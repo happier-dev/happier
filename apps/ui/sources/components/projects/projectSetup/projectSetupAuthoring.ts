@@ -25,7 +25,7 @@ export type ProjectSetupAgentGuidanceInput = Pick<ProjectSetupAuthoringInput, 'w
 type ProjectSetupAgentGuidanceRefusal = Readonly<{ kind: 'stale'; reason: 'host_retired' }>
     | Readonly<{ kind: 'unavailable'; reason: 'aborted' | 'origin_unavailable' }>;
 
-async function readProjectSetupAgentGuidanceCurrent(input: ProjectSetupAgentGuidanceInput) {
+async function readProjectSetupAgentGuidanceCurrent(input: ProjectSetupAgentGuidanceInput, observeDestination: boolean) {
     if (input.signal?.aborted) return { kind: 'unavailable', reason: 'aborted' } as const;
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime?.isCurrent()) return { kind: 'stale', reason: 'host_retired' } as const;
@@ -66,7 +66,7 @@ async function readProjectSetupAgentGuidanceCurrent(input: ProjectSetupAgentGuid
         if (beforeReads) return beforeReads;
         const address = { serverId: input.workspace.serverId, refId: input.workspace.workspaceId };
         const [inspection, preferences] = await Promise.all([
-            read('projects.inspect', { workspace: input.workspace }, ProjectDefinitionInspectOutputSchema),
+            read('projects.inspect', { workspace: input.workspace, read: { kind: 'guidance' } }, ProjectDefinitionInspectOutputSchema),
             read('projects.worker.preferences.get', { workspace: address }, ProjectWorkerActionOutputSchemasV1['projects.worker.preferences.get']),
         ]);
         const afterReads = refusal();
@@ -85,7 +85,7 @@ async function readProjectSetupAgentGuidanceCurrent(input: ProjectSetupAgentGuid
             ? Object.entries(document.manifest.services ?? {}).map(([name, declaration]) => ({ name, ...declaration }))
             : document === null ? [] : null;
         const configured = preferences.ok && preferences.value.status === 'ready' ? preferences.value.preference.destination : undefined;
-        const destination = configured ? {
+        const destination = configured && observeDestination ? {
             configured,
             observation: configured.kind === 'machine'
                 ? await read('projects.worker.status', { workspace: address, destination: configured, purpose: 'finite' }, ProjectWorkerActionOutputSchemasV1['projects.worker.status'])
@@ -99,9 +99,7 @@ async function readProjectSetupAgentGuidanceCurrent(input: ProjectSetupAgentGuid
             sourceWorkspace: input.workspace,
             definition: inspection.ok ? { basis: inspection.value.definition.basis, status: document?.status ?? 'absent',
                 ...(document ? { diagnostics: document.diagnostics } : {}) } : inspection,
-            ...(inspection.ok ? { detection: inspection.value.detection, importCandidates: inspection.value.importCandidates,
-                ...(inspection.value.commands ? { commands: inspection.value.commands } : {}),
-                ...(inspection.value.tools ? { tools: inspection.value.tools } : {}) } : {}),
+            ...(inspection.ok ? { detection: inspection.value.detection, detectionSummary: inspection.value.detectionSummary } : {}),
             workerPreferences: preferences.ok ? preferences.value : preferences,
             scripts,
             services,
@@ -126,19 +124,23 @@ export type ProjectSetupAgentGuidance = Extract<ProjectSetupAgentGuidanceResult,
 
 /** The editable request contains a short observation, never the qualified inspection DTO. */
 function describeSetupAuthoringFacts(guidance: ProjectSetupAgentGuidance): string {
-    const entries = guidance.detection?.entries ?? [];
-    const scripts = entries.filter(entry => entry.usage === 'script');
-    const services = entries.filter(entry => entry.usage === 'service');
-    const serviceSources = services.length > 0 ? services.map(entry => entry.source)
-        : (guidance.services ?? []).map(service => service.source);
-    const scriptSources = scripts.length > 0 ? scripts.map(entry => entry.source) : (guidance.scripts ?? []).map(script => script.source);
-    const files = joinProjectFiles([...scriptSources, ...serviceSources]
-        .map(source => describeProjectCommandSource(source).file)
-        .filter(file => file !== null));
+    const summary = guidance.detectionSummary;
+    const detectedScripts = summary?.scripts ?? 0;
+    const detectedServices = summary?.services ?? 0;
+    const scriptSources = (guidance.scripts ?? []).map(script => script.source);
+    const serviceSources = (guidance.services ?? []).map(service => service.source);
+    const scriptCount = detectedScripts || scriptSources.length;
+    const serviceCount = detectedServices || serviceSources.length;
+    const sourceFiles = (sources: typeof scriptSources) => sources
+        .map(source => describeProjectCommandSource(source).file).filter(file => file !== null);
+    const files = joinProjectFiles([
+        ...(summary && detectedScripts > 0 ? summary.files.filter(file => file.scripts > 0).map(file => file.file) : sourceFiles(scriptSources)),
+        ...(summary && detectedServices > 0 ? summary.files.filter(file => file.services > 0).map(file => file.file) : sourceFiles(serviceSources)),
+    ]);
     return [
         // A zero count is not an observation the agent needs; an empty checkout seeds the request alone.
-        [...(scriptSources.length > 0 ? [t('projects.authoring.scriptsCount', { count: scriptSources.length })] : []),
-            ...(serviceSources.length > 0 ? [t('projects.authoring.servicesCount', { count: serviceSources.length })] : []),
+        [...(scriptCount > 0 ? [t('projects.authoring.scriptsCount', { count: scriptCount })] : []),
+            ...(serviceCount > 0 ? [t('projects.authoring.servicesCount', { count: serviceCount })] : []),
             ...(files ? [t('projects.scripts.foundIn', { files })] : [])].join(' · '),
         ...(guidance.detection?.coverage === 'partial' ? [t('projects.scripts.definition.partial')] : []),
         ...('status' in guidance.workerPreferences && guidance.workerPreferences.status === 'ready'
@@ -148,7 +150,7 @@ function describeSetupAuthoringFacts(guidance: ProjectSetupAgentGuidance): strin
 
 /** GUIDE disclosure and ordinary authoring consume this same read-only factual owner. */
 export async function readProjectSetupAgentGuidance(input: ProjectSetupAgentGuidanceInput): Promise<ProjectSetupAgentGuidanceResult> {
-    return await readProjectSetupAgentGuidanceCurrent(input);
+    return await readProjectSetupAgentGuidanceCurrent(input, true);
 }
 
 /** Scripts empty and Overview Setup are thin entries to the real presentation Action. */
@@ -161,7 +163,7 @@ export async function openProjectSetupAuthoring(input: ProjectSetupAuthoringInpu
         page: input.page ?? 'scripts', ...(input.comparisonId ? { comparisonId: input.comparisonId } : {}),
     };
     try {
-        const observed = await readProjectSetupAgentGuidance(input);
+        const observed = await readProjectSetupAgentGuidanceCurrent(input, false);
         if (observed.kind !== 'ready') return { ok: true, result: observed };
         if ('ok' in observed.guidance.definition && !observed.guidance.definition.ok) return observed.guidance.definition;
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');

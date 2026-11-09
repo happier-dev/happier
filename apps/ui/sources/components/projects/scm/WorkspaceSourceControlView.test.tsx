@@ -5,7 +5,7 @@ import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { machineScmCommitCreate } from '@/sync/ops/scm/machineScm';
 import type { machineScmChangeDiscard } from '@/sync/ops/scm/machineScm';
 import type { machineScmRemoteFetch, machineScmRemotePull, machineScmRemotePush } from '@/sync/ops/scm/machineScm';
-import type { ScmStashListResponse } from '@happier-dev/protocol';
+import type { ScmStashListResponse } from '@happier-dev/protocol/scm';
 
 import { renderScreen } from '@/dev/testkit';
 import { publishActiveReviewFile, readActiveReviewFile, resetActiveReviewFilesForTests } from '@/components/workspaces/scm/review/activeReviewFile';

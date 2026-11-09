@@ -140,9 +140,9 @@ describe('project manifest editor model', () => {
         target: 'deploy',
       },
     });
-    model.importEnvironment({
+    model.importToolchain({
       kind: 'pluginToolchain',
-      adapter: { pluginId: 'example.pixi', localId: 'environment' },
+      adapter: { pluginId: 'example.pixi', localId: 'toolchain' },
       configPath: 'pixi.toml',
     });
     model.removeDeclaration('scripts', 'test');
@@ -182,9 +182,9 @@ describe('project manifest editor model', () => {
       file: 'pixi.toml',
       target: 'deploy',
     });
-    expect(document.manifest.environment).toEqual({
+    expect(document.manifest.toolchain).toEqual({
       kind: 'pluginToolchain',
-      adapter: { pluginId: 'example.pixi', localId: 'environment' },
+      adapter: { pluginId: 'example.pixi', localId: 'toolchain' },
       configPath: 'pixi.toml',
     });
     expect(
@@ -529,7 +529,7 @@ describe('project manifest editor model', () => {
       configPath: '.devcontainer/devcontainer.json',
     });
     // The namespace stays independent of the toolchain selection, and clearing it removes only it.
-    expect(model.importEnvironment({ kind: 'toolchain', tool: 'mise' })).toBe(
+    expect(model.importToolchain({ kind: 'toolchain', tool: 'mise' })).toBe(
       true,
     );
     expect(model.selectDevcontainer(null)).toBe(true);
@@ -537,7 +537,7 @@ describe('project manifest editor model', () => {
     if (document.status !== 'valid')
       throw new Error('Expected usable document');
     expect(document.manifest.devcontainer).toBeUndefined();
-    expect(document.manifest.environment).toEqual({
+    expect(document.manifest.toolchain).toEqual({
       kind: 'toolchain',
       tool: 'mise',
     });

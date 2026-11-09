@@ -1,5 +1,8 @@
-import * as React from 'react';
+import { replacePersistentUiStateForTest, PersistedPaneScopesSchema } from '@/dev/testkit/harness/persistentUiState';
 import { t } from '@/text';
+import { paneUiState } from '@/sync/domains/state/filePaneUiState';
+import { projectLastMobileSurfaceState, projectLastActiveRootPathState, projectLastActiveWorktreeIdState } from '@/sync/domains/state/navigationUiState';
+import * as React from 'react';
 import { act } from 'react-test-renderer';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -41,8 +44,11 @@ let deviceTypeMock: 'phone' | 'tablet' = 'tablet';
 let paneScopesMock: Record<string, { right?: { activeTabId?: string | null } }> = {};
 let localSettingsMock: Record<string, unknown> = {};
 let projectLastMobileSurfacesByWorkspaceRefIdMock: Record<string, ProjectMobileSurface> = {};
+let projectLastActiveRootPathsMock: Record<string, string> = {};
+let projectLastActiveWorktreeIdsMock: Record<string, string> = {};
 
 vi.mock('react-native', async () => {
+    const React = await import('react');
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock({
         View: React.forwardRef((props: any, ref: any) => React.createElement('View', { ...props, ref }, props.children)),
@@ -54,11 +60,13 @@ vi.mock('react-native', async () => {
             return React.createElement('Pressable', props, props.children);
         },
         Platform: { OS: 'web' },
-        useWindowDimensions: () => ({ width: deviceTypeMock === 'phone' ? 390 : 1024, height: 844, scale: 1, fontScale: 1 }),
         Dimensions: { get: () => ({ width: deviceTypeMock === 'phone' ? 390 : 1024, height: 844, scale: 1, fontScale: 1 }),
             addEventListener: () => ({ remove: () => {} }) },
     });
 });
+
+vi.mock('@/components/ui/popover', async (importOriginal) =>
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -104,7 +112,7 @@ vi.mock('@/modal', async () => {
 
 // Device persistence is a system boundary; the actual retained-draft repository and Open entrance stay real.
 vi.mock('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage', () => ({
-    getSessionDraftPersistenceStorage: () => ({ getString: (key: string) => draftRecords.get(key),
+    getSessionDraftPersistenceStorage: () => ({ getString: (key: string) => draftRecords.get(key), getAllKeys: () => [...draftRecords.keys()],
         set: (key: string, value: string) => draftRecords.set(key, value), delete: (key: string) => draftRecords.delete(key),
         flush: async () => {} }),
 }));
@@ -115,6 +123,16 @@ const { AppPaneProvider } = await import('@/components/appShell/panes/AppPanePro
 const { appPaneReduce, createAppPaneState } = await import('@/components/appShell/panes/model/appPaneReducer');
 const { serializeDetailsWorkspaceState } = await import('@/components/appShell/panes/details/workspace/migrateLegacyDetailsWorkspaceState');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+
+/** A closed row mounts only its trigger; the row menu model exists while its menu is open. */
+async function openFirstRowMenu(screen: Awaited<ReturnType<typeof renderProjects>>) {
+    const trigger = screen.root.findAll(node => node.props.accessibilityLabel === 'common.moreActions'
+        && typeof node.props.onPress === 'function')[0]!;
+    await act(async () => trigger.props.onPress({}));
+}
+function findRowMenu(screen: Awaited<ReturnType<typeof renderProjects>>) {
+    return screen.findAllByType(DropdownMenu).find(menu => menu.props.items?.some((item: { id: string }) => item.id === 'rename'));
+}
 
 beforeEach(async () => {
     await homes.reset();
@@ -148,10 +166,12 @@ async function renderProjects(element: React.ReactElement) {
     for (const [scopeId, scope] of Object.entries(paneScopesMock)) {
         if (scope.right?.activeTabId) panes = appPaneReduce(panes, { type: 'openRight', scopeId, tabId: scope.right.activeTabId });
     }
-    storage.setState({ localSettings: { ...localSettingsDefaults, ...localSettingsMock,
-        projectLastMobileSurfaceByWorkspaceRefId: mobileSurfaces(),
-        appPaneScopesV1: Object.fromEntries(Object.entries(panes.scopes).map(([id, scope]) => [id,
-            { mainHidden: scope.mainHidden, right: scope.right, bottom: scope.bottom, details: serializeDetailsWorkspaceState(scope.details) }])) } });
+    replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse(Object.fromEntries(Object.entries(panes.scopes).map(([id, scope]) => [id,
+        { mainHidden: scope.mainHidden, right: scope.right, bottom: scope.bottom, details: serializeDetailsWorkspaceState(scope.details) }]))));
+    replacePersistentUiStateForTest(projectLastMobileSurfaceState, mobileSurfaces());
+    replacePersistentUiStateForTest(projectLastActiveRootPathState, projectLastActiveRootPathsMock);
+    replacePersistentUiStateForTest(projectLastActiveWorktreeIdState, projectLastActiveWorktreeIdsMock);
+    storage.setState({ localSettings: { ...localSettingsDefaults, ...localSettingsMock } });
     storage.getState().applyMachines(machinesMock, true);
     // A synced Account: its Machine inventory has arrived (even when it holds none of these Machines).
     storage.getState().applyReady();
@@ -201,6 +221,8 @@ describe('ProjectsListView', () => {
         paneScopesMock = {};
         localSettingsMock = {};
         projectLastMobileSurfacesByWorkspaceRefIdMock = {};
+        projectLastActiveRootPathsMock = {};
+        projectLastActiveWorktreeIdsMock = {};
         translationPrefixMock = '';
         folderSelection.path = null;
         relationships = [];
@@ -434,7 +456,8 @@ describe('ProjectsListView', () => {
         const { ProjectsListView } = await import('./ProjectsListView');
         const screen = await renderProjects(<ProjectsListView />);
 
-        const firstDropdown = screen.findAllByType(DropdownMenu)[0];
+        await openFirstRowMenu(screen);
+        const firstDropdown = findRowMenu(screen);
         expect(firstDropdown).toBeTruthy();
         const firstItems = firstDropdown?.props?.items;
         const firstOnSelect = firstDropdown?.props?.onSelect;
@@ -442,11 +465,11 @@ describe('ProjectsListView', () => {
         projectLastMobileSurfacesByWorkspaceRefIdMock = { wr_1: 'git' };
 
         await act(async () => {
-            storage.getState().applyLocalSettings({ projectLastMobileSurfaceByWorkspaceRefId: mobileSurfaces() }, { persist: false });
+            replacePersistentUiStateForTest(projectLastMobileSurfaceState, mobileSurfaces());
         });
         await screen.update(<AppPaneProvider><ProjectsListView /></AppPaneProvider>);
 
-        const secondDropdown = screen.findAllByType(DropdownMenu)[0];
+        const secondDropdown = findRowMenu(screen);
         expect(secondDropdown?.props?.items).toBe(firstItems);
         expect(secondDropdown?.props?.onSelect).toBe(firstOnSelect);
     });
@@ -463,9 +486,9 @@ describe('ProjectsListView', () => {
         }];
         localSettingsMock = {
             projectLastMobileRouteByWorkspaceRefId: { wr_1: 'git' },
-            projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/repo/.worktrees/feature-auth' },
-            projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_feature' },
         };
+        projectLastActiveRootPathsMock = { wr_1: '/repo/.worktrees/feature-auth' };
+        projectLastActiveWorktreeIdsMock = { wr_1: 'gitwt_feature' };
 
         const { ProjectsListView } = await import('./ProjectsListView');
         const screen = await renderProjects(<ProjectsListView />);
@@ -485,10 +508,8 @@ describe('ProjectsListView', () => {
             label: 'Repo',
             createdAtMs: 1,
         }];
-        localSettingsMock = {
-            projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/repo/.worktrees/feature-auth' },
-            projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_feature' },
-        };
+        projectLastActiveRootPathsMock = { wr_1: '/repo/.worktrees/feature-auth' };
+        projectLastActiveWorktreeIdsMock = { wr_1: 'gitwt_feature' };
         projectLastMobileSurfacesByWorkspaceRefIdMock = { wr_1: 'overview' };
 
         const { ProjectsListView } = await import('./ProjectsListView');
@@ -509,10 +530,8 @@ describe('ProjectsListView', () => {
             label: 'Repo',
             createdAtMs: 1,
         }];
-        localSettingsMock = {
-            projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/repo/.worktrees/feature-auth' },
-            projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'gitwt_feature' },
-        };
+        projectLastActiveRootPathsMock = { wr_1: '/repo/.worktrees/feature-auth' };
+        projectLastActiveWorktreeIdsMock = { wr_1: 'gitwt_feature' };
         projectLastMobileSurfacesByWorkspaceRefIdMock = { wr_1: 'terminal' };
 
         const { ProjectsListView } = await import('./ProjectsListView');
@@ -536,10 +555,11 @@ describe('ProjectsListView', () => {
         const { ProjectsListView } = await import('./ProjectsListView');
         const screen = await renderProjects(<ProjectsListView />);
 
-        const dropdowns = screen.findAllByType(DropdownMenu);
-        expect(dropdowns.length).toBeGreaterThan(0);
-        expect(dropdowns[0]?.props.placement).toBe('bottom');
-        expect(dropdowns[0]?.props.popoverAnchorAlign).toBe('end');
+        await openFirstRowMenu(screen);
+        const rowMenu = findRowMenu(screen);
+        expect(rowMenu).toBeTruthy();
+        expect(rowMenu?.props.placement).toBe('bottom');
+        expect(rowMenu?.props.popoverAnchorAlign).toBe('end');
     });
 
     describe('workspace-sync row presentation', () => {
@@ -598,27 +618,27 @@ describe('ProjectsListView', () => {
             />,
         );
 
-        const englishDropdown = screen.findAllByType(DropdownMenu)[0];
+        // A closed row mounts only its trigger; the menu model exists while the menu is open.
+        expect(findRowMenu(screen)).toBeUndefined();
+        await openFirstRowMenu(screen);
+        const englishDropdown = findRowMenu(screen);
         expect(englishDropdown).toBeTruthy();
         expect(englishDropdown?.props.items.find((item: { id: string; title: string }) => item.id === 'rename')?.title)
             .toBe('sessionsList.renameWorkspace');
 
         translationPrefixMock = 'es:';
         const secondOnRemove = vi.fn();
-        await act(async () => {
-            screen.tree.update(
-                <ProjectsListItemMenu
-                    workspaceRef={workspaceRef}
-                    pinAction="pin"
-                    onTogglePinned={vi.fn()}
-                    onRename={vi.fn()}
-                    onReset={vi.fn()}
-                    onRemove={secondOnRemove}
-                />,
-            );
-        });
-
-        const spanishDropdown = screen.findAllByType(DropdownMenu)[0];
+        await screen.update(
+            <ProjectsListItemMenu
+                workspaceRef={workspaceRef}
+                pinAction="pin"
+                onTogglePinned={vi.fn()}
+                onRename={vi.fn()}
+                onReset={vi.fn()}
+                onRemove={secondOnRemove}
+            />,
+        );
+        const spanishDropdown = findRowMenu(screen);
         expect(spanishDropdown?.props.items.find((item: { id: string; title: string }) => item.id === 'rename')?.title)
             .toBe('es:sessionsList.renameWorkspace');
     });

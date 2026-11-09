@@ -2,7 +2,7 @@ import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceR
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 import type { StorageState } from '@/sync/store/types';
-import { resolveDisplayIdentityForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
+import { areSessionMachineTargetInputsEqual, resolveDisplayIdentityForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
 import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -13,24 +13,28 @@ import {
 import { resolveInboxItemAttentionV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { readSessionWorkStatusFacts } from '@/components/work/status/sessionWorkStatusFacts';
-import {
-    readRealmQualifiedMobileSurface,
-} from '@/sync/domains/settings/mobileSurfacePersistence';
 import { resolveProjectMobileSurfaceStorageKeys } from '@/sync/domains/settings/mobileSurfacePersistence';
+import { projectLastMobileSurfaceState } from '@/sync/domains/state/navigationUiState';
 import { buildWorkspaceCacheKey, normalizeWorkspaceRootPath } from '@/sync/domains/workspaces/workspaceScope';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
-import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 
 import { projectsTreeCheckoutKey, type ProjectsTreeCheckoutFacts } from './projectsTreeRows';
 
 export type ProjectsTreeCheckoutFactsState = Pick<StorageState,
     'sessions' | 'sessionListRowsByServerId' | 'sessionListRenderableDelta' | 'machines' | 'machineListByServerId' | 'machineListStatusByServerId' | 'profileScope' | 'getWorkspaceScmSnapshot'
-> & Readonly<{ localSettings: Pick<LocalSettings, 'projectLastMobileSurfaceByWorkspaceRefId'> }>;
+>;
 
 export type ProjectsTreeCheckoutFactsSelector = {
-    (state: ProjectsTreeCheckoutFactsState, nowMs: number, scmChanged?: boolean): ReadonlyMap<string, ProjectsTreeCheckoutFacts>;
+    (state: ProjectsTreeCheckoutFactsState, nowMs: number, change?: ProjectsTreeCheckoutFactsChange): ReadonlyMap<string, ProjectsTreeCheckoutFacts>;
     getNextWakeAtMs(): number | null;
+    getScmScopeKeys(): ReadonlySet<string>;
 };
+
+export type ProjectsTreeCheckoutFactsChange = Readonly<{
+    reset?: boolean;
+    scmScopeKey?: string;
+    mobileSurfaceKey?: string;
+}>;
 
 function checkoutKey(ref: WorkspaceRefV1): string {
     return projectsTreeCheckoutKey({ refId: ref.id, workspaceAddress: workspaceAddressFromRefV1(ref) });
@@ -61,10 +65,21 @@ export function createProjectsTreeCheckoutFactsSelector(refs: readonly Workspace
     let previousNowMs: number | null = null;
     let previousRevision: number | null = null;
     let nextWakeAtMs: number | null = null;
-    const refScopes = new Set(refs.map(ref => buildWorkspaceCacheKey(ref)));
-    const serverIds = new Set(refs.map(ref => ref.serverId));
-    // Structural membership only. Status is recomputed from canonical rows for the affected keys.
-    const placementByAddress = new Map<string, { serverId: string; sessionId: string; machineId: string; rootPath: string; scopeKey: string }>();
+    const checkoutsByScope = new Map<string, { ref: WorkspaceRefV1; key: string; index: number }[]>();
+    refs.forEach((ref, index) => {
+        const scope = buildWorkspaceCacheKey(ref);
+        let checkouts = checkoutsByScope.get(scope);
+        if (!checkouts) checkoutsByScope.set(scope, checkouts = []);
+        checkouts.push({ ref, key: checkoutKey(ref), index });
+    });
+    const scmScopeKeys = new Set(checkoutsByScope.keys());
+    const serverIds = [...new Set(refs.map(ref => ref.serverId))];
+    let mobileSurfaceKeys: readonly (string | null)[] = [];
+    const scopesByMobileSurfaceKey = new Map<string, Set<string>>();
+    // Retain input paths even outside saved checkouts: a later SCM discovery can
+    // attribute these Sessions to a displayed repository without a census rebuild.
+    const placementByAddress = new Map<string, { serverId: string; sessionId: string; machineId: string; rootPath: string; inputScopeKey: string; scopeKey: string }>();
+    const addressesByInputScope = new Map<string, Set<string>>();
     const membersByScope = new Map<string, Set<string>>();
     const wakeAtByScope = new Map<string, number>();
 
@@ -75,7 +90,13 @@ export function createProjectsTreeCheckoutFactsSelector(refs: readonly Workspace
         members?.delete(address);
         if (members?.size === 0) membersByScope.delete(old.scopeKey);
         placementByAddress.delete(address);
-        affected.add(old.scopeKey);
+        const inputs = addressesByInputScope.get(old.inputScopeKey);
+        inputs?.delete(address);
+        if (inputs?.size === 0) {
+            addressesByInputScope.delete(old.inputScopeKey);
+            if (!checkoutsByScope.has(old.inputScopeKey)) scmScopeKeys.delete(old.inputScopeKey);
+        }
+        if (checkoutsByScope.has(old.scopeKey)) affected.add(old.scopeKey);
     };
 
     const place = (state: ProjectsTreeCheckoutFactsState, serverId: string, sessionId: string, affected: Set<string>) => {
@@ -100,44 +121,61 @@ export function createProjectsTreeCheckoutFactsSelector(refs: readonly Workspace
         const snapshot = state.getWorkspaceScmSnapshot(target);
         const scopeKey = buildWorkspaceCacheKey({ ...target,
             rootPath: snapshot?.repo.isRepo && snapshot.repo.rootPath ? snapshot.repo.rootPath : rootPath });
-        if (!refScopes.has(scopeKey)) return;
-        placementByAddress.set(address, { serverId, sessionId, machineId: identity.machineId, rootPath, scopeKey });
+        const inputScopeKey = buildWorkspaceCacheKey(target);
+        placementByAddress.set(address, { ...target, sessionId, inputScopeKey, scopeKey });
+        let inputs = addressesByInputScope.get(inputScopeKey);
+        if (!inputs) addressesByInputScope.set(inputScopeKey, inputs = new Set());
+        inputs.add(address);
+        scmScopeKeys.add(inputScopeKey);
+        if (!checkoutsByScope.has(scopeKey)) return;
         let members = membersByScope.get(scopeKey);
         if (!members) membersByScope.set(scopeKey, members = new Set());
         members.add(address);
         affected.add(scopeKey);
     };
 
-    const select = (state: ProjectsTreeCheckoutFactsState, nowMs: number, scmChanged = false): ReadonlyMap<string, ProjectsTreeCheckoutFacts> => {
-        const mobileSurfaceKeys = resolveProjectMobileSurfaceStorageKeys({
-            workspaceRefs: refs, activeScope: state.profileScope, activeServerId: state.profileScope?.serverId,
-        });
-        if (!scmChanged && previousRevision === state.sessionListRenderableDelta.revision && previousNowMs === nowMs
-            && previousState?.sessionListRowsByServerId === state.sessionListRowsByServerId
-            && previousState.sessions === state.sessions && previousState.machines === state.machines
-            && previousState.machineListByServerId === state.machineListByServerId
-            && previousState.machineListStatusByServerId === state.machineListStatusByServerId
-            && previousState.profileScope === state.profileScope
-            && previousState.getWorkspaceScmSnapshot === state.getWorkspaceScmSnapshot
-            && previousState.localSettings === state.localSettings) return previous;
+    const select = (state: ProjectsTreeCheckoutFactsState, nowMs: number, change: ProjectsTreeCheckoutFactsChange = {}): ReadonlyMap<string, ProjectsTreeCheckoutFacts> => {
+        if (change.reset || previousState === null || previousState.profileScope !== state.profileScope) {
+            mobileSurfaceKeys = resolveProjectMobileSurfaceStorageKeys({
+                workspaceRefs: refs, activeScope: state.profileScope, activeServerId: state.profileScope?.serverId,
+            });
+            scopesByMobileSurfaceKey.clear();
+            for (const [scope, checkouts] of checkoutsByScope) for (const { index } of checkouts) {
+                const key = mobileSurfaceKeys[index];
+                if (!key) continue;
+                let scopes = scopesByMobileSurfaceKey.get(key);
+                if (!scopes) scopesByMobileSurfaceKey.set(key, scopes = new Set());
+                scopes.add(scope);
+            }
+        }
         const affected = new Set<string>();
         const delta = state.sessionListRenderableDelta;
-        const rowsChanged = previousState?.sessionListRowsByServerId !== state.sessionListRowsByServerId
+        // A different Home's arrivals do not change this tree's placement inputs.
+        const rowsChanged = serverIds.some(serverId => previousState?.sessionListRowsByServerId[serverId] !== state.sessionListRowsByServerId[serverId])
             || previousState?.sessions !== state.sessions;
         const canApplyDelta = previousRevision !== null && delta.revision === previousRevision + 1;
-        const rebuild = scmChanged || previousState === null || previousState.machines !== state.machines
-            || previousState.machineListByServerId !== state.machineListByServerId
-            || previousState.machineListStatusByServerId !== state.machineListStatusByServerId
+        // Placement reads only the Machine facts its target resolver names; heartbeats and daemon
+        // publications replace Machine records without moving any Session.
+        const rebuild = change.reset || previousState === null
+            || !areSessionMachineTargetInputsEqual(previousState.machines, state.machines)
+            || serverIds.some(serverId => !areSessionMachineTargetInputsEqual(previousState?.machineListByServerId[serverId], state.machineListByServerId[serverId])
+                || previousState?.machineListStatusByServerId[serverId] !== state.machineListStatusByServerId[serverId])
             || previousState.profileScope !== state.profileScope
             || previousState.getWorkspaceScmSnapshot !== state.getWorkspaceScmSnapshot
             || previousNowMs !== null && nowMs < previousNowMs
-            || canApplyDelta && delta.rebuiltSessionListIndex
+            // A published delta lists every changed row; an index rebuild alone moves no placement.
             || rowsChanged && !canApplyDelta;
         if (rebuild) {
             placementByAddress.clear();
             membersByScope.clear();
+            addressesByInputScope.clear();
+            scmScopeKeys.clear();
             wakeAtByScope.clear();
-            for (const scope of refScopes) affected.add(scope);
+            nextWakeAtMs = null;
+            for (const scope of checkoutsByScope.keys()) {
+                affected.add(scope);
+                scmScopeKeys.add(scope);
+            }
             for (const serverId of serverIds) {
                 for (const sessionId of Object.keys(state.sessionListRowsByServerId[serverId] ?? {})) place(state, serverId, sessionId, affected);
             }
@@ -145,63 +183,80 @@ export function createProjectsTreeCheckoutFactsSelector(refs: readonly Workspace
             for (const serverId of serverIds) {
                 for (const sessionId of delta.removedSessionIds) place(state, serverId, sessionId, affected);
                 for (const sessionId of delta.changedSessionIds) place(state, serverId, sessionId, affected);
+                for (const sessionId of delta.hydratedSessionIds ?? []) place(state, serverId, sessionId, affected);
             }
         }
-        for (const [scope, wakeAt] of wakeAtByScope) if (wakeAt <= nowMs) affected.add(scope);
-        const next = new Map<string, ProjectsTreeCheckoutFacts>();
-        let unchanged = previous.size === refs.length;
-        for (const [refIndex, ref] of refs.entries()) {
-            const key = checkoutKey(ref);
-            const scope = buildWorkspaceCacheKey(ref);
+        if (!rebuild && change.scmScopeKey) {
+            if (checkoutsByScope.has(change.scmScopeKey)) affected.add(change.scmScopeKey);
+            for (const address of [...addressesByInputScope.get(change.scmScopeKey) ?? []]) {
+                const placement = placementByAddress.get(address)!;
+                place(state, placement.serverId, placement.sessionId, affected);
+            }
+        }
+        if (change.mobileSurfaceKey) for (const scope of scopesByMobileSurfaceKey.get(change.mobileSurfaceKey) ?? []) affected.add(scope);
+        if (nextWakeAtMs !== null && nextWakeAtMs <= nowMs) {
+            for (const [scope, wakeAt] of wakeAtByScope) if (wakeAt <= nowMs) affected.add(scope);
+        }
+        let next: Map<string, ProjectsTreeCheckoutFacts> | null = null;
+        let earliestWakeInvalidated = false;
+        for (const scope of affected) for (const { ref, key, index } of checkoutsByScope.get(scope) ?? []) {
             const old = previous.get(key);
-            let attention = old?.attention ?? null;
+            let attention: ProjectsTreeCheckoutFacts['attention'] = null;
             let memberSnapshot: ScmWorkingSnapshot | null = null;
-            if (affected.has(scope)) {
-                attention = null;
-                wakeAtByScope.delete(scope);
-                for (const address of membersByScope.get(scope) ?? []) {
-                    const placement = placementByAddress.get(address)!;
-                    const row = state.sessionListRowsByServerId[placement.serverId]?.[placement.sessionId];
-                    if (!row) continue;
-                    const runtimeInput = { ...row, hasPendingUserMessages: (row.pendingCount ?? 0) > 0, nowMs };
-                    const status = resolveWorkStatusTone({ kind: 'session', facts: readSessionWorkStatusFacts(
-                        row.serverId === placement.serverId ? row : { ...row, serverId: placement.serverId }, nowMs,
-                    ) });
-                    const memberAttention = status.attentionType && resolveInboxItemAttentionV1(status.attentionType).interrupt
-                        ? 'needs-you' : status.bucket === 'working' ? 'working' : null;
-                    if (memberAttention === 'needs-you' || attention !== 'needs-you' && memberAttention === 'working') attention = memberAttention;
-                    const snapshot = state.getWorkspaceScmSnapshot(placement);
-                    if (snapshot && (!memberSnapshot || snapshot.fetchedAt > memberSnapshot.fetchedAt)) memberSnapshot = snapshot;
-                    for (const expiry of readSessionRuntimePresentationFreshnessExpirations(runtimeInput, nowMs)) {
-                        wakeAtByScope.set(scope, Math.min(wakeAtByScope.get(scope) ?? Infinity, expiry));
-                    }
+            let scopeWakeAtMs: number | null = null;
+            for (const address of membersByScope.get(scope) ?? []) {
+                const placement = placementByAddress.get(address)!;
+                const row = state.sessionListRowsByServerId[placement.serverId]?.[placement.sessionId];
+                if (!row) continue;
+                const runtimeInput = { ...row, hasPendingUserMessages: (row.pendingCount ?? 0) > 0, nowMs };
+                const status = resolveWorkStatusTone({ kind: 'session', facts: readSessionWorkStatusFacts(
+                    row.serverId === placement.serverId ? row : { ...row, serverId: placement.serverId }, nowMs,
+                ) });
+                const memberAttention = status.attentionType && resolveInboxItemAttentionV1(status.attentionType).interrupt
+                    ? 'needs-you' : status.bucket === 'working' ? 'working' : null;
+                if (memberAttention === 'needs-you' || attention !== 'needs-you' && memberAttention === 'working') attention = memberAttention;
+                const snapshot = state.getWorkspaceScmSnapshot(placement);
+                if (snapshot && (!memberSnapshot || snapshot.fetchedAt > memberSnapshot.fetchedAt)) memberSnapshot = snapshot;
+                for (const expiry of readSessionRuntimePresentationFreshnessExpirations(runtimeInput, nowMs)) {
+                    scopeWakeAtMs = Math.min(scopeWakeAtMs ?? Infinity, expiry);
+                }
+            }
+            const oldWakeAtMs = wakeAtByScope.get(scope) ?? null;
+            if (oldWakeAtMs !== scopeWakeAtMs) {
+                if (oldWakeAtMs !== null && oldWakeAtMs === nextWakeAtMs) earliestWakeInvalidated = true;
+                if (scopeWakeAtMs === null) wakeAtByScope.delete(scope);
+                else {
+                    wakeAtByScope.set(scope, scopeWakeAtMs);
+                    nextWakeAtMs = Math.min(nextWakeAtMs ?? Infinity, scopeWakeAtMs);
                 }
             }
             const workspaceSnapshot = state.getWorkspaceScmSnapshot(ref);
             const snapshot = !workspaceSnapshot || (memberSnapshot && memberSnapshot.fetchedAt > workspaceSnapshot.fetchedAt)
                 ? memberSnapshot : workspaceSnapshot;
-            const surfaceKey = mobileSurfaceKeys[refIndex];
+            const surfaceKey = mobileSurfaceKeys[index];
             const facts: ProjectsTreeCheckoutFacts = {
-                ...(snapshot || affected.has(scope) ? readScmFacts(snapshot, ref.rootPath)
-                    : { branch: old?.branch ?? null, isWorktree: old?.isWorktree ?? null }),
+                ...readScmFacts(snapshot, ref.rootPath),
                 attention,
                 newFromSession: (membersByScope.get(scope)?.size ?? 0) > 0 && surfaceKey !== null && ref.lastOpenedAtMs == null
-                    && readRealmQualifiedMobileSurface(state.localSettings.projectLastMobileSurfaceByWorkspaceRefId, surfaceKey) === null,
+                    && (surfaceKey ? projectLastMobileSurfaceState.read(surfaceKey) ?? null : null) === null,
             };
-            const stable = sameFacts(old, facts) ? old! : facts;
-            next.set(key, stable);
-            if (stable !== old) unchanged = false;
+            if (!sameFacts(old, facts)) {
+                next ??= new Map(previous);
+                next.set(key, facts);
+            }
         }
-        if (!unchanged) previous = next;
-        nextWakeAtMs = null;
-        for (const wakeAt of wakeAtByScope.values()) nextWakeAtMs = Math.min(nextWakeAtMs ?? Infinity, wakeAt);
+        if (next) previous = next;
+        if (earliestWakeInvalidated) {
+            nextWakeAtMs = null;
+            for (const wakeAt of wakeAtByScope.values()) nextWakeAtMs = Math.min(nextWakeAtMs ?? Infinity, wakeAt);
+        }
         previousState = { sessions: state.sessions, sessionListRowsByServerId: state.sessionListRowsByServerId,
             sessionListRenderableDelta: state.sessionListRenderableDelta, machines: state.machines,
             machineListByServerId: state.machineListByServerId, machineListStatusByServerId: state.machineListStatusByServerId, profileScope: state.profileScope,
-            getWorkspaceScmSnapshot: state.getWorkspaceScmSnapshot, localSettings: state.localSettings };
+            getWorkspaceScmSnapshot: state.getWorkspaceScmSnapshot };
         previousNowMs = nowMs;
         previousRevision = delta.revision;
         return previous;
     };
-    return Object.assign(select, { getNextWakeAtMs: () => nextWakeAtMs });
+    return Object.assign(select, { getNextWakeAtMs: () => nextWakeAtMs, getScmScopeKeys: () => scmScopeKeys });
 }

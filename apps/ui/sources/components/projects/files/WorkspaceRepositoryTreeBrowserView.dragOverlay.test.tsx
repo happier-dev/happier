@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
     flushHookEffects,
@@ -51,15 +51,14 @@ vi.mock('@/hooks/ui/useWebFileDropZone', () => import('@/hooks/ui/useWebFileDrop
 
 vi.mock('@/utils/files/webDroppedEntries', () => import('@/utils/files/webDroppedEntries.web'));
 
+const { installWebLockManagerMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
+const restoreLocks = installWebLockManagerMock().restore;
+await prepareSessionFilesViewTestkit();
+const { WorkspaceRepositoryTreeBrowserView } = await import('./WorkspaceRepositoryTreeBrowserView');
+afterAll(() => restoreLocks());
+
 describe('WorkspaceRepositoryTreeBrowserView (drag overlay)', () => {
     let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
-    let restoreLocks = () => {};
-    beforeAll(async () => {
-        const { installWebLockManagerMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
-        restoreLocks = installWebLockManagerMock().restore;
-        await prepareSessionFilesViewTestkit();
-    });
-    afterAll(() => restoreLocks());
     beforeEach(async () => {
         // Browser feature detection is an external platform boundary.
         vi.stubGlobal('SharedWorker', class SharedWorker {});
@@ -78,7 +77,6 @@ describe('WorkspaceRepositoryTreeBrowserView (drag overlay)', () => {
 
     function statRequests() { return fixture.requests.filter(request => request.method === RPC_METHODS.STAT_FILE); }
     async function renderBrowser(inputs: HTMLInputElement[] = []) {
-        const { WorkspaceRepositoryTreeBrowserView } = await import('./WorkspaceRepositoryTreeBrowserView');
         const { useActiveServerAccountScope, useServerScopedMachine, useLocalSetting } = await import('@/sync/domains/state/storage');
         const { useServerFeaturesSnapshotForServerId } = await import('@/sync/domains/features/featureDecisionRuntime');
         const { isBrowserIrohHost } = await import('@/sync/runtime/browserIroh/hostEligibility');
@@ -218,8 +216,15 @@ describe('WorkspaceRepositoryTreeBrowserView (drag overlay)', () => {
         const { Platform } = await import('react-native');
         Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true });
         let finishSelection!: (value: unknown) => void;
+        let nativeCredentials: import('@/auth/storage/tokenStorage').HomeCredentialWriteRollback | null = null;
         nativeDocumentPickerBoundary.mockImplementationOnce(() => new Promise(resolve => { finishSelection = resolve; }));
         try {
+            // The fixture restored on web; native admission reads the device keychain.
+            const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+            nativeCredentials = await TokenStorage.setCredentialsForServerUrlWithRollback(
+                fixture.home.serverUrl, { serverId: fixture.scope.serverId }, fixture.credentials,
+            );
+            if (!nativeCredentials) throw new Error('Expected native Home credential fixture');
             const { admission } = await renderBrowser();
             const requested = invokeRepositoryUploadPick({
                 scope: { serverId: fixture.scope.serverId, accountId: 'alice' },
@@ -235,6 +240,7 @@ describe('WorkspaceRepositoryTreeBrowserView (drag overlay)', () => {
             });
             expect(statRequests()).toHaveLength(0);
         } finally {
+            await nativeCredentials?.rollback();
             Object.defineProperty(Platform, 'OS', { value: 'web', configurable: true });
         }
     });

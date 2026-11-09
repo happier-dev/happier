@@ -11,12 +11,12 @@ import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 export function projectSetupReadinessLine(
     readiness: ProjectSetupReadinessV1 | null,
     /** The selected native environment's name: its changed inputs ask for a new review (plan 24). */
-    environmentName: string | null = null,
+    toolchainName: string | null = null,
 ): string | null {
     switch (readiness?.kind) {
         case 'current': return t('projects.scripts.setup.readySince', { time: formatAsOfTime(readiness.completedAtMs) });
         case 'unprepared': return t('projects.scripts.setup.notRunYet');
-        case 'needsReview': return environmentName ? t('projects.scripts.environment.changed') : t('projects.scripts.setup.needsReview');
+        case 'needsReview': return toolchainName ? t('projects.scripts.toolchain.changed') : t('projects.scripts.setup.needsReview');
         case 'unknown': return t('projects.scripts.setup.stateUnknown');
         default: return null;
     }

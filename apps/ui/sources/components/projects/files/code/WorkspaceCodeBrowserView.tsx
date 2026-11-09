@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ScrollView, View } from 'react-native';
+import { Platform, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_TREE_ROW_METRICS, HappierPressable, HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
 
@@ -28,7 +28,6 @@ import { CheckoutReachabilityLine, CheckoutReachabilityScope, useCheckoutReachab
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { HeaderActionsScope } from '@/components/navigation/stackHeaderActions';
@@ -39,6 +38,7 @@ import { CodeCommitStrip } from './CodeCommitStrip';
 import { CodeEntryHistoryCells } from './CodeEntryHistoryCells';
 import { CodeReadmeCard, findCodeReadmePath } from './CodeReadmeCard';
 import { CODE_ENTRY_HISTORY_PENDING, type CodeEntryHistoryState } from './codeEntryHistoryPresentation';
+import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 
 /**
  * The per-entry history a Code page shows (plan 13 §5 `scm.history.entries`, through the history
@@ -379,7 +379,7 @@ function CodeListingSkeleton(props: Readonly<{ testID: string }>) {
     const { theme } = useUnistyles();
     const reducedMotion = useReducedMotionPreference();
     const heights = HAPPIER_TREE_ROW_METRICS.tableMinHeightPx;
-    const minHeight = isTouchPrimaryPointer() ? heights.touch : heights.precise;
+    const minHeight = useHappierTouchPrimaryPointer(Platform.OS) ? heights.touch : heights.precise;
     return (
         <View testID={props.testID} aria-busy>
             {CODE_LISTING_SKELETON_WIDTHS.map((width) => (
@@ -412,7 +412,6 @@ function CodeWidgetFooter(props: Readonly<{
                     testID={`${props.testID}-open`}
                     accessibilityRole="link"
                     onPress={props.onOpenInCode}
-                    hitSlop={8}
                     style={(state) => [
                         styles.footerLink,
                         focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),

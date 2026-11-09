@@ -1,4 +1,4 @@
-import { useFilesystemTreeKeyboard } from '@/components/ui/filesystemBrowser/useFilesystemTreeKeyboard';
+import { FilesystemTreeRowActive, useFilesystemTreeKeyboard } from '@/components/ui/filesystemBrowser/useFilesystemTreeKeyboard';
 import { useFilesystemTreeScrollAnchor } from '@/components/ui/filesystemBrowser/useFilesystemTreeScrollAnchor';
 import { DiffStat } from '@/components/workspaces/scm/DiffStat';
 import * as React from 'react';
@@ -28,12 +28,12 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import Reanimated, { FadeIn } from 'react-native-reanimated';
+import { createStore, type StoreApi } from 'zustand/vanilla';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useLiveFileWriteAgentLabels } from '@/components/workspaces/files/useWorkspaceFileWriteTabPresentation';
 import { Icon } from '@/components/ui/icons/Icon';
 import { HAPPIER_TREE_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
-import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
 import type { SelectionCheckState } from '@/components/ui/selection/SelectionCheckGlyph';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
@@ -42,6 +42,7 @@ import { resolveScmChangeToneColor, resolveScmChangeToneForCode } from '@/scm/sc
 import { selectScmChangedFiles } from '@/scm/scmStatusFiles';
 import { ScmChangeMark } from '@/components/workspaces/scm/changes/ScmChangeMark';
 import { resolveScmChangePathTag } from '@/scm/scmChangePathTag';
+import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 
 export type WorkspaceRepositoryTreeWebDropTarget = RepositoryFileDropTarget;
 export type WorkspaceRepositoryDirectoryState = Readonly<{ loaded: boolean; loading: boolean; error: string | null }>;
@@ -199,6 +200,21 @@ const NO_CLOSED_PATHS: ReadonlySet<string> = new Set();
 
 
 /** A change list labels lockfiles and generated output where they appear (the shared path classifier). */
+/**
+ * The open file's mark is read per row: opening a file redraws the previous and the new row, not every
+ * mounted row through the list's shared `extraData`.
+ */
+function RepositoryTreeRowSelection(props: Readonly<{
+    store: StoreApi<string | null>;
+    path: string | null;
+    children: (selected: boolean) => React.ReactElement;
+}>): React.ReactElement {
+    const { store, path } = props;
+    const selected = React.useSyncExternalStore(store.subscribe,
+        () => path !== null && store.getState() === path, () => false);
+    return props.children(selected);
+}
+
 function ScmChangePathTag(props: Readonly<{ path: string; theme: AppTheme }>) {
     const label = resolveScmChangePathTag(props.path);
     if (!label) return null;
@@ -231,6 +247,7 @@ function renderEntryIcon(node: WorkspaceRepositoryTreeNode, theme: AppTheme) {
 }
 
 export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceRepositoryTreeList(props: WorkspaceRepositoryTreeListProps): React.ReactElement | null {
+    const touchPrimaryPointer = useHappierTouchPrimaryPointer(Platform.OS);
     const { theme, expandedPaths, onExpandedPathsChange, onOpenFile } = props;
     const accountScope = useActiveServerAccountScope();
     const detailsMode = props.detailsMode === true;
@@ -322,13 +339,15 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
     const badgeIndex = useScmTreeBadgeIndex(props.scmSnapshot ?? null);
     const badgeSignature = buildScmTreeBadgeSignature(props.scmSnapshot ?? null);
     const selectedPath = props.selectedPath ?? null;
+    const [selectedPathStore] = React.useState(() => createStore<string | null>(() => selectedPath));
+    React.useLayoutEffect(() => { selectedPathStore.setState(selectedPath, true); }, [selectedPathStore, selectedPath]);
     const rowRenderState = React.useMemo(() => ({
         accountScope,
         workspaceScope: props.scope,
         treeKeyboard,
         badgeIndex,
         changedOnly,
-        selectedPath,
+        selectedPathStore,
         detailsMode,
         liveFileWrites,
         writerLabels,
@@ -357,7 +376,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         treeKeyboard,
         badgeIndex,
         changedOnly,
-        selectedPath,
+        selectedPathStore,
         detailsMode,
         liveFileWrites,
         writerLabels,
@@ -387,14 +406,12 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         props.scope.rootPath,
         accountScope?.serverId,
         accountScope?.accountId,
-        treeKeyboard.activePath,
         badgeSignature,
         liveWriteSignature,
         // The web badge index lands a tick after the snapshot (useScmTreeBadgeIndex): mounted rows must
         // redraw when it arrives, or they keep the badge-less first render.
         badgeIndex ? 'badges' : 'no-badges',
         changedOnly ? 'changed' : 'all',
-        selectedPath ?? '',
         detailsMode ? 'details' : 'compact',
         props.renderRowActions ? 'actions' : 'no-actions',
         props.rowSelection ? `select:${props.rowSelection.revision}` : 'no-select',
@@ -415,12 +432,10 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         props.scope.rootPath,
         accountScope?.serverId,
         accountScope?.accountId,
-        treeKeyboard.activePath,
         badgeSignature,
         liveWriteSignature,
         badgeIndex,
         changedOnly,
-        selectedPath,
         detailsMode,
         props.webFileDropEnabled,
         props.renderRowActions,
@@ -441,7 +456,8 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         metadata: props.renderRowMetadata,
         subtitle: props.renderRowSubtitle,
         visual: rowVisualSignature,
-    }), [props.fileHref, props.renderRowMetadata, props.renderRowSubtitle, rowVisualSignature]);
+        touchPrimaryPointer,
+    }), [props.fileHref, props.renderRowMetadata, props.renderRowSubtitle, rowVisualSignature, touchPrimaryPointer]);
 
     const renderRow = React.useCallback(({ node, showDivider }: FilesystemBrowserRowRenderInput) => {
         const rowState = rowRenderStateRef.current;
@@ -588,20 +604,26 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
             {proposalEmphasis === 'in' ? (
                 <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 3, bottom: 3, width: 3, borderRadius: 2, zIndex: 1, backgroundColor: rowState.theme.colors.state.active.foreground }} />
             ) : null}
+            <RepositoryTreeRowSelection store={rowState.selectedPathStore} path={node.type === 'file' ? node.path : null}>
+            {(selected) => (
+            <FilesystemTreeRowActive source={rowState.treeKeyboard.activePath} path={node.path}>
+            {(active) => (
             <FilesystemBrowserRow
                 testID={rowTestId}
-                treeItemProps={rowState.treeKeyboard.getRowProps(node,
+                treeItemProps={rowState.treeKeyboard.getRowProps(node, active,
                     node.type === 'directory' ? () => { void rowState.toggleDirectory(node.path); } : undefined,
                     node.type === 'file' ? () => (rowState.onOpenFilePinned ?? rowState.onOpenFile)(node.path) : undefined,
                 )}
                 node={node}
-                title={node.name}
+                title={node.type === 'info' && node.infoKind === 'truncated'
+                    ? t('newSession.pathPicker.truncatedDirectoryInfo', { count: node.entryCount ?? 0 })
+                    : node.name}
                 titleAccessory={rowState.changeRows && node.type === 'directory' && badge ? (
                     <Text testID={`${rowTestId}-count`} style={{ ...Typography.variant('meta'), color: rowState.theme.colors.text.tertiary, fontVariant: ['tabular-nums'],  }}>
                         {formatExactCount(badge.changedCount)}
                     </Text>
                 ) : undefined}
-                selected={node.type === 'file' && node.path === rowState.selectedPath}
+                selected={selected}
                 subtitle={subtitle}
                 icon={rowState.changeRows && node.type === 'file' && badge
                     ? <ScmChangeMark testID={`${rowTestId}-change`} code={badge.kindLetter} color={changeToneColor} size="compact" />
@@ -683,6 +705,10 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
                         : null
                 }
             />
+            )}
+            </FilesystemTreeRowActive>
+            )}
+            </RepositoryTreeRowSelection>
             </View>
             </WorkspaceDestinationRow>
             </TreeRowArrival>
@@ -751,7 +777,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
                 Platform.OS === 'web'
                     ? (_data, index) => {
                         const heights = props.folderPage ? HAPPIER_TREE_ROW_METRICS.tableMinHeightPx : HAPPIER_TREE_ROW_METRICS.minHeightPx;
-                        const length = isTouchPrimaryPointer() ? heights.touch : heights.precise;
+                        const length = touchPrimaryPointer ? heights.touch : heights.precise;
                         return { length, offset: length * index, index };
                     }
                     : undefined

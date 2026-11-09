@@ -16,6 +16,7 @@ export function useProjectSetupReturnInspection(origin: PluginUiNewSessionSeedOr
     const { read } = useProjectDefinitionInspection(
         setupOrigin?.workspace ?? null,
         binding?.accountId === setupOrigin?.accountId ? binding : null,
+        { kind: 'setup' },
     );
     if (!read || 'error' in read) return { summary: null, setupReadiness: null };
     const setupReadiness = read.value.setupReadiness ?? null;

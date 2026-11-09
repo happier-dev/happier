@@ -1,6 +1,7 @@
+import { createWorkspaceSyncRelationshipsListFixture } from '@/dev/testkit/harness/workspaceSyncHarness';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computeWorkspaceSyncPolicyDigest, type WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol';
+import { computeWorkspaceSyncPolicyDigest, type WorkspaceSyncRelationshipV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -74,13 +75,13 @@ async function waiveRetirement() {
 
 function answerFacts(lastCleanSyncAtMs: number | null = 1234, sizeBytes = 0) {
   rpc.machine.mockImplementation(async ({ method }: { method: string }) => {
-    if (method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST) return { statuses: [{
+    if (method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST) return createWorkspaceSyncRelationshipsListFixture([{
       relationshipId: 'copy', controllerMachineId: 'controller', state: 'watching',
       alphaPath: '/worker/project', betaPath: '/source/project', mode: 'keep_synced',
       endpointStates: { alpha: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 },
         beta: { connected: true, scanned: true, scanProblemCount: 0, transitionProblemCount: 0 } },
       conflictCount: 0, lastCycleObservedAtMs: 9999, lastCleanSyncAtMs,
-    }] };
+    }]);
     if (method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT) return { ok: true,
       preview: { targetMachineId: 'worker', workspaceRefId: 'target', rootFingerprint: 'a'.repeat(64), sizeBytes } };
     throw new Error(`unexpected_rpc:${method}`);
@@ -278,7 +279,7 @@ describe('Machine fresh-copy model', () => {
     await act(async () => { await hook.getCurrent().remove(hook.getCurrent().copies![0]!); });
     expect(hook.getCurrent().copies).toHaveLength(1);
     expect(hook.getCurrent().notices.get('copy')).toMatchObject({ kind: failure.kind, details: failure.details });
-    await waitForHomeGovernance(() => expect(rpc.machine.mock.calls.some(([input]) => input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST)).toBe(true));
+    await waitForHomeGovernance(() => expect(rpc.machine.mock.calls.some(([input]) => input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST)).toBe(true));
     expect(rpc.machine.mock.calls.filter(([input]) => input.method === 'projects.worker.copy.retire')).toHaveLength(1);
     await hook.unmount();
   });

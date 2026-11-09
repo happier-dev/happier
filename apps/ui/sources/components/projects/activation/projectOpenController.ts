@@ -1,5 +1,4 @@
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { OpenProjectResultV1Schema, type OpenProjectInputV1, type OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { ProjectOpenDraftDocumentV2Schema, type OpenProjectDraftSelectionV1 } from '@happier-dev/protocol/projects/openProjectDraftV1';
@@ -7,9 +6,8 @@ import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/doma
 import { areSessionDraftCurrentnessCapturesEqual, type SessionDraftRepository, type ProjectOpenDraftPatch } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { buildProjectOpenInput } from './projectOpenChoices';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { admitProjectSourceSelectionV1, ProjectSourcesReadOutputV1Schema, type ProjectSourcesReadInputV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
-import type { ActionOperationActionInputV1 } from '@happier-dev/protocol/actions/specs/actionOperations';
+import type { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 
 export type ProjectOpenOutcome = OpenProjectResultV1 | Extract<ActionExecuteResult, { ok: false }>;
@@ -30,8 +28,7 @@ export type ProjectOpenControllerOptions = Readonly<{
         | 'flushSessionDraftLocally' | 'flushProjectOpenDraftForAdmission' | 'captureSessionDraftCurrentness'>;
     scope: ServerAccountScope;
     draftId: string;
-    executor: Readonly<{ execute(id: 'projects.open' | 'projects.sources.read' | 'action.operations.get', input: OpenProjectInputV1 | ProjectSourcesReadInputV1 | ActionOperationActionInputV1,
-        context: ActionExecutorContext & { expectedAccountId: string }): Promise<ActionExecuteResult> }>;
+    executor: Pick<ReturnType<typeof createDefaultActionExecutor>, 'execute' | 'executeConfirmed'>;
     captureLifetime(): ServerAccountScopeLifetime | null;
     getCheckouts?(): readonly WorkspaceRefV1[];
     onOpened(result: Extract<OpenProjectResultV1, { kind: 'opened' }>, isCurrent: () => boolean): void | Promise<void>;
@@ -93,7 +90,13 @@ export function createProjectOpenController(options: ProjectOpenControllerOption
         publish({ ...snapshot, draft: latest.selection.value, result: latest.result.value,
             retiredAttempt: latest.retiredAttempt.value });
     };
-    const write = (patch: ProjectOpenDraftPatch) => { repository.writeProjectOpenDraft({ scope, draftId, patch }); refresh(); };
+    const write = (patch: ProjectOpenDraftPatch) => {
+        // Repository notifications own change detection, including writes made
+        // before a view subscribes or while an unsubscribed attempt settles.
+        const unsubscribeWrite = unsubscribe ? null : repository.subscribeSessionDraft(scope, address, refresh);
+        try { repository.writeProjectOpenDraft({ scope, draftId, patch }); }
+        finally { unsubscribeWrite?.(); }
+    };
     const selectionCurrentness = () => repository.captureSessionDraftCurrentness({ scope, address, fieldIds: ['selection'] });
     let unsubscribe: (() => void) | null = null;
     return {
@@ -222,34 +225,18 @@ export function createProjectOpenController(options: ProjectOpenControllerOption
                 let result: ProjectOpenOutcome;
                 let issued = false;
                 try {
-                    const sourceAdmission = input.source.kind === 'source' ? await admitProjectSourceSelectionV1({
-                        serverId: input.serverId, sourceId: input.source.id, captured: input.source,
-                        ref: input.ref, subdir: input.subdir, signal: abort.signal,
-                        readSource: async request => {
-                            const read = await options.executor.execute('projects.sources.read', request, {
-                                surface: 'ui', authority: 'present_user', serverId: input.serverId,
-                                expectedAccountId: lifetime.scope.accountId, signal: abort.signal,
-                            });
-                            return read.ok ? ProjectSourcesReadOutputV1Schema.parse(read.result) : read;
-                        },
-                    }) : null;
-                    if (sourceAdmission?.kind === 'refused') {
-                        result = sourceAdmission;
+                    write({ uncertainInputs: [input], result: { kind: 'outcomeUnknown' } });
+                    await repository.flushProjectOpenDraftForAdmission({ scope, draftId });
+                    if (retired || !lifetime.isCurrent()
+                        || !areSessionDraftCurrentnessCapturesEqual(capture, selectionCurrentness())) {
+                        result = failure('cancelled');
                     } else {
-                        write({ uncertainInputs: [input], result: { kind: 'outcomeUnknown' } });
-                        await repository.flushProjectOpenDraftForAdmission({ scope, draftId });
-                        if (retired || !lifetime.isCurrent()
-                            || !areSessionDraftCurrentnessCapturesEqual(capture, selectionCurrentness())) {
-                            result = failure('cancelled');
-                        } else {
-                            issued = true;
-                            const executed = await options.executor.execute('projects.open', input, {
-                                surface: 'ui', authority: 'present_user', serverId: input.serverId,
-                                expectedAccountId: lifetime.scope.accountId, signal: abort.signal,
-                                presentUserConfirmation: { actionId: 'projects.open' },
-                            });
-                            result = executed.ok ? OpenProjectResultV1Schema.parse(executed.result) : executed;
-                        }
+                        issued = true;
+                        const executed = await options.executor.executeConfirmed('projects.open', input, {
+                            surface: 'ui', authority: 'present_user', serverId: input.serverId,
+                            expectedAccountId: lifetime.scope.accountId, signal: abort.signal,
+                        });
+                        result = executed.ok ? OpenProjectResultV1Schema.parse(executed.result) : executed;
                     }
                 } catch {
                     result = issued ? { kind: 'outcomeUnknown' } : failure('project_open_draft_unavailable');

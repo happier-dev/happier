@@ -2,7 +2,7 @@ import React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import type { ReviewCommentStateV1, ReviewCommentV1 } from '@happier-dev/protocol';
+import type { ReviewCommentStateV1, ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { reviewCommentTransitionTargetsV1 } from '@happier-dev/protocol/reviews/comments/mutation';
 
 import { hasAgentIconMark } from '@/agents/catalog/catalog';
@@ -14,7 +14,6 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
-import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
 import { StatusPill, type StatusPillVariant } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -219,7 +218,6 @@ export function ReviewCommentCard(props: ReviewCommentCardProps) {
                                         iconSize={ICON_SIZE.sm}
                                         variant="plain"
                                         disabled={disabled}
-                                        minimumInteractiveTargetSize={resolveTouchTargetFloorPx() ?? undefined}
                                         accessibilityLabel={t('common.moreActions')}
                                         onPress={toggle}
                                         expanded={open}

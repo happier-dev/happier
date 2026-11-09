@@ -10,6 +10,8 @@ import { ArtifactAccessGrantsListResponseV1Schema, type ArtifactAccessGrantRowV1
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -17,6 +19,7 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 installPromptStacksCommonModuleMocks({ storage: importOriginal => importOriginal() });
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
+await loadSyncSingletonForTests();
 afterEach(async () => { standardCleanup(); await homes.reset(); });
 
 vi.mock('@/components/ui/popover', async importOriginal => {
@@ -84,10 +87,22 @@ describe('ProjectContextBody', () => {
         expect(screen.findByTestId('project-context.memory.draft')).toBeTruthy();
     });
 
+    it('keeps the Memory page search field in place while its memory is first read, so it does not appear when the document resolves', async () => {
+        storage.getState().clearProjectAccountRowsScope();
+        storage.getState().activateProjectAccountRowsScope(scope);
+        const screen = await renderScreen(<ProjectMemoryBody workspaceRef={workspaceRef} />);
+        expect(screen.findByTestId('project-memory.memory.loading')).toBeTruthy();
+        expect(screen.findByTestId('project-memory.memory.searchPanel.input')).toBeTruthy();
+        // The Context page is one section among others: its search stays the section's own icon.
+        const context = await renderScreen(<ProjectContextBody workspaceRef={workspaceRef} />);
+        expect(context.findByTestId('project-context.memory.searchPanel.input')).toBeNull();
+    });
+
     describe.each([
-        ['Context', ProjectContextBody, 'project-context.memory'],
-        ['Memory', ProjectMemoryBody, 'project-memory.memory'],
-    ] as const)('%s Project read status', (_name, Body, memoryTestID) => {
+        ['Context', ProjectContextBody, 'project-context.memory', ['none', 'remember']],
+        // The Memory page is a page of its own memory: confirmed absence is its one empty state, with the first save as its action.
+        ['Memory', ProjectMemoryBody, 'project-memory.memory', ['firstUse', 'firstUse-action']],
+    ] as const)('%s Project read status', (_name, Body, memoryTestID, [absent, firstSave]) => {
         it('does not turn an unresolved attached document kind into confirmed empty memory', async () => {
             storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
                 workspaceRefs: [workspaceRef], relationships: [], organizations: [{ key: {
@@ -96,6 +111,8 @@ describe('ProjectContextBody', () => {
             const screen = await renderScreen(<Body workspaceRef={workspaceRef} />);
             expect(Boolean(screen.findByTestId(`${memoryTestID}.none`))).toBe(false);
             expect(Boolean(screen.findByTestId(`${memoryTestID}.remember`))).toBe(false);
+            expect(screen.findByTestId(`${memoryTestID}.loading`)).toBeTruthy();
+            expect(screen.findByTestId(`${memoryTestID}.unavailable`)).toBeNull();
         });
 
         it('keeps unknown memory loading until a complete Project read establishes absence', async () => {
@@ -118,8 +135,8 @@ describe('ProjectContextBody', () => {
                     workspaceRefs: [workspaceRef], relationships: [], organizations: [], revisionsByPhysicalKey: {} });
             });
             expect(screen.findByTestId(`${memoryTestID}.loading`)).toBeNull();
-            expect(screen.findByTestId(`${memoryTestID}.none`)).toBeTruthy();
-            expect(screen.findByTestId(`${memoryTestID}.remember`)).toBeTruthy();
+            expect(screen.findByTestId(`${memoryTestID}.${absent}`)).toBeTruthy();
+            expect(screen.findByTestId(`${memoryTestID}.${firstSave}`)).toBeTruthy();
         });
 
         it.each(['error', 'locked', 'refused'] as const)('does not report a failed %s Project read as empty memory', async (status) => {
@@ -134,6 +151,10 @@ describe('ProjectContextBody', () => {
     });
 
     it('draws the personal Project layer: memory in its own section, documents as rows, an unreadable one without its title', async () => {
+        const lockedArtifact: DecryptedArtifact = { id: 'gone-1', title: null, header: null, rawHeader: null,
+            storageMode: 'e2ee', kindHint: 'prompt_doc.v2', isDecrypted: false, headerVersion: 1,
+            createdAt: 1, updatedAt: 1, seq: 1, availability: { kind: 'locked', reason: 'encryption_material_unavailable' } };
+        storage.getState().applyArtifacts([lockedArtifact]);
         const screen = await renderScreen(<ProjectContextBody workspaceRef={workspaceRef} />);
         const rowTitle = (testID: string) => screen.findAllByTestId(testID).map((node) => node.props.title).find((title) => typeof title === 'string');
 
@@ -147,7 +168,7 @@ describe('ProjectContextBody', () => {
         expect(screen.findByTestId('project-context.memory.detach')).toBeTruthy();
 
         // A document this Account cannot read keeps its row and its Remove, but never a guessed title.
-        expect(rowTitle('project-context.personal.gone-entry')).toBe('contextPages.project.privateDocument');
+        await settled(() => expect(rowTitle('project-context.personal.gone-entry')).toBe('contextPages.project.privateDocument'));
         const actionIds = screen.findAllByType('ItemRowActions' as never).map((node) => (node.props.actions as { id: string }[]).map((action) => action.id));
         expect(actionIds).toContainEqual(['delete']);
         expect(actionIds).toContainEqual(['edit', 'moveUp', 'moveDown',
@@ -221,7 +242,7 @@ describe('ProjectContextBody', () => {
             await settled(() => expect(screen.findAll(node =>
                 String(node.props.testID ?? '').startsWith('project-context.shared.') && node.props.title === header.title).length).toBeGreaterThan(0));
             await act(async () => {});
-            return { screen, serverId, directoryPath: directory.path };
+            return { screen, serverId };
         }
 
         it.each([
@@ -242,7 +263,7 @@ describe('ProjectContextBody', () => {
         });
 
         it.each(['grant wake', 'credential replacement'] as const)('offers sharing for a confirmed private owned Doc until %s', async invalidation => {
-            const { screen, serverId, directoryPath } = await attachOwnedDocument({});
+            const { screen, serverId } = await attachOwnedDocument({});
             await settled(() => expect(screen.findByTestId('project-context.shareOffer')).toBeTruthy());
             if (invalidation === 'grant wake') {
                 // A changed grant has no content revision; the existing Account wake retires the privacy claim.
@@ -250,20 +271,16 @@ describe('ProjectContextBody', () => {
                 expect(screen.findByTestId('project-context.shareOffer')).toBeNull();
                 return;
             }
-            const previousReads = homes.requestsFor(directoryPath).length;
             const credentials = await TokenStorage.getCredentialsForServerUrl('https://project-audience.test', { serverId });
             if (!credentials) throw new Error('Expected captured Home credential');
-            const write = await TokenStorage.setCredentialsForServerUrlWithRollback('https://project-audience.test', { serverId },
-                { ...credentials, token: `${credentials.token}rotated` });
-            try {
-                // Team presentation must have recovered after credential replacement, so its temporary absence cannot hide a stale offer.
-                await settled(() => {
-                    expect(homes.requestsFor(directoryPath).length).toBeGreaterThan(previousReads);
-                    expect(screen.findAllByTestId('project-context.header').some(node =>
-                        node.props.meta?.some((fact: { key: string }) => fact.key === 'team'))).toBe(true);
-                });
-                expect(screen.findByTestId('project-context.shareOffer')).toBeNull();
-            } finally { await write?.rollback(); }
+            // A real credential replacement also restores the Account connection and its lifetime.
+            await homes.switchAccount(serverId, scope.accountId, { ...credentials, token: `${credentials.token}rotated` });
+            // Team presentation must have recovered, so its temporary absence cannot hide a stale offer.
+            await settled(() => {
+                expect(screen.findAllByTestId('project-context.header').some(node =>
+                    node.props.meta?.some((fact: { key: string }) => fact.key === 'team'))).toBe(true);
+            });
+            expect(screen.findByTestId('project-context.shareOffer')).toBeNull();
         });
     });
 });

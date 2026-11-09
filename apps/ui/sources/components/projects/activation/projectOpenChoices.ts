@@ -2,13 +2,14 @@ import { OpenProjectInputV1Schema, type OpenProjectInputV1 } from '@happier-dev/
 import { OpenProjectDraftSelectionV1Schema, type OpenProjectDraftSelectionV1 } from '@happier-dev/protocol/projects/openProjectDraftV1';
 import { normalizeProjectSourceSubdirV1, type ProjectSourceV1, type ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { WorkspaceAddressV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { findWorkspaceProjectCandidatesV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { readScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import { buildSessionHandoffWorkspaceAction } from '@/sync/domains/sessionHandoff/sessionHandoffDefaults';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { resolveWorkspaceRefByAddress, resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
 
 export type ProjectOpenSubject =
-  | Readonly<{ kind: 'source'; source: Pick<ProjectSourceV1, 'id' | 'revision' | 'repository' | 'defaultRef' | 'subdir'> }>
+  | Readonly<{ kind: 'source'; source: Pick<ProjectSourceV1, 'id' | 'revision' | 'repository' | 'defaultRef' | 'subdir'> & Partial<Pick<ProjectSourceV1, 'name'>> }>
   | Readonly<{ kind: 'repository'; selector: ProjectSourceRepositorySelectorV1 }>
   | Readonly<{ kind: 'folder'; path: string }>
   | Readonly<{ kind: 'workspace'; workspace: Pick<WorkspaceRefV1, 'id' | 'serverId' | 'machineId' | 'rootPath'> }>;
@@ -48,7 +49,7 @@ export function suggestProjectOpenDestination(
 ): string {
   if (!state.subject || !state.machineHomeDir) return '';
   const name = state.subject.kind === 'source'
-    ? state.subject.source.repository.repository.nameWithOwner.split('/').pop()
+    ? state.subject.source.repository?.repository.nameWithOwner.split('/').pop()
     : state.subject.kind === 'repository' ? state.subject.selector.repository.nameWithOwner.split('/').pop()
     : state.subject.kind === 'workspace'
       ? state.subject.workspace.rootPath.split(/[\\/]/u).filter(Boolean).pop() : null;
@@ -63,6 +64,7 @@ export function suggestProjectOpenDestination(
 
 export function resolveProjectOpenUseOptions(state: ProjectOpenChoiceState): readonly ProjectOpenUseOption[] {
   if (!state.subject || !state.machineId) return [];
+  if (state.subject.kind === 'source' && !state.subject.source.repository) return [];
   if (state.subject.kind === 'folder') return [
     { use: 'existing', from: null, candidates: [] },
     // A canonical SCM entrance may carry an explicitly chosen worktree intent.
@@ -81,9 +83,14 @@ export function resolveProjectOpenUseOptions(state: ProjectOpenChoiceState): rea
       ? [result.ref] : result.kind === 'ambiguous'
         ? result.candidates.filter(ref => resolveServerProfileScopeIdForIdentifier(ref.serverId) === home) : [];
   } else {
-    // Source provenance offers candidates, not an accepted Project anchor or exact checkout.
-    candidates = state.checkouts.filter(ref => resolveServerProfileScopeIdForIdentifier(ref.serverId) === home
-      && ref.source?.sourceId === subject.source.id);
+    // Provenance and resolved repository identity offer candidates, never a new accepted anchor.
+    const selector = subject.source.repository;
+    const repositoryIdentity = selector ? readScmHostingRepositoryIdentity({ ...selector.provider,
+      nameWithOwner: selector.repository.nameWithOwner }) : null;
+    candidates = findWorkspaceProjectCandidatesV1(state.checkouts, { serverId: home,
+      source: { sourceId: subject.source.id, revision: subject.source.revision },
+      ...(repositoryIdentity ? { repositoryIdentity } : {}),
+    }, { normalizeServerId: resolveServerProfileScopeIdForIdentifier });
   }
   const option = (use: ProjectOpenUse, refs: readonly WorkspaceRefV1[]): ProjectOpenUseOption => {
     const selected = state.checkoutAddress && state.checkoutAddress.workspaceId === state.checkoutId
@@ -114,8 +121,9 @@ export function resolveProjectOpenDefaults(state: ProjectOpenChoiceState): Parti
   const use = kept ? state.use! : (options.find(option => option.use === 'existing') ?? options[0]!).use;
   const patch: Partial<Pick<ProjectOpenChoiceState, 'use' | 'checkoutId' | 'checkoutAddress'>> = kept ? {} : { use };
   const option = options.find(candidate => candidate.use === use);
-  // The one checkout here is named even when an earlier choice pointed at another Machine's checkout.
-  if ((use === 'existing' || use === 'worktree') && option && !option.from && option.candidates.length === 1) {
+  // Capture the sole shown checkout, including an implicit selection, so the draft can execute it.
+  if ((use === 'existing' || use === 'worktree' || use === 'copy') && option && option.candidates.length === 1
+    && (!option.from || !state.checkoutId)) {
     return { ...patch, checkoutId: option.candidates[0]!.id,
       checkoutAddress: workspaceAddressFromRefV1(option.candidates[0]!) };
   }
@@ -138,7 +146,7 @@ export function buildProjectOpenDraft(state: ProjectOpenChoiceState): OpenProjec
     : subject?.kind === 'workspace' ? { serverId: subject.workspace.serverId, workspaceId: subject.workspace.id,
       machineId: subject.workspace.machineId, rootPath: subject.workspace.rootPath }
       : state.checkoutAddress?.workspaceId === state.checkoutId ? state.checkoutAddress : undefined;
-  const source = subject?.kind === 'source' ? {
+  const source = subject?.kind === 'source' && subject.source.repository ? {
     kind: 'source' as const, id: subject.source.id, revision: subject.source.revision, selector: subject.source.repository,
     ...(subject.source.defaultRef ? { defaultRef: subject.source.defaultRef } : {}),
     ...(subject.source.subdir ? { subdir: subject.source.subdir } : {}),

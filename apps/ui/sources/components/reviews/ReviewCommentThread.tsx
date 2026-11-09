@@ -2,7 +2,7 @@ import React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import type { ReviewCommentV1 } from '@happier-dev/protocol';
+import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 
 import type { ReviewCommentLabels } from './labels';
 import { ReviewCommentCard, type ReviewCommentCardActions } from './ReviewCommentCard';

@@ -1,4 +1,4 @@
-import type { ReviewCommentV1 } from '@happier-dev/protocol';
+import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import type { WorkspaceFileOpenOptions, WorkspaceFileOpenTarget } from '@/components/workspaces/files/useWorkspaceFileOpener';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
 import { isAbsoluteLocalPath, normalizeLocalPathForComparison, resolvePathRelativeToRoot } from '@/utils/path/resolvePathRelativeToRoot';

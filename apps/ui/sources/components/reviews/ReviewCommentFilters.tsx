@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
-import type { ReviewCommentStateV1 } from '@happier-dev/protocol';
+import type { ReviewCommentStateV1 } from '@happier-dev/protocol/reviews/comments/v1';
 
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';

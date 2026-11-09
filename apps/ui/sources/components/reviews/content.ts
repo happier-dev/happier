@@ -1,4 +1,4 @@
-import type { ReviewCommentSnapshotV1, ReviewCommentV1 } from '@happier-dev/protocol';
+import type { ReviewCommentSnapshotV1, ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 
 export type ReviewCommentBodyLabels = Readonly<{
     contentUnavailable: string;

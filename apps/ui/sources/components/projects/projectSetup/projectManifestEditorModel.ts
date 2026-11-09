@@ -8,10 +8,10 @@ import {
 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
 import {
   ProjectDevcontainerSelectionV1Schema,
-  ProjectEnvironmentSelectionV1Schema,
+  ProjectToolchainSelectionV1Schema,
   ProjectNativeRefV1Schema,
   type ProjectDevcontainerSelectionV1,
-  type ProjectEnvironmentSelectionV1,
+  type ProjectToolchainSelectionV1,
   type ProjectNativeRefV1,
 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import type { ProjectDefinitionWorkspace } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
@@ -197,11 +197,11 @@ export function createProjectManifestEditorModel(
         },
       ]);
     },
-    importEnvironment(selection: ProjectEnvironmentSelectionV1) {
-      const parsed = ProjectEnvironmentSelectionV1Schema.safeParse(selection);
+    importToolchain(selection: ProjectToolchainSelectionV1) {
+      const parsed = ProjectToolchainSelectionV1Schema.safeParse(selection);
       return (
         parsed.success &&
-        edit([{ kind: 'set', path: ['environment'], value: parsed.data }])
+        edit([{ kind: 'set', path: ['toolchain'], value: parsed.data }])
       );
     },
     removeDeclaration(collection: 'scripts' | 'services', name: string) {

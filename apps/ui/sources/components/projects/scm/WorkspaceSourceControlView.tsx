@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { Platform, Pressable, View } from 'react-native';
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtualizedListTypes';
@@ -65,6 +66,7 @@ function matchesQuery(filePath: string, query: string): boolean {
 
 export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceControlViewProps) => {
     const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const copyFeedback = useHappierCopyFeedback();
     const [searchQuery, setSearchQuery] = React.useState('');
     const [requestedChangedFilesViewMode, setChangedFilesViewMode] = React.useState<ChangedFilesViewMode>('repository');
@@ -435,7 +437,7 @@ export const WorkspaceSourceControlView = React.memo((props: WorkspaceSourceCont
                     style={{
                         borderTopWidth: Platform.select({ ios: 0.33, default: 1 }),
                         borderTopColor: theme.colors.border.default,
-                        backgroundColor: theme.colors.surface.base,
+                        backgroundColor: materialColor(theme.colors.surface.base, 'transparent'),
                     }}
                 >
                     <ScmCommitComposerCard

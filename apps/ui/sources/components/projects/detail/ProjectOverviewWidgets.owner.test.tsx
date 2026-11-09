@@ -24,7 +24,7 @@ const owner = UserProfileSchema.parse({ id: ownerAccountId, name: 'Dashboard aut
     username: 'dashboard-author', avatar: null, bio: null, status: 'none', publicKey: null });
 let ownerRead: Promise<void> | null = null;
 /** The Home's admitted access for the viewer: read-only by default, edit for a dashboard shared to edit. */
-let viewerAccess: 'view' | 'edit' = 'view';
+let viewerAccess: 'view' | 'edit' | 'admin' | 'owner' = 'view';
 const ownerRequests: string[] = [];
 const runtime = installSessionPaneRuntimeTestHarness({ request: async (url, init) => {
     const path = new URL(String(url)).pathname;
@@ -37,7 +37,9 @@ const runtime = installSessionPaneRuntimeTestHarness({ request: async (url, init
     if (stored && (init?.method ?? 'GET') === 'GET') {
         const row = artifacts.read(decodeURIComponent(stored[1]!));
         // Home HTTP admission: this Account views the other Account's acknowledged document.
-        return row ? Response.json({ ...row, access: viewerAccess }) : Response.json({}, { status: 404 });
+        // The real audience reader resolves an owner's sharing from the Home's grants route below.
+        return row ? Response.json({ ...row, access: viewerAccess })
+            : Response.json({}, { status: 404 });
     }
     return artifacts.handle(path, init);
 } });
@@ -99,6 +101,7 @@ async function renderViewedEmptyDashboard() {
         artifactDataKeys: new Map(), addArtifact: () => {},
     });
     expect(artifacts.readPlainBody(artifactId)).toBe(JSON.stringify(layout));
+    if (viewerAccess === 'owner') artifacts.seedAccountGrant(artifactId, 'dashboard-recipient', 'view');
     return await renderScreen(<runtime.Wrapper><ProjectOverviewWidgets
         workspaceRef={{ id: 'w1', serverId: runtime.serverId, machineId: 'm1', rootPath: '/repo', createdAtMs: 1, projectKey: 'project-key' }}
         activeRootPath="/repo" projectName="happier" layoutId="release" artifactId={artifactId} ownerAccountId={ownerAccountId}
@@ -119,6 +122,28 @@ it('supplies the admitted shared dashboard owner’s meaningful profile to the i
         // The line names whose dashboard it is in words, not only by an avatar keyed on an opaque id.
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('Dashboard author'));
         expect(artifacts.list()).toHaveLength(1);
+    } finally { await screen.unmount(); }
+});
+
+it('says the owner’s own shared dashboard is theirs and shared, never another person’s editable copy', async () => {
+    await runtime.restoreRealm({ accountId: ownerAccountId });
+    viewerAccess = 'owner';
+    const screen = await renderViewedEmptyDashboard();
+    try {
+        await vi.waitFor(() => expect(screen.findAllByType(ProjectDashboardIdentityLine)).toHaveLength(1));
+        const line = screen.findAllByType(ProjectDashboardIdentityLine)[0]!.props;
+        expect(line).toMatchObject({ title: 'Release', detail: 'projects.dashboard.sharedLine' });
+        expect(line.owner).toMatchObject({ accountId: ownerAccountId, displayName: 'projects.dashboard.you' });
+        expect(screen.getTextContent()).not.toContain('shareSheet.documents.levels.canEdit');
+    } finally { await screen.unmount(); }
+});
+
+it('names an administrator’s access as Admin, not Can edit', async () => {
+    viewerAccess = 'admin';
+    const screen = await renderViewedEmptyDashboard();
+    try {
+        await vi.waitFor(() => expect(screen.findAllByType(ProjectDashboardIdentityLine)).toHaveLength(1));
+        expect(screen.findAllByType(ProjectDashboardIdentityLine)[0]!.props.detail).toBe('shareSheet.documents.levels.admin');
     } finally { await screen.unmount(); }
 });
 

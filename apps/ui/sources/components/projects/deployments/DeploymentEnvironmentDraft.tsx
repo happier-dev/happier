@@ -85,6 +85,8 @@ export const DeploymentEnvironmentDraft = React.memo(
       phone: boolean;
       actions: Pick<Actions, 'prepareCreate'> | null;
       copyFrom?: DeploymentEnvironmentDetailV1 | null;
+      /** A door that names what it starts from (Store → Apps): a stored definition, in any Project. */
+      definitionKind?: 'compose' | 'image' | null;
       onApprovalRequested: (artifactId: string) => void;
       /** `platformTargetKey`: the new Environment runs on this platform, so its link sheet opens on it next. */
       onSaved: (environmentId: string, next?: Readonly<{ platformTargetKey?: string; tab?: DeploymentEnvironmentTabV1 }>) => void;
@@ -117,6 +119,8 @@ export const DeploymentEnvironmentDraft = React.memo(
     const onPlatform = platformTarget !== null;
     const [composePath, setComposePath] = React.useState(DEFAULT_COMPOSE_PATH);
     const [composeDocument, setComposeDocument] = React.useState('');
+    const [imageName, setImageName] = React.useState('');
+    const [imagePort, setImagePort] = React.useState('');
     const [ref, setRef] = React.useState<string | null>(null);
     const [production, setProduction] = React.useState(props.copyFrom?.environment.protection === 'production');
     const [saving, setSaving] = React.useState(false);
@@ -149,7 +153,11 @@ export const DeploymentEnvironmentDraft = React.memo(
       machines.find(answers) ??
       null;
     const branch = ref ?? source?.defaultRef ?? null;
-    const storedDefinition = source !== null && source.repository === undefined;
+    // A repository-free Project has only stored definitions; a door may also ask for one in any Project.
+    const definitionKind = props.definitionKind ?? (source !== null && source.repository === undefined ? 'compose' : null);
+    const storedDefinition = definitionKind !== null;
+    const imagePortNumber = Number(imagePort.trim());
+    const imagePortValid = /^\d+$/.test(imagePort.trim()) && imagePortNumber >= 1 && imagePortNumber <= 65535;
     // A Compose Environment runs on the chosen Machine: its Docker host setup is planned once per choice, and a
     // Machine that needs it shows the setup review in place. Saving can wait for it; nothing runs until Apply.
     const host = useDeployHostReadiness(onPlatform ? null : props.lifetime, onPlatform ? null : chosen?.id ?? null);
@@ -177,7 +185,9 @@ export const DeploymentEnvironmentDraft = React.memo(
     const valid =
       name.trim().length > 0 &&
       chosen !== null &&
-      (props.copyFrom !== undefined && props.copyFrom !== null || (storedDefinition
+      (props.copyFrom !== undefined && props.copyFrom !== null || (definitionKind === 'image'
+        ? imageName.trim().length > 0 && imagePortValid
+        : storedDefinition
         ? composeDocument.trim().length > 0
         : branch !== null && (onPlatform || composePath.trim().length > 0)));
     const { actions, onSaved, onApprovalRequested } = props;
@@ -188,7 +198,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     // A prepared run carries the exact operands it was prepared from; any edit makes it stale.
     React.useEffect(() => {
       setPrepared(null);
-    }, [name, chosen?.id, branch, composePath, composeDocument, storedDefinition, production, retention, onPlatform, copyChoices]);
+    }, [name, chosen?.id, branch, composePath, composeDocument, imageName, imagePort, storedDefinition, production, retention, onPlatform, copyChoices]);
     const machineName = (machineId: string) => {
       const machine = (allMachines ?? []).find((entry) => entry.id === machineId);
       return machine ? getMachineDisplayName(machine, allMachines ?? []) : t('approvals.machineNotKnown');
@@ -211,7 +221,9 @@ export const DeploymentEnvironmentDraft = React.memo(
             ...(props.copyFrom && copyChoices ? { copyFrom: {
               environmentId: props.copyFrom.environment.id, expectedRevision: props.copyFrom.environment.revision,
               choices: copyChoices,
-            } } : { definition: storedDefinition ? {
+            } } : { definition: definitionKind === 'image' ? {
+              from: 'image', image: imageName.trim(), port: imagePortNumber,
+            } : storedDefinition ? {
               from: 'compose', document: composeDocument, profiles: [], services: [],
             } : onPlatform ? { from: 'repository', ref: branch! } : {
               from: 'repository', ref: branch!,
@@ -444,7 +456,18 @@ export const DeploymentEnvironmentDraft = React.memo(
               : t('projects.deployments.whatRunsDescription')}
           >
             {props.copyFrom ? <Item title={deploymentDefinitionLabel(props.copyFrom.content) ?? t('projects.deployments.whatRunsTitle')}
-              subtitle={props.copyFrom.content.name} mode="info" /> : storedDefinition ? (
+              subtitle={props.copyFrom.content.name} mode="info" /> : definitionKind === 'image' ? <>
+              <Item title={t('projects.deployments.imageName')} accessoryLayout="stacked" showChevron={false}
+                rightElement={<FieldTextInput testID="project-deployments.draft.imageName"
+                  accessibilityLabel={t('projects.deployments.imageName')} value={imageName}
+                  onChangeText={setImageName} monospace autoCapitalize="none" autoComplete="off" />}
+              />
+              <Item title={t('projects.deployments.imagePort')} accessoryLayout="stacked" showChevron={false}
+                rightElement={<FieldTextInput testID="project-deployments.draft.imagePort"
+                  accessibilityLabel={t('projects.deployments.imagePort')} value={imagePort}
+                  onChangeText={setImagePort} monospace autoCapitalize="none" autoComplete="off" />}
+              />
+            </> : storedDefinition ? (
               <Item title={t('projects.deployments.composeFile')} accessoryLayout="stacked" showChevron={false}
                 rightElement={<FieldTextInput testID="project-deployments.draft.composeDocument"
                   accessibilityLabel={t('projects.deployments.composeFile')} value={composeDocument}

@@ -70,6 +70,7 @@ export function ProjectRightPanelBrowserView(props: Readonly<{
             localServicePreviewState={hostProps.localServicePreviewState}
             localServicePreviewServerId={hostProps.localServicePreviewServerId}
             launchpadRows={hostProps.launchpadRows}
+            localServiceTargets={hostProps.localServiceTargets}
             launchpadRefreshStatus={hostProps.launchpadRefreshStatus}
             launchpadRefreshError={hostProps.launchpadRefreshError}
             onRefreshLaunchpad={hostProps.onRefreshLaunchpad}

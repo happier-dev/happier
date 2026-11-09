@@ -23,6 +23,7 @@ export function buildProjectOpenRoute(input: OpenProjectInputV1, requestedMode?:
 
 /** A saved Source captures its effective selector now, but never selects a Machine for the person. */
 export function buildProjectSourceOpenRoute(serverId: string, source: ProjectSourceV1) {
+    if (!source.repository) return null;
     const seed = sourceSeedSchema.parse({ serverId, source: { kind: 'source', id: source.id, revision: source.revision,
         selector: source.repository, ...(source.defaultRef ? { defaultRef: source.defaultRef } : {}),
         ...(source.subdir ? { subdir: source.subdir } : {}) } });

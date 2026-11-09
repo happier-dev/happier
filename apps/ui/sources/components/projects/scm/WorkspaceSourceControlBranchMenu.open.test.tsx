@@ -22,7 +22,7 @@ vi.mock('react-native-unistyles', async () => {
 });
 // Genuine device persistence/randomness; SCM, menu and retained draft owners remain real.
 vi.mock('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage', () => ({ getSessionDraftPersistenceStorage: () => ({
-    getString: (key: string) => boundary.values.get(key), set: (key: string, value: string) => boundary.values.set(key, value),
+    getString: (key: string) => boundary.values.get(key), getAllKeys: () => [...boundary.values.keys()], set: (key: string, value: string) => boundary.values.set(key, value),
     delete: (key: string) => boundary.values.delete(key),
 }) }));
 vi.mock('@/platform/randomUUID', () => ({ randomUUID: () => `00000000-0000-4000-8000-${String(boundary.sequence++).padStart(12, '0')}` }));

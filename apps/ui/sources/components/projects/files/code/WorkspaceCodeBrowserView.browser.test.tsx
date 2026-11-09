@@ -23,6 +23,42 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
     beforeAll(prepareSessionFilesViewTestkit);
     afterEach(async () => { standardCleanup(); vi.useRealTimers(); await fixture?.dispose(); });
 
+    it.each([500, 501])('keeps all admitted entries and the completeness fact for a %i-file directory', async (count) => {
+        const rootPath = `/code-listing-${count}`;
+        const files = Array.from({ length: count }, (_, index) => ({ name: `f${String(index + 1).padStart(4, '0')}.txt`,
+            path: `${rootPath}/f${String(index + 1).padStart(4, '0')}.txt`, type: 'file', size: 1 }));
+        fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
+            if (request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) return { ok: true, path: rootPath,
+                truncated: count > 500, entries: files.slice(0, 500) };
+            if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return { success: true, snapshot: fileViewSnapshot({ rootPath }) };
+            if (request.method === RPC_METHODS.SCM_HISTORY_ENTRIES) return { success: true, headOid: 'a'.repeat(40), entries: [] };
+            return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
+        } });
+        await fixture.render(<WorkspaceCodeBrowserView paneScopeId={`code-listing-test-${count}`} scope={fixture.scope}
+            rootLabel="Code" location={{ path: '', kind: 'folder' }} onNavigate={() => {}} onOpenFile={() => {}} />);
+        await vi.waitFor(() => {
+            const nodes: readonly { type: string; name: string; infoKind?: string; entryCount?: number }[] = recycler.props.data;
+            expect(nodes.filter(node => node.type === 'file')).toHaveLength(500);
+            expect(nodes.filter(node => node.type === 'file').at(-1)?.name).toBe('f0500.txt');
+            expect(nodes.filter(node => node.type === 'info')).toEqual(count > 500
+                ? [expect.objectContaining({ infoKind: 'truncated', entryCount: 500 })] : []);
+        });
+    });
+
+    it('presents the existing directory incompleteness notice through the real Code tree', async () => {
+        const rootPath = '/code-truncated-folder';
+        fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
+            if (request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) return { ok: true, path: rootPath,
+                truncated: true, entries: [{ name: 'first.txt', path: `${rootPath}/first.txt`, type: 'file' }] };
+            if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) return { success: true, snapshot: fileViewSnapshot({ rootPath }) };
+            if (request.method === RPC_METHODS.SCM_HISTORY_ENTRIES) return { success: true, headOid: 'a'.repeat(40), entries: [] };
+            return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
+        } });
+        const screen = await fixture.render(<WorkspaceCodeBrowserView paneScopeId="code-truncated-test" scope={fixture.scope}
+            rootLabel="Code" location={{ path: '', kind: 'folder' }} onNavigate={() => {}} onOpenFile={() => {}} />);
+        await vi.waitFor(() => expect(screen.root.findAllByProps({ title: 'newSession.pathPicker.truncatedDirectoryInfo' }).length).toBeGreaterThan(0));
+    });
+
     it('mounts and demands only the large folder viewport, then reveals an off-screen row through the shared keyboard owner', async () => {
         const rootPath = '/code-large-folder';
         const entries = [...Array.from({ length: 1000 }, (_, index) => ({ name: `file-${String(index).padStart(4, '0')}.ts`,
@@ -63,7 +99,7 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
             && (request.payload as { paths: string[] }).paths.includes(entries[900].name))).toBe(true));
     });
 
-    it('retires history and filesystem effects at heartbeat expiry without a second Machine update', async () => {
+    it('retires history and filesystem effects on pushed presence withdrawal without replacing the Machine row', async () => {
         const rootPath = '/code-presence-expiry';
         fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
             if (request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) return { ok: true, path: rootPath, truncated: false,
@@ -81,6 +117,13 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
         const readsBeforeExpiry = fixture.requests.filter(request => request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY
             || request.method === RPC_METHODS.SCM_HISTORY_ENTRIES).length;
         await act(async () => { vi.advanceTimersByTime(60_001); });
+        // The server owns presence expiry; elapsed client time cannot withdraw it.
+        expect(screen.findHostByTestId('workspace-code-offline')).toBeNull();
+        await act(async () => {
+            fixture!.storage.getState().applyMachineActivityUpdates([
+                { id: fixture!.scope.machineId, active: false, activeAt: Date.now() },
+            ], { sourceServerId: fixture!.scope.serverId });
+        });
         // Said once, by the Code page: the folder and its history don't repeat the cause.
         expect(screen.findHostByTestId('workspace-code-offline')).toBeTruthy();
         expect(screen.findHostByTestId('repository-tree-offline')).toBeNull();

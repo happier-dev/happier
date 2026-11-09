@@ -284,6 +284,29 @@ describe('ProjectDashboardHeader', () => {
             await vi.waitFor(() => expect(selected).toHaveLength(1));
         } finally { prompt.mockRestore(); releaseInventory(); }
     });
+    it('keeps a routed dashboard pending, never unavailable, while the inventory has not answered', async () => {
+        const surface = { serverId: runtime.serverId, accountId: 'account-a', owner: { kind: 'project' as const, projectId: 'project-key' } };
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        expect(await createDefaultActionExecutor().execute('widgets.area.layout.create', { surface, layoutId: 'release', name: 'Release' },
+            { surface: 'ui', serverId: runtime.serverId, expectedAccountId: 'account-a' })).toMatchObject({ ok: true });
+        const inventory = createDeferred<void>();
+        holdInventory = () => inventory.promise;
+        const screen = await renderScreen(header('release'));
+        try {
+            await vi.waitFor(() => expect(screen.findAllByType(WidgetAreaLayoutBar).length).toBeGreaterThan(0));
+            const pending = screen.findAllByType(WidgetAreaLayoutBar)[0]!;
+            const routed = pending.props.layouts.find((option: { id: string }) => option.id === pending.props.selectedId);
+            expect(routed).toBeTruthy();
+            expect(routed).not.toMatchObject({ unavailable: true });
+            expect(routed.name).not.toBe('projects.dashboard.unavailable');
+            inventory.resolve();
+            await vi.waitFor(() => {
+                const bar = screen.findAllByType(WidgetAreaLayoutBar)[0]!;
+                expect(bar.props.layouts.find((option: { id: string }) => option.id === bar.props.selectedId)).toMatchObject({ name: 'Release' });
+            });
+        } finally { inventory.resolve(); await screen.unmount(); }
+    });
+
     it('leaves an explicitly missing dashboard unavailable without lending it Overview actions', async () => {
         const surface = { serverId: runtime.serverId, accountId: 'account-a', owner: { kind: 'project' as const, projectId: 'project-key' } };
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
@@ -291,14 +314,18 @@ describe('ProjectDashboardHeader', () => {
             { surface: 'ui', serverId: runtime.serverId, expectedAccountId: 'account-a', bypassApprovals: true } as never)).toMatchObject({ ok: true });
         const before = artifacts.list();
         const screen = await renderScreen(header('removed'));
-        await vi.waitFor(() => expect(screen.findAllByType(WidgetAreaLayoutBar)[0]!.props.layouts.length).toBeGreaterThan(0));
+        // The routed tab exists while the inventory is pending; only its settled answer establishes absence.
+        await vi.waitFor(() => {
+            const bar = screen.findAllByType(WidgetAreaLayoutBar)[0]!;
+            expect(bar.props.layouts.find((option: { id: string }) => option.id === bar.props.selectedId)).toMatchObject({ unavailable: true });
+        });
         const bar = screen.findAllByType(WidgetAreaLayoutBar)[0]!;
         expect(bar.props.layouts.find((option: { id: string }) => option.id === bar.props.selectedId)).toMatchObject({ unavailable: true });
         expect(bar.props.actions).toBeNull();
         expect(artifacts.list()).toEqual(before);
     });
 
-    it.each(['selection', 'checkout', 'project'] as const)('does not navigate an acknowledged delete after its %s retires', async retirement => {
+    it.each(['selection', 'checkout', 'project'] as const)('settles only the still-displayed deleted document after its %s changes', async retirement => {
         const { screen, dashboard, actions } = await renderReleaseSelected();
         let complete!: () => void;
         holdDelete = () => new Promise<void>(resolve => { complete = resolve; });
@@ -309,7 +336,8 @@ describe('ProjectDashboardHeader', () => {
         await screen.update(header(retirement === 'selection' ? null : 'release', overrides));
         await act(async () => complete());
         await vi.waitFor(() => expect(artifacts.read(dashboard.artifactId)).toBeNull());
-        expect(selected).toEqual([]);
+        // Changing checkout keeps the same Project dashboard displayed; another layout or Project must stay put.
+        expect(selected).toEqual(retirement === 'checkout' ? [null] : []);
     });
 
     it('retires a pending Create prompt when the selected dashboard changes before submission', async () => {
@@ -325,13 +353,17 @@ describe('ProjectDashboardHeader', () => {
         } finally { prompt.mockRestore(); }
     });
 
-    it('delegates deletion confirmation to the canonical Action policy', async () => {
+    it('asks by name before deleting a named dashboard, and a declined confirmation changes nothing', async () => {
         const { dashboard, actions } = await renderReleaseSelected();
         const prompt = vi.spyOn(Modal, 'confirm').mockResolvedValueOnce(false);
         try {
             await act(async () => actions.props.onSelect('delete'));
-            await vi.waitFor(() => expect(artifacts.read(dashboard.artifactId)).toBeNull());
-            expect(selected).toEqual([null]);
+            expect(prompt).toHaveBeenCalledTimes(1);
+            expect(prompt.mock.calls[0]).toEqual(['projects.dashboard.deleteConfirmTitle(name=Release)', 'projects.dashboard.deleteConfirmBody',
+                expect.objectContaining({ destructive: true })]);
+            expect(deletes).toEqual([]);
+            expect(artifacts.read(dashboard.artifactId)).not.toBeNull();
+            expect(selected).toEqual([]);
         } finally { prompt.mockRestore(); }
     });
 
@@ -350,7 +382,7 @@ describe('ProjectDashboardHeader', () => {
         } finally { prompt.mockRestore(); }
     });
 
-    it('does not restore a selected document when its read completes after the checkout changes', async () => {
+    it('commits selection before its read and never selects again after the checkout changes', async () => {
         const { screen, dashboard } = await renderReleaseSelected();
         let complete!: () => void;
         holdRead = path => path === `/v1/artifacts/${dashboard.artifactId}`
@@ -358,10 +390,12 @@ describe('ProjectDashboardHeader', () => {
         let selecting!: Promise<void>;
         await act(async () => { selecting = screen.findAllByType(WidgetAreaLayoutBar)[0]!.props.onSelect(dashboard.artifactId); });
         await vi.waitFor(() => expect(complete).toBeTypeOf('function'));
+        // Selection-before-read is the owner-approved contract; checkout changes retire only its continuation.
+        expect(selected).toEqual(['release']);
         await screen.update(header('release', { activeRootPath: '/repo/feature', activeWorktreeId: 'feature' }));
         holdRead = null;
         await act(async () => { complete(); await selecting; });
-        expect(selected).toEqual([]);
+        expect(selected).toEqual(['release']);
     });
     it('moves a user view before the host Overview through the real menu and canonical layout Action', async () => {
         const { screen, dashboard, actions } = await renderReleaseSelected();
@@ -371,12 +405,31 @@ describe('ProjectDashboardHeader', () => {
         expect(artifacts.read(dashboard.artifactId)?.headerVersion).toBeGreaterThan(dashboard.revision!.headerVersion);
         expect(selected).toEqual([]);
     });
-    it('deletes the exact selected dashboard at its revision, then selects the default Overview', async () => {
+    it.each(['owner', 'socket'] as const)('settles the deleted selection before its %s removal publication, without waiting for inventory', async source => {
         const { dashboard, actions } = await renderReleaseSelected();
-        await act(async () => { actions.props.onSelect('delete'); });
-        await vi.waitFor(() => expect(selected).toEqual([null]));
-        expect(deletes).toEqual([`/v1/artifacts/${dashboard.artifactId}/revision/${dashboard.revision?.headerVersion}/${dashboard.revision?.bodyVersion}`]);
-        expect(artifacts.read(dashboard.artifactId)).toBeNull();
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { readPresentationNotice, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
+        retirePresentationNotice();
+        const inventory = createDeferred<void>();
+        holdInventory = () => inventory.promise;
+        let atRemoval: { selected: (string | null)[]; notice: string | undefined } | undefined;
+        const unsubscribe = storage.subscribe((state, previous) => {
+            if (previous.artifacts[dashboard.artifactId] && !state.artifacts[dashboard.artifactId]) {
+                atRemoval = { selected: [...selected], notice: readPresentationNotice()?.key };
+            }
+        });
+        try {
+            if (source === 'owner') await act(async () => { actions.props.onSelect('delete'); });
+            else {
+                await artifacts.handle(`/v1/artifacts/${dashboard.artifactId}/revision/${dashboard.revision?.headerVersion}/${dashboard.revision?.bodyVersion}`, { method: 'DELETE' });
+                const { handleDeleteArtifactSocketUpdate } = await import('@/sync/engine/artifacts/syncArtifacts');
+                await act(async () => { handleDeleteArtifactSocketUpdate({ artifactId: dashboard.artifactId,
+                    deleteArtifact: storage.getState().deleteArtifact, artifactDataKeys: new Map() }); });
+            }
+            await vi.waitFor(() => expect(artifacts.read(dashboard.artifactId)).toBeNull());
+            expect(atRemoval).toEqual({ selected: [null], notice: source === 'owner' ? `dashboard-deleted:${dashboard.artifactId}` : undefined });
+            expect(deletes).toEqual(source === 'owner' ? [`/v1/artifacts/${dashboard.artifactId}/revision/${dashboard.revision?.headerVersion}/${dashboard.revision?.bodyVersion}`] : []);
+        } finally { unsubscribe(); holdInventory = null; inventory.resolve(); }
     });
 
     it.each(['rename', 'moveBefore', 'delete'] as const)('settles a refused %s truthfully: the dashboard stays as it was, the refusal says so once, and Retry repeats the request', async (operation) => {

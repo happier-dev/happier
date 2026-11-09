@@ -1,3 +1,5 @@
+import { replacePersistentUiStateForTest, PersistedPaneScopesSchema } from '@/dev/testkit/harness/persistentUiState';
+import { paneUiState } from '@/sync/domains/state/filePaneUiState';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -19,6 +21,10 @@ let serverIdA: string;
 let serverIdB: string;
 let rows: ProjectAccountRowV1[];
 let revision: number;
+const dimensions = vi.hoisted(() => ({
+    current: { width: 390, height: 844, scale: 1, fontScale: 1 },
+    listeners: new Set<() => void>(),
+}));
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -26,9 +32,12 @@ vi.mock('expo-router', async () => {
 });
 vi.mock('react-native', async () => {
     const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
-    const dimensions = { width: 390, height: 844, scale: 1, fontScale: 1 };
     return createReactNativeNativeMock({ platformOS: 'ios' }, {
-        useWindowDimensions: () => dimensions, Dimensions: { get: () => dimensions },
+        // Only native dimension delivery is replaced; responsive classification stays real.
+        useWindowDimensions: () => React.useSyncExternalStore(listener => {
+            dimensions.listeners.add(listener); return () => { dimensions.listeners.delete(listener); };
+        }, () => dimensions.current, () => dimensions.current),
+        Dimensions: { get: () => dimensions.current },
     });
 });
 vi.mock('react-native-unistyles', async () => {
@@ -44,7 +53,10 @@ const { storage } = await import('@/sync/domains/state/storage');
 const { useOpenProject } = await import('./useOpenProject');
 const { useWorkspaceRefById, useWorkspaceRefResolutionById } = await import('./detail/useWorkspaceRefById');
 const { AppPaneProvider, useAppPaneContext } = await import('@/components/appShell/panes/AppPaneProvider');
+const { AppPaneContext } = await import('@/components/appShell/panes/AppPaneContext');
+const { buildProjectPaneScopeId } = await import('./detail/projectPaneScope');
 const { buildRealmQualifiedMobileSurfaceStorageKey } = await import('@/sync/domains/settings/mobileSurfacePersistence');
+const { projectLastMobileSurfaceState, projectLastActiveRootPathState, projectLastActiveWorktreeIdState } = await import('@/sync/domains/state/navigationUiState');
 
 function PaneWrapper(props: React.PropsWithChildren) { return React.createElement(AppPaneProvider, null, props.children); }
 
@@ -66,6 +78,7 @@ async function refreshWorkspaceRefs() {
 
 describe('useOpenProject', () => {
     beforeEach(async () => {
+        dimensions.current = { width: 390, height: 844, scale: 1, fontScale: 1 };
         await loadSyncSingletonForTests(); await homes.reset();
         routerPush.mockReset();
         serverIdA = await homes.addHome({ name: 'Projects Home A', serverUrl: 'https://projects-open-a.test', accountId: 'account-a' });
@@ -78,15 +91,90 @@ describe('useOpenProject', () => {
         await restoreConnectionToActiveServer({ token: homes.findByServerUrl('https://projects-open-a.test')!.token! });
         storage.getState().activateProjectAccountRowsScope({ serverId: serverIdA, accountId: 'account-a' });
         storage.getState().applySettingsLocal({ mobileWorkspaceExperienceV1: 'cockpit' });
-        storage.getState().applyLocalSettings({ projectLastActiveRootPathByWorkspaceRefId: {}, projectLastActiveWorktreeIdByWorkspaceRefId: {},
-            projectLastMobileSurfaceByWorkspaceRefId: {} });
+        replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({}));
+        replacePersistentUiStateForTest(projectLastMobileSurfaceState, {});
+        replacePersistentUiStateForTest(projectLastActiveRootPathState, {});
+        replacePersistentUiStateForTest(projectLastActiveWorktreeIdState, {});
         await refreshWorkspaceRefs();
         homes.requests.length = 0;
+    });
+
+    it('reads the latest exact navigation keys when an existing open command runs without settings writes or caller renders', async () => {
+        const key = `project-selection:v1:${JSON.stringify([serverIdA, 'wr_1'])}`;
+        const pageKey = buildRealmQualifiedMobileSurfaceStorageKey('project', { serverId: serverIdA, accountId: 'account-a' }, 'wr_1')!;
+        let commits = 0;
+        const hook = await renderHook(() => useOpenProject(), { wrapper: ({ children }) =>
+            <AppPaneProvider><React.Profiler id="project-navigation" onRender={() => { commits += 1; }}>{children}</React.Profiler></AppPaneProvider> });
+        const open = hook.getCurrent();
+        const before = commits;
+        const settingsWrite = vi.spyOn(storage.getState(), 'applyLocalSettings');
+        try {
+            await act(async () => {
+                for (let index = 0; index < 20; index += 1) {
+                    projectLastActiveRootPathState.set(key, `/repo/feature-${index}`);
+                    projectLastActiveWorktreeIdState.set(key, `worktree-${index}`);
+                    projectLastMobileSurfaceState.set(pageKey, index % 2 ? 'context' : 'overview');
+                }
+            });
+            expect(commits).toBe(before);
+            expect(hook.getCurrent()).toBe(open);
+            expect(await open('wr_1', { serverId: serverIdA })).toBe(true);
+            const href = new URL(routerPush.mock.calls[0]![0], 'https://happier.invalid');
+            expect(href.pathname).toBe('/projects/wr_1/context');
+            expect(href.searchParams.get('worktreeId')).toBe('worktree-19');
+            expect(settingsWrite).not.toHaveBeenCalled();
+        } finally { settingsWrite.mockRestore(); }
     });
     afterEach(async () => {
         await standardCleanup();
         const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
         await disconnectActiveServerConnection(); await homes.reset();
+    });
+
+    it.each(['File drafts', 'window resizes'])('does no caller work for %s and reads current layout and sidebar when an existing open command runs', async arrival => {
+        let pane: React.ContextType<typeof AppPaneContext> | undefined;
+        let commits = 0;
+        function CapturePane() { pane = React.useContext(AppPaneContext); return null; }
+        function Wrapper(props: React.PropsWithChildren) {
+            return React.createElement(AppPaneProvider, null, React.createElement(CapturePane),
+                React.createElement(React.Profiler, { id: 'project-opener', onRender: () => { commits += 1; } }, props.children));
+        }
+        const hook = await renderHook(() => useOpenProject(), { wrapper: Wrapper });
+        const scopeId = buildProjectPaneScopeId('wr_1', serverIdA);
+        await act(async () => {
+            pane!.getSnapshot().dispatch({ type: 'activateScope', scopeId, initialRight: { isOpen: true, activeTabId: 'files' } });
+            pane!.getSnapshot().dispatch({ type: 'setRightTab', scopeId, tabId: 'files' });
+            pane!.getSnapshot().dispatch({ type: 'openDetailsTab', scopeId, openAs: 'pinned',
+                tab: { key: 'file:src/index.ts', kind: 'file', title: 'index.ts', resource: { kind: 'file', path: 'src/index.ts' } } });
+        });
+        const open = hook.getCurrent();
+        const before = commits;
+        let publications = 0;
+        let storageNotifications = 0;
+        const stopPane = pane!.subscribe(() => { publications += 1; });
+        const stopStorage = storage.subscribe(() => { storageNotifications += 1; });
+        try {
+            for (let index = 0; index < 20; index += 1) {
+                await act(async () => {
+                    if (arrival === 'File drafts') pane!.getSnapshot().dispatch({ type: 'patchDetailsTabState', scopeId,
+                        tabKey: 'file:src/index.ts', patch: { accountId: 'account-a', isEditingFile: true,
+                            editorOriginalHash: 'base-hash', editorText: `draft-${index}` }, persist: false });
+                    else {
+                        dimensions.current = { width: index % 2 ? 1440 : 390, height: index % 2 ? 900 : 844, scale: 1, fontScale: 1 };
+                        for (const listener of [...dimensions.listeners]) listener();
+                    }
+                });
+            }
+            expect(publications).toBe(arrival === 'File drafts' ? 20 : 0);
+            expect(storageNotifications).toBe(0);
+            expect(commits).toBe(before);
+            expect(hook.getCurrent()).toBe(open);
+        } finally { stopPane(); stopStorage(); }
+        await act(async () => pane!.getSnapshot().dispatch({ type: 'setRightTab', scopeId, tabId: 'git' }));
+        await act(async () => { expect(await open('wr_1', { serverId: serverIdA })).toBe(true); });
+        const href = new URL(routerPush.mock.calls[0]![0], 'https://happier.invalid');
+        expect(href.pathname).toBe(arrival === 'File drafts' ? '/projects/wr_1/changes' : '/projects/wr_1/overview');
+        expect(href.searchParams.get('serverId')).toBe(serverIdA);
     });
 
     it('exposes only an accepted checkout of the captured Project to its surfaces', async () => {
@@ -143,7 +231,7 @@ describe('useOpenProject', () => {
             workspaceId: 'wr_1', rootPath: '/repo' }, directory: '/repo/packages/app', setup: 'approvalRequired' as const };
         workspaceRefs.current.push({ ...workspaceRefs.current[0]!, serverId: serverIdB, rootPath: '/other' });
         await refreshWorkspaceRefs();
-        storage.getState().applyLocalSettings({ projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/repo/elsewhere' } });
+        projectLastActiveRootPathState.set('wr_1', '/repo/elsewhere');
         writeProjectOpenDraft({ scope: { serverId: serverIdA, accountId: 'account-a' }, draftId,
             patch: { selection: { serverId: serverIdA, machineId: 'machine-a', source: { kind: 'folder', path: '/repo' },
                 materialization: { kind: 'attach' } }, result: accepted }, materializationIntent: 'seeded' });
@@ -215,8 +303,8 @@ describe('useOpenProject', () => {
     it('never restores a bare-id checkout preference when another Home owns the same id', async () => {
         workspaceRefs.current.push({ ...workspaceRefs.current[0]!, serverId: serverIdB, rootPath: '/other' });
         await refreshWorkspaceRefs();
-        storage.getState().applyLocalSettings({ projectLastActiveRootPathByWorkspaceRefId: { wr_1: '/repo/feature' },
-            projectLastActiveWorktreeIdByWorkspaceRefId: { wr_1: 'foreign-worktree' } });
+        projectLastActiveRootPathState.set('wr_1', '/repo/feature');
+        projectLastActiveWorktreeIdState.set('wr_1', 'foreign-worktree');
         const hook = await renderHook(() => useOpenProject(), { wrapper: PaneWrapper });
         expect(await hook.getCurrent()('wr_1', { serverId: serverIdB })).toBe(true);
         expect(new URL(routerPush.mock.calls[0][0], 'https://happier.invalid').searchParams.get('worktreeId')).toBe('@root');
@@ -226,7 +314,8 @@ describe('useOpenProject', () => {
         workspaceRefs.current.push({ ...workspaceRefs.current[0]!, serverId: serverIdB, rootPath: '/other' });
         await refreshWorkspaceRefs();
         const key = buildRealmQualifiedMobileSurfaceStorageKey('project', { serverId: serverIdA, accountId: 'account-a' }, 'wr_1')!;
-        storage.getState().applyLocalSettings({ projectLastMobileSurfaceByWorkspaceRefId: { [key]: 'context', wr_1: 'git' } });
+        projectLastMobileSurfaceState.set(key, 'context');
+        projectLastMobileSurfaceState.set('wr_1', 'git');
         const hook = await renderHook(() => useOpenProject(), { wrapper: PaneWrapper });
         expect(await hook.getCurrent()('wr_1', { serverId: serverIdA })).toBe(true);
         expect(new URL(routerPush.mock.calls[0][0], 'https://happier.invalid').pathname).toBe('/projects/wr_1/context');
@@ -238,8 +327,8 @@ describe('useOpenProject', () => {
         workspaceRefs.current.push({ ...workspaceRefs.current[0]!, serverId: serverIdB, rootPath: '/other' });
         await refreshWorkspaceRefs();
         const key = `project-selection:v1:${JSON.stringify([serverIdB, 'wr_1'])}`;
-        storage.getState().applyLocalSettings({ projectLastActiveRootPathByWorkspaceRefId: { [key]: '/other/feature', wr_1: '/repo/feature' },
-            projectLastActiveWorktreeIdByWorkspaceRefId: { [key]: 'selected-worktree', wr_1: 'foreign-worktree' } });
+        replacePersistentUiStateForTest(projectLastActiveRootPathState, { [key]: '/other/feature', wr_1: '/repo/feature' });
+        replacePersistentUiStateForTest(projectLastActiveWorktreeIdState, { [key]: 'selected-worktree', wr_1: 'foreign-worktree' });
         const hook = await renderHook(() => useOpenProject(), { wrapper: PaneWrapper });
         expect(await hook.getCurrent()('wr_1', { serverId: serverIdB })).toBe(true);
         expect(new URL(routerPush.mock.calls[0][0], 'https://happier.invalid').searchParams.get('worktreeId')).toBe('selected-worktree');

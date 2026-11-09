@@ -14,16 +14,21 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { showProjectSourceShareSheet } from '@/components/sharing/projects/showProjectSourceShareSheet';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { Icon } from '@/components/ui/icons/Icon';
 import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/KeyboardStickyFooter';
+import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
 import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
+import { usePageBackControl } from '@/components/ui/layout/usePageBackControl';
+import { ProjectSourcesBackHeader } from './ProjectSourcesBackHeader';
+import { useHappierCollectionLayout } from '@happier-dev/plugin-ui/presentation';
 import {
   PageHeader,
   type PageHeaderMetaFact,
 } from '@/components/ui/layout/PageHeader';
 import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
-import { Item } from '@/components/ui/lists/Item';
+import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
@@ -32,10 +37,8 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import {
-  useAllMachines,
-  useArtifact,
-  useArtifactsLoaded,
   useWorkspaceRefs,
+  useActiveMachineFacts,
 } from '@/sync/domains/state/storage';
 import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
@@ -46,6 +49,9 @@ import { useViewportClass } from '@/utils/platform/useViewportClass';
 
 import { ProjectRefSelect } from '../ProjectRefSelect';
 import { useProjectDashboardDocument } from '@/components/widgets/area/useProjectDashboardDocument';
+import { useProjectDashboardOwner } from '@/components/projects/overview/useProjectDashboardOwner';
+import { documentShareAccessLabel } from '@/components/sharing/documents/documentShareAdapter';
+import { presentSharePrincipal } from '@/components/sharing/sharePrincipalPresentation';
 
 import type {
   ProjectSourceDraft,
@@ -53,11 +59,11 @@ import type {
   ProjectSourcesState,
 } from './projectSourcesController';
 import { formatProjectSourceAddress } from './projectSourceAddress';
+import { presentProjectSourceAddressRefusal } from './resolveProjectSourceAddress';
 import {
   readSourceTeamId,
 } from './ProjectSourcesRail';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
-import { presentProjectSourceAddressRefusal } from './resolveProjectSourceAddress';
 
 function lastSegment(nameWithOwner: string): string {
   return nameWithOwner.split('/').filter(Boolean).pop() ?? nameWithOwner;
@@ -88,7 +94,7 @@ const SourceAudienceRow = React.memo(function SourceAudienceRow(
   props: Readonly<{
     summary: string;
     /** The share sheet opens only on a saved Source this person may manage. */
-    onShare: (() => void) | null;
+    onShare: NonNullable<ItemProps['onPress']> | null;
     creating: boolean;
     /** On a phone the row is label + value only; its sentence moves to the section description. */
     compact: boolean;
@@ -114,9 +120,10 @@ const DashboardAttachmentRow = React.memo(function DashboardAttachmentRow(
     /** The Home this page reads; a reference qualified to another Home is never read from this one's cache. */
     serverId: string;
     sourceId: string;
+    canChooseCheckout: boolean;
     canDetach: boolean;
     onDetach: (reference: PromptArtifactRefV1) => void;
-    onOpen?: (reference: PromptArtifactRefV1, workspace: WorkspaceAddressV1) => void;
+    onOpen?: (reference: PromptArtifactRefV1, workspace?: WorkspaceAddressV1) => void;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -132,19 +139,24 @@ const DashboardAttachmentRow = React.memo(function DashboardAttachmentRow(
       props.reference.serverId,
       props.serverId,
     );
-  const cached = useArtifact(props.reference.artifactId);
-  const qualified = useProjectDashboardDocument(elsewhere ? props.reference : null, props.serverId);
-  const artifact = elsewhere ? qualified.document ? { title: qualified.document.name, isDecrypted: true, access: qualified.document.access } : null : cached;
-  const localLoaded = useArtifactsLoaded();
-  const loaded = elsewhere ? qualified.loaded : localLoaded;
-  const readable = artifact !== null && artifact.isDecrypted;
-  const canOpen = readable && checkouts.length > 0 && props.onOpen !== undefined;
+  const { document, loaded, grants } = useProjectDashboardDocument(props.reference, props.serverId, true);
+  const readable = document !== null;
+  const canOpen = readable && (checkouts.length > 0 || props.canChooseCheckout) && props.onOpen !== undefined;
+  // Roster visibility comes from the same admitted grants reader as the Share sheet.
+  const owner = useProjectDashboardOwner(props.reference.serverId ?? props.serverId, document?.surface.accountId ?? null);
   const access =
-    artifact?.access === 'edit'
+    document?.access === 'edit'
       ? t('shareSheet.documents.levels.canEdit')
-      : artifact?.access === 'view'
+      : document?.access === 'view'
         ? t('shareSheet.documents.levels.canRead')
         : null;
+  const grantSummary = grants?.map(grant => {
+    const principal = presentSharePrincipal({ ref: grant.principal, name: grant.display.name,
+      username: grant.display.username, viewerAccountId: document?.viewerScope.accountId });
+    // The lab reads a grant as a sentence ("Acme can read"): the recipient, then the level word in running case.
+    const level = documentShareAccessLabel(props.reference.artifactId, 'widget-area-layout.v1', grant.accessLevel);
+    return `${principal.displayName} ${level.charAt(0).toLocaleLowerCase()}${level.slice(1)}`;
+  }).join(' · ');
   const row = (showPicker?: () => void) => (
     <Item
       testID={`projects.sources.dashboard.${props.reference.serverId ?? props.serverId}:${props.reference.artifactId}`}
@@ -157,14 +169,14 @@ const DashboardAttachmentRow = React.memo(function DashboardAttachmentRow(
       }
       title={
         readable
-          ? (artifact.title ?? t('projects.sources.dashboardUnavailableTitle'))
+          ? document.name
           : loaded
             ? t('projects.sources.dashboardUnavailableTitle')
             : ' '
       }
       subtitle={
         readable
-          ? (access ?? undefined)
+          ? ([owner?.displayName, grantSummary || access].filter(Boolean).join(' · ') || undefined)
           : elsewhere
             ? t('projects.sources.dashboardOtherHome')
             : loaded
@@ -173,9 +185,11 @@ const DashboardAttachmentRow = React.memo(function DashboardAttachmentRow(
       }
       showChevron={canOpen}
       {...(canOpen ? { onPress: () => {
-        if (checkouts.length === 1) props.onOpen?.(props.reference, workspaceAddressFromRefV1(checkouts[0]!));
+        if (checkouts.length === 0) props.onOpen?.(props.reference);
+        else if (checkouts.length === 1) props.onOpen?.(props.reference, workspaceAddressFromRefV1(checkouts[0]!));
         else showPicker?.();
       } } : {})}
+      rightElementOutsidePressable={props.canDetach}
       rightElement={
         props.canDetach ? (
           <RoundButton
@@ -212,7 +226,7 @@ const SourceCheckouts = React.memo(function SourceCheckouts(
 ) {
   const { theme } = useUnistyles();
   const refs = useWorkspaceRefs();
-  const machines = useAllMachines();
+  const machines = useActiveMachineFacts();
   const rows = React.useMemo(() => {
     const list = (Array.isArray(refs) ? refs : []).filter(
       (ref) =>
@@ -283,8 +297,10 @@ export type ProjectSourceDetailProps = Readonly<{
   onDiscardCreate: () => void;
   onOpen: (source: ProjectSourceV1) => void;
   onOpenCheckout: (workspaceRefId: string) => void;
-  onOpenDashboard?: (sourceId: string, reference: PromptArtifactRefV1, workspace: WorkspaceAddressV1) => void;
+  onOpenDashboard?: (source: ProjectSourceV1, reference: PromptArtifactRefV1, workspace?: WorkspaceAddressV1) => void;
   onDeleted: () => void;
+  /** Leaves the page for the list where the detail stands alone (a phone); the hosted web page has no native header to do it. */
+  onBack?: () => void;
 }>;
 
 function issueBanner(
@@ -375,9 +391,14 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
   const { state, controller } = props;
   const current = props.creating ? null : state.current;
   const newDraft = state.creationDraft;
-  const machines = useAllMachines();
+  const machines = useActiveMachineFacts();
   // A phone reads the page as summaries that push their editor (lab `SOURCESp`), with Open pinned below.
   const compact = useViewportClass() === 'compact';
+  // Beside the rail the list is the way out; only a detail that stands alone needs its own Back.
+  const standsAlone = useHappierCollectionLayout()?.mode === 'stacked';
+  const inheritedBack = useNavigationBackControl();
+  const pageBack = usePageBackControl('projects.sources.detail.back', () => props.onBack?.());
+  const backControl = standsAlone && props.onBack ? pageBack : inheritedBack;
   const [titleDraft, setTitleDraft] = React.useState<string | null>(null);
   const [addressError, setAddressError] = React.useState<string | null>(null);
   // Unconfirmed create (outcome unknown): a complete inspection of every Source decides whether Save may run again.
@@ -413,7 +434,7 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
     ? (newDraft?.address ?? '')
     : state.addressResolution.kind !== 'idle'
       ? state.addressResolution.address
-      : view
+      : view?.repository
         ? formatProjectSourceAddress(view.repository)
         : '';
   // A new Source's address names its Git host only once a Machine on this Home has resolved it (A3b).
@@ -479,9 +500,15 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
 
   if (!props.creating && !current) {
     const banner = issueBanner(state.issue, props.homeName);
+    // The loading and unavailable states have no page identity of their own, but a detail that stands alone
+    // (a phone) still needs its Back: the header draws it, titled as the page it leaves.
+    const stateBack = standsAlone && props.onBack
+      ? <ProjectSourcesBackHeader testID="projects.sources.detail.header" control={pageBack} />
+      : null;
     if (!banner) {
       return (
         <ItemList testID="projects.sources.detail.loading">
+          {stateBack}
           <SurfaceStateCard
             kind="loading"
             title={t('projects.sources.loading')}
@@ -491,6 +518,7 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
     }
     return (
       <ItemList testID="projects.sources.detail.unavailable">
+        {stateBack}
         {banner ? (
           <AttentionBanner
             testID="projects.sources.detail.issue"
@@ -507,11 +535,11 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
   const team = teamId ? props.teamName(teamId) : null;
   const meta: PageHeaderMetaFact[] = current
     ? [
-        {
+        ...(current.repository ? [{
           key: 'address',
           text: formatProjectSourceAddress(current.repository),
           mono: true,
-        },
+        }] : []),
         ...(team
           ? [
               {
@@ -555,73 +583,75 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
   return (
     <View style={styles.page}>
     <ItemList testID="projects.sources.detail">
-      <PageHeader
-        testID="projects.sources.detail.header"
-        title={
-          props.creating
-            ? newName || t('projects.sources.new')
-            : (view?.name ?? '')
-        }
-        alwaysShowTitle
-        leading={
-          <PageHeaderMarkIcon name="git-branch" />
-        }
-        {...(canEdit && (props.creating || view)
-          ? {
-              titleEditor: {
-                value: props.creating
-                  ? (newDraft?.name ?? '')
-                  : (titleDraft ?? view!.name),
-                placeholder: t('projects.sources.name'),
-                accessibilityLabel: t('projects.sources.name'),
-                onChangeText: props.creating
-                  ? (name: string) => controller.editCreation({ name })
-                  : setTitleDraft,
-                onCommit: () => {
-                  if (props.creating) return;
-                  const name = (titleDraft ?? '').trim();
-                  setTitleDraft(null);
-                  if (name && name !== view!.name) controller.edit({ name });
-                },
-              },
-            }
-          : {})}
-        meta={meta}
-        primaryAction={
-          dirty || props.creating
+      <NavigationBackChromeProvider control={backControl}>
+        <PageHeader
+          testID="projects.sources.detail.header"
+          title={
+            props.creating
+              ? newName || t('projects.sources.new')
+              : (view?.name ?? '')
+          }
+          alwaysShowTitle
+          leading={
+            <PageHeaderMarkIcon name="git-branch" />
+          }
+          {...(canEdit && (props.creating || view)
             ? {
-                title: t('common.save'),
-                onPress: save,
-                disabled:
-                  !dirty ||
-                  saving ||
-                  state.addressSaveDisabledReason !== null ||
-                  (retryingCreate && !retryReady),
-                loading: saving,
-                testID: 'projects.sources.detail.save',
-              }
-            : current && !compact
-              ? {
-                  title: t('projects.sources.open'),
-                  onPress: () => props.onOpen(current),
-                  testID: 'projects.sources.detail.open',
-                }
-              : undefined
-        }
-        {...(dirty || props.creating
-          ? {
-              cancelAction: {
-                title: t('common.discard'),
-                onPress: () => {
-                  controller.discard();
-                  if (props.creating) props.onDiscardCreate();
-                  setAddressError(null);
+                titleEditor: {
+                  value: props.creating
+                    ? (newDraft?.name ?? '')
+                    : (titleDraft ?? view!.name),
+                  placeholder: t('projects.sources.name'),
+                  accessibilityLabel: t('projects.sources.name'),
+                  onChangeText: props.creating
+                    ? (name: string) => controller.editCreation({ name })
+                    : setTitleDraft,
+                  onCommit: () => {
+                    if (props.creating) return;
+                    const name = (titleDraft ?? '').trim();
+                    setTitleDraft(null);
+                    if (name && name !== view!.name) controller.edit({ name });
+                  },
                 },
-                testID: 'projects.sources.detail.discard',
-              },
-            }
-          : {})}
-      />
+              }
+            : {})}
+          meta={meta}
+          primaryAction={
+            dirty || props.creating
+              ? {
+                  title: t('common.save'),
+                  onPress: save,
+                  disabled:
+                    !dirty ||
+                    saving ||
+                    state.addressSaveDisabledReason !== null ||
+                    (retryingCreate && !retryReady),
+                  loading: saving,
+                  testID: 'projects.sources.detail.save',
+                }
+              : current?.repository && !compact
+                ? {
+                    title: t('projects.sources.open'),
+                    onPress: () => props.onOpen(current),
+                    testID: 'projects.sources.detail.open',
+                  }
+                : undefined
+          }
+          {...(dirty || props.creating
+            ? {
+                cancelAction: {
+                  title: t('common.discard'),
+                  onPress: () => {
+                    controller.discard();
+                    if (props.creating) props.onDiscardCreate();
+                    setAddressError(null);
+                  },
+                  testID: 'projects.sources.detail.discard',
+                },
+              }
+            : {})}
+        />
+      </NavigationBackChromeProvider>
       {retryingCreate ? (
         <AttentionBanner
           testID="projects.sources.detail.outcomeUnknown"
@@ -795,10 +825,11 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
           )}
           onShare={
             current && canEdit && !state.conflict
-              ? () =>
+              ? (event) =>
                   showProjectSourceShareSheet({
                     controller,
                     name: current.name,
+                    anchor: resolvePressTriggerAnchor(event),
                   })
               : null
           }
@@ -826,10 +857,11 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
               key={`${attachment.ref.serverId ?? props.controller.scope.serverId}:${attachment.ref.artifactId}`}
               reference={attachment.ref}
               sourceId={current.id}
+              canChooseCheckout={current.repository !== undefined}
               serverId={props.controller.scope.serverId}
               canDetach={canEdit}
               onDetach={detach}
-              onOpen={props.onOpenDashboard ? (reference, workspace) => props.onOpenDashboard?.(current.id, reference, workspace) : undefined}
+              onOpen={props.onOpenDashboard ? (reference, workspace) => props.onOpenDashboard?.(current, reference, workspace) : undefined}
             />
           ))}
         </ItemGroup>
@@ -860,7 +892,7 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
         </ItemGroup>
       ) : null}
     </ItemList>
-    {compact && current && !dirty ? (
+    {compact && current?.repository && !dirty ? (
       <KeyboardStickyFooter>
         <PagePinnedBar>
           <RoundButton

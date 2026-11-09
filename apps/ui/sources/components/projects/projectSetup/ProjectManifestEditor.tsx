@@ -42,6 +42,11 @@ import { ProjectManifestForm, type ProjectManifestFormSection } from './ProjectM
 import type { ProjectDefinitionInspection } from './useProjectDefinitionInspection';
 import { useProjectManifestEditorSnapshot } from './useProjectManifestEditorSnapshot';
 
+// These are unrequested picker choices, never evidence that discovery completed or found nothing.
+const UNREQUESTED_DETECTION: ProjectDefinitionDetectionV1 = {
+  entries: [], toolchains: [], devcontainers: [], coverage: 'partial', diagnostics: [],
+};
+
 export type ProjectManifestEditorProps = Readonly<{
   workspace: WorkspaceAddressV1;
   accountId: string;
@@ -312,12 +317,14 @@ function ProjectManifestEditorLeaf(
         </PageContentColumn>
       ) : (
         <ProjectManifestForm
+          workspace={props.workspace}
+          accountId={props.accountId}
           model={model}
           manifest={snapshot.draft.manifest}
-          detection={props.detection}
-          importCandidates={props.importCandidates}
-          commands={props.commands}
-          tools={props.tools}
+          detection={props.seedFromDetection ? props.detection : UNREQUESTED_DETECTION}
+          importCandidates={props.seedFromDetection ? props.importCandidates : []}
+          commands={props.seedFromDetection ? props.commands : undefined}
+          tools={props.seedFromDetection ? props.tools : undefined}
           machineName={machineName}
           section={section}
           onSectionChange={setSection}

@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { V2SessionRecordSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { createSessionListSourceFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { SessionListQueryV1Schema } from '@happier-dev/protocol/sessions/listing/query';
-import { encodeV2SessionListCursorV1, SessionAwarenessListResultV1Schema } from '@happier-dev/protocol';
+import { encodeV2SessionListCursorV1} from '@happier-dev/protocol/sessions/control/contract';
+import { SessionAwarenessListResultV1Schema } from '@happier-dev/protocol/sessions/awareness/action';
 import {
     createPlainSessionOwnerMetadataEnvelopeV1,
     SessionOwnerMetadataV1Schema,
@@ -56,7 +57,8 @@ const sessionRecord = (id: string) => V2SessionRecordSchema.parse({
         follow: { follows: false, notificationLevel: null }, notification: { level: 'important', source: 'owner' },
     } });
 const runtime = installSessionPaneRuntimeTestHarness({
-    features: () => createRootLayoutFeaturesResponse({ features: { sessions: { filteredListing: { enabled: true } } } }),
+    // The 0.3 Home advertises the Project selector the roster sends.
+    features: () => createRootLayoutFeaturesResponse({ features: { sessions: { filteredListing: { enabled: true, projectSelectorVersion: 1 } } } }),
     configureSocket: socket => {
         vi.spyOn(socket, 'emit').mockReturnValue(socket);
         vi.mocked(socket.connect).mockImplementation(() => {
@@ -70,7 +72,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
     const id = path.startsWith('/v2/sessions/') ? decodeURIComponent(path.slice('/v2/sessions/'.length)) : null;
     const admittedIds = paged ? [...firstPageIds, ...continuationIds, ...(extraEmptyPage ? ['other-next'] : [])] : sessionIds;
     if (id && admittedIds.includes(id)) return Response.json({ session: sessionRecord(id) });
-    if (path !== '/v2/sessions' && path !== '/v1/sessions' && path !== '/v2/sessions/query') return null;
+    if (path !== '/v2/sessions' && path !== '/v2/sessions/query') return null;
     requests += 1;
     if (fail) return new Response('{}', { status: 503 });
     const cursor = path === '/v2/sessions/query' && typeof init?.body === 'string'
@@ -133,8 +135,9 @@ describe('Project Sessions widget body', () => {
         });
         expect(screen.findByTestId('w.session:other')).toBeNull();
         expect(screen.findByTestId('w.empty')).toBeNull();
-        expect(screen.findHostByTestId('w.more')).not.toBeNull();
-        expect(continuationRequested).toBe(false);
+        // The query owner fills a short candidate page through its cursor.
+        expect(screen.findHostByTestId('w.more')).toBeNull();
+        expect(continuationRequested).toBe(true);
     });
 
     it('keeps a contributed Agent mark through the real compact Project roster', async () => {
@@ -225,5 +228,33 @@ describe('Project Sessions widget body', () => {
             .toEqual(match ? ['by-checkout', 'by-path'] : []);
         expect(result).toMatchObject({ nextCursor: null, hasNext: false });
         expect(continuationRequested).toBe(true);
+    });
+    it('owns no relative-time wake while its retained surface is not presented', async () => {
+        sessionIds = ['own'];
+        const checkout = { id: 'checkout', serverId: runtime.serverId, machineId: 'machine', rootPath: '/repo', projectKey: 'anchor', createdAtMs: 1 };
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: [checkout] });
+        const timers = installTimerCensus(stack => stack.includes('sessionListRuntimeClock') ? 'session-list-clock' : null);
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const widget = (presented: boolean) => <runtime.Wrapper><PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>
+            <ProjectSessionsWidgetBody checkout={checkout} testID="hidden-widget" />
+        </PluginSurfaceFocusEligibilityProvider></runtime.Wrapper>;
+        try {
+            const screen = await renderScreen(widget(true));
+            await vi.waitFor(async () => {
+                await flushHookEffects();
+                expect(screen.findHostByTestId('hidden-widget.session:own')).not.toBeNull();
+            });
+            await screen.update(widget(false));
+            await flushHookEffects();
+            // A hidden retained page keeps its rows; their times move again when it is presented.
+            expect(screen.findHostByTestId('hidden-widget.session:own')).not.toBeNull();
+            expect(timers.read().filter(timer => timer.consumer === 'session-list-clock')).toHaveLength(0);
+            await screen.update(widget(true));
+            await flushHookEffects();
+            expect(timers.read().filter(timer => timer.consumer === 'session-list-clock')).toHaveLength(1);
+        } finally {
+            standardCleanup();
+            timers.stop();
+        }
     });
 });

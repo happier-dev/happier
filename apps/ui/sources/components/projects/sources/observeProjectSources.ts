@@ -13,5 +13,9 @@ export function observeProjectSources(controller: ProjectSourcesController, opti
         if (event.entityIds && !event.entityIds.some((id) => id === PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1
             || id === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 || isAccountCurrentnessEntityIdV1(id))) return;
         onChange();
-    }, { serverIds: [controller.scope.serverId] });
+    }, { serverIds: [controller.scope.serverId], reconnect: { readNotCurrent: () => {
+        // An offline or unsettled list/detail read retries on reconnect; ready rows follow the feed.
+        const state = controller.getSnapshot();
+        return state.status !== 'ready' || (state.detailStatus !== 'ready' && state.detailStatus !== 'initial');
+    } } });
 }

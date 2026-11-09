@@ -33,7 +33,7 @@ export const ProjectDetailsMainPanel = React.memo((props: ProjectDetailsMainPane
         machineId: props.workspaceRef.machineId,
         rootPath: props.workspaceRef.rootPath,
     }), [props.workspaceRef.machineId, props.workspaceRef.rootPath, props.workspaceRef.serverId]);
-    const { snapshot } = useWorkspaceScmSnapshotController(workspaceScope);
+    const { snapshot } = useWorkspaceScmSnapshotController(workspaceScope, { detail: 'summary' });
 
     const renderHeaderActionsPrefix = React.useCallback((params: WorkspaceDetailsPanelHeaderActionRenderParams) => {
         if (deviceType !== 'phone') return null;

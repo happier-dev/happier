@@ -108,7 +108,6 @@ export const CodeCommitStrip = React.memo(function CodeCommitStrip(
       accessibilityRole="button"
       accessibilityLabel={t('projects.code.history')}
       onPress={props.onOpenHistory}
-      hitSlop={6}
       style={(pressState) => [
         styles.history,
         focusRingStyle({ focused: pressState.focused, color: theme.colors.border.focus }),

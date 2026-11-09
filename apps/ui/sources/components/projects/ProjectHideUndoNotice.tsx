@@ -5,16 +5,12 @@ import { StyleSheet } from 'react-native-unistyles';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 
+import { motionTokens } from '@/components/ui/motion/motionTokens';
 import type { ProjectsListModel } from './useProjectsListModel';
 
 /**
- * How long "Project hidden · Undo" stays (lab p-projects HIDE). A presentation lifetime only: Undo
- * stays reachable afterwards as Show in the Hidden group, and the Hide itself is already saved.
- */
-const PROJECT_HIDE_UNDO_VISIBLE_MS = 5_000;
-
-/**
- * The one line after a Hide (plan 10 §2 Auto/hide): "Project hidden" with Undo, drawn by the shared
+ * The one line after a Hide (plan 10 §2 Auto/hide): "Project hidden" with Undo for the shared hold (Undo
+ * stays reachable afterwards as Show in the Hidden group), drawn by the shared
  * line state (the same "done · Undo" anatomy as a discarded commit proposal). It leaves on its own,
  * on Undo, or when the receipt it would undo is no longer current.
  */
@@ -30,7 +26,7 @@ export const ProjectHideUndoNotice = React.memo(function ProjectHideUndoNotice(p
     dismissRef.current = onDismiss;
     React.useEffect(() => {
         if (!undo) return;
-        const timer = setTimeout(() => dismissRef.current(), PROJECT_HIDE_UNDO_VISIBLE_MS);
+        const timer = setTimeout(() => dismissRef.current(), motionTokens.undoHoldMs);
         return () => clearTimeout(timer);
     }, [undo]);
     if (!undo || !undo.isCurrent()) return null;

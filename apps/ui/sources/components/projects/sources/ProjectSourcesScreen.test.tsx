@@ -8,8 +8,9 @@ await vi.hoisted(async () => {
   installDisconnectedServerSocketBoundary();
 });
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { createProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createPlainProjectAccountRowListFixture, createProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createLayoutArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import { buildWidgetSurfaceArtifactIdV1, buildWidgetSurfaceArtifactHeaderV1, WidgetAreaLayoutV1Schema } from '@happier-dev/protocol/widgets';
@@ -21,9 +22,8 @@ import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/act
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 /**
- * The Action front door is this screen's boundary: Source reads and writes are Actions whose host
- * (membership, revision CAS, storage) lives outside the page. The fake records each call and answers
- * the catalog; the screen, its controller, the address parser and the editor below it are real.
+ * Source host ports stand in for Home storage/membership and Machine SCM transport. The canonical
+ * Action executor/front door, screen, controller, address parser and editor remain real.
  */
 const shared = vi.hoisted(() => ({
   calls: [] as Array<{ actionId: string; input: any }>,
@@ -33,35 +33,36 @@ const shared = vi.hoisted(() => ({
   createOutcomes: [] as Array<'unknown'>,
   artifacts: {} as Record<string, unknown>,
   confirm: vi.fn(async () => false),
+  /** Holds `projects.sources.read` so a test can look at the loading Source detail. */
+  readGate: null as null | Promise<void>,
 }));
 
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
-  createFrontDoorActionExecute: () => async (actionId: string, input: any) => {
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
+  const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+  const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+  const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
+  const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
+  const schemas = await import('@happier-dev/protocol/projects/sources/projectSourceV1');
+  // Host fixtures receive protocol-validated inputs from the real executor.
+  const respond = async (actionId: string, input: any): Promise<unknown> => {
     shared.calls.push({ actionId, input });
     if (actionId === 'projects.sources.list')
       return {
-        ok: true,
-        result: {
           ok: true,
           sources: shared.sources,
           coverage: { complete: true, nextCursor: null },
-        },
       };
     if (actionId === 'projects.sources.read') {
+      await shared.readGate;
       const source = shared.sources.find(
         (row: any) => row.id === input.sourceId,
       );
-      return {
-        ok: true,
-        result: source
+      return source
           ? { ok: true, source, canManage: true }
-          : { ok: false, error: 'source_unavailable' },
-      };
+          : { ok: false, error: 'source_unavailable' };
     }
     if (actionId === 'scm.hostingRepository.resolveAddress')
       return {
-        ok: true,
-        result: {
           success: true,
           kind: 'resolved',
           selector: {
@@ -74,10 +75,7 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
             repository: { nameWithOwner: 'acme/billing' },
             protocol: 'https',
           },
-        },
       };
-    if (actionId === 'projects.sources.create' && shared.createOutcomes.shift() === 'unknown')
-      return { ok: false, errorCode: 'outcome_unknown' };
     if (actionId === 'projects.sources.create') {
       // The real create answers the canonical Source row, never the request's idempotency key.
       const { serverId: _serverId, requestKey: _requestKey, ...fields } = input;
@@ -89,19 +87,42 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
         ...fields,
       };
       shared.sources = [...shared.sources, source];
-      return { ok: true, result: { ok: true, source, canManage: true } };
+      return { ok: true, source, canManage: true };
     }
     if (actionId === 'projects.sources.delete') {
       shared.sources = shared.sources.filter((row: any) => row.id !== input.sourceId);
-      return { ok: true, result: { ok: true, sourceId: input.sourceId, revision: input.expectedRevision + 1 } };
+      return { ok: true, sourceId: input.sourceId, revision: input.expectedRevision + 1 };
     }
-    return { ok: true, result: {} };
-  },
-}));
+    throw new Error(`Unexpected Source host request: ${actionId}`);
+  };
+  const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+    isActionApprovalRequired: () => false,
+    projectSourcesList: async input => schemas.ProjectSourcesListOutputV1Schema.parse(await respond('projects.sources.list', input)),
+    projectSourcesRead: async input => schemas.ProjectSourcesReadOutputV1Schema.parse(await respond('projects.sources.read', input)),
+    projectSourcesCreate: async input => {
+      if (shared.createOutcomes.shift() === 'unknown') {
+        shared.calls.push({ actionId: 'projects.sources.create', input });
+        return { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' };
+      }
+      return schemas.ProjectSourcesCreateOutputV1Schema.parse(await respond('projects.sources.create', input));
+    },
+    projectSourcesDelete: async input => schemas.ProjectSourcesDeleteOutputV1Schema.parse(await respond('projects.sources.delete', input)),
+    scmActionExecute: ({ actionId, input }) => respond(actionId, input),
+  }));
+  const frontDoor = createFrontDoorActionExecuteForVitest(original);
+  // Substitute the external host ports even when the hook supplies its default host executor.
+  // Both public factories still run their real front-door implementation.
+  return { ...original,
+    createFrontDoorActionExecute: () => frontDoor(executor),
+    createFrontDoorUiActionExecutor: (_injected?: Parameters<typeof original.createFrontDoorUiActionExecutor>[0],
+      scope?: Parameters<typeof original.createFrontDoorUiActionExecutor>[1]) => original.createFrontDoorUiActionExecutor(executor, scope),
+  };
+});
 
+const routerSpies = vi.hoisted(() => ({ back: undefined as undefined | { mockClear(): void; mock: { calls: unknown[][] } } }));
 vi.mock('expo-router', async () => {
   const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-  return createExpoRouterMock({
+  const mock = createExpoRouterMock({
     params: () => shared.routes.params,
     router: {
       push: (value: unknown) => {
@@ -111,7 +132,9 @@ vi.mock('expo-router', async () => {
         shared.navigation.push(value);
       },
     },
-  }).module;
+  });
+  routerSpies.back = mock.spies.back;
+  return mock.module;
 });
 
 vi.mock('@/modal', async () => {
@@ -122,6 +145,17 @@ vi.mock('@/modal', async () => {
 vi.mock('@/text', async () => {
   const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
   return createTextModuleMock({ translate: (key: string) => key });
+});
+
+// Window size is an environment adapter; the page, its header and its Back are production code.
+const viewport = vi.hoisted(() => ({ compact: false }));
+vi.mock('@/utils/platform/useViewportClass', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/utils/platform/useViewportClass')>();
+  return {
+    ...actual,
+    useViewportClass: (...args: Parameters<typeof actual.useViewportClass>) =>
+      viewport.compact ? 'compact' : actual.useViewportClass(...args),
+  };
 });
 
 const { ProjectSourcesScreen } = await import('./ProjectSourcesScreen');
@@ -139,7 +173,9 @@ afterEach(() => {
   shared.navigation = [];
   shared.routes.params = {};
   shared.createOutcomes = [];
+  shared.readGate = null;
   shared.confirm.mockClear();
+  viewport.compact = false;
 });
 
 function signIn() {
@@ -156,6 +192,54 @@ function signIn() {
 }
 
 describe('Projects › Sources', () => {
+  it('displays a repository-less Source and omits its repository Open action', async () => {
+    signIn();
+    shared.routes.params = { source: 'stored-source' };
+    shared.sources = [{ id: 'stored-source', revision: 1, name: 'Production', audience: [], createdByAccountId: 'account-1' }];
+    const screen = await renderScreen(<ProjectSourcesScreen />);
+    await vi.waitFor(() => expect(screen.findByTestId('projects.sources.detail.header')).not.toBeNull());
+    expect(screen.getTextContent()).toContain('Production');
+    expect(screen.findByTestId('projects.sources.detail.open')).toBeNull();
+    expect(shared.navigation).toEqual([]);
+  });
+
+  it('draws Back in the Source page header only where the detail stands alone, and Back leaves it', async () => {
+    signIn();
+    shared.routes.params = { source: 'stored-source' };
+    shared.sources = [{ id: 'stored-source', revision: 1, name: 'Production', audience: [], createdByAccountId: 'account-1' }];
+    const screen = await renderScreen(<ProjectSourcesScreen />);
+    await vi.waitFor(() => expect(screen.findByTestId('projects.sources.detail.header')).not.toBeNull());
+    const layout = screen.findHostByTestId('projects.sources.layout')!;
+    // Beside the list the rail is the way out.
+    await act(async () => layout.props.onLayout({ nativeEvent: { layout: { width: 1200, height: 800 } } }));
+    expect(screen.findByTestId('projects.sources.detail.back')).toBeNull();
+    // Alone (a phone), the page header's own Back returns to the list; the hosted web page has no native header.
+    await act(async () => layout.props.onLayout({ nativeEvent: { layout: { width: 390, height: 800 } } }));
+    routerSpies.back!.mockClear();
+    await act(async () => screen.pressByTestId('projects.sources.detail.back'));
+    expect(routerSpies.back!.mock.calls).toHaveLength(1);
+  });
+
+  it.each(['loading', 'unavailable'] as const)('gives the stacked %s Source detail the same Back, and Back leaves it', async (state) => {
+    signIn();
+    shared.routes.params = { source: 'gone' };
+    shared.sources = [{ id: 'stored-source', revision: 1, name: 'Production', audience: [], createdByAccountId: 'account-1' }];
+    let release = () => {};
+    if (state === 'loading') shared.readGate = new Promise<void>((resolve) => { release = resolve; });
+    const screen = await renderScreen(<ProjectSourcesScreen />);
+    await vi.waitFor(() => expect(screen.findHostByTestId('projects.sources.layout')).not.toBeNull());
+    const layout = screen.findHostByTestId('projects.sources.layout')!;
+    await act(async () => layout.props.onLayout({ nativeEvent: { layout: { width: 390, height: 800 } } }));
+    await vi.waitFor(() => expect(screen.findByTestId(`projects.sources.detail.${state}`)).not.toBeNull());
+    routerSpies.back!.mockClear();
+    await act(async () => screen.pressByTestId('projects.sources.detail.back'));
+    expect(routerSpies.back!.mock.calls).toHaveLength(1);
+    // Beside the list the rail is the way out, so no Back is added to the state.
+    await act(async () => layout.props.onLayout({ nativeEvent: { layout: { width: 1200, height: 800 } } }));
+    expect(screen.findByTestId('projects.sources.detail.back')).toBeNull();
+    release();
+  });
+
   it('restores the device-local Sources rail width without changing another collection', async () => {
     signIn();
     shared.routes.params = { source: 'new' };
@@ -207,6 +291,25 @@ describe('Projects › Sources', () => {
       screen.pressByTestId('projects.sources.empty.add');
     });
     expect(shared.navigation).toContainEqual('/projects/sources?source=new');
+  });
+
+  it('gives the empty catalog the Sources page header and Back on a phone', async () => {
+    signIn();
+    viewport.compact = true;
+    const screen = await renderScreen(<ProjectSourcesScreen />);
+    await vi.waitFor(() => expect(screen.findByTestId('projects.sources.empty')).toBeTruthy());
+    expect(screen.findByTestId('projects.sources.header')).not.toBeNull();
+    routerSpies.back!.mockClear();
+    await act(async () => screen.pressByTestId('projects.sources.back'));
+    expect(routerSpies.back!.mock.calls).toHaveLength(1);
+  });
+
+  it('leaves the empty catalog headerless beside the app shell', async () => {
+    signIn();
+    const screen = await renderScreen(<ProjectSourcesScreen />);
+    await vi.waitFor(() => expect(screen.findByTestId('projects.sources.empty')).toBeTruthy());
+    expect(screen.findByTestId('projects.sources.header')).toBeNull();
+    expect(screen.findByTestId('projects.sources.back')).toBeNull();
   });
 
   it('saves a new Source from a typed address through the one create Action and selects it', async () => {
@@ -360,16 +463,11 @@ describe('Projects › Sources', () => {
     // The outermost match is the row itself (its title/subtitle props); findByTestId prefers the pressable host.
     const local = screen.findAllByTestId('projects.sources.dashboard.server-1:dash')[0]!;
     const foreign = screen.findAllByTestId('projects.sources.dashboard.server-2:dash')[0]!;
-    expect(local.props.title).toBe('Local release');
+    await vi.waitFor(() => expect(screen.findAllByTestId('projects.sources.dashboard.server-1:dash')[0]!.props.title)
+      .toBe('projects.sources.dashboardUnavailableTitle'));
     expect(foreign.props.title).not.toBe('Local release');
     expect(foreign.props.subtitle).toBe('projects.sources.dashboardOtherHome');
-    await act(async () => screen.pressByTestId('projects.sources.dashboard.server-1:dash'));
-    const href = shared.navigation.at(-1);
-    expect(typeof href).toBe('string');
-    const url = new URL(String(href), 'https://happier.test');
-    expect(url.pathname).toBe('/projects/checkout-1/overview');
-    expect(Object.fromEntries(url.searchParams)).toMatchObject({ serverId: 'server-1',
-      dashboardSourceId: 'source-1', dashboardArtifactId: 'dash' });
+    expect(local.props.onPress).toBeUndefined();
     expect(foreign.props.onPress).toBeUndefined();
   });
   it('names each checkout\'s Machine through the machine-name owner, never its raw id', async () => {
@@ -431,14 +529,29 @@ describe('Projects › Sources', () => {
     await vi.waitFor(() => expect(select()!.props.selectedId).toBe('ref:develop'));
     expect(screen.findByTestId('projects.sources.detail.save')).toBeTruthy();
   });
-  it('opens the independently admitted foreign dashboard and retains its Home in the exact checkout route', async () => {
+  it.each([{ foreign: true, bound: true }, { foreign: false, bound: true }, { foreign: true, bound: false }])
+  ('opens an independently admitted dashboard directly or through retained Source Open (%j)', async ({ foreign, bound }) => {
+    const releaseFirstRead = createDeferred<void>();
+    const documentReads: AbortSignal[] = [];
+    const projectRows = createPlainProjectAccountRowListFixture({ workspaceRefs: [{ id: 'foreign-checkout',
+      serverId: 'srv_source_dashboards', machineId: 'machine', rootPath: '/repo', createdAtMs: 1,
+      projectKey: 'personal-project', ...(bound ? { source: { sourceId: 'foreign-source', revision: 1 } } : {}) }] });
     const homes = await serveAccountHomes({ homes: [
       { key: 'foreign', serverUrl: 'https://rf10-source-foreign.example', accountId: 'foreign-viewer' },
-      { key: 'source', serverUrl: 'https://rf10-source-local.example', accountId: 'source-viewer' },
-    ], route: request => request.home === 'foreign' ? document.request(request.url, { method: request.method, headers: request.headers }) : undefined });
+      { key: 'source', serverUrl: 'https://rf10-source-local.example', accountId: 'source-viewer', serverIdentityId: 'srv_source_dashboards' },
+    ], route: async request => {
+      if (request.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return Response.json(projectRows);
+      if (request.home !== (foreign ? 'foreign' : 'source')) return undefined;
+      const response = await document.request(request.url, { method: request.method, headers: request.headers });
+      if (request.path === `/v1/artifacts/${encodeURIComponent(artifactId)}`) {
+        if (!request.signal) throw new Error('Expected cancellable dashboard read');
+        documentReads.push(request.signal);
+        if (documentReads.length === 1) await releaseFirstRead.promise;
+      }
+      return response;
+    } });
     const serverId = homes.homes.source!.id;
-    const disconnect = await homes.restoreActiveConnection();
-    const foreignHome = homes.homes.foreign!.id;
+    const foreignHome = foreign ? homes.homes.foreign!.id : serverId;
     const surface = { accountId: 'dashboard-owner', serverId: foreignHome, owner: { kind: 'project' as const, projectId: 'owners-project' } };
     const artifactId = buildWidgetSurfaceArtifactIdV1(surface);
     const layout = WidgetAreaLayoutV1Schema.parse({ v: 1, surface, name: 'Foreign release', items: [] });
@@ -450,7 +563,7 @@ describe('Projects › Sources', () => {
       createdByAccountId: 'dashboard-owner', createdAt: 1, display: { name: 'Studio' } }]);
     storage.setState({ projectAccountRows: createProjectAccountRowsFixture({ serverId, accountId: 'source-viewer' }, {
       workspaceRefs: [{ id: 'foreign-checkout', serverId, machineId: 'machine', rootPath: '/repo', createdAtMs: 1,
-        projectKey: 'personal-project', source: { sourceId: 'foreign-source', revision: 1 } }],
+        projectKey: 'personal-project', ...(bound ? { source: { sourceId: 'foreign-source', revision: 1 } } : {}) }],
     }), artifacts: { [artifactId]: { id: artifactId, title: 'Local release', isDecrypted: true, access: 'edit',
       headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } } });
     shared.sources = [{ id: 'foreign-source', revision: 1, name: 'Repository', audience: [], createdByAccountId: 'source-owner',
@@ -461,17 +574,71 @@ describe('Projects › Sources', () => {
     try {
       const screen = await renderScreen(<ProjectSourcesScreen />);
       const rowId = `projects.sources.dashboard.${foreignHome}:${artifactId}`;
+      await vi.waitFor(() => expect(documentReads).toHaveLength(1));
+      for (let index = 0; index < 3; index++) {
+        await act(async () => publishHomeAccountChange(foreignHome, [`unrelated-pending-${index}`], {
+          changeKinds: ['artifact'], feedPageConsumed: true,
+        }));
+        await flushHookEffects();
+        expect(documentReads[0]!.aborted).toBe(false);
+        expect(documentReads).toHaveLength(1);
+      }
+      releaseFirstRead.resolve();
       await vi.waitFor(() => expect(screen.findAllByTestId(rowId)[0]?.props.title).toBe('Foreign release'));
       // Both Homes render the Artifact's admitted audience, independently of this Home's people cache.
       await vi.waitFor(() => expect(String(screen.findAllByTestId(rowId)[0]?.props.subtitle))
-        .toMatch(foreign ? /^Studio: shareSheet\.documents\.levels\.canRead$/
-          : /\S+ · Studio: shareSheet\.documents\.levels\.canRead$/));
-      expect(screen.findAllByTestId(rowId)[0]?.props.onPress).toBeTypeOf('function');
+        .toMatch(foreign ? /^Studio shareSheet\.documents\.levels\.canRead$/
+          : /\S+ · Studio shareSheet\.documents\.levels\.canRead$/));
+      await vi.waitFor(() => expect(screen.findAllByTestId(rowId)[0]?.props.onPress).toBeTypeOf('function'));
+      const { Modal } = await import('@/modal');
+      vi.mocked(Modal.show).mockClear();
       await act(async () => screen.pressByTestId(rowId));
-      const url = new URL(String(shared.navigation.at(-1)), 'https://happier.test');
-      expect(url.pathname).toBe('/projects/foreign-checkout/overview');
-      expect(Object.fromEntries(url.searchParams)).toMatchObject({ serverId, dashboardSourceId: 'foreign-source',
-        dashboardArtifactId: artifactId, dashboardServerId: foreignHome });
+      if (!bound) {
+        await vi.waitFor(() => expect(Modal.show).toHaveBeenCalledOnce());
+        const shown = vi.mocked(Modal.show).mock.calls[0]![0];
+        expect(shown.chrome?.testID).toBe('projects.open.dialog');
+        const routeParams = (shown.props as { routeParams: Record<string, string> }).routeParams;
+        expect(routeParams).toMatchObject({ serverId, draftId: expect.any(String), dashboardSourceId: 'foreign-source',
+          dashboardArtifactId: artifactId, dashboardServerId: foreignHome });
+        const { getSessionDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        expect(getSessionDraftSnapshot({ serverId, accountId: 'source-viewer' }, { kind: 'projectOpen', draftId: routeParams.draftId! })?.document)
+          .toMatchObject({ selection: { value: { source: { kind: 'source', id: 'foreign-source' } } } });
+        expect(shared.navigation).toEqual([]);
+        expect(shared.calls.some(call => call.actionId === 'projects.open')).toBe(false);
+        expect(storage.getState().projectAccountRows.workspaceRefs[0]?.source).toBeUndefined();
+      } else {
+        const url = new URL(String(shared.navigation.at(-1)), 'https://happier.test');
+        expect(url.pathname).toBe('/projects/foreign-checkout/overview');
+        expect(Object.fromEntries(url.searchParams)).toMatchObject({ serverId, dashboardSourceId: 'foreign-source',
+          dashboardArtifactId: artifactId, dashboardServerId: foreignHome });
+        expect(Modal.show).not.toHaveBeenCalled();
+      }
+      for (let index = 0; index < 3; index++) {
+        await act(async () => publishHomeAccountChange(foreignHome, [`unrelated-settled-${index}`], {
+          changeKinds: ['artifact'], feedPageConsumed: true,
+        }));
+        await flushHookEffects();
+        expect(documentReads).toHaveLength(1);
+      }
+      const wakes = [
+        () => publishHomeAccountChange(foreignHome, [artifactId], { changeKinds: ['artifact'], feedPageConsumed: true }),
+        () => publishHomeAccountChange(foreignHome),
+        () => publishHomeAccountChange(foreignHome, undefined, { source: 'connected' }),
+        // Admission widens unknown domain facts; supplied unrelated IDs cannot narrow this wake.
+        () => publishHomeAccountChange(foreignHome, ['unknown-resource'], { source: 'socket', changeKinds: [] }),
+        () => publishHomeAccountChange(foreignHome, ['mixed-resource'], { changeKinds: ['artifact', 'account'], feedPageConsumed: true }),
+      ];
+      for (const [index, wake] of wakes.entries()) {
+        await act(async () => wake());
+        await vi.waitFor(() => expect(documentReads).toHaveLength(index + 2));
+        await flushHookEffects();
+        expect(screen.findAllByTestId(rowId)[0]?.props.onPress).toBeTypeOf('function');
+      }
+      if (foreign) {
+        await act(async () => homes.switchAccount('foreign', 'replacement-dashboard-viewer'));
+        await vi.waitFor(() => expect(documentReads).toHaveLength(7));
+        await vi.waitFor(() => expect(screen.findAllByTestId(rowId)[0]?.props.onPress).toBeTypeOf('function'));
+      }
       document.setCallerAccess(null);
       await act(async () => publishHomeAccountChange(foreignHome, [artifactId], { changeKinds: ['artifact'] }));
       await vi.waitFor(() => expect(screen.findAllByTestId(rowId)[0]?.props.onPress).toBeUndefined());
@@ -489,6 +656,6 @@ describe('Projects › Sources', () => {
       expect(grantReads.slice(0, 6).every(request => request.accountId === (foreign ? 'foreign-viewer' : 'source-viewer'))).toBe(true);
       expect(grantReads.slice(6).every(request => request.accountId === (foreign ? 'replacement-dashboard-viewer' : 'source-viewer'))).toBe(true);
       expect(contentReads.length + grantReads.length).toBe(reads.length);
-    } finally { await disconnect(); await homes.dispose(); }
+    } finally { releaseFirstRead.resolve(); await homes.dispose(); }
   });
 });

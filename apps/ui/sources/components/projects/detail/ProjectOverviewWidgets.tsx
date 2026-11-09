@@ -118,9 +118,15 @@ export function ProjectOverviewDocument(props: Readonly<{
     const dashboardFacts = layout.state.status === 'ready' && layout.state.isShared ? layout.state.dashboard ?? null : null;
     const dashboardOwner = useProjectDashboardOwner(layout.state.status === 'ready' ? layout.state.surface.serverId : '',
         dashboardFacts?.ownerAccountId ?? null);
+    // The owner's own shared dashboard is theirs: "You · Shared" (lab D_SHARED), never their own name with
+    // another person's access level. Everyone else reads whose it is and the access they act under.
+    const ownDashboard = dashboardFacts?.access === 'owner';
     const identity = dashboardFacts
-        ? <ProjectDashboardIdentityLine owner={dashboardOwner ?? { accountId: dashboardFacts.ownerAccountId }} title={dashboardFacts.name}
-            detail={t(dashboardFacts.access === 'view' ? 'shareSheet.documents.levels.canRead' : 'shareSheet.documents.levels.canEdit')} />
+        ? <ProjectDashboardIdentityLine title={dashboardFacts.name}
+            owner={ownDashboard ? { accountId: dashboardFacts.ownerAccountId, displayName: t('projects.dashboard.you'), imageUrl: dashboardOwner?.imageUrl ?? null }
+                : dashboardOwner ?? { accountId: dashboardFacts.ownerAccountId }}
+            detail={ownDashboard ? t('projects.dashboard.sharedLine') : t(dashboardFacts.access === 'view' ? 'shareSheet.documents.levels.canRead'
+                : dashboardFacts.access === 'admin' ? 'shareSheet.documents.levels.admin' : 'shareSheet.documents.levels.canEdit')} />
         // An edited preset says so once, with Reset to preset (lab wgsaved R).
         : preset?.isEdited && presetSurface ? <WidgetAreaPresetLine preset={preset} surface={presetSurface} testID="project-overview.preset" /> : null;
     // A viewer who cannot edit has nothing to add or drop into an empty side area, so it draws nothing

@@ -13,6 +13,7 @@ import { presentActionFailureOutcome } from '@/components/tools/shell/approvals/
 import { Text } from '@/components/ui/text/Text';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { keepNamesWhole } from '@/utils/text/keepNamesWhole';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
@@ -32,6 +33,8 @@ import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionE
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 type Choice = 'remove' | 'detach';
+/** Compose prefixes a volume with Happier's project id; the person's name for it is what follows. The exact name stays in the delete confirmation. */
+const volumeDisplayName = (name: string) => name.replace(/^happier-[0-9a-f]+_/, '');
 const NO_REVIEW: DeploymentReviewHandle = { pendingId: null, request: () => {}, open: () => {} };
 const PRESENTED = { mounted: true, visible: true, focused: true } as const;
 
@@ -48,6 +51,8 @@ export type DeploymentDispositionSheetInput = Readonly<{
   machine: string | null;
   /** Something Happier deployed is running there now. */
   running: boolean;
+  /** The services a removal stops, by Compose name; empty when not known. */
+  services?: readonly string[];
   /** A retained target association can be detached even without an active deployment. */
   hasRetainedAssociations?: boolean;
   /**
@@ -178,6 +183,12 @@ function DeploymentDispositionSheet(
   });
   React.useEffect(() => () => setChrome?.(null), [setChrome]);
 
+  // A removal says what stops in one line: its services, then the addresses that go with them.
+  const domainNames = domains.result.items.map(item => item.content.hostname);
+  const stopsValue = joinHappierFacts(
+    props.services?.length ? props.services.join(', ') : null,
+    domainNames.length > 0 ? t('projects.deployments.factStopsDomains', { domains: domainNames.join(', ') }) : null,
+  );
   const facts: Array<Readonly<{ key: string; label: string; value: string }>> =
     choice === 'detach'
       ? [
@@ -208,11 +219,16 @@ function DeploymentDispositionSheet(
           },
         ]
       : [
-          // Volumes are named only where something ran: a never-deployed environment has none.
+          // What a removal stops and frees (lab `teardown/remove`), only where something ran.
+          ...(props.running && stopsValue ? [{
+            key: 'stops',
+            label: t('projects.deployments.factStops'),
+            value: stopsValue,
+          }] : []),
           ...(props.running ? [{
-            key: 'data',
-            label: t('projects.deployments.factData'),
-            value: t('projects.deployments.factDataValue'),
+            key: 'frees',
+            label: t('projects.deployments.factFrees'),
+            value: t('projects.deployments.factFreesValue', { machine }),
           }] : []),
           {
             key: 'keeps',
@@ -276,7 +292,8 @@ function DeploymentDispositionSheet(
           ]}
         />
       ) : null}
-      {choice === 'remove' && props.reviewVolumes ? <ItemGroup title={t('projects.deployments.factData')}>
+      {choice === 'remove' && props.reviewVolumes ? <ItemGroup title={t('projects.deployments.factData')}
+        description={t('projects.deployments.factDataValue')}>
         {volumeReview === null ? <SurfaceStateCard size="line" kind={volumeError ? 'error' : 'loading'}
           testID={volumeError ? 'project-deployments.disposition.volumes.error' : undefined}
           title={volumeError ? t('projects.deployments.volumeReviewError') : t('projects.deployments.loading')}
@@ -288,7 +305,7 @@ function DeploymentDispositionSheet(
         {volumeReview?.length === 0 ? <Item testID="project-deployments.disposition.volumes.empty"
           title={t('projects.deployments.noDataToKeep')} mode="info" /> : null}
         {volumeReview?.map(volume => <React.Fragment key={volume.name}>
-          <SegmentedChoiceItem title={volume.name} disabled={busy}
+          <SegmentedChoiceItem title={volumeDisplayName(volume.name)} disabled={busy}
             testIDPrefix={`project-deployments.disposition.volume.${volume.name}`}
             value={volumeChoices[volume.name] ?? 'keep'}
             options={[{ id: 'keep', label: t('common.keep') }, { id: 'delete', label: t('common.delete') }]}
@@ -317,9 +334,6 @@ function DeploymentDispositionSheet(
           ))}
         </ItemGroup>
       {domainInput ? <ItemGroup testID="project-deployments.disposition.domains" header="none">
-        {domains.result.items.length > 0 ? <Item mode="info" title={t('projects.deployments.tabDomains')}
-          subtitle={t('projects.deployments.deleteDomains', { domains: domains.result.items.map(item => item.content.hostname).join(', ') })}
-          subtitleLines={0} /> : null}
         {domains.result.status === 'empty' ? null : <DeploymentTabState result={domains.result}
           testID="project-deployments.disposition.domains" errorTitle={t('projects.deployments.domainsErrorTitle')}
           emptyTitle={t('projects.deployments.domainsEmpty')} />}

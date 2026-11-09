@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { normalizeWorkspaceRootPathV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import type { ProjectDefinitionInspectRead } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
@@ -26,22 +27,30 @@ export function projectDefinitionInspectionKey(workspace: WorkspaceAddressV1): s
 
 type InspectionStore = SharedSubscriptionStore<WorkspaceAddressV1, ProjectDefinitionInspectionRead | null,
     ProjectDefinitionInspectionRead | null, typeof createProjectManifestActionClient>;
-type InspectionReader = Readonly<{ workspace: WorkspaceAddressV1; store: InspectionStore; bindings: Map<() => void, ServerCredentialAccountScopeBinding> }>;
+type InspectionReader = Readonly<{ workspace: WorkspaceAddressV1; store: InspectionStore; retained: boolean;
+    bindings: Map<() => void, ServerCredentialAccountScopeBinding>; release(): void }>;
 
 // Hook bindings have distinct object lifetimes. Share only their exact credential-backed
-// display identity; every read still requires a live binding. Credential mutation evicts it.
+// display identity while demanded; the last consumer or credential mutation evicts it.
+// The Scripts list is the exception: its narrow read (names and files, no author document or
+// per-row resolution) belongs to the Account, not its bearer. It stays as the last-good list
+// until that Account leaves the Home, and a revisit revalidates it by revision so an unchanged
+// checkout resends no body.
+const retainsLastGood = (read: ProjectDefinitionInspectRead) => read.kind === 'scripts';
 const readers = new Map<string, InspectionReader>();
 const unqualifiedReaders = new WeakMap<ServerCredentialAccountScopeBinding, Map<string, InspectionReader>>();
-subscribeHomeCredentialChange(event => {
+subscribeHomeCredentialChange((event, { accountLeft }) => {
     for (const [key, reader] of readers) {
         if (!areServerProfileIdentifiersEquivalent(event.serverId, reader.workspace.serverId)) continue;
+        if (reader.retained && !accountLeft) continue;
         reader.store.publish(reader.workspace, null);
         reader.store.reset();
         readers.delete(key);
     }
 });
 
-function createInspectionStore(currentBinding: () => ServerCredentialAccountScopeBinding | undefined): InspectionStore {
+function createInspectionStore(read: ProjectDefinitionInspectRead, currentBinding: () => ServerCredentialAccountScopeBinding | undefined): InspectionStore {
+    const retained = retainsLastGood(read);
     const store: InspectionStore = createSharedSubscriptionStore<WorkspaceAddressV1, ProjectDefinitionInspectionRead | null,
         ProjectDefinitionInspectionRead | null, typeof createProjectManifestActionClient>({
         emptyState: null,
@@ -49,14 +58,22 @@ function createInspectionStore(currentBinding: () => ServerCredentialAccountScop
         normalizeInput: input => input,
         storeKey: projectDefinitionInspectionKey,
         defaultSnapshotClient: createProjectManifestActionClient,
-        retainState: true,
+        retainState: retained,
         beginRefresh: state => state && 'value' in state ? { ...state, refreshing: true } : state,
         refresh: async ({ input, snapshotClient, signal }) => {
             const binding = currentBinding();
             if (!binding) return null;
-            const value = await snapshotClient({ workspace: input, expectedAccountId: binding.accountId, signal }).inspect();
+            const client = snapshotClient({ workspace: input, expectedAccountId: binding.accountId, signal });
+            const shown = retained ? store.getState(input) : null;
+            const held = shown && 'value' in shown ? shown.value : undefined;
+            const reply = held?.revision ? await client.revalidate(read, held.revision) : await client.inspect(read);
             return current => {
                 if (!binding.isCurrent() && !currentBinding()) return null;
+                if ('unchanged' in reply) {
+                    const value = current && 'value' in current ? current.value : held;
+                    return value ? { key: projectDefinitionInspectionKey(input), value, refreshing: false } : current;
+                }
+                const value = reply;
                 let facts = value;
                 if (current && 'value' in current) {
                     if (sameStrictJsonValue(current.value, value)) facts = current.value;
@@ -77,26 +94,21 @@ function createInspectionStore(currentBinding: () => ServerCredentialAccountScop
             const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
                 ? error.code : 'project_definition_inspection_failed';
             // Machine/root/content refusals withdraw the inspection even while Account
-            // credentials remain current. Transport failures retain display facts only.
+            // credentials remain current. A transport failure keeps the last-good facts at full
+            // strength with its error as the freshness line; a Run is still admitted at invocation.
             if (!state || !('value' in state) || ['permission_denied', 'not_authenticated',
                 'access_denied', 'admission_unavailable', 'content_unavailable'].includes(code)) {
                 return { key: projectDefinitionInspectionKey(input), error: code };
             }
-            const { setupReadiness: _readiness, setupConsent: _consent, ...value } = state.value;
-            return { ...state, value, refreshing: false, error: code };
+            return { ...state, refreshing: false, error: code };
         },
         applySnapshot: (_state, snapshot) => snapshot,
         subscribeRecovery: (input, refresh) => {
+            // Only these presented reads consume setup readiness from Project operation changes.
+            if (!['scripts', 'overview', 'rail', 'services', 'setup'].includes(read.kind)) return () => {};
             const current = input;
             const binding = currentBinding()!;
             const accountId = binding.accountId;
-            // Hidden time was not observed. Retain the definition for continuity, but re-read
-            // setup authority on new demand. Explicit refresh while observed keeps its basis.
-            const retained = store.getState(input);
-            if (retained && 'value' in retained) {
-                const { setupReadiness: _readiness, setupConsent: _consent, ...value } = retained.value;
-                store.publish(input, { key: retained.key, value, refreshing: true });
-            }
             const root = normalizeWorkspaceRootPathV1(current.rootPath);
             const serverId = binding.serverId;
             const machineKey = actionOperationMachineAddressKey({ serverId, machineId: current.machineId });
@@ -141,47 +153,76 @@ function createInspectionStore(currentBinding: () => ServerCredentialAccountScop
     return store;
 }
 
-function inspectionReader(workspace: WorkspaceAddressV1, binding: ServerCredentialAccountScopeBinding): InspectionReader {
+function inspectionReader(workspace: WorkspaceAddressV1, binding: ServerCredentialAccountScopeBinding, read: ProjectDefinitionInspectRead,
+    create: boolean): InspectionReader | undefined {
     const workspaceKey = projectDefinitionInspectionKey(workspace);
-    const key = binding.credentialKey ? JSON.stringify([binding.serverId, binding.accountId, binding.credentialKey, workspaceKey]) : null;
+    const selectionKey = JSON.stringify([workspaceKey, read]);
+    const retained = retainsLastGood(read);
+    // A retained list belongs to the Account; others to the exact bearer that read them.
+    const key = binding.credentialKey
+        ? JSON.stringify([binding.serverId, binding.accountId, retained ? null : binding.credentialKey, selectionKey]) : null;
     let unqualified = unqualifiedReaders.get(binding);
-    let reader = key ? readers.get(key) : unqualified?.get(workspaceKey);
-    if (!reader) {
+    let reader = key ? readers.get(key) : unqualified?.get(selectionKey);
+    if (!reader && create) {
         const bindings = new Map<() => void, ServerCredentialAccountScopeBinding>();
-        reader = { workspace, bindings, store: createInspectionStore(() => [...bindings.values()].find(current => current.isCurrent())) };
+        const created: InspectionReader = { workspace, bindings, retained,
+            store: createInspectionStore(read, () => [...bindings.values()].find(current => current.isCurrent())),
+            release() {
+                if (bindings.size > 0 || retained) return;
+                if (key) { if (readers.get(key) === created) readers.delete(key); }
+                else if (unqualified?.get(selectionKey) === created) unqualified.delete(selectionKey);
+            } };
+        reader = created;
         if (key) readers.set(key, reader);
         else {
             if (!unqualified) { unqualified = new Map(); unqualifiedReaders.set(binding, unqualified); }
-            unqualified.set(workspaceKey, reader);
+            unqualified.set(selectionKey, reader);
         }
     }
     return reader;
 }
 
-/** One demand-owned inspection per exact checkout and credential scope; nothing here executes. */
-export function useProjectDefinitionInspection(workspace: WorkspaceAddressV1 | null, binding: ServerCredentialAccountScopeBinding | null): Readonly<{
+/** One demand-owned inspection per exact checkout, read selection and credential scope; nothing here executes. */
+export function useProjectDefinitionInspection(workspace: WorkspaceAddressV1 | null, binding: ServerCredentialAccountScopeBinding | null,
+    selection: ProjectDefinitionInspectRead = { kind: 'scripts' }): Readonly<{
     read: ProjectDefinitionInspectionRead | null;
     retry: () => void;
 }> {
     const presented = useLayoutPresentationActive();
     const key = workspace ? projectDefinitionInspectionKey(workspace) : null;
+    const selectionKey = JSON.stringify(selection);
     // The semantic checkout key owns demand, not a caller's freshly allocated address object.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    const reader = React.useMemo(() => workspace && binding ? inspectionReader(workspace, binding) : null, [binding, key]);
+    const lookupReader = React.useCallback((create: boolean) => workspace && binding
+        ? inspectionReader(workspace, binding, selection, create) : undefined, [binding, key, selectionKey]);
     const subscribe = React.useCallback((listener: () => void) => {
-        if (!presented || !binding?.isCurrent() || !reader) return () => {};
+        if (!presented || !binding?.isCurrent()) return () => {};
+        const reader = lookupReader(true);
+        if (!reader) return () => {};
         reader.bindings.set(listener, binding);
         const dispose = reader.store.subscribe(reader.workspace, listener);
-        const retirement = binding.onRetire(() => {
+        let released = false;
+        const release = () => {
+            if (released) return;
+            released = true;
             reader.bindings.delete(listener);
-            // A hook unmount retires its binding too. Withdraw this consumer's
-            // authority without erasing display facts for a later qualified reader.
+            dispose();
+            reader.release();
+        };
+        const retirement = binding.onRetire(() => {
+            release();
             listener();
         });
-        return () => { retirement.dispose(); reader.bindings.delete(listener); dispose(); };
-    }, [binding, presented, reader]);
-    const getSnapshot = React.useCallback(() => binding?.isCurrent() && reader ? reader.store.getState(reader.workspace) : null, [binding, reader]);
+        return () => { retirement.dispose(); release(); };
+    }, [binding, presented, lookupReader]);
+    const getSnapshot = React.useCallback(() => {
+        const reader = presented && binding?.isCurrent() ? lookupReader(false) : undefined;
+        return reader ? reader.store.getState(reader.workspace) : null;
+    }, [binding, presented, lookupReader]);
     const read = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-    const retry = React.useCallback(() => { if (binding?.isCurrent() && reader) reader.store.invalidate(reader.workspace); }, [binding, reader]);
+    const retry = React.useCallback(() => {
+        const reader = presented && binding?.isCurrent() ? lookupReader(false) : undefined;
+        if (reader) reader.store.invalidate(reader.workspace);
+    }, [binding, presented, lookupReader]);
     return { read, retry };
 }

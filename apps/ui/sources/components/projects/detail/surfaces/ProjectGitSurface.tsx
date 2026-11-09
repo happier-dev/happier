@@ -8,21 +8,29 @@ import { WorkspaceScmReviewDetailsView, type WorkspaceScmReviewDetailsViewProps 
 import { useScmReviewTabState } from '@/components/sessions/files/comparison/useSessionScmReviewTabState';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { t } from '@/text';
-import { useDestinationParams } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { useDestinationParamsSelector } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { useProjectSessions, useSessionListRowRenderablesForItems, useWorkspaceRefs } from '@/sync/domains/state/storage';
 import { findWorkspaceRefByScope } from '@/sync/domains/workspaces/workspaceRefs';
 import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { projectReviewEvidenceSessions, type ProjectReviewEvidenceSession } from './projectReviewEvidenceSessions';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { SESSION_DETAILS_SCM_REVIEW_TAB_KEY } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
+import { areSnapshotProjectionsEquivalent } from '@/sync/domains/state/structuralSharing';
 
-/** Only the mounted review demands the canonical, separately admitted Project roster. */
+const selectReviewRoute = (params: Readonly<Record<string, string | string[] | undefined>>) => {
+    const details = parseSessionPaneUrlState(params)?.details;
+    return details?.kind === 'scmReview' ? details : null;
+};
+
+/** Only the presented review demands the canonical, separately admitted Project roster; a retained hidden pane does not. */
 function ProjectReviewSurface(props: WorkspaceScmReviewDetailsViewProps) {
     const refs = useWorkspaceRefs();
     const checkout = findWorkspaceRefByScope(refs, props);
     const project = React.useMemo(() => checkout ? projectWorkspaceRefV1(checkout) : null,
         [checkout?.serverId, checkout?.projectKey, checkout?.id]);
-    const roster = useProjectSessions(project);
+    const presented = useLayoutPresentationActive();
+    const roster = useProjectSessions(presented ? project : null);
     const rows = useSessionListRowRenderablesForItems(roster.items);
     const publishedEvidence = React.useRef<readonly ProjectReviewEvidenceSession[] | undefined>(undefined);
     const evidenceSessions = React.useMemo(() => {
@@ -51,8 +59,7 @@ export const ProjectGitSurface = React.memo((props: Readonly<{
         gitTabState: scope?.right.tabState.git,
         reviewTabState: scope?.details.tabState[SESSION_DETAILS_SCM_REVIEW_TAB_KEY],
     }));
-    const params = useDestinationParams<Record<string, string | string[] | undefined>>();
-    const routeResource = parseSessionPaneUrlState(params)?.details;
+    const routeResource = useDestinationParamsSelector(selectReviewRoute, areSnapshotProjectionsEquivalent);
     const { activeGitSubTab, setActiveGitSubTab } = useWorkspaceScmTabState({
         scopeState: { right: { tabState: { git: pane.scopeState.gitTabState } } }, setRightTabState: pane.setRightTabState,
     });
@@ -61,9 +68,13 @@ export const ProjectGitSurface = React.memo((props: Readonly<{
         SESSION_DETAILS_SCM_REVIEW_TAB_KEY, pane.scopeState.reviewTabState);
     const mode = persistedReviewTabState?.projectChangesMode === 'git' ? 'git' : 'review';
     // Review | Git leads the review's own comparison bar (one line of chrome); in Git it heads Git's pane.
-    const modeSwitch = <SegmentedTabBar tabs={[{ id: 'review', label: t('files.toolbar.review') }, { id: 'git', label: t('session.rightPanel.tabs.git') }]}
+    const reviewLabel = t('files.toolbar.review');
+    const gitLabel = t('session.rightPanel.tabs.git');
+    const modeSwitch = React.useMemo(() => <SegmentedTabBar tabs={[{ id: 'review', label: reviewLabel }, { id: 'git', label: gitLabel }]}
         activeTabId={mode} onSelectTab={(next) => setPersistedReviewTabState({ projectChangesMode: next })}
-        testIDPrefix="project-changes-mode" segmentSizing="content" />;
+        testIDPrefix="project-changes-mode" segmentSizing="content" />, [gitLabel, mode, reviewLabel, setPersistedReviewTabState]);
+    const showInGit = React.useCallback(() => { setPersistedReviewTabState({ projectChangesMode: 'git' }); setActiveGitSubTab('commit'); },
+        [setActiveGitSubTab, setPersistedReviewTabState]);
     return (
         <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
             {mode === 'git' ? modeSwitch : null}
@@ -71,7 +82,7 @@ export const ProjectGitSurface = React.memo((props: Readonly<{
                 {...(routeResource?.kind === 'scmReview' ? routeResource : {})}
                 serverId={props.serverId} machineId={props.machineId} rootPath={props.rootPath}
                 onOpenFile={props.onOpenFile} onOpenFilePinned={props.onOpenFilePinned}
-                onShowInGit={() => { setPersistedReviewTabState({ projectChangesMode: 'git' }); setActiveGitSubTab('commit'); }} /> : <WorkspaceRightPanelGitView
+                onShowInGit={showInGit} /> : <WorkspaceRightPanelGitView
             activeSubTabId={activeGitSubTab}
             onActiveSubTabChange={setActiveGitSubTab}
             serverId={props.serverId}

@@ -12,6 +12,7 @@ import { useSessionTerminalActionExecute } from '@/components/sessions/terminal/
 
 export type WorkspaceEmbeddedTerminalPaneProps = Readonly<{
     scopeId: string;
+    presentationId?: string;
     workspaceRefId?: string;
     machineId: string;
     rootPath: string | null;
@@ -31,6 +32,10 @@ export type WorkspaceEmbeddedTerminalPaneProps = Readonly<{
 }>;
 
 export const WorkspaceEmbeddedTerminalPane = React.memo(function WorkspaceEmbeddedTerminalPane(props: WorkspaceEmbeddedTerminalPaneProps) {
+    return <WorkspaceEmbeddedTerminalPaneContent key={props.terminalKey} {...props} />;
+});
+
+const WorkspaceEmbeddedTerminalPaneContent = React.memo(function WorkspaceEmbeddedTerminalPaneContent(props: WorkspaceEmbeddedTerminalPaneProps) {
     const terminalRendererRef = React.useRef<EmbeddedTerminalRendererHandle | null>(null);
     const machine = useMachinePresenceSummary(props.serverId, props.machineId);
     const machineReachable = machine.reachability === 'unknown' ? null : machine.reachability === 'reachable';
@@ -52,6 +57,7 @@ export const WorkspaceEmbeddedTerminalPane = React.memo(function WorkspaceEmbedd
         memberId: props.terminalInstanceId,
     });
     const presentation = useEmbeddedTerminalPresentation({ scopeId: props.scopeId, terminalKey,
+        presentationId: props.presentationId,
         terminalId: props.terminalInstanceId ?? null, available: true, focused: props.focused,
         controller, terminalRef: terminalRendererRef });
     const execute = useSessionTerminalActionExecute(props.scopeId);

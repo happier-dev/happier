@@ -21,7 +21,7 @@ import { FileFindSeedHost } from '@/components/appShell/panes/fileFindSeedHost';
 import { WorkspaceCommitDetailsView } from '@/components/projects/panes/details/views/WorkspaceCommitDetailsView';
 import { WorkspaceScmReviewDetailsView } from '@/components/projects/panes/details/views/WorkspaceScmReviewDetailsView';
 import { createSessionScmReviewDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
-import { readSessionScmReviewTarget } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { readFileTabChanges, readSessionScmReviewTarget } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { WorkspaceScmStashDetailsView } from '@/components/projects/panes/details/views/WorkspaceScmStashDetailsView';
 import { ProjectTerminalSurface } from '@/components/projects/detail/surfaces/ProjectTerminalSurface';
 import { readTerminalDetailsCwd, readTerminalDetailsInstanceId } from '@/components/terminal/terminalDetailsTabModel';
@@ -30,6 +30,7 @@ import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScop
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { PluginUiDestinationRuntimeFormFactorV1 } from '@happier-dev/protocol/plugins/ui';
 import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
+import type { ProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import {
     readWorkspaceSyncConflictDetailsResource,
     WorkspaceSyncConflictDetailsView,
@@ -42,6 +43,7 @@ export type WorkspaceDetailsSurfaceRendererOptions = Readonly<{
     onRevealInFilesTree?: (path: string) => void;
     onOpenChanges?: () => void;
     workspaceRefId: string;
+    projectContext?: ProjectWidgetAreaContextV1;
     workspaceCacheKey: string;
     workspaceScope: WorkspaceScopeBase;
     serverId: string;
@@ -102,7 +104,9 @@ export function createWorkspaceDetailsSurfaceRenderers(
     const pluginDetailsDestinationMount = {
         machineId: options.machineId,
         serverId: options.serverId,
-        projectId: options.workspaceRefId,
+        projectId: options.projectContext ? options.projectContext.target?.checkout?.id : options.workspaceRefId,
+        projectContext: options.projectContext,
+        policyContext: options.projectContext?.policyContext,
         platform: options.platform,
         formFactor: options.formFactor,
         projectionPhase: options.pluginUiProjectionPhase ?? 'unavailable',
@@ -152,6 +156,7 @@ export function createWorkspaceDetailsSurfaceRenderers(
             // local-preview platform (B-RC1 / DV-PLATFORM-CLOSURE).
             platform: resolveBrowserSurfacePlatform(options.platform),
             launchpadRows: options.launchpadRows,
+            localServiceTargets: options.localServiceTargets,
             launchpadRefreshStatus: options.launchpadRefreshStatus,
             launchpadRefreshError: options.launchpadRefreshError,
             onRefreshLaunchpad: options.onRefreshLaunchpad,
@@ -182,6 +187,7 @@ export function createWorkspaceDetailsSurfaceRenderers(
                         targetKind="project"
                         filePath={filePath}
                         initialView={readWorkspaceFileLinkView(input.tab.resource)}
+                        initialChanges={readFileTabChanges(input.tab.resource)}
                         deepLinkAnchor={readFileTargetAnchorResource(input.tab.resource)}
                         presentation={options.presentation}
                         sessionIdForAugmentation={options.sessionIdForAugmentation ?? null}
@@ -285,6 +291,7 @@ export function createWorkspaceDetailsSurfaceRenderers(
                         rootPath={readTerminalDetailsCwd(input.tab.resource) ?? options.activeRootPath}
                         serverId={options.serverId}
                         terminalInstanceId={terminalInstanceId}
+                        presentation="details"
                         workspace={options.terminalWorkspace}
                     />
                 );

@@ -20,16 +20,22 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
+import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
+import { useViewportClass } from '@/utils/platform/useViewportClass';
+import { usePageBackControl } from '@/components/ui/layout/usePageBackControl';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { useOpenProject } from '../useOpenProject';
 import { ProjectSourceDetail } from './ProjectSourceDetail';
+import { ProjectSourcesBackHeader } from './ProjectSourcesBackHeader';
 import { ProjectSourcesRail, groupProjectSources } from './ProjectSourcesRail';
 import { useProjectSources } from './useProjectSources';
 import { buildProjectSourceOpenRoute, readProjectOpenRouteDraft } from '../activation/projectOpenRoute';
 import { seedAndOpenProjectDraft } from '../activation/projectOpenDraftSeed';
 import { useNavigateToProjectOpen } from '../activation/projectOpenPresentation';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import type { ProjectAttachedDashboardSelection } from '../detail/projectRouteState';
 
 /** Projects › Sources: one Collection list beside the selected Source (lab `p-sources`). */
 export const PROJECT_SOURCES_ROUTE = '/projects/sources';
@@ -78,6 +84,18 @@ const ProjectSourcesCollection = React.memo(function ProjectSourcesCollection(
   const { state, controller } = useProjectSources(props.scope);
   const [query, setQuery] = React.useState('');
   const openProject = useOpenProject();
+  const openSource = React.useCallback((source: ProjectSourceV1, attachedDashboard?: ProjectAttachedDashboardSelection) => {
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime?.isCurrent() || lifetime.scope.serverId !== props.scope.serverId) return;
+    const route = buildProjectSourceOpenRoute(props.scope.serverId, source);
+    const selection = route ? readProjectOpenRouteDraft(route.params) : null;
+    if (!selection) return;
+    fireAndForget(seedAndOpenProjectDraft({ lifetime, selection, navigate: retained => navigateToOpen({ ...retained,
+      params: { ...retained.params, ...(attachedDashboard ? {
+        dashboardSourceId: attachedDashboard.sourceId, dashboardArtifactId: attachedDashboard.artifactId,
+        ...(attachedDashboard.serverId === undefined ? {} : { dashboardServerId: attachedDashboard.serverId }),
+      } : {}) } }) }), { tag: 'ProjectSources.open' });
+  }, [navigateToOpen, props.scope.serverId]);
   const teamsDirectory = useTeamsDirectory({
     serverIds: [props.scope.serverId],
   });
@@ -143,10 +161,16 @@ const ProjectSourcesCollection = React.memo(function ProjectSourcesCollection(
       : null;
   const emptyCatalog =
     state.status === 'ready' && !retained && !query.trim() && !creating;
+  // The empty page has no list beside it: on a phone it stands alone, so it carries the page Back like its other states.
+  const emptyStandsAlone = useViewportClass() === 'compact';
+  const leaveEmpty = usePageBackControl('projects.sources.back', () =>
+    safeRouterBack({ router, fallbackHref: '/projects' }),
+  );
 
   if (emptyCatalog) {
     return (
       <ItemList testID="projects.sources.empty">
+        {emptyStandsAlone ? <ProjectSourcesBackHeader testID="projects.sources.header" control={leaveEmpty} /> : null}
         <EmptyState
           layout="page"
           iconName="git-branch"
@@ -191,22 +215,19 @@ const ProjectSourcesCollection = React.memo(function ProjectSourcesCollection(
       onDiscardCreate={() =>
         navigate(projectSourceRoute(state.rows[0]?.id ?? null), true)
       }
-      onOpen={(source) => {
-        const lifetime = captureActiveServerAccountScopeLifetime();
-        if (!lifetime?.isCurrent() || lifetime.scope.serverId !== props.scope.serverId) return;
-        const selection = readProjectOpenRouteDraft(buildProjectSourceOpenRoute(props.scope.serverId, source).params);
-        if (!selection) return;
-        fireAndForget(seedAndOpenProjectDraft({ lifetime, selection, navigate: navigateToOpen }), { tag: 'ProjectSources.open' });
-      }}
+      onOpen={openSource}
       onOpenCheckout={(workspaceRefId) => {
         fireAndForget(openProject(workspaceRefId, { serverId: props.scope.serverId }), { tag: 'ProjectSources.openCheckout' });
       }}
-      onOpenDashboard={(sourceId, reference, workspaceAddress) => {
+      onOpenDashboard={(source, reference, workspaceAddress) => {
+        const attachedDashboard = { sourceId: source.id, artifactId: reference.artifactId,
+          ...(reference.serverId === undefined ? {} : { serverId: reference.serverId }) };
+        if (!workspaceAddress) { openSource(source, attachedDashboard); return; }
         fireAndForget(openProject(workspaceAddress.workspaceId, { serverId: props.scope.serverId, workspaceAddress,
-          attachedDashboard: { sourceId, artifactId: reference.artifactId,
-            ...(reference.serverId === undefined ? {} : { serverId: reference.serverId }) } }), { tag: 'ProjectSources.openDashboard' });
+          attachedDashboard }), { tag: 'ProjectSources.openDashboard' });
       }}
       onDeleted={() => navigate(projectSourceRoute(null), true)}
+      onBack={() => safeRouterBack({ router, fallbackHref: PROJECT_SOURCES_ROUTE })}
     />
   ) : null;
   const scale = Math.max(1, fontScale);
@@ -216,7 +237,6 @@ const ProjectSourcesCollection = React.memo(function ProjectSourcesCollection(
       style={{
         flex: 1,
         minHeight: 0,
-        backgroundColor: theme.colors.surface.base,
       }}
     >
       <HappierListDetailLayout

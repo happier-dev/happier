@@ -7,15 +7,13 @@ import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { Text } from '@/components/ui/text/Text';
 import { ScmCommitComposerCard } from '@/components/workspaces/scm/commitComposer/ScmCommitComposerCard';
 import { ScmChangeRow } from '@/components/workspaces/scm/changes/ScmChangeRow';
 import { ScmChangeOverflowMenu } from '@/components/workspaces/scm/changes/ScmChangeOverflowMenu';
 import { activeReviewFileKeyForWorkspace } from '@/components/workspaces/scm/review/activeReviewFile';
-import { buildSessionScmSummary } from '@/components/sessions/sourceControl/status/statusSummary';
+import { buildSessionScmSummary, sumChangedLines } from '@/components/sessions/sourceControl/status/statusSummary';
 import { CheckoutUnreachableState, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
 import { resolveChangesGlanceFiles } from '@/components/sessions/companion/glances/glanceModels';
-import { Typography } from '@/constants/Typography';
 import { WidgetGlanceRow } from '@/components/widgets/glance/WidgetGlanceRow';
 import { DiffStat } from '@/components/workspaces/scm/DiffStat';
 import { buildCommitSelectionPathHints, isFileSelectedForCommit } from '@/scm/operations/commitSelectionHints';
@@ -40,7 +38,6 @@ export const WorkspaceLocalChangesBody = React.memo(function WorkspaceLocalChang
     scope: WorkspaceScopeBase;
     /** Promotes the exact selected path into pending-changes Files review. */
     onOpenReview?: (path?: string) => void;
-    onWalkThrough?: () => void;
 }>) {
     const { theme } = useUnistyles();
     const testID = props.testID ?? 'workspace-local-changes';
@@ -55,9 +52,12 @@ export const WorkspaceLocalChangesBody = React.memo(function WorkspaceLocalChang
     // without one, this body says it with when the state was true.
     const reachability = useCheckoutReachability(props.scope);
     const offline = reachability.unreachable;
+    // A summary first (lab p-overview HOME): what is not committed and what is not pushed, then one commit
+    // box. The files themselves, and choosing among them, belong to Changes, one tap away; only a widget
+    // its owner sized tall has the room to list them here.
     const presentation = useWidgetPresentation();
-    const visibleCount = summary ? resolveChangesGlanceFiles(summary, presentation?.footprint.height === 'compact' ? 1
-        : presentation?.footprint.height === 'tall' ? changedFiles.length : undefined).rows.length : 0;
+    const listsFiles = presentation?.footprint.height === 'tall';
+    const visibleCount = summary && listsFiles ? resolveChangesGlanceFiles(summary, changedFiles.length).rows.length : 0;
     const selectedPaths = React.useMemo(() => new Set(buildCommitSelectionPathHints(controls)),
         [controls.commitSelectionPaths, controls.commitSelectionPatches]);
     const selected = (file: (typeof changedFiles)[number]) => isFileSelectedForCommit({
@@ -65,9 +65,16 @@ export const WorkspaceLocalChangesBody = React.memo(function WorkspaceLocalChang
     });
     const selectionCount = isAtomicCommitStrategy(controls.scmCommitStrategy)
         ? selectedPaths.size : changedFiles.filter(selected).length;
+    // The commit box says what Commit would commit: the included files, or all of them when none is chosen.
+    const commitSummary = React.useMemo(() => {
+        if (selectionCount === 0) return { fileCount: changedFiles.length, linesAdded: added, linesRemoved: removed };
+        const included = changedFiles.filter(selected);
+        const lines = sumChangedLines(included);
+        return { fileCount: included.length, linesAdded: lines.added, linesRemoved: lines.removed };
+    }, [added, changedFiles, controls.scmCommitStrategy, removed, selectedPaths, selectionCount]);
     const [selectionModeUserOn, setSelectionModeUserOn] = React.useState(false);
     const writeEnabled = controls.scmWriteEnabled && !offline;
-    const selectionModeActive = writeEnabled && (selectionModeUserOn || selectionCount > 0);
+    const selectionModeActive = listsFiles && writeEnabled && (selectionModeUserOn || selectionCount > 0);
     const reviewKey = activeReviewFileKeyForWorkspace(props.scope);
     const openChanges = props.onOpenReview ? () => props.onOpenReview?.() : null;
 
@@ -104,6 +111,9 @@ export const WorkspaceLocalChangesBody = React.memo(function WorkspaceLocalChang
                     testID={`${testID}-files`}
                     mark="file"
                     title={t('projects.localChanges.filesNotCommitted', { count: changedFiles.length })}
+                    // How many of them the shared Changes selection (the one the commit box commits) includes.
+                    tag={selectionCount > 0 ? t('projects.localChanges.includedForCommit', { count: selectionCount }) : null}
+                    tagSentence
                     onPress={openChanges}
                     trailing={(
                         <>
@@ -130,11 +140,6 @@ export const WorkspaceLocalChangesBody = React.memo(function WorkspaceLocalChang
                             surface: 'files', refreshAll: controls.refresh,
                         }), { tag: 'WorkspaceLocalChangesBody.discard' }) : undefined} />} />
             )) : null}
-            {props.onOpenReview && changedFiles.length > visibleCount ? <Text style={styles.quiet}>
-                {t('widgetGlances.moreFiles', { count: changedFiles.length - visibleCount })}
-            </Text> : null}
-            {changedFiles.length > 0 && props.onWalkThrough ? <ToolbarButton
-                label={t('turnChanges.card.walkThrough')} onPress={props.onWalkThrough} /> : null}
             {ahead > 0 ? (
                 <WidgetGlanceRow
                     testID={`${testID}-ahead`}
@@ -163,14 +168,15 @@ export const WorkspaceLocalChangesBody = React.memo(function WorkspaceLocalChang
                     commitAllowed={controls.commitAllowed && !offline}
                     commitBlockedMessage={controls.commitBlockedMessage}
                     onCommitFromMessage={controls.handleCommitFromMessage}
-                    selectionSummary={{ fileCount: changedFiles.length, linesAdded: added, linesRemoved: removed }}
+                    selectionSummary={commitSummary}
                     selectionCount={selectionCount}
                     onClearSelection={selectionCount > 0 ? controls.handleClearSelection : undefined}
                     onSelectAllSelection={isAtomicCommitStrategy(controls.scmCommitStrategy) ? () => storage.getState()
                         .markWorkspaceScmCommitSelectionPaths(props.scope, changedFiles.map(file => file.fullPath)) : undefined}
-                    commitSelectionAvailable={writeEnabled} selectionModeActive={selectionModeActive}
+                    commitSelectionAvailable={listsFiles && writeEnabled} selectionModeActive={selectionModeActive}
                     onEnterSelectionMode={() => setSelectionModeUserOn(true)} onExitSelectionMode={() => setSelectionModeUserOn(false)}
-                    pushShortcut={controls.commitAdjacentPushAction}
+                    // The push row above owns Push; the box keeps one action, Commit.
+                    pushShortcut={ahead > 0 ? undefined : controls.commitAdjacentPushAction}
                     commitMessageGeneratorEnabled={controls.commitMessageGeneratorEnabled}
                     onGenerateCommitMessageSuggestion={controls.generateCommitMessageSuggestion}
                     onCancelCommitMessageSuggestion={controls.cancelCommitMessageSuggestion}
@@ -184,9 +190,5 @@ export const WorkspaceLocalChangesBody = React.memo(function WorkspaceLocalChang
 const styles = StyleSheet.create((theme) => ({
     body: {
         gap: theme.space.s4,
-    },
-    quiet: {
-        ...Typography.variant('meta'),
-        color: theme.colors.text.secondary,
     },
 }));

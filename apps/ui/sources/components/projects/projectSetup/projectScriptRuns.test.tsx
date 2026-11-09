@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import * as React from 'react';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectExecutionChoiceV1 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 
@@ -27,8 +27,9 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExec
     ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { deriveWorkspaceSyncRelationshipId } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { ProjectManifestFileSnapshotSchema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestDocument';
 
-const inspectionTransport = vi.hoisted(() => ({ accounts: [] as string[], answer: null as unknown,
+const inspectionTransport = vi.hoisted(() => ({ accounts: [] as string[], reads: [] as unknown[], answer: null as unknown,
     workerAnswer: null as unknown, hold: null as Promise<void> | null, failure: null as string | null, offline: false }));
 
 // Passive inspection uses the original Account's external Action ingress even on its own Machine.
@@ -36,6 +37,7 @@ async function inspectActionResponse(path: string, init?: RequestInit): Promise<
     if (path !== '/v1/actions/projects.inspect') return null;
     const envelope = ExternalActionRequestEnvelopeV1Schema.parse(typeof init?.body === 'string' ? JSON.parse(init.body) : null);
     const request = PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS['projects.inspect'].parse(envelope.input);
+    inspectionTransport.reads.push(request.read);
     expect(envelope.target).toEqual({ kind: 'machine', machineId: request.workspace.machineId });
     const bearer = new Headers(init?.headers).get('Authorization')?.slice('Bearer '.length);
     if (!bearer) throw new Error('Inspection must carry its captured Account');
@@ -77,10 +79,64 @@ const { useProjectScriptsController } = await import('./useProjectScriptsControl
 const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
 const NO_CHANGE = () => {};
 afterEach(() => { standardCleanup(); actionOperationStore.reset(); inspectionTransport.accounts = []; inspectionTransport.answer = null;
+    inspectionTransport.reads = [];
     inspectionTransport.workerAnswer = null; inspectionTransport.hold = null; inspectionTransport.failure = null; inspectionTransport.offline = false; });
 
 describe('Scripts canonical operation subscriptions', () => {
-    it.each([false, true])('keeps hidden inspection idle and retains one shared checkout result through close, reopen and remount (initially presented: %s)', async initiallyPresented => {
+    it('refreshes consumed readiness on a Project operation change without rereading an open editor', async () => {
+        const disposeExecutor = await installRealActionExecutorModuleLoader();
+        const connection = await restoreServerAccountForTest({
+            serverUrl: 'https://script-readiness-demand.test', serverIdentityId: 'srv_script_readiness_demand', accountId: 'account',
+            credentials: { token: createAccountTokenForTests('account', { currentAccount: true }) },
+            request: async (url, init) => {
+                const path = new URL(String(url)).pathname;
+                const inspection = await inspectActionResponse(path, init);
+                if (inspection) return inspection;
+                const machineRead = createPlainMachineReadHttpResponseFixture(path, init, 'account');
+                if (machineRead) return machineRead;
+                if (path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: 'source-machine', accountId: 'account' })]);
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+                if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+                return Response.json({}, { status: 404 });
+            },
+        });
+        try {
+            const workspace: WorkspaceAddressV1 = { serverId: resolveServerProfileScopeIdForIdentifier(connection.home.id),
+                machineId: 'source-machine', workspaceId: 'source', rootPath: '/source' };
+            const manifest = { version: 1 as const, workspace: { setup: [{ kind: 'command' as const, command: 'echo setup' }] } };
+            const answer = { definition: { basis: { kind: 'present' as const, hash: 'a'.repeat(64) },
+                document: { status: 'valid' as const, bytes: JSON.stringify(manifest), original: manifest, manifest, diagnostics: [] } },
+                detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete' as const, diagnostics: [] }, importCandidates: [] };
+            inspectionTransport.answer = { ...answer, setupReadiness: { kind: 'unprepared', reviewedEffectDigest: 'effect' } };
+            const homes = [workspace.serverId];
+            const scripts = await renderHook(() => {
+                const binding = useServerCredentialAccountScopeBindings(homes).get(workspace.serverId) ?? null;
+                return { ...useProjectDefinitionInspection(workspace, binding, { kind: 'scripts' }), binding };
+            });
+            await vi.waitFor(() => expect(scripts.getCurrent().read).toHaveProperty('value'));
+            const editor = await renderHook(() => useProjectDefinitionInspection(workspace, scripts.getCurrent().binding, { kind: 'editor' }));
+            await vi.waitFor(() => expect(editor.getCurrent().read).toHaveProperty('value'));
+            const readCount = (kind: string) => inspectionTransport.reads.filter(read => read && typeof read === 'object' && 'kind' in read && read.kind === kind).length;
+            expect(readCount('scripts')).toBe(1);
+            expect(readCount('editor')).toBe(1);
+            inspectionTransport.answer = { ...answer, setupReadiness: { kind: 'current', reviewedEffectDigest: 'effect', completedAtMs: 123 } };
+            const operation: ActionOperationSnapshotV1 = { version: 1, operationId: 'readiness-control', revision: 1,
+                actionId: 'projects.prepare', state: 'succeeded', scope: { accountId: 'account', machineId: workspace.machineId },
+                title: 'Prepare', createdAt: 100, startedAt: 110, settledAt: 120, cancellation: 'unsupported',
+                domainRef: { kind: 'projectCommand', purpose: 'setup', serverId: workspace.serverId, machineId: workspace.machineId,
+                    workspaceRefId: workspace.workspaceId, cwd: workspace.rootPath, sourceWorkspace: workspace } };
+            await act(async () => { actionOperationStore.mergeSnapshots({ serverId: workspace.serverId, snapshots: [operation] }); });
+            await vi.waitFor(() => expect(scripts.getCurrent().read).toMatchObject({ value: { setupReadiness: { kind: 'current', completedAtMs: 123 } } }));
+            expect(readCount('scripts')).toBe(2);
+            expect(readCount('editor')).toBe(1);
+            await act(async () => { editor.getCurrent().retry(); });
+            await vi.waitFor(() => expect(readCount('editor')).toBe(2));
+            await editor.unmount();
+            await scripts.unmount();
+        } finally { await connection.dispose(); disposeExecutor(); }
+    });
+    it.each([false, true])('shares demanded inspection and releases its full tree on last close before fresh reopen (initially presented: %s)', async initiallyPresented => {
         const disposeExecutor = await installRealActionExecutorModuleLoader();
         const connection = await restoreServerAccountForTest({
             serverUrl: 'https://script-definition-demand.test', serverIdentityId: 'srv_script_definition_demand', accountId: 'account',
@@ -89,6 +145,8 @@ describe('Scripts canonical operation subscriptions', () => {
                 const path = new URL(String(url)).pathname;
                 const inspection = await inspectActionResponse(path, init);
                 if (inspection) return inspection;
+                const machineRead = createPlainMachineReadHttpResponseFixture(path, init, 'account');
+                if (machineRead) return machineRead;
                 if (path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: 'source-machine', accountId: 'account' })]);
                 if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
                 if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
@@ -106,7 +164,9 @@ describe('Scripts canonical operation subscriptions', () => {
                 services: { app: { source: { kind: 'command', command: 'serve' }, execution: 'portable' } } };
             inspectionTransport.answer = ProjectDefinitionInspectOutputSchema.parse({ definition: { basis: { kind: 'present', hash: 'a'.repeat(64) },
                 document: { status: 'valid', bytes: JSON.stringify(manifest), original: manifest, manifest, diagnostics: [] } },
-                detection: { entries: [{ source: native, usage: 'script' }], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+                // The observed FX220 checkout had 6,230 detected entries; closing must release that shape too.
+                detection: { entries: Array.from({ length: 6_230 }, (_, index) => ({ source: { ...native, target: `build-${index}` }, usage: 'script' })),
+                    toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
                 setupReadiness: { kind: 'current', reviewedEffectDigest: 'inspected-effect', completedAtMs: 123 },
                 setupConsent: { kind: 'admitted' } });
             const homes = [workspace.serverId];
@@ -115,12 +175,21 @@ describe('Scripts canonical operation subscriptions', () => {
                 return { ...useProjectDefinitionInspection(workspace, binding), binding };
             };
             const hook = await renderHook(useInspection, { wrapper });
+            if (initiallyPresented) await vi.waitFor(() => expect(inspectionTransport.accounts).toEqual(['account']));
             expect(inspectionTransport.accounts).toEqual(initiallyPresented ? ['account'] : []);
             presented = true;
             await hook.rerender();
             await vi.waitFor(() => expect(hook.getCurrent().read).toHaveProperty('value'));
             const success = hook.getCurrent().read;
             if (!success || !('value' in success)) throw new Error('Expected admitted inspection');
+            expect(success.value.detection.entries).toHaveLength(6_230);
+            const { createProjectManifestEditorModel } = await import('./projectManifestEditorModel');
+            const { createProjectManifestActionClient } = await import('./projectManifestActionClient');
+            const actions = createProjectManifestActionClient({ workspace, expectedAccountId: 'account' });
+            const draft = createProjectManifestEditorModel({ workspace, expectedAccountId: 'account',
+                definition: ProjectManifestFileSnapshotSchema.parse(success.value.definition), actions });
+            const dirtyBytes = JSON.stringify({ ...manifest, scripts: { edited: { source: { kind: 'command', command: 'keep my draft' } } } });
+            draft.setRaw(dirtyBytes);
             const mainBinding = hook.getCurrent().binding;
             expect(inspectionTransport.accounts).toEqual(['account']);
             const sibling = await renderHook(useInspection, { wrapper });
@@ -128,6 +197,7 @@ describe('Scripts canonical operation subscriptions', () => {
             expect(inspectionTransport.accounts).toEqual(['account']);
             expect(sibling.getCurrent().read).toBe(success);
             await sibling.unmount();
+            expect(hook.getCurrent().read).toBe(success);
             // Two children can also consume one parent-owned binding. Releasing one
             // must not withdraw the other's remaining demand or currentness.
             const sameBinding = await renderHook(() => useProjectDefinitionInspection(workspace, mainBinding), { wrapper });
@@ -137,35 +207,51 @@ describe('Scripts canonical operation subscriptions', () => {
             await vi.waitFor(() => expect(inspectionTransport.accounts).toEqual(['account', 'account']));
             presented = false;
             await hook.rerender();
+            // No retained inspection tree after the last visible consumer leaves.
+            expect(hook.getCurrent().read).toBeNull();
             await act(async () => { hook.getCurrent().retry(); });
             expect(inspectionTransport.accounts).toEqual(['account', 'account']);
             inspectionTransport.hold = refreshing.promise;
+            // A new presented consumer may reopen while the old hook remains mounted but hidden. The
+            // narrow Scripts list paints at once as last-good, its setup facts at full strength while it revalidates.
+            const replacement = await renderHook(() => useProjectDefinitionInspection(workspace, mainBinding));
+            const lastGood = replacement.getCurrent().read;
+            expect(lastGood).toMatchObject({ refreshing: true });
+            if (!lastGood || !('value' in lastGood)) throw new Error('Expected the retained Scripts list');
+            expect(lastGood.value.detection).toBe(success.value.detection);
+            expect(lastGood.value).toBe(success.value);
+            await vi.waitFor(() => expect(inspectionTransport.accounts).toEqual(['account', 'account', 'account']));
             presented = true;
             await hook.rerender();
-            expect(hook.getCurrent().read).toMatchObject({ refreshing: true, value: { definition: success.value.definition } });
-            const reopened = hook.getCurrent().read;
-            expect(reopened && 'value' in reopened ? reopened.value : null).not.toHaveProperty('setupConsent');
-            expect(reopened && 'value' in reopened ? reopened.value : null).not.toHaveProperty('setupReadiness');
+            expect(hook.getCurrent().read).toBe(lastGood);
             await vi.waitFor(() => expect(inspectionTransport.accounts).toEqual(['account', 'account', 'account']));
             await act(async () => { refreshing.resolve(); });
             await vi.waitFor(() => expect(hook.getCurrent().read).toMatchObject({ refreshing: false }));
+            expect(replacement.getCurrent().read).toBe(hook.getCurrent().read);
+            expect(inspectionTransport.accounts).toHaveLength(3);
+            await replacement.unmount();
             await hook.unmount();
             const nextRead = createDeferred<void>();
             inspectionTransport.hold = nextRead.promise;
             const remounted = await renderHook(useInspection, { wrapper });
-            // A new credential hook must resolve its Account before exposing retained data.
-            await vi.waitFor(() => expect(remounted.getCurrent().read).toMatchObject({ refreshing: true, value: { definition: success.value.definition } }));
+            // Reopen shows the narrow last-good list while it reacquires current facts.
+            expect(remounted.getCurrent().read).toMatchObject({ refreshing: true });
             await vi.waitFor(() => expect(inspectionTransport.accounts).toEqual(['account', 'account', 'account', 'account']));
             await act(async () => { nextRead.resolve(); });
             await vi.waitFor(() => expect(remounted.getCurrent().read).toEqual(success));
+            const reopened = remounted.getCurrent().read;
+            if (!reopened || !('value' in reopened)) throw new Error('Expected fresh inspection');
+            const reopenedDraft = createProjectManifestEditorModel({ workspace, expectedAccountId: 'account',
+                definition: ProjectManifestFileSnapshotSchema.parse(reopened.value.definition), actions });
+            expect(reopenedDraft.getSnapshot()).toMatchObject({ dirty: true, draft: { bytes: dirtyBytes } });
             const retainedBinding = remounted.getCurrent().binding;
             inspectionTransport.offline = true;
             await act(async () => { remounted.getCurrent().retry(); });
             await vi.waitFor(() => expect(remounted.getCurrent().read).toMatchObject({ refreshing: false, error: expect.any(String) }));
             const offline = remounted.getCurrent().read;
             expect(offline).toMatchObject({ value: { definition: success.value.definition, detection: success.value.detection } });
-            expect.soft(offline && 'value' in offline ? offline.value : null).not.toHaveProperty('setupReadiness');
-            expect.soft(offline && 'value' in offline ? offline.value : null).not.toHaveProperty('setupConsent');
+            expect(offline && 'value' in offline ? offline.value : null).toMatchObject({
+                setupReadiness: success.value.setupReadiness, setupConsent: success.value.setupConsent });
             inspectionTransport.offline = false;
             for (const code of ['access_denied', 'admission_unavailable', 'content_unavailable', 'permission_denied', 'not_authenticated']) {
                 inspectionTransport.failure = null;
@@ -178,6 +264,18 @@ describe('Scripts canonical operation subscriptions', () => {
                 expect(remounted.getCurrent().binding).toBe(retainedBinding);
                 expect(retainedBinding?.isCurrent()).toBe(true);
             }
+            inspectionTransport.failure = null;
+            const beforeSetup = inspectionTransport.accounts.length;
+            const setup = await renderHook(() => useProjectDefinitionInspection(workspace, retainedBinding, { kind: 'setup' }), { wrapper });
+            await vi.waitFor(() => expect(setup.getCurrent().read).toHaveProperty('value'));
+            expect(inspectionTransport.accounts).toHaveLength(beforeSetup + 1);
+            expect(inspectionTransport.reads[0]).toEqual({ kind: 'scripts' });
+            expect(inspectionTransport.reads.at(-1)).toEqual({ kind: 'setup' });
+            const sameSetup = await renderHook(() => useProjectDefinitionInspection(workspace, retainedBinding, { kind: 'setup' }), { wrapper });
+            expect(sameSetup.getCurrent().read).toBe(setup.getCurrent().read);
+            expect(inspectionTransport.accounts).toHaveLength(beforeSetup + 1);
+            await sameSetup.unmount();
+            await setup.unmount();
             await remounted.unmount();
         } finally { refreshing.resolve(); await connection.dispose(); disposeExecutor(); }
     });
@@ -264,7 +362,7 @@ describe('Scripts canonical operation subscriptions', () => {
             const manifest = { version: 1, scripts: { build: { source: { kind: 'command', command: 'build' }, execution: 'portable' } } };
             inspectionTransport.answer = { definition: { basis: { kind: 'present', hash: 'a'.repeat(64) }, document: { status: 'valid',
                 bytes: JSON.stringify(manifest), original: manifest, manifest, diagnostics: [] } },
-                detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [] };
+                detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [] };
             inspectionTransport.workerAnswer = ProjectWorkerStatusResultV1Schema.parse({ eligible: false, candidate: null,
                 load: { kind: 'unknown' }, explanation: reason,
                 ...(workerRefusal.workerCopy ? { workerCopy: workerRefusal.workerCopy } : {}) });
@@ -384,7 +482,7 @@ describe('Scripts canonical operation subscriptions', () => {
                     scripts: { build: { source: { kind: 'command' as const, command } } } };
                 return ProjectDefinitionInspectOutputSchema.parse({ definition: { basis: { kind: 'present' as const, hash: 'a'.repeat(64) }, document: { status: 'valid' as const,
                     bytes: JSON.stringify(manifest), original: manifest, manifest, diagnostics: [] } },
-                    detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete' as const, diagnostics: [] }, importCandidates: [],
+                    detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete' as const, diagnostics: [] }, importCandidates: [],
                     setupReadiness: { kind: 'current', reviewedEffectDigest: 'proven-effect', completedAtMs: 123 } });
             };
             inspectionTransport.answer = answerFor('previous-account-command');

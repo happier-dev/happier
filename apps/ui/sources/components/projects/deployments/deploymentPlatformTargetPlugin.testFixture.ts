@@ -7,7 +7,8 @@ export const DEPLOYMENT_TARGETS_TEST_SERVICE = { pluginId: 'com.example.cloud', 
 export const DEPLOYMENT_TARGETS_TEST_EXECUTION = { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } } as const;
 
 /** A third-party plugin declaring two runtime platforms, Alpha and Beta, through the public deployment target contract. */
-export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: (name: string, input: JsonValue) => Promise<void> = async () => {}) {
+export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: (name: string, input: JsonValue) => Promise<void> = async () => {},
+  options: Readonly<{ emptyChoices?: boolean }> = {}) {
   const service = DEPLOYMENT_TARGETS_TEST_SERVICE;
   const execution = DEPLOYMENT_TARGETS_TEST_EXECUTION;
   const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
@@ -19,7 +20,7 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
       properties: { ...DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema.properties, [name]: { type: 'string' } } },
     resultSchema: DeploymentTargetLinkProviderContentV1ProtocolSchema.jsonSchema,
     inputHints: { fields: [{ path: name, title: `${name} region`, widget: 'select', required: true,
-      options: [{ value: `${name}-west`, label: `${name} West` }] },
+      options: options.emptyChoices ? [] : [{ value: `${name}-west`, label: `${name} West` }] },
       { path: 'providerAccountId', title: 'Account', widget: 'text', required: true },
       { path: 'providerEnvironment', title: 'Environment', widget: 'json', required: true }] },
     run: async (input: JsonValue) => {

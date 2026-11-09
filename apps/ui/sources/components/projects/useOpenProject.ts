@@ -4,7 +4,7 @@ import { captureMountedWorkspaceAction, resolveWorkspaceUiActionOutcome } from '
 
 import { AppPaneContext } from '@/components/appShell/panes/AppPaneContext';
 import { isMobileWorkspaceCockpitEnabled } from '@/components/workspaceCockpit/mobileWorkspaceExperience';
-import { storage, useWorkspaceRefs, useLocalSetting, useSetting } from '@/sync/domains/state/storage';
+import { storage, useWorkspaceRefs, useSetting } from '@/sync/domains/state/storage';
 import { readProjectWorkspaceRefs } from '@/sync/store/domains/projectAccountRows';
 import { getDeviceType } from '@/utils/platform/responsive';
 
@@ -19,8 +19,10 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { resolveWorkspaceRefByAddress, resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { readProjectSelectionPreference, resolveProjectSelectionPreferenceKeys } from '@/sync/domains/settings/projectSelectionPersistence';
-import { readRealmQualifiedMobileSurface, resolveProjectMobileSurfaceStorageKey } from '@/sync/domains/settings/mobileSurfacePersistence';
+import { resolveProjectSelectionPreferenceKeys } from '@/sync/domains/settings/projectSelectionPersistence';
+import { resolveProjectMobileSurfaceStorageKey } from '@/sync/domains/settings/mobileSurfacePersistence';
+import { projectLastMobileSurfaceState } from '@/sync/domains/state/navigationUiState';
+import { readProjectSelectionUiState } from '@/sync/domains/state/projectSelectionUiState';
 import type { WorkspaceRefResolutionV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 export type OpenProjectOptions = Readonly<{
@@ -28,6 +30,8 @@ export type OpenProjectOptions = Readonly<{
     workspaceAddress?: WorkspaceAddressV1;
     activeRootPath?: string;
     attachedDashboard?: ProjectAttachedDashboardSelection;
+    /** Open on one of the person's own dashboards: its layout id, or `null` for the default. */
+    layoutId?: string | null;
     initialResource?: Readonly<{ kind: 'file'; path: string; anchor?: FileTargetAnchor; anchorSource?: ReviewCommentSource; find?: FindSeed }> | Readonly<{ kind: 'commit'; sha: string }>;
 }>;
 
@@ -43,9 +47,6 @@ export function useOpenProject(): OpenProject {
     const paneSubscription = React.useContext(AppPaneContext);
     const mobileWorkspaceExperience = useSetting('mobileWorkspaceExperienceV1');
     const workspaceRefs = useWorkspaceRefs();
-    const lastMobileSurfaceByWorkspaceRefId = useLocalSetting('projectLastMobileSurfaceByWorkspaceRefId');
-    const lastActiveRootPathByWorkspaceRefId = useLocalSetting('projectLastActiveRootPathByWorkspaceRefId');
-    const lastActiveWorktreeIdByWorkspaceRefId = useLocalSetting('projectLastActiveWorktreeIdByWorkspaceRefId');
     const [resolutionIssue, setResolutionIssue] = React.useState<OpenProject['resolution']>(null);
     const issueRef = React.useRef(resolutionIssue);
     const publishIssue = React.useCallback((issue: OpenProject['resolution']) => {
@@ -73,8 +74,7 @@ export function useOpenProject(): OpenProject {
         const pagePreferenceKey = resolveProjectMobileSurfaceStorageKey({ workspaceRefs: refs, workspaceRefId: workspaceRef.id,
             targetServerId: workspaceRef.serverId, activeScope: pageAuthority?.scope, activeServerId: pageAuthority?.scope.serverId });
         const preferenceKeys = resolveProjectSelectionPreferenceKeys(refs, workspaceRef);
-        const persistedActiveRootPath = readProjectSelectionPreference(lastActiveRootPathByWorkspaceRefId, preferenceKeys);
-        const persistedWorktreeId = readProjectSelectionPreference(lastActiveWorktreeIdByWorkspaceRefId, preferenceKeys);
+        const { activeRootPath: persistedActiveRootPath, worktreeId: persistedWorktreeId } = readProjectSelectionUiState(preferenceKeys);
         const scopeId = buildProjectPaneScopeId(workspaceRef.id, workspaceRef.serverId);
         const activeRootPath = options?.activeRootPath?.trim()
             || persistedActiveRootPath
@@ -84,10 +84,10 @@ export function useOpenProject(): OpenProject {
             : activeRootPath === persistedActiveRootPath
             ? persistedWorktreeId
             : null;
-        if (options?.attachedDashboard) {
+        if (options?.attachedDashboard || options?.layoutId !== undefined) {
             return await openHref(buildProjectRouteHref({ workspaceRefId: workspaceRef.id, serverId: workspaceRef.serverId,
                 segment: 'overview', activeRootPath, defaultRootPath: workspaceRef.rootPath, activeWorktreeId,
-                attachedDashboard: options.attachedDashboard }));
+                ...(options.attachedDashboard ? { attachedDashboard: options.attachedDashboard } : { layoutId: options.layoutId })}));
         }
         if (options?.initialResource) {
             const resource = options.initialResource;
@@ -127,7 +127,7 @@ export function useOpenProject(): OpenProject {
             deviceType,
             cockpitEnabled: isMobileWorkspaceCockpitEnabled({ deviceType, mobileWorkspaceExperience }),
             rememberedRightTabId: paneSubscription?.getSnapshot().state.scopes[scopeId]?.right?.activeTabId,
-            persistedMobileSurface: readRealmQualifiedMobileSurface(lastMobileSurfaceByWorkspaceRefId, pagePreferenceKey),
+            persistedMobileSurface: pagePreferenceKey ? projectLastMobileSurfaceState.read(pagePreferenceKey) ?? null : null,
             persistedActiveRootPath: activeRootPath,
             persistedWorktreeId: activeWorktreeId,
         }));
@@ -142,7 +142,7 @@ export function useOpenProject(): OpenProject {
             const result = await execute({ actionId: 'workspace.tabs.open', input: { href, ...(find ? { find } : {}) } });
             return resolveWorkspaceUiActionOutcome(result);
         }
-    }, [mobileWorkspaceExperience, openFile, lastActiveRootPathByWorkspaceRefId, lastActiveWorktreeIdByWorkspaceRefId, lastMobileSurfaceByWorkspaceRefId, paneSubscription, publishIssue, router, workspaceRefs]);
+    }, [mobileWorkspaceExperience, openFile, paneSubscription, publishIssue, router, workspaceRefs]);
     return React.useMemo(() => Object.defineProperties(open, {
         resolution: { configurable: true, get: () => issueRef.current },
         dismissResolution: { configurable: true, value: () => publishIssue(null) },

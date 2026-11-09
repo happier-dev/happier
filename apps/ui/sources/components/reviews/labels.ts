@@ -1,4 +1,4 @@
-import type { ReviewCommentStateV1 } from '@happier-dev/protocol';
+import type { ReviewCommentStateV1 } from '@happier-dev/protocol/reviews/comments/v1';
 
 export type ReviewCommentLabels = Readonly<{
     delegate?: string;

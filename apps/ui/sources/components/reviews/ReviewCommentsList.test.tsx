@@ -1,7 +1,7 @@
 import React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ReviewCommentV1 } from '@happier-dev/protocol';
+import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { renderScreen, reviewCommentLabelsFixture } from '@/dev/testkit';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 

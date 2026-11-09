@@ -25,6 +25,8 @@ const routerPushSpy = vi.hoisted(() => vi.fn());
 const routeState = vi.hoisted(() => ({ pathname: '/projects' }));
 const boundaryRowRenders = vi.hoisted(() => new Map<string, number>());
 
+const rowMenuProbe = vi.hoisted(() => ({ mounts: 0, unmounts: 0, triggerRenders: 0 }));
+
 let serverId: string;
 let machinesMock: Machine[] = [];
 let workspaceRefsV1Mock: WorkspaceRefV1[] = [];
@@ -42,6 +44,46 @@ vi.mock('react-native', async () => {
         Platform: { OS: 'web' },
     });
 });
+
+// Instrumentation only: the real DropdownMenu and RowActionRevealSlot render; the wrappers count row-menu
+// mounts (a Projects row menu is the DropdownMenu that carries a `rename` item) and trigger renders.
+vi.mock('@/components/ui/forms/dropdown/DropdownMenu', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/ui/forms/dropdown/DropdownMenu')>();
+    return {
+        ...actual,
+        DropdownMenu: (props: React.ComponentProps<typeof actual.DropdownMenu>) => {
+            const isRowMenu = React.useRef(props.items.some(item => item.id === 'rename')).current;
+            React.useEffect(() => {
+                if (!isRowMenu) return undefined;
+                rowMenuProbe.mounts += 1;
+                return () => { rowMenuProbe.unmounts += 1; };
+            }, [isRowMenu]);
+            return React.createElement(actual.DropdownMenu, props);
+        },
+    };
+});
+vi.mock('@/components/ui/lists/RowActionRevealSlot', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('@/components/ui/lists/RowActionRevealSlot')>();
+    return {
+        ...actual,
+        RowActionRevealSlot: (props: React.ComponentProps<typeof actual.RowActionRevealSlot>) => {
+            rowMenuProbe.triggerRenders += 1;
+            return React.createElement(actual.RowActionRevealSlot, props);
+        },
+    };
+});
+
+// The recycler is a third-party boundary: it builds only the rows its measured viewport reaches. `limit`
+// stands in for that viewport (undefined: every row reaches it); the column's own logic stays real.
+const legendWindow = vi.hoisted(() => ({ limit: undefined as number | undefined, state: null as null | { refHandle: { scrollToIndex: { mock: { calls: unknown[][] } } } } }));
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({ renderItems: true, memoizeItems: true, get renderItemLimit() { return legendWindow.limit; } },
+        (state) => { legendWindow.state = state as never; });
+});
+
+vi.mock('@/components/ui/popover', async (importOriginal) =>
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -73,11 +115,19 @@ vi.mock('@/modal', async () => {
     return createModalModuleMock().module;
 });
 
+// Counting probe only: the real Projects model runs; the test counts how often a surface evaluates it.
+const listModelRuns = vi.hoisted(() => ({ count: 0 }));
+vi.mock('./useProjectsListModel', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('./useProjectsListModel')>();
+    return { ...actual, useProjectsListModel: () => { listModelRuns.count += 1; return actual.useProjectsListModel(); } };
+});
 const { storage } = await import('@/sync/domains/state/storage');
 const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
 
 beforeEach(async () => {
+    legendWindow.limit = undefined;
     boundaryRowRenders.clear();
+    Object.assign(rowMenuProbe, { mounts: 0, unmounts: 0, triggerRenders: 0 });
     await homes.reset();
     await loadSyncSingletonForTests();
     serverId = await homes.addHome({ name: 'Projects Home', serverUrl: 'https://projects-column.test',
@@ -192,6 +242,63 @@ describe('ProjectsColumn', () => {
         expect([...boundaryRowRenders]).toEqual([]);
     });
 
+    it('builds only the Project rows its viewport reaches when the column opens over 150 Projects', async () => {
+        machinesMock = [createMachine({ id: 'machine', host: 'Machine', activeAt: Date.now() })];
+        workspaceRefsV1Mock = Array.from({ length: 150 }, (_, index) => ({
+            id: `ref-${index}`, serverId, machineId: 'machine', rootPath: `/repo-${index}`,
+            projectKey: `project-${index}`, createdAtMs: 1,
+        }));
+        legendWindow.limit = 20;
+        const { ProjectsColumn } = await import('./ProjectsColumn');
+        const screen = await renderProjects(<ProjectsColumn />);
+        // Opening the column mounts the rows in view, not one row per Project.
+        expect(boundaryRowRenders.size).toBe(20);
+        // Each built row says where it stands in the whole tree, not among the rows the window built.
+        const positions = [...boundaryRowRenders.keys()].map(id => {
+            const row = screen.root.findAll(node => node.props.testID === id && node.props.accessibilityLevel !== undefined)[0]!;
+            return [row.props.accessibilityLevel, row.props.accessibilitySetSize, row.props.accessibilityPositionInSet];
+        });
+        expect(positions).toEqual(Array.from({ length: 20 }, (_, index) => [1, 150, index + 1]));
+        // The column's own entries and state lines are not tree items: they stand beside the tree, not in it.
+        const head = screen.findByTestId('projects-column:tree:head');
+        expect(head).not.toBeNull();
+        expect(screen.findByTestId('projects-column:tree')!.findAll(node => node === head)).toHaveLength(0);
+        // The keyboard still walks the whole tree: moving past the last built row scrolls the list to it.
+        const lastBuilt = [...boundaryRowRenders.keys()].at(-1)!;
+        const last = screen.findByTestId(lastBuilt)!.findAll(node => typeof node.props.onKeyDown === 'function')[0]!;
+        await act(async () => { last.props.onKeyDown({ key: 'ArrowDown', nativeEvent: { key: 'ArrowDown' }, preventDefault: () => {} }); });
+        expect(legendWindow.state!.refHandle.scrollToIndex.mock.calls.at(-1)?.[0]).toMatchObject({ index: 20 });
+    });
+
+    it('mounts a row menu only when it is opened, and re-renders only the row whose pin state changed', async () => {
+        machinesMock = [createMachine({ id: 'machine', host: 'Machine', activeAt: Date.now() })];
+        workspaceRefsV1Mock = Array.from({ length: 40 }, (_, index) => ({
+            id: `ref-${index}`, serverId, machineId: 'machine', rootPath: `/repo-${index}`,
+            projectKey: `project-${index}`, createdAtMs: 1,
+        }));
+        const { ProjectsColumn } = await import('./ProjectsColumn');
+        const screen = await renderProjects(<ProjectsColumn />);
+        const triggers = () => screen.root.findAll(node => node.props.accessibilityLabel === 'common.moreActions'
+            && typeof node.props.onPress === 'function' && typeof node.type === 'function');
+        expect(triggers().length).toBeGreaterThanOrEqual(40);
+        expect(rowMenuProbe.triggerRenders).toBeGreaterThanOrEqual(40);
+        expect(rowMenuProbe.mounts).toBe(0);
+
+        rowMenuProbe.triggerRenders = 0;
+        await act(async () => storage.setState({ sessionListRowsByServerId: { [serverId]: {} } }));
+        expect(rowMenuProbe.triggerRenders).toBe(0);
+        await act(async () => storage.setState({ pinnedWorkspaceRefIds: ['ref-27'] }));
+        expect(rowMenuProbe.triggerRenders).toBe(1);
+        expect(rowMenuProbe.mounts).toBe(0);
+
+        const openRow = screen.root.findAll(node => node.props.workspaceRef?.id === 'ref-27' && 'pinAction' in node.props)[0]!;
+        const trigger = openRow.findAll(node => node.props.accessibilityLabel === 'common.moreActions' && typeof node.props.onPress === 'function')[0]!;
+        await act(async () => trigger.props.onPress({}));
+        expect(rowMenuProbe.mounts).toBe(1);
+        const menu = screen.root.findAll(node => Array.isArray(node.props.items) && node.props.items.some((item: { id: string }) => item.id === 'rename'))[0]!;
+        expect(menu.props.items.map((item: { id: string }) => item.id)).toEqual(['new-session', 'save-source', 'unpin', 'browse-store', 'rename', 'reset', 'hide', 'remove']);
+    });
+
     it('PF3 keeps the production column quiet for five unrelated Session arrivals with 150 Projects', async () => {
         machinesMock = [createMachine({ id: 'machine', host: 'Machine', activeAt: Date.now() })];
         workspaceRefsV1Mock = Array.from({ length: 150 }, (_, index) => ({
@@ -228,6 +335,13 @@ describe('ProjectsColumn', () => {
         await vi.waitFor(() => expect(screen.findByTestId('projects-column:tree-saved-saved')).toBeTruthy());
         await act(async () => { storage.getState().setProjectAccountRowsStatusForScope(storage.getState().profileScope!, 'loading'); });
         expect(screen.findByTestId('projects-column:tree-saved-saved')).toBeNull();
+    });
+
+    it('says "no projects yet" once as a quiet line when there are no Projects and nothing saved', async () => {
+        workspaceRefsV1Mock = [];
+        const { ProjectsColumn } = await import('./ProjectsColumn');
+        const screen = await renderProjects(<ProjectsColumn />);
+        await vi.waitFor(() => expect(screen.findByTestId('projects-column:empty')).toBeTruthy());
     });
 
     it('shows saved Sources as content without repeating a no-projects message', async () => {
@@ -402,6 +516,35 @@ describe('Projects index', () => {
         // …and the page still offers the column's Add, not that Source.
         expect(screen.findByTestId('projects-none-open:add')).toBeTruthy();
         expect(screen.findByTestId('projects-none-open:open-source')).toBeNull();
+    });
+
+    it('stops the retained index model while its workspace tab is not presented and catches up when shown', async () => {
+        const { AppShellColumnContext } = await import('@/components/navigation/shell/appRail/appShellColumnContext');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { ProjectsIndexView } = await import('./ProjectsIndexView');
+        let setPresented: (presented: boolean) => void = () => {};
+        function RetainedTab() {
+            const [presented, set] = React.useState(true);
+            setPresented = set;
+            return <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>
+                <AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}><ProjectsIndexView /></AppShellColumnContext.Provider>
+            </PluginSurfaceFocusEligibilityProvider>;
+        }
+        const screen = await renderProjects(<RetainedTab />);
+        expect(screen.findByTestId('projects-none-open')).toBeTruthy();
+        await act(async () => { setPresented(false); });
+        await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); });
+        const before = listModelRuns.count;
+        for (let index = 1; index <= 3; index += 1) {
+            await act(async () => {
+                storage.getState().applyMachines(machinesMock.map(machine => ({ ...machine,
+                    metadata: { ...machine.metadata!, homeDir: `/Users/moved-${index}` }, metadataVersion: (machine.metadataVersion ?? 0) + index })), false);
+            });
+        }
+        expect(listModelRuns.count - before).toBe(0);
+        await act(async () => { setPresented(true); });
+        expect(listModelRuns.count - before).toBeGreaterThan(0);
+        expect(screen.findByTestId('projects-none-open')).toBeTruthy();
     });
 
     it('does not repeat the list beside the Projects column: it says no project is open', async () => {

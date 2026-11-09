@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
 
 import { t } from '@/text';
 import { machineScmDiffCommit } from '@/sync/ops/scm/machineScm';
@@ -28,7 +27,6 @@ export type WorkspaceCommitDetailsViewProps = Readonly<{
 }>;
 
 export const WorkspaceCommitDetailsView = React.memo((props: WorkspaceCommitDetailsViewProps) => {
-    const { theme } = useUnistyles();
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState<string | null>(null);
     const [diff, setDiff] = React.useState('');
@@ -98,7 +96,7 @@ export const WorkspaceCommitDetailsView = React.memo((props: WorkspaceCommitDeta
     const expandedKeys = new Set(allKeys);
 
     return (
-        <View style={{ flex: 1, minHeight: 0, minWidth: 0, backgroundColor: theme.colors.surface.base }}>
+        <View style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
             <ScmCommitDetailsHeader
                 sha={props.sha}
                 commit={commitEntry}

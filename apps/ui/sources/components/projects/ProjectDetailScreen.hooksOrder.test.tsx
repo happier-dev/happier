@@ -23,7 +23,6 @@ vi.mock('react-native', async () => {
         Platform: { OS: 'web' },
         View: React.forwardRef((props: any, ref: any) => React.createElement('View', { ...props, ref }, props.children)),
         Pressable: (props: any) => React.createElement('Pressable', props, props.children),
-        useWindowDimensions: () => ({ width: 1024, height: 768, scale: 1, fontScale: 1 }),
         Dimensions: { get: () => ({ width: 1024, height: 768, scale: 1, fontScale: 1 }) },
     });
 });
@@ -78,19 +77,24 @@ vi.mock('@/hooks/server/useActiveServerSnapshot', () => ({
     useActiveServerSnapshot: () => ({ serverId: 's1' }),
 }));
 
-vi.mock('@/components/plugins/projection/useScopedPluginUiProjection', () => ({
-    useScopedPluginUiProjection: () => ({
-        pluginUiProjection: { generation: 9 },
+// A real (empty) projection model: the Project page catalog selects its sidebar placements from it.
+const scopedProjection = vi.hoisted(() => ({ model: null as unknown }));
+vi.mock('@/components/plugins/projection/useScopedPluginUiProjection', async () => {
+    const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
+    scopedProjection.model = { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 9 };
+    return { useScopedPluginUiProjection: () => ({
+        pluginUiProjection: scopedProjection.model,
         pluginBrowserProjection: null,
         phase: 'current',
         interactionEnabled: true,
         machineId: 'm1',
         serverId: 's1',
         platform: 'web',
-    }),
-}));
+    }) };
+});
 
-vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
+vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', async (importOriginal) => ({
+    ...await importOriginal<Record<string, unknown>>(),
     useAppPaneScope: () => ({
         scopeState: { right: { isOpen: false, activeTabId: null } },
         openRight: () => undefined,
@@ -173,7 +177,7 @@ describe('ProjectDetailScreen', () => {
             projectId: 'wr_1',
             machineId: 'm1',
             serverId: 's1',
-            pluginUiProjection: { generation: 9 },
+            pluginUiProjection: scopedProjection.model,
             projectionPhase: 'current',
             interactionEnabled: true,
             platform: 'web',

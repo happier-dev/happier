@@ -9,6 +9,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { useWorkspaceRefs } from '@/sync/domains/state/storage';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
+import type { ProjectAttachedDashboardSelection } from '../detail/projectRouteState';
 import { getSessionDraftSnapshot, subscribeSessionDraft, writeProjectOpenDraft, flushSessionDraftLocally, flushProjectOpenDraftForAdmission,
     captureSessionDraftCurrentness } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
@@ -17,6 +18,7 @@ export type UseProjectOpenOptions = Readonly<{
     draftId: string;
     initialDraft?: OpenProjectDraftSelectionV1;
     seedIfMissing?: boolean;
+    attachedDashboard?: ProjectAttachedDashboardSelection;
     onOpened?: (result: Extract<OpenProjectResultV1, { kind: 'opened' }>) => void;
 }>;
 
@@ -28,8 +30,10 @@ export function useProjectOpen(options: UseProjectOpenOptions) {
     checkoutsRef.current = checkouts;
     const [focusUnavailable, setFocusUnavailable] = React.useState(false);
     const onOpenedRef = React.useRef(options.onOpened);
+    const attachedDashboardRef = React.useRef(options.attachedDashboard);
     const openExistingRef = React.useRef(openExistingProject);
     onOpenedRef.current = options.onOpened;
+    attachedDashboardRef.current = options.attachedDashboard;
     openExistingRef.current = openExistingProject;
     const controller = React.useMemo<ProjectOpenController>(() => createProjectOpenController({
             initialDraft: options.initialDraft, seedIfMissing: options.seedIfMissing, scope: options.scope, draftId: options.draftId,
@@ -56,8 +60,11 @@ export function useProjectOpen(options: UseProjectOpenOptions) {
                     return;
                 } finally { account?.dispose(); }
                 if (!isCurrent()) return;
+                const attachedDashboard = attachedDashboardRef.current;
                 const focused = await openExistingRef.current(result.workspace.workspaceId, {
                     serverId: result.workspace.serverId, workspaceAddress: result.workspace, activeRootPath: result.directory,
+                    // The chooser can change Sources; carry this intent only for the Source actually accepted by Open.
+                    ...(attachedDashboard && result.facts?.source?.sourceId === attachedDashboard.sourceId ? { attachedDashboard } : {}),
                 });
                 setFocusUnavailable(!focused);
                 if (focused) onOpenedRef.current?.(result);

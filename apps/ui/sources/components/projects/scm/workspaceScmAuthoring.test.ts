@@ -7,9 +7,6 @@ import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAc
 import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
 import { ScmDiffSummaryResultSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { PluginUiNewSessionSeedV1Schema, PluginUiNewSessionSeedOriginV1Schema } from '@happier-dev/protocol/plugins/ui';
-import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
-import { readNewSessionDraftFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
-import { resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
@@ -18,6 +15,10 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
 const { storage } = await import('@/sync/domains/state/storage');
 const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
 const { buildWorkspaceScmAuthoringSeed, openWorkspaceScmAuthoringDraft } = await import('./workspaceScmAuthoring');
+// Production owners load after the socket boundary, which must precede socket.io-client's first import.
+const { seedAndOpenNewSession } = await import('@/components/sessions/new/newSessionSeedComposer');
+const { readNewSessionDraftFromRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+const { resetSessionDraftRepositoryForTests } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
 
 const workspace = { serverId: 'home-a', workspaceId: 'checkout-exact', machineId: 'machine-a', rootPath: '/repo' };
 const scope = { serverId: workspace.serverId, accountId: 'alice' };

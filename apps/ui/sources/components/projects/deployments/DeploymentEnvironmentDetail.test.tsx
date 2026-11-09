@@ -175,7 +175,89 @@ function controllerFor(
   };
 }
 
+describe('A removed Environment (PAGE-ACCEPT-100 D17)', () => {
+  it('says it is gone instead of drawing a live page', async () => {
+    const base = environmentDetailForHome();
+    const detail = { ...base, environment: { ...base.environment, deletedAtMs: 1_700_000_000_000 } };
+    const { controller } = controllerFor({ detail });
+    const screen = await renderScreen(
+      <DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+        demand={{ mounted: true, visible: true, focused: true }} accountId={scope.accountId} serverId={scope.serverId}
+        phone={false} deploy={null} review={{ pendingId: null, request: () => {}, open: () => {} }} onOpenReceipt={() => {}} />,
+    );
+    try {
+      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.environment.removed'),
+        (node) => node !== null);
+      expect(screen.findByTestId('project-deployments.environment.serving.none')).toBeNull();
+      expect(screen.findByTestId('project-deployments.environment.data')).toBeNull();
+    } finally { await screen.unmount(); controller.retire(); }
+  });
+});
+
 describe('Project deployments page', () => {
+  it.each([
+    { phone: false, stored: false }, { phone: true, stored: false },
+    { phone: false, stored: true }, { phone: true, stored: true },
+  ])('shows the Environment catalog action with a serving deployment (phone=$phone, stored=$stored)', async ({ phone, stored }) => {
+    const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+    const { createEmptyPluginAccountKvRowV1, setPluginAccountKvEntryV1, PluginAccountStorageReadResponseV1Schema } =
+      await import('@happier-dev/protocol/plugins/data/accountKvV1');
+    const { TRIAGE_PLUGIN } = await import('../../../../../../packages/plugins/triage/src/definition');
+    const { createTestkitAccountKv } = await import('../../../../../../packages/plugins/triage/src/settings/testkit/accountKv.test-support');
+    const { administerTriageAction } = await import('../../../../../../packages/plugins/triage/src/actions/actionsCatalog');
+    const { TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1 } = await import('../../../../../../packages/plugins/triage/src/settings/actions');
+    const catalog = createTestkitAccountKv();
+    const created = await administerTriageAction({ v: 1, kind: 'create', expectedRevision: 'absent',
+      label: 'Set it up', enabled: true, appliesTo: ['deploymentEnvironment'], profileId: null,
+      workspaceMode: 'repository', target: { kind: 'agent', promptInvocationId: 'environment-setup', delivery: 'compose' } },
+    { catalog: catalog.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1), mintActionId: () => 'environment.set-up' });
+    expect(created.status).toBe('applied');
+    const value = catalog.read(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1);
+    if (value === undefined) throw new Error('Expected the produced action catalog');
+    const row = createEmptyPluginAccountKvRowV1();
+    setPluginAccountKvEntryV1(row, TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1, value, undefined);
+    // Account KV HTTP and executable bytes are the only substituted boundaries. Triage's real
+    // catalog producer, Action admission, Account investigation owner and full page stay real.
+    homes.answer(scope.serverId, `GET /v1/account/plugin-storage/${TRIAGE_PLUGIN.manifest.id}`, { body:
+      PluginAccountStorageReadResponseV1Schema.parse({ status: 'present', revision: 1, content: { t: 'plain', v: row } }),
+    });
+    const connection = await restoreServerAccountForTest({ serverUrl: 'https://environment-navigation.test',
+      accountId: scope.accountId, request: homes.request });
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Expected the Environment Account lifetime');
+    const installed = await installPortableAccountPluginReleaseForTest({ manifest: TRIAGE_PLUGIN.manifest,
+      activate: TRIAGE_PLUGIN.activateAccount, accountLifetime: lifetime, publishProjection: true });
+    const base = environmentDetailForHome();
+    const detail = stored ? environmentDetailForHome({ content: { ...base.content, definition: {
+      kind: 'stored', document: 'services:\n  app:\n    image: app:tested\n', contentRevision: 1,
+      composeDigest: `sha256:${'a'.repeat(64)}`, profiles: [], services: ['app'],
+    } } }) : base;
+    expect(detail.targetLinks.some(row => row.targetLink.activeDeploymentId)).toBe(true);
+    const { controller } = controllerFor({ detail });
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    try {
+      screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller} environmentId={detail.environment.id}
+        demand={shown} accountId={scope.accountId} serverId={scope.serverId} phone={phone} deploy={null}
+        review={noReview} onOpenReceipt={() => {}} />);
+      const { AgentActionButton } = await import('@happier-dev/plugin-ui/components');
+      await waitForHomeGovernance(async () => {
+        await act(async () => {});
+        expect(screen!.findAllByType(AgentActionButton).map(button => ({ title: button.props.title,
+          launchMode: button.props.launchMode, startUnavailableReason: button.props.startUnavailableReason })))
+          .toContainEqual({ title: 'Set it up', launchMode: 'review', startUnavailableReason: undefined });
+        expect(screen!.root.findAll(node => typeof node.type === 'string' && node.props.role === 'button'
+          && node.props.accessibilityLabel === 'Set it up').length).toBeGreaterThan(0);
+      });
+    } finally {
+      await screen?.unmount();
+      await act(async () => { controller.retire(); });
+      await installed.dispose();
+      await connection.dispose();
+    }
+  });
+
   it('draws no setup control and opens no prompt-only authoring until the person has a record for Environments', async () => {
     const base = environmentDetailForHome();
     const detail = { ...base, content: { ...base.content, definition: { kind: 'repository' as const, ref: 'main' } },
@@ -1139,6 +1221,73 @@ describe('Project deployments page', () => {
       expect(screen.findByTestId('project-deployments.environment.settings.checks-alerts.notDeployed')).not.toBeNull();
       expect(screen.findByTestId('project-deployments.environment.settings.checks-alerts.error')).toBeNull();
     } finally { await act(async () => { controller.retire(); }); }
+  });
+
+  it('reviews a stored service private publication before saving both Compose and its export without deploying', async () => {
+    const base = environmentDetailForHome();
+    const stored = environmentDetailForHome({ content: { ...base.content,
+      definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}`,
+        document: 'services:\n  postgres:\n    image: postgres:17\n', profiles: [], services: [] },
+    } });
+    const { controller, detail } = controllerFor({ detail: stored });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { createMachineFixture } = await import('@/dev/testkit');
+    const { MachineReachabilityObservationV1Schema } = await import('@happier-dev/protocol/machines/reachability/machineReachabilityPostureV1');
+    const network = { provider: { pluginId: 'happier.access.tailscale', localId: 'tailscale' },
+      networkIdentity: 'shop-net', displayName: 'Shop network', dnsName: null,
+      addresses: ['100.80.0.12'], state: 'ready', interfaceName: 'tailscale0', sourceRanges: ['100.64.0.0/10'], magicDnsEnabled: false };
+    const reachability = MachineReachabilityObservationV1Schema.parse({ revision: 1,
+      management: { daemon: 'ready', providers: [], publicSsh: 'closed' }, privateNetworks: [network], ingress: [] });
+    storage.setState({ profileScope: { serverId: scope.serverId, accountId: scope.accountId } });
+    storage.getState().applyMachines([createMachineFixture({ id: 'machine-a', installationId: 'installation-a' })], true,
+      { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
+    const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+    const { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1 } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+    const updates: Array<ReturnType<typeof DeploymentActionInputSchemasV1['deployments.environments.update']['parse']>> = [];
+    await answerExternalActionAccountForHome(homes, scope.serverId, { machineId: 'machine-a', installationId: 'installation-a',
+      actionId: 'deployments.environments.update', tokenEpoch: 0, execute: input => {
+        updates.push(DeploymentActionInputSchemasV1['deployments.environments.update'].parse(input));
+        return DeploymentActionOutputSchemasV1['deployments.environments.update'].parse({ ok: true, environmentId: detail.environment.id, revision: 2 });
+      } });
+    homes.answer(scope.serverId, `/v1/deployments/environments/${detail.environment.id}`, { body: {
+      ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(row => row.targetLink),
+    } });
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const account = await captureLazyActionAccountContext(scope.serverId);
+    const { createDeploymentActions } = await import('./deploymentActions');
+    const actions = createDeploymentActions(account.accountLifetime, scope.projectSourceId);
+    const { ModalProvider } = await import('@/modal');
+    const deploy = vi.fn();
+    const screen = await renderScreen(<ModalProvider><DeploymentEnvironmentDetail controller={controller}
+      environmentId={detail.environment.id} demand={shown} accountId={scope.accountId} serverId={scope.serverId}
+      phone={false} deploy={deploy} review={noReview} lifetime={account.accountLifetime}
+      environmentActions={actions} onOpenReceipt={() => {}} /></ModalProvider>);
+    const id = 'project-deployments.environment.privateSharing';
+    try {
+      await selectEnvironmentTab(screen, 'settings');
+      expect(screen.findByTestId(`${id}.add`)).not.toBeNull();
+      await screen.pressByTestIdAsync(`${id}.add`);
+      expect(screen.findByTestId(`${id}.networkMissing`)).not.toBeNull();
+      await act(async () => { storage.getState().applyMachines([createMachineFixture({ id: 'machine-a', installationId: 'installation-a',
+        daemonState: { status: 'running', reachability } })], true,
+        { sourceServerId: scope.serverId, sourceAccountId: scope.accountId }); });
+      expect(screen.findByTestId(`${id}.networkMissing`)).toBeNull();
+      await act(async () => { screen.findByTestId(`${id}.hostPort`)!.props.onChangeText('15432');
+        screen.findByTestId(`${id}.containerPort`)!.props.onChangeText('5432');
+        screen.findByTestId(`${id}.scheme`)!.props.onChangeText('postgres'); });
+      await screen.pressByTestIdAsync(`${id}.review`);
+      expect(updates).toHaveLength(0);
+      expect(screen.findByTestId(`${id}.reviewAddress`)?.props.detail).toBe('100.80.0.12');
+      expect(screen.findByTestId(`${id}.reviewHostPort`)?.props.detail).toBe('15432');
+      await screen.pressByTestIdAsync(`${id}.save`);
+      await waitForHomeGovernance(() => expect(updates).toHaveLength(1));
+      expect(updates[0]!.patch?.ownServer?.serviceExports).toEqual([{ key: 'postgres', service: 'postgres',
+        containerPort: 5432, scheme: 'postgres', exposure: 'privateNetwork', privateNetwork: 'shop-net' }]);
+      expect(updates[0]!.patch?.definition).toMatchObject({ from: 'compose' });
+      expect(updates[0]!.patch?.definition && 'document' in updates[0].patch.definition
+        ? updates[0].patch.definition.document : '').toContain('100.80.0.12');
+      expect(deploy).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); controller.retire(); account.dispose(); }
   });
 
   it('links a Machine from where Deploy says it needs one, in a sheet that makes the link', async () => {

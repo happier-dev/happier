@@ -50,7 +50,7 @@ export const ProjectMemoryBody = React.memo(function ProjectMemoryBody(
     projectRef.serverId,
   );
   const hasSource = shared.status !== 'none';
-  const { entry, resolved: memoryResolved } = React.useMemo(
+  const { entry, resolved: memoryResolved, attachmentStatus: memoryAttachmentStatus } = React.useMemo(
     () =>
       selectProjectMemoryEntry({
         hasSource,
@@ -147,11 +147,16 @@ export const ProjectMemoryBody = React.memo(function ProjectMemoryBody(
         description={t('contextPages.project.memoryDescription')}
         serverId={model.serverId}
         entry={entry}
-        attachmentStatus={!memoryResolved ? 'unavailable' : shared.status === 'none' ? personal.status : shared.status}
+        attachmentStatus={!memoryResolved ? memoryAttachmentStatus : shared.status === 'none' ? personal.status : shared.status}
         searchScope={page.searchScope}
+        searchScopeName={page.name}
         scopeTarget={canWrite ? { scope: 'project', projectRef } : undefined}
         footer={() => undefined}
         emptyText={t('contextPages.project.memoryEmpty')}
+        firstUse={{
+          title: t('memoryContext.memory.projectFirstUseTitle'),
+          reason: t('memoryContext.memory.projectFirstUseReason', { project: projectName }),
+        }}
         readOnly={!canWrite}
       />
     </ItemList>

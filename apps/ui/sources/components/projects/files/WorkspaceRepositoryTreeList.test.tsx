@@ -98,10 +98,12 @@ vi.mock('@/components/ui/filesystemBrowser/FilesystemBrowserRow', () => ({
         const content = React.createElement('FilesystemBrowserRow', {
             testID: props.testID,
             title: props.title,
+            selected: props.selected,
             onPress: props.onPress,
             onDoublePress: props.onDoublePress,
             onDisclosurePress: props.onDisclosurePress,
             rowPresentation: props.rowPresentation,
+            treeItemProps: props.treeItemProps,
         });
         if (typeof props.wrapContent === 'function') {
             return props.wrapContent({ node: props.node, content });
@@ -345,5 +347,65 @@ describe('WorkspaceRepositoryTreeList', () => {
         });
         expect(latestFilesystemBrowserProps.current?.extraData).not.toBe(before);
         badgeIndexState.current = null;
+    });
+
+    it('moves the selected mark between rows without redrawing every mounted row', async () => {
+        repositoryTreeBrowserState.nodes = [
+            { path: 'a.ts', name: 'a.ts', type: 'file', depth: 0 },
+            { path: 'b.ts', name: 'b.ts', type: 'file', depth: 0 },
+            { path: 'c.ts', name: 'c.ts', type: 'file', depth: 0 },
+        ];
+        const renders: string[] = [];
+        const element = (selectedPath: string) => (
+            <WorkspaceRepositoryTreeList
+                theme={theme}
+                scope={{ serverId: 'server', machineId: 'm1', rootPath: '/repo' }}
+                expandedPaths={[]}
+                onExpandedPathsChange={() => {}}
+                onOpenFile={() => {}}
+                selectedPath={selectedPath}
+            />
+        );
+        const screen = await renderScreen(element('a.ts'));
+        const before = latestFilesystemBrowserProps.current?.extraData;
+        const selectedOf = (path: string) => screen.findAll((node) => (node.type as any) === 'FilesystemBrowserRow'
+            && node.props.testID === `repository-tree-row-${toTestIdSafeValue(path)}`)[0]?.props.selected;
+        expect(selectedOf('a.ts')).toBe(true);
+        await act(async () => { screen.update(element('b.ts')); });
+        // Every mounted row reads extraData; a selection change must not republish it.
+        expect(latestFilesystemBrowserProps.current?.extraData).toBe(before);
+        expect(selectedOf('a.ts')).toBe(false);
+        expect(selectedOf('b.ts')).toBe(true);
+        expect(selectedOf('c.ts')).toBe(false);
+        void renders;
+    });
+
+    it('moves the roving tab stop between rows without redrawing every mounted row', async () => {
+        repositoryTreeBrowserState.nodes = [
+            { path: 'a.ts', name: 'a.ts', type: 'file', depth: 0 },
+            { path: 'b.ts', name: 'b.ts', type: 'file', depth: 0 },
+            { path: 'c.ts', name: 'c.ts', type: 'file', depth: 0 },
+        ];
+        const screen = await renderScreen(
+            <WorkspaceRepositoryTreeList
+                theme={theme}
+                scope={{ serverId: 'server', machineId: 'm1', rootPath: '/repo' }}
+                expandedPaths={[]}
+                onExpandedPathsChange={() => {}}
+                onOpenFile={() => {}}
+                selectedPath={null}
+            />,
+        );
+        const rowOf = (path: string) => screen.findAll((node) => (node.type as any) === 'FilesystemBrowserRow'
+            && node.props.testID === `repository-tree-row-${toTestIdSafeValue(path)}`)[0];
+        expect(rowOf('a.ts')?.props.treeItemProps.webTabIndex).toBe(0);
+        const before = latestFilesystemBrowserProps.current?.extraData;
+        // Clicking a row focuses it, which moves the tree's single tab stop.
+        await act(async () => { rowOf('b.ts')?.props.treeItemProps.onFocus(); });
+        // Every mounted row reads extraData; a tab-stop move must not republish it.
+        expect(latestFilesystemBrowserProps.current?.extraData).toBe(before);
+        expect(rowOf('a.ts')?.props.treeItemProps.webTabIndex).toBe(-1);
+        expect(rowOf('b.ts')?.props.treeItemProps.webTabIndex).toBe(0);
+        expect(rowOf('c.ts')?.props.treeItemProps.webTabIndex).toBe(-1);
     });
 });

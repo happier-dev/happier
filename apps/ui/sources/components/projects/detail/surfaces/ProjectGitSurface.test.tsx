@@ -11,6 +11,7 @@ import { createSessionAccessFixture } from '@/dev/testkit';
 import { applyProjectAccountRowsFixture, createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { createCompactSessionListFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 
 let reviewCommits = 0;
 let reviewData: unknown;
@@ -26,6 +27,77 @@ let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
 afterEach(async () => { standardCleanup(); await fixture?.dispose(); });
 
 describe('Project Changes destination', () => {
+    it.each(['unsuccessful response', 'destroyed stream'] as const)('shows a failed first history read (%s) and loads commits through Try again', async (failure) => {
+        let failHistory = true;
+        const entry = { sha: 'a'.repeat(40), shortSha: 'aaaaaaa', authorName: 'A', authorEmail: '', timestamp: Date.now(), subject: 'Recovered history', body: '' };
+        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request => {
+            if (request.method === 'scm.status.snapshot') return { success: true, snapshot: fileViewSnapshot({ rootPath: '/repo' }) };
+            if (request.method === 'scm.log.list') {
+                if (failHistory && failure === 'destroyed stream') throw Object.assign(new Error('Stream destroyed'), { code: 'ERR_STREAM_DESTROYED' });
+                return ScmLogListResponseSchema.parse(failHistory ? { success: false, error: 'History unavailable' } : { success: true, entries: [entry] });
+            }
+            return undefined;
+        } });
+        fixture.storage.setState({ sessions: {} });
+        const noop = () => {};
+        const screen = await fixture.render(<ProjectGitSurface scopeId="project:history-retry" serverId={fixture.home.id} machineId="m1" rootPath="/repo"
+            onOpenFile={noop} onOpenFilePinned={noop} onOpenReviewAllChanges={noop} onOpenStashDetails={noop}
+            onOpenCommit={noop} onSelectWorkspacePath={noop} onRequestCreateWorktreeFromAnotherBranch={noop} onRevealInFilesTree={noop} />);
+        await screen.pressByTestIdAsync('project-changes-mode:git');
+        await flushHookEffects({ cycles: 20 });
+        expect(fixture.requests.some(request => request.method === 'scm.log.list')).toBe(true);
+        expect(screen.findHostByTestId('session-git-timeline-error')).not.toBeNull();
+        failHistory = false;
+        await screen.pressByTestIdAsync('session-git-timeline-error-action');
+        await flushHookEffects({ cycles: 20 });
+        expect(screen.findHostByTestId('session-git-timeline-error')).toBeNull();
+        expect(screen.findHostByTestId(`scm-commit-entry-${entry.sha}`)).not.toBeNull();
+    });
+
+    it('adds no SCM acquisition when the admitted phone navigation placement and presentation change', async () => {
+        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', rpc: request =>
+            request.method === 'scm.status.snapshot' ? { success: true, snapshot: fileViewSnapshot({ rootPath: '/repo' }) } : undefined });
+        fixture.storage.setState({ sessions: {} });
+        const { useProjectNavigationCatalog } = await import('@/components/projects/navigation/useProjectNavigationCatalog');
+        const { ProjectCockpitTabBar } = await import('@/components/navigation/mobile/chrome/bars/ProjectCockpitTabBar');
+        const target = { kind: 'project', workspaceRefId: 'checkout', serverId: fixture.home.id } as const;
+        const noop = () => {};
+        function Host() {
+            const catalog = useProjectNavigationCatalog({ target });
+            return <>
+                <ProjectCockpitTabBar workspaceRefId="checkout" pages={catalog.pages} items={catalog.items}
+                    activeSurface="changes" activePage="changes" onSurfacePress={noop} />
+                <ProjectGitSurface scopeId="project:placement" serverId={fixture.home.id} machineId="m1" rootPath="/repo"
+                    onOpenFile={noop} onOpenFilePinned={noop} onOpenReviewAllChanges={noop} onOpenStashDetails={noop}
+                    onOpenCommit={noop} onSelectWorkspacePath={noop} onRequestCreateWorktreeFromAnotherBranch={noop} onRevealInFilesTree={noop} />
+            </>;
+        }
+        const screen = await fixture.render(<Host />);
+        await flushHookEffects({ cycles: 20 });
+        const review = screen.findByTestId('scm-review-list');
+        expect(review).not.toBeNull();
+        const baseline = fixture.requests.filter(request => request.method.startsWith('scm.')).length;
+        const placements = fixture.storage.getState().localSettings.navigationSurfacePlacementsV1;
+        await act(async () => fixture.storage.setState({ localSettings: { ...fixture.storage.getState().localSettings,
+            navigationSurfacePlacementsV1: { ...placements,
+                detailPages: { ...placements.detailPages, project: { phone: { items: {
+                    orderedIds: ['overview', 'changes', 'code'], placements: { code: 'overflow', changes: 'pinned' },
+                } } } },
+            },
+        } }));
+        await flushHookEffects({ cycles: 10 });
+        expect(screen.findByTestId('project-cockpit-tab-code')).toBeNull();
+        expect(screen.findByTestId('project-cockpit-tab-changes')).not.toBeNull();
+        await act(async () => fixture.storage.setState({ localSettings: { ...fixture.storage.getState().localSettings,
+            navigationSurfacePlacementsV1: { ...fixture.storage.getState().localSettings.navigationSurfacePlacementsV1,
+                pageTabs: { ...placements.pageTabs, project: 'top' } },
+        } }));
+        await flushHookEffects({ cycles: 10 });
+        expect(screen.findByTestId('project-cockpit-tab-changes')).toBeNull();
+        expect(screen.findByTestId('project-cockpit-tab-more')).not.toBeNull();
+        expect(screen.findByTestId('scm-review-list')).toBe(review);
+        expect(fixture.requests.filter(request => request.method.startsWith('scm.')).length - baseline).toBe(0);
+    });
     it('does not commit the parked Review when a different file route opens, switches or reopens', async () => {
         const entries = Array.from({ length: 57_000 }, (_, index) => ({ path: `src/file-${index}.ts`,
             previousPath: null, kind: 'modified' as const, includeStatus: '', pendingStatus: 'M',
@@ -102,27 +174,32 @@ describe('Project Changes destination', () => {
         let serverId = '';
         let listRequests = 0;
         const checkout = () => ({ id: 'checkout', serverId, machineId: 'm1', rootPath: '/repo', projectKey: 'anchor', createdAtMs: 1 });
-        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', request: async url => {
-            const path = new URL(String(url)).pathname;
-            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ features: { sessions: { filteredListing: { enabled: true } } } }));
-            if (path === '/v1/account/project-rows/list') return Response.json(createPlainProjectAccountRowListFixture({ workspaceRefs: serverId ? [checkout()] : [] }));
-            if (!['/v2/sessions', '/v1/sessions', '/v2/sessions/query'].includes(path)) return Response.json({}, { status: 404 });
-            listRequests += 1;
-            return Response.json({ sessions: admitted.map(id => ({ ...V2SessionRecordSchema.parse({
-                id, seq: 1, createdAt: 1, updatedAt: 2, active: false, activeAt: 2, latestTurnId: `turn-${id}`,
-                encryptionMode: 'plain', dataEncryptionKey: null, metadataLayoutVersion: 0,
-                metadata: JSON.stringify({ path: '/repo', machineId: 'm1', projectId: 'anchor', name: `Review ${id}` }),
-                metadataVersion: 1, agentState: null, agentStateVersion: 1, share: null,
-                effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: createSessionAccessFixture().capabilities },
-                responsibleAccountId: null, responsibleAccount: null,
-            }), viewer: {
+        const sessionRecord = (id: string) => V2SessionRecordSchema.parse({
+            id, seq: 1, createdAt: 1, updatedAt: 2, active: false, activeAt: 2, latestTurnId: `turn-${id}`,
+            encryptionMode: 'plain', dataEncryptionKey: null, metadataLayoutVersion: 0,
+            metadata: JSON.stringify({ path: '/repo', machineId: 'm1', projectId: 'anchor', name: `Review ${id}` }),
+            metadataVersion: 1, agentState: null, agentStateVersion: 1, share: null,
+            effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: createSessionAccessFixture().capabilities },
+            responsibleAccountId: null, responsibleAccount: null,
+            viewer: {
                 latestFailureSeq: null,
                 readState: { state: 'tracking', lastViewedSessionSeq: 1, unreadSince: null },
                 relevance: { relevant: true, reasons: ['owned_by_me'] },
                 attention: { needsAttention: false, reasons: [], primary: null, presentation: 'full' },
                 follow: { follows: false, notificationLevel: null }, notification: { level: 'important', source: 'owner' },
-            } })), nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false });
-        }, rpc: request => {
+            },
+        });
+        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', request: createCompactSessionListFetchBoundary(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ features: { sessions: { filteredListing: { enabled: true } } } }));
+            if (path === '/v1/account/project-rows/list') return Response.json(createPlainProjectAccountRowListFixture({ workspaceRefs: serverId ? [checkout()] : [] }));
+            const id = path.startsWith('/v2/sessions/') ? decodeURIComponent(path.slice('/v2/sessions/'.length)) : null;
+            if (id && admitted.includes(id)) return Response.json({ session: sessionRecord(id) });
+            if (!['/v2/sessions', '/v2/sessions/query'].includes(path)) return null;
+            listRequests += 1;
+            return Response.json({ sessions: admitted.map(sessionRecord), nextCursor: null, hasNext: false,
+                attentionNextCursor: null, attentionHasNext: false });
+        }), rpc: request => {
             if (request.method === 'scm.status.snapshot') return { success: true, snapshot: fileViewSnapshot({ rootPath: '/repo' }) };
             if (request.method === 'scm.diffSummary.capture') {
                 const input = request.payload as { sessionId: string; source: { kind: 'session'; sessionId: string } | { kind: 'turnCheckpoint'; turnId: string } };
@@ -175,6 +252,31 @@ describe('Project Changes destination', () => {
         const { SourceControlUnavailableState } = await import('@/components/workspaces/scm/states/SourceControlUnavailableState');
         expect(screen.findAllByType(SourceControlUnavailableState)).toHaveLength(1);
         expect(screen.findByTestId('scm-comparison-start-review')).toBeNull();
+    });
+    it('does not demand the Project Session roster while a retained surface is not presented', async () => {
+        let serverId = '';
+        let listRequests = 0;
+        const checkout = () => ({ id: 'checkout', serverId, machineId: 'm1', rootPath: '/repo', projectKey: 'anchor', createdAtMs: 1 });
+        fixture = await createSessionFilesViewFixture({ rootPath: '/repo', request: createCompactSessionListFetchBoundary(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({ features: { sessions: { filteredListing: { enabled: true } } } }));
+            if (path === '/v1/account/project-rows/list') return Response.json(createPlainProjectAccountRowListFixture({ workspaceRefs: serverId ? [checkout()] : [] }));
+            if (!['/v2/sessions', '/v2/sessions/query'].includes(path)) return null;
+            listRequests += 1;
+            return Response.json({ sessions: [], nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false });
+        }), rpc: request => request.method === 'scm.status.snapshot' ? { success: true, snapshot: fileViewSnapshot({ rootPath: '/repo' }) } : undefined });
+        serverId = fixture.home.id;
+        primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse({ features: { sessions: { filteredListing: { enabled: true } } } }) } });
+        applyProjectAccountRowsFixture(fixture.storage, { workspaceRefs: [checkout()] });
+        const noop = () => {};
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        await fixture.render(<PluginSurfaceFocusEligibilityProvider active={false}>
+            <ProjectGitSurface scopeId="project:hidden" serverId={fixture.home.id} machineId="m1" rootPath="/repo"
+                onOpenFile={noop} onOpenFilePinned={noop} onOpenReviewAllChanges={noop} onOpenStashDetails={noop}
+                onOpenCommit={noop} onSelectWorkspacePath={noop} onRequestCreateWorktreeFromAnotherBranch={noop} onRevealInFilesTree={noop} />
+        </PluginSurfaceFocusEligibilityProvider>);
+        await flushHookEffects({ cycles: 20 });
+        expect(listRequests).toBe(0);
     });
     it('restores the chosen file after Git and page/companion remount without accepting hidden-list scroll requests', async () => {
         const entries = ['src/a.ts', 'src/b.ts'].map((path) => ({ path, previousPath: null, kind: 'modified' as const,

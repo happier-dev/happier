@@ -11,7 +11,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { useActiveServerAccountScope, useAllMachines } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { t } from '@/text';
@@ -58,7 +58,7 @@ export const ProjectOpenResolutionCard = React.memo(
     }>,
   ) {
     const testID = props.testID ?? 'project-open-resolution';
-    const machines = useAllMachines();
+    const machines = useActiveMachineFacts();
     const describe = React.useCallback(
       (candidate: WorkspaceRefV1) => {
         const machine =

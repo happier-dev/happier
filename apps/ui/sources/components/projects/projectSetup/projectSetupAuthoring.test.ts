@@ -8,7 +8,7 @@ import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { act } from 'react-test-renderer';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { ProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
+import { ProjectDefinitionInspectInputSchema, ProjectDefinitionInspectOutputSchema, type ProjectDefinitionInspectRead } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ProjectWorkerStatusResultV1Schema } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1';
@@ -17,6 +17,7 @@ import { machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/
 import { WorkspaceRefV1WriteSchema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { createPlainProjectAccountRowListFixture, createProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { buildProjectAccountRowPhysicalKeyV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -79,7 +80,7 @@ beforeEach(async () => {
     machineTransport.mockImplementation(async ({ method }) => {
         if (method !== 'daemon.projects.inspect.v1') throw new Error(`Unexpected Machine effect: ${method}`);
         return ProjectDefinitionInspectOutputSchema.parse({ definition: { basis: { kind: 'absent' }, document: null },
-            detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [] });
+            detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [] });
     });
     homeId = await homes.addHome({ name: 'Home', serverUrl: 'https://project-authoring.test', accountId: 'account-a',
         serverIdentityId: 'srv_project_authoring', currentAccount: true, machinePoolsEnabled: true });
@@ -145,6 +146,92 @@ async function currentGuidance(workspace: Parameters<typeof readProjectSetupAgen
 }
 
 describe('Project setup return inspection data', () => {
+    it('PF4 keeps the authoring return origin stable across unrelated checkout arrivals', async () => {
+        const origin = PluginUiNewSessionSeedOriginV1Schema.parse({ kind: 'project', accountId: 'account-a', page: 'scripts',
+            workspace: { serverId, workspaceId: 'checkout-a', machineId: 'machine-a', rootPath: '/repo' } });
+        const scope = { serverId, accountId: 'account-a' };
+        const baseline = storage.getState().projectAccountRows!;
+        const selected = baseline.workspaceRefs.find(ref => ref.id === 'checkout-a')!;
+        const keyOf = (id: string) => buildProjectAccountRowPhysicalKeyV1({ kind: 'workspace-ref', serverId, id });
+        const refs = [selected, ...Array.from({ length: 149 }, (_, index) => ({
+            ...selected, id: `pf4-other-${index}`, rootPath: `/other-${index}`,
+        }))];
+        const initial = createProjectAccountRowsFixture(scope, { workspaceRefs: refs, organizations: baseline.organizations,
+            relationships: baseline.relationships, revisionsByPhysicalKey: { ...baseline.revisionsByPhysicalKey,
+                ...Object.fromEntries(refs.map(ref => [keyOf(ref.id), 0])),
+                [keyOf(selected.id)]: (baseline.revisionsByPhysicalKey[keyOf(selected.id)] ?? 0) + 1 } });
+        // A background bootstrap must describe the same census as the admitted scale fixture.
+        homes.answer(homeId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, {
+            body: createPlainProjectAccountRowListFixture({ workspaceRefs: refs }),
+        });
+        storage.getState().applyProjectAccountRowsForScope(scope, initial);
+        expect(storage.getState().projectAccountRows!.workspaceRefs).toHaveLength(150);
+        let current!: ReturnType<typeof useProjectAuthoringReturn>;
+        let renders = 0;
+        const Destination = React.memo(({ value }: { value: typeof current.destination }) => { renders++; return null; });
+        function Probe() { current = useProjectAuthoringReturn(origin); return React.createElement(Destination, { value: current.destination }); }
+        const screen = await renderScreen(React.createElement(Probe));
+        try {
+            expect(current.destination.kind).toBe('ready');
+            const before = current.destination;
+            renders = 0;
+            await act(async () => { storage.getState().applyProjectAccountRowsForScope(scope, { ...initial,
+                workspaceRefs: initial.workspaceRefs.map(ref => ({ ...ref })),
+                organizations: initial.organizations.map(row => ({ ...row, value: { ...row.value } })),
+            }); });
+            expect({ sameDestination: current.destination === before, renders }).toEqual({ sameDestination: true, renders: 0 });
+            const unrelated = { ...initial, workspaceRefs: initial.workspaceRefs.map(ref => ref.id === 'pf4-other-42' ? { ...ref, label: 'Other renamed' } : ref),
+                revisionsByPhysicalKey: { ...initial.revisionsByPhysicalKey, [keyOf('pf4-other-42')]: 2 } };
+            await act(async () => { storage.getState().applyProjectAccountRowsForScope(scope, unrelated); });
+            expect(storage.getState().projectAccountRows!.workspaceRefs.find(ref => ref.id === 'pf4-other-42')?.label).toBe('Other renamed');
+            expect({ sameDestination: current.destination === before, renders }).toEqual({ sameDestination: true, renders: 0 });
+            await act(async () => { storage.getState().applyProjectAccountRowsForScope(scope, { ...unrelated,
+                revisionsByPhysicalKey: { ...unrelated.revisionsByPhysicalKey, [keyOf(selected.id)]: initial.revisionsByPhysicalKey[keyOf(selected.id)] + 1 },
+                workspaceRefs: unrelated.workspaceRefs.map(ref => ref.id === selected.id ? { ...ref, label: 'Selected renamed' } : ref) }); });
+            expect(storage.getState().projectAccountRows!.workspaceRefs.find(ref => ref.id === selected.id)?.label).toBe('Selected renamed');
+            expect(current.destination).not.toBe(before);
+            expect(renders).toBe(1);
+            expect(current.destination).toMatchObject({ kind: 'ready', workspaceRef: { label: 'Selected renamed' } });
+        } finally { await screen.unmount(); }
+    });
+    it('PF4 retains inspection facts across equal refreshes and publishes real readiness changes', async () => {
+        const { useProjectDefinitionInspection } = await import('./useProjectDefinitionInspection');
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const workspace = { serverId, workspaceId: 'checkout-a', machineId: 'machine-a', rootPath: '/repo' };
+        const inspection = ProjectDefinitionInspectOutputSchema.parse({ definition: { basis: { kind: 'absent' }, document: null },
+            detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+            setupReadiness: { kind: 'unprepared', reviewedEffectDigest: 'effect-1' } });
+        machineTransport.mockImplementation(async () => structuredClone(inspection));
+        let current!: ReturnType<typeof useProjectDefinitionInspection>;
+        let renders = 0;
+        type Facts = Extract<NonNullable<typeof current.read>, { value: unknown }>['value'];
+        const FactsSubscriber = React.memo(({ value }: { value: Facts | null }) => { renders++; return null; });
+        function Probe() {
+            const { binding } = useServerCredentialAccountScopeBinding(serverId);
+            current = useProjectDefinitionInspection(workspace, binding);
+            return React.createElement(FactsSubscriber, { value: current.read && 'value' in current.read ? current.read.value : null });
+        }
+        const screen = await renderScreen(React.createElement(Probe));
+        try {
+            await vi.waitFor(() => expect(current.read && 'value' in current.read ? current.read.value.setupReadiness?.kind : null).toBe('unprepared'));
+            const before = current.read && 'value' in current.read ? current.read.value : null;
+            renders = 0;
+            const reads = machineTransport.mock.calls.length;
+            await act(async () => { current.retry(); });
+            await vi.waitFor(() => expect(machineTransport.mock.calls.length).toBeGreaterThan(reads));
+            await vi.waitFor(() => expect(current.read && 'refreshing' in current.read ? current.read.refreshing : true).toBe(false));
+            const after = current.read && 'value' in current.read ? current.read.value : null;
+            expect({ sameFacts: after === before, renders }).toEqual({ sameFacts: true, renders: 0 });
+            const prepared = { ...inspection, setupReadiness: { kind: 'current' as const, reviewedEffectDigest: 'effect-1', completedAtMs: 1000 } };
+            machineTransport.mockImplementation(async () => structuredClone(prepared));
+            await act(async () => { current.retry(); });
+            await vi.waitFor(() => expect(current.read && 'value' in current.read ? current.read.value.setupReadiness?.kind : null).toBe('current'));
+            expect(renders).toBe(1);
+            const changed = current.read && 'value' in current.read ? current.read.value : null;
+            expect(changed).not.toBe(before);
+            expect(changed?.definition).toBe(before?.definition);
+        } finally { await screen.unmount(); }
+    });
     it('keeps an omitted-execution Script on SOURCE while its Run is pending despite a saved worker preference', async () => {
         const { ProjectScriptsBody } = await import('./ProjectScriptsBody');
         const workspace = { serverId, workspaceId: 'checkout-a', machineId: 'machine-a', rootPath: '/repo' };
@@ -153,7 +240,7 @@ describe('Project setup return inspection data', () => {
             definition: { basis: { kind: 'present', hash: 'a'.repeat(64) }, document: {
                 status: 'valid', bytes: JSON.stringify(manifest), original: manifest, manifest, diagnostics: [],
             } },
-            detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+            detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
         });
         homes.answer(homeId, `${WORKSPACE_EXECUTION_CONFIG_ROUTE_V1}/read`, { body: { status: 'present', revision: 1,
             content: { t: 'plain', v: { enabled: true, destination: { kind: 'machine', machineId: 'worker-b' },
@@ -197,7 +284,7 @@ describe('Project setup return inspection data', () => {
         const workspace = { serverId, workspaceId: 'checkout-a', machineId: 'machine-a', rootPath: '/repo' };
         machineTransport.mockResolvedValue(ProjectDefinitionInspectOutputSchema.parse({
             definition: { basis: { kind: 'absent' }, document: null },
-            detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] },
+            detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] },
             importCandidates: [], ...(setupReadiness ? { setupReadiness } : {}),
         }));
         const hook = await renderHook(() => useProjectSetupReturnInspection({ kind: 'project', accountId: 'account-a', workspace, page: 'scripts' }));
@@ -266,12 +353,14 @@ describe('Project setup through ordinary authoring', () => {
         const scope = { serverId, accountId: 'account-a' };
         machineTransport.mockResolvedValue(ProjectDefinitionInspectOutputSchema.parse({
             definition: { basis: { kind: 'absent' }, document: null },
-            detection: { entries: [
-                { source: { kind: 'native', tool: 'package_script', file: 'package.json', target: 'test' }, usage: 'script' },
-                { source: { kind: 'native', tool: 'compose', file: 'compose.yaml', target: 'web' }, usage: 'service' },
-            ], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+            detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+            detectionSummary: { total: 2, scripts: 1, services: 1, files: [
+                { file: 'package.json', total: 1, scripts: 1, services: 0 },
+                { file: 'compose.yaml', total: 1, scripts: 0, services: 1 },
+            ] },
         }));
         const result = await openProjectSetupAuthoring({ workspace });
+        expect(machineTransport.mock.calls.at(-1)?.[0]?.payload.read).toEqual({ kind: 'guidance' });
         if (!result.ok) throw new Error(result.errorCode);
         const opened = SessionAuthoringOpenResultV1Schema.parse(result.result);
         if (opened.kind !== 'opened') throw new Error('Draft refused');
@@ -285,13 +374,123 @@ describe('Project setup through ordinary authoring', () => {
         }
         expect.soft(draft?.sessionName).toBe(t('projects.authoring.draftTitle', { project: 'repo' }));
     });
+    it('reads native detail through the real Action only while demanded by its captured Account', async () => {
+        const { useProjectDefinitionDemand, ProjectNativeInvocationDetail } = await import('./ProjectNativeInvocationDetail');
+        const workspace = { serverId, workspaceId: 'checkout-a', machineId: 'machine-a', rootPath: '/repo' };
+        const source = { kind: 'native', tool: 'package_script', file: 'package.json', target: 'test' } as const;
+        const selection: ProjectDefinitionInspectRead = { kind: 'detail', sources: [{ source, usage: 'script' }] };
+        const answer = (args: string[]) => ProjectDefinitionInspectOutputSchema.parse({
+            definitionScope: 'statusOnly',
+            definition: { basis: { kind: 'absent' }, document: null },
+            detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] },
+            importCandidates: [{ source, usage: 'script', availability: 'available', preselected: true,
+                invocation: { tool: 'yarn', args, cwd: '/repo' } }],
+        });
+        const pending = createDeferred<unknown>();
+        const reopened = createDeferred<unknown>();
+        const requests: unknown[] = [];
+        machineTransport.mockImplementation(async request => {
+            const input = ProjectDefinitionInspectInputSchema.parse(request.payload);
+            requests.push(input.read);
+            return await pending.promise;
+        });
+        for (const capturedAccount of [null, 'other-account']) {
+            const refused = await renderScreen(React.createElement(ProjectNativeInvocationDetail, {
+                workspace, accountId: capturedAccount, source, usage: 'script', testID: 'captured-native',
+            }));
+            try {
+                await vi.waitFor(() => expect(refused.findAllByTestId('captured-native').some(node =>
+                    node.props.kind === 'unavailable' && node.props.diagnosticCode === 'not_authenticated')).toBe(true));
+                expect(requests).toEqual([]);
+            } finally { await refused.unmount(); }
+        }
+        let open = false;
+        let accountId = 'other-account';
+        const hook = await renderHook(() => useProjectDefinitionDemand(workspace, accountId, selection, open));
+        try {
+            expect(requests).toEqual([]);
+            open = true;
+            await hook.rerender();
+            expect(requests).toEqual([]);
+            await vi.waitFor(() => expect(hook.getCurrent().scopeError).toBe('not_authenticated'));
+            accountId = 'account-a';
+            await hook.rerender();
+            await vi.waitFor(() => expect(requests).toEqual([selection]));
+            expect(hook.getCurrent().read).toBeNull();
+            expect(hook.getCurrent().scopeError).toBeNull();
+            await act(async () => pending.resolve(answer(['test'])));
+            await vi.waitFor(() => expect(hook.getCurrent().read).toHaveProperty('value.importCandidates.0.invocation.args', ['test']));
+            open = false;
+            await hook.rerender();
+            expect(hook.getCurrent().read).toBeNull();
+            expect(requests).toEqual([selection]);
+            machineTransport.mockImplementation(async request => {
+                requests.push(ProjectDefinitionInspectInputSchema.parse(request.payload).read);
+                return await reopened.promise;
+            });
+            open = true;
+            await hook.rerender();
+            await vi.waitFor(() => expect(requests).toEqual([selection, selection]));
+            expect(hook.getCurrent().read).toBeNull();
+            await act(async () => reopened.resolve(answer(['test', '--watch'])));
+            await vi.waitFor(() => expect(hook.getCurrent().read).toHaveProperty('value.importCandidates.0.invocation.args', ['test', '--watch']));
+            expect(requests).toEqual([selection, selection]);
+            accountId = 'other-account';
+            await hook.rerender();
+            expect(hook.getCurrent().read).toBeNull();
+            expect(hook.getCurrent().scopeError).toBe('not_authenticated');
+            expect(requests).toEqual([selection, selection]);
+        } finally { reopened.resolve(answer(['test', '--watch'])); await hook.unmount(); }
+    });
+    it('settles opened native detail when Home identity is retained without a current credential binding', async () => {
+        const { ProjectNativeInvocationDetail, useProjectDefinitionDemand } = await import('./ProjectNativeInvocationDetail');
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const { adoptHomeProfile } = await import('@/sync/domains/server/serverProfiles');
+        const workspace = { serverId, workspaceId: 'checkout-a', machineId: 'machine-a', rootPath: '/repo' };
+        const source = { kind: 'native', tool: 'package_script', file: 'package.json', target: 'test' } as const;
+        const selection: ProjectDefinitionInspectRead = { kind: 'detail', sources: [{ source, usage: 'script' }] };
+        const renewedUrl = 'https://project-authoring-renewed.test';
+        const credentials = createDeferred<Awaited<ReturnType<typeof TokenStorage.getCredentialsForServerUrl>>>();
+        const readCredentials = TokenStorage.getCredentialsForServerUrl.bind(TokenStorage);
+        // Device credential storage is the boundary; the scope owner and retirement stay real.
+        const storageRead = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation((url, options) =>
+            url === renewedUrl ? credentials.promise : readCredentials(url, options));
+        const hook = await renderHook(() => ({
+            scope: useServerCredentialAccountScopeBinding(serverId),
+            demand: useProjectDefinitionDemand(workspace, 'account-a', selection, true),
+        }));
+        const screen = await renderScreen(React.createElement(ProjectNativeInvocationDetail, {
+            workspace, accountId: 'account-a', source, usage: 'script', testID: 'renewed-native',
+        }));
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().demand.read).toHaveProperty('value'));
+            const beforeRenewal = machineTransport.mock.calls.length;
+            await act(async () => { await adoptHomeProfile({
+                descriptor: { serverUrl: renewedUrl, homeServerIdentityId: serverId },
+                source: 'manual', descriptorAuthority: 'current_connection_observation',
+            }); });
+            await vi.waitFor(() => expect(hook.getCurrent().scope).toMatchObject({
+                resolution: { kind: 'bound', scope: { accountId: 'account-a' } }, binding: null,
+            }));
+            expect(hook.getCurrent().demand.read).toBeNull();
+            expect(hook.getCurrent().demand.scopeError).toBe('unavailable');
+            expect(screen.findAllByTestId('renewed-native').some(node =>
+                node.props.kind === 'unavailable' && node.props.diagnosticCode === 'unavailable')).toBe(true);
+            expect(machineTransport.mock.calls).toHaveLength(beforeRenewal);
+        } finally {
+            await screen.unmount();
+            await hook.unmount();
+            storageRead.mockRestore();
+            credentials.resolve(null);
+        }
+    });
     it('opens an authoring draft for literal manifest scripts with empty native detection', async () => {
         const workspace = { serverId, workspaceId: 'checkout-a', machineId: 'machine-a', rootPath: '/repo' };
         const manifest = { version: 1, scripts: { test: { source: { kind: 'command', command: 'echo ready' } } } };
         machineTransport.mockResolvedValue(ProjectDefinitionInspectOutputSchema.parse({
             definition: { basis: { kind: 'present', hash: 'b'.repeat(64) },
                 document: { status: 'valid', bytes: JSON.stringify(manifest), original: manifest, manifest, diagnostics: [] } },
-            detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+            detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
         }));
         const result = await openProjectSetupAuthoring({ workspace });
         if (!result.ok) throw new Error(result.errorCode);
@@ -307,7 +506,7 @@ describe('Project setup through ordinary authoring', () => {
         const workspace = { serverId, workspaceId: 'checkout-a', machineId: 'machine-a', rootPath: '/repo' };
         machineTransport.mockResolvedValue(ProjectDefinitionInspectOutputSchema.parse({
             definition: { basis: { kind: 'absent' }, document: null },
-            detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+            detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
         }));
         const result = await openProjectSetupAuthoring({ workspace });
         if (!result.ok) throw new Error(result.errorCode);
@@ -335,19 +534,19 @@ describe('Project setup through ordinary authoring', () => {
         const inspection = ProjectDefinitionInspectOutputSchema.parse({
             definition: { basis: { kind: 'present', hash: 'b'.repeat(64) },
                 document: { status: 'valid', bytes: JSON.stringify(manifest), original: manifest, manifest, diagnostics: [] } },
-            detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+            detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
         });
         machineTransport.mockClear();
         machineTransport.mockImplementation(async ({ method, payload, accountId: requester, serverId: home }) => {
             expect(method).toBe('daemon.projects.inspect.v1');
-            expect(payload).toEqual({ workspace });
+            expect(payload).toEqual({ workspace, read: { kind: 'setup' } });
             expect(requester).toBe('account-a');
             expect(home).toBe(serverId);
             return inspection;
         });
         if (accountId === 'account-a') {
             const { createProjectManifestActionClient } = await import('./projectManifestActionClient');
-            expect(await createProjectManifestActionClient({ workspace, expectedAccountId: accountId }).inspect())
+            expect(await createProjectManifestActionClient({ workspace, expectedAccountId: accountId }).inspect({ kind: 'setup' }))
                 .toMatchObject({ definition: { document: { status: 'valid', manifest } } });
             machineTransport.mockClear();
         }
@@ -414,9 +613,9 @@ describe('Project setup through ordinary authoring', () => {
             expect(accountId).toBe(scope.accountId);
             if (method === 'daemon.projects.inspect.v1') {
                 expect(machineId).toBe(workspace.machineId);
-                expect(payload).toEqual({ workspace });
+                expect(payload).toEqual({ workspace, read: { kind: 'guidance' } });
                 return ProjectDefinitionInspectOutputSchema.parse({ definition: { basis: { kind: 'absent' }, document: null },
-                    detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [] });
+                    detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [] });
             }
             if (method === 'projects.worker.status') {
                 expect(machineId).toBe('worker-b');
@@ -434,6 +633,8 @@ describe('Project setup through ordinary authoring', () => {
         if (opened.kind !== 'opened') throw new Error(`Draft refused: ${JSON.stringify(opened)}`);
         const draft = readNewSessionDraftProjectionFromRepository({ scope, draftId: opened.draftId })?.draft;
         if (!draft) throw new Error('Draft missing');
+        expect(machineTransport.mock.calls.filter(([request]) => request.method === 'projects.worker.status')).toHaveLength(0);
+        expect(homes.requestsFor(machinePoolActionEndpointPathV1('machines.pools.get'))).toHaveLength(0);
         const facts = await currentGuidance(workspace);
         expect(draft.input).not.toContain('{');
         expect(facts).toMatchObject({ advisory: true, sourceWorkspace: workspace,
@@ -457,7 +658,7 @@ describe('Project setup through ordinary authoring', () => {
         const inspection = ProjectDefinitionInspectOutputSchema.parse({
             definition: { basis: { kind: 'present', hash: 'a'.repeat(64) },
                 document: { status: 'valid', bytes: JSON.stringify(manifest), original: manifest, manifest, diagnostics: [] } },
-            detection: { entries: [], environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+            detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
             commands: [{ name: 'local', usage: 'script', source, availability: 'available',
                 invocation: { tool: 'yarn', args: ['run', 'test'], cwd: workspace.rootPath, requestedVersion: '4.6.0' } }],
             tools: [{ tool: 'yarn', file: 'package.json', requestedVersion: '4.6.0', availability: 'available', version: '4.6.0' },
@@ -476,7 +677,7 @@ describe('Project setup through ordinary authoring', () => {
             expect(accountId).toBe(scope.accountId);
             if (method === 'daemon.projects.inspect.v1') {
                 expect(machineId).toBe(workspace.machineId);
-                expect(payload).toEqual({ workspace });
+                expect(payload).toEqual({ workspace, read: { kind: 'guidance' } });
                 return inspection;
             }
             if (method === 'projects.worker.status') {
@@ -518,12 +719,14 @@ describe('Project setup through ordinary authoring', () => {
             expect(storage.getState().sessions).toBe(sessionsBefore);
             expect(homes.requests.filter(request => request.path.endsWith('/mutate') || request.path.endsWith('/create'))).toEqual([]);
         }
+        machineTransport.mockClear();
         const result = await openProjectSetupAuthoring({ workspace });
         if (!result.ok) throw new Error(result.errorCode);
         const opened = SessionAuthoringOpenResultV1Schema.parse(result.result);
         if (opened.kind !== 'opened') throw new Error(`Draft refused: ${opened.kind}`);
         const draft = readNewSessionDraftProjectionFromRepository({ scope, draftId: opened.draftId })?.draft;
         if (!draft) throw new Error('Draft missing');
+        expect(machineTransport.mock.calls.filter(([request]) => request.method === 'projects.worker.status')).toHaveLength(0);
         // Detailed advisory facts remain at the real read owner; the composer receives prose only.
         const facts = await currentGuidance(workspace);
         expect(facts).toMatchObject({ services: [{ name: 'web', source, port: 5173 }, { name: 'server', source }] });
@@ -538,8 +741,6 @@ describe('Project setup through ordinary authoring', () => {
         expect(facts).toMatchObject({
             advisory: true,
             sourceWorkspace: workspace,
-            commands: inspection.commands,
-            tools: inspection.tools,
             workerPreferences: { status: 'ready', preference, revision: 7, provenance: 'saved' },
             destination: { configured: preference.destination, observation },
             scripts: [
@@ -551,6 +752,8 @@ describe('Project setup through ordinary authoring', () => {
                 approval: 'configured_action_policy' },
         });
         expect(facts).not.toHaveProperty('acceptedTarget');
+        expect(facts).not.toHaveProperty('commands');
+        expect(facts).not.toHaveProperty('tools');
         expect(draft).toMatchObject({ selectedMachineId: workspace.machineId, selectedPath: workspace.rootPath,
             authoringOrigin: { workspace } });
         expect(storage.getState().sessions).toBe(sessionsBefore);

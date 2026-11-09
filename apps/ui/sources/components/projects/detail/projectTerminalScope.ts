@@ -6,6 +6,8 @@ import { storage } from '@/sync/domains/state/storage';
 import { readCurrentProjectAccountRows } from '@/sync/store/domains/projectAccountRows';
 import { resolveWorkspaceRefByAddress, resolveWorkspaceRefById, sameWorkspaceProject } from '@/sync/domains/workspaces/workspaceRefs';
 import { parseProjectPaneScopeId } from './projectPaneScope';
+import type { DaemonTerminalListEntryV1 } from '@happier-dev/protocol/daemon/terminal';
+import type { SessionTerminalMemberV1 } from '@happier-dev/protocol/terminal/workspace';
 
 export type ProjectTerminalScope = Readonly<{
     scope: ServerAccountScope;
@@ -19,6 +21,29 @@ export function buildProjectTerminalKey(scope: ServerAccountScope, workspace: Wo
     // admitted address and is rechecked by the daemon, not copied into the key budget.
     return ['project-terminal', scope.serverId, scope.accountId, workspace.machineId, workspace.workspaceId,
         terminalId].map(encodeURIComponent).join(':');
+}
+
+/** One Project member's key: a Shell keeps the checkout it was opened in, else the Project's own. */
+export function buildProjectMemberTerminalKey(authority: Pick<ProjectTerminalScope, 'scope' | 'workspace'>, member: SessionTerminalMemberV1): string {
+    const workspace = member.target.kind === 'workspace_shell' || member.target.kind === 'terminal_view'
+        ? member.target.workspace ?? authority.workspace : authority.workspace;
+    return buildProjectTerminalKey(authority.scope, workspace, member.id);
+}
+
+/** Decode the producer's own key, then resolve its accepted checkout through the Project owner. */
+export function resolveRunningProjectTerminalMember(scopeId: string, authority: ProjectTerminalScope, entry: DaemonTerminalListEntryV1): SessionTerminalMemberV1 | null {
+    if (entry.ended) return null;
+    const parts = entry.terminalKey.split(':');
+    if (parts.length !== 6 || parts[0] !== 'project-terminal') return null;
+    let workspaceId: string;
+    let memberId: string;
+    try { workspaceId = decodeURIComponent(parts[4]); memberId = decodeURIComponent(parts[5]); }
+    catch { return null; }
+    if (!memberId.trim()) return null;
+    const checkout = resolveProjectTerminalScope(scopeId, { serverId: authority.workspace.serverId,
+        machineId: authority.workspace.machineId, workspaceId, rootPath: entry.cwd });
+    return checkout && entry.terminalKey === buildProjectTerminalKey(authority.scope, checkout.workspace, memberId)
+        ? { id: memberId, target: { kind: 'workspace_shell', workspace: checkout.workspace } } : null;
 }
 
 /** Resolve the incumbent pane against the current Account's accepted checkouts, never a path guess. */

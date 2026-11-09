@@ -29,6 +29,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SourceControlBranchIntegrationSection } from '@/components/workspaces/scm/update/SourceControlBranchIntegrationSection';
 import { SourceControlPullRequestSection } from '@/components/workspaces/scm/update/SourceControlPullRequestSection';
+import { ProjectScmPullRequestSurface } from '@/components/workspaces/scm/update/ScmPullRequestSurface';
 import { SourceControlPublishRepositorySection } from '@/components/workspaces/scm/update/SourceControlPublishRepositorySection';
 import { SourceControlRemotesSection } from '@/components/workspaces/scm/update/SourceControlRemotesSection';
 import type { ScmOperationState } from '@/sync/domains/state/storageTypes';
@@ -106,7 +107,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
         [snapshot],
     );
 
-    const { historyIdentity: commitHistoryIdentity, historyEntries, historyLoading, historyHasMore, loadCommitHistory } = useWorkspaceScmCommitHistory({
+    const { historyIdentity: commitHistoryIdentity, historyEntries, historyLoading, historyError, historyHasMore, loadCommitHistory } = useWorkspaceScmCommitHistory({
         serverId: props.serverId,
         machineId: props.machineId,
         rootPath: props.rootPath,
@@ -248,6 +249,9 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
 
     const loadMoreHistory = React.useCallback(() => {
         void loadCommitHistory();
+    }, [loadCommitHistory]);
+    const retryHistory = React.useCallback(() => {
+        void loadCommitHistory({ reset: true });
     }, [loadCommitHistory]);
     const runWorkspaceUpdateMutation = React.useCallback(async <T extends ScmMutationResponse>(input: {
         operation: ScmProjectOperationKind;
@@ -439,17 +443,25 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
         );
     }
 
+    const pullRequestSection = <SourceControlPullRequestSection
+        theme={theme}
+        snapshot={snapshot}
+        disabled={scmOperationBusy}
+        onOpenOrReuse={openOrReusePullRequest}
+        onOpenCompose={openComposePullRequest}
+        onCreateFeatureBranch={createFeatureBranch}
+        onRefresh={refresh}
+    />;
+    const detectedPullRequest = snapshot?.pullRequestStatus?.openPullRequest;
     const repositoryTools = (
         <ExpandableItem
             expanded={toolsExpanded}
             onExpandedChange={setToolsExpanded}
-            header={({ headerProps, expanded }) => (
+            header={({ headerProps }) => (
                 <Item
                     {...headerProps}
                     testID="project-git-tools"
                     title={t('sessionGitPane.flow.tools.title')}
-                    rightElement={<Icon name={expanded ? 'caret-up' : 'caret-down'} size={16} color={theme.colors.text.secondary} />}
-                    showChevron={false}
                 />
             )}
         >
@@ -472,15 +484,12 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
                     )}
                 />
             ) : null}
-            <SourceControlPullRequestSection
-                theme={theme}
-                snapshot={snapshot}
-                disabled={scmOperationBusy}
-                onOpenOrReuse={openOrReusePullRequest}
-                onOpenCompose={openComposePullRequest}
-                onCreateFeatureBranch={createFeatureBranch}
-                onRefresh={refresh}
-            />
+            {detectedPullRequest ? <ProjectScmPullRequestSurface
+                serverId={props.serverId}
+                machineId={props.machineId}
+                pullRequest={detectedPullRequest}
+                fallback={pullRequestSection}
+            /> : pullRequestSection}
             <SourceControlPublishRepositorySection
                 theme={theme}
                 snapshot={snapshot}
@@ -555,8 +564,10 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
             entries={historyEntries}
             incoming={null}
             loading={historyLoading}
+            error={historyError}
             hasMore={historyHasMore}
             onLoadMore={loadMoreHistory}
+            onRetry={retryHistory}
             onOpenCommit={props.onOpenCommit ?? (() => {})}
             landedSha={null}
         />

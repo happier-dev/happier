@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PluginPortableReleaseManifestV1Schema, type PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
+import { resolveEffectiveActionInputFields, type EffectiveActionInputField } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 
 import {
   buildPlatformTargetDraft,
@@ -263,6 +264,16 @@ describe('deployment platforms from bundled declarations', () => {
     expect(targets.every((target) => target.title.length > 0)).toBe(true);
   });
 
+  it('keeps an empty Account read visible with its reason for every bundled platform after Retry', () => {
+    for (const target of readTargets()) {
+      const fields = disclosePlatformFields(resolveEffectiveActionInputFields({ inputHints: { fields: [...target.fields] } }, {}), {});
+      expect(fields.map(field => field.path), target.key).toEqual([target.fields[0]?.path]);
+      expect(fields[0]?.required, target.key).toBe(true);
+      expect(drawPlatformFields(fields, {}, () => ({ status: 'ready', options: [] }), () => false), target.key)
+        .toMatchObject({ failure: { code: 'provider_options_empty' }, canCheck: false });
+    }
+  });
+
   it('keeps Cloudflare product as provider input for the independently selected target', () => {
     const pages = readTargets().find(target => target.key === 'happier.deploy.cloudflare/pages')!;
     const account = { service: pages.service, accountId: 'cloudflare-account' };
@@ -281,8 +292,24 @@ describe('deployment platforms from bundled declarations', () => {
 });
 
 describe('platform choice disclosure', () => {
-  const field = (path: string, required = true) => ({ path, required, widget: 'select', title: path }) as never;
+  const field = (path: string, required = true): EffectiveActionInputField => ({ path, required, visible: true, disabled: false, widget: 'select', title: path });
   const fields = [field('account'), field('note', false), field('project'), field('environment')];
+
+  it('says why a required choice is empty after Retry, while keeping paging and optional empty choices usable', () => {
+    const account = [field('account')];
+    const draw = (status: 'loading' | 'ready' | 'failed', options: readonly unknown[], paged = false) =>
+      drawPlatformFields(account, {}, () => ({ status, options, errorCode: 'plugin_action_generation_retired' }), () => paged);
+    expect(draw('failed', []).failure).toEqual({ code: 'plugin_action_generation_retired' });
+    expect(draw('loading', []).failure).toBeNull();
+    expect(draw('ready', [])).toMatchObject({ failure: { code: 'provider_options_empty' }, canCheck: false });
+    expect(draw('ready', [], true).failure).toBeNull();
+    expect(draw('ready', [{ value: 'account' }]).failure).toBeNull();
+    expect(drawPlatformFields(account, {}, () => ({ status: 'ready', options: [], nextCursor: 'next' }), () => false).failure).toBeNull();
+    expect(drawPlatformFields(account, { account: 'selected' }, () => ({ status: 'ready', options: [] }), () => false).failure).toBeNull();
+    expect(drawPlatformFields([{ ...field('name'), widget: 'text' }], {}, () => ({ status: 'ready', options: [] }), () => false).failure).toBeNull();
+    expect(drawPlatformFields([{ ...field('custom'), allowCustomValue: true }], {}, () => ({ status: 'ready', options: [] }), () => false).failure).toBeNull();
+    expect(drawPlatformFields([field('optional', false)], {}, () => ({ status: 'ready', options: [] }), () => false).failure).toBeNull();
+  });
 
   it('draws each choice once the required choice above it is made', () => {
     const paths = (values: Record<string, unknown>) => disclosePlatformFields(fields, values).map((entry: { path: string }) => entry.path);
@@ -330,7 +357,7 @@ describe('platform choice disclosure', () => {
   it('leaves out an optional choice this target has nothing for (a Worker has no Pages project)', () => {
     const states: Record<string, { status: 'ready'; options: readonly unknown[] }> = {
       account: { status: 'ready', options: [{ value: 'team-1' }] }, note: { status: 'ready', options: [] },
-      project: { status: 'ready', options: [{ value: 'prj-1' }] }, environment: { status: 'ready', options: [] },
+      project: { status: 'ready', options: [{ value: 'prj-1' }] }, environment: { status: 'ready', options: [{ value: 'production' }] },
     };
     const drawn = drawPlatformFields(fields, { account: 'team-1', project: 'prj-1' }, (entry: { path: string }) => states[entry.path]!, () => false);
     expect(drawn.fields.map((entry: { path: string }) => entry.path)).toEqual(['account', 'project', 'environment']);

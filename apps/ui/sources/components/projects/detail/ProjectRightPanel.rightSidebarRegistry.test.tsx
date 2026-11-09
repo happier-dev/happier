@@ -3,7 +3,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
-import { DaemonContributionRegistryProjectionDescribeResponseSchema, MACHINE_PLAIN_DATA_KEY_MARKER, PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { MACHINE_PLAIN_DATA_KEY_MARKER} from '@happier-dev/protocol/machines/machineStoredContent';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createDeferred, createMachineFixture, flushHookEffects, renderScreen } from '@/dev/testkit';
@@ -13,11 +14,12 @@ import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/pane
 import { createBuiltinPaneDestination, type SelectedPaneDestinationV1 } from '@/components/appShell/panes/model/selectedPaneDestination';
 import { ProjectDefinitionInspectInputSchema, ProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { readMachineStatusNextRefreshAtMs } from '@/utils/sessions/machineUtils';
 import { buildProjectPaneScopeId } from './projectPaneScope';
 import { createProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 
 const device = vi.hoisted(() => ({ phone: false, native: false }));
 vi.mock('socket.io-client', async (importOriginal) =>
@@ -58,13 +60,15 @@ beforeAll(async () => {
             return ProjectDefinitionInspectOutputSchema.parse({
                 definition: { basis: { kind: 'absent' }, document: null },
                 detection: { entries: [{ source: { kind: 'native', tool: 'package_script', file: 'package.json', target: 'check' }, usage: 'script' }],
-                    environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+                    toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
             });
         },
     });
 });
 const runtime = installSessionPaneRuntimeTestHarness({
     credentials: { token: createAccountTokenForTests('account-a', { currentAccount: true }) },
+    // Browser is a server-represented, fail-closed feature: this Home serves it enabled.
+    features: () => createRootLayoutFeaturesResponse({ features: { browser: { enabled: true } } }),
     scopeId: ({ serverId }) => buildProjectPaneScopeId('wr_1', serverId),
     request: async (url, init) => {
         const method = init?.method ?? 'GET';
@@ -245,9 +249,12 @@ describe('ProjectRightPanel right-sidebar registry tabs', () => {
         </runtime.Wrapper>;
         await act(async () => screen.update(rail('code')));
         expect(screen.findHostByTestId('project-rightpanel-action:files')).toBeNull();
-        for (const tabId of ['git', 'browser', 'services']) {
-            expect(screen.findHostByTestId(`project-rightpanel-action:${tabId}`)).not.toBeNull();
-        }
+        expect(screen.findHostByTestId('project-rightpanel-action:git')).not.toBeNull();
+        expect(screen.findHostByTestId('project-rightpanel-action:more')).not.toBeNull();
+        // The native popover measures outside this renderer; exercise its real controlled menu contract.
+        const menu = screen.tree.findByType(DropdownMenu).props as React.ComponentProps<typeof DropdownMenu>;
+        expect(menu.items.map(item => item.id)).toEqual(expect.arrayContaining(['browser', 'services']));
+        expect(menu.items.some(item => item.id === 'files')).toBe(false);
         expect(runtime.pane.scopeState?.right).toEqual(retainedRight);
         await act(async () => screen.update(rail('overview')));
         expect(screen.findHostByTestId('project-rightpanel-action:files')).not.toBeNull();
@@ -266,10 +273,12 @@ describe('ProjectRightPanel right-sidebar registry tabs', () => {
             <ProjectRightSidebarProvider {...panelProps()} activePage={activePage}><ProjectRightSidebarRail /></ProjectRightSidebarProvider>
         </runtime.Wrapper>;
         await act(async () => screen.update(rail('code')));
-        expect(screen.findHostByTestId('project-rightpanel-action:widgets')).not.toBeNull();
+        expect(screen.findHostByTestId('project-rightpanel-action:more')).not.toBeNull();
+        const readMenu = () => screen.tree.findByType(DropdownMenu).props as React.ComponentProps<typeof DropdownMenu>;
+        expect(readMenu().items.some(item => item.id === 'widgets')).toBe(true);
         // Overview already draws the whole layout, its side area included.
         await act(async () => screen.update(rail('overview')));
-        expect(screen.findHostByTestId('project-rightpanel-action:widgets')).toBeNull();
+        expect(readMenu().items.some(item => item.id === 'widgets')).toBe(false);
         device.phone = true;
         const phone = await mount(createBuiltinPaneDestination('browser'));
         expect(phone.findHostByTestId('project-rightpanel-tab:widgets')).toBeNull();
@@ -343,7 +352,10 @@ describe('ProjectRightPanel right-sidebar registry tabs', () => {
             `Projection qualification: ${JSON.stringify(demandQualification)}; transport: ${JSON.stringify(projectionTransportTrace)}`,
         ).toMatchObject({ kind: 'ready', inputs: { pluginProjectionV2: { generation: 4 } } });
         expect(screen.findHostByTestId('project-right-panel-root')).toBeNull();
-        await screen.pressByTestIdAsync(`project-rightpanel-action:${TAB_ID}`);
+        expect(screen.findHostByTestId('project-rightpanel-action:more')).not.toBeNull();
+        const menu = screen.tree.findByType(DropdownMenu).props as React.ComponentProps<typeof DropdownMenu>;
+        expect(menu.items.some(item => item.id === TAB_ID)).toBe(true);
+        await act(async () => { menu.onSelect(TAB_ID); });
         expect(runtime.pane.scopeState?.right).toMatchObject({
             isOpen: true, activeTabId: null, selectedDestination: {
                 kind: 'plugin', destination: { pluginId: PLUGIN_ID, localId: DESTINATION_ID },
@@ -390,8 +402,7 @@ describe('ProjectRightPanel right-sidebar registry tabs', () => {
         expect((await pluginHost(screen)).props.projectionInteractionEnabled).toBe(true);
         const machine = storage.getState().machines.m1;
         if (!machine) throw new Error('Expected the current Project Machine');
-        const expiresAt = readMachineStatusNextRefreshAtMs(machine, Date.now());
-        if (expiresAt === null) throw new Error('Expected a current Machine heartbeat');
+        const expiresAt = Date.now() + 1;
         vi.useFakeTimers({ toFake: ['Date'] });
         try {
             vi.setSystemTime(expiresAt);

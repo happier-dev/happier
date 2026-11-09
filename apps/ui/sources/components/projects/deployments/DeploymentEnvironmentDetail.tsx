@@ -345,8 +345,43 @@ export const DeploymentEnvironmentDetail = React.memo(
       );
     }
 
+    // A removed Environment keeps its address and record; the page says it is gone instead of drawing a live one.
+    if (detail.environment.deletedAtMs === -1) {
+      return (
+        <ItemList testID="project-deployments.environment.removed">
+          <PageHeader
+            testID="project-deployments.environment.header"
+            title={detail.content.name}
+            alwaysShowTitle
+            leading={<PageHeaderMarkIcon name="cloud-slash" />}
+            description={t('projects.deployments.removedOn', { when: formatAsOfTime(detail.environment.deletedAtMs) })}
+          />
+          <ItemGroup header="none">
+            <Item
+              testID="project-deployments.environment.removed.notice"
+              title={t('projects.deployments.removedTitle')}
+              subtitle={t('projects.deployments.removedBody')}
+              subtitleLines={0}
+              mode="info"
+              showChevron={false}
+            />
+          </ItemGroup>
+          {history.result.items.length > 0 ? (
+            <ItemGroup testID="project-deployments.environment.recent" title={t('projects.deployments.recent')}>
+              {history.result.items.slice(0, RECENT_COUNT).map((receipt) => (
+                <DeploymentReceiptRow key={receipt.id} receipt={receipt} live={false}
+                  byYou={receipt.requestedByAccountId === props.accountId} phone={props.phone} onOpen={openReceipt} />
+              ))}
+            </ItemGroup>
+          ) : null}
+        </ItemList>
+      );
+    }
+
     const machineName = (machineId: string) =>
       machineNames[machineId] ?? t('projects.deployments.aMachine');
+    const activeReceipt = active.snapshot.value;
+    const services = activeReceipt ? deploymentServices(activeReceipt.content) : NO_SERVICES;
     // Where a name is only a fact or a clause, an unknown Machine drops out instead of reading "a machine".
     const knownMachine = (machineId: string | undefined) => (machineId ? machineNames[machineId] ?? null : null);
     const definition = deploymentDefinitionLabel(detail.content);
@@ -449,6 +484,7 @@ export const DeploymentEnvironmentDetail = React.memo(
         name: detail.content.name,
         machine: machines.length > 0 ? machines.map(machineName).join(', ') : null,
         running,
+        services: services.map((service) => service.name),
         hasRetainedAssociations: targetLinkId ? subject !== null : links.length > 0,
         canRemove: true,
         ...(detail.targetLinks.find(row => row.targetLink.id === (targetLinkId ?? detail.environment.runtimeTargetLinkId))?.targetLink.source.kind === 'host'
@@ -556,9 +592,7 @@ export const DeploymentEnvironmentDetail = React.memo(
         onOpen={openReceipt}
       />
     );
-    const activeReceipt = active.snapshot.value;
     const servingNotice = activeReceipt ? deploymentStateNotice(activeReceipt.deployment.state) : null;
-    const services = activeReceipt ? deploymentServices(activeReceipt.content) : NO_SERVICES;
     // Overview owns the whole precedence; other tabs keep only what blocks their own presses.
     const overview = tab === 'overview';
     const latest = overview ? history.result.items[0] ?? null : null;
@@ -956,6 +990,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               editing={props.domainActions ? {
                 actions: props.domainActions,
                 environmentRevision: detail.environment.revision,
+                deployedServices: services.map((service) => service.name),
                 recordedIngress: detail.content.ingress,
                 targetLink: runtime ? { id: runtime.id, revision: runtime.revision } : null,
                 review,

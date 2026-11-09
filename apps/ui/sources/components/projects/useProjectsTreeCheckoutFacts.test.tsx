@@ -4,6 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook, renderScreen, standardCleanup, createSessionListRenderableSessionFixture } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { sessionListRuntimeClock } from '@/hooks/session/sessionListRuntimeClock';
+import { projectLastMobileSurfaceState } from '@/sync/domains/state/navigationUiState';
+import { buildRealmQualifiedMobileSurfaceStorageKey } from '@/sync/domains/settings/mobileSurfacePersistence';
+import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persistentUiState';
 import { readSessionRuntimePresentationFreshnessExpirations } from '@/sync/domains/session/attention/runtimePresentation';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
@@ -22,6 +25,7 @@ vi.mock('react-native-unistyles', async () => {
 
 afterEach(() => {
     standardCleanup();
+    replacePersistentUiStateForTest(projectLastMobileSurfaceState, {});
     vi.useRealTimers();
 });
 
@@ -39,6 +43,29 @@ function arrange() {
 }
 
 describe('Projects tree checkout fact demand', () => {
+    it('clears viewed arrival memory live and ignores navigation state for an unrelated Project', async () => {
+        const refs = arrange();
+        storage.setState({ sessionListRowsByServerId: { 'home-a': { session: createSessionListRenderableSessionFixture({
+            id: 'session', active: true, activeAt: 1_000, thinkingAt: 1_000,
+            metadata: { machineId: 'machine', path: '/repo-0' },
+        }) } } });
+        let renders = 0;
+        const hook = await renderHook(() => { renders += 1; return useProjectsTreeCheckoutFacts(refs); });
+        const before = hook.getCurrent();
+        const initialRenders = renders;
+        expect([...before.values()][0]?.newFromSession).toBe(true);
+        const pageKey = (id: string) => buildRealmQualifiedMobileSurfaceStorageKey('project', {
+            serverId: 'home-a', accountId: 'account-a',
+        }, id)!;
+        await act(async () => projectLastMobileSurfaceState.set(pageKey('unrelated'), 'context'));
+        expect(renders).toBe(initialRenders);
+        await act(async () => projectLastMobileSurfaceState.set(pageKey('workspace-0'), 'code'));
+        expect([...hook.getCurrent().values()][0]?.newFromSession).toBe(false);
+        expect(renders).toBe(initialRenders + 1);
+        expect([...hook.getCurrent().values()].slice(1)).toEqual([...before.values()].slice(1));
+        await hook.unmount();
+        expect(vi.getTimerCount()).toBe(0);
+    });
     it('renders only the changed row body among 150 Projects after a real checkout-fact change', async () => {
         const refs = arrange();
         const groups = refs.map(ref => ({ projectKey: { projectKey: ref.id }, items: [ref] }));

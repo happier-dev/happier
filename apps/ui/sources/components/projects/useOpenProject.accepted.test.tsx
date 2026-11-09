@@ -6,6 +6,8 @@ import { installFileFindAccountBoundaryMocks } from '@/components/appShell/panes
 import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { storage } from '@/sync/domains/state/storage';
 import { useOpenProject } from './useOpenProject';
+import { projectLastActiveRootPathState, projectLastActiveWorktreeIdState } from '@/sync/domains/state/navigationUiState';
+import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persistentUiState';
 
 installFileFindAccountBoundaryMocks('home', 'account');
 const push = vi.hoisted(() => vi.fn());
@@ -23,8 +25,8 @@ describe('accepted Project Open focus', () => {
     beforeEach(() => {
         standardCleanup(); push.mockReset(); storage.getState().activateProfileScope({ serverId: 'home', accountId: 'account' });
         applyProjectAccountRowsFixture(storage);
-        storage.getState().applyLocalSettings({ projectLastActiveRootPathByWorkspaceRefId: { checkout: '/stale' },
-            projectLastActiveWorktreeIdByWorkspaceRefId: { checkout: 'stale-worktree' } }, { persist: false });
+        replacePersistentUiStateForTest(projectLastActiveRootPathState, { checkout: '/stale' });
+        replacePersistentUiStateForTest(projectLastActiveWorktreeIdState, { checkout: 'stale-worktree' });
     });
     it('uses the freshly admitted exact row and accepted directory, not a stale subscription or remembered checkout', async () => {
         const hook = await renderHook(() => useOpenProject(), { wrapper: Wrapper });

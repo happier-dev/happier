@@ -6,7 +6,12 @@ import { useProjectRouteHeaderOptions } from './useProjectRouteHeaderOptions';
 const windowSize = vi.hoisted(() => ({ width: 1440, height: 900 }));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({ useWindowDimensions: () => ({ ...windowSize, scale: 1, fontScale: 1 }) });
+    const getWindowDimensions = () => ({ ...windowSize, scale: 1, fontScale: 1 });
+    return createReactNativeWebMock({
+        // Responsive presentation reads Dimensions directly; both OS APIs describe the same window.
+        Dimensions: { get: getWindowDimensions },
+        useWindowDimensions: getWindowDimensions,
+    });
 });
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');

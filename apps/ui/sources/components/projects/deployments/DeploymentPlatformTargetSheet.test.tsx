@@ -20,8 +20,35 @@ const { ModalProvider } = await import('@/modal');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { ConnectedAccountPurposeTargetChooser } = await import('@/components/settings/connectedServices/account/ConnectedAccountPurposeTargetChooser');
 const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
+const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
 
 afterEach(standardCleanup);
+
+it('keeps a settled empty required choice visible with a typed reason and Retry', async () => {
+  const pluginId = 'com.example.empty-deploy';
+  const authored = createDeploymentTargetsTestPlugin(pluginId, undefined, { emptyChoices: true });
+  const serverId = await homes.addHome({ name: 'Empty choices', serverUrl: 'https://empty-choices.test', accountId: 'owner', currentAccount: true });
+  const context = await captureLazyActionAccountContext(serverId);
+  const installed = await installPortableAccountPluginReleaseForTest({ manifest: authored.manifest,
+    activate: api => authored.activateAccount(api, DEPLOYMENT_TARGETS_TEST_EXECUTION.account), accountLifetime: context.accountLifetime, publishProjection: true });
+  try {
+    const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
+    await act(async () => showDeploymentPlatformTargetSheet({ name: 'Site', environment: { id: 'environment', revision: 4, projectSourceId: '' },
+      ownerAccountId: 'owner', lifetime: context.accountLifetime, actions: createDeploymentActions(context.accountLifetime, ''), onApproval: () => {},
+      initialTargetKey: `${pluginId}/beta` }));
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(screen.root.findAllByType(ConnectedAccountPurposeTargetChooser)).toHaveLength(1); });
+    await act(async () => screen.root.findByType(ConnectedAccountPurposeTargetChooser).props.onChange({ kind: 'account',
+      account: { service: DEPLOYMENT_TARGETS_TEST_SERVICE, accountId: 'cloud-account' } }, null));
+    const failure = () => screen.root.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'project-deployments.platform.choicesFailed');
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(failure()?.props.diagnosticCode).toBe('provider_options_empty'); });
+    expect(screen.findByTestId('project-deployments.platform.check')?.props.disabled).toBe(true);
+    await act(async () => failure()!.props.action.onPress());
+    await waitForHomeGovernance(async () => { await act(async () => {}); expect(failure()?.props.diagnosticCode).toBe('provider_options_empty'); });
+  } finally {
+    await installed.dispose();
+    context.dispose();
+  }
+});
 
 it('selects independent third-party targets before resolving their account, fields, options and Inspect Action', async () => {
   const pluginId = 'com.example.independent-deploy';

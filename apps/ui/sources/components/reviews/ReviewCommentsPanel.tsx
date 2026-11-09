@@ -2,7 +2,7 @@ import React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import type { ReviewCommentStateV1, ReviewCommentV1 } from '@happier-dev/protocol';
+import type { ReviewCommentStateV1, ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { reviewCommentTransitionAllowedV1 } from '@happier-dev/protocol/reviews/comments/mutation';
 
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';

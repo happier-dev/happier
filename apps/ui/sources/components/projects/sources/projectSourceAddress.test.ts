@@ -3,6 +3,9 @@ import { ProjectSourceRepositorySelectorV1Schema } from '@happier-dev/protocol/p
 import { describeProjectSourceRow, formatProjectSourceAddress } from './projectSourceAddress';
 
 describe('Source address presentation', () => {
+    it('names a repository-less Source without inventing repository, ref or folder facts', () => {
+        expect(describeProjectSourceRow({ name: 'Production', defaultRef: 'old-main', subdir: 'old-folder' })).toBe('Production');
+    });
     // A list row speaks only what tells Sources apart: the whole repository is the quiet default (lab p-sources LIST,
     // "happier-dev/happier · v0.3"); a folder is named only when one is chosen.
     it.each([undefined, '.', './', ''])('leaves a whole-repository selection unsaid in a row (%j)', subdir => {

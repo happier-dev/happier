@@ -435,6 +435,46 @@ describe('Environment draft Machine Home', () => {
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
 
+  it('authors a Run an image definition in the same draft when the door asks for one', async () => {
+    const serverId = await homes.addHome({ name: 'Image', serverUrl: 'https://image-definition.test', accountId: 'alice',
+      serverIdentityId: `srv_${'f'.repeat(32)}`, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    try {
+      let authored: ReturnType<typeof DeploymentEnvironmentCreateIntentInputV1Schema.parse> | undefined;
+      homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
+        id: 'source-app', revision: 3, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
+        createdByAccountId: 'alice', repository } } });
+      homes.answer(serverId, 'POST /v1/machines/managed/actions/list', { body: { machines: [] } });
+      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
+        actionId: 'deployments.environments.create', tokenEpoch: 0, execute: input => {
+          authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input);
+          return { ok: false, error: 'deployment_unavailable' };
+        } });
+      await publishMachineInventoryForTest(account.accountLifetime.scope,
+        [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
+      const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app" definitionKind="image"
+        phone={false} actions={createDeploymentActions(account.accountLifetime, 'source-app')}
+        onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
+      const header = () => screen.findAllByType(PageHeader)[0]!;
+      const { FieldTextInput } = await import('@/components/ui/forms/FieldTextInput');
+      const field = (testID: string) => screen.findAllByType(FieldTextInput).find(node => node.props.testID === testID)!;
+      await act(async () => header().props.titleEditor.onChangeText('Web'));
+      await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.draft.imageName'), node => node !== null);
+      expect(screen.findByTestId('project-deployments.draft.ref'), 'an image definition needs no repository, even in a repository Project').toBeNull();
+      expect(header().props.primaryAction.disabled).toBe(true);
+      await act(async () => field('project-deployments.draft.imageName').props.onChangeText('ghcr.io/acme/web:1'));
+      await act(async () => field('project-deployments.draft.imagePort').props.onChangeText('not a port'));
+      expect(header().props.primaryAction.disabled, 'the port must be a real port').toBe(true);
+      await act(async () => field('project-deployments.draft.imagePort').props.onChangeText('8080'));
+      expect(header().props.primaryAction.disabled).toBe(false);
+      await act(async () => header().props.primaryAction.onPress());
+      await waitForTestEvent(homes.subscribe, () => authored, value => value !== undefined);
+      expect(authored).toMatchObject({ name: 'Web', definition: { from: 'image', image: 'ghcr.io/acme/web:1', port: 8080 } });
+      await screen.unmount();
+    } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
+  });
+
   it('starts on an answering Machine, never an unreachable one, and says the typed remedy when the target is unavailable', async () => {
     const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://draft-reachable.test', accountId: 'alice',
       serverIdentityId: `srv_${'r'.repeat(32)}`, currentAccount: true });

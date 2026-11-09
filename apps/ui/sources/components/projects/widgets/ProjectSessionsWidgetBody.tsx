@@ -27,6 +27,7 @@ import {
 } from '@/utils/sessions/sessionUtils';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useProjectSessionsWidgetBody } from './useProjectSessionsWidgetBody';
 
 /**
@@ -44,8 +45,11 @@ export function ProjectSessionsWidgetBody(
   const items = sessions.access === 'available' ? sessions.items : [];
   const renderables = useSessionListRowRenderablesForItems(items);
   const hasRenderableSessions = renderables.size > 0;
-  const relativeNowMs = useSessionListRelativeNowMs(hasRenderableSessions);
-  const runtimeNowMs = useSessionListRuntimeNowMs(hasRenderableSessions);
+  // Times are presentation only: a hidden retained page keeps its rows and reads the clock again when shown.
+  const presented = useLayoutPresentationActive();
+  const clocksActive = hasRenderableSessions && presented;
+  const relativeNowMs = useSessionListRelativeNowMs(clocksActive);
+  const runtimeNowMs = useSessionListRuntimeNowMs(clocksActive);
   const { presentation, query } = sessions;
   const hasMore = Object.values(query.statesByServerId).some(
     (state) => state?.hasNext || state?.attentionHasNext,

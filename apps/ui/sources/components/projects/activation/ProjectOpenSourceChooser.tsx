@@ -9,6 +9,7 @@ import { Item } from '@/components/ui/lists/Item';
 import {
   CollectionList,
   CollectionListGroupLabel,
+  CollectionNavigationRow,
   collectionListStyles,
 } from '@/components/ui/lists/collection/CollectionList';
 import { useTeamsDirectory } from '@/hooks/teams/useTeamsDirectory';
@@ -73,20 +74,18 @@ export const ProjectOpenSourceChooser = React.memo(
           testID: 'projects.open.search',
         }}
       >
-        {props.groups.map((group, index) => (
+        {props.groups.filter(group => group.sources.some(source => source.repository)).map((group, index) => (
           <React.Fragment key={group.id}>
             <CollectionListGroupLabel title={group.title} first={index === 0} />
-            {group.sources.map((source) => (
-              <Item
+            {group.sources.filter(source => source.repository).map((source) => (
+              <CollectionNavigationRow
+                surface="page"
                 key={source.id}
                 testID={`projects.open.source.${source.id}`}
                 title={source.name}
                 subtitle={describeProjectSourceRow(source)}
                 icon={mark('git-branch')}
                 selected={props.selectedSourceId === source.id}
-                density="compact"
-                showChevron={false}
-                pressableStyle={collectionListStyles.row}
                 onPress={() => props.onSelectSource(source)}
               />
             ))}
@@ -103,6 +102,7 @@ export const ProjectOpenSourceChooser = React.memo(
           />
         ) : null}
         <Item
+          rowRole="item"
           testID="projects.open.folder"
           title={t('projects.open.aFolder')}
           icon={mark('folder-open')}

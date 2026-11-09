@@ -97,6 +97,7 @@ async function setup(
     deferMachineDiscovery?: boolean;
     presenceBeforeDiscovery?: boolean;
     waive?: readonly string[];
+    role?: 'use';
   }> = {},
 ) {
   rpc.machine.mockImplementation(async ({ method }: { method: string }) => {
@@ -115,6 +116,9 @@ async function setup(
     storageMode: 'plain',
     metadataVersion: 4,
     dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+    isShared: options.role !== undefined,
+    ...(options.role ? { access: { custodian: { accountId: 'artifact-account', displayName: 'Test Account' },
+      role: options.role, resourceMode: 'plain' as const, accessState: 'ready' as const } } : {}),
   });
   let metadata: Record<string, unknown> = { ...machine.metadata };
   let version = 4;
@@ -317,6 +321,13 @@ describe('Machine › Work from your projects through the Machine policy Actions
     await vi.waitFor(() => expect(screen.findAllByTestId('work.unavailable').length).toBeGreaterThan(0));
     expect(screen.findAllByTestId('work.accepting')).toHaveLength(0);
     expect(policyReadCount()).toBe(0);
+    expect(sent).toHaveLength(0);
+  });
+  it('shows a Can use person the policy read-only and says who changes it', async () => {
+    const { screen, sent } = await setup({ role: 'use' });
+    await vi.waitFor(() => expect(screen.findAllByTestId('work.accepting')[0]?.props.subtitle).toContain('machines.widgets.body.common.recipient'));
+    expect(screen.findAllByTestId('work.accepting')[0]?.props.disabled).toBe(true);
+    expect(screen.findAllByTestId('work.capacity')[0]?.props.disabled).toBe(true);
     expect(sent).toHaveLength(0);
   });
   it('shows an own queued run from its canonical phase facts, never as running on an acceptance clock', async () => {

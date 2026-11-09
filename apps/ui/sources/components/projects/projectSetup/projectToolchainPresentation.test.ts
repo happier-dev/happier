@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import {
-  describeNativeEnvironmentRefusal,
-  nativeEnvironmentNameFor,
-} from './projectEnvironmentPresentation';
+  describeNativeToolchainRefusal,
+  nativeToolchainNameFor,
+} from './projectToolchainPresentation';
 import { presentProjectRun } from './projectScriptPresentation';
 import { projectSetupReadinessLine } from './projectSetupReadinessLine';
 
@@ -36,13 +36,13 @@ function operation(patch: Record<string, unknown>): ActionOperationProjection {
 
 describe('native environment presentation (plan 24 copy)', () => {
   it('names the environment a manifest selects, and nothing for the host', () => {
-    expect(nativeEnvironmentNameFor({ environment: native })).toBe(
+    expect(nativeToolchainNameFor({ toolchain: native })).toBe(
       'devenv',
     );
     expect(
-      nativeEnvironmentNameFor({ environment: { kind: 'host' } }),
+      nativeToolchainNameFor({ toolchain: { kind: 'host' } }),
     ).toBeNull();
-    expect(nativeEnvironmentNameFor({})).toBeNull();
+    expect(nativeToolchainNameFor({})).toBeNull();
   });
 
   it('says a review that evaluates a native environment waits for approval to evaluate it', () => {
@@ -51,7 +51,7 @@ describe('native environment presentation (plan 24 copy)', () => {
       setupReview: { reviewedEffectDigest: 'd', reviewedEffect: {} },
     });
     expect(presentProjectRun(held, 'nl3', '', 'devenv').text).toBe(
-      'Waiting for approval to evaluate this environment',
+      'Waiting for approval to evaluate this toolchain',
     );
     // A host setup review keeps the generic approval line.
     expect(presentProjectRun(held, 'nl3', '').text).toBe(
@@ -68,30 +68,30 @@ describe('native environment presentation (plan 24 copy)', () => {
     );
   });
 
-  it('turns a missing native tool into a typed refusal that says nothing ran on the host', () => {
+  it('turns a missing native tool into a typed refusal that says nothing ran in the machine environment', () => {
     expect(
-      describeNativeEnvironmentRefusal('native_tool_unavailable', 'Nix flake'),
+      describeNativeToolchainRefusal('native_tool_unavailable', 'Nix flake'),
     ).toBe(
-      'Nix flake is unavailable on this Machine. Nothing was run in the host environment.',
+      'Nix flake is unavailable on this Machine. Nothing was run in the machine environment.',
     );
     expect(
-      describeNativeEnvironmentRefusal('native_environment_failed', 'devenv'),
+      describeNativeToolchainRefusal('native_toolchain_failed', 'devenv'),
     ).toBe(
-      'Native environment preparation failed. View output. Nothing was run in the host environment.',
+      'Native toolchain preparation failed. View output. Nothing was run in the machine environment.',
     );
     // Other failures, and rows without a selected native environment, keep the generic refusal.
     expect(
-      describeNativeEnvironmentRefusal('scope_mismatch', 'devenv'),
+      describeNativeToolchainRefusal('scope_mismatch', 'devenv'),
     ).toBeNull();
     expect(
-      describeNativeEnvironmentRefusal('native_tool_unavailable', null),
+      describeNativeToolchainRefusal('native_tool_unavailable', null),
     ).toBeNull();
   });
 
   it('asks for a new review of a changed native environment instead of a generic setup change', () => {
     const readiness = { kind: 'needsReview', code: 'setup_changed' } as const;
     expect(projectSetupReadinessLine(readiness, 'devenv')).toBe(
-      'Environment inputs changed. Review again.',
+      'Toolchain inputs changed. Review again.',
     );
     expect(projectSetupReadinessLine(readiness)).toBe(
       'Setup changed. Review it in Scripts',

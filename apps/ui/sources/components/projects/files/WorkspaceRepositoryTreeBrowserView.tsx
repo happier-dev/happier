@@ -402,6 +402,9 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                         ? createActionApprovalContinuation<Awaited<ReturnType<typeof workspaceWriteFile>>, 'daemon.filesystem.writeFile'>({
                             artifactId: res.approvalArtifactId, actionId: 'daemon.filesystem.writeFile', scope: lifetime.scope,
                             refreshAfterExecution: false,
+                            onFailed: (code, failure) => {
+                                if (lifetime.isCurrent()) Modal.alert(t('common.error'), failure?.error || code);
+                            },
                             onSucceeded: value => {
                                 if (!lifetime.isCurrent()) return;
                                 if (value.success) complete();
@@ -451,6 +454,9 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
                         ? createActionApprovalContinuation<Awaited<ReturnType<typeof workspaceCreateDirectory>>, 'daemon.filesystem.createDirectory'>({
                             artifactId: res.approvalArtifactId, actionId: 'daemon.filesystem.createDirectory', scope: lifetime.scope,
                             refreshAfterExecution: false,
+                            onFailed: (code, failure) => {
+                                if (lifetime.isCurrent()) Modal.alert(t('common.error'), failure?.error || code);
+                            },
                             onSucceeded: value => {
                                 if (!lifetime.isCurrent()) return;
                                 if (value.success) complete();
@@ -670,6 +676,7 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
     createMenuSelectRef.current = onSelectCreateMenuItem;
     const selectCreateMenuItem = React.useCallback((itemId: RepositoryTreeCreateMenuItemId) => createMenuSelectRef.current(itemId), []);
     const rootLabel = props.rootLabel ?? t('files.projectRoot');
+    const unreachableReason = reachability.unreachable ? t('projects.checkouts.notAnswering', { machine: reachability.machineName }) : null;
     const createMenu = React.useMemo(() => (
         <RepositoryTreeCreateMenu
             createEnabled={allowCreateActions}
@@ -677,9 +684,10 @@ export const WorkspaceRepositoryTreeBrowserView = React.memo((props: WorkspaceRe
             uploadEnabled={transferActionsAvailable}
             isWeb={Platform.OS === 'web'}
             uploadDestinationLabel={uploadDestinationDir || rootLabel}
+            unavailableReason={unreachableReason}
             onSelect={selectCreateMenuItem}
         />
-    ), [allowCreateActions, pendingCreateSignal, transferActionsAvailable, uploadDestinationDir, rootLabel, selectCreateMenuItem]);
+    ), [allowCreateActions, pendingCreateSignal, transferActionsAvailable, uploadDestinationDir, rootLabel, unreachableReason, selectCreateMenuItem]);
     const showAllFiles = React.useCallback(() => setShowChangedOnly(false), [setShowChangedOnly]);
     const composed = folderPage && !widget ? folderPage.compose ?? null : null;
     // What is waiting on an approval, named. A composed page carries it in its own bar (no row pushes

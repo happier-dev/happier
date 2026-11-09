@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
 import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
-import { ReviewCommentDraftMessageV1Schema } from '@happier-dev/protocol';
+import { ReviewCommentDraftMessageV1Schema } from '@happier-dev/protocol/messages/structured/reviewCommentsV1';
 
 const routerPushSpy = vi.hoisted(() => vi.fn());
 const workspaceScmReviewDetailsViewSpy = vi.hoisted(() => vi.fn((_props: unknown) => null));

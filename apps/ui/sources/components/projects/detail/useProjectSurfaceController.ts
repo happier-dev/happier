@@ -21,9 +21,11 @@ import { resolveProjectRightTabId } from './resolveProjectRightTabId';
 import {
     normalizeProjectMobileSurface,
     resolveProjectCockpitRouteFromPathname,
+    resolveProjectPageForSurface,
     resolveProjectRightTabIdForSurface,
     type ProjectMobileSurface,
     type ProjectPageV1,
+    type ProjectPageSelection,
 } from '@/components/workspaceCockpit/project/projectCockpitState';
 import { useProjectRouteRouterRef } from './useProjectRouteRouterRef';
 import { useWorkspaceRefs } from '@/sync/domains/state/storage';
@@ -40,7 +42,9 @@ export function useProjectSurfaceController(params: Readonly<{
     const deviceType = useDeviceType();
     const routeParams = useLocalSearchParams<Record<string, string | string[]>>();
     const pathname = usePathname();
-    const page = resolveProjectCockpitRouteFromPathname(pathname)?.page ?? 'overview';
+    const currentRoute = React.useMemo(() => resolveProjectCockpitRouteFromPathname(pathname), [pathname]);
+    const page = currentRoute?.page ?? 'overview';
+    const selection = currentRoute?.selection;
     const workspaceRefs = useWorkspaceRefs();
     const checkoutWorkspace = React.useMemo(() => {
         const checkout = resolveProjectCheckoutWorkspaceRef(workspaceRefs, params.workspaceRef, params.activeRootPath);
@@ -49,6 +53,7 @@ export function useProjectSurfaceController(params: Readonly<{
     const paneContext = React.useContext(AppPaneContext);
     const pane = useAppPaneScope(params.scopeId, scope => ({
         activeTabId: scope?.right.activeTabId,
+        rightOpen: scope?.right.isOpen === true,
         gitTabState: scope?.right.tabState.git,
         reviewTabState: scope?.details.tabState[SESSION_DETAILS_SCM_REVIEW_TAB_KEY],
     }));
@@ -68,12 +73,14 @@ export function useProjectSurfaceController(params: Readonly<{
     }, [codeLocation, page, setLocation]);
     const activeTab = pane.scopeState.activeTabId ?? resolveProjectRightTabId(null);
 
-    const navigate = React.useCallback((surface: ProjectMobileSurface, nextPage: ProjectPageV1, layoutId?: string | null) => {
+    const navigate = React.useCallback((surface: ProjectMobileSurface, nextPage: ProjectPageV1, layoutId?: string | null,
+        nextSelection?: ProjectPageSelection) => {
         const details = paneContext?.getSnapshot().state.scopes[params.scopeId]?.details;
         routerRef.current.replace(buildProjectRouteHref({
             workspaceRefId: params.workspaceRef.id,
             surface,
             segment: nextPage,
+            selection: nextSelection,
             serverId: params.workspaceRef.serverId,
             routeParams,
             layoutId,
@@ -103,20 +110,13 @@ export function useProjectSurfaceController(params: Readonly<{
         }));
     }, [params.activeRootPath, params.activeWorktreeId, params.workspaceRef.id, params.workspaceRef.rootPath,
         params.workspaceRef.serverId, routeParams, routerRef, setActiveGitSubTab, setPersistedReviewTabState]);
-    const navigateToSurface = React.useCallback((surface: ProjectMobileSurface) => navigate(surface, page), [navigate, page]);
+    const navigateToSurface = React.useCallback((surface: ProjectMobileSurface) => navigate(surface, page, undefined, selection), [navigate, page, selection]);
     const selectDashboard = React.useCallback((layoutId: string | null) => {
         navigate(normalizeProjectMobileSurface(readProjectRouteStringParam(routeParams.mobileSurface)) ?? page, page, layoutId);
     }, [navigate, page, routeParams.mobileSurface]);
 
-    const setActiveTab = React.useCallback((tabId: string) => {
-        pane.openRight({ tabId });
-        pane.setRightTab(tabId);
-        if (deviceType !== 'phone') {
-            return;
-        }
-        if (activeTab === tabId) {
-            return;
-        }
+    // A phone shows each side-pane tab as its own page in the one tab bar, never as the side pane over it.
+    const showRightTabAsPage = React.useCallback((tabId: string) => {
         const tab = resolveProjectRightSidebarTabs({ presentation: 'mobile', activePage: page }).find((entry) => entry.id === tabId);
         // The registry surface vocabulary is shared across scopes (it also carries plugin and
         // session-only surfaces), so narrow through the project's own owner rather than
@@ -124,10 +124,28 @@ export function useProjectSurfaceController(params: Readonly<{
         const mobileSurface = normalizeProjectMobileSurface(
             tab ? resolveRightSidebarMobileSurface(tab, 'project') : null,
         );
-        if (mobileSurface) {
-            navigateToSurface(mobileSurface);
+        if (!mobileSurface) return;
+        // A tab with its own page opens that page (its tab in the bar); a companion opens over the current page.
+        const surfacePage = resolveProjectPageForSurface(mobileSurface);
+        if (surfacePage !== 'overview' || mobileSurface === 'overview') navigateToPage(surfacePage);
+        else navigateToSurface(mobileSurface);
+    }, [navigateToPage, navigateToSurface, page]);
+
+    const setActiveTab = React.useCallback((tabId: string) => {
+        if (deviceType !== 'phone') {
+            pane.openRight({ tabId });
+            pane.setRightTab(tabId);
+            return;
         }
-    }, [activeTab, deviceType, navigateToSurface, page, pane]);
+        pane.setRightTab(tabId);
+        if (activeTab !== tabId) showRightTabAsPage(tabId);
+    }, [activeTab, deviceType, pane, showRightTabAsPage]);
+
+    /** Folding away a companion preserves the explicitly selected Project page. */
+    const closeRetainedRightPaneOnPhone = React.useCallback(() => {
+        if (deviceType !== 'phone' || !pane.scopeState.rightOpen) return;
+        pane.closeRight();
+    }, [deviceType, pane]);
 
     const syncSurface = React.useCallback((surface: ProjectMobileSurface) => {
         // Page selection never replaces the retained companion selection.
@@ -137,11 +155,12 @@ export function useProjectSurfaceController(params: Readonly<{
             return;
         }
 
-        pane.openRight({ tabId: targetRightTabId });
+        // A phone's page already shows the surface: only the selection is kept for a wider window.
+        if (deviceType !== 'phone') pane.openRight({ tabId: targetRightTabId });
         if (pane.scopeState.activeTabId !== targetRightTabId) {
             pane.setRightTab(targetRightTabId);
         }
-    }, [page, pane, pane.scopeState.activeTabId]);
+    }, [deviceType, page, pane, pane.scopeState.activeTabId]);
 
     return React.useMemo(() => ({
         activeTab,
@@ -151,9 +170,12 @@ export function useProjectSurfaceController(params: Readonly<{
         selectDashboard,
         setActiveTab,
         syncSurface,
+        closeRetainedRightPaneOnPhone,
+        rightOpen: pane.scopeState.rightOpen,
         checkoutWorkspace,
         codeLocation,
         navigateCodeLocation,
         openCodeHistory,
-    }), [activeTab, checkoutWorkspace, codeLocation, navigateCodeLocation, openCodeHistory, navigateToPage, navigateToSurface, page, selectDashboard, setActiveTab, syncSurface]);
+    }), [activeTab, checkoutWorkspace, codeLocation, navigateCodeLocation, openCodeHistory, navigateToPage, navigateToSurface, page,
+        pane.scopeState.rightOpen, closeRetainedRightPaneOnPhone, selectDashboard, setActiveTab, syncSurface]);
 }

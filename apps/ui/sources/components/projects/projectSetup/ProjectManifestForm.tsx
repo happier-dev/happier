@@ -2,18 +2,19 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
-import { isSameInputOptionValue } from '@happier-dev/protocol/inputs';
+import { inputOptionValueKey, isSameInputOptionValue } from '@happier-dev/protocol/inputs';
 import type {
   ProjectCommandSourceV1,
   ProjectDefinitionDetectionV1,
   ProjectDefinitionImportCandidateV1,
   ProjectDevcontainerSelectionV1,
-  ProjectEnvironmentSelectionV1,
+  ProjectToolchainSelectionV1,
   ProjectManifestV1,
   ProjectNativeRefV1,
 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import {
   DropdownMenu,
   type DropdownMenuItem,
@@ -22,6 +23,7 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { InlineAddExpander } from '@/components/ui/forms/InlineAddExpander';
 import { Icon } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemAddRow } from '@/components/ui/lists/ItemAddRow';
@@ -39,10 +41,15 @@ import type { ProjectManifestEditorModel } from './projectManifestEditorModel';
 import { getProjectManifestImportSelection } from './projectManifestImportSelection';
 import {
   describeProjectCommandSource,
-  describeProjectEnvironment,
+  describeProjectToolchain,
   findProjectInvocation,
 } from './projectScriptPresentation';
 import type { ProjectDefinitionInspection } from './useProjectDefinitionInspection';
+import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { ProjectNativeInvocationDetail, useProjectDefinitionDemand } from './ProjectNativeInvocationDetail';
+
+const DiscoveryScope = React.createContext<Readonly<{ workspace: WorkspaceAddressV1; accountId: string }> | null>(null);
 
 type Collection = 'scripts' | 'services';
 type Declaration =
@@ -56,6 +63,8 @@ type Previews = Readonly<{
 const ID = 'project-manifest-editor';
 
 export type ProjectManifestFormProps = Readonly<{
+  workspace?: WorkspaceAddressV1;
+  accountId?: string;
   model: ProjectManifestEditorModel;
   manifest: ProjectManifestV1;
   detection: ProjectDefinitionDetectionV1;
@@ -79,6 +88,12 @@ export type ProjectManifestFormSection = 'toolchain' | 'setup' | 'scripts' | 'se
 type FormSection = ProjectManifestFormSection;
 
 export function ProjectManifestForm(props: ProjectManifestFormProps) {
+  const scope = React.useMemo(() => props.workspace && props.accountId
+    ? { workspace: props.workspace, accountId: props.accountId } : null, [props.workspace, props.accountId]);
+  return <DiscoveryScope.Provider value={scope}><ProjectManifestFormContent {...props} /></DiscoveryScope.Provider>;
+}
+
+function ProjectManifestFormContent(props: ProjectManifestFormProps) {
   const previews: Previews = {
     commands: props.commands,
     importCandidates: props.importCandidates,
@@ -87,16 +102,16 @@ export function ProjectManifestForm(props: ProjectManifestFormProps) {
   const phone = useDeviceType() === 'phone';
   const { section, onSectionChange: setSection } = props;
   const sections: Readonly<Record<FormSection, React.ReactNode>> = {
-    environment: <EnvironmentSection {...props} />,
+    toolchain: <ToolchainSection {...props} />,
     setup: <SetupSection model={props.model} manifest={props.manifest} detection={props.detection} previews={previews} />,
     scripts: <DeclarationSection collection="scripts" model={props.model} manifest={props.manifest} detection={props.detection} previews={previews} />,
     services: <DeclarationSection collection="services" model={props.model} manifest={props.manifest} detection={props.detection} previews={previews} />,
-    found: <FoundSection model={props.model} manifest={props.manifest} importCandidates={props.importCandidates} previews={previews} machineName={props.machineName} />,
+    found: <FoundImportsSection {...props} />,
   };
   if (!phone) {
     return (
       <View>
-        {sections.environment}
+        {sections.toolchain}
         {sections.setup}
         {sections.scripts}
         {sections.services}
@@ -128,7 +143,7 @@ export function ProjectManifestForm(props: ProjectManifestFormProps) {
 /** The phone Form's section list (lab EDITp): each row summarises its section and pushes it. */
 function PhoneFormSections(props: ProjectManifestFormProps & Readonly<{ onOpen: (section: FormSection) => void }>) {
   const { manifest } = props;
-  const environment = describeEnvironment(manifest.environment ?? { kind: 'host' });
+  const toolchain = describeToolchain(manifest.toolchain ?? { kind: 'host' });
   const tools = props.tools ?? [];
   const setup = manifest.workspace?.setup ?? [];
   const scripts = Object.entries(declarationsOf(manifest, 'scripts'));
@@ -142,12 +157,12 @@ function PhoneFormSections(props: ProjectManifestFormProps & Readonly<{ onOpen: 
   ].filter(Boolean).join(' · ');
   return (
     <View>
-      <ItemGroup title={t('projects.scripts.editor.environment')}>
-        <Item testID={`${ID}.section:environment`} title={t('projects.scripts.editor.toolsFrom')}
-          subtitle={[environment.title, environment.subtitle].filter(Boolean).join(' · ')} onPress={() => props.onOpen('environment')} />
+      <ItemGroup title={t('projects.scripts.editor.toolchain')}>
+        <Item testID={`${ID}.section:toolchain`} title={t('projects.scripts.editor.toolsFrom')}
+          subtitle={[toolchain.title, toolchain.subtitle].filter(Boolean).join(' · ')} onPress={() => props.onOpen('toolchain')} />
         {tools.length > 0 ? (
           // The tools the environment found and whether this Machine has them, without opening the section.
-          <Item testID={`${ID}.section:environment.tools`} title={tools.map((tool) => tool.tool).join(' · ')}
+          <Item testID={`${ID}.section:toolchain.tools`} title={tools.map((tool) => tool.tool).join(' · ')}
             subtitle={tools.length === 1
               ? describeToolAvailability(tools[0]!.availability, props.machineName)
               : t('projects.scripts.editor.toolsCount', {
@@ -155,7 +170,7 @@ function PhoneFormSections(props: ProjectManifestFormProps & Readonly<{ onOpen: 
                   total: tools.length,
                   machine: props.machineName,
                 })}
-            onPress={() => props.onOpen('environment')} />
+            onPress={() => props.onOpen('toolchain')} />
         ) : null}
       </ItemGroup>
       <ItemGroup title={t('projects.scripts.editor.setup')}>
@@ -180,7 +195,7 @@ function PhoneFormSections(props: ProjectManifestFormProps & Readonly<{ onOpen: 
             subtitle={describeProjectCommandSource(declaration.source).reference} onPress={() => props.onOpen('services')} />
         ))}
       </ItemGroup>
-      {props.importCandidates.length > 0 ? (
+      {props.workspace || props.importCandidates.length > 0 ? (
         <ItemGroup>
           <Item testID={`${ID}.section:found`} title={t('projects.scripts.editor.found')} onPress={() => props.onOpen('found')} />
         </ItemGroup>
@@ -193,10 +208,10 @@ function selectionId(selection: unknown): string {
   return JSON.stringify(selection);
 }
 
-function describeEnvironment(
-  selection: ProjectEnvironmentSelectionV1,
+function describeToolchain(
+  selection: ProjectToolchainSelectionV1,
 ): Readonly<{ title: string; subtitle?: string }> {
-  const { title, config } = describeProjectEnvironment(selection);
+  const { title, config } = describeProjectToolchain(selection);
   return config ? { title, subtitle: config } : { title };
 }
 
@@ -216,33 +231,41 @@ function describeToolAvailability(
 }
 
 /** Tools from (toolchain) and Devcontainer (namespace): two independent choices (plan 24 §5). */
-function EnvironmentSection(props: ProjectManifestFormProps) {
+function ToolchainSection(props: ProjectManifestFormProps) {
   const { model, manifest } = props;
   const { theme } = useUnistyles();
   const [toolsOpen, setToolsOpen] = React.useState(false);
   const [namespaceOpen, setNamespaceOpen] = React.useState(false);
-  const environment = manifest.environment ?? { kind: 'host' as const };
-  const environmentItems = React.useMemo<DropdownMenuItem[]>(() => {
-    const choices: ProjectEnvironmentSelectionV1[] = [
+  const [inspected, setInspected] = React.useState(false);
+  const scope = React.useContext(DiscoveryScope);
+  const phone = useDeviceType() === 'phone';
+  // Once asked, the section displays its observed versions and alternatives until it closes.
+  const demanded = inspected || (phone && props.section === 'toolchain');
+  const tooling = useProjectDefinitionDemand(scope?.workspace ?? null, scope?.accountId ?? null, { kind: 'tools' }, demanded);
+  const detection = tooling.read && 'value' in tooling.read ? tooling.read.value.detection : props.detection;
+  const tools = tooling.read && 'value' in tooling.read ? tooling.read.value.tools : props.tools;
+  const toolchain = manifest.toolchain ?? { kind: 'host' as const };
+  const toolchainItems = React.useMemo<DropdownMenuItem[]>(() => {
+    const choices: ProjectToolchainSelectionV1[] = [
       { kind: 'host' },
-      ...props.detection.environments,
+      ...detection.toolchains,
     ];
     if (
       !choices.some(
-        (choice) => selectionId(choice) === selectionId(environment),
+        (choice) => selectionId(choice) === selectionId(toolchain),
       )
     )
-      choices.push(environment);
+      choices.push(toolchain);
     return choices.map((choice) => ({
       id: selectionId(choice),
-      ...describeEnvironment(choice),
+      ...describeToolchain(choice),
     }));
-  }, [environment, props.detection.environments]);
-  const otherEnvironments = props.detection.environments.filter(
-    (choice) => selectionId(choice) !== selectionId(environment),
+  }, [toolchain, detection.toolchains]);
+  const otherToolchains = detection.toolchains.filter(
+    (choice) => selectionId(choice) !== selectionId(toolchain),
   );
   const namespaceItems = React.useMemo<DropdownMenuItem[]>(() => {
-    const choices = [...props.detection.devcontainers];
+    const choices = [...detection.devcontainers];
     if (
       manifest.devcontainer &&
       !choices.some(
@@ -263,26 +286,27 @@ function EnvironmentSection(props: ProjectManifestFormProps) {
         title: devcontainerPath(choice),
       })),
     ];
-  }, [manifest.devcontainer, props.detection.devcontainers]);
+  }, [manifest.devcontainer, detection.devcontainers]);
   const showNamespace =
-    props.detection.devcontainers.length > 0 ||
+    scope !== null ||
+    detection.devcontainers.length > 0 ||
     manifest.devcontainer !== undefined;
-  const environmentTitle = describeEnvironment(environment);
+  const toolchainTitle = describeToolchain(toolchain);
   return (
     <ItemGroup
-      title={t('projects.scripts.editor.environment')}
-      description={t('projects.scripts.editor.environmentBody')}
+      title={t('projects.scripts.editor.toolchain')}
+      description={t('projects.scripts.editor.toolchainBody')}
     >
       <DropdownMenu
-        testID={`${ID}.environment`}
+        testID={`${ID}.toolchain`}
         open={toolsOpen}
-        onOpenChange={setToolsOpen}
-        items={environmentItems}
-        selectedId={selectionId(environment)}
+        onOpenChange={(open) => { setToolsOpen(open); if (open) setInspected(true); }}
+        items={toolchainItems}
+        selectedId={selectionId(toolchain)}
         onSelect={(id) => {
-          if (environmentItems.some((item) => item.id === id))
-            model.importEnvironment(
-              JSON.parse(id) as ProjectEnvironmentSelectionV1,
+          if (toolchainItems.some((item) => item.id === id))
+            model.importToolchain(
+              JSON.parse(id) as ProjectToolchainSelectionV1,
             );
         }}
         itemTrigger={{
@@ -290,22 +314,22 @@ function EnvironmentSection(props: ProjectManifestFormProps) {
           showSelectedSubtitle: false,
           subtitle:
             [
-              environmentTitle.title,
-              environmentTitle.subtitle,
-              otherEnvironments.length
+              toolchainTitle.title,
+              toolchainTitle.subtitle,
+              otherToolchains.length
                 ? t('projects.scripts.editor.alsoFound', {
-                    names: otherEnvironments
+                    names: otherToolchains
                       .map(
                         (choice) =>
-                          describeEnvironment(choice).subtitle ??
-                          describeEnvironment(choice).title,
+                          describeToolchain(choice).subtitle ??
+                          describeToolchain(choice).title,
                       )
                       .join(', '),
                   })
                 : null,
               // The host stays the explicit default when nothing native was found (plan 24).
-              environment.kind === 'host' && props.detection.environments.length === 0
-                ? t('projects.scripts.environment.empty')
+              toolchain.kind === 'host' && detection.toolchains.length === 0 && (!scope || tooling.read && 'value' in tooling.read)
+                ? t('projects.scripts.toolchain.empty')
                 : null,
             ]
               .filter(Boolean)
@@ -316,7 +340,7 @@ function EnvironmentSection(props: ProjectManifestFormProps) {
         <DropdownMenu
           testID={`${ID}.devcontainer`}
           open={namespaceOpen}
-          onOpenChange={setNamespaceOpen}
+          onOpenChange={(open) => { setNamespaceOpen(open); if (open) setInspected(true); }}
           items={namespaceItems}
           selectedId={
             manifest.devcontainer ? selectionId(manifest.devcontainer) : 'none'
@@ -337,17 +361,21 @@ function EnvironmentSection(props: ProjectManifestFormProps) {
           }}
         />
       ) : null}
-      {environment.kind !== 'host' && props.tools === undefined ? (
+      {demanded && scope && (tooling.scopeError || tooling.read?.error) ? <SurfaceStateCard size="line" kind="unavailable"
+        title={t('projects.widgets.scriptsUnavailable')} diagnosticCode={tooling.scopeError ?? tooling.read?.error}
+        action={!tooling.scopeError || tooling.scopeError === 'unavailable'
+          ? { label: t('common.retry'), onPress: tooling.retry } : undefined} /> : null}
+      {demanded && scope && !tooling.scopeError && !tooling.read ? (
         // Inspection has not reported yet; nothing is evaluated while it looks.
         <Item
-          testID={`${ID}.environment.checking`}
+          testID={`${ID}.toolchain.checking`}
           mode="info"
           density="compact"
           showChevron={false}
-          title={t('projects.scripts.environment.checking')}
+          title={t('projects.scripts.toolchain.checking')}
         />
       ) : null}
-      {(props.tools ?? []).map((tool) => (
+      {(tools ?? []).map((tool) => (
         <Item
           key={`${tool.tool}:${tool.file}`}
           testID={`${ID}.tool:${tool.tool}`}
@@ -448,6 +476,7 @@ function SetupSection(
           <SourceField
             testID={`${ID}.step:${index}`}
             source={source}
+            usage="setup"
             choices={choices}
             onCommandChange={(command) => model.edit([
               { kind: 'set', path: ['workspace', 'setup', index, 'command'], value: command },
@@ -663,6 +692,7 @@ function DeclarationRow(
       <SourceField
         testID={testID}
         source={declaration.source}
+        usage={collection === 'scripts' ? 'script' : 'service'}
         choices={props.choices}
         onCommandChange={(command) => model.edit([
           { kind: 'set', path: [...path, 'source', 'command'], value: command },
@@ -726,6 +756,7 @@ function SourceField(
   props: Readonly<{
     testID: string;
     source: ProjectCommandSourceV1;
+    usage: 'script' | 'service' | 'setup';
     choices: readonly ProjectNativeRefV1[];
     /** Literal edits preserve unrecognized siblings in the lossless document. */
     onCommandChange: (command: string) => void;
@@ -734,19 +765,23 @@ function SourceField(
   }>,
 ) {
   const [open, setOpen] = React.useState(false);
+  const scope = React.useContext(DiscoveryScope);
+  const imports = useProjectDefinitionDemand(scope?.workspace ?? null, scope?.accountId ?? null, { kind: 'imports' }, open);
+  const choicesFromRead = imports.read && 'value' in imports.read ? imports.read.value.detection.entries
+    .filter(entry => entry.usage === props.usage).map(entry => entry.source) : props.choices;
   const { source } = props;
   const items = React.useMemo<DropdownMenuItem[]>(() => {
     if (source.kind === 'command') return [];
-    const choices = props.choices.some((choice) =>
+    const choices = choicesFromRead.some((choice) =>
       isSameInputOptionValue(choice, source),
     )
-      ? props.choices
-      : [source, ...props.choices];
+      ? choicesFromRead
+      : [source, ...choicesFromRead];
     return choices.map((choice) => ({
       id: selectionId(choice),
       title: describeProjectCommandSource(choice).reference,
     }));
-  }, [props.choices, source]);
+  }, [choicesFromRead, source]);
   if (source.kind === 'command') {
     return (
       <FieldValueItem
@@ -764,6 +799,7 @@ function SourceField(
     );
   }
   return (
+    <>
     <DropdownMenu
       testID={`${props.testID}.source`}
       open={open}
@@ -771,7 +807,7 @@ function SourceField(
       items={items}
       selectedId={selectionId(source)}
       onSelect={(id) => {
-        const next = props.choices.find((choice) => selectionId(choice) === id);
+        const next = choicesFromRead.find((choice) => selectionId(choice) === id);
         if (next) props.onChange(next);
       }}
       itemTrigger={{
@@ -780,6 +816,15 @@ function SourceField(
         subtitle: describeProjectCommandSource(source).reference,
       }}
     />
+    {open && scope && !imports.scopeError && !imports.read ? <SurfaceStateCard size="line" kind="loading"
+      title={t('projects.scripts.definition.inspecting')} /> : null}
+    {open && scope && (imports.scopeError || imports.read?.error) ? <SurfaceStateCard size="line" kind="unavailable"
+      title={t('projects.widgets.scriptsUnavailable')} diagnosticCode={imports.scopeError ?? imports.read?.error}
+      action={!imports.scopeError || imports.scopeError === 'unavailable'
+        ? { label: t('common.retry'), onPress: imports.retry } : undefined} /> : null}
+    {scope ? <ProjectNativeInvocationDetail workspace={scope.workspace} accountId={scope.accountId}
+      source={source} usage={props.usage} testID={`${props.testID}.nativeDetail`} /> : null}
+    </>
   );
 }
 
@@ -831,17 +876,13 @@ function EditableRow(
           rightElement={
             <View style={[styles.inline, styles.trailing]}>
               {props.rightElement}
-              <Icon
-                name={expanded ? 'caret-up' : 'caret-down'}
-                size={14}
-                color={theme.colors.text.tertiary}
-              />
+              <DisclosureCaret expanded={expanded} size={14} />
             </View>
           }
         />
       )}
     >
-      {props.children}
+      {expanded ? props.children : null}
       <View style={styles.rowActions}>
         <RoundButton
           size="small"
@@ -957,42 +998,76 @@ function declarationsOf(manifest: ProjectManifestV1, collection: Collection): Re
   return manifest[collection] ?? {};
 }
 
-function declaredName(
-  manifest: ProjectManifestV1,
-  collection: Collection,
-  source: ProjectNativeRefV1,
-): string | null {
-  return (
-    Object.entries(declarationsOf(manifest, collection)).find(([, declaration]) =>
-      isSameInputOptionValue(declaration.source, source),
-    )?.[0] ?? null
-  );
-}
-
 /**
  * Found in the repository (plan 20 §2 detected-source selection): every inspector offer stays
  * visible. Checking one adds its reference to the draft, unchecking removes it; a missing or unproved
  * tool stays visible and excluded, and a name already used in the file is named, never overwritten.
  */
+function FoundImportsSection(props: ProjectManifestFormProps) {
+  const phone = useDeviceType() === 'phone';
+  const [expanded, setExpanded] = React.useState(false);
+  if (phone) return <FoundImports {...props} />;
+  return <ItemGroup>
+    <ExpandableItem testID={`${ID}.found.disclosure`} expanded={expanded} onExpandedChange={setExpanded}
+      header={({ headerProps }) => <Item {...headerProps} testID={`${ID}.found.open`}
+        title={t('projects.scripts.editor.found')} showChevron={false}
+        rightElement={<DisclosureCaret expanded={expanded} size={14} />} />}>
+      {expanded ? <FoundImports {...props} /> : null}
+    </ExpandableItem>
+  </ItemGroup>;
+}
+
+function FoundImports(props: ProjectManifestFormProps) {
+  const scope = React.useContext(DiscoveryScope);
+  const phone = useDeviceType() === 'phone';
+  const { read, retry, scopeError } = useProjectDefinitionDemand(scope?.workspace ?? null, scope?.accountId ?? null, { kind: 'imports' }, true);
+  if (scope && (scopeError || read?.error)) return <SurfaceStateCard size="line" kind="unavailable"
+    title={t('projects.widgets.scriptsUnavailable')} diagnosticCode={scopeError ?? read?.error}
+    action={!scopeError || scopeError === 'unavailable' ? { label: t('common.retry'), onPress: retry } : undefined}
+    testID={`${ID}.found.error`} />;
+  if (scope && !read) return <SurfaceStateCard size="line" kind="loading"
+    title={t('projects.scripts.definition.inspecting')} testID={`${ID}.found.loading`} />;
+  const candidates = read && 'value' in read ? read.value.importCandidates : props.importCandidates;
+  if (candidates.length === 0) return <SurfaceStateCard size="line" kind="empty"
+    title={t('projects.widgets.scriptsEmpty')} testID={`${ID}.found.empty`} />;
+  return <FoundSection model={props.model} manifest={props.manifest} importCandidates={candidates}
+    machineName={props.machineName} showHeading={phone} />;
+}
+
 function FoundSection(
   props: Readonly<{
     model: ProjectManifestEditorModel;
     manifest: ProjectManifestV1;
     importCandidates: readonly ProjectDefinitionImportCandidateV1[];
-    previews: Previews;
     machineName: string;
+    showHeading?: boolean;
   }>,
 ) {
   const { model, manifest } = props;
   const { theme } = useUnistyles();
   const [namingIndex, setNamingIndex] = React.useState<number | null>(null);
   const [importName, setImportName] = React.useState('');
+  // The draft owns selection: preserve the first declaration/step for each exact canonical source.
+  const selected = React.useMemo(() => {
+    const names = { scripts: new Map<string, string>(), services: new Map<string, string>() };
+    for (const collection of ['scripts', 'services'] as const) {
+      for (const [name, declaration] of Object.entries(manifest[collection] ?? {})) {
+        const key = inputOptionValueKey(declaration.source);
+        if (!names[collection].has(key)) names[collection].set(key, name);
+      }
+    }
+    const steps = new Map<string, number>();
+    for (const [index, source] of (manifest.workspace?.setup ?? []).entries()) {
+      const key = inputOptionValueKey(source);
+      if (!steps.has(key)) steps.set(key, index);
+    }
+    return { names, steps };
+  }, [manifest.scripts, manifest.services, manifest.workspace?.setup]);
   const rows = getProjectManifestImportSelection(props.importCandidates).rows;
   if (rows.length === 0) return null;
-  const setup = manifest.workspace?.setup ?? [];
   return (
     <ItemGroup
-      title={t('projects.scripts.editor.found')}
+      title={props.showHeading === false ? undefined : t('projects.scripts.editor.found')}
       description={t('projects.scripts.editor.foundBody')}
     >
       {rows.map(({ index, candidate, enabled }) => {
@@ -1003,12 +1078,9 @@ function FoundSection(
             : usage === 'script'
               ? 'scripts'
               : 'services';
-        const name = collection
-          ? declaredName(manifest, collection, source)
-          : null;
-        const step = collection
-          ? -1
-          : setup.findIndex((entry) => isSameInputOptionValue(entry, source));
+        const sourceKey = inputOptionValueKey(source);
+        const name = collection ? selected.names[collection].get(sourceKey) ?? null : null;
+        const step = collection ? -1 : selected.steps.get(sourceKey) ?? -1;
         const checked = collection ? name !== null : step >= 0;
         const taken =
           collection !== null &&
@@ -1027,15 +1099,14 @@ function FoundSection(
             : candidate.availability === 'ambiguous'
               ? t('projects.scripts.editor.foundAmbiguous')
               : null;
-        const description = describeProjectCommandSource(
-          source,
-          findProjectInvocation(props.previews, source),
-        );
+        const description = describeProjectCommandSource(source);
         const disabled = !checked && !enabled;
         const trimmedName = importName.trim();
         const importNameTaken = collection !== null && Object.hasOwn(manifest[collection] ?? {}, trimmedName);
         return (
           <React.Fragment key={index}>
+          <NativeImportRow rowId={`${ID}.found:${index}`} source={source} usage={usage}
+            header={(detailControl) => (
           <Item
             testID={`${ID}.found:${index}`}
             accessibilityRole="checkbox"
@@ -1070,6 +1141,8 @@ function FoundSection(
                 : undefined
             }
             showChevron={false}
+            rightElement={detailControl}
+            rightElementOutsidePressable
             onPress={() => {
               if (collection && name) model.removeDeclaration(collection, name);
               else if (!collection && step >= 0) model.removeSetupStep(step);
@@ -1084,6 +1157,8 @@ function FoundSection(
                   source,
                 });
             }}
+          />
+            )}
           />
           <InlineAddExpander
             trigger={null}
@@ -1115,6 +1190,25 @@ function FoundSection(
       })}
     </ItemGroup>
   );
+}
+
+/** The checkbox edits selection; its separate disclosure previews only this exact native reference. */
+function NativeImportRow(props: Readonly<{
+  rowId: string;
+  source: ProjectNativeRefV1;
+  usage: 'script' | 'service' | 'setup';
+  header: (detailControl: React.ReactNode) => React.ReactElement;
+}>) {
+  const scope = React.useContext(DiscoveryScope);
+  const [expanded, setExpanded] = React.useState(false);
+  return <ExpandableItem testID={`${props.rowId}.disclosure`} expanded={expanded} onExpandedChange={setExpanded}
+    header={props.header(<IconButton testID={`${props.rowId}.details`} variant="plain"
+      iconName={expanded ? 'caret-down' : 'caret-right'} iconSize={14} expanded={expanded}
+      accessibilityLabel={`${t(expanded ? 'common.collapse' : 'common.expand')} · ${props.source.target}`}
+      onPress={() => setExpanded(value => !value)} />)}>
+    {expanded && scope ? <ProjectNativeInvocationDetail workspace={scope.workspace} accountId={scope.accountId}
+      source={props.source} usage={props.usage} testID={`${props.rowId}.nativeDetail`} /> : null}
+  </ExpandableItem>;
 }
 
 function ServiceMark() {

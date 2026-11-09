@@ -194,7 +194,10 @@ const ProjectDeploymentsPage = React.memo(
       () => resolveDeploymentEnvironmentDestinationV1({ tab: routeTab, section: routeSection }),
       [routeSection, routeTab],
     );
-    const [drafting, setDrafting] = React.useState(false);
+    // Store → Apps opens the draft on a stored definition; the address is consumed by the first save or discard.
+    const routeNewDefinition = readProjectRouteStringParam(params.newDefinition);
+    const newDefinition = routeNewDefinition === 'compose' || routeNewDefinition === 'image' ? routeNewDefinition : null;
+    const [drafting, setDrafting] = React.useState(newDefinition !== null);
     const [draftSource, setDraftSource] = React.useState<DeploymentEnvironmentDetailV1 | null>(null);
     const selection = React.useMemo<Selection>(() => drafting ? DRAFTING : routeDefaults ? {
       environmentId: null, deploymentId: null, defaults: true,
@@ -211,6 +214,7 @@ const ProjectDeploymentsPage = React.memo(
       if (next.drafting) return;
       const sameEnvironment = next.environmentId === current.environmentId;
       router.setParams({
+        newDefinition: undefined,
         deploymentSettings: next.defaults ? 'defaults' : undefined,
         deploymentEnvironment: next.environmentId ?? undefined,
         deployment: next.deploymentId ?? undefined,
@@ -354,6 +358,7 @@ const ProjectDeploymentsPage = React.memo(
       <DeploymentEnvironmentDraft
         key={draftSource?.environment.id ?? 'new'}
         copyFrom={draftSource}
+        definitionKind={newDefinition}
         lifetime={props.lifetime}
         sourceId={props.sourceId}
         phone={phone}

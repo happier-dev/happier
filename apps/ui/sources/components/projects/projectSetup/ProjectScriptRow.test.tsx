@@ -172,7 +172,7 @@ describe('Script output before a terminal exists', () => {
         workerCopy: { serverId: workspace.serverId, sourceWorkspaceRefId: workspace.workspaceId,
           sourceMachineId: workspace.machineId, targetMachineId: 'worker-machine' } }} />);
     await screen.pressByTestIdAsync('script.noWorker.setUpCopy');
-    expect(modal.show).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(modal.show).toHaveBeenCalledOnce());
     const policy = { v: 1 as const, selection: 'all_files' as const, extraIgnorePatterns: [], extraIncludePatterns: [] };
     const summary: WorkspaceSyncRelationshipSummary = {
       serverId: workspace.serverId, relationshipId: 'worker-link', status: null,

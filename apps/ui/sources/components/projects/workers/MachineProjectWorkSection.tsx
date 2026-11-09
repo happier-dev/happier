@@ -17,6 +17,7 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { CheckoutReachabilityLine, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
 import { Switch } from '@/components/ui/forms/Switch';
+import { useMachineTabFacts } from '@/components/machines/page/useMachineTabFacts';
 import { Icon } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -378,7 +379,14 @@ export function MachineProjectWorkSection(
   const machineScope = React.useMemo(() => ({ serverId: props.serverId, machineId: props.machineId }), [props.serverId, props.machineId]);
   const reachability = useCheckoutReachability(machineScope);
   const unreachable = reachability.unreachable;
-  const disabled = !value || policy.busy || unreachable;
+  // Someone who only uses this Machine reads its policy; Manage changes it, and the row says so.
+  const { recipient } = useMachineTabFacts(props.serverId, props.machineId);
+  const disabled = !value || policy.busy || unreachable || recipient;
+  const acceptingState = !value
+    ? t('common.loading')
+    : value.accepting
+      ? t('projectWorkers.acceptingNow')
+      : `${t('projectWorkers.notAccepting')} · ${t('projectWorkers.notAcceptingDetail')}`;
   const notice = describeObservedWorkerSettingNotice(policy.notice);
   // One Run at most field: inline on wide screens, inside the phone sheet on a phone (lab MACHINEp).
   const capacityField = (
@@ -463,13 +471,7 @@ export function MachineProjectWorkSection(
             {unreachable ? null : <Item
               testID={`${testID}.accepting`}
               title={t('projectWorkers.accepting')}
-              subtitle={
-                !value
-                  ? t('common.loading')
-                  : value.accepting
-                    ? t('projectWorkers.acceptingNow')
-                    : `${t('projectWorkers.notAccepting')} · ${t('projectWorkers.notAcceptingDetail')}`
-              }
+              subtitle={recipient && value ? `${acceptingState} · ${t('machines.widgets.body.common.recipient')}` : acceptingState}
               showChevron={false}
               disabled={disabled}
               rightElement={

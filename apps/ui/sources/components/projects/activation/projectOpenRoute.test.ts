@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { buildProjectCheckoutOpenRoute, buildProjectOpenRoute, buildProjectSourceOpenRoute, readProjectOpenRouteDraft } from './projectOpenRoute';
 
 describe('Project Open entrance', () => {
+    it('does not build a repository Open route for a Source without a repository', () => {
+        expect(buildProjectSourceOpenRoute('home', { id: 'source', revision: 1, name: 'Production', audience: [], createdByAccountId: 'account' })).toBeNull();
+    });
     it('captures the exact checkout Home and branch without selecting an execution Machine', () => {
         const route = buildProjectCheckoutOpenRoute({ serverId: 'other-home', workspaceId: 'checkout' }, 'feature');
         // No way to open is chosen for the person: Open starts on its own default once a Machine is chosen.
@@ -30,6 +33,7 @@ describe('Project Open entrance', () => {
         expect(readProjectOpenRouteDraft(buildProjectOpenRoute(input).params)).toEqual({ ...input, source: admittedSource });
         const route = buildProjectSourceOpenRoute('home', { id: 'source', revision: 2, name: 'Source',
             repository: input.source.selector, defaultRef: 'main', subdir: 'app', audience: [], createdByAccountId: 'account' });
+        if (!route) throw new Error('Repository Source must offer Open');
         const seeded = readProjectOpenRouteDraft(route.params);
         expect(seeded).toMatchObject({ serverId: 'home', machineId: '', source: admittedSource });
         // A saved Source never pre-chooses a fresh clone: an existing checkout on the Machine comes first.

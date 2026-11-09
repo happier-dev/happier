@@ -1,3 +1,6 @@
+import { replacePersistentUiStateForTest, PersistedPaneScopesSchema } from '@/dev/testkit/harness/persistentUiState';
+import { paneUiState } from '@/sync/domains/state/filePaneUiState';
+import { projectLastActiveRootPathState, projectLastActiveWorktreeIdState } from '@/sync/domains/state/navigationUiState';
 /** @vitest-environment jsdom */
 import * as React from 'react';
 import { act } from 'react';
@@ -67,9 +70,10 @@ beforeEach(async () => {
         label: 'Project Alpha', projectKey: 'project-alpha', createdAtMs: 1,
     }] });
     storage.setState({ sessions: {}, localSettings: { ...storage.getState().localSettings,
-        uiMultiPanePanelsEnabled: true, projectLastActiveRootPathByWorkspaceRefId: {},
-        projectLastActiveWorktreeIdByWorkspaceRefId: {},
+        uiMultiPanePanelsEnabled: true,
     } });
+    replacePersistentUiStateForTest(projectLastActiveRootPathState, {});
+    replacePersistentUiStateForTest(projectLastActiveWorktreeIdState, {});
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -102,17 +106,29 @@ function restoreRightPane(right: Readonly<{
     selectedDestination: SelectedPaneDestinationV1 | null;
 }>) {
     const scopeId = buildProjectPaneScopeId('wr_1', runtime.serverId);
-    storage.getState().applyLocalSettings({ appPaneScopesV1: {
+    (replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({
         [scopeId]: {
             mainHidden: false,
             right: { ...right, tabState: {} },
             details: { isOpen: false, tabs: [], activeTabKey: null, tabState: {} },
             bottom: { isOpen: false, activeTabId: null, selectedDestination: null, tabState: {} },
         },
-    } }, { persist: false });
+    })), storage.getState().applyLocalSettings({ }, { persist: false }));
 }
 
 describe('Project companion pane dismissal in the DOM', () => {
+    it.each(['git', 'files'])('lands on the phone Project without the restored %s sheet, then opens it explicitly', async (tabId) => {
+        restoreRightPane({ isOpen: true, activeTabId: tabId, selectedDestination: { kind: 'builtin', id: tabId } });
+        await renderProject('overview');
+        expect(runtime.pane.scopeState?.right).toMatchObject({ isOpen: false, activeTabId: tabId });
+        expect(container.querySelector('[data-testid="multi-pane-right-modal"]')).toBeNull();
+        await act(async () => runtime.pane.openRight({ tabId }));
+        expect(element('multi-pane-right-modal').getAttribute('aria-modal')).toBe('true');
+        await act(async () => element('project-rightpanel-header.close').click());
+        expect(container.querySelector('[data-testid="multi-pane-right-modal"]')).toBeNull();
+        expect(paneUiState.read(buildProjectPaneScopeId('wr_1', runtime.serverId))?.right.isOpen).toBe(true);
+    });
+
     it('opens the single phone Add gallery after dismissing Git and persists additions to both dashboard areas', async () => {
         const surface = { serverId: runtime.serverId, accountId: 'account-a',
             owner: { kind: 'project' as const, projectId: 'project-alpha' } };

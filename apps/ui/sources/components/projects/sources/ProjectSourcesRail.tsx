@@ -3,7 +3,6 @@ import { useUnistyles } from 'react-native-unistyles';
 import {
   HappierCollectionListMark,
 } from '@happier-dev/plugin-ui/presentation';
-import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -12,7 +11,7 @@ import {
   CollectionDraftRow,
   CollectionList,
   CollectionListGroupLabel,
-  collectionListStyles,
+  CollectionNavigationRow,
 } from '@/components/ui/lists/collection/CollectionList';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { t } from '@/text';
@@ -40,8 +39,8 @@ export const ProjectSourcesRail = React.memo(function ProjectSourcesRail(
   const projectSourceDraftTitle = useCollectionDraftTitle();
   const { theme } = useUnistyles();
   const mark = React.useCallback(
-    (dimmed?: boolean) => (
-      <HappierCollectionListMark dimmed={dimmed}>
+    () => (
+      <HappierCollectionListMark>
         <Icon name="git-branch" size={18} color={theme.colors.text.secondary} />
       </HappierCollectionListMark>
     ),
@@ -78,6 +77,7 @@ export const ProjectSourcesRail = React.memo(function ProjectSourcesRail(
       ) : null}
       {props.drafting ? (
         <CollectionDraftRow
+          rowRole="item"
           testID="projects.sources.rail.draft"
           titles={projectSourceDraftTitle}
           placeholder={t('projects.sources.new')}
@@ -105,7 +105,8 @@ export const ProjectSourcesRail = React.memo(function ProjectSourcesRail(
               group.id === 'yours' ? readSourceTeamId(source) : null;
             const team = teamId ? props.teamName(teamId) : null;
             return (
-              <Item
+              <CollectionNavigationRow
+                surface="page"
                 key={source.id}
                 testID={`projects.sources.row.${source.id}`}
                 title={source.name}
@@ -114,9 +115,6 @@ export const ProjectSourcesRail = React.memo(function ProjectSourcesRail(
                 subtitle={describeProjectSourceRow(source)}
                 icon={mark()}
                 selected={props.selectedId === source.id}
-                density="compact"
-                showChevron={false}
-                pressableStyle={collectionListStyles.row}
                 onPress={() => props.onSelect(source.id)}
               />
             );

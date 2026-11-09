@@ -70,7 +70,8 @@ export function useProjectsSourcesComposition(openedSourceIds: ReadonlySet<strin
     const openSource = React.useCallback((source: ProjectSourceV1) => {
         if (!accountScope) return;
         const lifetime = captureActiveServerAccountScopeLifetime();
-        const selection = readProjectOpenRouteDraft(buildProjectSourceOpenRoute(accountScope.serverId, source).params);
+        const route = buildProjectSourceOpenRoute(accountScope.serverId, source);
+        const selection = route ? readProjectOpenRouteDraft(route.params) : null;
         if (!selection || !lifetime?.isCurrent() || lifetime.scope.serverId !== accountScope.serverId
             || lifetime.scope.accountId !== accountScope.accountId) return;
         fireAndForget(seedAndOpenProjectDraft({ selection, lifetime, navigate: navigateToOpen }), { tag: 'projects.openSource' });
@@ -89,7 +90,7 @@ export function useProjectsSourcesComposition(openedSourceIds: ReadonlySet<strin
 
     const saved = React.useMemo((): Readonly<{ items: readonly ProjectsTreeSavedItem[]; onOpen: (key: string) => void }> | null => {
         if (!accountScope) return null;
-        const unopened = sources.state.rows.filter((source) => source.createdByAccountId === accountScope.accountId && !openedSourceIds.has(source.id));
+        const unopened = sources.state.rows.filter((source) => source.repository && source.createdByAccountId === accountScope.accountId && !openedSourceIds.has(source.id));
         return {
             items: unopened.map((source) => ({ key: source.id, title: source.name, subtitle: describeProjectSourceRow(source) })),
             onOpen: (key: string) => {

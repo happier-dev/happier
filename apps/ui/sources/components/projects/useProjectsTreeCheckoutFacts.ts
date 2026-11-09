@@ -4,9 +4,11 @@ import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceR
 
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { sessionListRuntimeClock } from '@/hooks/session/sessionListRuntimeClock';
+import { projectLastMobileSurfaceState } from '@/sync/domains/state/navigationUiState';
+import { resolveProjectMobileSurfaceStorageKeys } from '@/sync/domains/settings/mobileSurfacePersistence';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 
-import { createProjectsTreeCheckoutFactsSelector } from './projectsTreeCheckoutFacts';
+import { createProjectsTreeCheckoutFactsSelector, type ProjectsTreeCheckoutFactsChange } from './projectsTreeCheckoutFacts';
 import type { ProjectsTreeCheckoutFacts } from './projectsTreeRows';
 
 /**
@@ -24,6 +26,7 @@ function createProjectsTreeCheckoutFactsSource(
     store: ReturnType<typeof getStorage>,
 ): ProjectsTreeCheckoutFactsSource {
     const select = createProjectsTreeCheckoutFactsSelector(refs);
+    const serverIds = [...new Set(refs.map(ref => ref.serverId))];
     let nowMs = refs.length > 0 ? Math.max(sessionListRuntimeClock.getNowMs(), Date.now()) : Date.now();
     // This source produces the shared facts at its input wakes. Snapshot reads
     // by each rendered section must not recompute the whole checkout census.
@@ -31,7 +34,7 @@ function createProjectsTreeCheckoutFactsSource(
     const getSnapshot = () => {
         if (published === null) {
             nowMs = refs.length > 0 ? Math.max(sessionListRuntimeClock.getNowMs(), Date.now()) : Date.now();
-            published = select(store.getState(), nowMs, true);
+            published = select(store.getState(), nowMs, { reset: true });
         }
         return published;
     };
@@ -39,9 +42,23 @@ function createProjectsTreeCheckoutFactsSource(
     let stop: (() => void) | null = null;
     const start = () => {
         const token = {};
-        const refresh = (scmChanged = false) => {
+        let subscribedScope: ReturnType<typeof store.getState>['profileScope'] | undefined;
+        let stopMobileSurfaces: (() => void)[] = [];
+        const subscribeMobileSurfaces = () => {
+            const scope = store.getState().profileScope;
+            if (scope === subscribedScope) return;
+            subscribedScope = scope;
+            const keys = new Set(resolveProjectMobileSurfaceStorageKeys({
+                workspaceRefs: refs, activeScope: scope, activeServerId: scope?.serverId,
+            }).filter((key): key is string => key !== null));
+            for (const stop of stopMobileSurfaces) stop();
+            stopMobileSurfaces = [...keys].map(key => projectLastMobileSurfaceState.subscribeKey(key,
+                () => refresh({ mobileSurfaceKey: key })));
+        };
+        const refresh = (change: ProjectsTreeCheckoutFactsChange = {}) => {
+            subscribeMobileSurfaces();
             nowMs = Math.max(sessionListRuntimeClock.getNowMs(), Date.now());
-            const next = select(store.getState(), nowMs, scmChanged || published === null);
+            const next = select(store.getState(), nowMs, published === null ? { reset: true } : change);
             // Re-arm even when a heartbeat extends freshness without changing
             // the visible facts. Only this source's deadline can wake its readers.
             const wakeAtMs = select.getNextWakeAtMs();
@@ -52,24 +69,22 @@ function createProjectsTreeCheckoutFactsSource(
             published = next;
             for (const listener of [...listeners]) listener();
         };
-        const stopClock = sessionListRuntimeClock.subscribeWake(token, refresh);
-        const stopStore = store.subscribe((state, previous) => {
-            if (state.sessions !== previous.sessions
-                || state.sessionListRowsByServerId !== previous.sessionListRowsByServerId
-                || state.sessionListRenderableDelta.revision !== previous.sessionListRenderableDelta.revision
-                || state.machines !== previous.machines
-                || state.machineListByServerId !== previous.machineListByServerId
-                || state.machineListStatusByServerId !== previous.machineListStatusByServerId
-                || state.profileScope !== previous.profileScope
-                || state.getWorkspaceScmSnapshot !== previous.getWorkspaceScmSnapshot) refresh();
+        const stopClock = sessionListRuntimeClock.subscribeWake(token, () => refresh());
+        // Read the writer's latest delta with its row publication, not as a
+        // separate wake for an index rebuilt on a Home this tree does not read.
+        const stopStore = store.subscribe(() => refresh(), {
+            sessions: true, sessionListRowsByServerId: serverIds,
+            machines: true, machineListByServerId: serverIds, machineListStatusByServerId: serverIds,
+            profileScope: true,
         });
         // SCM snapshots live outside Zustand; their owner publishes actual snapshot changes.
-        const stopScm = projectManager.subscribeScmSnapshots(() => refresh(true));
-        refresh();
+        const stopScm = projectManager.subscribeScmSnapshots(scopeKey => refresh({ scmScopeKey: scopeKey }), select.getScmScopeKeys());
+        refresh({ reset: true });
         return () => {
             stopStore();
             stopScm();
             stopClock();
+            for (const stop of stopMobileSurfaces) stop();
         };
     };
     const subscribe = (listener: () => void) => {

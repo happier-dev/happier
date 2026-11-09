@@ -31,7 +31,7 @@ describe('retained whole-repository Source selections', () => {
   });
 });
 
-const source: ProjectSourceV1 = {
+const source = {
   id: 'source-happier',
   revision: 3,
   name: 'happier',
@@ -48,7 +48,7 @@ const source: ProjectSourceV1 = {
     protocol: 'https',
   },
   defaultRef: 'v0.3',
-};
+} satisfies ProjectSourceV1;
 const checkout = (
   id: string,
   machineId: string,
@@ -84,6 +84,50 @@ describe('Project Open choices', () => {
     expect(input).not.toHaveProperty('subdir');
     expect(input).not.toHaveProperty('ref');
     expect(StrictJsonValueSchema.safeParse(input).success).toBe(true);
+  });
+
+  it('offers an unbound checkout by resolved repository identity and retains its exact address for Source attach', () => {
+    const existing: WorkspaceRefV1 = { id: 'folder-picked', serverId: 'home', machineId: 'devbox',
+      rootPath: '/home/me/existing', createdAtMs: 1, projectKey: 'private-project',
+      repositoryIdentity: { kind: 'github', deployment: 'https://github.com/', repository: 'HAPPIER-DEV/HAPPIER' } };
+    const state = { ...base, checkouts: [existing] };
+    const options = resolveProjectOpenUseOptions(state);
+    expect(options.map(option => option.use)).toEqual(['existing', 'worktree', 'clone']);
+    expect(options[0]?.from).toBe(existing);
+    const selected = { ...state, ...resolveProjectOpenDefaults(state) };
+    expect(buildProjectOpenInput(buildProjectOpenDraft(selected), state.checkouts)).toMatchObject({
+      source: { kind: 'source', id: source.id, checkout: { serverId: 'home', machineId: 'devbox',
+        workspaceId: existing.id, rootPath: existing.rootPath } }, materialization: { kind: 'attach' },
+    });
+    expect(existing.source).toBeUndefined();
+    expect(existing.projectKey).toBe('private-project');
+  });
+
+  it('keeps repository candidates Home-qualified, excludes other deployments and repositories, and preserves ambiguity', () => {
+    const identity = { kind: 'github' as const, deployment: 'https://github.com', repository: 'happier-dev/happier' };
+    const candidate = (id: string, patch: Partial<WorkspaceRefV1> = {}): WorkspaceRefV1 => ({
+      id, serverId: 'home', machineId: 'devbox', rootPath: `/${id}`, createdAtMs: 1, repositoryIdentity: identity, ...patch,
+    });
+    const checkouts = [candidate('one'), candidate('two'), candidate('foreign-home', { serverId: 'another-home' }),
+      candidate('foreign-forge', { repositoryIdentity: { ...identity, deployment: 'https://github.example' } }),
+      candidate('other-repository', { repositoryIdentity: { ...identity, repository: 'another/repo' } }),
+      candidate('unknown', { repositoryIdentity: undefined })];
+    const state = { ...base, checkouts };
+    const existing = resolveProjectOpenUseOptions(state)[0]!;
+    expect(existing.candidates.map(ref => ref.id)).toEqual(['one', 'two']);
+    expect(existing.from).toBeNull();
+    expect(resolveProjectOpenDefaults(state)).toEqual({ use: 'existing' });
+  });
+
+  it('offers no repository action or destination for a Source without a repository, even with retained checkouts', () => {
+    const { repository: _repository, ...withoutRepository } = source;
+    const state: ProjectOpenChoiceState = { ...base, subject: { kind: 'source', source: withoutRepository },
+      checkouts: [checkout('here', 'devbox', '/repo'), checkout('elsewhere', 'mac', '/repo')] };
+    expect(resolveProjectOpenUseOptions(state)).toEqual([]);
+    expect(suggestProjectOpenDestination(state)).toBe('');
+    const draft = buildProjectOpenDraft({ ...state, use: 'clone', destination: '/home/me/src/repo' });
+    expect(OpenProjectDraftSelectionV1Schema.safeParse(draft).success).toBe(true);
+    expect(buildProjectOpenInput(draft, state.checkouts)).toBeNull();
   });
 
   it('retains a direct repository selection through the same canonical clone editor', () => {
@@ -221,6 +265,22 @@ describe('Project Open choices', () => {
     const only = checkout('only', 'devbox', '/home/me/src/happier');
     expect(resolveProjectOpenDefaults({ ...base, checkouts: [only], checkoutId: 'elsewhere' }))
       .toMatchObject({ use: 'existing', checkoutId: 'only', checkoutAddress: { workspaceId: 'only', machineId: 'devbox' } });
+  });
+
+  it.each([null, 'existing', 'worktree', 'copy'] as const)('captures the sole shown checkout in the executable draft (%s)', use => {
+    const only = checkout('only', use === 'copy' ? 'mac' : 'devbox', '/home/me/src/happier');
+    const state: ProjectOpenChoiceState = { ...base, checkouts: [only], use,
+      branch: 'feature', destination: '/home/me/src/happier-copy' };
+    const defaults = resolveProjectOpenDefaults(state);
+    const address = { serverId: only.serverId, machineId: only.machineId, workspaceId: only.id, rootPath: only.rootPath };
+    expect(defaults).toMatchObject({ checkoutId: only.id, checkoutAddress: address });
+    const draft = buildProjectOpenDraft({ ...state, ...defaults });
+    expect(draft.editing?.checkout).toEqual(address);
+    expect(buildProjectOpenInput(draft, state.checkouts)).toMatchObject({ source: { kind: 'source', checkout: address },
+      materialization: { kind: use === 'copy' ? 'sync' : use === 'worktree' ? 'worktree' : 'attach' } });
+    const restored = projectOpenChoiceStateFromDraft(draft, state.checkouts, state.machineHomeDir);
+    expect(resolveProjectOpenDefaults(restored)).toEqual({});
+    expect(buildProjectOpenInput(draft, [])).toBeNull();
   });
 
   it('reads a clone with no destination yet as no destination, never the root "/"', () => {

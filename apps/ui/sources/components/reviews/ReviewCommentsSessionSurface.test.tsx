@@ -2,8 +2,9 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ReviewCommentActionIdV1, ReviewCommentV1 } from '@happier-dev/protocol';
-import { ReviewCommentTransitionRequestV1Schema } from '@happier-dev/protocol';
+import type { ReviewCommentActionIdV1} from '@happier-dev/protocol/reviews/comments/actions';
+import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
+import { ReviewCommentTransitionRequestV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { flushHookEffects, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';

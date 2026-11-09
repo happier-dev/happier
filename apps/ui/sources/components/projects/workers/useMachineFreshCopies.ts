@@ -6,7 +6,7 @@ import type { MachineFreshCopyRow } from '@/sync/store/domains/projectAccountRow
 import { executeProjectWorkerActionV1, ProjectWorkerActionError } from '@/sync/ops/actions/projectWorkerActions';
 import { t } from '@/text';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
-import type { ProjectWorkerCopyRetireInputV1 } from '@happier-dev/protocol';
+import type { ProjectWorkerCopyRetireInputV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { ProjectWorkerDependencyV1Schema, type ProjectWorkerDependencyV1 } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getWorkspaceSyncCommittedCopyPreview, listWorkspaceSyncStatuses, type WorkspaceSyncCommittedCopyReviewResult } from '@/sync/ops/workspaceSync';

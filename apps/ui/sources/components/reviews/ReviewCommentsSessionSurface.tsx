@@ -9,11 +9,12 @@ import type {
     ReviewCommentListResponseV1,
     ReviewCommentRedactResponseV1,
     ReviewCommentReplyResponseV1,
+    ReviewCommentTransitionResponseV1} from '@happier-dev/protocol/reviews/comments/actions';
+import type {
     ReviewCommentStateV1,
-    ReviewCommentTransitionResponseV1,
     ReviewCommentV1,
     ReviewCommentScopeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/reviews/comments/v1';
 import { REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1, renderReviewFindingsForVerifyV1 } from '@happier-dev/protocol/reviews/reviewFindingsApplyInputV1';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';

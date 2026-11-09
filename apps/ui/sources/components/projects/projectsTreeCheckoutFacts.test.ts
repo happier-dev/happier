@@ -1,9 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createSessionListRenderableSessionFixture } from '@/dev/testkit';
+import { createMachineFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { buildRealmQualifiedMobileSurfaceStorageKey } from '@/sync/domains/settings/mobileSurfacePersistence';
+import { projectLastMobileSurfaceState } from '@/sync/domains/state/navigationUiState';
+import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persistentUiState';
+import { buildWorkspaceCacheKey } from '@/sync/domains/workspaces/workspaceScope';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 import { createProjectsTreeCheckoutFactsSelector, type ProjectsTreeCheckoutFactsState } from './projectsTreeCheckoutFacts';
@@ -27,13 +30,40 @@ const state = (): ProjectsTreeCheckoutFactsState => ({
     sessions: {}, machines: {}, machineListByServerId: {}, machineListStatusByServerId: {},
     sessionListRowsByServerId: {}, profileScope: { serverId: 'home-a', accountId: 'account-a' },
     sessionListRenderableDelta: { revision: 0, changedSessionIds: [], removedSessionIds: [], rebuiltSessionListIndex: false },
-    localSettings: { projectLastMobileSurfaceByWorkspaceRefId: {} },
     getWorkspaceScmSnapshot: scope => projectManager.getWorkspaceScmSnapshot(scope),
 });
 
-afterEach(() => projectManager.clear());
+afterEach(() => {
+    projectManager.clear();
+    replacePersistentUiStateForTest(projectLastMobileSurfaceState, {});
+});
 
 describe('Projects tree checkout facts', () => {
+    it('does not enumerate this Home for five row and Machine inventory arrivals on another Home', () => {
+        const source = state();
+        let scans = 0;
+        source.sessionListRowsByServerId = { 'home-a': new Proxy({ own: session('own', {
+            metadata: { machineId: 'machine-1', path: '/repo' }, latestTurnStatus: 'in_progress',
+        }) }, {
+            ownKeys(target) { scans++; return Reflect.ownKeys(target); },
+        }) };
+        const select = createProjectsTreeCheckoutFactsSelector([ref('workspace')]);
+        const before = select(source, 1_100);
+        expect([...before.values()][0]?.attention).toBe('working');
+        scans = 0;
+        for (let arrival = 0; arrival < 5; arrival++) {
+            source.sessionListRowsByServerId = { ...source.sessionListRowsByServerId,
+                'home-b': { other: session('other', { seq: arrival }) } };
+            source.machineListByServerId = { ...source.machineListByServerId, 'home-b': [] };
+            source.sessionListRenderableDelta = { revision: arrival + 1, changedSessionIds: ['other'],
+                removedSessionIds: [], rebuiltSessionListIndex: true };
+            expect(select(source, 1_100)).toBe(before);
+        }
+        expect(scans).toBe(0);
+        source.sessionListRowsByServerId = { ...source.sessionListRowsByServerId,
+            'home-a': { own: session('own', { metadata: { machineId: 'machine-1', path: '/repo' }, latestTurnStatus: 'completed' }) } };
+        expect([...select(source, 1_100).values()][0]?.attention).toBeNull();
+    });
     it('PF4 keeps equal checkout facts and changes only one of 150 checkout identities', () => {
         const refs = Array.from({ length: 150 }, (_, index) => ref(`checkout-${index}`, 'home-a', `/repo-${index}`));
         const source = state();
@@ -48,7 +78,7 @@ describe('Projects tree checkout facts', () => {
         const checkout = refs[42];
         projectManager.updateWorkspaceScmSnapshot(checkout, { ...snapshot(), repo: { isRepo: true, rootPath: checkout.rootPath },
             branch: { ...snapshot().branch, head: 'changed' } });
-        const after = select(source, 1_110);
+        const after = select(source, 1_110, { scmScopeKey: buildWorkspaceCacheKey(checkout) });
         expect(after).not.toBe(before);
         const changed = [...after].filter(([key, value]) => value !== before.get(key));
         expect(changed).toHaveLength(1);
@@ -77,6 +107,35 @@ describe('Projects tree checkout facts', () => {
         expect(source.getWorkspaceScmSnapshot).toHaveBeenCalledTimes(callsAfterFirstSelection);
     });
 
+    it('does not re-place a thousand Sessions for Machine heartbeats and daemon publications', () => {
+        const refs = Array.from({ length: 100 }, (_, index) => ref(`workspace-${index}`, 'home-a', `/repo-${index}`));
+        const rows = Object.fromEntries(Array.from({ length: 1_000 }, (_, index) => [`session-${index}`, session(`session-${index}`, {
+            metadata: { machineId: 'machine-1', path: `/repo-${Math.floor(index / 10)}` },
+        })]));
+        const machine = createMachineFixture();
+        const source = { ...state(), sessionListRowsByServerId: { 'home-a': rows },
+            machines: { 'machine-1': machine }, machineListByServerId: { 'home-a': [machine] },
+            sessionListRenderableDelta: { revision: 1, changedSessionIds: [], removedSessionIds: [], rebuiltSessionListIndex: true } };
+        const readSnapshot = vi.fn(source.getWorkspaceScmSnapshot);
+        source.getWorkspaceScmSnapshot = readSnapshot;
+        const select = createProjectsTreeCheckoutFactsSelector(refs);
+        const before = select(source, 1_100);
+        readSnapshot.mockClear();
+        let current: typeof source = source;
+        for (let beat = 1; beat <= 5; beat++) {
+            const next = { ...machine, activeAt: 1_000 + beat, updatedAt: 1_000 + beat,
+                daemonStateVersion: 1 + beat, daemonState: { status: 'running', resources: { beat } } };
+            current = { ...current, machines: { 'machine-1': next }, machineListByServerId: { 'home-a': [next] } };
+            expect(select(current, 1_100)).toBe(before);
+        }
+        // No Session was re-placed: placement reads each Session's SCM snapshot.
+        expect(readSnapshot).toHaveBeenCalledTimes(0);
+        // A fact placement reads (the Machine's home directory) still re-places.
+        const moved = { ...machine, metadata: { ...machine.metadata!, homeDir: '/Users/moved' } };
+        select({ ...current, machines: { 'machine-1': moved }, machineListByServerId: { 'home-a': [moved] } }, 1_100);
+        expect(readSnapshot.mock.calls.length).toBeGreaterThan(0);
+    });
+
     it('recomputes only the changed checkout membership among a thousand admitted Sessions', () => {
         const refs = Array.from({ length: 100 }, (_, index) => ref(`workspace-${index}`, 'home-a', `/repo-${index}`));
         const rows = Object.fromEntries(Array.from({ length: 1_000 }, (_, index) => [`session-${index}`, session(`session-${index}`, {
@@ -93,8 +152,8 @@ describe('Projects tree checkout facts', () => {
             'session-0': { ...rows['session-0']!, latestTurnStatus: 'completed' as const },
         } }, sessionListRenderableDelta: { revision: 2, changedSessionIds: ['session-0'], removedSessionIds: [], rebuiltSessionListIndex: false } };
         const after = select(changed, 1_100);
-        // Ten members in the affected checkout, one changed placement, and the visible checkout facts.
-        expect(readSnapshot.mock.calls.length).toBeLessThanOrEqual(refs.length + 11);
+        // Ten members, one changed placement and one affected checkout; no other checkout reads.
+        expect(readSnapshot.mock.calls.length).toBeLessThanOrEqual(12);
         expect([...after.values()].slice(1)).toEqual([...before.values()].slice(1));
         expect([...after.values()][99]).toBe([...before.values()][99]);
     });
@@ -116,7 +175,27 @@ describe('Projects tree checkout facts', () => {
             .toMatchObject({ subtitle: 'devbox · feature' });
     });
 
-    it('rebuilds membership on an index reset and removes only the addressed Home on a deletion', () => {
+    it('re-places only the listed Sessions when the Session list index is rebuilt', () => {
+        const refs = Array.from({ length: 100 }, (_, index) => ref(`workspace-${index}`, 'home-a', `/repo-${index}`));
+        const rows = Object.fromEntries(Array.from({ length: 1_000 }, (_, index) => [`session-${index}`, session(`session-${index}`, {
+            metadata: { machineId: 'machine-1', path: `/repo-${Math.floor(index / 10)}` }, latestTurnStatus: 'in_progress',
+        })]));
+        const source = { ...state(), sessionListRowsByServerId: { 'home-a': rows },
+            sessionListRenderableDelta: { revision: 1, changedSessionIds: [], removedSessionIds: [], rebuiltSessionListIndex: true } };
+        const readSnapshot = vi.fn(source.getWorkspaceScmSnapshot);
+        source.getWorkspaceScmSnapshot = readSnapshot;
+        const select = createProjectsTreeCheckoutFactsSelector(refs);
+        select(source, 1_100);
+        readSnapshot.mockClear();
+        // A reordering activity write: one listed row changes and the index projection is rebuilt.
+        const after = select({ ...source, sessionListRowsByServerId: { 'home-a': { ...rows,
+            'session-0': { ...rows['session-0']!, latestTurnStatus: 'completed' as const } } },
+        sessionListRenderableDelta: { revision: 2, changedSessionIds: ['session-0'], removedSessionIds: [], rebuiltSessionListIndex: true } }, 1_100);
+        expect(readSnapshot.mock.calls.length).toBeLessThanOrEqual(12);
+        expect([...after.values()][0]?.attention).toBe('working');
+    });
+
+    it('re-places Sessions listed as moved between Homes and removes only the addressed Home on a deletion', () => {
         const refs = [ref('first'), ref('second', 'home-b')];
         const row = session('same', { metadata: { machineId: 'machine-1', path: '/repo' }, latestTurnStatus: 'in_progress' });
         const initial = { ...state(), sessionListRowsByServerId: { 'home-a': { same: row }, 'home-b': { same: row } } };
@@ -126,7 +205,7 @@ describe('Projects tree checkout facts', () => {
             sessionListRenderableDelta: { revision: 1, changedSessionIds: [], removedSessionIds: ['same'], rebuiltSessionListIndex: false } };
         expect([...select(removed, 1_100).values()].map(fact => fact.attention)).toEqual([null, 'working']);
         const reset = { ...removed, sessionListRowsByServerId: { 'home-a': { same: row }, 'home-b': {} },
-            sessionListRenderableDelta: { revision: 2, changedSessionIds: [], removedSessionIds: [], rebuiltSessionListIndex: true } };
+            sessionListRenderableDelta: { revision: 2, changedSessionIds: ['same'], removedSessionIds: [], rebuiltSessionListIndex: true } };
         expect([...select(reset, 1_100).values()].map(fact => fact.attention)).toEqual(['working', null]);
     });
 
@@ -160,8 +239,8 @@ describe('Projects tree checkout facts', () => {
         const select = createProjectsTreeCheckoutFactsSelector(refs);
         expect([...select(source, 1_100).values()][0]).toMatchObject({ attention: 'needs-you', newFromSession: true });
         const storageKey = buildRealmQualifiedMobileSurfaceStorageKey('project', source.profileScope!, 'workspace')!;
-        source = { ...source, localSettings: { projectLastMobileSurfaceByWorkspaceRefId: { [storageKey]: 'code' } } };
-        expect([...select(source, 1_100).values()][0]).toMatchObject({ newFromSession: false });
+        projectLastMobileSurfaceState.set(storageKey, 'code');
+        expect([...select(source, 1_100, { mobileSurfaceKey: storageKey }).values()][0]).toMatchObject({ newFromSession: false });
         // A pending request stays visible while its runtime is live, however long it has waited.
         expect([...select(source, 121_001).values()][0]).toMatchObject({ attention: 'needs-you' });
         source.sessionListRowsByServerId = { 'home-a': { wait: session('wait', {

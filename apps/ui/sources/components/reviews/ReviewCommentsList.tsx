@@ -1,7 +1,7 @@
 import React from 'react';
 import { View } from 'react-native';
 
-import type { ReviewCommentV1 } from '@happier-dev/protocol';
+import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 

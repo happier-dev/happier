@@ -10,6 +10,7 @@ import { installUiListsCommonModuleMocks } from '@/components/ui/lists/uiListsTe
 import { t } from '@/text';
 import { formatResetAtTime } from '@/utils/time/formatResetAtTime';
 import type { SessionDraftRecordV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import type { SessionDraftRepositoryTransport } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 installFileFindAccountBoundaryMocks('home', 'account');
 installUiListsCommonModuleMocks();
@@ -36,15 +37,17 @@ vi.mock('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage', () => {
     const values = new Map<string, string>();
     return { getSessionDraftPersistenceStorage: () => ({
         getString: (key: string) => values.get(key),
+        getAllKeys: () => [...values.keys()],
         set: (key: string, value: string) => { values.set(key, value); },
         delete: (key: string) => { values.delete(key); },
     }) };
 });
 
-const routerSpies = vi.hoisted(() => ({ back: undefined as undefined | { mockClear(): void; mock: { calls: unknown[][] } } }));
+const routerSpies = vi.hoisted(() => ({ navigation: [] as unknown[], back: undefined as undefined | { mockClear(): void; mock: { calls: unknown[][] } } }));
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    const mock = createExpoRouterMock({ params: { draftId: '00000000-0000-4000-8000-000000000081', serverId: 'home' } });
+    const mock = createExpoRouterMock({ params: { draftId: '00000000-0000-4000-8000-000000000081', serverId: 'home' },
+        router: { push: value => { routerSpies.navigation.push(value); } } });
     routerSpies.back = mock.spies.back;
     return mock.module;
 });
@@ -59,12 +62,14 @@ beforeEach(() => {
     projectOpenAccountActionBoundary.capture = false;
     projectOpenAccountActionBoundary.calls = [];
     projectOpenAccountActionBoundary.opened = null;
+    routerSpies.navigation = [];
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 503 })));
 });
 afterEach(() => { standardCleanup(); vi.unstubAllGlobals(); });
 
 /** A signed-in Home with one online Machine and a retained Open draft for one Source. */
-async function seedOpenDraft(draftId: string, scope = { serverId: 'home', accountId: 'account' }) {
+async function seedOpenDraft(draftId: string, scope = { serverId: 'home', accountId: 'account' },
+    transport: Partial<SessionDraftRepositoryTransport> = {}, machinePlatform?: string) {
     const { storage } = await import('@/sync/domains/state/storage');
     const { configureSessionDraftRepository, resetSessionDraftRepositoryForTests, writeProjectOpenDraft, getSessionDraftSnapshot } =
         await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
@@ -86,8 +91,10 @@ async function seedOpenDraft(draftId: string, scope = { serverId: 'home', accoun
                     content: request.content, createdAt: 1, updatedAt: 2 };
                 return { status: 'updated', record: projectOpenDraftServerRow };
             },
+            ...transport,
         } });
-    const machine = createMachineFixture({ id: 'machine', activeAt: Date.now() });
+    const fixture = createMachineFixture({ id: 'machine', activeAt: Date.now() });
+    const machine = machinePlatform ? { ...fixture, metadata: { ...fixture.metadata!, platform: machinePlatform } } : fixture;
     storage.setState({ profileScope: scope, machines: { [machine.id]: machine }, machineListByServerId: { [scope.serverId]: [machine] },
         machineListStatusByServerId: { [scope.serverId]: 'idle' } });
     storage.getState().activateProjectAccountRowsScope(scope);
@@ -105,6 +112,80 @@ async function seedOpenDraft(draftId: string, scope = { serverId: 'home', accoun
 }
 
 describe('Project Open rendered choices', () => {
+    it('keeps the selected and menu Machine glyph aligned with local identity and platform', async () => {
+        const draftId = '00000000-0000-4000-8000-000000000081';
+        const { machine } = await seedOpenDraft(draftId, undefined, undefined, 'linux');
+        const { getSystemTasksRunner } = await import('@/components/systemTasks/systemTasksRuntime');
+        const { publishLocalDaemonStatus } = await import('@/components/settings/machines/localControl/localDaemonSharedState');
+        const { Icon } = await import('@/components/ui/icons/Icon');
+        const runner = getSystemTasksRunner();
+        publishLocalDaemonStatus(runner, { machineId: null });
+        const screen = await renderScreen(<ProjectOpenScreen routeParams={{ draftId, serverId: 'home' }} />);
+        await vi.waitFor(() => expect(screen.findByTestId('projects.open.where.row')).not.toBeNull());
+        await act(async () => screen.findAll(node => node.type === DropdownMenu && node.props.testID === 'projects.open.where')[0]!.props.onSelect(machine.id));
+        const glyphs = () => {
+            const row = screen.findByTestId('projects.open.where.row')!;
+            const menu = screen.findAll(node => node.type === DropdownMenu && node.props.testID === 'projects.open.where')[0]!;
+            return [row.findAll(node => node.type === Icon)[0]?.props.name,
+                menu.props.items.find((item: { id: string }) => item.id === machine.id).icon.props.name];
+        };
+        expect(glyphs()).toEqual(['hard-drives', 'hard-drives']);
+        await act(async () => publishLocalDaemonStatus(runner, { machineId: machine.id }));
+        expect(glyphs()).toEqual(['laptop', 'laptop']);
+        await act(async () => publishLocalDaemonStatus(runner, { machineId: null }));
+    });
+
+    it.each(['source', 'another-source'])('carries an attached dashboard only after accepting its Source (%s)', async acceptedSourceId => {
+        const draftId = acceptedSourceId === 'source' ? '00000000-0000-4000-8000-000000000083' : '00000000-0000-4000-8000-000000000084';
+        const { createHomeGovernanceHarness, installHomeGovernanceBoundaries } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        const home = createHomeGovernanceHarness();
+        installHomeGovernanceBoundaries(home);
+        onTestFinished(() => home.reset());
+        const serverId = await home.addHome({ name: 'Project Open', serverUrl: 'https://home.test',
+            serverIdentityId: 'srv_project_open_dashboard', accountId: 'account', currentAccount: true });
+        installFileFindAccountBoundaryMocks(serverId, 'account');
+        const scope = { serverId, accountId: 'account' };
+        const seeded = await seedOpenDraft(draftId, scope);
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { writeProjectOpenDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        const source = seeded.read().selection.value!.source!;
+        if (source.kind !== 'source') throw new Error('Expected Source');
+        const checkout = { id: 'existing', serverId, machineId: 'machine', rootPath: '/Users/tester/Hello-World',
+            createdAtMs: 1, projectKey: 'private-project', repositoryIdentity: { kind: 'github' as const,
+                deployment: source.selector.provider.baseUrl, repository: source.selector.repository.nameWithOwner } };
+        storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
+            workspaceRefs: [checkout], relationships: [], organizations: [], revisionsByPhysicalKey: {} });
+        writeProjectOpenDraft({ scope, draftId, patch: { selection: { serverId, machineId: 'machine', source: { ...source, id: acceptedSourceId } } } });
+        const { createPlainProjectAccountRowListFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
+        const { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } = await import('@happier-dev/protocol/projects/projectAccountRowsV1');
+        home.answer(serverId, `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { body: createPlainProjectAccountRowListFixture({
+            workspaceRefs: [{ ...checkout, source: { sourceId: acceptedSourceId, revision: 1 } }],
+        }) });
+        projectOpenAccountActionBoundary.capture = true;
+        projectOpenAccountActionBoundary.opened = { kind: 'opened', setup: 'notRequired', directory: checkout.rootPath,
+            workspace: { serverId, machineId: 'machine', workspaceId: checkout.id, rootPath: checkout.rootPath },
+            facts: { projectKey: checkout.projectKey, source: { sourceId: acceptedSourceId, revision: 1 } } };
+        const screen = await renderScreen(<ProjectOpenScreen routeParams={{ draftId, serverId,
+            dashboardSourceId: 'source', dashboardArtifactId: 'shared-dashboard', dashboardServerId: 'foreign-home' }} />);
+        await vi.waitFor(() => expect(screen.findByTestId('projects.open.submit')?.props.disabled).toBe(false));
+        expect(projectOpenAccountActionBoundary.calls).toEqual([]);
+        expect(routerSpies.navigation).toEqual([]);
+        expect(seeded.read().selection.value).toMatchObject({ source: { id: acceptedSourceId } });
+        await screen.pressByTestIdAsync('projects.open.submit');
+        await vi.waitFor(() => expect(routerSpies.navigation).toHaveLength(1));
+        expect(projectOpenAccountActionBoundary.calls).toHaveLength(1);
+        expect(projectOpenAccountActionBoundary.calls[0]).toMatchObject({ actionId: 'projects.open', input: {
+            source: { kind: 'source', id: acceptedSourceId, checkout: { workspaceId: 'existing', rootPath: checkout.rootPath } },
+            materialization: { kind: 'attach' },
+        } });
+        const url = new URL(String(routerSpies.navigation[0]), 'https://happier.test');
+        expect(url.pathname).toBe('/projects/existing/overview');
+        if (acceptedSourceId === 'source') expect(Object.fromEntries(url.searchParams)).toMatchObject({
+            dashboardSourceId: 'source', dashboardArtifactId: 'shared-dashboard', dashboardServerId: 'foreign-home',
+        });
+        else expect(url.searchParams.has('dashboardArtifactId')).toBe(false);
+    });
+
     it('adds a Project opened from a folder to the Projects list (owner 11-08: the list shows Projects the person added)', async () => {
         const draftId = '00000000-0000-4000-8000-000000000085';
         const { createHomeGovernanceHarness, installHomeGovernanceBoundaries } = await import('@/dev/testkit/harness/homeGovernanceHarness');
@@ -143,6 +224,90 @@ describe('Project Open rendered choices', () => {
         // No Session or recency marks a folder the person added: its organization row says it is shown.
         expect(written).toEqual([{ key: { kind: 'project-organization', serverId: 'srv_project_open_add', projectKey: checkout.projectKey },
             expectedRevision: 'absent', value: { hidden: false } }]);
+    });
+
+    it('settles the own-Source chooser from its exact draft while Account draft hydration is held', async () => {
+        const draftId = '00000000-0000-4000-8000-000000000081';
+        const scope = { serverId: 'home', accountId: 'account' };
+        let release!: (value: { items: SessionDraftRecordV2[] }) => void;
+        const heldList = new Promise<{ items: SessionDraftRecordV2[] }>(resolve => { release = resolve; });
+        let listReads = 0;
+        const exactReads: unknown[] = [];
+        const seeded = await seedOpenDraft(draftId, scope, {
+            list: () => { listReads += 1; return heldList; },
+            read: async address => { exactReads.push(address); return { status: 'absent' }; },
+        });
+        const { ensureSessionDraftRepositoryHydrated } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        const backgroundHydration = ensureSessionDraftRepositoryHydrated(scope);
+        onTestFinished(async () => { release({ items: [] }); await backgroundHydration; });
+        const before = seeded.read().selection.value;
+        const screen = await renderScreen(<ProjectOpenScreen />);
+        await vi.waitFor(() => expect(screen.findByTestId('projects.open.choices')).toBeTruthy());
+        expect(screen.findByTestId('projects.open.resolving')).toBeFalsy();
+        expect(seeded.read().selection.value).toEqual(before);
+        expect(exactReads).toEqual([{ kind: 'projectOpen', draftId }]);
+        expect(listReads).toBe(1);
+    });
+
+    it('keeps the chooser resolving until a newly selected draft read settles', async () => {
+        const draftId = '00000000-0000-4000-8000-000000000081';
+        const nextDraftId = '00000000-0000-4000-8000-000000000082';
+        const scope = { serverId: 'home', accountId: 'account' };
+        let release!: () => void;
+        const heldRead = new Promise<void>(resolve => { release = resolve; });
+        const exactReads: unknown[] = [];
+        await seedOpenDraft(draftId, scope, {
+            read: async address => {
+                exactReads.push(address);
+                if (address.kind === 'projectOpen' && address.draftId === nextDraftId) {
+                    await heldRead;
+                    return { status: 'absent' };
+                }
+                return projectOpenDraftServerRow
+                    ? { status: projectOpenDraftServerRow.content ? 'present' : 'deleted', record: projectOpenDraftServerRow }
+                    : { status: 'absent' };
+            },
+        });
+        onTestFinished(() => { release(); });
+        const { flushProjectOpenDraftForAdmission, getSessionDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        await flushProjectOpenDraftForAdmission({ scope, draftId });
+        const screen = await renderScreen(<ProjectOpenScreen />);
+        await vi.waitFor(() => expect(screen.findByTestId('projects.open.choices')).toBeTruthy());
+        await act(async () => { screen.update(<ProjectOpenScreen routeParams={{ draftId: nextDraftId, serverId: 'home' }} />); });
+        await vi.waitFor(() => expect(exactReads).toEqual([{ kind: 'projectOpen', draftId }, { kind: 'projectOpen', draftId: nextDraftId }]));
+        expect(screen.findByTestId('projects.open.resolving')).toBeTruthy();
+        expect(screen.findByTestId('projects.open.choices')).toBeFalsy();
+        await act(async () => { release(); });
+        await vi.waitFor(() => expect(screen.findByTestId('projects.open.choices')).toBeTruthy());
+        const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+        expect(screen.findAllByType(AttentionBanner).find(node => node.props.testID === 'projects.open.failed')?.props.details)
+            .toContain('project_open_draft_unavailable');
+        expect(getSessionDraftSnapshot(scope, { kind: 'projectOpen', draftId: nextDraftId })).toBeNull();
+    });
+
+    it.each(['provenance', 'retained', 'repository'] as const)('enables Open for the sole existing Source checkout without writing on mount (%s)', async kind => {
+        const draftId = '00000000-0000-4000-8000-000000000081';
+        const seeded = await seedOpenDraft(draftId);
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { writeProjectOpenDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        const scope = { serverId: 'home', accountId: 'account' };
+        const source = seeded.read().selection.value!.source!;
+        if (source.kind !== 'source') throw new Error('Expected Source');
+        storage.getState().applyProjectAccountRowsForScope(scope, { scope, status: 'ready', coverage: 'complete',
+            workspaceRefs: [{ id: 'existing', serverId: scope.serverId, machineId: seeded.machine.id,
+                rootPath: '/Users/tester/Hello-World', createdAtMs: 1,
+                ...(kind === 'repository' ? { repositoryIdentity: { kind: 'github' as const,
+                    deployment: source.selector.provider.baseUrl, repository: source.selector.repository.nameWithOwner } }
+                    : { source: { sourceId: source.id, revision: source.revision } }) }],
+            relationships: [], organizations: [], revisionsByPhysicalKey: {} });
+        writeProjectOpenDraft({ scope, draftId, patch: { selection: { serverId: scope.serverId, machineId: seeded.machine.id,
+            source, ...(kind === 'retained' ? { materialization: { kind: 'attach' } } : {}) } } });
+        const before = seeded.read().selection.value;
+        const screen = await renderScreen(<ProjectOpenScreen />);
+        await vi.waitFor(() => expect(screen.findByTestId('projects.open.submit')).toBeTruthy());
+        expect(screen.findByTestId('projects.open.submit')!.props.disabled).toBe(false);
+        expect(screen.findByTestId('projects.open.use.existing')).toBeTruthy();
+        expect(seeded.read().selection.value).toEqual(before);
     });
 
     it('keeps same-name Machines distinguishable and retains the selected id when reopened after presence changes', async () => {
@@ -208,6 +373,12 @@ describe('Project Open rendered choices', () => {
         expect(mode()).toBeDefined();
         await act(async () => { mode()!.props.onSelect('copy_once'); });
         expect(seeded.read().selection.value?.materialization).toMatchObject({ workspaceAction: { kind: 'copy_once', contentPolicy: workspaceAction.contentPolicy } });
+        // The content choices stay folded under the copy's Files row until the person opens it.
+        expect(screen.findAllByType(DropdownMenu).find(node => node.props.itemTrigger?.itemProps?.testID === 'projects.open-content-selection-trigger')).toBeUndefined();
+        const { Item } = await import('@/components/ui/lists/Item');
+        const files = screen.findAllByType(Item).find(node => node.props.testID === 'projects.open.files');
+        expect(files).toBeDefined();
+        await act(async () => { files!.props.onPress(); });
         const content = screen.findAllByType(DropdownMenu).find(node => node.props.itemTrigger?.itemProps?.testID === 'projects.open-content-selection-trigger');
         expect(content).toBeDefined();
         await act(async () => { content!.props.onSelect('git_worktree'); });
@@ -444,6 +615,9 @@ describe('Project Open rendered choices', () => {
         const where = screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'projects.open.where');
         await act(async () => { where!.props.onSelect(machine.id); });
         await vi.waitFor(() => expect(address()!.props.error).toBe(t('projects.sources.addressCheckFailed', { machine: machine.id, code: 'invalid_response' })));
+        // Correcting the address withdraws the refusal for the old one while the person is still typing (QA D3).
+        await act(async () => { address()!.props.onDraftChange('github.com/github/gitignore'); });
+        expect(address()!.props.error).toBeNull();
     });
 
     it('chooses the branch from a field select whose Other entry asks for any ref', async () => {

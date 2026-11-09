@@ -4,9 +4,10 @@ import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/acti
 import { createProjectSourceActionDeps } from '@/sync/api/projects/projectSourceActions';
 import { createProjectSourcesController } from './projectSourcesController';
 import type { ServerFetch } from '@/sync/http/client';
-import type { ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { ProjectSourcesUpdateInputV1Schema, type ProjectSourceV1, type ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { publishHomeAccountChange, publishHomeAccountChangeWake } from '@/sync/runtime/orchestration/homeAccountChange';
+import { ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { observeProjectSources } from './observeProjectSources';
 import { createProjectSourcesCatalog } from './projectSourcesCatalog';
 
@@ -32,6 +33,29 @@ const answer = (body: unknown, status = 200) => new Response(JSON.stringify(
 ), { status });
 
 describe('Project Sources controller through Source Actions', () => {
+    it('persists an explicitly cleared repository through the canonical null patch', async () => {
+        let current: ProjectSourceV1 = source();
+        const updates: unknown[] = [];
+        const controller = harness(async (_path, init) => {
+            if (init?.method === 'PATCH') {
+                const update = ProjectSourcesUpdateInputV1Schema.parse({ serverId: scope.serverId, sourceId: current.id, ...JSON.parse(String(init.body)) });
+                updates.push(update);
+                if (update.patch.repository === null) {
+                    const { repository: _repository, ...withoutRepository } = current;
+                    current = { ...withoutRepository, revision: current.revision + 1 };
+                }
+            }
+            return answer({ ok: true, source: current });
+        });
+        try {
+            await controller.select(current.id);
+            controller.edit({ repository: undefined });
+            await controller.save();
+            expect(updates).toEqual([expect.objectContaining({ patch: { repository: null } })]);
+            expect(controller.getSnapshot().current?.repository).toBeUndefined();
+        } finally { controller.dispose(); }
+    });
+
     it('updates a captured attachment target independently of the selected Source', async () => {
         const changed: string[] = [];
         const controller = harness(async (path, init) => {
@@ -627,6 +651,28 @@ describe('Project Sources controller through Source Actions', () => {
             publishHomeAccountChange('home-b', [PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1]);
             expect(controller.getSnapshot().current?.id).toBe('source-a');
             publishHomeAccountChange(scope.serverId, [PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1]);
+            await vi.waitFor(() => expect(controller.getSnapshot().current).toBeNull());
+            expect(controller.getSnapshot().rows).toEqual([]);
+        } finally { release(); controller.dispose(); }
+    });
+
+    it.each(['socket', 'feed-page'] as const)('drops Source access withdrawn by a linked-identity change (%s)', async (source_) => {
+        let revoked = false;
+        const controller = harness(async (path) => path.includes('/source-a?')
+            ? revoked ? answer({ ok: false, error: 'source_unavailable' }, 404) : answer({ ok: true, source: source() })
+            : answer({ ok: true, sources: revoked ? [] : [source()], coverage: { complete: true, nextCursor: null } }));
+        await controller.load('');
+        await controller.select('source-a');
+        const release = observeProjectSources(controller);
+        try {
+            // Restricted-Team Source access follows the Account's linked identities.
+            revoked = true;
+            void ((source_ === 'socket'
+                ? publishHomeAccountChangeWake(scope.serverId, { t: 'account-change', changeKinds: ['account'],
+                    entityIds: [ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1] }, 'socket')
+                // The focused Home's applied feed page publishes its exact changed ids.
+                : publishHomeAccountChange(scope.serverId, [ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1],
+                    { feedPageConsumed: true, changeKinds: ['account'] })));
             await vi.waitFor(() => expect(controller.getSnapshot().current).toBeNull());
             expect(controller.getSnapshot().rows).toEqual([]);
         } finally { release(); controller.dispose(); }

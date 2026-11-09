@@ -217,7 +217,7 @@ export function disclosePlatformFields(
   return disclosed.length === fields.length ? fields : disclosed;
 }
 
-type PlatformFieldChoices = Readonly<{ status: 'loading' | 'ready' | 'failed'; options: readonly unknown[]; errorCode?: string }>;
+type PlatformFieldChoices = Readonly<{ status: 'loading' | 'ready' | 'failed'; options: readonly unknown[]; errorCode?: string; nextCursor?: string }>;
 
 /**
  * The disclosed choices the sheet draws, and the one failed read it says once. A failed read stops the list: the
@@ -238,7 +238,13 @@ export function drawPlatformFields<Field extends EffectiveActionInputField>(
   for (const field of fields) {
     const choices = choicesOf(field);
     if (choices.status === 'failed') return { fields: drawn, failure: { code: choices.errorCode ?? 'unknown_error' }, canCheck: false };
-    if (field.required || readHappierActionInputPath(values as Record<string, unknown>, field.path) !== undefined
+    const value = readHappierActionInputPath(values as Record<string, unknown>, field.path);
+    if (field.required && !field.allowCustomValue && (field.widget === 'select' || field.widget === 'multiselect')
+      && value === undefined && choices.status === 'ready' && choices.options.length === 0
+      && choices.nextCursor === undefined && !paged(field)) {
+      return { fields: drawn, failure: { code: 'provider_options_empty' }, canCheck: false };
+    }
+    if (field.required || value !== undefined
       || choices.status !== 'ready' || choices.options.length > 0 || paged(field)) drawn.push(field);
   }
   return { fields: drawn, failure: null, canCheck: answered };

@@ -15,6 +15,8 @@ import {
   usePromptStackEntryPresentations,
 } from '@/components/settings/prompts/stacks/promptStackEntryPresentation';
 import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
+import type { ShareSheetAnchor } from '@/components/sharing/presentShareSheet';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import {
   PageHeader,
   type PageHeaderMetaFact,
@@ -101,7 +103,8 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
   }, [shareOffer]);
 
   const hasSource = shared.status !== 'none';
-  const { entry: memory, layer: memoryLayer, resolved: memoryResolved } = React.useMemo(
+  const { entry: memory, layer: memoryLayer, resolved: memoryResolved,
+    attachmentStatus: memoryAttachmentStatus } = React.useMemo(
     () => selectProjectMemoryEntry({ hasSource, sharedEntries: shared.entries, personalEntries: personal.entries, presentations }),
     [hasSource, personal.entries, presentations, shared.entries],
   );
@@ -187,8 +190,9 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
   );
 
   const openShare = React.useCallback(
-    (offer: ShareOffer) => {
+    (offer: ShareOffer, anchor?: ShareSheetAnchor) => {
       showDocumentShareSheet({
+        ...(anchor ? { anchor } : {}),
         artifactId: offer.artifactId,
         kind: offer.kind,
         name: offer.title,
@@ -300,9 +304,10 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
   ) =>
     documents.map((entry, index) => {
       const presentation = presentations(entry);
+      const presentationStatus = presentations.status(entry);
       const rowTestID = `${testID}.${layer}.${entry.id}`;
       // A document this viewer was not granted: one honest row, without its title or contents.
-      if (presentation.kind === 'unknown') {
+      if (presentationStatus === 'unavailable') {
         return (
           <PromptStackEntryRow
             key={entry.id}
@@ -337,19 +342,20 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
           entry={entry}
           title={title}
           access={describeAccess(entry)}
+          loading={presentationStatus === 'loading'}
           disabled={layer === 'shared' && shared.busy}
-          onOpen={() => {
+          onOpen={presentationStatus === 'ready' ? () => {
             const href = promptStackEntryHref(entry, presentations(entry).kind, projectRef.serverId);
             if (href) router.push(href as never);
-          }}
+          } : undefined}
           onShare={
             layer === 'shared' && owned && teamName
-              ? () =>
+              ? (anchor) =>
                   openShare({
                     artifactId: entry.ref.artifactId,
                     kind: presentation.headerKind,
                     title,
-                  })
+                  }, anchor)
               : undefined
           }
           onMove={
@@ -425,8 +431,9 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
         description={t('contextPages.project.memoryDescription')}
         serverId={model.serverId}
         entry={memory}
-        attachmentStatus={!memoryResolved ? 'unavailable' : shared.status === 'none' ? personal.status : shared.status}
+        attachmentStatus={!memoryResolved ? memoryAttachmentStatus : shared.status === 'none' ? personal.status : shared.status}
         searchScope={memorySearchScope}
+        searchScopeName={projectName}
         scopeTarget={(!hasSource && personal.available) || (hasSource && shared.canManage)
           ? { scope: 'project', projectRef }
           : undefined}
@@ -521,7 +528,7 @@ export const ProjectContextBody = React.memo(function ProjectContextBody(
           })}
           action={{
             label: t('contextPages.project.shareWith', { team: teamName }),
-            onPress: () => openShare(shareOffer),
+            onPress: (event?: unknown) => openShare(shareOffer, resolvePressTriggerAnchor(event)),
           }}
           onDismiss={() => setShareOffer(null)}
         />

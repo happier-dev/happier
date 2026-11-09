@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
-import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema } from '@happier-dev/protocol/account/authoringMemory';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -36,7 +36,7 @@ beforeAll(async () => {
                 JSON.stringify({ version: 1, scripts: { build: { source: { kind: 'command', command: 'make build' } } } })) }
                 : { basis: { kind: 'absent' }, document: null },
             detection: { entries: [{ usage: 'script', source: { kind: 'native', tool: 'package_script', file: 'package.json', target: 'test' } }],
-                environments: [], devcontainers: [], coverage: 'complete', diagnostics: [] },
+                toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] },
             importCandidates: [],
         }),
     });
@@ -66,6 +66,7 @@ const { activeReviewFileKeyForWorkspace, publishActiveReviewFile, readActiveRevi
 const { parseSessionPaneUrlState } = await import('@/components/sessions/panes/url/sessionPaneUrlState');
 const { ScmCommitComposerCard } = await import('@/components/workspaces/scm/commitComposer/ScmCommitComposerCard');
 const { readNewSessionDraftFromRepository, writeNewSessionDraftToRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+const { resolveNewSessionDraftRouteScope } = await import('@/components/sessions/new/navigation/newSessionDraftRouteIdentity');
 const { listNewSessionDraftProjections } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
 const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
 const { useRepositoryTreeBrowserState } = await import('@/hooks/workspaces/files/repositoryTreeBrowserState');
@@ -257,7 +258,7 @@ describe('Project Local Changes', () => {
         expect(storage.getState().sessions).toEqual({});
         await screen.unmount();
     });
-    it.each(['header', 'comments'] as const)('ordinary Project authoring from %s defers the exact worktree draft until approval', async source => {
+    it.each(['header', 'comments'] as const)('ordinary Project authoring from %s defers exact worktree context until approval and keeps it unlisted', async source => {
         const scope = { serverId: runtime.serverId, accountId: 'account-a' };
         accountSettings = { ...storage.getState().settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
             v: 1, actions: { 'session.authoring.open': { approvalRequiredSurfaces: ['ui'] } },
@@ -305,9 +306,15 @@ describe('Project Local Changes', () => {
         await vi.waitFor(() => expect(approvalArtifacts.list()).toHaveLength(2));
         await act(async () => { expect(await executor.execute('approval.request.decide', { artifactId: approvalArtifacts.list()[1]!.id, decision: 'approve' }, { surface: 'ui', serverId: runtime.serverId }))
             .toMatchObject({ ok: true, result: { status: 'executed' } }); });
-        const newDraft = listNewSessionDraftProjections(scope).find(row => !draftsBefore.some(old => old.draftId === row.draftId));
-        if (!newDraft) throw new Error('Approved authoring did not retain a draft');
-        expect(readNewSessionDraftFromRepository({ scope, draftId: newDraft.draftId })).toMatchObject({ selectedMachineId: 'm1', selectedPath: workspaceScope.rootPath,
+        expect(boundary.navigate).toHaveBeenCalledOnce();
+        const opened = boundary.navigate.mock.calls[0]?.[0];
+        expect(opened).toMatchObject({ pathname: '/new', params: { draftId: expect.any(String) } });
+        expect(resolveNewSessionDraftRouteScope({ activeScope: storage.getState().profileScope,
+            draftServerId: opened.params.draftServerId, draftAccountId: opened.params.draftAccountId,
+            requestedScopeResolution: { kind: 'unknown_home' } })).toEqual(scope);
+        // Placement and origin are opener context, readable by identity but not kept until authored.
+        expect(listNewSessionDraftProjections(scope)).toEqual(draftsBefore);
+        expect(readNewSessionDraftFromRepository({ scope, draftId: opened.params.draftId })).toMatchObject({ selectedMachineId: 'm1', selectedPath: workspaceScope.rootPath,
             authoringOrigin: { kind: 'project', purpose: 'session', accountId: scope.accountId, page: 'overview', layoutId: 'release-dashboard',
                 surface: 'tabs', resource: { kind: 'file', path: 'src/a.ts' }, workspace: {
                     serverId: runtime.serverId, workspaceId: selectedCheckout.id, machineId: 'm1', rootPath: workspaceScope.rootPath,
@@ -320,13 +327,13 @@ describe('Project Local Changes', () => {
             actions: { 'session.authoring.open': { disabledSurfaces: ['ui'] } } }) };
         storage.getState().applySettingsForScope(scope, accountSettings, ++accountSettingsVersion);
         await screen.pressByTestIdAsync(trigger);
-        expect(listNewSessionDraftProjections(scope)).toHaveLength(draftsBefore.length + 1);
+        expect(listNewSessionDraftProjections(scope)).toEqual(draftsBefore);
         expect(boundary.navigate).toHaveBeenCalledOnce();
         expect(approvalArtifacts.list()).toHaveLength(2);
         accountSettings = { ...accountSettings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }) };
         storage.getState().applySettingsForScope(scope, accountSettings, ++accountSettingsVersion);
         await screen.pressByTestIdAsync(trigger);
-        expect(listNewSessionDraftProjections(scope)).toHaveLength(draftsBefore.length + 2);
+        expect(listNewSessionDraftProjections(scope)).toEqual(draftsBefore);
         expect(boundary.navigate).toHaveBeenCalledTimes(2);
         expect(storage.getState().sessions).toEqual({});
         expect(storage.getState().reviewCommentsDraftsByWorkspaceCacheKey[cacheKey]).toEqual(commentsBefore);
@@ -404,9 +411,14 @@ describe('Project Local Changes', () => {
                 expect(boundary.routeParams.rightDestination).toBe(JSON.stringify(companion));
             }
             await screen.pressByTestIdAsync('project-shell-header.newSession');
-            const opened = listNewSessionDraftProjections(scope).find(row => !before.some(old => old.draftId === row.draftId));
-            expect(opened).toBeDefined();
-            const origin = readNewSessionDraftFromRepository({ scope, draftId: opened!.draftId })?.authoringOrigin;
+            expect(boundary.navigate).toHaveBeenCalledOnce();
+            const opened = boundary.navigate.mock.calls[0]?.[0];
+            expect(opened).toMatchObject({ pathname: '/new', params: { draftId: expect.any(String) } });
+            expect(resolveNewSessionDraftRouteScope({ activeScope: storage.getState().profileScope,
+                draftServerId: opened.params.draftServerId, draftAccountId: opened.params.draftAccountId,
+                requestedScopeResolution: { kind: 'unknown_home' } })).toEqual(scope);
+            expect(listNewSessionDraftProjections(scope)).toEqual(before);
+            const origin = readNewSessionDraftFromRepository({ scope, draftId: opened.params.draftId })?.authoringOrigin;
             expect(origin).toMatchObject({ page: 'overview', purpose: 'session' });
             expect(origin?.companion).toEqual(closed ? undefined : companion);
             expect(storage.getState().sessions).toEqual({});
@@ -661,6 +673,25 @@ describe('Project Local Changes', () => {
         // The folder still waits quietly in the card's own shape.
         expect(screen.findHostByTestId('repository-tree-unreachable')).not.toBeNull();
     });
+    it('summarizes Local changes in the Overview column: one files row, one push row and one commit box (lab p-overview HOME)', async () => {
+        storage.getState().applySettingsLocal({ experiments: true, featureToggles: { 'scm.writeOperations': true }, scmCommitStrategy: 'atomic' });
+        currentSnapshot = ScmWorkingSnapshotSchema.parse({ ...currentSnapshot,
+            capabilities: { ...currentSnapshot.capabilities, writeRemotePush: true },
+            repo: { ...currentSnapshot.repo, remotes: [{ name: 'origin', fetchUrl: 'git@example.com:repo.git', pushUrl: 'git@example.com:repo.git' }] },
+            branch: { ...currentSnapshot.branch, upstream: 'origin/main', ahead: 2 } });
+        const screen = await mount();
+        expect(screen.findHostByTestId('local-changes-files')).not.toBeNull();
+        expect(screen.findHostByTestId('local-changes-push')).not.toBeNull();
+        expect(screen.findAllByType(ScmCommitComposerCard)).toHaveLength(1);
+        // The files and choosing among them belong to Changes; Push belongs to its row, not the box.
+        expect(screen.findAllByType(ScmChangeRow)).toEqual([]);
+        expect(screen.findByType(ScmCommitComposerCard).props.commitSelectionAvailable).toBe(false);
+        expect(screen.findByType(ScmCommitComposerCard).props.pushShortcut).toBeUndefined();
+        expect(screen.getTextContent()).not.toContain('turnChanges.card.walkThrough');
+        await screen.pressByTestIdAsync('local-changes-files');
+        expect(boundary.navigate.mock.calls.at(-1)?.[0]).toContain('/projects/wr_1/changes');
+        expect(boundary.writes).toEqual([]);
+    });
     it('requires explicit native confirmation before discarding the actual checkout path', async () => {
         storage.getState().applySettingsLocal({ experiments: true, featureToggles: { 'scm.writeOperations': true }, scmCommitStrategy: 'git_staging' });
         const screen = await mount('/repo', 'project_changes', { tall: true });
@@ -689,13 +720,15 @@ describe('Project Local Changes', () => {
         expect(screen.findAllByType(ScmChangeRow)[0].props.file.isIncluded).toBe(false);
         expect(storage.getState().sessions).toEqual({});
     });
-    it('shows declared scripts and no-manifest detections through inspection without creating an execution Session', async () => {
+    it('shows declared scripts and a no-manifest summary through inspection without creating an execution Session', async () => {
         const screen = await mount('/repo', 'project_scripts');
         expect(screen.findHostByTestId('local-changes.script:build')).not.toBeNull();
         await screen.unmount();
         boundary.manifestPresent = false;
         const detected = await mount('/repo', 'project_scripts');
-        expect(detected.findHostByTestId('local-changes.detected:0')).not.toBeNull();
+        // Without a project file the widget summarizes what was found (lab p-overview HIDDEN), never the runnable rows.
+        expect(detected.findHostByTestId('local-changes.found')).not.toBeNull();
+        expect(detected.findHostByTestId('local-changes.detected:0')).toBeNull();
         expect(storage.getState().sessions).toEqual({});
     });
     it('opens ordinary editable setup authoring from Scripts without executing the scripts', async () => {

@@ -24,6 +24,13 @@ export function deploymentEnvironmentRoute(input: DeploymentEnvironmentAddress) 
     };
 }
 
+export type DeploymentNewDefinitionKind = 'compose' | 'image';
+
+/** A Project's new-Environment draft, opened on a stored definition (Store → Apps' Paste a Compose file, Run an image). */
+export function buildDeploymentNewDefinitionHref(input: Readonly<{ serverId: string; projectSourceId: string; kind: DeploymentNewDefinitionKind }>): string {
+    return `/deployments/${encodeURIComponent(input.projectSourceId)}?serverId=${encodeURIComponent(input.serverId)}&newDefinition=${input.kind}`;
+}
+
 /** The same address as a link path, for consumers that hold a path rather than a typed route. */
 export function buildDeploymentEnvironmentHref(input: DeploymentEnvironmentAddress): string {
     const { params } = deploymentEnvironmentRoute(input);

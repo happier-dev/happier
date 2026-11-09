@@ -14,6 +14,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { t } from '@/text';
+import { resolveMachineKindGlyph } from '@/components/machines/machineKindGlyph';
 
 import type { ProjectOpenUse } from './projectOpenChoices';
 
@@ -33,6 +34,8 @@ export const ProjectOpenWhereRow = React.memo(function ProjectOpenWhereRow(
     items: readonly DropdownMenuItem[];
     selectedId: string | null;
     machineName: string | null;
+    isThisComputer: boolean;
+    platform: string | null;
     status: ProjectOpenWhereStatus;
     compact: boolean;
     onSelect: (machineId: string) => void;
@@ -74,6 +77,9 @@ export const ProjectOpenWhereRow = React.memo(function ProjectOpenWhereRow(
         open={open}
         onOpenChange={setOpen}
         items={items}
+        // The canonical machine-picker rows (MachineSelector's dropdown): item rows with the chosen one checked.
+        rowKind="item"
+        variant="selectable"
         // The same rule as the other Machine pickers: a long inventory gets a search field.
         search={props.items.length >= 10}
         searchPlaceholder={t('newSession.machinePicker.searchPlaceholder')}
@@ -94,7 +100,7 @@ export const ProjectOpenWhereRow = React.memo(function ProjectOpenWhereRow(
             }
             icon={
               <Icon
-                name="desktop"
+                name={resolveMachineKindGlyph({ isThisComputer: props.isThisComputer, platform: props.platform })}
                 size={ICON_SIZE.md}
                 color={theme.colors.text.secondary}
               />
@@ -137,7 +143,9 @@ export type ProjectOpenUseRowModel = Readonly<{
 /**
  * "Use" (lab `openForm` Use): the reachable ways to open, existing first. Two or more are a radio
  * group; exactly one is a statement, not a choice. The selected clone or copy carries its
- * destination inline with a quiet Change; a worktree names its new branch under its row.
+ * destination inline with a quiet Change; a worktree names its new branch under its row. The selected
+ * copy discloses only what the person decides in place, in this same sheet: its folder, then the
+ * host's `copyFields` (sync mode and a folded Files row).
  */
 export const ProjectOpenUseSection = React.memo(function ProjectOpenUseSection(
   props: Readonly<{
@@ -149,6 +157,8 @@ export const ProjectOpenUseSection = React.memo(function ProjectOpenUseSection(
     onSelect: (use: ProjectOpenUse) => void;
     onChangeDestination: (path: string) => void;
     onChangeBranch: (branch: string) => void;
+    /** Rows the selected copy discloses after its folder. */
+    copyFields?: React.ReactNode;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -245,6 +255,9 @@ export const ProjectOpenUseSection = React.memo(function ProjectOpenUseSection(
             />,
           );
         }
+        if (selected && row.use === 'copy' && props.copyFields) {
+          nodes.push(<React.Fragment key="copy:fields">{props.copyFields}</React.Fragment>);
+        }
         if (selected && row.use === 'worktree') {
           nodes.push(
             <FieldValueItem
@@ -276,6 +289,10 @@ function ProjectOpenCheckoutChoice(props: Readonly<{ use: ProjectOpenUse; choice
       open={open}
       onOpenChange={setOpen}
       items={props.choice.items}
+      // The checkouts' names and folders set the menu's width, not the small Change button.
+      matchTriggerWidth={false}
+      rowKind="item"
+      variant="selectable"
       selectedId={props.choice.selectedId}
       onSelect={(id) => {
         setOpen(false);

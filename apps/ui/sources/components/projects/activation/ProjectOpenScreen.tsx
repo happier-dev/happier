@@ -1,14 +1,13 @@
 import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import type { OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { SessionDraftAddressV2Schema } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { randomUUID } from '@/platform/randomUUID';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { ensureSessionDraftRepositoryHydrated, flushSessionDraftLocally } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { ensureSessionDraftAddressesHydrated, flushSessionDraftLocally } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
 import {
   useLocalSearchParams,
@@ -18,12 +17,15 @@ import { publishPresentationNotice } from '@/components/sessions/presentation/pr
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { resolveMachineKindGlyph } from '@/components/machines/machineKindGlyph';
+import { useThisComputerMachineId } from '@/components/machines/add/useMachineAddPaths';
 import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/KeyboardStickyFooter';
 import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { usePageBackControl } from '@/components/ui/layout/usePageBackControl';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
+import { PopoverBoundaryProvider } from '@/components/ui/popover/PopoverBoundary';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -36,9 +38,9 @@ import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import {
   useActiveServerAccountScope,
-  useAllMachines,
   useProjectAccountRows,
   useWorkspaceRefs,
+  useActiveMachineFacts,
 } from '@/sync/domains/state/storage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
@@ -62,6 +64,7 @@ import { WorkspaceActivationSyncFields } from '@/components/workspaces/activatio
 
 import { ProjectRefSelect } from '../ProjectRefSelect';
 import { formatProjectSourceAddress } from '../sources/projectSourceAddress';
+import { presentProjectSourceAddressRefusal } from '../sources/resolveProjectSourceAddress';
 import { groupProjectSources } from '../sources/ProjectSourcesRail';
 import { useProjectSources } from '../sources/useProjectSources';
 import {
@@ -82,8 +85,8 @@ import {
 import { readProjectOpenRouteDraft } from './projectOpenRoute';
 import { ProjectOpenSourceChooser, ProjectOpenSourceSheet, useProjectSourceTeamName } from './ProjectOpenSourceChooser';
 import { useProjectOpen } from './useProjectOpen';
+import { readProjectAttachedDashboardSelection } from '../detail/projectRouteState';
 import { projectOpenRefusalPresentation } from './projectOpenRefusalPresentation';
-import { presentProjectSourceAddressRefusal } from '../sources/resolveProjectSourceAddress';
 
 /** The source list's width beside the choices (lab `p-open` OPEN), and the narrowest choices column. */
 const SOURCE_LIST_WIDTH_PX = 300;
@@ -119,23 +122,24 @@ export const ProjectOpenScreen = React.memo(function ProjectOpenScreen(
   const address = requestedDraftId ? SessionDraftAddressV2Schema.safeParse({ kind: 'projectOpen', draftId: requestedDraftId }) : null;
   const [newDraftId] = React.useState(randomUUID);
   const draftId = address?.success && address.data.kind === 'projectOpen' ? address.data.draftId : newDraftId;
-  const scopeKey = scope ? `${scope.serverId}:${scope.accountId}` : null;
-  const [hydration, setHydration] = React.useState<{ scopeKey: string; ready: boolean } | null>(null);
+  const draftKey = scope ? `${scope.serverId}:${scope.accountId}:${draftId}` : null;
+  const [hydration, setHydration] = React.useState<{ draftKey: string; ready: boolean } | null>(null);
   React.useEffect(() => {
-    if (!scope || !scopeKey) return;
+    if (!scope || !draftKey) return;
     let mounted = true;
     void (async () => {
       await flushSessionDraftLocally({ scope });
+      // Only this chooser's draft is required, never the Account's unrelated Session contexts.
       // Remote unavailability does not discard or hide locally retained chooser state.
-      await ensureSessionDraftRepositoryHydrated(scope).catch(() => {});
+      await ensureSessionDraftAddressesHydrated(scope, [{ kind: 'projectOpen', draftId }]).catch(() => {});
     })().then(() => {
-      if (mounted) setHydration({ scopeKey, ready: true });
-    }, () => { if (mounted) setHydration({ scopeKey, ready: false }); });
+      if (mounted) setHydration({ draftKey, ready: true });
+    }, () => { if (mounted) setHydration({ draftKey, ready: false }); });
     return () => { mounted = false; };
-  }, [scope?.serverId, scope?.accountId, scopeKey, draftId]);
+  }, [scope?.serverId, scope?.accountId, draftKey, draftId]);
   if (!scope) return <ItemList testID="projects.open.signedOut">{null}</ItemList>;
   if (address && !address.success) return <AttentionBanner testID="projects.open.invalidDraftAddress" title={t('projects.open.unsupported')} details={['invalid_draft_address']} />;
-  if (!hydration || hydration.scopeKey !== scopeKey) return <AttentionBanner testID="projects.open.resolving" tone="neutral" title={t('projects.open.resolving')} />;
+  if (!hydration || hydration.draftKey !== draftKey) return <AttentionBanner testID="projects.open.resolving" tone="neutral" title={t('projects.open.resolving')} />;
   if (!hydration.ready) return <AttentionBanner testID="projects.open.draftUnavailable" title={t('projects.open.unsupported')} details={['project_open_draft_unavailable']} />;
   return <ProjectOpenForm key={`${scope.serverId}:${scope.accountId}:${draftId}`} scope={scope} draftId={draftId}
     seedIfMissing={!requestedDraftId} onClose={props.onClose} routeParams={props.routeParams} setChrome={props.setChrome} />;
@@ -155,7 +159,8 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
   const params = props.routeParams ?? routeParams;
   const dialog = props.setChrome !== undefined;
   const seed = React.useMemo(() => readProjectOpenRouteDraft(params), [params]);
-  const machines = useAllMachines();
+  const machines = useActiveMachineFacts();
+  const thisComputerMachineId = useThisComputerMachineId();
   const presenceNowMs = useMachinePresenceNowMs(machines);
   const reachabilityRevision = useMachineReachabilityRevision();
   const checkouts = useWorkspaceRefs();
@@ -172,7 +177,8 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
   const [query, setQuery] = React.useState('');
   const requestedDraftId = readParam(params.draftId);
   const draftId = props.draftId;
-  const open = useProjectOpen({ scope: props.scope, draftId, seedIfMissing: props.seedIfMissing, initialDraft: seed ?? undefined, onOpened: opened });
+  const open = useProjectOpen({ scope: props.scope, draftId, seedIfMissing: props.seedIfMissing, initialDraft: seed ?? undefined,
+    attachedDashboard: readProjectAttachedDashboardSelection(params), onOpened: opened });
   const draftRef = React.useRef(open.draft);
   draftRef.current = open.draft;
   React.useEffect(() => {
@@ -180,6 +186,7 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
     if (!requestedDraftId && !dialog) router.replace({ pathname: '/projects/open', params: { draftId, serverId: props.scope.serverId } } as never);
   }, [dialog, draftId, requestedDraftId, props.scope.serverId, router]);
   const [width, setWidth] = React.useState<number | null>(null);
+  const choicesBoundaryRef = React.useRef<View>(null);
 
   const machineId = open.draft?.machineId ?? null;
   const machinePresence = useMachinePresenceSummary(props.scope.serverId, machineId);
@@ -320,10 +327,15 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
   useModalCardChrome(props.setChrome, dialogChrome);
 
   const selectedSourceId = subject?.kind === 'source' ? subject.source.id : null;
+  const refusalRepositorySelector = subject?.kind === 'source' ? subject.source.repository ?? null
+    : subject?.kind === 'repository' ? subject.selector : null;
+  const refusalRepository = refusalRepositorySelector ? formatProjectSourceAddress(refusalRepositorySelector) : null;
   const sourceName = subject?.kind === 'source'
     ? catalog.rows.find((row) => row.id === subject.source.id)?.name
-      ?? subject.source.repository.repository.nameWithOwner.split('/').pop()
-      ?? subject.source.repository.repository.nameWithOwner
+      ?? subject.source.name
+      ?? subject.source.repository?.repository.nameWithOwner.split('/').pop()
+      ?? subject.source.repository?.repository.nameWithOwner
+      ?? null
     : null;
   const openSourceSheet = () => {
     Modal.show({
@@ -349,7 +361,6 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
   };
 
   const machineName = machine ? (machineNames.get(machine.id) ?? getMachineDisplayName(machine)) : null;
-  const machineSentenceName = machine ? sentenceMachineName(machine.id) : '';
   const checkoutsHere = options.find((option) => option.use === 'existing')?.candidates.length ?? 0;
   const whereStatus: ProjectOpenWhereStatus = !machine || !machineName
     ? { kind: 'none' }
@@ -367,16 +378,22 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
   // Several checkouts of the Source on this Machine: the selected existing/worktree row names one and
   // changes which through the same menu pattern as Where (never a separate list on the page).
   const checkoutKey = (ref: Readonly<{ machineId: string; rootPath: string; id: string }>) => `${ref.machineId}\u0000${ref.rootPath}\u0000${ref.id}`;
+  // A checkout's folder, home-relative on its own Machine (a copy's checkouts live on other Machines).
+  const checkoutPath = (ref: Readonly<{ machineId: string; rootPath: string }>) => formatPathRelativeToHome(ref.rootPath,
+    (ref.machineId === machineId ? choiceBase.machineHomeDir : readMachineHomeDir(machines.find((candidate) => candidate.id === ref.machineId))) ?? undefined);
   const useRows = options.map((option) => ({
     use: option.use,
-    ...((option.use === 'existing' || option.use === 'worktree') && option.candidates.length > 1 ? {
+    ...(option.candidates.length > 1 ? {
       checkoutChoice: {
-        items: option.candidates.map((candidate) => ({
-          id: checkoutKey(candidate),
-          title: formatPathRelativeToHome(candidate.rootPath, choiceBase.machineHomeDir ?? undefined),
-          ...(candidate.lastOpenedAtMs != null
-            ? { subtitle: t('projects.open.openedAgo', { when: formatRelativeTime(candidate.lastOpenedAtMs) }) } : {}),
-        })),
+        items: option.candidates.map((candidate) => {
+          const openedAgo = candidate.lastOpenedAtMs != null
+            ? t('projects.open.openedAgo', { when: formatRelativeTime(candidate.lastOpenedAtMs) }) : null;
+          // A copy chooses among other Machines' checkouts: each names its Machine first, then its folder.
+          return option.use === 'copy'
+            ? { id: checkoutKey(candidate), title: sentenceMachineName(candidate.machineId),
+                subtitle: [checkoutPath(candidate), openedAgo].filter(Boolean).join(' · ') }
+            : { id: checkoutKey(candidate), title: checkoutPath(candidate), ...(openedAgo ? { subtitle: openedAgo } : {}) };
+        }),
         selectedId: option.from ? checkoutKey(option.from) : null,
         onSelect: (key: string) => {
           const candidate = option.candidates.find((ref) => checkoutKey(ref) === key);
@@ -387,8 +404,9 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
     } : {}),
     ...describeProjectOpenUse({
       use: option.use,
-      machineName: machineSentenceName,
-      fromPath: option.from
+      selected: option.use === effectiveUse,
+      fromMachine: option.from ? sentenceMachineName(option.from.machineId) : null,
+      fromPath: option.use === 'copy' && option.from ? checkoutPath(option.from) : option.from
         ? formatPathRelativeToHome(option.from.rootPath, choiceBase.machineHomeDir ?? undefined)
         : null,
       gitRef: ref ?? (subject?.kind === 'source' ? (subject.source.defaultRef ?? null) : null),
@@ -434,11 +452,12 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
             />
           </View>
         ) : null}
+        {/* Menus opened from the choices stay inside them: a picker never covers the footer's Open project. */}
+        <View ref={choicesBoundaryRef} style={styles.choicesPane}>
+        <PopoverBoundaryProvider boundaryRef={choicesBoundaryRef}>
         <ItemList
           testID="projects.open.choices"
-          style={styles.choicesPane}
-          // A card's page list is contained and owns no inset: the dialog gives the choices the card's sheet inset.
-          containerStyle={dialog ? styles.choicesInset : undefined}
+          style={styles.choicesList}
         >
           {dialog ? null : (
             // A pushed page leaves through Back (lab OPENp "‹ Projects"); Cancel belongs to the dialog's footer and to
@@ -475,7 +494,7 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
                 : t('status.offline'),
               icon: (
                 <Icon
-                  name="desktop"
+                  name={resolveMachineKindGlyph({ isThisComputer: candidate.id === thisComputerMachineId, platform: candidate.metadata?.platform })}
                   size={ICON_SIZE.sm}
                   color={theme.colors.text.secondary}
                 />
@@ -484,6 +503,8 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
             }))}
             selectedId={machineId}
             machineName={machineName}
+            isThisComputer={machine?.id === thisComputerMachineId}
+            platform={machine?.metadata?.platform ?? null}
             status={whereStatus}
             compact={!twoPanes}
             onSelect={setMachineId}
@@ -497,18 +518,18 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
             onSelect={setUse}
             onChangeDestination={setDestination}
             onChangeBranch={setBranch}
+            copyFields={effectiveUse === 'copy' && choiceBase.materialization?.kind === 'sync' ? <WorkspaceActivationSyncFields
+              action={choiceBase.materialization.workspaceAction}
+              onChange={workspaceAction => {
+                // The Sync fields never offer `none`; attachment is a different Open choice.
+                if (workspaceAction.kind === 'none') return;
+                edit({ materialization: { kind: 'sync', targetPath: effectiveDestination, workspaceAction } });
+              }}
+              testIdPrefix="projects.open"
+            /> : null}
           />
-          {effectiveUse === 'copy' && choiceBase.materialization?.kind === 'sync' ? <WorkspaceActivationSyncFields
-            action={choiceBase.materialization.workspaceAction}
-            onChange={workspaceAction => {
-              // The Sync fields never offer `none`; attachment is a different Open choice.
-              if (workspaceAction.kind === 'none') return;
-              edit({ materialization: { kind: 'sync', targetPath: effectiveDestination, workspaceAction } });
-            }}
-            testIdPrefix="projects.open"
-          /> : null}
           <ProjectOpenSubfolderRow subject={subject} subdir={choiceBase.subdir ?? ''} onChangeSubdir={setSubdir} />
-          <ProjectOpenOutcome open={open} gitRef={ref} subfolder={choiceBase.subdir ?? null}
+          <ProjectOpenOutcome open={open} gitRef={ref} repository={refusalRepository} subfolder={choiceBase.subdir ?? null}
             machineName={(id) => machineNames.get(id) ?? getMachineDisplayName(machines.find((candidate) => candidate.id === id) ?? null) ?? id}
             sentenceMachineName={sentenceMachineName}
             onChooseCandidate={candidate => {
@@ -519,6 +540,8 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
               editing: { ...open.draft.editing, checkout } });
           }} />
         </ItemList>
+        </PopoverBoundaryProvider>
+        </View>
       </View>
       {dialog ? null : (
         <ProjectOpenFooter
@@ -673,8 +696,8 @@ function ProjectOpenSubjectSection(
       {source && props.compact ? (
         <Item
           testID="projects.open.subject.repository"
-          title={props.sourceName ?? formatProjectSourceAddress(source.repository)}
-          subtitle={formatProjectSourceAddress(source.repository)}
+          title={props.sourceName ?? source.name ?? (repository ? formatProjectSourceAddress(repository) : '')}
+          subtitle={repository ? formatProjectSourceAddress(repository) : undefined}
           icon={<Icon name="git-branch" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
           onPress={props.onChooseSource}
         />
@@ -742,7 +765,10 @@ function ProjectOpenSubfolderRow(
 function describeProjectOpenUse(
   input: Readonly<{
     use: ProjectOpenUse;
-    machineName: string;
+    /** The way the form stands on: a selected copy leaves its mode to the rows it discloses. */
+    selected: boolean;
+    /** The Machine a copy comes from, in a sentence. */
+    fromMachine: string | null;
     fromPath: string | null;
     gitRef: string | null;
     /** When the existing checkout was last opened here, if known. */
@@ -756,7 +782,8 @@ function describeProjectOpenUse(
   switch (input.use) {
     case 'existing':
       return {
-        title: t('projects.open.existing', { machine: input.machineName }),
+        // The machine is already named under Where; the title says only which kind of checkout.
+        title: t('projects.open.existing'),
         // "~/src/happier · v0.3 · opened 2 days ago": which checkout, its branch, and when it was last used.
         subtitle: input.fromPath
           ? [
@@ -768,8 +795,8 @@ function describeProjectOpenUse(
     case 'worktree':
       return {
         title: t('projects.open.worktree'),
-        subtitle: input.fromPath ? t('projects.open.worktreeDetail', { path: input.fromPath })
-          : input.candidateCount > 1 ? t('projects.open.chooseCheckout', { count: input.candidateCount }) : undefined,
+        // Until a checkout is chosen, the existing row above already asks which one; say it once.
+        subtitle: input.fromPath ? t('projects.open.worktreeDetail', { path: input.fromPath }) : undefined,
       };
     case 'clone':
       return {
@@ -777,12 +804,23 @@ function describeProjectOpenUse(
         subtitle: input.destination ? t('projects.open.cloneDetail', { path: input.destination }) : undefined,
       };
     case 'copy':
-      return { title: t('projects.open.copy'), subtitle: t('projects.open.copyDetail') };
+      return {
+        title: t('projects.open.copy'),
+        // Names the checkout it copies ("MacBook Pro’s ~/src/happier"); several and none chosen asks which.
+        subtitle: input.fromMachine && input.fromPath
+          ? input.selected
+            ? t('projects.open.copyFrom', { machine: input.fromMachine, path: input.fromPath })
+            : t('projects.open.copyFromDetail', { machine: input.fromMachine, path: input.fromPath })
+          : input.candidateCount > 1 ? t('projects.open.chooseCheckout', { count: input.candidateCount })
+            : t('projects.open.copyDetail'),
+      };
   }
 }
 
 /** What the last confirmation came to, while it stays on this screen: its step, or the outcome and next action. */
 function ProjectOpenOutcome(props: Readonly<{ open: ReturnType<typeof useProjectOpen>; gitRef: string | null;
+    /** The repository being opened, as the Source row shows it, so a refusal can name it. */
+    repository: string | null;
     /** The subfolder this Open asked for, so a refusal can name it. */
     subfolder: string | null;
     machineName(machineId: string): string;
@@ -798,7 +836,9 @@ function ProjectOpenOutcome(props: Readonly<{ open: ReturnType<typeof useProject
                 'kind' in retired.result ? retired.result.kind : retired.result.errorCode]} /> : null;
     }
     if ('ok' in result && result.ok === false) {
-        return <AttentionBanner testID="projects.open.failed" title={t('projects.open.unsupported')} details={[result.errorCode]} />;
+        // An Action failure is a refusal in the same words as a returned one: one presenter decides them.
+        return <AttentionBanner testID="projects.open.failed"
+            {...projectOpenRefusalPresentation(result.errorCode, props.gitRef, undefined, props.repository, result.failureCause, props.subfolder)} />;
     }
     if (!('kind' in result)) return null;
     switch (result.kind) {
@@ -835,7 +875,7 @@ function ProjectOpenOutcome(props: Readonly<{ open: ReturnType<typeof useProject
                 description={result.remediation?.action === 'connect_github' ? t('projects.open.githubConnectHint') : undefined}
                 details={[result.code]} />;
             return <AttentionBanner testID="projects.open.refused" tone="danger"
-                {...projectOpenRefusalPresentation(result.code, props.gitRef, result.remediation, null, result.failureCause, props.subfolder)} />;
+                {...projectOpenRefusalPresentation(result.code, props.gitRef, result.remediation, props.repository, result.failureCause, props.subfolder)} />;
     }
 }
 
@@ -847,8 +887,8 @@ const styles = StyleSheet.create(() => ({
     width: SOURCE_LIST_WIDTH_PX,
     borderRightWidth: StyleSheet.hairlineWidth,
   },
-  choicesPane: { flex: 1, minWidth: 0 },
-  choicesInset: { paddingHorizontal: HAPPIER_PAGE_METRICS.sheetInsetPx },
+  choicesPane: { flex: 1, minWidth: 0, minHeight: 0 },
+  choicesList: { flex: 1 },
   footer: {
     flexDirection: 'row',
     alignItems: 'center',

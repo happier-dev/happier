@@ -34,8 +34,9 @@ export function formatProjectSourceAddress(
  * repository is the quiet default and stays unsaid; a folder is named only when one is chosen.
  */
 export function describeProjectSourceRow(
-  source: Pick<ProjectSourceV1, 'repository' | 'defaultRef' | 'subdir'>,
+  source: Pick<ProjectSourceV1, 'repository' | 'defaultRef' | 'subdir'> & Partial<Pick<ProjectSourceV1, 'name'>>,
 ): string {
+  if (!source.repository) return source.name ?? '';
   return [
     source.repository.repository.nameWithOwner,
     source.defaultRef,

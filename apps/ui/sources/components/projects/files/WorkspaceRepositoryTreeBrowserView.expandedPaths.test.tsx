@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ScmWorkingEntrySchema } from '@happier-dev/protocol';
+import { ScmWorkingEntrySchema } from '@happier-dev/protocol/scm/workingSnapshot';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { standardCleanup } from '@/dev/testkit';

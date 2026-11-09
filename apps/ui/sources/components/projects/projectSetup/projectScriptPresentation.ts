@@ -1,7 +1,8 @@
-import { isSameInputOptionValue } from '@happier-dev/protocol/inputs';
+import type { HappierRowStatusTone } from '@happier-dev/plugin-ui/presentation';
+import { inputOptionValueKey } from '@happier-dev/protocol/inputs';
 import type {
   ProjectCommandSourceV1,
-  ProjectEnvironmentSelectionV1,
+  ProjectToolchainSelectionV1,
   ProjectNativeRefV1,
   ProjectToolInspectionV1,
 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
@@ -17,7 +18,7 @@ import { t } from '@/text';
 
 type NativeTool = Extract<ProjectCommandSourceV1, { kind: 'native' }>['tool'];
 type ToolchainTool = Extract<
-  ProjectEnvironmentSelectionV1,
+  ProjectToolchainSelectionV1,
   { kind: 'toolchain' }
 >['tool'];
 
@@ -55,14 +56,41 @@ export function formatProjectInvocation(invocation: ProjectInvocationPreview): s
     .join(' ');
 }
 
+type ProjectInvocationIndex = Readonly<{
+  commands: readonly ProjectInvocationRow[] | undefined;
+  previews: ReadonlyMap<string, ProjectInvocationPreview>;
+}>;
+
+/**
+ * One index per inspection result, keyed by its import offers (the large list) and checked against its named
+ * commands. A page of thousands of found scripts asks once per row; a scan per row froze the Scripts page.
+ * Weakly held: it goes with the inspection result, and a newer result is indexed afresh.
+ */
+const invocationIndexes = new WeakMap<readonly ProjectInvocationRow[], ProjectInvocationIndex>();
+
+function indexProjectInvocations(
+  inspection: Readonly<{ commands?: readonly ProjectInvocationRow[]; importCandidates: readonly ProjectInvocationRow[] }>,
+): ReadonlyMap<string, ProjectInvocationPreview> {
+  const held = invocationIndexes.get(inspection.importCandidates);
+  if (held && held.commands === inspection.commands) return held.previews;
+  const previews = new Map<string, ProjectInvocationPreview>();
+  // Named commands first, then import offers: the first preview for a reference wins.
+  for (const entry of [...(inspection.commands ?? []), ...inspection.importCandidates]) {
+    if (!entry.invocation) continue;
+    const key = inputOptionValueKey(entry.source);
+    if (!previews.has(key)) previews.set(key, entry.invocation);
+  }
+  invocationIndexes.set(inspection.importCandidates, { commands: inspection.commands, previews });
+  return previews;
+}
+
 /** The runner argv inspection previewed for a native reference (named commands, then import offers). */
 export function findProjectInvocation(
   inspection: Readonly<{ commands?: readonly ProjectInvocationRow[]; importCandidates: readonly ProjectInvocationRow[] }>,
   source: ProjectCommandSourceV1,
 ): ProjectInvocationPreview | undefined {
   if (source.kind === 'command') return undefined;
-  return [...(inspection.commands ?? []), ...inspection.importCandidates]
-    .find((entry) => entry.invocation && isSameInputOptionValue(entry.source, source))?.invocation;
+  return indexProjectInvocations(inspection).get(inputOptionValueKey(source));
 }
 
 /**
@@ -105,11 +133,11 @@ export function describeProjectCommandSource(
 }
 
 /** "mise · .mise.toml" for the selected environment; the machine's own tools read as such. */
-export function describeProjectEnvironment(
-  selection: ProjectEnvironmentSelectionV1,
+export function describeProjectToolchain(
+  selection: ProjectToolchainSelectionV1,
 ): Readonly<{ title: string; config: string | null }> {
   if (selection.kind === 'host')
-    return { title: t('projects.scripts.environment.host'), config: null };
+    return { title: t('projects.scripts.toolchain.host'), config: null };
   const title =
     selection.kind === 'toolchain'
       ? describeProjectTool(selection.tool)
@@ -131,6 +159,11 @@ export type ProjectRunGlyph =
   | 'stopped'
   | 'attention';
 export type ProjectRunTone = 'quiet' | 'attention' | 'danger';
+
+/** A run's tone on the shared row status line: needs-you reads as warn, failure as bad. */
+export function projectRunStatusTone(tone: ProjectRunTone): HappierRowStatusTone {
+  return tone === 'danger' ? 'bad' : tone === 'attention' ? 'warn' : 'quiet';
+}
 export type ProjectRunPresentation = Readonly<{
   glyph: ProjectRunGlyph;
   tone: ProjectRunTone;
@@ -172,7 +205,7 @@ export function presentProjectRun(
   machineName: string | null,
   idleText: string,
   /** The selected native environment's name (plan 24): its review and preparation say so by name. */
-  environmentName: string | null = null,
+  toolchainName: string | null = null,
 ): ProjectRunPresentation {
   if (!operation)
     return {
@@ -222,8 +255,8 @@ export function presentProjectRun(
       return live(
         'attention',
         'attention',
-        environmentName
-          ? t('projects.scripts.environment.pending')
+        toolchainName
+          ? t('projects.scripts.toolchain.pending')
           : t('projects.scripts.setup.pending'),
       );
     if (
@@ -242,8 +275,8 @@ export function presentProjectRun(
       return live(
         'running',
         'quiet',
-        environmentName
-          ? t('projects.scripts.environment.preparing', { tool: environmentName, machine })
+        toolchainName
+          ? t('projects.scripts.toolchain.preparing', { tool: toolchainName, machine })
           : t('projectWorkers.preparing', { machine }),
       );
     return snapshot.state === 'accepted'

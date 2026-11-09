@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Pressable } from 'react-native';
 import { useNavigation } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -12,6 +11,7 @@ import { resolveProjectRouteHeaderTitle } from './projectRouteState';
 import { useProjectRouteRouterRef } from './useProjectRouteRouterRef';
 import { Icon } from '@/components/ui/icons/Icon';
 import { useDeviceType } from '@/utils/platform/responsive';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 export function useProjectRouteHeaderOptions(params: Readonly<{
     workspaceRef: WorkspaceRefV1 | null;
@@ -68,16 +68,15 @@ export function useProjectRouteHeaderOptions(params: Readonly<{
         headerShadowVisible: false,
         ...(phoneBar ? {
         headerLeft: () => (
-            <Pressable
+            <HappierPressable
                 testID={`${params.testIdPrefix}-back`}
                 onPress={handleBack}
-                hitSlop={15}
                 accessibilityRole="button"
                 accessibilityLabel={t('common.back')}
                 style={{ paddingHorizontal: theme.space.s12, paddingVertical: theme.space.s6 }}
             >
                 <Icon name="arrow-left" size={24} color={theme.colors.chrome.header.foreground} />
-            </Pressable>
+            </HappierPressable>
         ),
         headerRight: () => (
             <ProjectHeaderActions

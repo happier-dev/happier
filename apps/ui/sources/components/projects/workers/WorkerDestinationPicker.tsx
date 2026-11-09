@@ -24,7 +24,7 @@ import {
   type SelectionListOption,
   type SelectionListSectionDescriptor,
 } from '@/components/ui/selectionList';
-import { useAllMachines } from '@/sync/domains/state/storage';
+import { useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
 import { ManagedMachineSelectionOffers, type ManagedMachineConfigurationContinuation } from '@/components/sessions/new/components/machineSelection/ManagedMachineSelectionOffers';
@@ -96,7 +96,7 @@ function OpenWorkerDestinationPicker(props: WorkerDestinationPickerProps) {
   const phone = useDeviceType() === 'phone';
   const serverId = props.workspace.serverId;
   const activeServer = useNewSessionActiveServerSource();
-  const allMachines = useAllMachines();
+  const allMachines = useActiveMachineFacts();
   const serverIds = React.useMemo(() => [serverId], [serverId]);
   const scopedGroups = useServerScopedMachineOptions({
     allowedServerIds: serverIds,

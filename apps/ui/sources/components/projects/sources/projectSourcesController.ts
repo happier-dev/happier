@@ -85,7 +85,7 @@ function createIdentity(draft: ProjectSourceDraft) {
 function editedFields(draft: ProjectSourceDraft, basis: ProjectSourceDraft): ProjectSourcesUpdateInputV1['patch'] {
     return {
         ...(draft.name !== basis.name ? { name: draft.name } : {}),
-        ...(JSON.stringify(draft.repository) !== JSON.stringify(basis.repository) ? { repository: draft.repository } : {}),
+        ...(JSON.stringify(draft.repository) !== JSON.stringify(basis.repository) ? { repository: draft.repository ?? null } : {}),
         ...(draft.defaultRef !== basis.defaultRef ? { defaultRef: draft.defaultRef || null } : {}),
         ...(draft.subdir !== basis.subdir ? { subdir: draft.subdir || null } : {}),
         ...(JSON.stringify(draft.audience) !== JSON.stringify(basis.audience) ? { audience: draft.audience ?? [] } : {}),
@@ -96,7 +96,7 @@ function carryDraft(draft: ProjectSourceDraft, basis: ProjectSourceDraft, source
     const edits = editedFields(draft, basis);
     return { ...draftOf(source),
         ...(edits.name !== undefined ? { name: edits.name } : {}),
-        ...(edits.repository !== undefined ? { repository: edits.repository } : {}),
+        ...(edits.repository !== undefined ? { repository: edits.repository ?? undefined } : {}),
         ...(edits.audience !== undefined ? { audience: edits.audience } : {}),
         ...('defaultRef' in edits ? { defaultRef: edits.defaultRef ?? undefined } : {}),
         ...('subdir' in edits ? { subdir: edits.subdir ?? undefined } : {}),

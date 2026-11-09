@@ -1,6 +1,6 @@
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createActionExecutor } from '@happier-dev/protocol';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { createWidgetAreaActionPortV1, createWidgetAreaLayoutArtifactPortV1, createWidgetSurfaceArtifactPortV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
@@ -15,6 +15,7 @@ import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 // Install transport boundaries before the named-layout/approval consumer graph.
 installHomeGovernanceBoundaries(createHomeGovernanceHarness());
@@ -95,6 +96,12 @@ it.each(['network_error', 'thrown_network_error', 'cancelled', 'abort', 'denied'
         } });
         if (cancelled) expect(cold.getCurrent().state).not.toHaveProperty('readFailure');
         expect(accountNames(cold.getCurrent().state.dashboards)).toEqual(expectedNames);
+        if (errorCode === 'thrown_network_error') {
+            failure = false;
+            await act(async () => { publishHomeAccountChange(server.id, undefined, { source: 'connected' }); });
+            await vi.waitFor(() => expect(cold.getCurrent().state.status).toBe('ready'));
+            expect(cold.getCurrent().state).not.toHaveProperty('readFailure');
+        }
         await cold.unmount();
         failure = false;
         hold = true;
@@ -159,11 +166,27 @@ it('refreshes mounted inventory for new and removed same-area publications throu
         if (actionId === 'widgets.area.layout.create') expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
         return result;
     };
+    const values = Object.values;
+    let inventoryVisits = 0;
+    // Observe fleet enumeration transparently; admission, publication, Actions and consumers stay real.
+    const enumeration = vi.spyOn(Object, 'values').mockImplementation(value => {
+        const result = values(value);
+        if (value === storage.getState().artifacts) inventoryVisits += result.length;
+        return result;
+    });
     try {
         storage.setState({ artifacts: {} });
+        const fleet = Array.from({ length: 2048 }, (_, index) => ({ id: `unrelated-${index}`,
+            header: { kind: 'markdown', title: 'Unrelated' }, rawHeader: { kind: 'markdown', title: 'Unrelated' },
+            title: 'Unrelated', headerVersion: 1, bodyVersion: 1, isDecrypted: true as const,
+            ownerAccountId: scope.accountId, access: 'owner' as const, seq: index, createdAt: 1, updatedAt: 1 }));
+        storage.getState().applyArtifacts(fleet);
         const hook = await renderHook(() => useWidgetAreaLayouts({ surface, execute }));
         await vi.waitFor(() => expect(hook.getCurrent().state.status).toBe('ready'));
         const before = hook.getCurrent().state;
+        inventoryVisits = 0;
+        await act(async () => { storage.getState().updateArtifact({ ...fleet[0]!, headerVersion: 2 }); });
+        const unrelatedVisits = inventoryVisits;
         await act(async () => { expect(await execute('widgets.area.layout.create', { surface: other, layoutId: 'foreign', name: 'Other' })).toMatchObject({ ok: true }); });
         expect(hook.getCurrent().state).toBe(before);
         await act(async () => { expect(await execute('widgets.area.layout.create', { surface, layoutId: 'agent', name: 'Agent view' })).toMatchObject({ ok: true }); });
@@ -172,7 +195,9 @@ it('refreshes mounted inventory for new and removed same-area publications throu
         await act(async () => { expect(await execute('widgets.area.layout.delete', { surface: created.surface, expectedRevision: created.revision })).toMatchObject({ ok: true }); });
         await vi.waitFor(() => expect(hook.getCurrent().state.dashboards.map(row => row.name)).not.toContain('Agent view'));
         await hook.unmount();
-    } finally { storage.setState(previous); }
+        console.info('Dashboard unrelated Artifact cost', { artifacts: fleet.length, inventoryVisits: unrelatedVisits });
+        expect(unrelatedVisits).toBe(0);
+    } finally { enumeration.mockRestore(); storage.setState(previous); }
 });
 
 it.each(['project', 'home', 'account', 'retired'] as const)('withdraws private inventory immediately when its %s scope retires', async change => {

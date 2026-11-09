@@ -21,7 +21,7 @@ describe('retained Project Open entrance', () => {
         installFileFindAccountBoundaryMocks(profile.id, 'account');
         try {
             const values = new Map<string, string>();
-            const repository = createSessionDraftRepository({ storage: { getString: key => values.get(key),
+            const repository = createSessionDraftRepository({ storage: { getString: key => values.get(key), getAllKeys: () => [...values.keys()],
                 set: (key, value) => values.set(key, value), delete: key => values.delete(key) }, syncEnabled: false,
                 cipher: { seal: async () => { throw new Error('Not a network write'); }, open: async () => null },
                 randomUUID: () => '00000000-0000-4000-8000-000000000011' });
@@ -51,6 +51,9 @@ describe('retained Project Open entrance', () => {
         const repository = createSessionDraftRepository({ storage: { getString: key => {
             if (!prepared) throw new Error('Storage not prepared');
             return values.get(key);
+        }, getAllKeys: () => {
+            if (!prepared) throw new Error('Storage not prepared');
+            return [...values.keys()];
         }, set: (key, value) => values.set(key, value), prepare: async () => { prepared = true; },
             delete: key => values.delete(key), flush: async () => { persisted = true; } }, syncEnabled: false,
             cipher: { seal: async () => { throw new Error('Not a network write'); }, open: async () => null },

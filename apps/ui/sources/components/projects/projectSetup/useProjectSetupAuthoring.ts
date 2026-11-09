@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { useWorkspaceRefs, storage } from '@/sync/domains/state/storage';
+import { storage } from '@/sync/domains/state/storage';
+import { useProjectAccountWorkspaceRef } from '@/sync/domains/workspaces/projectAccountRows';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { PluginUiNewSessionSeedOriginV1 } from '@happier-dev/protocol/plugins/ui';
 import { openProjectSetupAuthoring, type ProjectSetupAuthoringInput } from './projectSetupAuthoring';
@@ -35,9 +36,9 @@ export function useProjectSetupAuthoring(input: ProjectSetupAuthoringInput | nul
 export function useProjectAuthoringReturn(origin: PluginUiNewSessionSeedOriginV1 | null | undefined) {
     const router = useRouter();
     // Subscribe only to the Account and Project rows which can change admission.
-    const workspaceRefs = useWorkspaceRefs();
+    const workspaceRef = useProjectAccountWorkspaceRef(origin?.workspace.workspaceId ?? null, origin?.workspace.serverId);
     const profileScope = storage(state => state.profileScope);
-    const destination = React.useMemo(() => resolveCurrentProjectAuthoringReturn(origin), [origin, profileScope, workspaceRefs]);
+    const destination = React.useMemo(() => resolveCurrentProjectAuthoringReturn(origin), [origin, profileScope, workspaceRef]);
     const onReturnToProject = React.useCallback(() => {
         const current = resolveCurrentProjectAuthoringReturn(origin);
         if (current.kind !== 'ready') return current;

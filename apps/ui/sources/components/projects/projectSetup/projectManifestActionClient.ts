@@ -1,6 +1,8 @@
 import {
   ProjectDefinitionInspectOutputSchema,
+  ProjectDefinitionInspectResultSchema,
   type ProjectDefinitionWorkspace,
+  type ProjectDefinitionInspectRead,
 } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import {
   readProjectSetupConsentFailureV1,
@@ -11,6 +13,8 @@ import {
   type ProjectWorkerNoAcceptanceFailureDetailsV1,
 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ProjectOrganizationUpdateInputV1Schema, ProjectOrganizationUpdateOutputV1Schema,
+  type ProjectOrganizationUpdateInputV1 } from '@happier-dev/protocol/projects/projectOrganizationV1';
 import {
   ProjectManifestUpdateResultSchema,
   type ProjectManifestFileBasisV1,
@@ -29,7 +33,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { HappyError } from '@/utils/errors/errors';
 
 type Execute = (
-  actionId: 'projects.inspect' | 'projects.manifest.update' | 'projects.script.run' | 'projects.prepare',
+  actionId: 'projects.inspect' | 'projects.manifest.update' | 'projects.script.run' | 'projects.prepare' | 'projects.organization.update',
   input: unknown,
   context?: Parameters<ReturnType<typeof createFrontDoorActionExecute>>[2],
 ) => ReturnType<ReturnType<typeof createFrontDoorActionExecute>>;
@@ -74,6 +78,7 @@ export function createProjectManifestActionClient(
     actionId:
       | 'projects.manifest.update'
       | 'projects.script.run'
+      | 'projects.organization.update'
       | 'projects.prepare',
     actionInput: unknown,
     schema: core.$ZodType<T>,
@@ -132,10 +137,10 @@ export function createProjectManifestActionClient(
   }
 
   return {
-    async inspect() {
+    async inspect(read: ProjectDefinitionInspectRead = { kind: 'scripts' }) {
       const result = await execute(
         'projects.inspect',
-        { workspace: input.workspace },
+        { workspace: input.workspace, read },
         context,
       );
       if (!result.ok)
@@ -143,6 +148,19 @@ export function createProjectManifestActionClient(
           code: result.errorCode,
         });
       return ProjectDefinitionInspectOutputSchema.parse(result.result);
+    },
+    /** Revalidates a held inspection: an unchanged current result comes back without its body. */
+    async revalidate(read: ProjectDefinitionInspectRead, ifRevision: string) {
+      const result = await execute(
+        'projects.inspect',
+        { workspace: input.workspace, read, ifRevision },
+        context,
+      );
+      if (!result.ok)
+        throw new HappyError(result.error, false, {
+          code: result.errorCode,
+        });
+      return ProjectDefinitionInspectResultSchema.parse(result.result);
     },
     update(
       request: Readonly<{
@@ -159,6 +177,9 @@ export function createProjectManifestActionClient(
         },
         ProjectManifestUpdateResultSchema,
       );
+    },
+    updateEnvironmentBinding(request: ProjectOrganizationUpdateInputV1) {
+      return invoke('projects.organization.update', ProjectOrganizationUpdateInputV1Schema.parse(request), ProjectOrganizationUpdateOutputV1Schema);
     },
     runScript(selection: ProjectScriptSelection, choice?: ProjectExecutionChoiceV1) {
       const actionInput = PROJECT_ACTION_INPUT_SCHEMAS_V1[

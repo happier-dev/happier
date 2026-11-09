@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * The one quiet line above a shared dashboard's widgets (12s3, `projects.dashboard.identity`): whose
@@ -67,11 +68,10 @@ export const ProjectDashboardIdentityLine = React.memo(
           {props.detail}
         </Text>
         {props.action ? (
-          <Pressable
+          <HappierPressable
             testID={`${testID}.action`}
             accessibilityRole="button"
             onPress={props.action.onPress}
-            hitSlop={8}
           >
             <Text
               style={[
@@ -82,7 +82,7 @@ export const ProjectDashboardIdentityLine = React.memo(
             >
               {props.action.label}
             </Text>
-          </Pressable>
+          </HappierPressable>
         ) : null}
       </View>
     );

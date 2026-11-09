@@ -10,15 +10,16 @@ import { useWorkspaceScmDiffSummaryBinding } from './useWorkspaceScmDiffSummaryB
 export type WorkspaceCommitsViewProps = Omit<ScmCommitsViewProps, 'plan'> & Readonly<{
     scope: Readonly<{ serverId: string; machineId: string; rootPath: string }>;
     comparison: SessionScmReviewComparison | null;
+    scopeId?: string;
 }> & ScmWalkthroughRestorationProps;
 
 /** The exact checkout binds the same saved commit-plan owner without borrowing a Session. */
 export const WorkspaceCommitsView = React.memo(function WorkspaceCommitsView(props: WorkspaceCommitsViewProps) {
     const enabled = props.active !== false;
     const comparison = enabled ? props.comparison : null;
-    const bound = useWorkspaceScmDiffSummaryBinding({ ...props.scope, comparison, output: 'commitPlan',
+    const bound = useWorkspaceScmDiffSummaryBinding({ ...props.scope, paneScopeId: props.scopeId, comparison, output: 'commitPlan',
         restoration: props.restoreState === undefined ? undefined : {
-            restoreState: props.restoreState, retryRestore: props.retryRestore, machineReachability: props.machineReachability,
+            restoreState: props.restoreState, restoreFailure: props.restoreFailure, retryRestore: props.retryRestore, machineReachability: props.machineReachability,
         } });
     const plan = useScmCommitPlan({ bound });
     return <ScmCommitsView {...props} plan={plan} />;
