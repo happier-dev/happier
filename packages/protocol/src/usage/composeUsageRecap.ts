@@ -15,9 +15,11 @@ export function composeUsageRecap(args: Readonly<{
   const key = snapshot.key;
   const accounting = snapshot.accounting;
   if (!accounting) return { kind: 'unavailable', reason: 'accounting_unavailable' };
+  // Compact accounting retains observations even when optional coverage has no bounds.
   const witnessedPeriod: ReturnType<typeof resolveUsageQueryPeriod> = 'relative' in input.query.period
     ? accounting.coverage?.range ?? {}
-    : { ...input.query.period, endMs: input.query.period.endMs ?? accounting.coverage?.range.endMs };
+    : { ...input.query.period, endMs: input.query.period.endMs ?? accounting.coverage?.range.endMs
+      ?? accounting.summary?.observationRange?.endMs };
   const endMs = witnessedPeriod.endMs;
   if (endMs === undefined) return { kind: 'unavailable', reason: 'period_unavailable' };
   const requestedPeriod = resolveUsageQueryPeriod(input.query, endMs);

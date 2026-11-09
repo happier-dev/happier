@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { executeUsageAction } from './usageActions.js';
-import { normalizeUsageQuery } from '../../inputs/usageQuery.js';
+import { normalizeUsageQuery, usageQueryToAnalyticsRequest } from '../../inputs/usageQuery.js';
 import { resolveUsagePageAggregation } from '../../usage/resolveUsagePageAggregation.js';
 import { UsageAnalyticsQueryResponseSchema } from '../../usage/usageAnalyticsContracts.js';
 import { createActionExecutor } from '../actionExecutor.js';
@@ -10,6 +10,9 @@ import { clientActionUnavailable } from '../clientDispatchV1.js';
 import { projectPublicProfile } from '../../account/projectPublicProfile.js';
 import { DEFAULT_PUBLIC_PROFILE_POLICY_V1 } from '../../account/publicProfile.js';
 import { UsageRecapExportResultSchema } from '../../usage/usageRecap.js';
+import { projectUsageAnalyticsSummary } from '../../usage/usageSummary.js';
+import { normalizeActionsSettingsV1 } from '../actionSettings.js';
+import { isApprovalRequiredByActionsSettings } from '../actionApprovalPolicy.js';
 
 const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 900 } });
 const response = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { eventCount: 1,
@@ -19,6 +22,35 @@ const response = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { event
 // Authenticated read/client renderer ports are the boundaries under test;
 // unrelated executor families are unreachable in these checked partial fixtures.
 describe('usage recap Action composition', () => {
+  it.each([
+    { query: {}, startMs: 0 },
+    { query: { period: { startMs: 100 } }, startMs: 100 },
+  ])('delivers an open private recap from compact observation bounds ($startMs)', async ({ query, startMs }) => {
+    // Authenticated accounting and device effects are boundaries; compact projection,
+    // Action admission, read admission and recap composition remain real.
+    const compact = projectUsageAnalyticsSummary(UsageAnalyticsQueryResponseSchema.parse({ ...response,
+      coverage: { status: 'partial', reasons: [], missingDimensions: [], sources: [], ranked: [], range: { complete: false } },
+      contributions: [{ id: 'observation', observedAtMs: 899, sessionId: null, turnId: null,
+        agentId: 'codex', modelId: null, machineId: null, projectKey: null, workspaceId: null,
+        source: 'runtime', tokens: response.totals.tokens, cost: response.totals.cost }],
+    }), usageQueryToAnalyticsRequest(normalizeUsageQuery(query)));
+    const settings = normalizeActionsSettingsV1(undefined);
+    const deps: Partial<ActionExecutorDeps> = {
+      isActionApprovalRequired: (actionId, context, input, uiConfirmation, operation, scope, safety) =>
+        isApprovalRequiredByActionsSettings(actionId, settings, context, safety, undefined, input,
+          uiConfirmation, undefined, operation, scope),
+      usageActions: {
+        query: async request => resolveUsagePageAggregation({ queries: request.queries,
+          accounting: [{ query: request.queries[0]!, value: compact, status: 'available', asOfMs: 500 }] }),
+        renderRecap: async () => ({ kind: 'rendered', base64: 'iVBORw==' }),
+        deliverRecap: async () => ({ kind: 'delivered' }),
+      },
+    };
+    const result = await createActionExecutor(deps as ActionExecutorDeps).execute('usage.recap.private.deliver',
+      { query, selectedFields: ['tokens'], intent: 'copy' }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'delivered', compose: { kind: 'composed',
+      period: { startMs, endMs: 900 }, facts: { tokens: { total: 12 } } } } });
+  });
   it('requests selected recap facts independently of the originating widget demand', async () => {
     const result = await executeUsageAction('usage.recap.private.compose', {
       query: { ...query, includeAccounting: false, includeInsights: false, includeActivity: false,
