@@ -63,7 +63,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('reply draft dec
         const publication = { kind: 'failed' as const, failure: { code: 'approval_rejected', phase: 'action_admission' as const, retryable: false } };
         const expected = kind === 'discussion_review' ? { disposition: 'released', outcome: { kind: 'declined' } }
             : { disposition: 'released', returnPublication: publication };
-        const row = { sessionId: session.id, localId, content: { t: 'plain', v: {} }, replyProgress: progress, replyDisposition: progress.disposition };
+        const row = { sessionId: session.id, localId, content: { t: 'plain' as const, v: {} }, replyProgress: progress, replyDisposition: progress.disposition };
         await db.sessionMessage.create({ data: { ...row, seq: 1, messageRole: 'user' } });
         if (custody === 'pending') await db.sessionPendingMessage.create({ data: { ...row, position: 0, requestedAction: { v: 1, kind: 'enqueue' } } });
         const before = await db.discussionMessage.count({ where: { discussionId } });
