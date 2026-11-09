@@ -202,16 +202,18 @@
             "ownedEnvKeys": [
               "AI_GATEWAY_API_KEY",
               "VERCEL_OIDC_TOKEN",
+              "HAPPIER_FX_PROVIDER_API_KEY",
               "FX_PROVIDER",
               "FX_MODEL",
               "FX_AUTH_MODE",
+              "FX_HOME",
               "FX_GATEWAY_BASE_URL",
               "FX_E2E_GATEWAY_CHAT_URL",
               "FX_E2E_GATEWAY_MODELS_URL",
               "FX_E2E_GATEWAY_CREDITS_URL"
             ],
             "suppressConnectedServiceIds": [
-              "openai-codex"
+              "happier.agent.codex/openai-codex"
             ]
           },
           "credentialSupport": {
@@ -229,9 +231,9 @@
                 "protocol": "openai-chat"
               }
             ],
-            "supportsNoAuth": false
+            "supportsNoAuth": true
           },
-          "materialization": "spawnEnv",
+          "materialization": "configFile",
           "required": {
             "streaming": true,
             "toolRoundTrips": true
@@ -250,6 +252,11 @@
               "code"
             ]
           }
+        },
+        "sessionModeDescriptor": {
+          "runtimeSwitch": "acp-setSessionMode",
+          "semantics": "agent-modes",
+          "source": "acp"
         },
         "surfaces": {
           "externalSession": {
@@ -502,7 +509,8 @@
             "HOME",
             "FX_PROVIDER",
             "FX_AUTH_MODE",
-            "FX_HOME"
+            "FX_HOME",
+            "FX_MODEL"
           ],
           "executables": [
             {

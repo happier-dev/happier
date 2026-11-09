@@ -202,6 +202,11 @@
         "runtime": {
           "kind": "custom"
         },
+        "sessionModeDescriptor": {
+          "runtimeSwitch": "acp-setSessionMode",
+          "semantics": "agent-modes",
+          "source": "acp"
+        },
         "surfaces": {
           "externalSession": {
             "externalLinkedTakeover": {

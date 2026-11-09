@@ -237,17 +237,17 @@
           "authIsolation": {
             "ownedEnvKeys": [
               "HAPPIER_OPENCODE_PROVIDER_API_KEY",
-              "OPENCODE_AUTH_CONTENT",
               "OPENCODE_CONFIG_CONTENT",
+              "OPENCODE_AUTH_CONTENT",
+              "CLAUDE_CODE_OAUTH_TOKEN",
               "OPENAI_API_KEY",
-              "ANTHROPIC_API_KEY",
-              "CLAUDE_CODE_OAUTH_TOKEN"
+              "ANTHROPIC_API_KEY"
             ],
             "suppressConnectedServiceIds": [
-              "openai-codex",
-              "openai",
-              "claude-subscription",
-              "anthropic"
+              "happier.agent.claude/claude-subscription",
+              "happier.agent.codex/openai-codex",
+              "happier.voice.openai/openai",
+              "happier.agent.claude/anthropic"
             ]
           },
           "credentialSupport": {
@@ -290,6 +290,11 @@
         },
         "runtime": {
           "kind": "custom"
+        },
+        "sessionModeDescriptor": {
+          "runtimeSwitch": "acp-setSessionMode",
+          "semantics": "agent-modes",
+          "source": "acp"
         },
         "surfaces": {
           "externalSession": {
@@ -729,11 +734,11 @@
         "scope": {
           "envKeys": [
             "HAPPIER_OPENCODE_PROVIDER_API_KEY",
-            "OPENCODE_AUTH_CONTENT",
             "OPENCODE_CONFIG_CONTENT",
+            "OPENCODE_AUTH_CONTENT",
+            "CLAUDE_CODE_OAUTH_TOKEN",
             "OPENAI_API_KEY",
             "ANTHROPIC_API_KEY",
-            "CLAUDE_CODE_OAUTH_TOKEN",
             "XDG_CONFIG_HOME",
             "HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH",
             "OPENCODE_PERMISSION",

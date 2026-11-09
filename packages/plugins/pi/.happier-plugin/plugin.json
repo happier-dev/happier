@@ -204,8 +204,60 @@
         ],
         "id": "pi",
         "primary": "sessions",
+        "providerRequirements": {
+          "acceptsProtocols": [
+            "openai-responses"
+          ],
+          "applyPolicy": "restart_session",
+          "authIsolation": {
+            "ownedEnvKeys": [
+              "HAPPIER_PI_PROVIDER_API_KEY",
+              "OPENAI_API_KEY",
+              "ANTHROPIC_API_KEY",
+              "GEMINI_API_KEY",
+              "OPENROUTER_API_KEY",
+              "KIMI_API_KEY",
+              "HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH",
+              "HAPPIER_PI_REQUEST_AUTH_PRODUCER_VERSION"
+            ],
+            "suppressConnectedServiceIds": [
+              "happier.agent.claude/claude-subscription",
+              "happier.agent.codex/openai-codex",
+              "happier.voice.openai/openai",
+              "happier.agent.claude/anthropic"
+            ]
+          },
+          "credentialSupport": {
+            "apiKeyTransports": [
+              {
+                "destination": {
+                  "formats": [
+                    "bearer"
+                  ],
+                  "kind": "httpHeader",
+                  "names": [
+                    "authorization"
+                  ]
+                },
+                "protocol": "openai-responses"
+              }
+            ],
+            "supportsNoAuth": false
+          },
+          "materialization": "configFile",
+          "required": {
+            "streaming": true,
+            "toolRoundTrips": true
+          },
+          "supportsFreeformModelIds": true
+        },
         "runtime": {
           "kind": "custom"
+        },
+        "sessionModeDescriptor": {
+          "runtimeSwitch": "none",
+          "semantics": "none",
+          "source": "none"
         },
         "surfaces": {
           "externalSession": {
@@ -568,6 +620,7 @@
         "reason": "Launch the Pi coding-agent CLI through the host execution service.",
         "scope": {
           "envKeys": [
+            "HAPPIER_PI_PROVIDER_API_KEY",
             "HAPPIER_PI_THINKING_LEVEL",
             "PI_OFFLINE",
             "HAPPIER_CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH",

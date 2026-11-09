@@ -160,7 +160,7 @@
               "HAPPIER_GEMINI_ACP_AUTH_META"
             ],
             "suppressConnectedServiceIds": [
-              "gemini"
+              "happier.agent.gemini/gemini-account"
             ]
           },
           "credentialSupport": {
@@ -189,6 +189,11 @@
         },
         "runtime": {
           "kind": "custom"
+        },
+        "sessionModeDescriptor": {
+          "runtimeSwitch": "none",
+          "semantics": "none",
+          "source": "none"
         },
         "surfaces": {
           "externalSession": {
@@ -266,6 +271,7 @@
                   "token": "apiKey"
                 }
               },
+              "apiKey": true,
               "directExport": {
                 "contractVersion": "happier.team-credential-manual-connected-account-direct.v1"
               },
@@ -324,7 +330,18 @@
           ]
         },
         "id": "gemini-account",
-        "title": "Gemini"
+        "title": "Gemini",
+        "ui": {
+          "iconResourceId": "agent-mark",
+          "setup": {
+            "catalogDescription": {
+              "fallback": "API key or a Google Cloud service account.",
+              "key": "connectedServicesSettings.catalogGemini"
+            },
+            "firstRun": true,
+            "order": 2
+          }
+        }
       }
     ],
     "daemonDatabases": [],
@@ -366,6 +383,12 @@
     "registrySources": [],
     "requestInterceptors": [],
     "resources": [
+      {
+        "contentType": "image/svg+xml",
+        "id": "agent-mark",
+        "kind": "asset",
+        "path": "assets/agent-mark.svg"
+      },
       {
         "contentType": "application/json",
         "id": "i18n-en",

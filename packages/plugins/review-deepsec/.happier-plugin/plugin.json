@@ -87,7 +87,7 @@
               "OPENAI_BASE_URL"
             ],
             "suppressConnectedServiceIds": [
-              "claude-subscription"
+              "happier.agent.claude/claude-subscription"
             ]
           },
           "credentialSupport": {
@@ -116,6 +116,11 @@
         },
         "runtime": {
           "kind": "custom"
+        },
+        "sessionModeDescriptor": {
+          "runtimeSwitch": "none",
+          "semantics": "none",
+          "source": "none"
         },
         "title": "DeepSec"
       }

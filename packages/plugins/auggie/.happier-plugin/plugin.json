@@ -111,6 +111,11 @@
         "runtime": {
           "kind": "custom"
         },
+        "sessionModeDescriptor": {
+          "runtimeSwitch": "none",
+          "semantics": "none",
+          "source": "none"
+        },
         "surfaces": {
           "externalSession": {
             "externalLinkedTakeover": {

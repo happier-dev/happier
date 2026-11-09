@@ -26,6 +26,7 @@
           "modes": [
             {
               "accountDirectSave": true,
+              "apiKey": true,
               "directExport": {
                 "contractVersion": "happier.team-credential-manual-connected-account-direct.v1"
               },
@@ -55,7 +56,18 @@
           ]
         },
         "id": "openai",
-        "title": "OpenAI API key"
+        "title": "OpenAI API key",
+        "ui": {
+          "iconResourceId": "service-mark",
+          "setup": {
+            "catalogDescription": {
+              "fallback": "Pay per use, billed to your OpenAI organization.",
+              "key": "connectedServicesSettings.catalogOpenAi"
+            },
+            "firstRun": false,
+            "order": 4
+          }
+        }
       }
     ],
     "daemonDatabases": [],
@@ -86,6 +98,12 @@
     "registrySources": [],
     "requestInterceptors": [],
     "resources": [
+      {
+        "contentType": "image/svg+xml",
+        "id": "service-mark",
+        "kind": "asset",
+        "path": "assets/service-mark.svg"
+      },
       {
         "contentType": "image/png",
         "id": "brand-icon",

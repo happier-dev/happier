@@ -443,8 +443,8 @@
               "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"
             ],
             "suppressConnectedServiceIds": [
-              "claude-subscription",
-              "anthropic"
+              "happier.agent.claude/claude-subscription",
+              "happier.agent.claude/anthropic"
             ]
           },
           "credentialSupport": {
@@ -491,6 +491,20 @@
             "supportsNoAuth": true
           },
           "materialization": "spawnEnv",
+          "modelRoles": [
+            {
+              "id": "fast",
+              "title": "Fast"
+            },
+            {
+              "id": "default",
+              "title": "Default"
+            },
+            {
+              "id": "strongest",
+              "title": "Strongest"
+            }
+          ],
           "required": {
             "streaming": true,
             "toolRoundTrips": true
@@ -498,8 +512,24 @@
           "supportsFreeformModelIds": true,
           "supportsReasoningEffort": true
         },
+        "requestCoverage": {
+          "equivalentCompletedReasons": [
+            "Local permission bridge stopped"
+          ],
+          "equivalentCompletedStatuses": [
+            "canceled"
+          ],
+          "equivalentSources": [
+            "claude_local_permission_bridge"
+          ]
+        },
         "runtime": {
           "kind": "custom"
+        },
+        "sessionModeDescriptor": {
+          "runtimeSwitch": "provider-native",
+          "semantics": "agent-modes",
+          "source": "provider-native"
         },
         "surfaces": {
           "externalSession": {
@@ -684,6 +714,17 @@
           "supported": true
         },
         "title": "Claude",
+        "ui": {
+          "iconResourceId": "agent-mark",
+          "setup": {
+            "catalogDescription": {
+              "fallback": "Pro or Max plan. Sign in with a browser, or paste a setup token.",
+              "key": "connectedServicesSettings.catalogClaude"
+            },
+            "firstRun": true,
+            "order": 0
+          }
+        },
         "usageIdentity": {
           "providerId": "claude",
           "requiredContext": "organization"
@@ -695,6 +736,7 @@
           "modes": [
             {
               "accountDirectSave": true,
+              "apiKey": true,
               "credentialOrigin": "authentication",
               "fields": [
                 {
@@ -737,7 +779,18 @@
         },
         "billingUrl": "https://platform.claude.com/settings/billing",
         "id": "anthropic",
-        "title": "Anthropic API key"
+        "title": "Anthropic API key",
+        "ui": {
+          "iconResourceId": "anthropic-mark",
+          "setup": {
+            "catalogDescription": {
+              "fallback": "Pay per use, billed to your Anthropic organization.",
+              "key": "connectedServicesSettings.catalogAnthropic"
+            },
+            "firstRun": false,
+            "order": 3
+          }
+        }
       }
     ],
     "daemonDatabases": [],
@@ -802,7 +855,7 @@
           "probes": [
             {
               "endpointTemplateId": "anthropic",
-              "parser": "anthropic-models",
+              "parser": "claude-models",
               "path": "/v1/models?limit=1000"
             }
           ],
@@ -954,6 +1007,10 @@
                 }
               ],
               "name": "Opus 5"
+            },
+            {
+              "id": "claude-sonnet-5-5",
+              "name": "Sonnet 5.5"
             },
             {
               "contextWindowTokens": 1000000,
@@ -1362,6 +1419,18 @@
     "registrySources": [],
     "requestInterceptors": [],
     "resources": [
+      {
+        "contentType": "image/svg+xml",
+        "id": "agent-mark",
+        "kind": "asset",
+        "path": "assets/agent-mark.svg"
+      },
+      {
+        "contentType": "image/svg+xml",
+        "id": "anthropic-mark",
+        "kind": "asset",
+        "path": "assets/anthropic-mark.svg"
+      },
       {
         "contentType": "application/json",
         "id": "i18n-en",

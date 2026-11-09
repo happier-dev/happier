@@ -2587,6 +2587,9 @@
                                     "type": "array",
                                     "uniqueItems": true
                                   },
+                                  "fieldChoices": {
+                                    "const": true
+                                  },
                                   "initialStatuses": {
                                     "items": {
                                       "additionalProperties": false,
@@ -4207,6 +4210,9 @@
                                     "type": "array",
                                     "uniqueItems": true
                                   },
+                                  "fieldChoices": {
+                                    "const": true
+                                  },
                                   "initialStatuses": {
                                     "items": {
                                       "additionalProperties": false,
@@ -4972,6 +4978,9 @@
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,
           "properties": {
+            "includeTaskFieldChoices": {
+              "const": true
+            },
             "instance": {
               "additionalProperties": false,
               "properties": {
@@ -5411,6 +5420,10 @@
                                       "minLength": 1,
                                       "type": "string"
                                     },
+                                    "expectedContributorOccurrenceId": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
                                     "input": {},
                                     "messageActionReference": {
                                       "additionalProperties": false,
@@ -5477,6 +5490,10 @@
                                       "type": "object"
                                     },
                                     "clientId": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "expectedContributorOccurrenceId": {
                                       "minLength": 1,
                                       "type": "string"
                                     },
@@ -5570,6 +5587,10 @@
                                   "type": "object"
                                 },
                                 "clientId": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "expectedContributorOccurrenceId": {
                                   "minLength": 1,
                                   "type": "string"
                                 },
@@ -6559,6 +6580,9 @@
                           "type": "array",
                           "uniqueItems": true
                         },
+                        "fieldChoices": {
+                          "const": true
+                        },
                         "initialStatuses": {
                           "items": {
                             "additionalProperties": false,
@@ -6943,6 +6967,60 @@
                   "maximum": 9007199254740991,
                   "minimum": -9007199254740991,
                   "type": "integer"
+                },
+                "taskFieldChoices": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "assigneeIds": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 128
+                          },
+                          "label": {
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "label"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    },
+                    "labelIds": {
+                      "items": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "id": {
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string",
+                            "x-happier-max-utf8-bytes": 128
+                          },
+                          "label": {
+                            "minLength": 1,
+                            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "label"
+                        ],
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
                 },
                 "taskFields": {
                   "additionalProperties": false,
@@ -8419,6 +8497,10 @@
                                               "minLength": 1,
                                               "type": "string"
                                             },
+                                            "expectedContributorOccurrenceId": {
+                                              "minLength": 1,
+                                              "type": "string"
+                                            },
                                             "input": {},
                                             "messageActionReference": {
                                               "additionalProperties": false,
@@ -8485,6 +8567,10 @@
                                               "type": "object"
                                             },
                                             "clientId": {
+                                              "minLength": 1,
+                                              "type": "string"
+                                            },
+                                            "expectedContributorOccurrenceId": {
                                               "minLength": 1,
                                               "type": "string"
                                             },
@@ -8578,6 +8664,10 @@
                                           "type": "object"
                                         },
                                         "clientId": {
+                                          "minLength": 1,
+                                          "type": "string"
+                                        },
+                                        "expectedContributorOccurrenceId": {
                                           "minLength": 1,
                                           "type": "string"
                                         },
@@ -9567,6 +9657,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -9951,6 +10044,60 @@
                           "maximum": 9007199254740991,
                           "minimum": -9007199254740991,
                           "type": "integer"
+                        },
+                        "taskFieldChoices": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "assigneeIds": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  },
+                                  "label": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "label"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "labelIds": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "id": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string",
+                                    "x-happier-max-utf8-bytes": 128
+                                  },
+                                  "label": {
+                                    "minLength": 1,
+                                    "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "id",
+                                  "label"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            }
+                          },
+                          "type": "object"
                         },
                         "taskFields": {
                           "additionalProperties": false,
@@ -13176,6 +13323,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -14719,6 +14869,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -16261,6 +16414,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -17963,6 +18119,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -19560,6 +19719,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -21416,6 +21578,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -22959,6 +23124,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -24501,6 +24669,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -26203,6 +26374,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -27800,6 +27974,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -32706,6 +32883,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -34512,6 +34692,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -37343,6 +37526,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -39149,6 +39335,9 @@
                                   },
                                   "type": "array",
                                   "uniqueItems": true
+                                },
+                                "fieldChoices": {
+                                  "const": true
                                 },
                                 "initialStatuses": {
                                   "items": {
@@ -41980,6 +42169,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -43787,6 +43979,9 @@
                                   "type": "array",
                                   "uniqueItems": true
                                 },
+                                "fieldChoices": {
+                                  "const": true
+                                },
                                 "initialStatuses": {
                                   "items": {
                                     "additionalProperties": false,
@@ -44553,6 +44748,17 @@
           "bitbucket-connected-account"
         ],
         "id": "triage-prepare-review-workspace",
+        "inputHints": {
+          "fields": [
+            {
+              "connectedAccountOptions": true,
+              "path": "instance.binding.account",
+              "required": true,
+              "title": "Bitbucket account",
+              "widget": "select"
+            }
+          ]
+        },
         "inputSchema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "additionalProperties": false,

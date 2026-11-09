@@ -26179,6 +26179,10 @@
                                       "minLength": 1,
                                       "type": "string"
                                     },
+                                    "expectedContributorOccurrenceId": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
                                     "input": {},
                                     "messageActionReference": {
                                       "additionalProperties": false,
@@ -26245,6 +26249,10 @@
                                       "type": "object"
                                     },
                                     "clientId": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "expectedContributorOccurrenceId": {
                                       "minLength": 1,
                                       "type": "string"
                                     },
@@ -26338,6 +26346,10 @@
                                   "type": "object"
                                 },
                                 "clientId": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "expectedContributorOccurrenceId": {
                                   "minLength": 1,
                                   "type": "string"
                                 },
@@ -58404,6 +58416,10 @@
                                       "minLength": 1,
                                       "type": "string"
                                     },
+                                    "expectedContributorOccurrenceId": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
                                     "input": {},
                                     "messageActionReference": {
                                       "additionalProperties": false,
@@ -58470,6 +58486,10 @@
                                       "type": "object"
                                     },
                                     "clientId": {
+                                      "minLength": 1,
+                                      "type": "string"
+                                    },
+                                    "expectedContributorOccurrenceId": {
                                       "minLength": 1,
                                       "type": "string"
                                     },
@@ -58563,6 +58583,10 @@
                                   "type": "object"
                                 },
                                 "clientId": {
+                                  "minLength": 1,
+                                  "type": "string"
+                                },
+                                "expectedContributorOccurrenceId": {
                                   "minLength": 1,
                                   "type": "string"
                                 },

@@ -104,6 +104,9 @@
           }
         },
         "catalog": {
+          "agentCliSystemTool": {
+            "toolId": "ohmypi-cli"
+          },
           "vendorResume": {
             "support": "supported"
           }
@@ -206,7 +209,8 @@
           },
           {
             "credentialKinds": [
-              "token"
+              "token",
+              "oauth"
             ],
             "materializationKinds": [
               "environment"
@@ -249,8 +253,59 @@
         ],
         "id": "ohmypi",
         "primary": "sessions",
+        "providerRequirements": {
+          "acceptsProtocols": [
+            "openai-responses"
+          ],
+          "applyPolicy": "restart_session",
+          "authIsolation": {
+            "ownedEnvKeys": [
+              "HAPPIER_OH_MY_PI_PROVIDER_API_KEY",
+              "OPENAI_CODEX_OAUTH_TOKEN",
+              "OPENAI_API_KEY",
+              "ANTHROPIC_OAUTH_TOKEN",
+              "ANTHROPIC_API_KEY",
+              "GEMINI_API_KEY"
+            ],
+            "suppressConnectedServiceIds": [
+              "happier.agent.codex/openai-codex",
+              "happier.voice.openai/openai",
+              "happier.agent.claude/claude-subscription",
+              "happier.agent.claude/anthropic",
+              "happier.agent.gemini/gemini-account"
+            ]
+          },
+          "credentialSupport": {
+            "apiKeyTransports": [
+              {
+                "destination": {
+                  "formats": [
+                    "bearer"
+                  ],
+                  "kind": "httpHeader",
+                  "names": [
+                    "authorization"
+                  ]
+                },
+                "protocol": "openai-responses"
+              }
+            ],
+            "supportsNoAuth": false
+          },
+          "materialization": "configFile",
+          "required": {
+            "streaming": true,
+            "toolRoundTrips": true
+          },
+          "supportsFreeformModelIds": true
+        },
         "runtime": {
           "kind": "custom"
+        },
+        "sessionModeDescriptor": {
+          "runtimeSwitch": "acp-setSessionMode",
+          "semantics": "agent-modes",
+          "source": "acp"
         },
         "surfaces": {
           "externalSession": {
@@ -598,6 +653,7 @@
         "reason": "Launch the user-installed Oh My Pi CLI through the host execution service.",
         "scope": {
           "envKeys": [
+            "HAPPIER_OH_MY_PI_PROVIDER_API_KEY",
             "OPENAI_CODEX_OAUTH_TOKEN",
             "OPENAI_API_KEY",
             "ANTHROPIC_OAUTH_TOKEN",

@@ -52,7 +52,8 @@
             {
               "endpointTemplateId": "lmstudio-openai-responses",
               "parser": "lmstudio-native-models",
-              "path": "/api/v1/models"
+              "path": "/api/v1/models",
+              "reportsModelLoadState": true
             },
             {
               "endpointTemplateId": "lmstudio-openai-responses",
@@ -92,7 +93,8 @@
           "availabilityProbe": {
             "endpointTemplateId": "lmstudio-openai-responses",
             "parser": "lmstudio-native-models",
-            "path": "/api/v1/models"
+            "path": "/api/v1/models",
+            "reportsModelLoadState": true
           },
           "installedCheck": {
             "lookupNames": [

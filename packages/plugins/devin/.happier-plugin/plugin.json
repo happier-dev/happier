@@ -6,6 +6,24 @@
     "agents": [
       {
         "capabilities": {
+          "providerStateSharing": {
+            "config": {
+              "modes": [
+                "linked",
+                "copied",
+                "isolated"
+              ],
+              "supported": true
+            },
+            "state": {
+              "modes": [
+                "isolated",
+                "shared"
+              ],
+              "sharedStatePrivacyRiskAcknowledgementRequired": true,
+              "supported": true
+            }
+          },
           "sessions": {
             "cancel": true,
             "configuration": true,
@@ -115,6 +133,20 @@
             }
           }
         },
+        "connectedAccounts": [
+          {
+            "credentialKinds": [
+              "oauth",
+              "token"
+            ],
+            "materializationKinds": [
+              "files"
+            ],
+            "purpose": "devin-native",
+            "required": false,
+            "service": "devin-account"
+          }
+        ],
         "description": {
           "fallback": "Devin CLI (experimental)",
           "key": "profiles.aiBackend.devinSubtitleExperimental"
@@ -247,6 +279,11 @@
             "kind": "stdio"
           }
         },
+        "sessionModeDescriptor": {
+          "runtimeSwitch": "acp-setSessionMode",
+          "semantics": "agent-modes",
+          "source": "acp"
+        },
         "surfaces": {
           "externalSession": {
             "externalLinkedTakeover": {
@@ -310,7 +347,90 @@
     "composerControls": [],
     "composerReferences": [],
     "composerRegions": [],
-    "connectedAccountDescriptors": [],
+    "connectedAccountDescriptors": [
+      {
+        "authentication": {
+          "account": {
+            "artifactId": "connected-account-authentication",
+            "exportName": "activate"
+          },
+          "defaultModeId": "browser-session",
+          "modes": [
+            {
+              "allowRawAuthorizationCode": true,
+              "callbackUrl": "https://app.happier.dev/oauth/mcp/callback",
+              "id": "browser-session",
+              "kind": "oauthAuthorizationCode",
+              "outcomeReconciliation": "none",
+              "pkce": "required",
+              "scopes": [],
+              "title": "Sign in with Devin"
+            },
+            {
+              "fields": [
+                {
+                  "id": "seatToken",
+                  "schema": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "secret": true,
+                  "title": "Enterprise seat credential"
+                },
+                {
+                  "id": "apiServerUrl",
+                  "schema": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "secret": false,
+                  "title": "API server URL"
+                }
+              ],
+              "id": "enterprise-seat",
+              "kind": "manual",
+              "outcomeReconciliation": "none",
+              "setup": {
+                "checklist": [
+                  "Your enterprise administrator must grant the Use Devin CLI role.",
+                  "Use the native enterprise seat credential and its matching API server."
+                ],
+                "createKeyTitle": "Read enterprise sign-in instructions",
+                "url": "https://docs.devin.ai/cli/enterprise/devin-auth"
+              },
+              "title": "Enterprise seat credential"
+            },
+            {
+              "browserReachability": "unreachable",
+              "credentialOrigin": "native_import",
+              "fields": [
+                {
+                  "default": "native",
+                  "id": "source",
+                  "schema": {
+                    "enum": [
+                      "native"
+                    ],
+                    "type": "string"
+                  },
+                  "secret": false,
+                  "title": "Source"
+                }
+              ],
+              "id": "native-import",
+              "kind": "manual",
+              "outcomeReconciliation": "none",
+              "title": "Import native login"
+            }
+          ],
+          "native": {
+            "systemTool": "devin-cli"
+          }
+        },
+        "id": "devin-account",
+        "title": "Devin"
+      }
+    ],
     "daemonDatabases": [],
     "deploymentTargets": [],
     "dragSources": [],
@@ -530,13 +650,33 @@
     "optional": [],
     "required": [
       {
+        "capability": "network",
+        "id": "devin-oauth",
+        "reason": "Exchange a Devin browser authorization code and read optional account identity.",
+        "scope": {
+          "methods": [
+            "GET",
+            "POST"
+          ],
+          "targets": [
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://api.devin.ai"
+            }
+          ]
+        }
+      },
+      {
         "capability": "process",
         "id": "devin-process",
         "reason": "Run the declared Devin CLI executable.",
         "scope": {
           "envKeys": [
             "XDG_CONFIG_HOME",
-            "APPDATA"
+            "XDG_DATA_HOME",
+            "APPDATA",
+            "WINDSURF_API_KEY",
+            "HAPPIER_DEVIN_NATIVE_DATA_HOME"
           ],
           "executables": [
             {

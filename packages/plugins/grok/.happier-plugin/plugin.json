@@ -6,6 +6,24 @@
     "agents": [
       {
         "capabilities": {
+          "providerStateSharing": {
+            "config": {
+              "modes": [
+                "linked",
+                "copied",
+                "isolated"
+              ],
+              "supported": true
+            },
+            "state": {
+              "modes": [
+                "isolated",
+                "shared"
+              ],
+              "sharedStatePrivacyRiskAcknowledgementRequired": true,
+              "supported": true
+            }
+          },
           "sessions": {
             "cancel": true,
             "configuration": true,
@@ -164,6 +182,21 @@
             }
           }
         },
+        "connectedAccounts": [
+          {
+            "credentialKinds": [
+              "oauth",
+              "token"
+            ],
+            "materializationKinds": [
+              "files",
+              "environment"
+            ],
+            "purpose": "primary",
+            "required": false,
+            "service": "xai"
+          }
+        ],
         "description": {
           "fallback": "Grok Build CLI (experimental)",
           "key": "profiles.aiBackend.grokSubtitleExperimental"
@@ -172,6 +205,11 @@
         "primary": "sessions",
         "runtime": {
           "kind": "custom"
+        },
+        "sessionModeDescriptor": {
+          "runtimeSwitch": "none",
+          "semantics": "none",
+          "source": "none"
         },
         "surfaces": {
           "externalSession": {
@@ -223,7 +261,75 @@
     "composerControls": [],
     "composerReferences": [],
     "composerRegions": [],
-    "connectedAccountDescriptors": [],
+    "connectedAccountDescriptors": [
+      {
+        "authentication": {
+          "defaultModeId": "device",
+          "modes": [
+            {
+              "browserReachability": "unreachable",
+              "id": "device",
+              "kind": "oauthDeviceCode",
+              "outcomeReconciliation": "none",
+              "scopes": [
+                "openid",
+                "profile",
+                "email",
+                "offline_access",
+                "grok-cli:access",
+                "api:access"
+              ],
+              "title": "Grok subscription"
+            },
+            {
+              "apiKey": true,
+              "credentialOrigin": "authentication",
+              "fields": [
+                {
+                  "id": "apiKey",
+                  "schema": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "secret": true,
+                  "title": "xAI API key"
+                }
+              ],
+              "id": "api-key",
+              "kind": "manual",
+              "outcomeReconciliation": "none",
+              "title": "Paid xAI API key"
+            },
+            {
+              "credentialOrigin": "native_import",
+              "fields": [
+                {
+                  "default": "native",
+                  "id": "source",
+                  "schema": {
+                    "enum": [
+                      "native"
+                    ],
+                    "type": "string"
+                  },
+                  "secret": false,
+                  "title": "Source"
+                }
+              ],
+              "id": "native-import",
+              "kind": "manual",
+              "outcomeReconciliation": "none",
+              "title": "Import Grok login"
+            }
+          ],
+          "native": {
+            "systemTool": "grok-cli"
+          }
+        },
+        "id": "xai",
+        "title": "xAI"
+      }
+    ],
     "daemonDatabases": [],
     "deploymentTargets": [],
     "dragSources": [],
@@ -421,12 +527,47 @@
         "reason": "Run the declared Grok CLI executable with its declared xAI API-key environment.",
         "scope": {
           "envKeys": [
-            "XAI_API_KEY"
+            "XAI_API_KEY",
+            "GROK_CONNECTED_ACCOUNT_MODE",
+            "GROK_OAUTH2_ISSUER",
+            "GROK_OAUTH2_CLIENT_ID",
+            "GROK_CODE_XAI_API_KEY",
+            "GROK_AUTH",
+            "GROK_AUTH_PATH",
+            "GROK_AUTH_PROVIDER_COMMAND",
+            "GROK_OIDC_ISSUER",
+            "GROK_OIDC_CLIENT_ID",
+            "GROK_OAUTH2_PRINCIPAL_TYPE",
+            "GROK_OAUTH2_PRINCIPAL_ID",
+            "GROK_LOCAL_AUTH",
+            "GROK_HOME",
+            "HAPPIER_GROK_NATIVE_HOME"
           ],
           "executables": [
             {
               "id": "grok-cli",
               "kind": "systemTool"
+            }
+          ]
+        }
+      },
+      {
+        "capability": "network",
+        "id": "xai-account-network",
+        "reason": "Connect the selected xAI account and read its identity and usage.",
+        "scope": {
+          "methods": [
+            "GET",
+            "POST"
+          ],
+          "targets": [
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://auth.x.ai"
+            },
+            {
+              "kind": "fixedOrigin",
+              "origin": "https://cli-chat-proxy.grok.com"
             }
           ]
         }

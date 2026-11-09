@@ -55,6 +55,11 @@
         "runtime": {
           "kind": "custom"
         },
+        "sessionModeDescriptor": {
+          "runtimeSwitch": "none",
+          "semantics": "none",
+          "source": "none"
+        },
         "title": "CodeRabbit"
       }
     ],
