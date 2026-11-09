@@ -442,6 +442,7 @@ export type {
   RestoreCheckpointRequestV1,
   RuntimeConfigUpdateOutcomeV1,
   RuntimeOutboundTranscriptToolNormalizationV1,
+  ToolNormalizationSourceV3,
   RuntimeOutboundTranscriptUsageObservationV1,
   TerminalAttachmentId,
   TerminalControlCapture,

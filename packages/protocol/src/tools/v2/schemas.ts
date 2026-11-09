@@ -1,11 +1,11 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 import type { KnownCanonicalToolNameV2 } from './names.js';
-import { ToolHappyMetaV2Schema, ToolHappierMetaV2Schema } from './meta.js';
-import { StructuredQuestionAnswersV1Schema } from '../structuredQuestionAnswersV1.js';
+import { ToolHappyMetaV2Schema, ToolHappierMetaSchema } from './meta.js';
+import { StructuredQuestionAnswerDetailsV1Schema, StructuredQuestionAnswersV1Schema } from '../structuredQuestionAnswersV1.js';
 
 const BaseEnvelopeSchema = lazyZodSchema(() => z.looseObject({
-  _happier: z.optional(ToolHappierMetaV2Schema),
+  _happier: z.optional(ToolHappierMetaSchema),
   // Legacy envelope key accepted for migration back-compat.
   _happy: z.optional(ToolHappyMetaV2Schema),
   _raw: z.optional(z.unknown()),
@@ -300,6 +300,7 @@ export const AskUserQuestionInputV2Schema = lazyZodSchema(() => (<T extends z.Zo
 })));
 
 export const AskUserQuestionResultV2Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.unknown() }) as z.ZodMiniObject<T['shape'], z.core.$loose>)(z.extend(BaseEnvelopeSchema, {
+  answerDetails: z.optional(StructuredQuestionAnswerDetailsV1Schema),
   answers: z.optional(z.union([
     StructuredQuestionAnswersV1Schema,
     z.record(z.string(), z.string()),

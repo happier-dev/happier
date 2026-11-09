@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
 
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
-import { ToolHappyMetaV2Schema, ToolHappierMetaV2Schema } from './meta.js';
+import { ToolHappyMetaV2Schema, ToolHappierMetaSchema } from './meta.js';
 
 import {
   AgentTeamCreateInputV2Schema,
@@ -14,7 +14,7 @@ import {
 describe('AgentTeam tool schemas', () => {
   it('preserves classic JSON Schema projection and open tool-envelope composition', () => {
     const input = z.looseObject({
-      _happier: z.optional(ToolHappierMetaV2Schema),
+      _happier: z.optional(ToolHappierMetaSchema),
       _happy: z.optional(ToolHappyMetaV2Schema),
       _raw: z.optional(z.unknown()),
       team_name: z.optional(z.string()), teamName: z.optional(z.string()),

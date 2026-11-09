@@ -413,6 +413,7 @@ export type { RuntimeConfigOutcomeStatusV1 } from '../../agentRuntime/projection
 export type { RuntimeConfigOutcomeTimingV1 } from '../../agentRuntime/projections.js';
 export type { RuntimeConfigUpdateOutcomeV1 } from '../../agentRuntime/projections.js';
 export type { RuntimeOutboundTranscriptToolNormalizationV1 } from '../../agentRuntime/projections.js';
+export type { ToolNormalizationSourceV3 } from '../../agentRuntime/projections.js';
 export type { RuntimeOutboundTranscriptUsageObservationV1 } from '../../agentRuntime/projections.js';
 export type { SessionContextUsageSnapshotV1 } from '../../agentRuntime/projections.js';
 export { SessionContextUsageSnapshotV1Schema } from '../../agentRuntime/projections.js';

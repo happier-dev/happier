@@ -1,5 +1,5 @@
 import { maybeParseJson } from '../activity/parseJson.js';
-import { resolveToolEnvelopeMetaV2 } from '../tools/v2/meta.js';
+import { resolveToolEnvelopeMeta } from '../tools/v2/meta.js';
 import { isShellToolNameAlias } from '../tools/v2/aliases.js';
 import { SubAgentRunResultV2Schema } from '../tools/v2/schemas.js';
 
@@ -12,7 +12,7 @@ export function isRecord(value: unknown): value is Readonly<Record<string, unkno
 function readFirstPartyShellBridgeCall(value: unknown): Readonly<{ tool: string; json: boolean; rawToolName: string }> | null {
     const parsed = maybeParseJson(value);
     if (!isRecord(parsed)) return null;
-    const meta = resolveToolEnvelopeMetaV2(parsed);
+    const meta = resolveToolEnvelopeMeta(parsed);
     const bridge = parsed.happierToolsShellBridge;
     if (!meta || !isShellToolNameAlias(meta.rawToolName)
         || !isRecord(bridge) || bridge.kind !== 'call' || bridge.source !== 'happier'
@@ -36,7 +36,7 @@ export function readHappierActionToolName(toolName: string, input: unknown): str
 /** Normalizers preserve operands at the top level; `_raw` is only a truncated preview. */
 export function readHappierActionToolPayload(value: unknown): unknown {
     const parsed = maybeParseJson(value);
-    if (!isRecord(parsed) || !resolveToolEnvelopeMetaV2(parsed)) return parsed;
+    if (!isRecord(parsed) || !resolveToolEnvelopeMeta(parsed)) return parsed;
     const bridge = readFirstPartyShellBridgeCall(parsed);
     return Object.fromEntries(Object.entries(parsed).filter(([key]) => ![
         '_happier', '_happy', '_raw', '_mcp', '_acp', 'locations',
@@ -77,7 +77,7 @@ export function readHappierActionToolResultCandidates(result: unknown, input?: u
     const normalized = maybeParseJson(result);
     const parsed = readHappierActionToolPayload(normalized);
     const candidates: unknown[] = [parsed];
-    if (isRecord(normalized) && resolveToolEnvelopeMetaV2(normalized) && isRecord(parsed)
+    if (isRecord(normalized) && resolveToolEnvelopeMeta(normalized) && isRecord(parsed)
         && Object.keys(parsed).length === 1 && Object.hasOwn(parsed, 'value')) {
         candidates.push(maybeParseJson(parsed.value));
     }

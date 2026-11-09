@@ -929,25 +929,8 @@ export type HandoffSurfaceV1 = Readonly<{
     | Promise<HandoffNativeTranscriptPathCandidateV1 | null>;
 }>;
 
-export type RuntimeOutboundTranscriptToolNormalizationV1 = Readonly<{
-  normalizeToolCallV2: (params: Readonly<{
-    protocol: 'acp' | 'claude' | 'codex';
-    provider: string;
-    toolName: string;
-    rawInput: unknown;
-    callId?: string;
-  }>) => Readonly<{
-    canonicalToolName: string;
-    input: unknown;
-  }>;
-  normalizeToolResultV2: (params: Readonly<{
-    protocol: 'acp' | 'claude' | 'codex';
-    provider: string;
-    rawToolName: string;
-    canonicalToolName: string;
-    rawOutput: unknown;
-  }>) => unknown;
-}>;
+export type { RuntimeOutboundTranscriptToolNormalizationV1 } from '@happier-dev/agents';
+export type { ToolNormalizationSourceV3 } from '@happier-dev/protocol';
 
 /** Canonical terminal paste framing; Agent runtimes must not copy escape sequences. */
 export const TERMINAL_BRACKETED_PASTE_START: string = canonicalTerminalBracketedPasteStart;

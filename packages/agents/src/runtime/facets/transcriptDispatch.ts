@@ -4,14 +4,14 @@ import type {
   UsageObservationScope,
   UsagePromptCache,
   ProviderTranscriptDispatchRequestV1,
+  ToolNormalizationSourceV3,
 } from '@happier-dev/protocol';
 
-export type RuntimeOutboundTranscriptToolProtocolV1 = 'acp' | 'claude' | 'codex';
+export type RuntimeOutboundTranscriptToolProtocolV1 = ToolNormalizationSourceV3['protocol'];
 
 export type RuntimeOutboundTranscriptToolNormalizationV1 = Readonly<{
   normalizeToolCallV2: (params: Readonly<{
-    protocol: RuntimeOutboundTranscriptToolProtocolV1;
-    provider: string;
+    source: ToolNormalizationSourceV3;
     toolName: string;
     rawInput: unknown;
     callId?: string;
@@ -20,8 +20,7 @@ export type RuntimeOutboundTranscriptToolNormalizationV1 = Readonly<{
     input: unknown;
   }>;
   normalizeToolResultV2: (params: Readonly<{
-    protocol: RuntimeOutboundTranscriptToolProtocolV1;
-    provider: string;
+    source: ToolNormalizationSourceV3;
     rawToolName: string;
     canonicalToolName: string;
     rawOutput: unknown;
@@ -92,8 +91,7 @@ export type RuntimeOutboundTranscriptPostSendEffectV1 =
   }>;
 
 export type RuntimeOutboundTranscriptToolTraceEventV1 = Readonly<{
-  protocol: RuntimeOutboundTranscriptToolProtocolV1;
-  provider: string;
+  source: ToolNormalizationSourceV3;
   kind: string;
   payload: unknown;
   localId?: string;

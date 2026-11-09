@@ -9,11 +9,20 @@ export {
 export {
   ToolHappyMetaV2Schema,
   ToolHappierMetaV2Schema,
+  ToolHappierMetaV3Schema,
+  ToolHappierMetaSchema,
+  ToolNormalizationSourceV3Schema,
+  ToolEnvelopeMetaContainerSchema,
   ToolEnvelopeMetaContainerV2Schema,
   ToolNormalizationProtocolSchema,
   resolveToolEnvelopeMetaV2,
+  resolveToolEnvelopeMeta,
   type ToolHappyMetaV2,
   type ToolHappierMetaV2,
+  type ToolHappierMetaV3,
+  type ToolNormalizationSourceV3,
+  type ToolEnvelopeMeta,
+  type LegacyToolEnvelopeMeta,
   type ToolNormalizationProtocol,
 } from './meta.js';
 

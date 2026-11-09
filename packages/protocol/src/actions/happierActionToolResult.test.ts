@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readHappierActionToolFailure } from './happierActionToolResult.js';
+import { readHappierActionToolFailure, readHappierActionToolPayload } from './happierActionToolResult.js';
 
 /** The MCP text envelope an Agent's transcript stores for a first-party Action call. */
 function mcpTextResult(payload: unknown) {
@@ -15,6 +15,21 @@ function mcpTextResult(payload: unknown) {
 const input = { actionId: 'session.stop', input: { sessionId: 's1' } };
 
 describe('readHappierActionToolFailure', () => {
+  it('reads the Action operand from current qualified tool provenance', () => {
+    const operand = { actionId: 'session.stop', input: { sessionId: 's1' } };
+    expect(readHappierActionToolPayload({
+      ...operand,
+      _happier: {
+        v: 3,
+        protocol: 'native',
+        agent: { pluginId: 'example.agent', localId: 'fixture' },
+        rawToolName: 'mcp__happier__action_execute',
+        canonicalToolName: 'MCP',
+      },
+      _raw: { truncatedPreview: true },
+    })).toEqual(operand);
+  });
+
   it('reads the host SubAgentRun terminal failure without treating a successful result or another tool as a failure', () => {
     const result = { status: 'failed', runId: 'run_1', callId: 'call_1', sidechainId: 'call_1',
       error: { code: 'codex_tool_restriction_unsupported_auth', message: 'Codex cannot enforce this policy.' } };
