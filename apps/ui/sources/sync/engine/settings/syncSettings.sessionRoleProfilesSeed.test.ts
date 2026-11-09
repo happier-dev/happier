@@ -5,6 +5,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
+import type { Encryption } from '@/sync/encryption/encryption';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
@@ -36,6 +37,7 @@ describe('fresh account Repo Admin role seed', () => {
     let postAttempts: number;
     let failAfterCommit: boolean;
     let failBeforeCommit: boolean;
+    let serverContentAbsent: boolean;
     let versionMismatchBaseline: { raw: Record<string, unknown>; version: number } | null;
     let events: string[];
 
@@ -61,6 +63,7 @@ describe('fresh account Repo Admin role seed', () => {
         postAttempts = 0;
         failAfterCommit = false;
         failBeforeCommit = false;
+        serverContentAbsent = false;
         versionMismatchBaseline = null;
         events = [];
         boundary.serverFetch.mockReset();
@@ -112,13 +115,14 @@ describe('fresh account Repo Admin role seed', () => {
                     }, { status: 409 });
                 }
                 serverRaw = structuredClone(body.content.v);
+                serverContentAbsent = false;
                 serverVersion += 1;
                 if (failAfterCommit) throw new Error('response-lost');
                 return Response.json({ success: true, version: serverVersion });
             }
             if (path === '/v2/account/settings') {
                 return Response.json({
-                    content: { t: 'plain', v: structuredClone(serverRaw) },
+                    content: serverContentAbsent ? null : { t: 'plain', v: structuredClone(serverRaw) },
                     version: serverVersion,
                 });
             }
@@ -133,6 +137,8 @@ describe('fresh account Repo Admin role seed', () => {
     });
 
     it('persists one stable Repo Admin before exposing it for assignment, then reloads without duplication', async () => {
+        serverContentAbsent = true;
+
         await run();
 
         expect(postAttempts).toBe(1);
@@ -149,6 +155,41 @@ describe('fresh account Repo Admin role seed', () => {
         await run();
         expect(postAttempts).toBe(1);
         expect((serverRaw.sessionRoleProfilesV1 as { customRoles: unknown[] }).customRoles).toHaveLength(1);
+    });
+
+    it('fails closed without seed persistence when an encrypted settings document is unreadable', async () => {
+        const encryption = {
+            getContentPrivateKey: () => new Uint8Array(32).fill(7),
+            decryptRaw: vi.fn(async () => null),
+        } as unknown as Encryption;
+        boundary.serverFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: 1 });
+            if (path === '/v2/account/settings' && init?.method === 'POST') {
+                postAttempts += 1;
+                return Response.json({ success: true, version: serverVersion + 1 });
+            }
+            if (path === '/v2/account/settings') {
+                return Response.json({
+                    content: { t: 'encrypted', c: 'unreadable-account-settings' },
+                    version: serverVersion,
+                });
+            }
+            throw new Error(`Unexpected request: ${path}`);
+        });
+
+        await expect(syncSettings({
+            credentials,
+            encryption,
+            settingsScope: scope,
+            pendingSettings: {},
+            clearPendingSettings: vi.fn(),
+        })).rejects.toThrow('Failed to open encrypted account settings');
+
+        expect(postAttempts).toBe(0);
+        expect(resolveAssignableSessionRoleProfileV1(
+            storage.getState().settings,
+            SEEDED_PRODUCT_LEAD_ROLE_PROFILE_V1.id,
+        )).toBeNull();
     });
 
     it.each([

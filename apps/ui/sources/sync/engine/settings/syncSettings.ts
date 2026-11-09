@@ -802,7 +802,7 @@ export async function syncSettings(params: SyncSettingsParams): Promise<void> {
         throw new Error(`Settings sync failed after ${maxRetries} retries due to version conflicts${mismatchHint}`);
     }
 
-    const initialFetched = await fetchAccountSettingsBaseline();
+    const initialFetched = await fetchAccountSettingsBaseline({ requireReadable: true });
     const initialSeed = settingsScope
         ? seedSessionRoleProfilesIfAbsent(initialFetched.raw)
         : { seeded: false };
