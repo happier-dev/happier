@@ -271,6 +271,8 @@ export function useInstalledPlugins(input: StoreInstalledInput, demand: StoreDem
         if (!admitted.scope) return { rows: EMPTY_ROWS, coverage: admitted.coverage };
         if (held.failure) return { rows: EMPTY_ROWS, coverage: { unavailable: held.failure } };
         if (!native) throw new Error('An admitted Account requires its scoped Plugin availability reader');
+        // The Account's availability arrives after the page opens; until then Plugins are loading, not failed.
+        if (native.kind === 'unavailable' && native.code === 'account_availability_not_loaded') return { rows: EMPTY_ROWS, coverage: 'loading' };
         if (native.kind !== 'available') return { rows: EMPTY_ROWS, coverage: { unavailable: native } };
         const scope = admitted.scope;
         // Native materializations have Home/Machine placement only; neither their declarations

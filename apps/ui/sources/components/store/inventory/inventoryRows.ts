@@ -20,11 +20,20 @@ import { machinePageHref } from '@/components/machines/page/machinePageHref';
 
 export const inventoryColumnAdapter = defineSettingsCollectionAdapter(['kind', 'status', 'machine', 'project']);
 export type ManagedInventoryField = typeof inventoryColumnAdapter.fields[number];
+type OperationalKind = 'watchedService' | 'setup' | 'configuredCheck';
+function operationalKindWord(kind: InstalledRow['kind']): string | null {
+    switch (kind) {
+        case 'watchedService': return t('machineServices.groups.watched');
+        case 'setup': return t('capabilities.store.setupFamilyTitle');
+        case 'configuredCheck': return t('capabilities.store.checksFamilyTitle');
+        default: return null;
+    }
+}
 export function inventoryKindTitle(kind: InstalledRow['kind']): string {
-    return kind === 'watchedService' ? t('machineServices.groups.watched') : t(`capabilities.store.kinds.${kind}.title`);
+    return operationalKindWord(kind) ?? t(`capabilities.store.kinds.${kind as Exclude<InstalledRow['kind'], OperationalKind>}.title`);
 }
 export function inventoryKindWord(kind: InstalledRow['kind']): string {
-    return kind === 'watchedService' ? t('machineServices.groups.watched') : t(`capabilities.store.kindWord.${kind}`);
+    return operationalKindWord(kind) ?? t(`capabilities.store.kindWord.${kind as Exclude<InstalledRow['kind'], OperationalKind>}`);
 }
 export type ManagedInventoryRowPresentation = Readonly<{
     row: InstalledRow;
@@ -159,6 +168,19 @@ export function presentInventoryRow(row: InstalledRow, input: StoreInstalledInpu
             href = machinePageHref({ door: 'rail', target: { serverId: row.scope.serverId, machineId: row.machineId },
                 tab: { id: 'services', page: 'service', service: row.native.watchId } });
             machines = portable(row.machineId) ? [portable(row.machineId)!] : null;
+            break;
+        case 'setup':
+            title = row.name;
+            context = row.itemCount > 0 ? t('machinePresets.setup.itemCount', { count: row.itemCount }) : null;
+            href = machinePageHref({ door: 'rail', target: { serverId: row.scope.serverId, machineId: row.machineId }, tab: { id: 'setup' } });
+            machines = portable(row.machineId) ? [portable(row.machineId)!] : null;
+            break;
+        case 'configuredCheck':
+            title = row.native.name;
+            context = row.native.description ?? null;
+            // A switched-off Check files under the same Off every other kind uses; never-run says nothing and stays listed.
+            statuses = row.native.enabled ? null : ['off'];
+            href = `/automations/${row.automationId}`;
             break;
         case 'software':
             title = row.subject === 'recipe' ? row.native.ref.recipeId : row.native.adapterId;

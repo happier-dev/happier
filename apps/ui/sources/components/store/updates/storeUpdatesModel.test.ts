@@ -283,3 +283,42 @@ describe('describeUncheckedSources', () => {
     expect(lines[2]).not.toContain(' · ');
   });
 });
+
+describe('buildStoreUpdates plugin observations', () => {
+  const plugin = (pluginId: string): InstalledRow => ({
+    kind: 'plugin', key: `plugin:${pluginId}`, scope, installations: [],
+    native: { pluginId, title: pluginId, enabled: true, version: '1.0.0', installations: [] } as never,
+  });
+  const update = (pluginId: string, state: 'available' | 'removed' | 'unchecked' | 'unknown') => ({
+    key: `plugin:${pluginId}`, pluginId, state, from: '1.0.0',
+    observation: state === 'available' ? { state: 'update_available' as const, latest: { kind: 'version' as const, version: '2.0.0' } }
+      : state === 'removed' ? { state: 'removed_from_source' as const }
+      : state === 'unchecked' ? { state: 'unchecked' as const, reason: { state: 'needs_machine' as const } } : null,
+    ...(state === 'unchecked' ? { reason: { state: 'needs_machine' as const } } : {}),
+  });
+  const rows = [plugin('a'), plugin('b'), plugin('c')];
+
+  it('lists an observed newer plugin as a Plugins section entry with its versions', () => {
+    const view = buildStoreUpdates(rows, [], { checkedAt: 1, failed: false }, [update('a', 'available'), update('b', 'unknown'), update('c', 'removed')]);
+    expect(view.sections.map(section => section.kind)).toEqual(['plugin']);
+    expect(view.sections[0]!.entries.map(entry => [entry.key, entry.state, entry.from, entry.to])).toEqual([
+      ['plugin:a', 'available', '1.0.0', '2.0.0'], ['plugin:c', 'removed', '1.0.0', null],
+    ]);
+    expect(view.tracked).toBe(2);
+    expect(view.count).toBe(2);
+  });
+
+  it('says it could not check a plugin the checker reports as unchecked, and never calls that up to date', () => {
+    const view = buildStoreUpdates(rows, [], { checkedAt: 1, failed: false }, [update('a', 'unchecked')]);
+    expect(view.sections[0]!.entries[0]).toMatchObject({ state: 'unchecked', reason: { state: 'needs_machine' } });
+    expect(view.unchecked).toBe(1);
+    expect(view.count).toBeNull();
+  });
+
+  it('does not let plugins without an observation block a complete check', () => {
+    const view = buildStoreUpdates(rows, [], { checkedAt: 1, failed: false }, [update('a', 'unknown')]);
+    expect(view.sections).toEqual([]);
+    expect(view.tracked).toBe(0);
+    expect(view.count).toBe(0);
+  });
+});

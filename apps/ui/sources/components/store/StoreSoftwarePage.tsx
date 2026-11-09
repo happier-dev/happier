@@ -16,7 +16,6 @@ import { CapabilityListingSections } from '@/components/capabilities/add/Capabil
 import { CapabilityFacts } from '@/components/capabilities/facts/CapabilityFacts';
 import { pluginSourceKindLabel } from '@/components/settings/plugins/model/pluginMarketplaceModel';
 import { useStoreDirectoryState } from '@/components/settings/plugins/model/usePluginsOpenItem';
-import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
 import { BareSectionContent } from '@/components/ui/lists/BareSectionContent';
@@ -32,6 +31,7 @@ import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { t } from '@/text';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 
 import type {
   StoreSoftwareItem,
@@ -61,8 +61,6 @@ import type { StorePresetDoorItem } from './presets/storePresetDoor';
 import { describeMachineSetupAllOffline } from '@/components/settings/machines/managed/MachineSetupPlanReview';
 import {
   SoftwareMachineMark,
-  SoftwareMachineSelect,
-  softwareMachinesUnreachableLine,
   foldOfflineSoftwareTargets,
   type SoftwareMachineTarget,
   SoftwareTargetsDraftProvider,
@@ -95,24 +93,18 @@ export function SoftwareMark(
 }
 
 /**
- * Store → Software (lab `w:kind`): what the chosen Machine's plugins offer, as Runtimes and Programs. Browsing reads
- * descriptors from that one Machine; nothing is installed or checked until a listing's Install on… review.
+ * Store → Software (lab `w:kind`): what this Account's plugins offer, as Runtimes and Programs. Browsing needs no
+ * Machine and reads none; which Machines support an item is checked in a listing's Install on… review.
  */
 export function StoreSoftwarePage(
   props: Readonly<{ presented: boolean }>,
 ): React.ReactNode {
   const directory = useStoreDirectoryState();
   const query = directory.state?.query ?? '';
-  const machines = useSoftwareMachines();
-  const [browseId, setBrowseId] = React.useState<string | null>(null);
-  const browsed =
-    machines.targets.find((entry) => entry.machine.machineId === browseId) ??
-    machines.targets[0] ??
-    null;
-  const target = browsed?.target ?? null;
+  const scope = useAccountSettingsScope();
   const input = React.useMemo(
-    () => ({ query: query.trim(), softwareTarget: target }),
-    [query, target],
+    () => ({ query: query.trim(), softwareTarget: { scope, machine: null } }),
+    [query, scope],
   );
   const demand = React.useMemo(
     () => ({ presented: props.presented }),
@@ -122,32 +114,14 @@ export function StoreSoftwarePage(
   const selected = useStoreListingSelection();
   const openItem = React.useCallback(
     (item: StoreSoftwareItem) => {
-      if (!target?.scope || !target.machine) return;
       const value = MachineSetupToolchainSoftwareChoiceV1Schema.safeParse(item.value);
       const recipe = MachineRecipeReferenceV1Schema.safeParse(item.value);
       const choice = value.success ? value.data : recipe.success ? recipe.data : null;
       if (!choice) return;
-      openListing({ type: 'software', target: { scope: target.scope, machine: target.machine },
-        value: choice });
+      openListing({ type: 'software', value: choice });
     },
-    [openListing, target],
+    [openListing],
   );
-  const browse = React.useCallback(
-    (entry: { machine: { machineId: string } }) => setBrowseId(entry.machine.machineId),
-    [],
-  );
-  // With no Machine to choose (all offline or unreachable), one line says why in place of rows and chooser.
-  const unreachable = softwareMachinesUnreachableLine(machines);
-  // One Machine needs no choice; several say which one the page reads, and why the others can't be read now.
-  const accessory =
-    machines.targets.length > 1 && !unreachable ? (
-      <SoftwareMachineSelect
-        testID="store.kind.software.machine"
-        machines={machines}
-        selectedId={browsed?.machine.machineId ?? null}
-        onSelect={browse}
-      />
-    ) : undefined;
   return (
     <SoftwareTargetsDraftProvider>
     <StoreSoftwareKind input={input} demand={demand}>
@@ -156,31 +130,16 @@ export function StoreSoftwarePage(
           kind="software"
           query={query}
           onQueryChange={directory.setQuery}
-          accessory={accessory}
           presented={props.presented}
         >
-          {unreachable ? (
-            <SurfaceStateCard testID="store.kind.software.state" kind="unavailable" size="line" title={unreachable} />
-          ) : browsed ? (
-            <SoftwareDirectory
-              list={list}
-              query={input.query}
-              machine={softwareMachineName(browsed.machine)}
-              open={openItem}
-              selectedKey={selected?.type === 'software' && JSON.stringify(selected.target) === JSON.stringify(target)
-                ? actionInputOptionValueKey(selected.value) : null}
-              onClear={() => directory.setQuery('')}
-            />
-          ) : (
-            <EmptyState
-              testID="store.kind.software.noMachine"
-              layout="page"
-              iconName="desktop"
-              title={t('capabilities.store.softwarePage.noMachineTitle')}
-              subtitle={t('capabilities.store.softwarePage.noMachineBody')}
-            />
-          )}
-          {/* The Account's presets hold software for any Machine, so they stay whatever the browsed Machine says. */}
+          <SoftwareDirectory
+            list={list}
+            query={input.query}
+            open={openItem}
+            selectedKey={selected?.type === 'software' ? actionInputOptionValueKey(selected.value) : null}
+            onClear={() => directory.setQuery('')}
+          />
+          {/* The Account's presets hold software for any Machine. */}
           <StorePresetsShelf presented={props.presented} query={input.query} />
         </StoreKindFrame>
       )}
@@ -193,7 +152,6 @@ function SoftwareDirectory(
   props: Readonly<{
     list: StoreKindList<'software'>;
     query: string;
-    machine: string;
     open: (item: StoreSoftwareItem) => void;
     selectedKey: string | null;
     onClear: () => void;
@@ -229,10 +187,10 @@ function SoftwareDirectory(
       ].filter((group) => rows.some((row) => row.group === group.key)),
     [rows],
   );
-  // A Machine that cannot be read says so once, where its rows would be; it never reads as "nothing offered".
+  // A catalog that cannot be read says so once, where its rows would be; it never reads as "nothing offered".
   const error = props.list.error;
   if (error && rows.length === 0) {
-    return <SoftwareUnavailable error={error} machine={props.machine} onRetry={props.list.refresh} />;
+    return <SoftwareUnavailable error={error} onRetry={props.list.refresh} />;
   }
   if (!props.list.loading && rows.length === 0 && !props.query) {
     return (
@@ -240,9 +198,7 @@ function SoftwareDirectory(
         testID="store.kind.software.empty"
         kind="empty"
         size="line"
-        title={t('capabilities.store.softwarePage.empty', {
-          machine: props.machine,
-        })}
+        title={t('capabilities.store.softwarePage.catalogEmpty')}
       />
     );
   }
@@ -266,24 +222,26 @@ export function SoftwareUnavailable(props: Readonly<{ error: string; machine?: s
   const { error } = props;
   const unavailable = error === 'offline' || error === 'unknown' || error === 'missing_option_dependency';
   const machine = props.machine ?? t('storeInstalled.machineFallback');
+  const failed = props.machine ? t('capabilities.store.softwarePage.failed', { machine }) : t('capabilities.store.softwarePage.catalogFailed');
   const title = error === 'missing_option_dependency' ? t('capabilities.store.softwarePage.noMachineTitle')
     : error === 'offline' ? t('capabilities.store.softwarePage.offline', { machine })
     : error === 'unknown' ? t('capabilities.store.softwarePage.unknown', { machine })
-    : t('capabilities.store.softwarePage.failed', { machine });
+    : failed;
   return <SurfaceStateCard testID="store.kind.software.state" kind={unavailable ? 'unavailable' : 'error'}
     size="line" title={title} {...(unavailable ? {} : {
       action: { label: t('capabilities.store.retry'), onPress: props.onRetry }, diagnosticCode: error,
     })} />;
 }
 
-const NO_SOFTWARE_TARGET: StoreSoftwareTarget = { scope: null, machine: null };
-
 /** A routed native choice reuses the same exact-read/listing owner in page and pane. */
 export function StoreSoftwareRouteListing(props: Readonly<{
   reference: StoreSoftwareListingReference; pushed: boolean; onClose: () => void;
 }>) {
   const machines = useSoftwareMachines();
-  const target = props.reference.target ?? machines.targets[0]?.target ?? NO_SOFTWARE_TARGET;
+  const scope = useAccountSettingsScope();
+  // Exact selected details are read from a Machine that can answer; with none, the listing still shows what it is.
+  const target = props.reference.target ?? machines.targets.find((entry) => entry.machine.online !== false)?.target
+    ?? { scope, machine: null };
   return <SoftwareListing target={target}
     item={{ value: props.reference.value, label: t('capabilities.store.kinds.software.title') }}
     machines={machines} pushed={props.pushed} onClose={props.onClose} />;
@@ -339,7 +297,7 @@ function SoftwareListingBody(
   const [touched, setTouched] = React.useState<ReadonlySet<string>>(() => new Set());
   const ready = state.status === 'ready';
   // The owner's own validation says whether this recipe asks for values the listing cannot collect.
-  const needsInputs = ready && !toolchain && !state.configure({}).ok;
+  const needsInputs = ready && !toolchain && props.target.machine !== null && !state.configure({}).ok;
   // The recipe's field titles are the declaring plugin's localized text, read by the one Action-presentation resolver.
   const localize = usePluginLocalizedTextResolver({ projection: null });
   const hints = React.useMemo(() => {

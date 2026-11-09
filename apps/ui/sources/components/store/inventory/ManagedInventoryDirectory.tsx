@@ -314,6 +314,10 @@ export function RowMark(
     }
     case 'watchedService':
       return <Icon name="eye" size={GLYPH_PX} color={theme.colors.text.secondary} />;
+    case 'setup':
+      return <Icon name="stack" size={GLYPH_PX} color={theme.colors.text.secondary} />;
+    case 'configuredCheck':
+      return <Icon name="pulse" size={GLYPH_PX} color={theme.colors.text.secondary} />;
     default:
       // The same mark Discover and Search draw: its artwork, otherwise its kind's glyph, never a letter.
       return <StoreItemMark facts={{ kind: row.kind, title: props.title }} size={MARK_PX} />;

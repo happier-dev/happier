@@ -4,6 +4,7 @@ import type { ActionFieldOption } from '@/components/sessions/actions/ActionInpu
 import { useInputFieldOptions } from '@/components/sessions/actions/useInputFieldOptions';
 import { EMPTY_INPUT_OPTIONS, type InputFieldOptionsState } from '@/components/sessions/actions/inputFieldOptionsStore';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
 import type { StoreDemand, StoreInstalledInput, StoreItemSummary, StoreListInput } from './storeKinds';
 import { useInstalledScope } from './storeAccountAdmission';
 
@@ -25,7 +26,11 @@ export function useSoftwareOptions(target: StoreSoftwareTarget | null | undefine
     const admitted = !!scope && (inert || !!machine);
     const presence = useMachinePresenceSummary(admitted && !inert ? scope?.serverId : null,
         admitted && !inert ? machine?.machineId : null, admitted && !inert ? binding : null);
-    const available = demand.presented && admitted && (inert || presence.reachability === 'reachable');
+    // Inert offerings are the Account's declarations: they cannot be read before its availability has arrived.
+    const accountDeclarations = usePluginAccountAvailabilityReader(inert ? scope : null, undefined, { enabled: inert && demand.presented });
+    const declarations = React.useMemo(() => accountDeclarations?.readInstalledPlugins() ?? null, [accountDeclarations]);
+    const awaitingDeclarations = inert && declarations?.kind === 'unavailable' && declarations.code === 'account_availability_not_loaded';
+    const available = demand.presented && admitted && (inert ? !awaitingDeclarations : presence.reachability === 'reachable');
     const request = { field: SOFTWARE_FIELD, draftInput: inert ? {} : { homeId: machine?.serverIdentityId, machineId: machine?.machineId },
         ...(values === undefined ? {} : { values }) };
     const options = useInputFieldOptions({ requests: [request], enabled: available, serverId: scope?.serverId,
@@ -33,6 +38,7 @@ export function useSoftwareOptions(target: StoreSoftwareTarget | null | undefine
     const reason = !admitted ? 'missing_option_dependency' : inert ? null : presence.reachability === 'unreachable' ? 'offline'
         : presence.reachability === 'unknown' ? 'unknown' : null;
     const state: InputFieldOptionsState = !demand.presented ? { status: 'ready', options: EMPTY_INPUT_OPTIONS }
+        : awaitingDeclarations ? { status: 'loading', options: EMPTY_INPUT_OPTIONS }
         : reason ? { status: 'failed', options: EMPTY_INPUT_OPTIONS, errorCode: reason } : options.state(SOFTWARE_FIELD);
     return { state, refresh: options.retry, target: admitted ? target : null, accountLifetime: admitted ? binding : null };
 }

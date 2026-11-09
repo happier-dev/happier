@@ -77,7 +77,7 @@ it('admits the exact Machine from the real Installed URL before native detail ac
 
 afterEach(async () => { standardCleanup(); clearPluginAccountAvailabilityProjection(); await account.reset(); rpc.reset(); });
 
-it('mounts Updates with only MCP, Skill and Agent acquisition, preserving the native rows', async () => {
+it('mounts Updates with only MCP, Skill, Agent and Plugin acquisition, preserving the native rows', async () => {
     const { ACP_CATALOG_ROWS_ROUTE_V1 } = await import('@happier-dev/protocol/acp/catalog/catalogRowsV1');
     const origin = { kind: 'registry', provenance: { sourceId: 'registry:updates', sourceUrl: 'https://updates-registry.test',
         format: 'git', itemId: 'docs', importedAt: 1, ref: { kind: 'version', version: '1' } },
@@ -112,10 +112,10 @@ it('mounts Updates with only MCP, Skill and Agent acquisition, preserving the na
         await vi.waitFor(() => expect(families.skill.mock.results.some(result => result.type === 'return'
             && result.value.rows.some(row => row.native.skillId === 'review-changes'))).toBe(true));
         expect(screen.findAllByTestId('store.updates').length).toBeGreaterThan(0);
-        for (const kind of ['app', 'provider', 'plugin', 'software'] as const) expect(families[kind]).not.toHaveBeenCalled();
+        for (const kind of ['app', 'provider', 'software'] as const) expect(families[kind]).not.toHaveBeenCalled();
         expect(watch).not.toHaveBeenCalled();
         expect(notices).not.toHaveBeenCalled();
-        for (const kind of ['mcpServer', 'skill', 'agent'] as const) {
+        for (const kind of ['mcpServer', 'skill', 'agent', 'plugin'] as const) {
             expect(families[kind]).toHaveBeenCalled();
             expect(families[kind]!.mock.results.every(result => result.type === 'return' && Array.isArray(result.value.rows))).toBe(true);
         }
@@ -126,6 +126,19 @@ it('mounts Updates with only MCP, Skill and Agent acquisition, preserving the na
         watch.mockRestore(); notices.mockRestore();
         await home.dispose();
     }
+});
+
+it('keeps Plugins loading, not failed, until the Account availability projection arrives', async () => {
+    await account.restore({ serverIdentityId: 'srv_inventory_plugins_arrival', machines: [] });
+    const scope = storage.getState().settingsScope!;
+    await act(async () => { clearPluginAccountAvailabilityProjection(); });
+    const hook = await renderHook(() => useManagedInventory({ scope, machine: null, projectKey: null, presented: true }), { wrapper: Boundary });
+    try {
+        await flushHookEffects();
+        expect(hook.getCurrent().families.plugin.coverage).toBe('loading');
+        await act(async () => { replacePluginAccountAvailabilityProjection({ scope, snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } }); });
+        await vi.waitFor(() => expect(hook.getCurrent().families.plugin.coverage).not.toBe('loading'));
+    } finally { await hook.unmount(); }
 });
 
 it('reports a missing held MCP secret through its canonical reference reader without material acquisition', async () => {

@@ -29,7 +29,7 @@ import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreen
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { RowMark } from '../inventory/ManagedInventoryDirectory';
-import { presentInventoryRow } from '../inventory/inventoryRows';
+import { presentInventoryRow, type ManagedInventoryRowPresentation } from '../inventory/inventoryRows';
 import { storeKinds } from '../catalog/storeKinds';
 import { useInstalledScope } from '../catalog/storeAccountAdmission';
 import {
@@ -39,14 +39,18 @@ import {
   captureStoreUpdateBasis,
   describeUncheckedSources,
 } from './storeUpdatesModel';
+import { useStorePluginUpdates } from './useStorePluginUpdates';
 import { useStoreUpdates } from './useStoreUpdates';
 import { submitBrowserExtensionMutation } from '../submitBrowserExtensionMutation';
+
+type Href = ManagedInventoryRowPresentation['home']['href'];
 
 const KIND_TITLE: Readonly<Record<StoreUpdateKind, () => string>> = {
   mcpServer: () => t('capabilities.store.kinds.mcpServer.title'),
   skill: () => t('capabilities.store.kinds.skill.title'),
   agent: () => t('capabilities.store.kinds.agent.title'),
   browserExtension: () => t('capabilities.store.kinds.browserExtension.title'),
+  plugin: () => t('capabilities.store.kinds.plugin.title'),
 };
 
 function formatTime(ms: number): string {
@@ -59,7 +63,7 @@ function formatTime(ms: number): string {
 /**
  * Store → Updates (`/plugins?view=updates`, S40-U6a): every newer version the owners recorded for what this
  * Account manages, grouped by kind, each leading to its owner's own review (Skills' per-file Updates, an MCP
- * server's or agent's page, or the browser's native permission review). Check now runs the one finite registry check.
+ * server's, agent's or plugin's page, or the browser's native permission review). Check now runs the one finite registry check.
  */
 export function StoreUpdatesScreen(): React.ReactNode {
   const scope = useAccountSettingsScope();
@@ -76,9 +80,10 @@ export function StoreUpdatesScreen(): React.ReactNode {
   const skill = storeKinds.skill.useInstalled(query, demand, admitted);
   const agent = storeKinds.agent.useInstalled(query, demand, admitted);
   const browserExtension = storeKinds.browserExtension.useInstalled(query, demand, admitted);
-  const families = { mcpServer, skill, agent, browserExtension };
-  const rows = React.useMemo(() => [...mcpServer.rows, ...agent.rows, ...skill.rows, ...browserExtension.rows],
-    [mcpServer.rows, agent.rows, skill.rows, browserExtension.rows]);
+  const plugin = storeKinds.plugin.useInstalled(query, demand, admitted);
+  const families = { mcpServer, skill, agent, browserExtension, plugin };
+  const rows = React.useMemo(() => [...mcpServer.rows, ...agent.rows, ...skill.rows, ...browserExtension.rows, ...plugin.rows],
+    [mcpServer.rows, agent.rows, skill.rows, browserExtension.rows, plugin.rows]);
   const execution = useMountedActionExecution(scope);
   const refreshSkills = skill.continuation;
   const refreshBrowserExtensions = browserExtension.continuation;
@@ -95,12 +100,13 @@ export function StoreUpdatesScreen(): React.ReactNode {
     enabled: presented,
     captureBasis,
   });
+  const pluginUpdates = useStorePluginUpdates({ rows: plugin.rows, check });
   const view = useStoreUpdates(rows, check, scope, presented,
-    [mcpServer, skill, agent, browserExtension]
-      .every(family => family.coverage === 'available'));
+    [mcpServer, skill, agent, browserExtension, plugin]
+      .every(family => family.coverage === 'available'), pluginUpdates.entries);
   const router = useRouter();
   const go = React.useCallback(
-    (href: string) => {
+    (href: NonNullable<Href>) => {
       const result = runGuardedNavigation(() => router.push(href as never));
       if (result !== true)
         fireAndForget(result, { tag: 'StoreUpdatesScreen.go' });
@@ -110,7 +116,7 @@ export function StoreUpdatesScreen(): React.ReactNode {
 
   const loading =
     view.sections.length === 0 &&
-    [mcpServer, skill, agent, browserExtension].some((family) => family.coverage === 'loading');
+    [mcpServer, skill, agent, browserExtension, plugin].some((family) => family.coverage === 'loading');
   const coverageFamilies = STORE_UPDATE_KINDS.map(kind => ({ kind, result: families[kind] }));
   const unresolved = STORE_UPDATE_KINDS.flatMap(kind => {
     const family = families[kind];
@@ -288,7 +294,7 @@ function UpdateRow(
   props: Readonly<{
     entry: StoreUpdateEntry;
     input: Parameters<typeof presentInventoryRow>[1];
-    go: (href: string) => void;
+    go: (href: NonNullable<Href>) => void;
     execute: ReturnType<typeof useMountedActionExecution>['execute'];
     getSignal: () => AbortSignal;
     ready: boolean;
@@ -303,9 +309,7 @@ function UpdateRow(
     entry.row.kind === 'skill' &&
     (entry.state === 'available' || entry.state === 'needsChoice')
       ? SKILLS_UPDATES_ROUTE
-      : typeof presentation.home.href === 'string'
-        ? presentation.home.href
-        : null;
+      : presentation.home.href;
   const version = entry.from && entry.to ? `${entry.from} → ${entry.to}` : null;
   const state =
     entry.state === 'available'

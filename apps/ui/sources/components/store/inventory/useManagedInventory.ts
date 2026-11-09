@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { storeKinds, type InstalledRow, type StoreDemand, type StoreInstalledInput } from '../catalog/storeKinds';
 import { useManagedInventoryAttention } from './useManagedInventoryAttention';
-import { useManagedWatchedServices, type ManagedWatchedServiceRow } from './managedOperationalInventory';
+import { useManagedConfiguredChecks, useManagedSetup, useManagedWatchedServices, type ManagedConfiguredCheckRow, type ManagedSetupRow,
+    type ManagedWatchedServiceRow } from './managedOperationalInventory';
 import { useInstalledScope } from '../catalog/storeAccountAdmission';
 
-export type ManagedInventoryRow = InstalledRow | ManagedWatchedServiceRow;
+export type ManagedInventoryRow = InstalledRow | ManagedWatchedServiceRow | ManagedSetupRow | ManagedConfiguredCheckRow;
 
 export type ManagedInventoryQuery = StoreInstalledInput & StoreDemand;
 export type ManagedInventoryFamilies = Readonly<{
@@ -12,7 +13,11 @@ export type ManagedInventoryFamilies = Readonly<{
 }>;
 export type ManagedInventoryView = Readonly<{
     families: ManagedInventoryFamilies;
-    operationalFamilies: Readonly<{ watchedService: ReturnType<typeof useManagedWatchedServices> }>;
+    operationalFamilies: Readonly<{
+        watchedService: ReturnType<typeof useManagedWatchedServices>;
+        setup: ReturnType<typeof useManagedSetup>;
+        configuredCheck: ReturnType<typeof useManagedConfiguredChecks>;
+    }>;
     rows: readonly ManagedInventoryRow[];
     coverage: 'complete' | 'partial' | 'unavailable';
     loading: boolean;
@@ -44,16 +49,19 @@ export function useManagedInventory(query: ManagedInventoryQuery): ManagedInvent
     const plugin = storeKinds.plugin.useInstalled(input, demand, admitted);
     const software = storeKinds.software.useInstalled(input, demand, admitted);
     const watchedService = useManagedWatchedServices(input, demand, admitted);
-    const operationalFamilies = React.useMemo(() => ({ watchedService }), [watchedService]);
+    const setup = useManagedSetup(input, demand, admitted);
+    const configuredCheck = useManagedConfiguredChecks(input, demand, admitted);
+    const operationalFamilies = React.useMemo(() => ({ watchedService, setup, configuredCheck }), [watchedService, setup, configuredCheck]);
     const families = React.useMemo(() => ({ app, browserExtension, mcpServer, skill, agent, provider, plugin, software }),
         [app, browserExtension, mcpServer, skill, agent, provider, plugin, software]);
     const rows = React.useMemo<readonly ManagedInventoryRow[]>(() => [...app.rows, ...browserExtension.rows, ...mcpServer.rows, ...agent.rows, ...skill.rows,
-        ...provider.rows, ...plugin.rows, ...software.rows, ...watchedService.rows],
-        [app.rows, browserExtension.rows, mcpServer.rows, agent.rows, skill.rows, provider.rows, plugin.rows, software.rows, watchedService.rows]);
+        ...provider.rows, ...plugin.rows, ...software.rows, ...setup.rows, ...watchedService.rows, ...configuredCheck.rows],
+        [app.rows, browserExtension.rows, mcpServer.rows, agent.rows, skill.rows, provider.rows, plugin.rows, software.rows, setup.rows, watchedService.rows, configuredCheck.rows]);
     const attentionQuery = React.useMemo(() => ({ ...input, presented: demand.presented }), [input, demand.presented]);
     const attention = useManagedInventoryAttention(attentionQuery, families, rows, admitted.scope);
     return React.useMemo(() => {
-        const results = [...Object.values(families), watchedService];
+        // Checks claim no Machine, so on a Machine door they neither add to nor soften that Machine's own coverage.
+        const results = [...Object.values(families), watchedService, setup, ...(input.machine ? [] : [configuredCheck])];
         return { families, operationalFamilies, rows, ...summarizeInstalledFamilies(results), ...attention };
-    }, [families, operationalFamilies, watchedService, rows, attention.attention, attention.noticeSource]);
+    }, [families, operationalFamilies, watchedService, setup, configuredCheck, input.machine, rows, attention.attention, attention.noticeSource]);
 }

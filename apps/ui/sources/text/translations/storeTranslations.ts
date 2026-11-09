@@ -2,7 +2,8 @@
 
 import { storeSoftwareTranslations, type StoreSoftwareTranslation } from './storeSoftwareTranslations';
 import { storeAppTranslations } from './storeAppTranslations';
-import { storeBrowserExtensionTranslations, storeBrowserExtensionInstallTranslations, type StoreBrowserExtensionInstallTranslation } from './storeBrowserExtensionTranslations';
+import { storeBrowserExtensionTranslations, storeBrowserExtensionInstallTranslations, storeBrowserExtensionProfileTranslations,
+    type StoreBrowserExtensionInstallTranslation, type StoreBrowserExtensionProfileTranslation } from './storeBrowserExtensionTranslations';
 import { storeAppPageTranslations, type StoreAppPageTranslation } from './storeAppPageTranslations';
 
 type Source = Readonly<{ source: string }>;
@@ -15,7 +16,9 @@ type KindCopy = Readonly<{
 
 export type StoreTranslation = Readonly<{
   /** Plural kind names used within sentences, preserving locale-specific capitalization. */
-  kindSentenceNames: Readonly<Record<keyof StoreTranslation['kindWord'] | 'watchedService', string>>;
+  setupFamilyTitle: string;
+  checksFamilyTitle: string;
+  kindSentenceNames: Readonly<Record<keyof StoreTranslation['kindWord'] | 'watchedService' | 'setup' | 'configuredCheck', string>>;
   allProjects: string;
   browseStore: string;
   suggestionsTitle: string;
@@ -176,7 +179,9 @@ const en: StoreTranslation = {
     plugin: 'Plugin',
     software: 'Software',
   },
-  kindSentenceNames: { app: 'apps', browserExtension: 'browser extensions', mcpServer: 'MCP servers', skill: 'skills', agent: 'agents', provider: 'providers', plugin: 'plugins', software: 'software', watchedService: 'watched services' },
+  setupFamilyTitle: 'Setup',
+  checksFamilyTitle: 'Checks',
+  kindSentenceNames: { setup: 'setup', configuredCheck: 'checks', app: 'apps', browserExtension: 'browser extensions', mcpServer: 'MCP servers', skill: 'skills', agent: 'agents', provider: 'providers', plugin: 'plugins', software: 'software', watchedService: 'watched services' },
   picksTitle: 'Happier picks',
   picksDescription: 'Checked and kept up to date by Happier.',
   fromSource: ({ source }) => `From ${source}`,
@@ -187,7 +192,7 @@ const en: StoreTranslation = {
   loadMore: 'Load more',
   add: 'Add',
   added: 'Added',
-  retry: 'Try again',
+  retry: 'Retry',
   sourcesUnreachable: ({ count }) => `${count} sources unreachable`,
   hideSources: 'Hide',
   noMatch: ({ query }) => `Nothing matches “${query}”.`,
@@ -257,7 +262,9 @@ const en: StoreTranslation = {
 };
 
 const ca: StoreTranslation = {
-  kindSentenceNames: { app: 'aplicacions', browserExtension: 'extensions del navegador', mcpServer: 'servidors MCP', skill: 'habilitats', agent: 'agents', provider: 'proveïdors', plugin: 'connectors', software: 'programari', watchedService: 'serveis supervisats' },
+  setupFamilyTitle: 'Configuració',
+  checksFamilyTitle: 'Comprovacions',
+  kindSentenceNames: { setup: 'configuració', configuredCheck: 'comprovacions', app: 'aplicacions', browserExtension: 'extensions del navegador', mcpServer: 'servidors MCP', skill: 'habilitats', agent: 'agents', provider: 'proveïdors', plugin: 'connectors', software: 'programari', watchedService: 'serveis supervisats' },
   allProjects: "Tots els projectes",
   browseStore: "Explora la botiga",
   suggestionsTitle: "Suggeriments per a aquest projecte",
@@ -388,7 +395,9 @@ const ca: StoreTranslation = {
 };
 
 const de: StoreTranslation = {
-  kindSentenceNames: { app: 'Apps', browserExtension: 'Browser-Erweiterungen', mcpServer: 'MCP-Server', skill: 'Skills', agent: 'Agenten', provider: 'Anbieter', plugin: 'Plugins', software: 'Software', watchedService: 'überwachte Dienste' },
+  setupFamilyTitle: 'Einrichtung',
+  checksFamilyTitle: 'Prüfungen',
+  kindSentenceNames: { setup: 'Einrichtung', configuredCheck: 'Prüfungen', app: 'Apps', browserExtension: 'Browser-Erweiterungen', mcpServer: 'MCP-Server', skill: 'Skills', agent: 'Agenten', provider: 'Anbieter', plugin: 'Plugins', software: 'Software', watchedService: 'überwachte Dienste' },
   allProjects: "Alle Projekte",
   browseStore: "Store durchsuchen",
   suggestionsTitle: "Für dieses Projekt empfohlen",
@@ -518,7 +527,9 @@ const de: StoreTranslation = {
 };
 
 const es: StoreTranslation = {
-  kindSentenceNames: { app: 'aplicaciones', browserExtension: 'extensiones del navegador', mcpServer: 'servidores MCP', skill: 'habilidades', agent: 'agentes', provider: 'proveedores', plugin: 'complementos', software: 'software', watchedService: 'servicios supervisados' },
+  setupFamilyTitle: 'Configuración',
+  checksFamilyTitle: 'Comprobaciones',
+  kindSentenceNames: { setup: 'configuración', configuredCheck: 'comprobaciones', app: 'aplicaciones', browserExtension: 'extensiones del navegador', mcpServer: 'servidores MCP', skill: 'habilidades', agent: 'agentes', provider: 'proveedores', plugin: 'complementos', software: 'software', watchedService: 'servicios supervisados' },
   allProjects: "Todos los proyectos",
   browseStore: "Explorar la tienda",
   suggestionsTitle: "Sugerencias para este proyecto",
@@ -648,7 +659,9 @@ const es: StoreTranslation = {
 };
 
 const fr: StoreTranslation = {
-  kindSentenceNames: { app: 'applications', browserExtension: 'extensions du navigateur', mcpServer: 'serveurs MCP', skill: 'compétences', agent: 'agents', provider: 'fournisseurs', plugin: 'extensions', software: 'logiciels', watchedService: 'services surveillés' },
+  setupFamilyTitle: 'Configuration',
+  checksFamilyTitle: 'Vérifications',
+  kindSentenceNames: { setup: 'configuration', configuredCheck: 'vérifications', app: 'applications', browserExtension: 'extensions du navigateur', mcpServer: 'serveurs MCP', skill: 'compétences', agent: 'agents', provider: 'fournisseurs', plugin: 'extensions', software: 'logiciels', watchedService: 'services surveillés' },
   allProjects: "Tous les projets",
   browseStore: "Parcourir le Store",
   suggestionsTitle: "Suggestions pour ce projet",
@@ -779,7 +792,9 @@ const fr: StoreTranslation = {
 };
 
 const it: StoreTranslation = {
-  kindSentenceNames: { app: 'app', browserExtension: 'estensioni del browser', mcpServer: 'server MCP', skill: 'skill', agent: 'agenti', provider: 'fornitori', plugin: 'plugin', software: 'software', watchedService: 'servizi monitorati' },
+  setupFamilyTitle: 'Configurazione',
+  checksFamilyTitle: 'Controlli',
+  kindSentenceNames: { setup: 'configurazione', configuredCheck: 'controlli', app: 'app', browserExtension: 'estensioni del browser', mcpServer: 'server MCP', skill: 'skill', agent: 'agenti', provider: 'fornitori', plugin: 'plugin', software: 'software', watchedService: 'servizi monitorati' },
   allProjects: "Tutti i progetti",
   browseStore: "Esplora lo Store",
   suggestionsTitle: "Suggerimenti per questo progetto",
@@ -909,7 +924,9 @@ const it: StoreTranslation = {
 };
 
 const ja: StoreTranslation = {
-  kindSentenceNames: { app: 'アプリ', browserExtension: 'ブラウザー拡張機能', mcpServer: 'MCP サーバー', skill: 'スキル', agent: 'エージェント', provider: 'プロバイダー', plugin: 'プラグイン', software: 'ソフトウェア', watchedService: '監視対象サービス' },
+  setupFamilyTitle: 'セットアップ',
+  checksFamilyTitle: 'チェック',
+  kindSentenceNames: { setup: 'セットアップ', configuredCheck: 'チェック', app: 'アプリ', browserExtension: 'ブラウザー拡張機能', mcpServer: 'MCP サーバー', skill: 'スキル', agent: 'エージェント', provider: 'プロバイダー', plugin: 'プラグイン', software: 'ソフトウェア', watchedService: '監視対象サービス' },
   allProjects: "すべてのプロジェクト",
   browseStore: "ストアを見る",
   suggestionsTitle: "このプロジェクトへのおすすめ",
@@ -1038,7 +1055,9 @@ const ja: StoreTranslation = {
 };
 
 const pl: StoreTranslation = {
-  kindSentenceNames: { app: 'aplikacje', browserExtension: 'rozszerzenia przeglądarki', mcpServer: 'serwery MCP', skill: 'umiejętności', agent: 'agenci', provider: 'dostawcy', plugin: 'wtyczki', software: 'oprogramowanie', watchedService: 'monitorowane usługi' },
+  setupFamilyTitle: 'Konfiguracja',
+  checksFamilyTitle: 'Sprawdzenia',
+  kindSentenceNames: { setup: 'konfiguracja', configuredCheck: 'sprawdzenia', app: 'aplikacje', browserExtension: 'rozszerzenia przeglądarki', mcpServer: 'serwery MCP', skill: 'umiejętności', agent: 'agenci', provider: 'dostawcy', plugin: 'wtyczki', software: 'oprogramowanie', watchedService: 'monitorowane usługi' },
   allProjects: "Wszystkie projekty",
   browseStore: "Przeglądaj sklep",
   suggestionsTitle: "Propozycje dla tego projektu",
@@ -1168,7 +1187,9 @@ const pl: StoreTranslation = {
 };
 
 const pt: StoreTranslation = {
-  kindSentenceNames: { app: 'aplicativos', browserExtension: 'extensões do navegador', mcpServer: 'servidores MCP', skill: 'skills', agent: 'agentes', provider: 'provedores', plugin: 'plugins', software: 'software', watchedService: 'serviços monitorados' },
+  setupFamilyTitle: 'Configuração',
+  checksFamilyTitle: 'Verificações',
+  kindSentenceNames: { setup: 'configuração', configuredCheck: 'verificações', app: 'aplicativos', browserExtension: 'extensões do navegador', mcpServer: 'servidores MCP', skill: 'skills', agent: 'agentes', provider: 'provedores', plugin: 'plugins', software: 'software', watchedService: 'serviços monitorados' },
   allProjects: "Todos os projetos",
   browseStore: "Explorar a loja",
   suggestionsTitle: "Sugestões para este projeto",
@@ -1299,7 +1320,9 @@ const pt: StoreTranslation = {
 };
 
 const ru: StoreTranslation = {
-  kindSentenceNames: { app: 'приложения', browserExtension: 'расширения браузера', mcpServer: 'MCP-серверы', skill: 'навыки', agent: 'агенты', provider: 'поставщики', plugin: 'плагины', software: 'программное обеспечение', watchedService: 'отслеживаемые службы' },
+  setupFamilyTitle: 'Настройка',
+  checksFamilyTitle: 'Проверки',
+  kindSentenceNames: { setup: 'настройка', configuredCheck: 'проверки', app: 'приложения', browserExtension: 'расширения браузера', mcpServer: 'MCP-серверы', skill: 'навыки', agent: 'агенты', provider: 'поставщики', plugin: 'плагины', software: 'программное обеспечение', watchedService: 'отслеживаемые службы' },
   allProjects: "Все проекты",
   browseStore: "Открыть магазин",
   suggestionsTitle: "Рекомендации для этого проекта",
@@ -1429,7 +1452,9 @@ const ru: StoreTranslation = {
 };
 
 const zhHans: StoreTranslation = {
-  kindSentenceNames: { app: '应用', browserExtension: '浏览器扩展', mcpServer: 'MCP 服务器', skill: '技能', agent: '代理', provider: '提供方', plugin: '插件', software: '软件', watchedService: '受监控服务' },
+  setupFamilyTitle: '设置',
+  checksFamilyTitle: '检查',
+  kindSentenceNames: { setup: '设置', configuredCheck: '检查', app: '应用', browserExtension: '浏览器扩展', mcpServer: 'MCP 服务器', skill: '技能', agent: '代理', provider: '提供方', plugin: '插件', software: '软件', watchedService: '受监控服务' },
   allProjects: "所有项目",
   browseStore: "浏览商店",
   suggestionsTitle: "为此项目推荐",
@@ -1557,7 +1582,9 @@ const zhHans: StoreTranslation = {
 };
 
 const zhHant: StoreTranslation = {
-  kindSentenceNames: { app: '應用程式', browserExtension: '瀏覽器擴充功能', mcpServer: 'MCP 伺服器', skill: '技能', agent: '代理', provider: '提供者', plugin: '外掛', software: '軟體', watchedService: '受監控服務' },
+  setupFamilyTitle: '設定',
+  checksFamilyTitle: '檢查',
+  kindSentenceNames: { setup: '設定', configuredCheck: '檢查', app: '應用程式', browserExtension: '瀏覽器擴充功能', mcpServer: 'MCP 伺服器', skill: '技能', agent: '代理', provider: '提供者', plugin: '外掛', software: '軟體', watchedService: '受監控服務' },
   allProjects: "所有專案",
   browseStore: "瀏覽商店",
   suggestionsTitle: "為此專案推薦",
@@ -1685,20 +1712,21 @@ const zhHant: StoreTranslation = {
 };
 
 const storeByLocale = {
-  en: { ...en, softwarePage: storeSoftwareTranslations.en, appPage: storeAppPageTranslations.en, browserExtensionInstall: storeBrowserExtensionInstallTranslations.en },
-  ca: { ...ca, softwarePage: storeSoftwareTranslations.ca, appPage: storeAppPageTranslations.ca, browserExtensionInstall: storeBrowserExtensionInstallTranslations.ca },
-  de: { ...de, softwarePage: storeSoftwareTranslations.de, appPage: storeAppPageTranslations.de, browserExtensionInstall: storeBrowserExtensionInstallTranslations.de },
-  es: { ...es, softwarePage: storeSoftwareTranslations.es, appPage: storeAppPageTranslations.es, browserExtensionInstall: storeBrowserExtensionInstallTranslations.es },
-  fr: { ...fr, softwarePage: storeSoftwareTranslations.fr, appPage: storeAppPageTranslations.fr, browserExtensionInstall: storeBrowserExtensionInstallTranslations.fr },
-  it: { ...it, softwarePage: storeSoftwareTranslations.it, appPage: storeAppPageTranslations.it, browserExtensionInstall: storeBrowserExtensionInstallTranslations.it },
-  ja: { ...ja, softwarePage: storeSoftwareTranslations.ja, appPage: storeAppPageTranslations.ja, browserExtensionInstall: storeBrowserExtensionInstallTranslations.ja },
-  pl: { ...pl, softwarePage: storeSoftwareTranslations.pl, appPage: storeAppPageTranslations.pl, browserExtensionInstall: storeBrowserExtensionInstallTranslations.pl },
-  pt: { ...pt, softwarePage: storeSoftwareTranslations.pt, appPage: storeAppPageTranslations.pt, browserExtensionInstall: storeBrowserExtensionInstallTranslations.pt },
-  ru: { ...ru, softwarePage: storeSoftwareTranslations.ru, appPage: storeAppPageTranslations.ru, browserExtensionInstall: storeBrowserExtensionInstallTranslations.ru },
-  zhHans: { ...zhHans, softwarePage: storeSoftwareTranslations.zhHans, appPage: storeAppPageTranslations.zhHans, browserExtensionInstall: storeBrowserExtensionInstallTranslations.zhHans },
-  zhHant: { ...zhHant, softwarePage: storeSoftwareTranslations.zhHant, appPage: storeAppPageTranslations.zhHant, browserExtensionInstall: storeBrowserExtensionInstallTranslations.zhHant },
-} satisfies Record<string, StoreTranslation & Readonly<{ softwarePage: StoreSoftwareTranslation; appPage: StoreAppPageTranslation; browserExtensionInstall: StoreBrowserExtensionInstallTranslation }>>;
+  en: { ...en, softwarePage: storeSoftwareTranslations.en, appPage: storeAppPageTranslations.en, browserExtensionInstall: storeBrowserExtensionInstallTranslations.en, browserExtensionProfile: storeBrowserExtensionProfileTranslations.en },
+  ca: { ...ca, softwarePage: storeSoftwareTranslations.ca, appPage: storeAppPageTranslations.ca, browserExtensionInstall: storeBrowserExtensionInstallTranslations.ca, browserExtensionProfile: storeBrowserExtensionProfileTranslations.ca },
+  de: { ...de, softwarePage: storeSoftwareTranslations.de, appPage: storeAppPageTranslations.de, browserExtensionInstall: storeBrowserExtensionInstallTranslations.de, browserExtensionProfile: storeBrowserExtensionProfileTranslations.de },
+  es: { ...es, softwarePage: storeSoftwareTranslations.es, appPage: storeAppPageTranslations.es, browserExtensionInstall: storeBrowserExtensionInstallTranslations.es, browserExtensionProfile: storeBrowserExtensionProfileTranslations.es },
+  fr: { ...fr, softwarePage: storeSoftwareTranslations.fr, appPage: storeAppPageTranslations.fr, browserExtensionInstall: storeBrowserExtensionInstallTranslations.fr, browserExtensionProfile: storeBrowserExtensionProfileTranslations.fr },
+  it: { ...it, softwarePage: storeSoftwareTranslations.it, appPage: storeAppPageTranslations.it, browserExtensionInstall: storeBrowserExtensionInstallTranslations.it, browserExtensionProfile: storeBrowserExtensionProfileTranslations.it },
+  ja: { ...ja, softwarePage: storeSoftwareTranslations.ja, appPage: storeAppPageTranslations.ja, browserExtensionInstall: storeBrowserExtensionInstallTranslations.ja, browserExtensionProfile: storeBrowserExtensionProfileTranslations.ja },
+  pl: { ...pl, softwarePage: storeSoftwareTranslations.pl, appPage: storeAppPageTranslations.pl, browserExtensionInstall: storeBrowserExtensionInstallTranslations.pl, browserExtensionProfile: storeBrowserExtensionProfileTranslations.pl },
+  pt: { ...pt, softwarePage: storeSoftwareTranslations.pt, appPage: storeAppPageTranslations.pt, browserExtensionInstall: storeBrowserExtensionInstallTranslations.pt, browserExtensionProfile: storeBrowserExtensionProfileTranslations.pt },
+  ru: { ...ru, softwarePage: storeSoftwareTranslations.ru, appPage: storeAppPageTranslations.ru, browserExtensionInstall: storeBrowserExtensionInstallTranslations.ru, browserExtensionProfile: storeBrowserExtensionProfileTranslations.ru },
+  zhHans: { ...zhHans, softwarePage: storeSoftwareTranslations.zhHans, appPage: storeAppPageTranslations.zhHans, browserExtensionInstall: storeBrowserExtensionInstallTranslations.zhHans, browserExtensionProfile: storeBrowserExtensionProfileTranslations.zhHans },
+  zhHant: { ...zhHant, softwarePage: storeSoftwareTranslations.zhHant, appPage: storeAppPageTranslations.zhHant, browserExtensionInstall: storeBrowserExtensionInstallTranslations.zhHant, browserExtensionProfile: storeBrowserExtensionProfileTranslations.zhHant },
+} satisfies Record<string, StoreTranslation & Readonly<{ softwarePage: StoreSoftwareTranslation; appPage: StoreAppPageTranslation; browserExtensionInstall: StoreBrowserExtensionInstallTranslation; browserExtensionProfile: StoreBrowserExtensionProfileTranslation }>>;
 
 export const storeTranslations: Readonly<
-  Record<keyof typeof storeByLocale, StoreTranslation & Readonly<{ softwarePage: StoreSoftwareTranslation; appPage: StoreAppPageTranslation; browserExtensionInstall: StoreBrowserExtensionInstallTranslation }>>
+  Record<keyof typeof storeByLocale, StoreTranslation & Readonly<{ softwarePage: StoreSoftwareTranslation; appPage: StoreAppPageTranslation;
+    browserExtensionInstall: StoreBrowserExtensionInstallTranslation; browserExtensionProfile: StoreBrowserExtensionProfileTranslation }>>
 > = storeByLocale;

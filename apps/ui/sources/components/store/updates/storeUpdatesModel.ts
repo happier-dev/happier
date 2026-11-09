@@ -11,6 +11,7 @@ import type { CapabilityStatus } from '@/components/capabilities/status/capabili
 
 import type { ManagedInventoryRow as InstalledRow } from '../inventory/useManagedInventory';
 import type { BrowserExtensionActionIntent } from '../catalog/storeBrowserExtensions';
+import type { StorePluginUpdateEntry } from './useStorePluginUpdates';
 
 /** The kinds whose owners record where they came from and what that source says now (the registry trackers). */
 export const STORE_UPDATE_KINDS = [
@@ -18,6 +19,7 @@ export const STORE_UPDATE_KINDS = [
   'skill',
   'agent',
   'browserExtension',
+  'plugin',
 ] as const;
 export type StoreUpdateKind = typeof STORE_UPDATE_KINDS[number];
 
@@ -142,7 +144,9 @@ export function buildStoreUpdates(
   rows: readonly InstalledRow[],
   results: RegistryUpdateCheckResultV1['results'],
   check?: Pick<RegistryUpdateCheckState, 'checkedAt' | 'failed' | 'basis' | 'attemptedAt'>,
+  plugins: readonly StorePluginUpdateEntry[] = [],
 ): StoreUpdatesView {
+  const pluginUpdates = new Map(plugins.map((update) => [update.key, update]));
   const checked = new Map(
     results.map((result) => [result.kind === 'browserExtension'
       ? JSON.stringify([result.kind, result.machineId, result.key])
@@ -154,6 +158,27 @@ export function buildStoreUpdates(
   let successful = 0;
   let complete = check?.checkedAt != null && !check.failed;
   for (const row of rows) {
+    if (row.kind === 'plugin') {
+      // No observation means nothing is claimed, so it never holds back "up to date".
+      const update = pluginUpdates.get(row.key);
+      if (!update?.observation) continue;
+      tracked += 1;
+      if (update.state === 'unchecked') { unchecked += 1; complete = false; }
+      else successful += 1;
+      const pluginEntry: StoreUpdateEntry | null = update.state === 'unchecked'
+        ? { key: row.key, row, state: 'unchecked', reason: update.reason, from: update.from, to: null }
+        : update.state === 'available' && update.observation.state === 'update_available'
+          ? { key: row.key, row, state: 'available', from: update.from, to: update.observation.latest ? contentRefLabel(update.observation.latest) : null }
+          : update.state === 'removed'
+            ? { key: row.key, row, state: 'removed', status: { kind: 'removed' }, from: update.from, to: null }
+            : null;
+      if (pluginEntry) {
+        const entries = byKind.get('plugin');
+        if (entries) entries.push(pluginEntry);
+        else byKind.set('plugin', [pluginEntry]);
+      }
+      continue;
+    }
     const item = readTracked(row);
     if (!item) continue;
     tracked += 1;
