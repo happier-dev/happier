@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { SessionPermissionMode } from '@happier-dev/protocol';
+import type { SessionPermissionMode } from '@happier-dev/protocol/sessions/metadata/permission-modes';
 
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';

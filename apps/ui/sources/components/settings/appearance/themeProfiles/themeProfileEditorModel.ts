@@ -3,6 +3,17 @@ import { readThemeProfilePathValue } from '@/theme/profiles/themeProfilePathAcce
 import { THEME_PROFILE_TOKEN_DEFINITIONS, type ThemeProfileTokenDefinition } from '@/theme/profiles/themeProfileTokenRegistry';
 import type { ThemeProfileMode, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
 
+/** Resolve the profile a mounted editor's route addresses. */
+export function resolveThemeProfileEditorTarget(input: Readonly<{
+    routeId: string | null;
+    capturedLegacyProfileId?: string | null;
+    legacyProfileIds: Readonly<Record<string, string>>;
+}>): string | null {
+    if (input.capturedLegacyProfileId === undefined || input.capturedLegacyProfileId === null) return input.routeId;
+    return Object.entries(input.legacyProfileIds)
+        .find(([, originalId]) => originalId === input.capturedLegacyProfileId)?.[0] ?? null;
+}
+
 export type ThemeProfileTokenGroupModel = Readonly<{
     group: string;
     tokens: readonly ThemeProfileTokenDefinition[];

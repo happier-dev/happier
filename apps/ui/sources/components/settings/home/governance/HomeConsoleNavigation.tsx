@@ -191,6 +191,7 @@ export const HomeConsoleSidebar = React.memo(function HomeConsoleSidebar(props: 
                         {index > 0 ? <View style={styles.groupGap} /> : null}
                         {group.map((destination) => (
                             <CollectionNavigationRow
+                                rowRole="item"
                                 key={destination.id}
                                 testID={`home-console-rail:${destination.id}`}
                                 title={t(destination.titleKey)}

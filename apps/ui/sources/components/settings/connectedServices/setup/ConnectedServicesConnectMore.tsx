@@ -1,7 +1,9 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, View, type GestureResponderEvent } from 'react-native';
+import type { PopoverAnchor } from '@/components/ui/popover';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 
 import { useHomeSetupDismissals } from '@/components/hub/layout/useHomeSetupDismissals';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -13,9 +15,12 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { t } from '@/text';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { presentConnectSheet } from './ConnectedServiceSetupModal';
 
 import { homeConnectServiceStepId } from '../home/selectHomeConnectInvitations';
 import { ConnectedServiceMark, formatAgentNames } from '../ConnectedServiceMark';
@@ -27,7 +32,6 @@ import {
     resolveConnectMoreBlockForRequest,
     selectConnectMoreOffer,
     signsInWithAnAccount,
-    buildConnectedServiceSetupRoute,
 } from './connectMoreBlocks';
 import {
     ConnectedServiceSetupPanel,
@@ -61,7 +65,7 @@ export type ConnectedServicesConnectMoreProps = Readonly<{
 
 /**
  * Connect more (lab `csvc` A1–A4, P0): a row of set-up blocks for what the agents on your machines
- * accept but you haven't connected, and "More services" to browse everything. A block grows in place
+ * accept, including services with connected accounts, and "More services" to browse everything. A block grows in place
  * into the set-up panel (a service's flow, or the catalog, whose own blocks grow again into theirs);
  * when an account connects the panel closes and its row settles (A5, `ConnectedAccountSettled`).
  * The page's rail "+", "Add account" and "Sign in again" arrive as a `request` and open here.
@@ -69,16 +73,12 @@ export type ConnectedServicesConnectMoreProps = Readonly<{
  */
 export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMoreProps) {
     const phone = useDeviceType() === 'phone';
-    const router = useRouter();
+    const scope = useActiveServerAccountScope();
     const { hidden, dismiss } = useHomeSetupDismissals();
     const catalog = React.useMemo(() => buildConnectedServiceSetupCatalog(props.model), [props.model]);
     const addable = catalog.filter((entry) => entry.canAdd);
-    const connectableKeys = React.useMemo(
-        () => new Set(props.model.connectable.map((service) => service.serviceKey)),
-        [props.model.connectable],
-    );
     const tools = addable.filter((entry) => entry.section === 'tools');
-    const { offered, browse: hasBrowse } = selectConnectMoreOffer({ layout: props.layout, catalog, connectableKeys, hidden });
+    const { offered, browse: hasBrowse } = selectConnectMoreOffer({ layout: props.layout, catalog, hidden });
 
     const [openId, setOpenId] = React.useState<string | null>(null);
     const liveOpenOffer = offered.find(entry => entry.serviceKey === openId) ?? null;
@@ -94,6 +94,14 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
     const rootRef = React.useRef<View>(null);
     const { onOpenChange, onRequestHandled, onConnected, request } = props;
 
+    const openSheet = React.useCallback((target: ConnectedServiceSetupTarget, anchor?: PopoverAnchor) => {
+        const service = target.kind === 'catalog' ? undefined : parseQualifiedPluginContributionKey(target.serviceKey) ?? undefined;
+        fireAndForget(presentConnectSheet({ scope, service, ...(anchor ? { anchor } : {}), ...(props.targetSelection ? { targetSelection: props.targetSelection } : {}), ...(target.kind === 'reconnect' && service
+            ? { intent: 'reconnect', account: { service, accountId: target.accountId } } : {}) }).then(result => {
+            if (result.kind !== 'dismissed') onConnected(result.account, buildQualifiedPluginContributionKey(result.account.service));
+        }), { tag: 'ConnectedServicesConnectMore.connect' });
+    }, [onConnected, props.targetSelection, scope]);
+
     React.useEffect(() => {
         onOpenChange?.(openId !== null);
     }, [onOpenChange, openId]);
@@ -104,7 +112,7 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
     React.useEffect(() => {
         if (!request) return;
         if (phone && !props.renderServiceFlow) {
-            router.push(buildConnectedServiceSetupRoute(request));
+            openSheet(request);
             onRequestHandled();
             return;
         }
@@ -120,7 +128,7 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
         const node = rootRef.current as unknown as { scrollIntoView?: (options: Readonly<{ block: string; behavior: string }>) => void } | null;
         node?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' });
         onRequestHandled();
-    }, [onRequestHandled, phone, props.renderServiceFlow, request, router]);
+    }, [onRequestHandled, phone, props.renderServiceFlow, request, openSheet]);
 
     const settle = React.useCallback((account: QualifiedConnectedAccountRef, serviceKey: string) => {
         setOpenId(null);
@@ -144,9 +152,9 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
     const items: SetupBlockItem[] = visibleOffers.map((entry) => ({
         id: entry.serviceKey,
         renderTile: ({ open }) => {
-            const start = () => {
+            const start = (event?: GestureResponderEvent) => {
                 if (phone && !props.renderServiceFlow) {
-                    router.push(buildConnectedServiceSetupRoute({ kind: 'service', serviceKey: entry.serviceKey }));
+                    openSheet({ kind: 'service', serviceKey: entry.serviceKey }, resolvePressTriggerAnchor(event));
                     return;
                 }
                 setTarget({ kind: 'service', serviceKey: entry.serviceKey });
@@ -156,17 +164,21 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
                 return <ConnectedServiceCatalogBlock entry={entry} layout={phone ? 'row' : 'card'} showCount={false} onConnect={start} />;
             }
             const agents = formatAgentNames(entry.usedBy);
+            // A service you already use stays here for another account (owner #29): its count, and Add account.
+            const connected = entry.connectedCount > 0;
             return (
                 <SetupBlockTile
                     testID={`connected-services-connect-more:${entry.serviceKey}`}
                     layout={phone ? 'row' : 'wide'}
-                    glyph={<ConnectedServiceMark legacyServiceId={entry.legacyServiceId} size="inline" />}
+                    glyph={<ConnectedServiceMark legacyServiceId={entry.legacyServiceId} pluginId={entry.service.pluginId} size="inline" />}
                     title={entry.label}
-                    subtitle={signsInWithAnAccount(entry)
-                        ? t('connectedServicesSetup.serviceSignInInstead', { agents })
-                        : t('connectedServicesSetup.serviceCanUse', { agents })}
+                    subtitle={connected
+                        ? [agents, t('connectedServicesSettings.setupConnectedCount', { count: entry.connectedCount })].filter(Boolean).join(' · ')
+                        : signsInWithAnAccount(entry)
+                            ? t('connectedServicesSetup.serviceSignInInstead', { agents })
+                            : t('connectedServicesSetup.serviceCanUse', { agents })}
                     action={{
-                        label: t('connectedServicesSettings.connect'),
+                        label: connected ? t('connectedServicesSettings.addAccount') : t('connectedServicesSettings.connect'),
                         testID: `connected-services-connect-more:${entry.serviceKey}.action`,
                         onPress: start,
                     }}
@@ -183,9 +195,9 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
     if (hasBrowse || openId === CONNECT_MORE_BROWSE_ID) {
         const rest = addable.filter((entry) => !offered.includes(entry));
         const marked = (props.layout === 'firstRun' ? rest : tools.length > 0 ? tools : rest).slice(0, 3);
-        const browse = (open: () => void) => () => {
+        const browse = (open: () => void) => (event?: GestureResponderEvent) => {
             if (phone && !props.renderServiceFlow) {
-                router.push(buildConnectedServiceSetupRoute({ kind: 'catalog' }));
+                openSheet({ kind: 'catalog' }, resolvePressTriggerAnchor(event));
                 return;
             }
             setTarget({ kind: 'catalog' });
@@ -205,7 +217,7 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
                             <Text style={styles.moreTitle}>{t('connectedServicesSetup.firstRunMore')}</Text>
                             <View style={styles.marks}>
                                 {marked.map((entry) => (
-                                    <ConnectedServiceMark key={entry.serviceKey} legacyServiceId={entry.legacyServiceId} size="inline" />
+                                    <ConnectedServiceMark key={entry.serviceKey} legacyServiceId={entry.legacyServiceId} pluginId={entry.service.pluginId} size="inline" />
                                 ))}
                             </View>
                             <View style={styles.grow} />
@@ -226,7 +238,7 @@ export function ConnectedServicesConnectMore(props: ConnectedServicesConnectMore
                     glyph={(
                         <View style={styles.marks}>
                             {marked.map((entry) => (
-                                <ConnectedServiceMark key={entry.serviceKey} legacyServiceId={entry.legacyServiceId} size="inline" />
+                                <ConnectedServiceMark key={entry.serviceKey} legacyServiceId={entry.legacyServiceId} pluginId={entry.service.pluginId} size="inline" />
                             ))}
                         </View>
                     )}

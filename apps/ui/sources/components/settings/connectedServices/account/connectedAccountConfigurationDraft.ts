@@ -1,9 +1,12 @@
 import type {
     PluginConfigurationSettingFieldV2,
+} from '@happier-dev/protocol/plugins/contributions/settings';
+import type {
     PluginJsonValueV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
 export type ConnectedAccountConfigurationControl =
     | 'text'
@@ -15,6 +18,7 @@ export type ConnectedAccountConfigurationControl =
     | 'json';
 
 export type ConnectedAccountConfigurationDraft = Readonly<Record<string, unknown>>;
+export type ConnectedAccountConfigurationSecretSelections = Readonly<Record<string, SharedSavedSecretReferenceSelectionV1 | null>>;
 export type ConnectedAccountConfigurationOption = Readonly<{
     value: PluginJsonValueV2;
     title: string | Readonly<{ key: string; fallback: string }>;
@@ -26,6 +30,7 @@ export type ConnectedAccountConfigurationSubmission =
         ok: true;
         values: Readonly<Record<string, PluginJsonValueV2>>;
         secretValues: Readonly<Record<string, string>>;
+        selectedSecrets?: ConnectedAccountConfigurationSecretSelections;
     }>
     | Readonly<{
         ok: false;
@@ -155,16 +160,28 @@ export function buildConnectedAccountConfigurationSubmission(params: Readonly<{
     fields: readonly PluginConfigurationSettingFieldV2[];
     draft: ConnectedAccountConfigurationDraft;
     configuredSecretFieldIds: readonly string[];
+    secretRefs?: Readonly<Record<string, string>>;
+    selectedSecrets?: ConnectedAccountConfigurationSecretSelections;
 }>): ConnectedAccountConfigurationSubmission {
     const configuredSecretFieldIds = new Set(params.configuredSecretFieldIds);
     const values: Record<string, PluginJsonValueV2> = {};
     const secretValues: Record<string, string> = {};
+    const selectedSecrets: Record<string, SharedSavedSecretReferenceSelectionV1 | null> = {};
     const missingFieldIds: string[] = [];
     const invalidFieldIds: string[] = [];
 
     for (const field of params.fields) {
         const draftValue = params.draft[field.id];
         if (field.secret === true) {
+            if (params.secretRefs !== undefined) {
+                const selected = params.selectedSecrets?.[field.id];
+                if (selected !== undefined) selectedSecrets[field.id] = selected;
+                if (field.required === true && (selected === null || (selected === undefined
+                    && !params.secretRefs[field.id] && !configuredSecretFieldIds.has(field.id)))) {
+                    missingFieldIds.push(field.id);
+                }
+                continue;
+            }
             if (typeof draftValue !== 'string') {
                 invalidFieldIds.push(field.id);
             } else if (draftValue.length > 0) {
@@ -187,5 +204,6 @@ export function buildConnectedAccountConfigurationSubmission(params: Readonly<{
             invalidFieldIds: invalidFieldIds.sort(),
         };
     }
-    return { ok: true, values, secretValues };
+    return { ok: true, values, secretValues,
+        ...(params.secretRefs === undefined ? {} : { selectedSecrets }) };
 }

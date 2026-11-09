@@ -8,6 +8,7 @@ import {
     COLLECTION_RAIL_MIN_WIDTH_PX,
     HappierListDetailLayout,
     useHappierCollectionLayout,
+    useHappierMaterialColorResolver,
     type HappierCollectionRailWidth,
 } from '@happier-dev/plugin-ui/presentation';
 
@@ -20,6 +21,7 @@ import { getPreferredLanguage, t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { CollectionDraftTitleScope } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import { useCollectionRailWidth } from '@/components/ui/lists/collection/useCollectionRailWidth';
+import { HorizontalSafeAreaProvider, NavigatorSafeAreaBleed, ScreenBackdropBoundary, useHorizontalSafeArea, useHorizontalSafeAreaContentPadding } from '@/components/navigation/safeArea/HorizontalSafeArea';
 
 export type SettingsCollectionLayoutProps = Readonly<{
     /** The rail's default width at normal text scale, from the shared role metrics. */
@@ -63,11 +65,13 @@ export const SettingsCollectionLayout = React.memo(function SettingsCollectionLa
     const scale = Math.max(1, fontScale);
     const hasRail = props.rail !== null && props.rail !== undefined;
     const railWidth = useCollectionRailWidth(props.navigator);
+    // The containing page owns its cleared or reading coat; collection structure inherits that material.
+    const materialColor = useHappierMaterialColorResolver();
 
     return <CollectionDraftTitleScope key={props.navigator}>
         {/* One phone header stays above both panes and follows the active child route. */}
         <Stack.Screen options={routes.find((route) => route.name === currentRoute)?.options} />
-        <View style={{ flex: 1, minHeight: 0, backgroundColor: theme.colors.surface.base }}>
+        <NavigatorSafeAreaBleed><View style={{ flex: 1, minHeight: 0, backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }}>
             <HappierListDetailLayout
                 testID={`${props.testID}-layout`}
                 listTestID={`${props.testID}-list-pane`}
@@ -86,22 +90,22 @@ export const SettingsCollectionLayout = React.memo(function SettingsCollectionLa
                 gap={0}
                 listStyle={hasRail ? { borderRightWidth: 1, borderRightColor: theme.colors.border.default } : undefined}
                 // The rail exists only beside a detail; when stacked, the index page lists the collection instead.
-                list={(layout) => (layout?.mode === 'split' ? props.rail : null)}
+                list={(layout) => (layout?.mode === 'split' ? <CollectionRailSafeArea>{props.rail}</CollectionRailSafeArea> : null)}
                 detailActive
                 // Narrow screens show the detail stack only: its index page is the list.
                 stackedPane="detail"
                 // The detail is one pane of a split, never the page sheet: a pane host inside it keeps its
                 // right panel in the page and budgets its own width, so the shell's canvas tail stays out.
                 detail={<AppShellTailContext.Provider value={null}><View style={{ flex: 1, minHeight: 0 }}>
-                    {props.detailTop}
                     <CollectionDetailControlsHost enabled={isModalPresentation} rootPathname={props.rootPathname}>
+                        {props.detailTop ? <CollectionChromeSafeArea>{props.detailTop}</CollectionChromeSafeArea> : null}
                         <Stack screenOptions={{ headerShown: false }}>
                             {routes.map((route) => <Stack.Screen key={route.name} name={route.name} />)}
                         </Stack>
                     </CollectionDetailControlsHost>
                 </View></AppShellTailContext.Provider>}
             />
-        </View>
+        </View></NavigatorSafeAreaBleed>
     </CollectionDraftTitleScope>;
 });
 
@@ -110,15 +114,32 @@ export const SettingsCollectionLayout = React.memo(function SettingsCollectionLa
  * own page (landing, loading or empty, rail or not) has none: it was opened from the settings sidebar
  * beside it. Stacked, the page is pushed and the shell owns back.
  */
+function CollectionRailSafeArea(props: React.PropsWithChildren) {
+    const area = useHorizontalSafeArea();
+    return <View style={{ flex: 1, minHeight: 0, paddingLeft: area.padded ? 0 : area.left }}>
+        <ScreenBackdropBoundary>{props.children}</ScreenBackdropBoundary>
+    </View>;
+}
+
+/** Intrinsic collection chrome keeps its height while its controls stay inside the window edges. */
+function CollectionChromeSafeArea(props: React.PropsWithChildren) {
+    const area = useHorizontalSafeArea();
+    const padding = useHorizontalSafeAreaContentPadding();
+    return <View style={padding}>
+        <HorizontalSafeAreaProvider value={{ ...area, padded: true }}>{props.children}</HorizontalSafeAreaProvider>
+    </View>;
+}
+
 const CollectionDetailControlsHost = React.memo(function CollectionDetailControlsHost(props: Readonly<{
     enabled: boolean;
     rootPathname: string;
     children: React.ReactNode;
 }>) {
     const split = useHappierCollectionLayout()?.mode === 'split';
+    const area = useHorizontalSafeArea();
     return (
         <SettingsFloatingControlsHost enabled={props.enabled && split} collectionRootPathname={props.rootPathname}>
-            {props.children}
+            <HorizontalSafeAreaProvider value={split ? { ...area, left: 0 } : area}>{props.children}</HorizontalSafeAreaProvider>
         </SettingsFloatingControlsHost>
     );
 });

@@ -23,8 +23,6 @@ export type ManagedStatusTone = 'ready' | 'attention' | 'none';
 export type ManagedProvisionerCard = Readonly<{
   id: string;
   title: string;
-  /** What it creates ("Server", "Droplet"); cloud cards only, where there is room. */
-  kind?: string;
   description: string;
   /** The provisioner's mark at the size its slot draws it (a tile's, a row's). */
   mark: (size: number) => React.ReactNode;

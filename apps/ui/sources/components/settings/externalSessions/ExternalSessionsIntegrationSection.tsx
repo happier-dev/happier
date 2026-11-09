@@ -14,8 +14,8 @@ import { PluginDiagnosticsSection } from '@/components/settings/plugins/diagnost
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { restoreFocusToBestTarget } from '@/keyboard/focusReturn';
-import type { PluginDiagnosticDataV1 } from '@happier-dev/protocol';
-import type { PluginSessionHookInstallPreviewV1 } from '@happier-dev/protocol';
+import type { PluginDiagnosticDataV1 } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
+import type { PluginSessionHookInstallPreviewV1 } from '@happier-dev/protocol/sessions/external/hookManagementV1';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { HappyError } from '@/utils/errors/errors';
 

@@ -4,7 +4,7 @@ import * as React from 'react';
 export const MANAGED_OPTIONS_EDIT_PAUSE_MS = 300;
 
 /**
- * The value the provider's options are read with. Edits to a recipe field are read once the person pauses,
+ * The value the provider's options are read with. Edits to a launch field are read once the person pauses,
  * so typing "16" asks once, not for "1" and then "16". The first value, and any value arriving while
  * nothing is settled yet or after one is withdrawn, is read at once. The fields themselves always show
  * the live draft; only the read follows this.

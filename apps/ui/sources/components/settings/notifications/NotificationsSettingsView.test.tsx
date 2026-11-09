@@ -3,11 +3,13 @@ import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID,
+    type NotificationChannelV1} from '@happier-dev/protocol/account/settings/notificationChannels';
+import {
     DEFAULT_ATTENTION_DELIVERY_POLICY_V1,
-    type NotificationChannelV1,
-    type NotificationsSettingsV1,
     type AttentionDeliveryPolicyV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/attentionDeliveryPolicy';
+import {
+    type NotificationsSettingsV1} from '@happier-dev/protocol/account/settings/accountSettings';
 import { DEFAULT_ATTENTION_DEVICE_OVERRIDES_V1 } from '@/sync/domains/settings/attentionDeviceOverridesV1';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
@@ -20,6 +22,14 @@ import { DEFAULT_NOTIFICATION_CHANNEL_TOPICS_V1 } from '@happier-dev/protocol/ac
 import { loadNotificationsSettingsActionExecutorForTests, restoreNotificationsSettingsCatalog } from './notificationsSettingsCatalogTestHarness';
 import { clearActiveUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
 import type { LiveActivityRemoteUpdateCapabilityDiagnostics } from '@happier-dev/protocol/activity/live/remoteUpdateCapabilities';
+
+const nativePickerInstalled = vi.hoisted(() => ({ value: false }));
+
+// Select the real Metro native adapter; only the installed SDK and OS module presence are substituted.
+vi.mock('@/components/ui/dateTime/DateTimePickerPopover', () => vi.importActual('@/components/ui/dateTime/DateTimePickerPopover.native'));
+vi.mock('@react-native-community/datetimepicker', () => ({
+    default: (props: React.Attributes & Record<string, unknown>) => React.createElement('NativeDateTimePicker', props),
+}));
 
 const platformState = vi.hoisted(() => ({
     os: 'ios' as 'ios' | 'web' | 'android',
@@ -175,12 +185,6 @@ const localSettingsState = {
     desktopOverlayAutoHideDelayMs: 6_000,
     desktopOverlayExpandedBehavior: 'click',
     desktopOverlayInteractiveCollapsed: true,
-    desktopOverlayEnableDragReposition: false,
-    desktopOverlayLockPosition: true,
-    desktopOverlayPlacementMode: 'anchored',
-    desktopOverlayAnchor: 'top_center',
-    desktopOverlayOffsetX: 0,
-    desktopOverlayOffsetY: 0,
     desktopOverlayClickAction: 'expand_overlay',
     desktopOverlayDensity: 'compact',
     desktopOverlayShowSessionCount: true,
@@ -208,6 +212,9 @@ installSettingsViewCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
+            // This settings harness has no native layout/animation ticks; the OS preference settles disclosures immediately.
+            AccessibilityInfo: { isReduceMotionEnabled: async () => true },
+            UIManager: { hasViewManagerConfig: (name: string) => nativePickerInstalled.value && name === 'RNDateTimePicker' },
             Platform: {
                 get OS() {
                     return platformState.os;
@@ -248,6 +255,11 @@ installSettingsViewCommonModuleMocks({
         }).module;
     },
 });
+
+// Static runtime imports can resolve the common mock before its options are installed.
+// Attach the OS boundary to this suite's platform fixture after that resolution.
+const notificationsNativeBoundary = await import('react-native');
+Object.defineProperty(notificationsNativeBoundary.Platform, 'OS', { configurable: true, get: () => platformState.os });
 
 vi.mock('@/utils/platform/desktopHost', async importOriginal => ({
     ...(await importOriginal<typeof import('@/utils/platform/desktopHost')>()),
@@ -373,6 +385,7 @@ describe('NotificationsSettingsView', () => {
         localSettingsState.deviceRemoteAlertsEnabled = true;
         followingFeatureState.enabled = true;
         platformState.os = 'ios';
+        nativePickerInstalled.value = false;
         tauriDesktopState.value = false;
         modalPromptMock.mockReset();
         modalConfirmMock.mockReset();
@@ -478,7 +491,7 @@ describe('NotificationsSettingsView', () => {
         expect(row.props.rightElement.props.value).toBe(true);
         expect(row.props.rightElement.props.disabled).toBe(false);
         await act(async () => { row.props.rightElement.props.onValueChange(false); });
-        expect(storage.getState().settings).toMatchObject({ sessionRemoteAlertsEnabled: false });
+        await vi.waitFor(() => expect(storage.getState().settings).toMatchObject({ sessionRemoteAlertsEnabled: false }));
         expect(storage.getState().localSettings.attentionDeviceOverridesV1).toEqual(localSettingsState.attentionDeviceOverridesV1);
     });
 
@@ -1086,6 +1099,139 @@ describe('NotificationsSettingsView', () => {
         expect(modalAlertMock).not.toHaveBeenCalled();
     });
 
+
+    it.each(['account', 'device'] as const)('edits custom quiet-hours %s schedules without resetting untouched windows or the other scope', async owner => {
+        const schedule = {
+            timezone: 'Europe/Amsterdam',
+            windows: [
+                { startLocalTime: '21:30', endLocalTime: '06:45', days: ['mon', 'fri'] as ('mon' | 'fri')[] },
+                { startLocalTime: '12:00', endLocalTime: '13:00', days: ['sun'] as 'sun'[] },
+            ],
+        };
+        settingsState.attentionDeliveryPolicyV1 = {
+            ...settingsState.attentionDeliveryPolicyV1, quietHours: { enabled: true, ...schedule },
+        };
+        localSettingsState.attentionDeviceOverridesV1 = {
+            ...DEFAULT_ATTENTION_DEVICE_OVERRIDES_V1, quietHoursOverride: { mode: 'custom', ...schedule },
+        };
+        const screen = await openNotificationsScreen();
+        await act(async () => screen.pressRow('settings-notifications-quiet-hours-' + owner + '-edit'));
+        const prefix = 'settings-notifications-quiet-hours-' + owner + '-editor';
+        expect(screen.findByTestId(prefix + '-timezone')?.props.value).toBe(schedule.timezone);
+        expect(screen.findByTestId(prefix + '-window-0-start')?.props.value).toBe('21:30');
+        expect(screen.findByTestId(prefix + '-window-1-end')?.props.value).toBe('13:00');
+        expect(fixture!.settingsWrites).toEqual(settingsWritesBeforeControl);
+        expect(storage.getState().localSettings).toEqual(localBeforeControl);
+        await act(async () => screen.changeTextByTestId(prefix + '-window-0-start', '20:15'));
+        await act(async () => screen.pressByTestId(prefix + '-save'));
+        const expected = { ...schedule, windows: [{ ...schedule.windows[0]!, startLocalTime: '20:15' }, schedule.windows[1]!] };
+        if (owner === 'account') {
+            await vi.waitFor(() => expect(fixture!.readRaw().attentionDeliveryPolicyV1).toMatchObject({ quietHours: { enabled: true, ...expected } }));
+            expect(storage.getState().localSettings).toEqual(localBeforeControl);
+        } else {
+            await vi.waitFor(() => expect(storage.getState().localSettings.attentionDeviceOverridesV1.quietHoursOverride).toEqual({ mode: 'custom', ...expected }));
+            expect(fixture!.readRaw()).toEqual(rawBeforeControl);
+        }
+        expect(screen.findByTestId(prefix + '-save')).toBeNull();
+    });
+
+    it('keeps custom quiet-hours drafts local until valid Save, and discards Cancel without changing the schedule', async () => {
+        settingsState.attentionDeliveryPolicyV1 = {
+            ...settingsState.attentionDeliveryPolicyV1,
+            quietHours: { enabled: true, timezone: 'UTC', windows: [{ startLocalTime: '23:00', endLocalTime: '05:00' }] },
+        };
+        const screen = await openNotificationsScreen();
+        await act(async () => screen.pressRow('settings-notifications-quiet-hours-account-edit'));
+        const prefix = 'settings-notifications-quiet-hours-account-editor';
+        await act(async () => screen.changeTextByTestId(prefix + '-window-0-start', '25:99'));
+        await act(async () => screen.pressByTestId(prefix + '-save'));
+        expect(screen.findByTestId(prefix + '-window-0-start.error')).not.toBeNull();
+        expect(fixture!.readRaw()).toEqual(rawBeforeControl);
+        await act(async () => screen.changeTextByTestId(prefix + '-window-0-start', '22:00'));
+        await act(async () => screen.changeTextByTestId(prefix + '-timezone', 'Not/A_Timezone'));
+        await act(async () => screen.pressByTestId(prefix + '-save'));
+        expect(screen.findByTestId(prefix + '-timezone.error')).not.toBeNull();
+        expect(fixture!.settingsWrites).toEqual(settingsWritesBeforeControl);
+        await act(async () => screen.pressByTestId(prefix + '-cancel'));
+        await act(async () => screen.pressRow('settings-notifications-quiet-hours-account-edit'));
+        expect(screen.findByTestId(prefix + '-window-0-start')?.props.value).toBe('23:00');
+        expect(screen.findByTestId(prefix + '-timezone')?.props.value).toBe('UTC');
+    });
+
+    it('clears a device schedule weekday restriction through the shared Every day choice', async () => {
+        localSettingsState.attentionDeviceOverridesV1 = {
+            ...DEFAULT_ATTENTION_DEVICE_OVERRIDES_V1,
+            quietHoursOverride: { mode: 'custom', timezone: 'UTC', windows: [
+                { startLocalTime: '23:00', endLocalTime: '05:00', days: ['mon'] },
+            ] },
+        };
+        const screen = await openNotificationsScreen();
+        await act(async () => screen.pressRow('settings-notifications-quiet-hours-device-edit'));
+        const prefix = 'settings-notifications-quiet-hours-device-editor';
+        await act(async () => screen.pressByTestId(prefix + '-window-0-days-trigger'));
+        await vi.waitFor(() => expect(screen.findByTestId(prefix + '-window-0-days:all')).not.toBeNull());
+        await act(async () => screen.pressByTestId(prefix + '-window-0-days:all'));
+        await act(async () => screen.pressByTestId(prefix + '-save'));
+        await vi.waitFor(() => expect(screen.findByTestId(prefix + '-save')).toBeNull());
+        const saved = storage.getState().localSettings.attentionDeviceOverridesV1.quietHoursOverride;
+        expect(saved.mode).toBe('custom');
+        if (saved.mode !== 'custom') throw new Error('Expected the authored custom schedule');
+        expect(saved.windows[0]?.days ?? []).toEqual([]);
+        expect(fixture!.readRaw()).toEqual(rawBeforeControl);
+    });
+
+    it('closes the interactive quiet-hours native picker while the real Account Save awaits its HTTP response', async () => {
+        nativePickerInstalled.value = true;
+        settingsState.attentionDeliveryPolicyV1 = {
+            ...settingsState.attentionDeliveryPolicyV1,
+            quietHours: { enabled: true, timezone: 'UTC', windows: [{ startLocalTime: '23:00', endLocalTime: '05:00' }] },
+        };
+        const screen = await openNotificationsScreen();
+        await act(async () => screen.pressRow('settings-notifications-quiet-hours-account-edit'));
+        const prefix = 'settings-notifications-quiet-hours-account-editor';
+        await act(async () => screen.pressByTestId(prefix + '-window-0-start-picker'));
+        await act(async () => { await import('@react-native-community/datetimepicker'); });
+        await vi.waitFor(() => expect(screen.findAllByType('NativeDateTimePicker')).toHaveLength(1));
+        await act(async () => screen.findByType('NativeDateTimePicker').props.onChange({ type: 'set' }, new Date(2000, 0, 1, 22, 30)));
+        expect(screen.findByTestId(prefix + '-window-0-start')?.props.value).toBe('22:30');
+        const gate = fixture!.deferNextSettingsWrite();
+        try {
+            await act(async () => screen.pressByTestId(prefix + '-save'));
+            await gate.started;
+            expect(screen.findAllByType('NativeDateTimePicker')).toHaveLength(0);
+        } finally {
+            await act(async () => gate.release());
+        }
+        await vi.waitFor(() => expect(screen.findByTestId(prefix + '-save')).toBeNull());
+        expect(fixture!.readRaw().attentionDeliveryPolicyV1).toMatchObject({ quietHours: {
+            windows: [{ startLocalTime: '22:30', endLocalTime: '05:00' }],
+        } });
+    });
+
+    it('authors quiet-hours windows and weekday selections through the shared schedule controls', async () => {
+        settingsState.attentionDeliveryPolicyV1 = {
+            ...settingsState.attentionDeliveryPolicyV1,
+            quietHours: { enabled: true, timezone: 'UTC', windows: [{ startLocalTime: '23:00', endLocalTime: '05:00' }] },
+        };
+        const screen = await openNotificationsScreen();
+        await act(async () => screen.pressRow('settings-notifications-quiet-hours-account-edit'));
+        const prefix = 'settings-notifications-quiet-hours-account-editor';
+        await act(async () => screen.pressByTestId(prefix + '-add'));
+        await act(async () => screen.changeTextByTestId(prefix + '-window-1-end', '08:30'));
+        await act(async () => screen.pressByTestId(prefix + '-window-1-days-trigger'));
+        await vi.waitFor(() => expect(screen.findByTestId(prefix + '-window-1-days:tue')).not.toBeNull());
+        await act(async () => screen.pressByTestId(prefix + '-window-1-days:tue'));
+        await act(async () => screen.pressByTestId(prefix + '-window-0-remove'));
+        expect(fixture!.settingsWrites).toEqual(settingsWritesBeforeControl);
+        await act(async () => screen.pressByTestId(prefix + '-save'));
+        await vi.waitFor(() => expect(fixture!.readRaw().attentionDeliveryPolicyV1).toMatchObject({
+            quietHours: { enabled: true, timezone: 'UTC', windows: [
+                { startLocalTime: '22:00', endLocalTime: '08:30', days: ['tue'] },
+            ] },
+        }));
+        expect(storage.getState().localSettings).toEqual(localBeforeControl);
+    });
+
     it('defaults focus muting off and writes only the canonical policy without changing other choices', async () => {
         const screen = await openNotificationsScreen();
         const row = requireRow(screen, 'settings-notifications-mute-phone-focused-computer');
@@ -1210,12 +1356,11 @@ describe('NotificationsSettingsView', () => {
     });
 
     it('previews native notification sounds through the local notification sender', async () => {
-
         const screen = await openNotificationsScreen();
-        const previewItem = requireRow(screen, 'settings-notifications-sounds-preview');
+        const previewItem = requireRowByTitle(screen, 'settingsNotifications.sounds.previewTitle');
 
         await act(async () => {
-            previewItem.props.onPress();
+            previewItem.props.rightElement.props.onPress();
         });
 
         await vi.waitFor(() => { expect(scheduleExpoNotificationMock).toHaveBeenCalledWith(expect.objectContaining({ content: expect.objectContaining({
@@ -1223,6 +1368,24 @@ describe('NotificationsSettingsView', () => {
             body: 'settingsNotifications.sounds.previewNotificationBody',
             sound: 'happier_soft.wav',
         }), trigger: null })); });
+    });
+
+    it('offers and plays the bundled sound preview in the desktop webview', async () => {
+        platformState.os = 'web';
+        tauriDesktopState.value = true;
+        const played: string[] = [];
+        vi.stubGlobal('Audio', class {
+            constructor(readonly src: string) {}
+            async play() { played.push(this.src); }
+        });
+        try {
+            const screen = await openNotificationsScreen();
+            const previewItem = requireRowByTitle(screen, 'settingsNotifications.sounds.previewTitle');
+            await act(async () => { previewItem.props.rightElement.props.onPress(); });
+            await vi.waitFor(() => expect(played).toHaveLength(1));
+            expect(played[0]).toContain('happier_soft.wav');
+            expect(scheduleExpoNotificationMock).not.toHaveBeenCalled();
+        } finally { vi.unstubAllGlobals(); }
     });
 
     it('refuses the exact permission operation after allowing the Enable channel mutation', async () => {

@@ -2,11 +2,9 @@ import * as React from 'react';
 import { Redirect, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useHappierCollectionIndexView } from '@happier-dev/plugin-ui/presentation';
 import { useFocusEffect } from '@/components/appShell/workspace/destinationRoute';
-import type { TeamMembersListFilterV1, TeamMembershipV1 } from '@happier-dev/protocol/teams';
-import { Platform } from 'react-native';
+import type { TeamMembersListFilterV1 } from '@happier-dev/protocol/teams';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { Avatar } from '@/components/ui/avatar/Avatar';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
@@ -15,26 +13,20 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
-import { VirtualizedList } from '@/components/ui/lists/virtualized';
-import { StatusPill } from '@/components/ui/status/StatusPill';
-import { useTeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
-import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
+import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
+import { useTeamMembersRoster, type TeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
 import { getPreferredLanguage, t } from '@/text';
-import { formatCalendarDate } from '@/utils/datetime/cachedIntlFormatters';
 
 import { TeamSection } from '../TeamSection';
 import type { TeamSectionContext } from '../teamSectionContext';
 import { teamMemberDetailPath } from '../teamsRoutes';
 import { TeamOwnerRequiredNotice } from './TeamOwnerRequiredNotice';
 import { TeamMemberAddAction } from './TeamMemberAddAction';
-import { TeamLeaveAction } from './TeamLeaveAction';
-import { teamMemberRowSubtitle } from './teamMemberPresentation';
+import { TeamMemberRow } from './TeamMemberRow';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
-import { usePageListBottomPadding } from '@/components/ui/lists/pageListBottomPadding';
 import { teamReadFailureLabel } from '../teamMutationPresentation';
 import { useTeamReadFailureAction } from '../useTeamReadFailureAction';
 
-const MEMBER_AVATAR_SIZE = 36;
 const MEMBER_CHUNK_SIZE = 12;
 
 type MemberVirtualizedRow = Readonly<{
@@ -93,84 +85,29 @@ const MemberFilterRow = React.memo(function MemberFilterRow(props: Readonly<{
     );
 });
 
-const MemberRow = React.memo(function MemberRow(props: Readonly<{
-    membership: TeamMembershipV1;
-    viewerAccountId: string;
-    language: string;
-    leaveContext?: TeamSectionContext;
-    onOpen: (membershipId: string) => void;
-}>) {
-    const { membership, leaveContext } = props;
-    const person = resolveAccountDisplayName({ profile: membership.account, accountId: membership.accountId, viewerAccountId: props.viewerAccountId });
-    return (
-        <Item
-            testID={`team-members-row:${membership.id}`}
-            title={person.name}
-            subtitle={teamMemberRowSubtitle(membership, person, t('teams.members.joined', {
-                when: formatCalendarDate(membership.joinedAt, props.language),
-            }))}
-            leftElement={<Avatar id={membership.accountId} size={MEMBER_AVATAR_SIZE} imageUrl={membership.account.avatarUrl} />}
-            accessoryLayout="adaptive"
-            rightElement={membership.status === 'suspended' || leaveContext ? <>
-                {membership.status === 'suspended' ? <StatusPill
-                    testID={`team-members-status:${membership.id}`}
-                    variant="warning"
-                    label={t('teams.status.suspended')}
-                    labelVariant="phrase"
-                /> : null}
-                {leaveContext ? <TeamLeaveAction context={leaveContext} presentation="button" testID={`team-members-leave:${membership.id}`} /> : null}
-            </> : undefined}
-            onPress={() => props.onOpen(membership.id)}
-        />
-    );
-});
-
-const MemberRoster = React.memo(function MemberRoster(props: Readonly<{
+/** The complete roster presentation; the route retains authenticated reads and focus refresh. */
+export const TeamMembersView = React.memo(function TeamMembersView(props: Readonly<{
     context: TeamSectionContext;
     header?: React.ReactNode;
+    roster: TeamMembersRoster;
+    filter: TeamMembersListFilterV1;
+    setFilter: (filter: TeamMembersListFilterV1) => void;
+    query: string;
+    setQuery: (query: string) => void;
 }>) {
     const { theme } = useUnistyles();
-    const bottomPadding = usePageListBottomPadding();
     const router = useRouter();
     const readFailureAction = useTeamReadFailureAction();
     const view = useHappierCollectionIndexView();
-    const { context } = props;
+    const { context, roster, filter, setFilter, query, setQuery } = props;
     const language = getPreferredLanguage();
     const addressServerId = context.address.serverId;
     const teamId = context.address.teamId;
     const openMember = React.useCallback((membershipId: string) => {
         router.push(teamMemberDetailPath({ serverId: addressServerId, teamId }, membershipId));
     }, [router, addressServerId, teamId]);
-    const [filter, setFilter] = React.useState<TeamMembersListFilterV1>('all');
-    const [query, setQuery] = React.useState('');
-
-    // The Home authorizes this roster on `viewTeam`, so every viewer it would
-    // answer sees it. Management is a separate question, asked per control and
-    // per row below: an ordinary member reads the roster and is offered nothing.
     const canRead = context.team.capabilities.viewRoster;
     const searchTerm = query.trim();
-    const roster = useTeamMembersRoster({
-        scope: context.scope,
-        address: context.address,
-        filter,
-        query: searchTerm,
-        enabled: canRead,
-    });
-    const hasFocused = React.useRef(false);
-
-    // The Add member route sits above this roster in the navigation stack. Its
-    // successful mutation returns a canonical membership and then comes back;
-    // re-reading this retained pager on that focus transition makes the new row
-    // visible without waiting for the independent AccountChange catch-up. The
-    // first focus is already covered by the pager's initial read, so it does not
-    // issue a duplicate request.
-    useFocusEffect(React.useCallback(() => {
-        if (!hasFocused.current) {
-            hasFocused.current = true;
-            return;
-        }
-        void roster.reload();
-    }, [roster.reload]));
 
     // The recovery candidates are exactly the rows the Home says may be given a
     // role — never a role comparison made here. "No candidate" is claimed only
@@ -268,7 +205,7 @@ const MemberRoster = React.memo(function MemberRoster(props: Readonly<{
                     {chunk.map((membership) => {
                         const leavesOwnMembership = membership.accountId === context.scope.accountId && context.team.capabilities.leave;
                         return (
-                            <MemberRow
+                            <TeamMemberRow
                                 key={membership.id}
                                 membership={membership}
                                 viewerAccountId={context.scope.accountId}
@@ -310,8 +247,10 @@ const MemberRoster = React.memo(function MemberRoster(props: Readonly<{
         canRead,
         context,
         filter,
+        setFilter,
         noOwnerCandidate,
         query,
+        setQuery,
         roster,
         openMember,
         language,
@@ -345,18 +284,12 @@ const MemberRoster = React.memo(function MemberRoster(props: Readonly<{
     }
 
     return (
-        <VirtualizedList
+        <VirtualizedItemList
             testID="team-members-virtualized-list"
             data={rows}
             keyExtractor={(item) => item.key}
             renderItem={renderRow}
             ListHeaderComponent={props.header === undefined ? null : <>{props.header}</>}
-            style={{
-                flex: 1,
-                backgroundColor: theme.colors.surface.base,
-                ...(Platform.OS === 'web' ? { minHeight: 0 } : {}),
-            }}
-            contentContainerStyle={{ paddingBottom: bottomPadding }}
             initialNumToRender={6}
             maxToRenderPerBatch={4}
             windowSize={7}
@@ -364,6 +297,44 @@ const MemberRoster = React.memo(function MemberRoster(props: Readonly<{
             maintainVisibleContentPosition
         />
     );
+});
+
+const MemberRoster = React.memo(function MemberRoster(props: Readonly<{
+    context: TeamSectionContext;
+    header?: React.ReactNode;
+}>) {
+    const { context } = props;
+    const [filter, setFilter] = React.useState<TeamMembersListFilterV1>('all');
+    const [query, setQuery] = React.useState('');
+
+    // The Home authorizes this roster on `viewTeam`, so every viewer it would
+    // answer sees it. Management is a separate question, asked per control and
+    // per row below: an ordinary member reads the roster and is offered nothing.
+    const roster = useTeamMembersRoster({
+        scope: context.scope,
+        address: context.address,
+        filter,
+        query: query.trim(),
+        enabled: context.team.capabilities.viewRoster,
+    });
+    const hasFocused = React.useRef(false);
+
+    // The Add member route sits above this roster in the navigation stack. Its
+    // successful mutation returns a canonical membership and then comes back;
+    // re-reading this retained pager on that focus transition makes the new row
+    // visible without waiting for the independent AccountChange catch-up. The
+    // first focus is already covered by the pager's initial read, so it does not
+    // issue a duplicate request.
+    useFocusEffect(React.useCallback(() => {
+        if (!hasFocused.current) {
+            hasFocused.current = true;
+            return;
+        }
+        void roster.reload();
+    }, [roster.reload]));
+
+    return <TeamMembersView {...props} roster={roster} filter={filter} setFilter={setFilter}
+        query={query} setQuery={setQuery} />;
 });
 
 export const TeamMembersScreen = React.memo(function TeamMembersScreen(props: Readonly<{

@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { DEFAULT_CURATED_MARKETPLACE_SOURCE_URL, COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1 } from '@happier-dev/protocol/marketplace';
 import { HAPPIER_PICKS_SOURCE_ID } from '@happier-dev/protocol/registries';
-import { renderHook, standardCleanup } from '@/dev/testkit';
+import { installTimerCensus, renderHook, standardCleanup } from '@/dev/testkit';
 import { createRegistryPluginCatalogFixture, createRegistryNpmPackageFixture } from '@/dev/testkit/fixtures/registryPluginCatalog';
 import { installPromptRegistriesCommonModuleMocks } from '@/components/settings/prompts/registries/promptRegistriesScreenTestHelpers';
 
@@ -21,8 +21,263 @@ const { AppPaneProvider } = await import('@/components/appShell/panes/AppPanePro
 const { renderSettingsView } = await import('@/dev/testkit/harness/settingsViewHarness');
 const { PluginSettingsHomeScreen } = await import('./PluginSettingsHomeScreen');
 const { PluginListingScreen } = await import('./listing/PluginListingScreen');
+const { PluginAddModal } = await import('./add/openPluginAddModal');
+const { CapabilityAddModalBody } = await import('@/components/capabilities/add/CapabilityAddModal');
+const actionFrontDoor = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+const { usePluginCatalog } = await import('./model/usePluginCatalog');
+const { storeKinds } = await import('@/components/store/catalog/storeKinds');
+const { StorePluginKind } = await import('@/components/store/StoreKindScreen');
+const { StoreListingController } = await import('@/components/store/StoreListingController');
+import type { StoreListingState } from '@/components/store/StoreListingController';
 
-async function setup(suffix: string, options: Readonly<{
+it('resolves a Store npm itemId to its admitted Plugin id and pin without listing or a title lookup', async () => {
+    await setup('store-listing-pointer', { handleExternalRequest: npmBoundary() });
+    const reads = observeRegistryReads();
+    let current: StoreListingState = { kind: 'unavailable' };
+    const screen = await renderSettingsView(<StoreListingController reference={{ type: 'registryItem', kind: 'plugin',
+        sourceId: COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1, itemId: '@sample/one', version: '1.0.0',
+    }} onClose={() => {}}>{state => { current = state; return null; }}</StoreListingController>);
+    await waitForHomeGovernance(() => expect(current).toMatchObject({ kind: 'plugin', resolving: false, listing: {
+        sourceId: COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1, itemId: '@sample/one', pluginId: 'sample.one', version: '1.0.0',
+    } }));
+    expect(reads.filter(read => read.action === 'registries.items.list')).toHaveLength(0);
+    expect(reads.filter(read => read.action === 'registries.items.read')).toEqual([{ action: 'registries.items.read',
+        input: { kind: 'plugin', sourceId: COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1, itemId: '@sample/one', version: '1.0.0' } }]);
+    await screen.unmount();
+});
+
+it('consumes stable Store rows across equal/changed refresh, selected exact read and hidden demand with 128 held Machines', async () => {
+    const entries = Array.from({ length: 100 }, (_, index) => ({ pluginId: `sample.store${index}`, title: `Store ${index}` }));
+    const { fixture, sourceId, catalog, requests } = await setupCatalog('store-consumer-lifecycle', { entries });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { createMachineFixture } = await import('@/dev/testkit');
+    const machines = Array.from({ length: 128 }, (_, index) => createMachineFixture({ id: `recorded-${index}` }));
+    storage.setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
+        machineListByServerId: { [fixture.home.id]: machines } });
+    // Observe real timer boundaries. Attribute to the first app callsite, not a consumer
+    // higher in the stack of a Registry/Action-owned deadline.
+    const timers = installTimerCensus(stack => {
+        const owner = stack.split('\n').find(line => line.includes('/sources/') && !line.includes('/dev/testkit/'));
+        return owner && /\/components\/store\/|\/plugins\/model\/usePluginCatalog/.test(owner) ? 'store' : null;
+    });
+    onTestFinished(() => timers.stop());
+    const reads = observeRegistryReads();
+    let list!: ReturnType<typeof storeKinds.plugin.useList>;
+    const input = { query: '', sourceIds: [sourceId] };
+    const tree = (presented: boolean) => <StorePluginKind input={input} demand={{ presented }}>{value => {
+        list = value;
+        return null;
+    }}</StorePluginKind>;
+    const screen = await renderSettingsView(tree(false));
+    expect(reads).toHaveLength(0);
+    await screen.update(tree(true));
+    await waitForHomeGovernance(() => expect(list.items).toHaveLength(100));
+    const before = list.items;
+    let requestCount = requests.length;
+    await act(async () => { list.refresh(); });
+    await waitForHomeGovernance(() => expect(requests.length).toBeGreaterThan(requestCount));
+    await waitForHomeGovernance(() => expect(list.loading).toBe(false));
+    expect.soft(list.items.filter((row, index) => row !== before[index])).toHaveLength(0);
+    catalog.entries[42]!.display.title = 'Changed Store 42';
+    requestCount = requests.length;
+    await act(async () => { list.refresh(); });
+    await waitForHomeGovernance(() => expect(requests.length).toBeGreaterThan(requestCount));
+    await waitForHomeGovernance(() => expect(list.items[42]?.title).toBe('Changed Store 42'));
+    expect.soft(list.items.filter((row, index) => row !== before[index])).toHaveLength(1);
+    expect(reads.filter(read => read.action === 'registries.items.read')).toHaveLength(0);
+    expect(timers.read().filter(timer => timer.consumer === 'store')).toHaveLength(0);
+    const beforePreference = list.items;
+    const beforePreferenceReads = reads.length;
+    await act(async () => { storage.setState({ localSettings: { ...storage.getState().localSettings,
+        pluginsCollectionViewV1: { installed: 'grid', discover: 'list' } } }); });
+    expect(list.items).toBe(beforePreference);
+    expect(reads).toHaveLength(beforePreferenceReads);
+    await screen.update(tree(false));
+    expect(timers.read().filter(timer => timer.consumer === 'store')).toHaveLength(0);
+    const listsBeforeExact = reads.filter(read => read.action === 'registries.items.list').length;
+    const selected = await renderHook(() => usePluginCatalog({ selection: {
+        sourceId, pluginId: 'sample.store42', itemId: 'sample.store42', version: '1.2.3',
+    } }));
+    await waitForHomeGovernance(() => expect(selected.getCurrent().selectedItem?.summary.title).toBe('Changed Store 42'));
+    expect(reads.filter(read => read.action === 'registries.items.list')).toHaveLength(listsBeforeExact);
+    expect(reads.filter(read => read.action === 'registries.items.read')).toHaveLength(1);
+    expect(fixture.requests.some(request => request.path.startsWith('/v1/machines'))).toBe(false);
+    await selected.unmount();
+    await screen.unmount();
+});
+
+function observeRegistryReads(includeSources = false) {
+    const reads: { action: string; input: unknown }[] = [];
+    const create = actionFrontDoor.createFrontDoorActionExecute;
+    // Observe real Action dispatches; all admission, transport and projection remain real.
+    const observation = vi.spyOn(actionFrontDoor, 'createFrontDoorActionExecute').mockImplementation((...args) => {
+        const execute = create(...args);
+        return Object.assign((...invocation: Parameters<typeof execute>) => {
+            if (invocation[0] === 'registries.items.read' || invocation[0] === 'registries.items.list'
+                || includeSources && invocation[0] === 'registries.sources.list') {
+                reads.push({ action: invocation[0], input: invocation[1] });
+            }
+            return execute(...invocation);
+        }, { prepare: execute.prepare });
+    });
+    onTestFinished(() => observation.mockRestore());
+    return reads;
+}
+
+it('shares one Plugin Add source acquisition across selector, catalog and selected detail', async () => {
+    const { sourceId } = await setupCatalog('add-shared-source');
+    // Count one presented source revision, independently of the Home's initial catalog hydration.
+    const { usePromptLibraryCatalogValue } = await import('@/sync/store/usePromptLibraryCatalog');
+    const accountCatalog = await renderHook(() => usePromptLibraryCatalogValue('registry-sources'));
+    await waitForHomeGovernance(() => expect(accountCatalog.getCurrent().status).toBe('ready'));
+    const reads = observeRegistryReads(true);
+    const screen = await renderSettingsView(<PluginAddModal onClose={() => {}} params={{ initialSelection: {
+        sourceId, itemId: 'sample.plugin', version: '1.2.3',
+    } }} />);
+    const config = () => screen.findAll(node => node.type === CapabilityAddModalBody)[0]!.props.config;
+    await waitForHomeGovernance(() => expect(config().catalog.items).toHaveLength(1));
+    expect(reads.filter(read => read.action === 'registries.sources.list')).toHaveLength(1);
+    const { useRegistrySourceMutations } = await import('@/registries/useRegistrySourceMutations');
+    const mutation = await renderHook(() => useRegistrySourceMutations());
+    await waitForHomeGovernance(() => expect(mutation.getCurrent().ready).toBe(true));
+    const before = reads.length;
+    await act(async () => { await mutation.getCurrent().update({ sourceId, title: 'Renamed shared source' }); });
+    await waitForHomeGovernance(() => expect(config().catalog.items[0]?.sourceTitle).toBe('Renamed shared source'));
+    expect(reads.slice(before).filter(read => read.action === 'registries.sources.list')).toHaveLength(1);
+    await mutation.unmount();
+    await screen.unmount();
+    await accountCatalog.unmount();
+});
+
+it('opens a scale-shaped Browse with zero body reads and reads only the selected native listing', async () => {
+    const reads = observeRegistryReads();
+    const entries = Array.from({ length: 100 }, (_, index) => ({ pluginId: `sample.plugin${index}`, title: `Plugin ${index}` }));
+    const { hook, sourceId } = await setup('summary-cost', { entries });
+    await act(async () => { hook.getCurrent().setActiveView('discover'); hook.getCurrent().setSelectedDiscoverSourceId(sourceId); });
+    await waitForHomeGovernance(() => expect(hook.getCurrent().discoverEntries).toHaveLength(100));
+    expect(reads.filter(read => read.action === 'registries.items.read')).toHaveLength(0);
+    const listing = { sourceId, pluginId: 'sample.plugin42', itemId: 'sample.plugin42', version: '1.2.3' };
+    await act(async () => { hook.getCurrent().openDiscoverListing(listing); });
+    await waitForHomeGovernance(() => expect(hook.getCurrent().discoverEntries).toHaveLength(1));
+    expect(hook.getCurrent().discoverEntries[0]).toMatchObject({ id: 'sample.plugin42', version: '1.2.3' });
+    expect(reads.filter(read => read.action === 'registries.items.read')).toHaveLength(1);
+});
+
+it('narrows the Store Plugin adapter at acquisition by all selected source ids', async () => {
+    const { fixture, sourceId } = await setup('store-source-scope', { curatedEntries: [
+        { pluginId: 'curated.only', title: 'Curated only', review: 'approved' },
+    ] });
+    const reads = observeRegistryReads();
+    const input = { query: '', sourceIds: [sourceId] };
+    let presented = false;
+    const hook = await renderHook(() => storeKinds.plugin.useList(input, { presented }));
+    expect(hook.getCurrent().items).toEqual([]);
+    expect(reads).toHaveLength(0);
+    presented = true;
+    await hook.rerender();
+    await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+    await waitForHomeGovernance(() => expect(hook.getCurrent().items).toHaveLength(1));
+    expect(hook.getCurrent().items[0]?.sourceId).toBe(sourceId);
+    const summary = storeKinds.plugin.summary(hook.getCurrent().items[0]!);
+    expect(summary.ref).toMatchObject({ sourceId, itemId: 'sample.plugin', version: '1.2.3' });
+    expect(reads.filter(read => read.action === 'registries.items.list').every(read =>
+        JSON.stringify(read.input).includes(sourceId))).toBe(true);
+    expect(reads.filter(read => read.action === 'registries.items.read')).toHaveLength(0);
+    expect(fixture.requests.some(request => request.path.startsWith('/v1/machines'))).toBe(false);
+});
+
+it('opens a cold npm native pointer without any list-for-location and refuses mismatched Plugin identity', async () => {
+    const reads = observeRegistryReads();
+    const { hook } = await setup('npm-exact-cost', { handleExternalRequest: npmBoundary() });
+    const listing = { sourceId: COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1,
+        pluginId: 'sample.one', itemId: '@sample/one', version: '1.0.0' };
+    await act(async () => { hook.getCurrent().setActiveView('discover'); hook.getCurrent().openDiscoverListing(listing); });
+    await waitForHomeGovernance(() => expect(hook.getCurrent().discoverEntries).toHaveLength(1));
+    expect(hook.getCurrent().discoverEntries[0]).toMatchObject({ id: 'sample.one', itemId: '@sample/one', version: '1.0.0' });
+    expect(reads.filter(read => read.action === 'registries.items.list')).toHaveLength(0);
+    expect(reads.filter(read => read.action === 'registries.items.read')).toHaveLength(1);
+    await act(async () => { hook.getCurrent().openDiscoverListing({ ...listing, pluginId: 'sample.two' }); });
+    await waitForHomeGovernance(() => expect(hook.getCurrent().loadingDiscover).toBe(false));
+    expect(hook.getCurrent().discoverEntries).toEqual([]);
+});
+
+it.each(['available', 'unavailable pin', 'withdrawn source'] as const)('opens an exact Add seed without browsing or substituting a different item: %s', async state => {
+    const { sourceId } = await setup(`add-seed-${state.replaceAll(' ', '-')}`);
+    const reads = observeRegistryReads();
+    const screen = await renderSettingsView(<PluginAddModal onClose={() => {}} params={{ initialSelection: {
+        sourceId: state === 'withdrawn source' ? 'removed-source' : sourceId,
+        itemId: 'sample.plugin', version: state === 'unavailable pin' ? '9.9.9' : '1.2.3',
+    } }} />);
+    const catalog = () => screen.findAll(node => node.type === CapabilityAddModalBody)[0]?.props.config.catalog;
+    await waitForHomeGovernance(() => expect(catalog()?.loading).toBe(false));
+    expect(catalog().items).toHaveLength(state === 'available' ? 1 : 0);
+    expect(reads.filter(read => read.action === 'registries.items.list')).toHaveLength(0);
+    expect(reads.filter(read => read.action === 'registries.items.read')).toHaveLength(state === 'withdrawn source' ? 0 : 1);
+    if (state === 'withdrawn source') {
+        const sourceSelect = screen.findAll(node => node.props.filter?.testID === 'plugins.add.registries.select')[0];
+        await act(async () => { sourceSelect!.props.filter.renderPopoverContent({ close() {}, maxHeight: 400 }).props.onSelect('all'); });
+    } else {
+        await act(async () => { catalog().onQueryChange('sample'); });
+    }
+    await waitForHomeGovernance(() => expect(catalog().items).toHaveLength(1));
+    expect(reads.some(read => read.action === 'registries.items.list')).toBe(true);
+});
+
+it.each([false, true])('withdraws Plugin Add catalog reads during registry administration and resumes current results (seed=%s)', async seeded => {
+    const { sourceId, catalog } = await setupCatalog(`add-registry-demand-${seeded}`);
+    const reads = observeRegistryReads();
+    const { useRegistrySourceMutations } = await import('@/registries/useRegistrySourceMutations');
+    const mutation = await renderHook(() => useRegistrySourceMutations());
+    const screen = await renderSettingsView(<PluginAddModal onClose={() => {}} params={seeded ? { initialSelection: {
+        sourceId, itemId: 'sample.plugin', version: '1.2.3',
+    } } : {}} />);
+    const config = () => screen.findAll(node => node.type === CapabilityAddModalBody)[0]!.props.config;
+    await waitForHomeGovernance(() => expect(config().catalog.items).toHaveLength(1));
+    const select = screen.findAll(node => node.props.filter?.testID === 'plugins.add.registries.select')[0]!;
+    await act(async () => select.props.filter.renderPopoverContent({ close() {}, maxHeight: 400 }).props.onSelect('action:manage'));
+    await waitForHomeGovernance(() => expect(screen.findByTestId('plugins.add:registries')).not.toBeNull());
+    const before = reads.length;
+    catalog.entries[0]!.display.title = 'Updated while managing sources';
+    await waitForHomeGovernance(() => expect(mutation.getCurrent().ready).toBe(true));
+    await act(async () => { await mutation.getCurrent().update({ sourceId, title: 'Updated source title' }); });
+    // The visible source detail reads its own page for count/status. Hidden Browse/seed reads must stay withdrawn.
+    expect(reads.slice(before)).toEqual([{ action: 'registries.items.list',
+        input: expect.objectContaining({ kind: 'plugin', sourceIds: [sourceId] }) }]);
+    const beforeReturn = reads.length;
+    await screen.pressByTestIdAsync('plugins.add:back');
+    await waitForHomeGovernance(() => expect(config().catalog.items[0]?.title).toBe('Updated while managing sources'));
+    expect(reads.length).toBeGreaterThan(beforeReturn);
+    await mutation.unmount();
+});
+
+it('keeps closed catalogs idle and settles cold legacy npm links as unresolved without guessing a package or scanning', async () => {
+    const reads = observeRegistryReads();
+    await setup('legacy-npm-cost', { handleExternalRequest: npmBoundary() });
+    const closed = await renderHook(() => usePluginCatalog({ enabled: false, browse: true }));
+    expect(closed.getCurrent().discoverEntries).toEqual([]);
+    expect(reads).toHaveLength(0);
+    const legacy = await renderHook(() => usePluginCatalog({ selection: {
+        sourceId: COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1, pluginId: 'sample.one',
+    } }));
+    await waitForHomeGovernance(() => expect(legacy.getCurrent().unresolvedListing).toBe(true));
+    expect(legacy.getCurrent().loadingDiscover).toBe(false);
+    expect(legacy.getCurrent().discoverEntries).toEqual([]);
+    expect(reads).toHaveLength(0);
+});
+
+it('refuses an unavailable reviewed npm pin without substituting latest or searching the source', async () => {
+    const reads = observeRegistryReads();
+    await setup('npm-pin-refusal', { handleExternalRequest: npmBoundary() });
+    const selected = await renderHook(() => usePluginCatalog({ selection: {
+        sourceId: COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1, pluginId: 'sample.one', itemId: '@sample/one', version: '9.9.9',
+    } }));
+    await waitForHomeGovernance(() => expect(selected.getCurrent().discoverError).not.toBeNull());
+    expect(selected.getCurrent().discoverEntries).toEqual([]);
+    expect(selected.getCurrent().selectedItem).toBeNull();
+    expect(reads.filter(read => read.action === 'registries.items.list')).toHaveLength(0);
+});
+
+async function setupCatalog(suffix: string, options: Readonly<{
     entries?: Parameters<typeof createRegistryPluginCatalogFixture>[0]['entries'];
     curatedEntries?: Parameters<typeof createRegistryPluginCatalogFixture>[0]['entries'];
     handleExternalRequest?: (url: string) => Promise<Response | null>;
@@ -59,6 +314,13 @@ async function setup(suffix: string, options: Readonly<{
     const { storage } = await import('@/sync/domains/state/storage');
     storage.setState({ localSettings: { ...storage.getState().localSettings,
         pluginsCollectionViewV1: { installed: 'list', discover: 'list' } } });
+    return { fixture, sourceId, sourceUrl, requests, catalog,
+        fail: () => { unavailable = true; }, recover: () => { unavailable = false; }, hold: (value: Promise<void> | null) => { pending = value; } };
+}
+
+async function setup(suffix: string, options: Parameters<typeof setupCatalog>[1] = {}) {
+    const catalog = await setupCatalog(suffix, options);
+    const { fixture, requests } = catalog;
     const hook = await renderHook(() => usePluginSettingsScreenState());
     onTestFailed(() => {
         const state = hook.getCurrent();
@@ -66,9 +328,8 @@ async function setup(suffix: string, options: Readonly<{
             sourceId: state.selectedDiscoverSourceId, entries: state.discoverEntries.map(entry => ({ id: entry.id, version: entry.version })),
             loading: state.loadingDiscover, loadingMore: state.loadingMoreDiscover, nextCursor: state.discoverNextCursor, error: state.discoverError }));
     });
-    await waitForHomeGovernance(() => expect(hook.getCurrent().marketplaceSourceRegistryAvailable).toBe(true));
-    return { hook, fixture, sourceId, sourceUrl, requests,
-        fail: () => { unavailable = true; }, recover: () => { unavailable = false; }, hold: (value: Promise<void> | null) => { pending = value; } };
+    await waitForHomeGovernance(() => expect(hook.getCurrent().canRefreshDiscover).toBe(true));
+    return { ...catalog, hook };
 }
 
 async function browse(hook: Awaited<ReturnType<typeof setup>>['hook']) {
@@ -167,7 +428,7 @@ function npmBoundary() {
 
 it('pages Community npm through the real format reader and clears its continuation when the query changes', async () => {
     const { hook, requests } = await setup('npm-paging', { handleExternalRequest: npmBoundary() });
-    await act(async () => { hook.getCurrent().setSelectedDiscoverSourceId(COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1); });
+    await act(async () => { hook.getCurrent().setActiveView('discover'); hook.getCurrent().setSelectedDiscoverSourceId(COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1); });
     await waitForHomeGovernance(() => expect(hook.getCurrent().discoverEntries, 'Community npm first page').toHaveLength(1));
     expect(hook.getCurrent().discoverEntries[0]).toMatchObject({ id: 'sample.one', version: '1.0.0', sourceId: COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1 });
     expect(hook.getCurrent().discoverNextCursor).not.toBeNull();
@@ -186,7 +447,7 @@ it('settles the latest selected source while an earlier catalog response is stil
     let release!: () => void;
     hold(new Promise<void>(resolve => { release = resolve; }));
     onTestFinished(() => { release(); });
-    await act(async () => { hook.getCurrent().setSelectedDiscoverSourceId(sourceId); });
+    await act(async () => { hook.getCurrent().setActiveView('discover'); hook.getCurrent().setSelectedDiscoverSourceId(sourceId); });
     await act(async () => { hook.getCurrent().setSelectedDiscoverSourceId(COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1); });
     await waitForHomeGovernance(() => expect(hook.getCurrent().discoverEntries).toHaveLength(1));
     expect(hook.getCurrent().discoverEntries[0]?.sourceId).toBe(COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1);
@@ -243,6 +504,6 @@ it('announces the real pending catalog once and renders its source failure outsi
     });
     fail();
     await act(async () => { release(); });
-    await waitForHomeGovernance(() => expect(screen.findByTestId(`settings.plugins.marketplace.discover.issue.${sourceId}`)).not.toBeNull());
+    await waitForHomeGovernance(() => expect(screen.findByTestId('settings.plugins.marketplace.discover.sources')).not.toBeNull());
     expect(screen.getTextContent()).not.toContain('HTTP 503');
 });

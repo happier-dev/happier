@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createProviderErrorV1, ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { createProviderErrorV1} from '@happier-dev/protocol/providers/errors';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { getAgentStaticModels } from '@happier-dev/agents';
 import { ModelVisibilityRefV1Schema, serializeModelVisibilityRefV1 } from '@happier-dev/protocol/providers/model-selection';
 import type { PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
@@ -31,6 +32,7 @@ import {
   createProviderSettingsHarness,
   createProviderSettingsAccountHarness,
   installProviderSettingsRpcBoundary,
+  installBundledProviderDeclarationsRpcBoundary,
 } from '@/dev/testkit/harness/providerSettingsHarness';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
@@ -43,27 +45,9 @@ import {
   createCustomProviderDraft,
 } from '@/providers/authoring/state';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
-import { resolveAgentNativeModels } from './agentModelVisibility';
 import { readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { parseProviderContributionIdentityV1 } from '@happier-dev/protocol/providers/contribution-identity';
-
-describe('resolveAgentNativeModels', () => {
-  it('uses the machine-observed Agent catalog instead of the static Default placeholder', () => {
-    expect(resolveAgentNativeModels({
-      runtimeAgentId: 'codex',
-      agentTargetKey: 'agent:happier.agent.codex/codex',
-      modelVisibilityByRef: {},
-      observedModels: [
-        { id: 'default', name: 'Default' },
-        { id: 'gpt-6-luna', name: 'GPT-6-Luna', description: 'Fast model' },
-      ],
-    })).toEqual([
-      { id: 'default', name: 'Default', hidden: false },
-      { id: 'gpt-6-luna', name: 'GPT-6-Luna', description: 'Fast model', hidden: false },
-    ]);
-  });
-});
 
 const mocks = vi.hoisted(() => ({
   mutate: vi.fn(),
@@ -263,6 +247,15 @@ describe('AgentModelsScreen provider settings safety', () => {
   });
 
   it('renders projected rows supplied through the shared Provider RPC boundary and real manager', async () => {
+    const dynamicModel = { id: 'native-dynamic-model', name: 'Dynamic native model', description: 'Machine catalog' };
+    expect(getAgentStaticModels('codex').some(model => model.id === dynamicModel.id)).toBe(false);
+    installBundledProviderDeclarationsRpcBoundary(providerHarness);
+    const { AgentModelsProbeObservationSchema } = await import('@happier-dev/protocol/capabilities');
+    providerHarness.intercept(RPC_METHODS.CAPABILITIES_INVOKE, request => {
+      expect(request.payload).toMatchObject({ method: 'probeModels' });
+      return { ok: true, result: AgentModelsProbeObservationSchema.parse({ agentId: 'codex', source: 'dynamic',
+        supportsFreeform: false, availableModels: [dynamicModel] }) };
+    });
     const { AgentModelsScreen } = await import('./AgentModelsScreen');
     const { ProviderModelManager } =
       await import('@/providers/models/ProviderModelManager');
@@ -306,10 +299,13 @@ describe('AgentModelsScreen provider settings safety', () => {
     const screen = await renderScreen(
       <AgentModelsScreen
         agentTargetKey="agent:happier.agent.codex/codex"
-        runtimeAgentId={null}
+        runtimeAgentId="codex"
       />,
     );
 
+    await waitForHomeGovernance(() => expect(screen.findByTestId('agent-models')).not.toBeNull());
+    await waitForHomeGovernance(() => expect(screen.findByType(ProviderModelManager).props.nativeModels)
+      .toContainEqual({ ...dynamicModel, hidden: false }));
     expect(
       screen.findByType(ProviderModelManager).props.groups[0].rows.find((row: ModelRow) => row.ref.modelId === 'boundary-model')?.descriptor.name,
     ).toBe('Boundary agent model');
@@ -362,7 +358,7 @@ describe('AgentModelsScreen provider settings safety', () => {
         projection: PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE,
       }),
     );
-    const loaded = await loadDaemonMergedProjectionCacheEntry({
+    const loaded = await loadDaemonMergedProjectionCacheEntry({ sections: 'complete',
       machineId: 'machine-a',
       serverId,
     });

@@ -18,6 +18,9 @@ const mocks = vi.hoisted(() => ({
     targetChosen: true,
     activeView: 'installed' as 'installed' | 'discover',
     setActiveView: vi.fn(),
+    pluginActionApproval: { approvalId: null, approvalPending: false, serverId: null, approvalSummary: null } as {
+        approvalId: string | null; approvalPending: boolean; serverId: string | null; approvalSummary: null;
+    },
 }));
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
@@ -60,7 +63,7 @@ vi.mock('./model/usePluginSettingsScreenState', () => ({
         pendingPluginChanges: [],
         daemonOperationsAvailable: true,
         isPluginActionInFlight: () => false,
-        decidePendingPluginChange: () => {},
+        pluginActionApproval: mocks.pluginActionApproval,
         administrationTargetSelection: mocks.targetChosen
             ? { state: { kind: 'online' }, candidates: [], selectedTarget: { serverIdentityId: 'server-a', machineId: 'machine-a' }, canExecute: true, resolveExecutionTarget: () => null }
             : { state: { kind: 'unselected' }, candidates: [], selectedTarget: null, canExecute: false, resolveExecutionTarget: () => null },
@@ -105,7 +108,7 @@ vi.mock('./detail/PluginDetailScreen', async () => ({
     PluginDetailView: (await import('@/dev/testkit/mocks/components')).createPassThroughComponent('PluginDetailView'),
 }));
 vi.mock('./listing/PluginListingScreen', async () => ({
-    PluginListingView: (await import('@/dev/testkit/mocks/components')).createPassThroughComponent('PluginListingView'),
+    PluginListingPane: (await import('@/dev/testkit/mocks/components')).createPassThroughComponent('PluginListingPane'),
 }));
 vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', async () => ({
     MachineAdministrationTargetSelector: (await import('@/dev/testkit/mocks/components')).createPassThroughComponent('MachineAdministrationTargetSelector'),
@@ -118,9 +121,6 @@ vi.mock('./PluginAccountDataEraseRecoverySection', async () => ({
 }));
 vi.mock('./NativeAppPluginPanelsSettingsEntry', async () => ({
     NativeAppPluginPanelsSettingsEntry: (await import('@/dev/testkit/mocks/components')).createPassThroughComponent('NativeAppPluginPanelsSettingsEntry'),
-}));
-vi.mock('./PluginAppPagesSettingsEntry', async () => ({
-    PluginAppPagesSettingsEntry: (await import('@/dev/testkit/mocks/components')).createPassThroughComponent('PluginAppPagesSettingsEntry'),
 }));
 vi.mock('./PluginMarketplaceSections', async () => {
     const { createPassThroughComponent } = await import('@/dev/testkit/mocks/components');
@@ -184,6 +184,7 @@ describe('Settings > Plugins information architecture', () => {
         mocks.installedPlugins = [];
         mocks.installedPluginsRead = true;
         mocks.targetChosen = true;
+        mocks.pluginActionApproval = { approvalId: null, approvalPending: false, serverId: null, approvalSummary: null };
         mocks.setActiveView.mockClear();
         if (!routerMock.value) throw new Error('Router boundary must be installed');
         routerMock.value.resetParams();
@@ -200,7 +201,8 @@ describe('Settings > Plugins information architecture', () => {
      * rendered with nothing selected. One navigation owner means the active
      * value is always one of the segments the reader can see.
      */
-    it('renders one management navigation owner whose segments contain the active view', async () => {
+    it('renders one app-host navigation owner whose segments contain the active view', async () => {
+        mocks.pathname = '/plugins';
         for (const activeView of ['installed', 'discover'] as const) {
             mocks.activeView = activeView;
             const segmentIds = await readManagementSegmentIds();
@@ -245,9 +247,34 @@ describe('Settings > Plugins information architecture', () => {
         // The column is hidden: the page offers the choice itself.
         expect(await readManagementSegmentIds(inShell(false))).toEqual(['installed', 'discover']);
         standardCleanup();
-        // Settings' Plugin marketplace sits beside the settings column, not the Plugins one.
+        // Settings is management only; discovery lives in the app host.
         mocks.pathname = '/settings/plugins';
-        expect(await readManagementSegmentIds(inShell(true))).toEqual(['installed', 'discover']);
+        expect(await readManagementSegmentIds(inShell(true))).toEqual([]);
+        standardCleanup();
+        const screen = await renderInAppPanes(inShell(false)(React.createElement(PluginSettingsHomeScreen)));
+        expect(screen.findByTestId('settings.plugins.management.view:installed')).toBeNull();
+        expect(screen.findByTestId('settings.plugins.management.view:discover')).toBeNull();
+        expect(screen.findByTestId('settings.plugins.add')).not.toBeNull();
+        await act(async () => { screen.pressByTestId('settings.plugins.browseInStore'); });
+        expect(routerMock.value?.spies.push).toHaveBeenCalledWith('/plugins?view=browse');
+        expect(screen.findAll(node => String(node.type) === 'InstalledPluginsSection')).toHaveLength(1);
+        expect(screen.findAll(node => String(node.type) === 'DiscoverListingsSection')).toHaveLength(0);
+    });
+
+    it('opens the Store Plugins kind page (view=kind&kind=plugin) on Browse, as view=browse does', async () => {
+        mocks.pathname = '/plugins';
+        mocks.params = { view: 'kind', kind: 'plugin' };
+        await renderInAppPanes(React.createElement(PluginSettingsHomeScreen));
+        expect(mocks.setActiveView).toHaveBeenCalledWith('discover');
+    });
+
+    it('keeps Settings management visible during a legacy Browse handoff', async () => {
+        mocks.activeView = 'discover';
+        mocks.params = { view: 'browse', source: 'source-one', plugin: 'exact.plugin', itemId: '@exact/package', version: '1.2.3' };
+        const screen = await renderInAppPanes(React.createElement(PluginSettingsHomeScreen));
+        expect(screen.findAll(node => String(node.type) === 'InstalledPluginsSection')).toHaveLength(1);
+        expect(screen.findAll(node => String(node.type) === 'DiscoverListingsSection')).toHaveLength(0);
+        expect(routerMock.value?.spies.replace).toHaveBeenCalledWith('/plugins?view=browse&plugin=exact.plugin&source=source-one&itemId=%40exact%2Fpackage&version=1.2.3');
     });
 
     it('keeps the single installed-plugins search on the page beside the navigation-only Plugins column', async () => {
@@ -294,6 +321,21 @@ describe('Settings > Plugins information architecture', () => {
         }));
         await act(async () => { screen.pressByTestId('settings.plugins.detailPane.header.close'); });
         expect(routerMock.value?.spies.setParams).toHaveBeenCalledWith({ plugin: undefined, source: undefined });
+    });
+
+    it('keeps a review closed from the open plugin pane waiting in that pane, not behind it', async () => {
+        // Update was pressed in the plugin's pane; its review opened there and the person closed it unanswered.
+        mocks.params = { plugin: 'acme.plugin' };
+        mocks.pluginActionApproval = { approvalId: 'approval-1', approvalPending: true, serverId: 'server-1', approvalSummary: null };
+        const { Modal } = await import('@/modal');
+        const screen = await renderInAppPanes(React.createElement(PluginSettingsHomeScreen));
+        const presented = vi.mocked(Modal.show).mock.calls.filter(([config]) => config.chrome?.testID === 'approvals.in-place.modal');
+        expect(presented).toHaveLength(1);
+        await act(async () => { presented[0]![0].onRequestClose?.(); });
+        // The waiting line is offered in the pane the person is reading, once; the page behind it stays quiet.
+        const detail = screen.findAll((node) => (node.type as unknown) === 'PluginDetailView')[0];
+        expect(detail?.props.approvalReview?.waiting).toBe(true);
+        expect(screen.findByTestId('settings.plugins.approvalWaiting')).toBeNull();
     });
 
     it('opens a plugin as its own page where there is no side pane (phones)', async () => {

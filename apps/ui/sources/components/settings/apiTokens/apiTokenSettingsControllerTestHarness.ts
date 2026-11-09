@@ -2,9 +2,10 @@ import React from 'react';
 import { expect } from 'vitest';
 import 'fake-indexeddb/auto';
 import {
-    API_TOKEN_FULL_GRANT_V1,
+    API_TOKEN_FULL_GRANT_V1} from '@happier-dev/protocol/auth/apiTokenGrant';
+import {
     computeAccountEncryptionMigrateKeyFingerprintV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { renderScreen } from '@/dev/testkit';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { IdentityConnectionTestDiagnosticsV1 } from '@happier-dev/protocol';
+import type { IdentityConnectionTestDiagnosticsV1 } from '@happier-dev/protocol/identity/testDiagnostics';
 
 import { identityTestDiagnosticsRows } from './identityTestDiagnosticsPresentation';
 

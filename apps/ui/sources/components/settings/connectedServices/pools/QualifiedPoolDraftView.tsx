@@ -1,15 +1,14 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import {
     useConnectedAccountIdentityPrivacy,
     type ConnectedAccountIdentityPresenter,
@@ -45,10 +44,12 @@ export const QualifiedPoolDraftView = React.memo(function QualifiedPoolDraftView
     onDiscard: () => void;
 }>) {
     const { theme } = useUnistyles();
-    const styles = stylesheet;
     const [name, setName] = React.useState('');
     const [selected, setSelected] = React.useState<ReadonlySet<string>>(() => new Set());
     const trimmed = name.trim();
+    const { publish: publishDraftTitle } = useCollectionDraftTitle();
+    React.useEffect(() => { publishDraftTitle(trimmed); }, [publishDraftTitle, trimmed]);
+    React.useEffect(() => () => publishDraftTitle(''), [publishDraftTitle]);
     const toggle = React.useCallback((accountId: string) => {
         setSelected((current) => {
             const next = new Set(current);
@@ -59,10 +60,27 @@ export const QualifiedPoolDraftView = React.memo(function QualifiedPoolDraftView
     }, []);
 
     return (
-        <ItemList testID={TEST_ID}>
+        // The same column and header actions as every Settings draft (gateway, provider): the page is the
+        // pool's detail-to-be, named like its draft row until the name is typed (lab s2svc:poolNew).
+        <ItemList testID={TEST_ID} pageColumn="wide">
             <SettingsPageHeader
-                title={trimmed || t('connectedServicesPool.newPoolTitle')}
+                title={trimmed || t('connectedServicesCollection.newPoolDraft', { service: props.serviceLabel })}
                 alwaysShowTitle
+                cancelAction={{
+                    testID: `${TEST_ID}:discard`,
+                    title: t('connectedServicesPool.discard'),
+                    onPress: props.onDiscard,
+                }}
+                primaryAction={{
+                    testID: `${TEST_ID}:create`,
+                    title: t('connectedServicesPool.create'),
+                    disabled: trimmed.length === 0 || props.creating,
+                    loading: props.creating,
+                    onPress: () => props.onCreate({
+                        displayName: trimmed,
+                        accountIds: props.accounts.map((account) => account.accountId).filter((id) => selected.has(id)),
+                    }),
+                }}
                 description={t('connectedServicesPool.newPoolDescription', { service: props.serviceLabel })}
                 leading={(
                     <PageHeaderMarkIcon name="stack" />
@@ -110,39 +128,9 @@ export const QualifiedPoolDraftView = React.memo(function QualifiedPoolDraftView
                     );
                 })}
             </ItemGroup>
-            <ItemGroup surface="none">
-                <View style={styles.actions}>
-                    <RoundButton
-                        testID={`${TEST_ID}:create`}
-                        size="small"
-                        title={t('connectedServicesPool.create')}
-                        disabled={trimmed.length === 0 || props.creating}
-                        loading={props.creating}
-                        onPress={() => props.onCreate({
-                            displayName: trimmed,
-                            accountIds: props.accounts.map((account) => account.accountId).filter((id) => selected.has(id)),
-                        })}
-                    />
-                    <RoundButton
-                        testID={`${TEST_ID}:discard`}
-                        size="small"
-                        display="secondary"
-                        title={t('connectedServicesPool.discard')}
-                        onPress={props.onDiscard}
-                    />
-                </View>
-            </ItemGroup>
         </ItemList>
     );
 });
-
-const stylesheet = StyleSheet.create(() => ({
-    actions: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-    },
-}));
 
 /**
  * The live new-pool draft: names this service's accounts through the canonical presenter and renders

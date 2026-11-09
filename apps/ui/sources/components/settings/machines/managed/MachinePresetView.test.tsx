@@ -49,7 +49,7 @@ import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plug
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
-import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { ManagedMachinePresetCreateInputV1Schema, ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 
 const route = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), params: {} as Record<string, string | string[] | undefined> }));
 const boundary = vi.hoisted(() => ({ rpc: vi.fn() }));
@@ -309,7 +309,7 @@ function sizeControl(screen: Awaited<ReturnType<typeof renderSettingsView>>) {
   )[0];
 }
 
-async function seed(machinePoolsEnabled?: boolean) {
+async function seed(machinePoolsEnabled?: boolean, teamsEnabled?: boolean) {
   const serverId = await harness.addHome({
     name: 'History',
     serverUrl: 'https://history.example',
@@ -317,6 +317,7 @@ async function seed(machinePoolsEnabled?: boolean) {
     accountId: 'owner',
     currentAccount: true,
     machinePoolsEnabled,
+    teamsEnabled,
   });
   await harness.addHome({
     name: 'Other',
@@ -401,6 +402,52 @@ async function seedConfiguration(serverId: string) {
 }
 
 describe('reachable preset detail', () => {
+  it('keeps selected preset reads quiet for unrelated Machine pushes and refreshes relevant changes and recovery', async () => {
+    const serverId = await seed();
+    const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
+    const { useMachinePresetDetail } = await import('./useMachinePresets');
+    const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+    const hook = await renderHook(() => useMachinePresetDetail(scopeId, preset.id));
+    const reads = () => [
+      harness.requestsFor('/v1/machines/presets/get').length,
+      harness.requestsFor('/v1/machines/managed/actions/list').length,
+    ];
+    try {
+      await waitForHomeGovernance(() => expect(hook.getCurrent().state.value?.preset.id).toBe(preset.id));
+      expect(reads()).toEqual([1, 2]);
+      const retained = hook.getCurrent().state.value;
+      for (const machineId of ['other-controller', 'other-guest', 'another-machine']) {
+        await act(async () => publishHomeAccountChange(scopeId, [machineId], {
+          source: 'socket', changeKinds: ['machine'],
+        }));
+        await flushHookEffects();
+      }
+      expect(reads()).toEqual([1, 2]);
+      expect(hook.getCurrent().state.value).toBe(retained);
+
+      const changed = { ...preset, revision: preset.revision + 1, name: 'Updated preset' };
+      harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: changed } });
+      await act(async () => publishHomeAccountChange(scopeId, [preset.controller.machineId], {
+        source: 'socket', changeKinds: ['machine'],
+      }));
+      await waitForHomeGovernance(() => expect(hook.getCurrent().state.value?.preset.name).toBe(changed.name));
+      expect(reads()).toEqual([2, 4]);
+
+      // Preset writes use Account changes; missing hints and snapshot repair remain conservative.
+      for (const event of [
+        { entityIds: [preset.id], details: { source: 'socket', changeKinds: ['account'] } },
+        { entityIds: ['unknown-machine'], details: { source: 'socket' } },
+        { entityIds: [], details: { source: 'socket', changeKinds: ['machine'] } },
+        { entityIds: ['other-controller'], details: { source: 'snapshot', changeKinds: ['machine'] } },
+        { entityIds: ['other-controller'], details: { source: 'socket', changeKinds: ['machine', 'account'] } },
+      ] as const) {
+        const previous = reads();
+        await act(async () => publishHomeAccountChange(scopeId, event.entityIds, event.details));
+        await waitForHomeGovernance(() => expect(reads()).toEqual([previous[0]! + 1, previous[1]! + 2]));
+      }
+    } finally { await hook.unmount(); }
+  });
+
   it('settles a pending managed birth read as a typed cancellation when its Account changes', async () => {
     const serverId = await seed();
     const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
@@ -2191,6 +2238,112 @@ describe('reachable preset detail', () => {
     );
     expect(harness.requestsFor('/v1/machines/pools/resolve')).toEqual([]);
   });
+
+  it.each(['before options arrive', 'after exact choices are ready'] as const)(
+    'authors a new Team pool preset with editable native choices %s', async timing => {
+      const serverId = await seed(true, true);
+      const scopeId = await seedConfiguration(serverId);
+      const { storage } = await import('@/sync/domains/state/storage');
+      storage.getState().applyMachines([
+        createMachineFixture({ id: preset.controller.machineId, installationId: preset.controller.installationId, activeAt: Date.now() }),
+        createMachineFixture({ id: 'offline-controller', installationId: 'offline-installation', active: false, activeAt: 1 }),
+      ], true, { sourceServerId: scopeId, sourceAccountId: 'owner' });
+      observeMachinePresenceForTest({ serverId: scopeId, accountId: 'owner' }, [preset.controller.machineId]);
+      const editableProvisioner: MachineProvisionersListResultV1['provisioners'][number] = {
+        ...provisioner,
+        descriptor: { ...provisioner.descriptor, launchSchema: PluginJsonSchemaV2Schema.parse({
+          type: 'object', properties: { cpu: { type: 'integer', minimum: 1 }, image: { type: 'string' } },
+          required: ['cpu', 'image'], additionalProperties: false,
+        }) },
+      };
+      seedOptionsDeclaration(editableProvisioner, PluginJsonSchemaV2Schema.parse({ type: 'object', properties: {}, additionalProperties: false }));
+      const options = createMachineProvisionerOptionsFixture({ base: { launch: {} }, dimensions: {
+        size: [
+          { id: 'small', title: 'Small', assignments: [{ path: 'cpu', value: 2 }] },
+          { id: 'large', title: 'Large', assignments: [{ path: 'cpu', value: 4 }] },
+        ],
+        image: [
+          { id: 'base', title: 'Base image', assignments: [{ path: 'image', value: 'base' }] },
+          { id: 'linux', title: 'Linux guest', assignments: [{ path: 'image', value: 'linux' }] },
+        ], location: [], network: [], duration: [],
+      } });
+      let releaseOptions: () => void = () => {};
+      const optionsGate = timing === 'before options arrive'
+        ? new Promise<void>(resolve => { releaseOptions = resolve; }) : Promise.resolve();
+      for (const actionId of ['machines.provisioners.list', 'machines.provisioners.options'] as const) {
+        harness.answer(serverId, `/v1/actions/${actionId}`, { select: async value => {
+          const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+          if (actionId === 'machines.provisioners.options') await optionsGate;
+          return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true,
+            result: actionId === 'machines.provisioners.options' ? options : request.target.kind === 'machine'
+              ? { controller: preset.controller, provisioners: [editableProvisioner] } : { provisioners: [] },
+          } } };
+        } });
+      }
+      const team = teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageSettings: true }) });
+      harness.answer(serverId, '/v1/teams/list', { body: { items: [team], nextCursor: null } });
+      const { bindHomeDomainActionHttpRequestV1 } = await import('@happier-dev/protocol/actions/homeDomainActionFamily');
+      harness.answer(serverId, bindHomeDomainActionHttpRequestV1('teams.get', { v: 1, teamId: team.id }).path, { body: team });
+      const poolId = '6be84651-2df7-4125-aac4-0d093217b198';
+      harness.answer(serverId, '/v1/machines/pools/list', { body: { pools: [{
+        pool: { id: poolId, name: 'Team builders', description: null, revision: 1, createdAt: 1, updatedAt: 1,
+          audience: { kind: 'team', teamId: team.id }, members: [
+            { machineId: preset.controller.machineId, priorityTier: 0, enabled: true, state: 'connected' },
+            { machineId: 'offline-controller', priorityTier: 0, enabled: true, state: 'offline' },
+          ] },
+        availability: { state: 'known', connectedCount: 1, enabledCount: 2 },
+        access: { canManage: true, canResolve: true, canViewMembers: true },
+      }] } });
+      const screen = await renderSettingsView(<ManagedMachineConfigurationView serverId={scopeId}
+        provisioner={buildQualifiedPluginContributionKey(preset.launch.provider)} presetOnly initialController={preset.controller} />);
+      const field = (testID: string) => screen.tree.findAllByType(ManagedFieldRow).find(row => row.props.testID === testID);
+      try {
+        await waitForHomeGovernance(() => expect(field('managed-config.audience')?.props.row.choices.some((choice: { id: string }) => choice.id === team.id)).toBe(true));
+        expect(field('managed-config.audience')?.props.row.disabled).toBe(false);
+        await act(async () => field('managed-config.audience')?.props.row.onChange(team.id));
+        await waitForHomeGovernance(() => expect(field('managed-config.limit')?.props.row.disabled).toBe(false));
+        await act(async () => field('managed-config.limit')?.props.row.onChange('2'));
+        if (timing === 'after exact choices are ready') {
+          await waitForHomeGovernance(() => expect(sizeControl(screen)?.props.sizes.some((size: { id: string }) => size.id === 'large')).toBe(true));
+        } else {
+          await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/actions/machines.provisioners.options').length).toBeGreaterThan(0));
+          expect(sizeControl(screen)).toBeUndefined();
+        }
+        const targetControl = () => screen.tree.findAllByType(SegmentedChoiceItem).find(row => row.props.testIDPrefix === 'managed-config.controller-target');
+        await waitForHomeGovernance(() => expect(targetControl()?.props.disabled).toBe(false));
+        await act(async () => screen.pressByTestId('managed-config.controller-target:pool'));
+        expect(targetControl()?.props.value).toBe('pool');
+        await waitForHomeGovernance(() => expect(field('managed-config.controller-pool')?.props.row.choices).toEqual([{ id: poolId, title: 'Team builders' }]));
+        expect(field('managed-config.controller-pool')?.props.row.disabled).toBe(false);
+        await act(async () => field('managed-config.controller-pool')?.props.row.onChange(poolId));
+        await act(async () => releaseOptions());
+        await waitForHomeGovernance(() => expect(sizeControl(screen)?.props.sizes.find((size: { id: string }) => size.id === 'large')?.selectable).toBe(true));
+        await act(async () => sizeControl(screen)?.props.onChange('large'));
+        expect(sizeControl(screen)?.props.value).toBe('large');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.images:linux')?.props.disabled).toBe(false));
+        await act(async () => screen.pressByTestId('managed-config.images:linux'));
+        harness.answer(serverId, '/v1/machines/presets/create', { select: input => {
+          const saved = ManagedMachinePresetV1Schema.parse({ ...preset, ...ManagedMachinePresetCreateInputV1Schema.parse(input), revision: 1, controller: undefined });
+          return { body: { kind: 'saved', preset: saved } };
+        } });
+        await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
+        await act(async () => screen.pressByTestId('managed-config.create'));
+        await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/machines/presets/create')).toHaveLength(1));
+        const created = ManagedMachinePresetCreateInputV1Schema.parse(harness.requestsFor('/v1/machines/presets/create')[0]?.input);
+        expect(created).toMatchObject({ owner: { kind: 'team', teamId: team.id }, controllerPoolId: poolId,
+          simultaneousLimit: { maximum: 2 }, launch: { choices: { cpu: 4, image: 'linux' } } });
+        expect(created).not.toHaveProperty('controller');
+        await waitForHomeGovernance(() => expect(route.replace).toHaveBeenLastCalledWith(
+          `/settings/machines/presets/${created.id}?serverId=${encodeURIComponent(scopeId)}`,
+        ));
+        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toEqual([]);
+        expect(harness.requestsFor('/v1/machines/pools/resolve')).toEqual([]);
+      } finally {
+        releaseOptions();
+        await screen.unmount();
+      }
+    },
+  );
 
   it('preserves an edited launch after rejection and revision conflict, then saves through normal approval', async () => {
     const serverId = await seed();

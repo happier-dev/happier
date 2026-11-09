@@ -10,6 +10,15 @@ import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storage';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { createSessionCallerHostedHtmlRequestController } from '@/components/ui/surfaces/hostedHtml/sessionCallerHostedHtmlRequestController';
+import { resolveScopedPluginSettingsServerIdentity } from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
+import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { DEFAULT_SESSION_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/sessionCapabilities';
+import { PENDING_INPUT_PROTOCOL_VERSION_V4 } from '@happier-dev/protocol/clientCompatibility/primitives';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -38,6 +47,125 @@ const originalState = storage.getState();
 afterEach(() => { standardCleanup(); storage.setState(originalState, true); });
 
 describe('Action policy controls through their canonical Action', () => {
+    it('honors foreign HTML Ask for safe Send through the UI approval policy hook', async () => {
+        const account = await createSecretSettingsTestHarness({ serverIdentityId: 'srv_g1_safe_send',
+            features: createRootLayoutFeaturesResponse({ capabilities: {
+                serverIdentity: { serverIdentityId: 'srv_g1_safe_send' },
+                session: { ...DEFAULT_SESSION_CAPABILITIES, pendingInput: { protocolVersion: PENDING_INPUT_PROTOCOL_VERSION_V4 } },
+            } }),
+            settings: settingsParse({ memoryUseInNewSessions: false, actionsSettingsV1: { v: 1, actions: {},
+                callerSurfacePolicies: { foreign_session_html: { 'session.message.send': 'ask_first' } },
+            } }),
+        });
+        const sessionId = 'foreign-safe-send';
+        const session = createPlainSessionCurrentProjectionRecordFixture({ id: sessionId,
+            metadata: { path: '/repo', host: 'tester.local' } });
+        const request = account.request.getMockImplementation();
+        if (!request) throw new Error('Expected the Home HTTP boundary');
+        const sent: unknown[] = [];
+        // Only HTTP is synthetic; Session admission, policy, Pending and Artifact clients stay real.
+        account.request.mockImplementation(createSessionReadBatchFetchBoundary(async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === `/v2/sessions/${sessionId}`) return Response.json({ session });
+            if (path === `/v1/sessions/${sessionId}/turns`) return Response.json({ v: 1, sessionId, updatedAt: 1, turns: [] });
+            if (path === `/v2/sessions/${sessionId}/pending` && init?.method === 'POST') {
+                const body: unknown = JSON.parse(String(init.body));
+                if (!body || typeof body !== 'object') throw new Error('Expected Pending enqueue input');
+                sent.push(body);
+                return Response.json({ didWrite: true, pendingCount: sent.length, pendingVersion: sent.length,
+                    requestedAction: Reflect.get(body, 'requestedAction'),
+                    pending: { localId: Reflect.get(body, 'localId'), content: Reflect.get(body, 'content'),
+                        status: 'queued', position: sent.length, createdAt: 1, updatedAt: 1,
+                        discardedAt: null, discardedReason: null, authorAccountId: account.scope.accountId },
+                });
+            }
+            return request(input, init);
+        }));
+        const serverIdentityId = resolveScopedPluginSettingsServerIdentity(account.scope.serverId);
+        if (!serverIdentityId) throw new Error('Expected the captured Home identity');
+        let owned = false;
+        const execute = createFrontDoorActionExecute();
+        let admission: unknown;
+        const controller = createSessionCallerHostedHtmlRequestController({
+            sessionId, serverId: account.scope.serverId, serverIdentityId, accountId: account.scope.accountId,
+            executeHostAction: async (...args) => { const result = await execute(...args); admission = result; return result; },
+            isAccountCurrent: () => true,
+            isSessionCurrent: () => true, isSessionOwned: () => owned, pluginTarget: null,
+            publishResourceEvent: () => {}, notify: () => {},
+        });
+        const send = (id: string) => controller.handleRequest({ requestId: id, method: 'executeAction',
+            payload: { action: 'session.message.send', input: { message: 'Hello', localId: id } },
+        });
+        const choose = (mode: 'allowed' | 'off') => account.replaceSettings(settingsParse({ ...account.persistedSettings,
+            actionsSettingsV1: { v: 1, actions: {}, callerSurfacePolicies: { foreign_session_html: { 'session.message.send': mode } } },
+        }));
+        try {
+            const asked = await send('foreign-ask');
+            expect(asked, JSON.stringify(admission)).toMatchObject({ kind: 'approval_request_created' });
+            expect(account.artifacts.list()).toHaveLength(1);
+            const body = account.artifacts.readPlainBody(account.artifacts.list()[0]!.id);
+            if (!body) throw new Error('Expected the stored approval request');
+            expect(ApprovalRequestV2Schema.parse(JSON.parse(body))).toMatchObject({ status: 'open', actionId: 'session.message.send' });
+            expect(sent).toEqual([]);
+            choose('allowed');
+            await expect(send('foreign-allowed')).resolves.toMatchObject({ status: 'accepted', localId: 'foreign-allowed' });
+            expect(sent).toHaveLength(1);
+            choose('off');
+            await expect(send('foreign-off')).resolves.toMatchObject({ code: 'action_disabled' });
+            expect(sent).toHaveLength(1);
+            owned = true;
+            await expect(send('own-send')).resolves.toMatchObject({ status: 'accepted', localId: 'own-send' });
+            expect(sent).toHaveLength(2);
+            expect(account.artifacts.list()).toHaveLength(1);
+        } finally { controller.dispose(); standardCleanup(); await account.dispose(); }
+    });
+    it('keeps foreign HTML Ask replay consistent with ordinary UI policy after an Off change', async () => {
+        const outcomes: boolean[] = [];
+        for (const foreign of [false, true]) {
+            const account = await createSecretSettingsTestHarness({ serverIdentityId: foreign ? 'srv_g1_foreign' : 'srv_g1_ui', settings: settingsParse({
+                memoryUseInNewSessions: false,
+                actionsSettingsV1: { v: 1, actions: foreign ? {} : { 'actions.policy.set': { approvalRequiredSurfaces: ['ui'] } },
+                    ...(foreign ? { callerSurfacePolicies: { foreign_session_html: { 'actions.policy.set': 'ask_first' } } } : {}),
+                },
+            }) });
+            const serverIdentityId = resolveScopedPluginSettingsServerIdentity(account.scope.serverId);
+            if (!serverIdentityId) throw new Error('Expected the captured Home identity');
+            const controller = createSessionCallerHostedHtmlRequestController({
+                sessionId: 'session-foreign', serverId: account.scope.serverId, serverIdentityId, accountId: account.scope.accountId,
+                executeHostAction: createFrontDoorActionExecute(), isAccountCurrent: () => true,
+                isSessionCurrent: () => true, isSessionOwned: () => !foreign, pluginTarget: null,
+                publishResourceEvent: () => {}, notify: () => {},
+            });
+            try {
+                const request = (requestId: string) => controller.handleRequest({ requestId, method: 'executeAction',
+                    payload: { action: 'actions.policy.set', input: { actionId: 'session.stop', audience: 'agent', mode: 'off' } },
+                });
+                await expect(request(foreign ? 'foreign-ask' : 'ui-ask')).resolves.toMatchObject({ kind: 'approval_request_created' });
+                expect(account.persistedSettings.actionsSettingsV1.actions['session.stop']?.disabledSurfaces.includes('agent') === true).toBe(false);
+                expect(account.artifacts.list()).toHaveLength(1);
+                const approved = await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[0]!.id, 'approve');
+                expect(approved, JSON.stringify({ foreign, approved })).toMatchObject({ ok: true, result: { status: 'executed' } });
+                expect(account.persistedSettings.actionsSettingsV1.actions['session.stop']?.disabledSurfaces.includes('agent') === true).toBe(true);
+                expect(account.artifacts.list()).toHaveLength(1);
+                account.replaceSettings(settingsParse({ ...account.persistedSettings, actionsSettingsV1: {
+                    ...account.persistedSettings.actionsSettingsV1, actions: { ...account.persistedSettings.actionsSettingsV1.actions,
+                        'session.stop': { disabledSurfaces: [] } },
+                } }));
+                await expect(request(foreign ? 'foreign-off-after-ask' : 'ui-off-after-ask'))
+                    .resolves.toMatchObject({ kind: 'approval_request_created' });
+                expect(account.artifacts.list()).toHaveLength(2);
+                account.replaceSettings(settingsParse({ ...account.persistedSettings, actionsSettingsV1: {
+                    ...account.persistedSettings.actionsSettingsV1,
+                    ...(foreign ? { callerSurfacePolicies: { foreign_session_html: { 'actions.policy.set': 'off' } } }
+                        : { actions: { 'actions.policy.set': { disabledSurfaces: ['ui'] } } }),
+                } }));
+                await decideApprovalAsInbox(account.scope.serverId, account.artifacts.list()[1]!.id, 'approve');
+                outcomes.push(account.persistedSettings.actionsSettingsV1.actions['session.stop']?.disabledSurfaces.includes('agent') === true);
+            } finally { controller.dispose(); standardCleanup(); await account.dispose(); }
+        }
+        // A caller class must not change the existing policy contract at replay.
+        expect(outcomes[1]).toBe(outcomes[0]);
+    });
     for (const control of ['audience', 'placement', 'tool exposure', 'spawn field', 'allow list'] as const) {
         it(`admits ${control} under Off, Ask rejection/approval and Allowed, preserving neighboring settings`, async () => {
             const actionId = control === 'spawn field' || control === 'allow list' ? 'settings.set' : 'actions.policy.set';

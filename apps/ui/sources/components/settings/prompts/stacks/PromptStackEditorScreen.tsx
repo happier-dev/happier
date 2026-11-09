@@ -218,15 +218,17 @@ export const PromptStackEditorScreen = React.memo(
             </View>
           }
         >
-          {documents.map((entry, index) => (
-            <PromptStackEntryRow
+          {documents.map((entry, index) => {
+            const presentationStatus = presentations.status(entry);
+            return <PromptStackEntryRow
               key={entry.id}
               testID={`promptStack.entry.${entry.id}`}
               entry={entry}
               title={promptStackEntryTitle(entry, presentations)}
-              unavailable={presentations(entry).kind === 'unknown'}
+              loading={presentationStatus === 'loading'}
+              unavailable={presentationStatus === 'unavailable'}
               disabled={!stack.canUpdate}
-              onOpen={presentations(entry).kind === 'unknown' ? undefined : () => {
+              onOpen={presentationStatus !== 'ready' ? undefined : () => {
                 const href = promptStackEntryHref(entry, presentations(entry).kind, scope?.serverId ?? '');
                 if (href) router.push(href as never);
               }}
@@ -243,8 +245,8 @@ export const PromptStackEditorScreen = React.memo(
                 update({ kind: 'set_enabled', entryId: entry.id, enabled })
               }
               onBudgetChange={(maxChars) => update({ kind: 'set_budget', entryId: entry.id, maxChars })}
-            />
-          ))}
+            />;
+          })}
 
           {stack.hasLoadedEntries && documents.length === 0 ? (
             <Item

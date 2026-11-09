@@ -17,6 +17,8 @@ import { Text } from '@/components/ui/text/Text';
 import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { t } from '@/text';
+import { PublicProfilePanelHeader } from './PublicProfilePanelHeader';
+import { usePublicProfileAtmospherePreview, usePublicProfileAtmospherePreviewValue } from '@/sync/store/settingsPreview';
 
 export type PublicProfileLookPreparation =
   | Readonly<{ status: 'ready'; prepared: PublicProfilePreparedAtmosphereV1 }>
@@ -38,6 +40,8 @@ export const PublicProfileLookPanel = React.memo(function PublicProfileLookPanel
   }>,
 ) {
   const { serverId, value } = props;
+  const preview = usePublicProfileAtmospherePreviewValue(serverId);
+  const setPreview = usePublicProfileAtmospherePreview(serverId);
   const pictures = useAtmospherePictureCatalog();
   const { binding } = useServerCredentialAccountScopeBinding(serverId);
   // The captured draft: edits start from the latest candidate, including one not yet re-rendered.
@@ -76,17 +80,13 @@ export const PublicProfileLookPanel = React.memo(function PublicProfileLookPanel
     if (next === latest.current.value) return;
     return setSetting(setting, next);
   }, [isCurrent, pictureActions.target, setSetting]);
-  const editor = React.useMemo<AtmosphereEditor>(() => ({ value, update, pictureActions }), [value, update, pictureActions]);
+  const previewEdit = React.useCallback<NonNullable<AtmosphereEditor['preview']>>(edit => {
+    setPreview(edit ? edit(latest.current.value) : undefined);
+  }, [setPreview]);
+  const editor = React.useMemo<AtmosphereEditor>(() => ({ value: preview ?? value, update, pictureActions, preview: previewEdit }), [value, preview, update, pictureActions, previewEdit]);
   return (
     <View style={styles.panel} testID={props.testID}>
-      <View style={styles.header}>
-        <Text variant="heading" emphasis="semiBold" style={styles.title} accessibilityRole="header">
-          {t('publicIdentity.look.title')}
-        </Text>
-        <Text variant="meta" style={styles.description}>
-          {t('publicIdentity.look.description')}
-        </Text>
-      </View>
+      <PublicProfilePanelHeader title={t('publicIdentity.look.title')} description={t('publicIdentity.look.description')} />
       <LookBackdropControls editor={editor} pictures={pictures} />
       {value.source === 'picture' ? (
         <LookFooter pictureRef={value.picture.ref} pictures={pictures} pictureActions={pictureActions} />
@@ -191,14 +191,6 @@ export function usePreparePublicProfileLook(serverId: string) {
 
 const styles = StyleSheet.create((theme) => ({
   panel: { paddingBottom: theme.space.s12 },
-  header: {
-    paddingHorizontal: theme.space.s16,
-    paddingTop: theme.space.s12,
-    paddingBottom: theme.space.s4,
-    gap: theme.space.s2,
-  },
-  title: { color: theme.colors.text.primary },
-  description: { color: theme.colors.text.secondary },
   footer: {
     flexDirection: 'row',
     alignItems: 'flex-start',

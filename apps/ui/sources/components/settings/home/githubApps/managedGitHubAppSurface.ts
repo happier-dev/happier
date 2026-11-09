@@ -1,4 +1,4 @@
-import type { ManagedGitHubAppOwnerV1 } from '@happier-dev/protocol';
+import type { ManagedGitHubAppOwnerV1 } from '@happier-dev/protocol/identity/githubApps';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';

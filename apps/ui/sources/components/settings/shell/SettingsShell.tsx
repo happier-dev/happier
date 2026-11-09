@@ -16,6 +16,8 @@ import { SettingsPageSearchProvider } from './SettingsPageSearchContext';
 import { SettingsFloatingControlsHost } from '@/components/settings/shell/SettingsModalFloatingControls';
 import { SettingsRailVisibilityContext } from '@/components/settings/shell/settingsRailVisibility';
 import { useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { HorizontalSafeAreaProvider, NavigatorSafeAreaBleed, ScreenBackdropBoundary, useHorizontalSafeArea } from '@/components/navigation/safeArea/HorizontalSafeArea';
+import { resolveNavigatorBleed, resolveSidebarInsetSplit } from '@/components/navigation/safeArea/horizontalSafeAreaGeometry';
 import {
     SETTINGS_NAV_SIDEBAR_DEFAULT_WIDTH_PX,
     SETTINGS_NAV_SIDEBAR_MAX_WIDTH_PX,
@@ -59,7 +61,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         // The plane the content pane lies on: the content pane is transparent and each settings
         // route paints its own canvas through `ItemList`. The rail beside it is the raised
         // surface, so this canvas is the recessed field the rail sits proud of.
-        backgroundColor: theme.colors.background.canvas,
+        backgroundColor: theme.colors.surface.base,
     },
     row: {
         flex: 1,
@@ -87,6 +89,7 @@ const stylesheet = StyleSheet.create((theme) => ({
  */
 
 export const SettingsShell = React.memo(function SettingsShell(props: Readonly<{ children: React.ReactNode }>) {
+    const horizontalArea = useHorizontalSafeArea();
     const hosted = useDestinationInstanceKey() !== null;
     const styles = stylesheet;
     const { theme } = useUnistyles();
@@ -118,12 +121,14 @@ export const SettingsShell = React.memo(function SettingsShell(props: Readonly<{
     // modal): this shell then hosts the page only, and never draws a second copy of the navigation.
     const appShell = useAppShellColumn();
     const showRail = enabled && !appShell.present && !sidebarFallbackActive && !!ResizableDockedPaneComponent && !!SettingsSidebarComponent;
+    const insetSplit = resolveSidebarInsetSplit(resolveNavigatorBleed(horizontalArea).child, { sidebarShown: showRail });
 
     // Keep the nested navigator under the same wrappers and at the same sibling
     // position. Replacing this tree on resize resets its route and unsaved forms.
     return (
         <SettingsPageSearchProvider>
-        <View style={[styles.root, { backgroundColor: materialColor(theme.colors.background.canvas, 'transparent') }]}>
+        <NavigatorSafeAreaBleed>
+        <View style={[styles.root, { backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }]}>
             <View style={styles.row}>
                 {showRail ? <SettingsShellSidebarCrashBoundary onSidebarError={handleSidebarRenderError}>
                     <ResizableDockedPaneComponent
@@ -141,21 +146,22 @@ export const SettingsShell = React.memo(function SettingsShell(props: Readonly<{
                             getStorage().getState().applyLocalSettings({ settingsNavSidebarWidthPx: SETTINGS_NAV_SIDEBAR_DEFAULT_WIDTH_PX }, { source: 'ui' });
                         }}
                     >
-                        <AppShellMaterialPlane group="sidebar" color={appShellColumnPlaneColor(theme.colors)} translucentColor={theme.colors.surface.selected} style={[appShellColumnSurface.column, styles.sidebarColumn]}>
-                            <SettingsSidebarComponent />
+                        <AppShellMaterialPlane group="sidebar" color={appShellColumnPlaneColor(theme.colors)} translucentColor={theme.colors.surface.selected} style={[appShellColumnSurface.column, styles.sidebarColumn, { paddingLeft: insetSplit.sidebar.padding }]}>
+                            <ScreenBackdropBoundary><SettingsSidebarComponent /></ScreenBackdropBoundary>
                         </AppShellMaterialPlane>
                     </ResizableDockedPaneComponent>
                 </SettingsShellSidebarCrashBoundary> : null}
 
-                <AppShellMaterialPlane group="content" color={theme.colors.background.canvas} translucentColor={theme.colors.surface.selected} nested={containingMaterial !== undefined} style={styles.content}>
+                <AppShellMaterialPlane group="content" color={theme.colors.surface.base} translucentColor={theme.colors.surface.selected} nested={containingMaterial !== undefined} style={styles.content}>
                     <SettingsRailVisibilityContext.Provider value={showRail || appShell.columnVisible}>
                         <SettingsFloatingControlsHost enabled={isTabletViewport || hosted}>
-                            {props.children}
+                            <HorizontalSafeAreaProvider value={insetSplit.content}>{props.children}</HorizontalSafeAreaProvider>
                         </SettingsFloatingControlsHost>
                     </SettingsRailVisibilityContext.Provider>
                 </AppShellMaterialPlane>
             </View>
         </View>
+        </NavigatorSafeAreaBleed>
         </SettingsPageSearchProvider>
     );
 });

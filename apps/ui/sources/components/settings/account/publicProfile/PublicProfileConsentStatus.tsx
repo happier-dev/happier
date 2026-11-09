@@ -47,16 +47,9 @@ export function PublicProfileConsentStatus(
       );
     case 'acknowledged': {
       const shownNow = !state.previousShown;
-      // Hiding takes effect at once; a newly shared value needs a refresh that may not have run yet.
-      const later =
-        shownNow &&
-        state.refresh !== 'complete' &&
-        state.refresh !== 'not_needed';
       const title = !shownNow
         ? t('publicIdentity.publicData.consent.hidden', { item })
-        : later
-          ? t('publicIdentity.publicData.consent.sharedLater', { item })
-          : t('publicIdentity.publicData.consent.shared', { item });
+        : t('publicIdentity.publicData.consent.shared', { item });
       return line('success', title, {
         label: t('publicIdentity.publicData.consent.undo'),
         onPress: props.onUndo,

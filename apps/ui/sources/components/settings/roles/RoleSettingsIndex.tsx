@@ -10,6 +10,7 @@ import { ItemAddRow } from '@/components/ui/lists/ItemAddRow';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { CollectionLandingState } from '@/components/ui/lists/collection/CollectionLandingState';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 
@@ -38,19 +39,17 @@ const RoleCollectionLanding = React.memo(function RoleCollectionLanding() {
     });
     if (!landingId) {
         return (
-            <ItemList>
-                <SurfaceStateCard
-                    testID="settings.roles.landing"
-                    kind={catalog.status === 'ready' ? 'empty' : catalog.status === 'failed' ? 'error' : 'loading'}
-                    title={catalog.status === 'ready' ? t('roles.rail.empty')
-                        : catalog.status === 'failed' ? t('roles.settings.loadFailed') : t('common.loading')}
-                    reason={catalog.status === 'ready' ? t('roles.settings.description') : undefined}
-                    action={catalog.status === 'ready' ? {
-                        label: t('roles.settings.newRole'),
-                        onPress: () => openRoleCollectionHref(router, newRoleRoute(), false, 'RoleCollectionLanding.add'),
-                    } : catalog.status === 'failed' ? { label: t('common.retry'), onPress: catalog.refresh } : undefined}
-                />
-            </ItemList>
+            <CollectionLandingState
+                testID="settings.roles.landing"
+                kind={catalog.status === 'ready' ? 'empty' : catalog.status === 'failed' ? 'error' : 'loading'}
+                title={catalog.status === 'ready' ? t('roles.rail.empty')
+                    : catalog.status === 'failed' ? t('roles.settings.loadFailed') : t('common.loading')}
+                reason={catalog.status === 'ready' ? t('roles.settings.description') : undefined}
+                action={catalog.status === 'ready' ? {
+                    label: t('roles.settings.newRole'),
+                    onPress: () => openRoleCollectionHref(router, newRoleRoute(), false, 'RoleCollectionLanding.add'),
+                } : catalog.status === 'failed' ? { label: t('common.retry'), onPress: catalog.refresh } : undefined}
+            />
         );
     }
     return <Redirect href={roleRoute(landingId) as never} />;

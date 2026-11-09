@@ -1,13 +1,17 @@
 import * as React from 'react';
+import { resolveBugReportLogSelection, type BugReportLogSelection } from '@happier-dev/protocol/bugs/reports/machineDiagnostics';
 
 import type { BugReportsFeature } from '../bugReportFeatureDefaults';
 
 export function useBugReportDiagnosticsSelection(feature: BugReportsFeature): {
+  logSelection: BugReportLogSelection;
+  setLogSelection: (value: BugReportLogSelection) => void;
   includeDiagnostics: boolean;
   setIncludeDiagnostics: (value: boolean) => void;
   diagnosticsKinds: string[];
   setDiagnosticsKinds: (kinds: string[]) => void;
 } {
+  const [logSelection, setLogSelection] = React.useState(resolveBugReportLogSelection);
   const includeDiagnosticsTouched = React.useRef(false);
   const diagnosticsKindsTouched = React.useRef(false);
 
@@ -48,6 +52,7 @@ export function useBugReportDiagnosticsSelection(feature: BugReportsFeature): {
   }, [feature.acceptedArtifactKinds]);
 
   return {
+    logSelection, setLogSelection,
     includeDiagnostics,
     setIncludeDiagnostics,
     diagnosticsKinds,

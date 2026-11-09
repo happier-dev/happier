@@ -8,7 +8,6 @@ import {
   normalizeUsageQuery,
 } from '@happier-dev/protocol/inputs/usageQuery';
 import { evaluateUsageCoach, applyUsageCoachPreferences } from '@happier-dev/protocol/usage/coach/evaluateUsageCoach';
-import { UsageCoachPreferencesV1Schema } from '@happier-dev/protocol/account/settings/usageCoachPreferencesV1';
 import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
@@ -77,7 +76,7 @@ function harness(options: Readonly<{ approve?: boolean; agentDigestDisabled?: bo
   const scope = lifetimeHarness();
   const store = new Map<string, unknown>([
     [ANCHOR, false],
-    [PREFERENCES, { v: 1, suppressions: [] }],
+    [PREFERENCES, { v: 1, disabledChecks: [], modelSuggestion: 'suggest_with_estimates' }],
     [COACH_STATE, { v: 1, suppressions: [] }],
   ]);
   let version = 5;
@@ -299,11 +298,11 @@ describe('Usage Coach widget controller', () => {
     expect(state()).toMatchObject({ dismissed: false, snoozedUntilMs: untilMs });
     expect((await controller.snooze(query, finding.evidenceKey, null)).ok).toBe(true);
     expect(store.get(COACH_STATE)).toMatchObject({ suppressions: [] });
-    expect(store.get(PREFERENCES)).toEqual({ v: 1, suppressions: [] });
+    expect(store.get(PREFERENCES)).toEqual({ v: 1, disabledChecks: [], modelSuggestion: 'suggest_with_estimates' });
     await controller.dismiss(query, finding.evidenceKey);
     expect((await controller.dismiss(query, finding.evidenceKey, false)).ok).toBe(true);
     expect(store.get(COACH_STATE)).toMatchObject({ suppressions: [] });
-    expect(store.get(PREFERENCES)).toEqual({ v: 1, suppressions: [] });
+    expect(store.get(PREFERENCES)).toEqual({ v: 1, disabledChecks: [], modelSuggestion: 'suggest_with_estimates' });
   });
 
   it('drops a late result once the captured Account retires', async () => {

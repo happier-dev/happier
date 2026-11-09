@@ -36,7 +36,7 @@ export function PromptStackDocumentMenu(props: Readonly<{
     onPick: (ref: PromptArtifactRefV1, title: string) => void;
 }>) {
     const { theme } = useUnistyles();
-    const artifacts = useArtifacts();
+    const artifacts = useArtifacts('promptLibrary');
     const { attachedRefs = EMPTY_ATTACHED_REFS, onPick, serverId, purpose } = props;
     const scope = useActiveServerAccountScope(serverId);
     const lifetime = React.useMemo(() => captureActiveServerAccountScopeLifetime(), [scope?.serverId, scope?.accountId]);

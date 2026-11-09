@@ -7,7 +7,7 @@ import {
   type PublicProfilePolicyV1,
   type PublicProfileSnapshotV1,
 } from '@happier-dev/protocol/account/publicProfile';
-import { projectPublicProfilePreview } from '@happier-dev/protocol/account/projectPublicProfile';
+import { createPublicProfileProjector, resolvePublicProfileFieldDependencies } from '@happier-dev/protocol/account/projectPublicProfile';
 import type {
   PublicProfileContextV1,
   PublicProfileLayoutV1,
@@ -16,11 +16,6 @@ import type {
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-
-const NO_APPEARANCE = {
-  atmosphere: { source: 'none' },
-  theme: 'auto',
-} as const;
 
 /**
  * The one item a hidden block waits for: the first unshared item that, shared alone, lets the one
@@ -33,6 +28,7 @@ export function resolvePublicProfileBlockShareField(
     context: PublicProfileContextV1;
     snapshot: PublicProfileSnapshotV1;
     policy: PublicProfilePolicyV1;
+    projector?: ReturnType<typeof createPublicProfileProjector>;
   }>,
 ): PublicProfileField | null {
   const block = input.layout.items
@@ -40,21 +36,22 @@ export function resolvePublicProfileBlockShareField(
     .find((item) => item.id === input.blockId);
   if (!block) return null;
   const layout: PublicProfileLayoutV1 = { v: 1, items: [block] };
+  // Only the items the block reads are candidates (the projector's own dependency map).
+  const uses = resolvePublicProfileFieldDependencies(layout).get(block.id) ?? new Set();
+  const projector = input.projector ?? createPublicProfileProjector(input.snapshot);
   return (
     PUBLIC_PROFILE_FIELDS_V1.find(
       (field) =>
+        uses.has(field) &&
         !input.policy.fields[field] &&
-        (projectPublicProfilePreview({
+        (projector.project({
           context: input.context,
           metadata: {},
-          snapshot: input.snapshot,
-          layout,
-          appearance: NO_APPEARANCE,
           policy: {
             ...input.policy,
             fields: { ...input.policy.fields, [field]: true },
           },
-        })?.layout.items.length ?? 0) > 0,
+        })?.projectLayout(layout).items.length ?? 0) > 0,
     ) ?? null
   );
 }
@@ -70,6 +67,7 @@ export function PublicProfileHiddenBlockNote(
     context: PublicProfileContextV1;
     snapshot: PublicProfileSnapshotV1;
     policy: PublicProfilePolicyV1;
+    projector?: ReturnType<typeof createPublicProfileProjector>;
     disabled: boolean;
     onShare: (field: PublicProfileField) => void;
   }>,
@@ -83,8 +81,9 @@ export function PublicProfileHiddenBlockNote(
         context,
         snapshot,
         policy,
+        projector: props.projector,
       }),
-    [blockId, layout, context, snapshot, policy],
+    [blockId, layout, context, snapshot, policy, props.projector],
   );
   const item = field ? t(`publicIdentity.publicData.fields.${field}`) : null;
   return (

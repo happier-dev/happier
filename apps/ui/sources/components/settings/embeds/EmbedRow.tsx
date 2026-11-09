@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol';
+import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 
 import { ApiTokenStatusGlyph } from '@/components/settings/apiTokens/ApiTokenStatusGlyph';
 import { buildApiTokenRowPresentation, resolveApiTokenStatusLabel } from '@/components/settings/apiTokens/apiTokenSettingsPresentation';
@@ -30,11 +30,11 @@ export const EmbedRow = React.memo(function EmbedRow(props: Readonly<{
     const press = React.useCallback(() => onPress(token), [onPress, token]);
     return (
         <Item
+            rowRole="catalogRow"
             testID={`settings-embeds-row:${props.token.tokenId}`}
             title={props.token.label}
             rightElement={statusLabel ? <ApiTokenStatusGlyph presentation={presentation} /> : undefined}
             subtitle={summary}
-            subtitleLines={1}
             accessibilityLabel={[props.token.label, statusLabel, summary].filter(Boolean).join(', ')}
             selected={rail ? props.selected === true : undefined}
             density={rail ? 'compact' : undefined}

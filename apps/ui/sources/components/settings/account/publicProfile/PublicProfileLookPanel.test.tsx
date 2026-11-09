@@ -18,6 +18,7 @@ import { pictureStore } from '@/components/atmosphere/pictureStore';
 import { pictureCreditLine } from '@/components/atmosphere/look/pictureCredit';
 import { nativePickImages } from '@/utils/files/nativePickImages';
 import { t } from '@/text';
+import { usePublicProfileAtmospherePreviewValue } from '@/sync/store/settingsPreview';
 import {
   PublicProfileLookPanel,
   usePreparePublicProfileLook,
@@ -112,6 +113,35 @@ describe('Public profile Look panel', () => {
     vi.restoreAllMocks();
   });
 
+  it('previews strength without editing the private candidate until the gesture commits', async () => {
+    const account = await createSecretSettingsTestHarness({ settings: settingsParse({
+      actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
+    }) });
+    const seen: AtmospherePresentation[] = [];
+    let preview: AtmospherePresentation | undefined;
+    function BandReader() { preview = usePublicProfileAtmospherePreviewValue(account.scope.serverId); return null; }
+    try {
+      const screen = await renderScreen(<><Draft serverId={account.scope.serverId}
+        initial={withRef({ kind: 'builtin', id: library.id })} seen={seen} /><BandReader /></>);
+      const track = screen.findByTestId('look-strength-track')!;
+      await act(async () => {
+        track.props.onLayout({ nativeEvent: { layout: { width: 100 } } });
+        track.props.onResponderGrant({ nativeEvent: { locationX: 20, pageX: 220 } });
+      });
+      for (let x = 30; x <= 80; x += 10) {
+        await act(async () => { track.props.onResponderMove({ nativeEvent: { pageX: 200 + x } }); });
+      }
+      expect(seen).toEqual([]);
+      expect(preview?.looks[library.id]?.strength).toBe(0.8);
+      expect(account.settingsWrites).toEqual([]);
+      await act(async () => { track.props.onResponderRelease(); });
+      await vi.waitFor(() => expect(seen).toHaveLength(1));
+      expect(seen[0]?.looks[library.id]?.strength).toBe(0.8);
+      expect(preview).toBeUndefined();
+      expect(account.settingsWrites).toEqual([]);
+    } finally { standardCleanup(); await account.dispose(); }
+  });
+
   it('admits real Look controls through Settings Off and Ask before changing the private candidate', async () => {
     const account = await createSecretSettingsTestHarness({ settings: settingsParse({
       actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } },
@@ -157,7 +187,7 @@ describe('Public profile Look panel', () => {
   });
 
   it('edits only the profile candidate with Home Look controls and no global glass rows', async () => {
-    const account = await createSecretSettingsTestHarness();
+    const account = await createSecretSettingsTestHarness({ settings: settingsParse({}) });
     const initialHome = account.persistedSettings.homeAtmosphere;
     const seen: AtmospherePresentation[] = [];
     try {
@@ -189,7 +219,7 @@ describe('Public profile Look panel', () => {
   });
 
   it('credits a library picture as the public page will', async () => {
-    const account = await createSecretSettingsTestHarness();
+    const account = await createSecretSettingsTestHarness({ settings: settingsParse({}) });
     try {
       const screen = await renderScreen(
         <Draft
@@ -210,7 +240,7 @@ describe('Public profile Look panel', () => {
   });
 
   it('discloses that applying uploads a device picture', async () => {
-    const account = await createSecretSettingsTestHarness();
+    const account = await createSecretSettingsTestHarness({ settings: settingsParse({}) });
     const localId = 'profile-look-device-picture';
     await pictureStore.put({
       localId,
@@ -243,7 +273,7 @@ describe('Public profile Look panel', () => {
   });
 
   it('shows a typed recovery for a missing device picture and acquires a replacement into the draft only', async () => {
-    const account = await createSecretSettingsTestHarness();
+    const account = await createSecretSettingsTestHarness({ settings: settingsParse({}) });
     const initialHome = account.persistedSettings.homeAtmosphere;
     const seen: AtmospherePresentation[] = [];
     vi.mocked(nativePickImages).mockResolvedValueOnce([
@@ -303,7 +333,7 @@ describe('Public profile Look panel', () => {
   });
 
   it('prepares the reviewed copy through the canonical preparer and reports a missing device picture', async () => {
-    const account = await createSecretSettingsTestHarness();
+    const account = await createSecretSettingsTestHarness({ settings: settingsParse({}) });
     const results: PublicProfileLookPreparation[] = [];
     let prepare: ReturnType<typeof usePreparePublicProfileLook> | null = null;
     function Probe() {

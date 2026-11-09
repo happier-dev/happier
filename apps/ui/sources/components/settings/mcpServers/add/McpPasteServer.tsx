@@ -12,7 +12,7 @@ import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { t } from '@/text';
 
-import { McpServerMark } from '../identity/McpServerMark';
+import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import {
   seedMcpPasteRow,
   type McpPasteAnswers,
@@ -32,6 +32,11 @@ export function McpPasteServer(
     hideHead?: boolean;
     /** Whether a value still asked is flagged. A caller that asks before an Add attempt keeps the fields neutral. */
     showAttention?: boolean;
+    /**
+     * One part in its own section (a paste's details: the values under What it needs, the transport under What runs
+     * where). Omitted: both, in one block.
+     */
+    part?: 'values' | 'transport';
     onRow: (inputId: string, value: ValueRefV1) => void;
     onFlip: (name: string, transport: 'http' | 'sse') => void;
     testID: string;
@@ -40,6 +45,8 @@ export function McpPasteServer(
   const { theme } = useUnistyles();
   const { server } = props;
   const remote = server.transport !== 'stdio';
+  const values = props.part !== 'transport';
+  const transport = props.part !== 'values';
   const rows = (asks: readonly McpPasteAsk[]) =>
     Object.fromEntries(
       asks.map((ask): [string, ValueRefV1] => [
@@ -71,7 +78,7 @@ export function McpPasteServer(
     <View style={styles.server} testID={props.testID}>
       {props.hideHead ? null : (
         <View style={styles.serverHead}>
-          <McpServerMark transport={server.transport} size={20} />
+          <HappierBrandMark brand={{ displayName: server.name }} pixelSize={20} externallyLabelled />
           <Text variant="body" style={styles.mono} numberOfLines={1}>
             {server.name}
           </Text>
@@ -82,7 +89,7 @@ export function McpPasteServer(
           </Text>
         </View>
       )}
-      {remote ? (
+      {remote && transport ? (
         <View style={styles.transport}>
           <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
             {t('capabilities.mcpAdd.paste.transport')}
@@ -117,7 +124,7 @@ export function McpPasteServer(
           )}
         </View>
       ) : null}
-      {server.literalSecrets.map((secret) => (
+      {values ? server.literalSecrets.map((secret) => (
         <View key={secret.inputId} style={styles.note}>
           <Icon
             name="lock"
@@ -134,8 +141,8 @@ export function McpPasteServer(
             })}
           </Text>
         </View>
-      ))}
-      {server.env.length > 0 ? (
+      )) : null}
+      {values && server.env.length > 0 ? (
         <ValueRefRowsEditor
           kind="env"
           declaredNames
@@ -147,7 +154,7 @@ export function McpPasteServer(
           attentionKeys={attention(server.env)}
         />
       ) : null}
-      {server.headers.length > 0 ? (
+      {values && server.headers.length > 0 ? (
         <ValueRefRowsEditor
           kind="header"
           declaredNames

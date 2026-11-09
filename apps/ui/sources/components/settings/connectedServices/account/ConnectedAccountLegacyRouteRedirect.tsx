@@ -11,11 +11,12 @@ import {
     resolveConnectedAccountSettingsRoute,
 } from '@/sync/domains/connectedServices/connectedAccountSettingsRoute';
 import { t } from '@/text';
+import { ConnectedServicesSettingsView } from '../ConnectedServicesSettingsView';
 
 /**
  * Translation-only ingress for released scalar built-in settings links.
- * It performs no account read or mutation and replaces the URL with the
- * qualified route as soon as the projected owner is available.
+ * Management links replace the URL with the qualified destination. Add links
+ * present the shared sheet over Credentials and use its existing settlement owner.
  */
 export const ConnectedAccountLegacyRouteRedirect = React.memo(
     function ConnectedAccountLegacyRouteRedirect() {
@@ -36,13 +37,18 @@ export const ConnectedAccountLegacyRouteRedirect = React.memo(
         );
 
         React.useEffect(() => {
-            if (!resolved) return;
-            router.replace(buildConnectedAccountSettingsRoute(
+            if (!resolved || addRequested) return;
+            const route = buildConnectedAccountSettingsRoute(
                 resolved.service,
                 resolved.focus,
-                { add: addRequested },
-            ));
+            );
+            if (route) router.replace(route);
         }, [addRequested, resolved, router]);
+
+        if (resolved && addRequested) return <ConnectedServicesSettingsView connectRequest={{
+            service: resolved.service,
+            ...(resolved.focus?.kind === 'account' ? { account: { service: resolved.service, accountId: resolved.focus.accountId } } : {}),
+        }} />;
 
         return (
             <ItemList>

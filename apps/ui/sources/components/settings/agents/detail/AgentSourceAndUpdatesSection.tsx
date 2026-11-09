@@ -17,7 +17,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 /** What the update check knows right now, from the page's one checker (P4 `registries.updates.check`). */
@@ -34,6 +34,8 @@ function sourceTitle(definition: AcpBackendDefinitionV1): string {
     (source) => source.id === provenance.sourceId,
   );
   if (builtIn) return builtIn.title;
+  if (provenance.ref.kind === 'packageContent') return provenance.ref.pluginId;
+  if (provenance.sourceUrl === undefined) return provenance.sourceId;
   try {
     return new URL(provenance.sourceUrl).host;
   } catch {

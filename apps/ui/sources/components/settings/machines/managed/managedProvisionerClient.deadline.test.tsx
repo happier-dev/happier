@@ -6,7 +6,8 @@ import { installApprovalCommonModuleMocks } from '@/components/approvals/approva
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createManagedControllerMachineFixture, createMachineProvisionerOptionsFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { upsertServerProfile, setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
@@ -24,7 +25,7 @@ afterEach(async () => {
 });
 
 describe('managed catalog request lifetime', () => {
-    it('counts Account preparation and daemon dispatch in one read deadline', async () => {
+    it('keeps slow Account preparation and dispatch within the caller lifetime', async () => {
         const serverUrl = 'https://catalog-preparation.example.test';
         const homeId = 'srv_catalog_preparation';
         await upsertServerProfile({ serverUrl, name: 'Catalog Home' });
@@ -58,37 +59,38 @@ describe('managed catalog request lifetime', () => {
             });
         });
         vi.useFakeTimers();
+        const caller = new AbortController();
         const pending = createDefaultActionExecutor().execute('machines.provisioners.list',
             { homeId, controller: { machineId: 'controller', installationId: 'installation' } },
-            { serverId: homeId, expectedAccountId: 'catalog-owner', surface: 'ui', authority: 'present_user', actionRequestId: 'preparation-read' });
+            { serverId: homeId, expectedAccountId: 'catalog-owner', surface: 'ui', authority: 'present_user', actionRequestId: 'preparation-read', signal: caller.signal });
         await preparing;
-        await vi.advanceTimersByTimeAsync(DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS / 2);
+        await vi.advanceTimersByTimeAsync(DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS + 1);
         releasePreparation();
         await dispatched;
-        await vi.advanceTimersByTimeAsync(DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS / 2 - 1);
+        await vi.advanceTimersByTimeAsync(DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS + 1);
         expect(requestSignal?.aborted).toBe(false);
-        await vi.advanceTimersByTimeAsync(1);
+        const settled = expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+        caller.abort();
         expect(requestSignal?.aborted).toBe(true);
-        expect(await pending).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+        await settled;
     });
 
-    it('settles a silent controller at the existing RPC deadline and retries through the same picker', async () => {
+    it('keeps a pending controller read alive beyond the RPC default and cancels it on unmount', async () => {
         const serverUrl = 'https://catalog-deadline.example.test';
         const homeId = 'srv_catalog_deadline';
         const token = createAccountTokenForTests('catalog-owner', { currentAccount: true });
         await upsertServerProfile({ serverUrl, name: 'Catalog Home' });
         await setServerProfileIdentityForUrl(serverUrl, homeId);
         await TokenStorage.setCredentialsForServerUrl(serverUrl, { serverId: homeId }, { token });
-        const { storage } = await import('@/sync/domains/state/storage');
-        storage.setState({ machineListByServerId: { [homeId]: [createMachineFixture({
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+        await publishMachineInventoryForTest({ serverId: homeId, accountId: 'catalog-owner' }, [createManagedControllerMachineFixture({
             id: 'controller', installationId: 'installation', activeAt: Date.now(), kind: 'persistent',
-        })] }, machineListStatusByServerId: { [homeId]: 'idle' } });
+        })]);
         let issued!: () => void;
         const dispatched = new Promise<void>(resolve => { issued = resolve; });
-        let answer = false;
         let catalogSignal: AbortSignal | null | undefined;
         let reads = 0;
-        // Only HTTP is substituted. The real Action, scope, catalog hook and request deadline run.
+        // Only HTTP is substituted. The real Action, scope, catalog hook and mount lifetime run.
         setRuntimeFetch(async (url, init) => {
             const path = new URL(String(url)).pathname;
             if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
@@ -96,42 +98,29 @@ describe('managed catalog request lifetime', () => {
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
             if (path !== '/v1/actions/machines.provisioners.list') return Response.json({}, { status: 404 });
-            const envelope = ExternalActionRequestEnvelopeV1Schema.parse(JSON.parse(String(init?.body)));
             reads++;
-            if (!answer) {
-                catalogSignal = init?.signal;
-                issued();
-                return await new Promise<Response>((_resolve, reject) => {
-                    const abort = () => reject(new DOMException('Request cancelled', 'AbortError'));
-                    init?.signal?.addEventListener('abort', abort, { once: true });
-                    if (init?.signal?.aborted) abort();
-                });
-            }
-            return Response.json({ v: 1, actionId: 'machines.provisioners.list', requestId: envelope.requestId,
-                execution: { ok: true, result: { provisioners: [] } } });
+            catalogSignal = init?.signal;
+            issued();
+            return await new Promise<Response>((_resolve, reject) => {
+                const abort = () => reject(new DOMException('Request cancelled', 'AbortError'));
+                init?.signal?.addEventListener('abort', abort, { once: true });
+                if (init?.signal?.aborted) abort();
+            });
         });
         vi.useFakeTimers();
         const screen = await renderScreen(<ListPresentationProvider value="page">
             <MachineProvisionerPicker serverId={homeId} />
         </ListPresentationProvider>);
         await dispatched;
-        await act(async () => { await vi.advanceTimersByTimeAsync(DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS - 1); });
+        await act(async () => { await vi.advanceTimersByTimeAsync(DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS + 1); });
         expect(catalogSignal?.aborted).toBe(false);
         expect(screen.findByTestId('managed-picker.unavailable')).toBeNull();
-        await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-        expect(catalogSignal?.aborted).toBe(true);
-        expect(screen.findByTestId('managed-picker.unavailable-diagnostic-target_unavailable')).not.toBeNull();
-        const retry = screen.findByTestId('managed-picker.unavailable-action');
-        expect(retry).not.toBeNull();
-        answer = true;
-        await act(async () => { screen.pressByTestId('managed-picker.unavailable-action'); });
-        await act(async () => { await vi.advanceTimersByTimeAsync(0); });
-        expect(reads).toBe(2);
-        expect(screen.findByTestId('managed-picker.unavailable')).toBeNull();
         await screen.unmount();
+        expect(catalogSignal?.aborted).toBe(true);
+        expect(reads).toBe(1);
     });
 
-    it('keeps valid near-deadline reads and caller-owned acquisition waits intact', async () => {
+    it('accepts valid reads and acquisition responses beyond the unrelated RPC default', async () => {
         const serverUrl = 'https://catalog-lifetime.example.test';
         const homeId = 'srv_catalog_lifetime';
         const token = createAccountTokenForTests('catalog-owner', { currentAccount: true });
@@ -160,24 +149,28 @@ describe('managed catalog request lifetime', () => {
             await pending;
             return Response.json({ v: 1, actionId: path.slice('/v1/actions/'.length), requestId: envelope.requestId,
                 execution: { ok: true, result: path.endsWith('/machines.provisioners.list')
-                    ? { provisioners: [] }
-                    : { kind: 'approval_request_created', artifactId: 'native-approval', actionId: 'machines.managed.acquire' } } });
+                    ? { provisioners: [] } : path.endsWith('/machines.provisioners.check')
+                        ? { available: true } : path.endsWith('/machines.provisioners.options') ? createMachineProvisionerOptionsFixture()
+                            : { kind: 'approval_request_created', artifactId: 'native-approval', actionId: 'machines.managed.acquire' } } });
         });
         vi.useFakeTimers();
         try {
-            for (const actionId of ['machines.provisioners.list', 'machines.managed.acquire'] as const) {
+            for (const actionId of ['machines.provisioners.list', 'machines.provisioners.check', 'machines.provisioners.options', 'machines.managed.acquire'] as const) {
                 const dispatched = new Promise<void>(resolve => { issued = resolve; });
                 const pending = executeManagedMachineNativeAction({ account, actionId,
-                    input: actionId === 'machines.provisioners.list'
-                        ? { homeId, controller: { machineId: 'controller', installationId: 'installation' } }
-                        : { selection: { kind: 'one-off', homeId, controller: { machineId: 'controller', installationId: 'installation' },
+                    input: actionId === 'machines.managed.acquire'
+                        ? { selection: { kind: 'one-off', homeId, controller: { machineId: 'controller', installationId: 'installation' },
                             launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
-                            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } },
+                            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+                            enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } }
+                        : { homeId, controller: { machineId: 'controller', installationId: 'installation' },
+                            ...(actionId !== 'machines.provisioners.list' ? { contribution: { pluginId: 'custom.compute', localId: 'vm' } } : {}),
+                            ...(actionId === 'machines.provisioners.options' ? { selectors: {} } : {}) },
                     context: { surface: 'ui', authority: 'present_user', actionRequestId: actionId } });
                 await Promise.race([dispatched, pending.then(result => {
                     throw new Error(`Action settled before dispatch: ${JSON.stringify(result)}`);
                 })]);
-                await vi.advanceTimersByTimeAsync(DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS + (actionId === 'machines.provisioners.list' ? -1 : 1));
+                await vi.advanceTimersByTimeAsync(DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS + 1);
                 expect(requestSignal?.aborted).toBe(false);
                 release();
                 expect(await pending).toMatchObject({ ok: true });

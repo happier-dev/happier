@@ -1,7 +1,7 @@
 import * as React from 'react';
-import type { FeatureId } from '@happier-dev/protocol';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 
-import { useGlobalSearchParams, usePathname } from '@/components/appShell/workspace/destinationRoute';
+import { usePathname } from '@/components/appShell/workspace/destinationRoute';
 import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useTeamsSettingsAdmission } from '@/hooks/teams/useTeamsSettingsAdmission';
@@ -10,10 +10,11 @@ import { useHomeAdministrationSettingsAdmission } from '@/hooks/home/useHomeAdmi
 import { useLocalSetting, useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 
 import { SETTINGS_PAGE_CATALOG, flattenSettingsPageCatalog } from '../pageCatalog';
 import { SETTINGS_ROUTES, settingsRoutePathname } from '../routes';
-import { resolveSettingsHost, type SettingsHost, type SettingsRouteContext } from '../settingDeclarations';
+import { resolveSettingsHost, type SettingsHost } from '../settingDeclarations';
 import { resolveSettingsPageGateUnavailableReason } from '../settingsPageGateAvailability';
 import type { ResolvedSettingsPageNode, SettingsPageId, SettingsPageNode } from '../types';
 import { mergeAdmittedPluginSettingsPages } from './pluginSettingsPageCatalog';
@@ -26,9 +27,9 @@ export type ResolvedSettingsPageIdentity = Readonly<{
 type ResolvedSettingsPageTree = ResolvedSettingsPageIdentity & Readonly<{
     featureSnapshot: Readonly<Record<string, boolean>>;
     host: SettingsHost;
-    routeContext: SettingsRouteContext;
-    teamRouteAdmitted: boolean;
-    homeRouteAdmitted: boolean;
+    /** Servers a scoped destination may bind to; search matches them against route params at query time. */
+    teamAdmittedServerIds: readonly string[];
+    homeAdmittedServerIds: readonly string[];
 }>;
 
 type CatalogVisibilityContext = Readonly<{
@@ -111,11 +112,12 @@ export function useSettingsPageFeatureSnapshot(featureIds: readonly FeatureId[])
 
 const NO_SERVER_IDS: readonly string[] = Object.freeze([]);
 
-/** Shared navigation/admission owner; search adds its own field declarations downstream. */
+/**
+ * Shared navigation/admission owner; search adds its own field declarations downstream. It reads the
+ * pathname only: route params belong to the search index, so a params-only change reaches no navigation reader.
+ */
 export function useResolvedSettingsPageTree(enabled: boolean): ResolvedSettingsPageTree {
     const pathname = usePathname();
-    const routeParams = useGlobalSearchParams();
-    const routeContext = React.useMemo<SettingsRouteContext>(() => ({ pathname: pathname ?? '/', params: routeParams }), [pathname, routeParams]);
     const pluginUiProjection = useAppShellPluginUiDeclarationProjection();
     const useProfiles = Boolean(useSetting('useProfiles'));
     const devModeEnabled = Boolean(useLocalSetting('devModeEnabled'));
@@ -126,21 +128,29 @@ export function useResolvedSettingsPageTree(enabled: boolean): ResolvedSettingsP
     const teamsShown = useTeamsDestinationShown(enabled ? teamsAdmission.capableServerIds : NO_SERVER_IDS);
     const teamsAdmitted = teamsAdmission.admitted && teamsShown;
     const homeAdministrationAdmitted = homeAdministrationAdmission.admitted;
-    const routeServerId = routeParams.serverId;
-    const teamRouteAdmitted = typeof routeServerId === 'string' && teamsAdmission.capableServerIds.includes(routeServerId);
-    const homeRouteAdmitted = typeof routeServerId === 'string' && homeAdministrationAdmission.admittedServerIds.includes(routeServerId);
     const featureSnapshot = useSettingsPageFeatureSnapshot(SETTINGS_PAGE_FEATURE_IDS);
     const locale = usePreferredLanguage();
+    const localize = usePluginLocalizedTextResolver({ projection: pluginUiProjection, locale });
     const catalog = React.useMemo(() => enabled ? mergeAdmittedPluginSettingsPages({
-        baseCatalog: SETTINGS_PAGE_CATALOG, projection: pluginUiProjection, locale,
-    }) : [], [enabled, pluginUiProjection, locale]);
+        baseCatalog: SETTINGS_PAGE_CATALOG, projection: pluginUiProjection, locale, localize,
+    }) : [], [enabled, pluginUiProjection, locale, localize]);
     const tree = React.useMemo(() => resolveTree(catalog, {
         useProfiles, devModeEnabled, tauriDesktop, features: featureSnapshot, teamsAdmitted, homeAdministrationAdmitted,
     }), [catalog, devModeEnabled, featureSnapshot, teamsAdmitted, homeAdministrationAdmitted, locale, tauriDesktop, useProfiles]);
     // Visibility does not retire a mounted route's identity; plugin lifecycle still owns its leaves.
     const flat = React.useMemo(() => flattenSettingsPageCatalog(catalog), [catalog]);
     const activePageId = React.useMemo(() => resolveActivePageIdFromPathname(pathname ?? '/', flat), [flat, pathname]);
-    return { tree, activePageId, featureSnapshot, host, routeContext, teamRouteAdmitted, homeRouteAdmitted };
+    return {
+        tree, activePageId, featureSnapshot, host,
+        teamAdmittedServerIds: teamsAdmission.capableServerIds,
+        homeAdmittedServerIds: homeAdministrationAdmission.admittedServerIds,
+    };
+}
+
+/** The full resolved page tree and active page for navigation readers; no search index, no route params. */
+export function useResolvedSettingsPageNavigation(): ResolvedSettingsPageIdentity {
+    const { tree, activePageId } = useResolvedSettingsPageTree(true);
+    return { tree, activePageId };
 }
 
 /** Current navigation identity does not demand Settings search or another route's admission. */

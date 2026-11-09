@@ -13,7 +13,7 @@ import { SetupSteps } from '@/components/ui/setupBlocks/SetupSteps';
 import { t } from '@/text';
 import { parseOauthCallbackUrl } from '@/utils/auth/oauthCore';
 import { getClipboardStringTrimmedSafe } from '@/utils/ui/clipboard';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import { useConnectedAccountInvalidFieldFocus } from './useConnectedAccountInvalidFieldFocus';
 import { useConnectedAccountDraftNavigationGuard } from './useConnectedAccountDraftNavigationGuard';

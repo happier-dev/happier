@@ -18,6 +18,7 @@ describe('openBugReportFallbackIssueUrl', () => {
         const showAlert = vi.fn(async () => {});
 
         const opened = await openBugReportFallbackIssueUrl('https://github.com/happier-dev/happier/issues/new', {
+            copyUrl: async () => false,
             canOpenUrl,
             openUrl,
             showAlert,
@@ -38,6 +39,7 @@ describe('openBugReportFallbackIssueUrl', () => {
         const showAlert = vi.fn(async () => {});
 
         const opened = await openBugReportFallbackIssueUrl('https://github.com/happier-dev/happier/issues/new', {
+            copyUrl: async () => false,
             canOpenUrl,
             openUrl,
             showAlert,
@@ -82,6 +84,7 @@ describe('openBugReportFallbackIssueUrl', () => {
         const showAlert = vi.fn(async () => {});
 
         const opened = await openBugReportFallbackIssueUrl('javascript:alert(1)', {
+            copyUrl: async () => false,
             canOpenUrl,
             openUrl,
             showAlert,
@@ -111,6 +114,7 @@ describe('openBugReportFallbackIssueUrl', () => {
         });
 
         const pending = openBugReportFallbackIssueUrl('https://github.com/happier-dev/happier/issues/new', {
+                copyUrl: async () => false,
                 canOpenUrl,
                 openUrl,
             });

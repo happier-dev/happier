@@ -2,6 +2,7 @@ import type {
     PluginMarketplaceDiscoverDiagnostic,
     PluginMarketplaceDiscoverSourceStatus,
 } from '../readPluginMarketplaceCatalog';
+import { describeRegistrySourceFailure, type RegistryFailureStatus } from '@/registries/describeRegistrySourceStatus';
 
 /** One technical fact behind an issue, shown only when the reader asks for details. */
 export type PluginMarketplaceDiscoverIssueDetail = Readonly<{ code: string; message: string }>;
@@ -18,6 +19,8 @@ export type PluginMarketplaceDiscoverIssue = Readonly<{
     sourceTitle: string | null;
     /** False when the source did not answer (unavailable, offline, sign-in, unreadable); true when it is only behind. */
     reachable: boolean;
+    /** A top-level finite read failure uses the same typed source presenter as registry shelves. */
+    summary?: string;
     details: readonly PluginMarketplaceDiscoverIssueDetail[];
 }>;
 
@@ -44,6 +47,7 @@ function addDetail(draft: IssueDraft, diagnostic: PluginMarketplaceDiscoverDiagn
 export function buildPluginMarketplaceDiscoverIssues(input: Readonly<{
     sourceStatuses: readonly PluginMarketplaceDiscoverSourceStatus[];
     diagnostics: readonly PluginMarketplaceDiscoverDiagnostic[];
+    readFailure?: Readonly<{ status: RegistryFailureStatus | null; sourceTitle: string | null }>;
 }>): PluginMarketplaceDiscoverIssue[] {
     const drafts = new Map<string, IssueDraft>();
     const draftFor = (sourceId: string | null, sourceTitle: string | null): IssueDraft => {
@@ -65,5 +69,9 @@ export function buildPluginMarketplaceDiscoverIssues(input: Readonly<{
     for (const diagnostic of input.diagnostics) {
         addDetail(draftFor(diagnostic.sourceId, diagnostic.sourceTitle), diagnostic);
     }
-    return [...drafts.values()].map(({ detailKeys: _detailKeys, ...issue }) => issue);
+    const issues: PluginMarketplaceDiscoverIssue[] = [...drafts.values()].map(({ detailKeys: _detailKeys, ...issue }) => issue);
+    if (input.readFailure && issues.length === 0) issues.push({ id: 'index', sourceId: null,
+        sourceTitle: input.readFailure.sourceTitle, reachable: false, details: [],
+        summary: describeRegistrySourceFailure(input.readFailure.status, input.readFailure.sourceTitle) });
+    return issues;
 }

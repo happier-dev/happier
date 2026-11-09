@@ -1,6 +1,6 @@
 import type * as React from 'react';
 import type { UnistylesThemes } from 'react-native-unistyles';
-import type { FeatureId } from '@happier-dev/protocol';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 
 import type { TranslationKey, TranslationKeyNoParams } from '@/text';
 
@@ -23,6 +23,7 @@ export const SETTINGS_PAGE_IDS = {
     apiTokens: 'apiTokens',
     secrets: 'secrets',
     usage: 'usage',
+    deployments: 'deployments',
     machines: 'machines',
     machinePoolsNew: 'machinePoolsNew',
     machinesAdd: 'machinesAdd',

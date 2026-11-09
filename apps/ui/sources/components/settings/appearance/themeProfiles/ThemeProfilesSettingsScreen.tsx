@@ -1,3 +1,4 @@
+import { useThemeProfiles } from '@/sync/store/useThemeProfiles';
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
@@ -44,7 +45,7 @@ export const ThemeProfilesSettingsScreen = React.memo(function ThemeProfilesSett
     const { theme } = useUnistyles();
     const router = useRouter();
     const [themePreference] = useLocalSettingMutable('themePreference');
-    const [themeProfiles] = useLocalSettingMutable('themeProfiles');
+    const themeProfiles = useThemeProfiles();
     const [addMenuOpen, setAddMenuOpen] = React.useState(false);
     const presetOptions = React.useMemo(() => buildThemePresetSourceOptions(themeProfiles), [themeProfiles]);
     const customOptions = React.useMemo(() => presetOptions.filter((option) => option.kind === 'custom'), [presetOptions]);

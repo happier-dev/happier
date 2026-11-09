@@ -1,3 +1,4 @@
+import { useThemeProfiles } from '@/sync/store/useThemeProfiles';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useLocalSearchParams } from '@/components/appShell/workspace/destinationRoute';
@@ -10,9 +11,8 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
-import { useLocalSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { exportThemeProfileToJson } from '@/theme/profiles/themeProfileImportExport';
 import { BUILT_IN_THEME_PROFILES, getBuiltInThemeProfileDefinition, isBuiltInThemeProfilePresetId } from '@/theme/profiles/builtInThemeProfiles';
 import type { ThemeProfileMode, ThemeProfileV1 } from '@/theme/profiles/themeProfileTypes';
@@ -37,10 +37,11 @@ const resolveExportMode = (profile: ThemeProfileV1): ThemeProfileMode => {
 
 
 export const ThemeProfileExportScreen = React.memo(function ThemeProfileExportScreen() {
+    const writeClipboard = useClipboardWrite();
     const styles = stylesheet;
     const copyFeedback = useHappierCopyFeedback();
     const params = useLocalSearchParams();
-    const [themeProfiles] = useLocalSettingMutable('themeProfiles');
+    const themeProfiles = useThemeProfiles();
     const profileId = getProfileIdParam(params.profileId);
     const builtInDefinition = BUILT_IN_THEME_PROFILES.find((definition) => definition.profile.id === profileId);
     const customProfile = themeProfiles.profiles.find((entry) => entry.id === profileId) ?? null;
@@ -52,11 +53,11 @@ export const ThemeProfileExportScreen = React.memo(function ThemeProfileExportSc
 
     const copy = React.useCallback(async () => {
         if (!json) return;
-        const copied = await setClipboardStringSafe(json);
+        const copied = await writeClipboard(json);
         if (copied) {
             copyFeedback.markCopied('theme-profile');
         }
-    }, [copyFeedback, json]);
+    }, [copyFeedback, json, writeClipboard]);
 
     const download = React.useCallback(async () => {
         if (!json) return;

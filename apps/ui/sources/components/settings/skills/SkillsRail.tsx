@@ -4,8 +4,6 @@ import {
   usePathname,
   useRouter,
 } from '@/components/appShell/workspace/destinationRoute';
-import { useUnistyles } from 'react-native-unistyles';
-import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 import type { SkillListItemV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 
 import { CapabilityRow } from '@/components/capabilities/row/CapabilityRow';
@@ -13,9 +11,9 @@ import { pickMostBlockingCapabilityStatus, type CapabilityStatusKind } from '@/c
 import { shortWhereItsOn } from '@/components/capabilities/where/whereItsOnPresentation';
 import { useWhereItsOnNames } from '@/components/capabilities/where/useWhereItsOnNames';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { Icon } from '@/components/ui/icons/Icon';
-import { Item } from '@/components/ui/lists/Item';
+import { SettingsCollectionPage } from '@/components/settings/shell/SettingsCollectionPage';
 import { CollectionIndexRow } from '@/components/ui/lists/collection/CollectionIndexRow';
+import { CollectionViewSwitch } from '@/components/ui/lists/collection/CollectionViewSwitch';
 import {
   CollectionList,
   CollectionListGroupLabel,
@@ -23,15 +21,9 @@ import {
   collectionListStyles,
 } from '@/components/ui/lists/collection/CollectionList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
-import { Text } from '@/components/ui/text/Text';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
 import {
   useReachMachines,
-  type ReachMachine,
 } from '@/sync/domains/capabilities/reach/useReachProjection';
 import { useFoundSkillsCount } from '@/sync/domains/skills/useFoundSkills';
 import {
@@ -49,11 +41,11 @@ import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/
 import {
   SKILLS_COLLECTION_ROUTE,
   SKILLS_SEARCH_THRESHOLD,
-  filterSkills,
   groupSkillsByFolder,
   groupSkillsByUse,
   skillHref,
   skillSource,
+  skillReachesMachine,
   hasOwnSkills,
 } from './skillsCollectionModel';
 import { SKILLS_FOUND_ROUTE } from './found/foundSkillsModel';
@@ -61,7 +53,18 @@ import { useSkillsNeedsALook } from './status/useSkillsNeedsALook';
 import { SKILLS_CHOOSE_ROUTE, useSkillsFirstRun } from './firstRun/useSkillsFirstRun';
 import { SKILLS_UPDATES_ROUTE, countSkillUpdates } from './updates/skillsUpdatesModel';
 import { setPreviewedSkill } from './skillsPreviewStore';
+import { useSkillSourceNames } from './useSkillSourceNames';
 import { skillStatus } from './status/skillStatus';
+import { skillColumnFacts, skillsColumnAdapter } from './skillsColumnAdapter';
+import { skillSourceId } from './skillSource';
+import { SkillMark } from './SkillKindGlyph';
+import { buildCapabilityHeaderMeta } from '@/components/capabilities/facts/CapabilityFacts';
+import { useSettingsColumnFilter } from '@/components/settings/shell/useSettingsColumnFilter';
+import { SkillsHomeOverviewView, type SkillsHomeReach } from './SkillsHomeOverview';
+import { useSkillMakers } from './useSkillMakers';
+import { skillMakerFilterLabel } from './skillMaker';
+import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
+import { areSessionBotFaceFactsEqual, type SessionBotFaceFacts } from '@/components/sessions/bots/face/sessionBotFaceFacts';
 
 function readParam(value: string | string[] | undefined): string | null {
   const raw = Array.isArray(value) ? value[0] : value;
@@ -77,15 +80,10 @@ function selectedSkillId(pathname: string): string | null {
   return rest && !rest.includes('/') && rest !== 'new' ? rest : null;
 }
 
-/** The machine named by `?machine=`, when it is one of the Account's machines. */
-export function useSkillsMachineFilter(
-  machines: readonly ReachMachine[],
-): ReachMachine | null {
+/** The Machine a route link hands the column (`?machine=`), which the column filter takes as its Machine condition. */
+function useSkillsRouteMachineId(): string | null {
   const params = useGlobalSearchParams<{ machine?: string | string[] }>();
-  const machineId = readParam(params.machine);
-  return machineId
-    ? (machines.find((machine) => machine.machineId === machineId) ?? null)
-    : null;
+  return readParam(params.machine);
 }
 
 /**
@@ -103,10 +101,10 @@ export const SkillsRail = React.memo(function SkillsRail(
 const SkillListRow = React.memo(function SkillListRow(props: Readonly<{
   item: SkillListItemV1;
   names: ReturnType<typeof useWhereItsOnNames>['names'];
-  installedPlugins: Parameters<typeof skillSource>[2];
   rail: boolean;
   selected: boolean | undefined;
   statusKind: CapabilityStatusKind | null;
+  makerFace: SessionBotFaceFacts | null;
   open: (href: string) => void;
 }>) {
   const { item, names } = props;
@@ -116,12 +114,9 @@ const SkillListRow = React.memo(function SkillListRow(props: Readonly<{
       title={item.name}
       description={item.description}
       whereSummary={shortWhereItsOn(item.rules, names)}
-      facts={{
-        presentation: 'row',
-        source: skillSource(item, names.machineName, props.installedPlugins),
-        trust: item.trust,
-        cost: { tokensWhenUsed: item.cost.bodyTokens },
-      }}
+      mark={props.makerFace ? <SessionBotFace facts={props.makerFace} size={20} motion={false} /> : <SkillMark firstParty={item.provenance.kind === 'first_party'} />}
+      // Source and cost live in the skill's detail; scripts stay on the row as a safety signal (lab k:home).
+      lead={item.trust === 'runs_scripts' ? t('capabilities.facts.runsScripts') : null}
       status={props.statusKind ? { kind: props.statusKind } : null}
       density={props.rail ? 'rail' : 'page'}
       selected={props.selected}
@@ -129,53 +124,93 @@ const SkillListRow = React.memo(function SkillListRow(props: Readonly<{
       onPreviewChange={(active) => setPreviewedSkill(active ? item.skillId : null)}
     />
   );
-});
+}, (previous, next) => previous.item === next.item && previous.names === next.names && previous.rail === next.rail
+  && previous.selected === next.selected && previous.statusKind === next.statusKind && previous.open === next.open
+  && areSessionBotFaceFactsEqual(previous.makerFace, next.makerFace));
 
 export const SkillsList = React.memo(function SkillsList(
   props: Readonly<{ variant: 'rail' | 'page'; library: SkillsLibrary }>,
 ) {
-  const { theme } = useUnistyles();
+  const reach = useReachMachines();
+  return <SkillsListView {...props} reach={reach} />;
+});
+
+/** The collection's presentation over the Machine facts admitted by its read owner. */
+export const SkillsListView = React.memo(function SkillsListView(
+  props: Readonly<{ variant: 'rail' | 'page'; library: SkillsLibrary; reach: SkillsHomeReach }>,
+) {
   const pluginUiProjection = useAppShellPluginUiDeclarationProjection();
+  const sourceNameFor = useSkillSourceNames();
   const router = useRouter();
   const pathname = usePathname().replace(/\/+$/, '');
   const { library } = props;
-  const { machines } = useReachMachines();
-  const machineFilter = useSkillsMachineFilter(machines);
+  const makerFor = useSkillMakers(library.items, library.scope);
+  const { machines, placeMachines, agentIds } = props.reach;
+  const routeMachineId = useSkillsRouteMachineId();
   const foundCount = useFoundSkillsCount(
     React.useMemo(() => machines.map((machine) => machine.machineId), [machines]),
   );
   const [query, setQuery] = React.useState('');
-  const agentIds = React.useMemo(
-    () => [...new Set(machines.flatMap((machine) => machine.agentIds))],
-    [machines],
-  );
-  const placeMachines = React.useMemo(
-    () =>
-      machines.map((machine) => ({
-        machineId: machine.machineId,
-        name: machine.name ?? machine.machineId,
-      })),
-    [machines],
-  );
   const { names } = useWhereItsOnNames({
     agentIds,
     machines: placeMachines,
   });
-  const searchable = library.items.length > SKILLS_SEARCH_THRESHOLD;
-  const visible = React.useMemo(
-    () =>
-      filterSkills(library.items, {
-        query: searchable ? query : '',
-        machine: machineFilter,
-      }),
-    [library.items, machineFilter, query, searchable],
-  );
-  const groups = React.useMemo(() => groupSkillsByUse(visible), [visible]);
+  const searchable = library.items.length > SKILLS_SEARCH_THRESHOLD || query.length > 0;
+  const visible = React.useMemo(() => {
+    const needle = searchable ? query.trim().toLowerCase() : '';
+    return needle
+      ? library.items.filter((item) => `${item.name} ${item.description ?? ''}`.toLowerCase().includes(needle))
+      : library.items;
+  }, [library.items, query, searchable]);
+  // Source and Machine (P8): held facts of the listed skills, read through the Skills adapter's registry.
+  const installedPlugins = pluginUiProjection?.installedPackagesById;
+  const columnFacts = React.useMemo(() => {
+    const sourceWords = new Map<string, string>();
+    const makerWords = new Map<string, string>();
+    const facts = library.items.map((item) => {
+      const maker = makerFor(item);
+      if (maker.kind === 'bot') for (const token of maker.filterValues)
+        if (token.startsWith('session:')) makerWords.set(token, maker.label);
+      const sourceId = skillSourceId(item);
+      if (!sourceWords.has(sourceId)) {
+        const source = skillSource(item, names.machineName, installedPlugins, sourceNameFor(item));
+        const words = source ? buildCapabilityHeaderMeta({ source }).find((fact) => fact.key === 'source')?.text : undefined;
+        if (words) sourceWords.set(sourceId, words);
+      }
+      return skillColumnFacts(item, {
+        sourceIds: [sourceId],
+        makerIds: maker.filterValues,
+        machineIds: machines.filter((machine) => skillReachesMachine(item, machine)).map((machine) => machine.machineId),
+        statuses: [],
+      });
+    });
+    return { facts, sourceWords, makerWords };
+  }, [installedPlugins, library.items, machines, makerFor, names, sourceNameFor]);
+  const filterFields = React.useMemo(() => ({
+    source: { label: t('sessionsList.filtersSource'), valueLabel: (id: string) => columnFacts.sourceWords.get(id) ?? t('common.unavailable') },
+    machine: { label: t('sessionsList.filtersMachine'), valueLabel: names.machineName },
+    maker: { label: t('capabilities.skills.maker.title'), valueLabel: (id: string) => columnFacts.makerWords.get(id) ?? skillMakerFilterLabel(id) },
+  }), [columnFacts.sourceWords, columnFacts.makerWords, names]);
+  const columnFilter = useSettingsColumnFilter({
+    column: 'skills',
+    search: { value: query, set: setQuery },
+    testIDPrefix: 'skills.rail',
+    adapter: skillsColumnAdapter,
+    fields: filterFields,
+    facts: columnFacts.facts,
+    seed: {
+      key: routeMachineId,
+      filter: { machine: { include: routeMachineId ? [routeMachineId] : [], exclude: [] } },
+    },
+  });
+  const matchesFilter = columnFilter.matches;
+  const shown = React.useMemo(() => visible.filter((item) => matchesFilter(item.skillId)), [matchesFilter, visible]);
+  const groups = React.useMemo(() => groupSkillsByUse(shown), [shown]);
   const folders = usePromptLibraryCatalogSelection('folders', readFolders);
   // Folder groups replace In use / Off once the person files a skill in a folder (IR-83).
   const folderGroups = React.useMemo(
-    () => groupSkillsByFolder(visible, folders),
-    [folders, visible],
+    () => groupSkillsByFolder(shown, folders),
+    [folders, shown],
   );
   const sections: readonly Readonly<{
     key: string;
@@ -219,22 +254,14 @@ export const SkillsList = React.memo(function SkillsList(
     },
     [atRoot, rail, router],
   );
-  const clearFilter = React.useCallback(() => {
-    const result = runGuardedNavigation(() =>
-      router.replace(pathname as never),
-    );
-    if (result !== true)
-      fireAndForget(result, { tag: 'SkillsRail.clearFilter' });
-  }, [pathname, router]);
-
   const renderRow = (item: SkillListItemV1) => (
     <SkillListRow
       key={item.skillId}
       item={item}
       names={names}
-      installedPlugins={pluginUiProjection?.installedPackagesById}
+      makerFace={makerFor(item).face}
       statusKind={pickMostBlockingCapabilityStatus(skillStatus(item, { nowMs: Date.now(), usageObservedSince: library.usageObservedSince }), 'row')?.kind ?? null}
-      rail={rail}
+      rail
       selected={rail ? selectedId === item.skillId : undefined}
       open={open}
     />
@@ -242,149 +269,24 @@ export const SkillsList = React.memo(function SkillsList(
 
   const loading = library.status === 'loading' && library.items.length === 0;
   const unavailable = library.status === 'unavailable';
-  const noMatch = !loading && visible.length === 0 && library.items.length > 0;
+  const noMatch = !loading && shown.length === 0 && library.items.length > 0;
   // The built-in skill stays listed under In use; the line says none of the person's own exist yet (P6 §4.1).
   const empty = !loading && !unavailable && !hasOwnSkills(library.items);
 
-  if (!rail) {
-    // The phone's Skills page: the same list as grouped inset sheets under the hero (lab hs A2p), each
-    // group a page section with its count, so rows read as one sheet rather than a rail's column.
-    const group = (section: (typeof sections)[number]) => (
-      <ItemGroup
-        key={section.key}
-        testID={`skills.list.group.${section.key}`}
-        title={section.title}
-        titleAccessory={
-          <Text variant="meta" style={pageStyles.count}>
-            {String(section.rows.length)}
-          </Text>
-        }
-      >
-        {section.rows.map(renderRow)}
-      </ItemGroup>
-    );
-    const stateCard = (
-      testID: string,
-      kind: 'error' | 'empty',
-      title: string,
-      action?: Readonly<{ label: string; onPress: () => void }>,
-    ) => (
-      <View style={pageStyles.state}>
-        <SurfaceStateCard
-          testID={testID}
-          size="line"
-          kind={kind}
-          title={title}
-          {...(kind === 'error'
-            ? { diagnosticCode: library.errorCode ?? undefined }
-            : {})}
-          {...(action ? { action } : {})}
-        />
-      </View>
-    );
-    return (
-      <View testID="skills.list">
-        {searchable ? (
-          <View style={pageStyles.search}>
-            <CompactSearchField
-              testID="skills.rail.search"
-              value={query}
-              onChangeText={setQuery}
-              placeholder={t('capabilities.skills.searchPlaceholder')}
-            />
-          </View>
-        ) : null}
-        {machineFilter ? (
-          <ItemGroup>
-            <Item
-              testID="skills.rail.machineFilter"
-              title={t('capabilities.skills.filterOn', {
-                machine: machineFilter.name ?? machineFilter.machineId,
-              })}
-              icon={
-                <Icon
-                  name="desktop"
-                  size={20}
-                  color={theme.colors.text.secondary}
-                />
-              }
-              showChevron={false}
-              rightElement={
-                <IconButton
-                  testID="skills.rail.machineFilter.clear"
-                  iconName="x"
-                  variant="plain"
-                  accessibilityLabel={t('capabilities.skills.clearFilter')}
-                  tooltip={t('capabilities.skills.clearFilter')}
-                  onPress={clearFilter}
-                />
-              }
-            />
-          </ItemGroup>
-        ) : null}
-        {firstVisit || updateCount > 0 ? (
-          <ItemGroup>
-            {firstVisit ? (
-              <Item
-                testID="skills.page.choose"
-                title={t('capabilities.skills.home.choose')}
-                detail={t('capabilities.skills.home.chooseOff', { count: firstVisit.off })}
-                icon={<Icon name="sparkle" size={20} color={theme.colors.text.secondary} />}
-                onPress={() => open(SKILLS_CHOOSE_ROUTE)}
-              />
-            ) : null}
-            {updateCount > 0 ? (
-              <Item
-                testID="skills.page.updates"
-                title={t('capabilities.skills.updates')}
-                detail={String(updateCount)}
-                icon={<Icon name="arrow-up" size={20} color={theme.colors.text.secondary} />}
-                onPress={() => open(SKILLS_UPDATES_ROUTE)}
-              />
-            ) : null}
-          </ItemGroup>
-        ) : null}
-        {machines.length > 0 ? (
-          <ItemGroup>
-            <Item
-              testID="skills.page.found"
-              title={t('capabilities.skillsFound.destination')}
-              detail={foundCount > 0 ? String(foundCount) : undefined}
-              icon={
-                <Icon
-                  name="desktop"
-                  size={20}
-                  color={theme.colors.text.secondary}
-                />
-              }
-              onPress={() => open(SKILLS_FOUND_ROUTE)}
-            />
-          </ItemGroup>
-        ) : null}
-        {unavailable
-          ? stateCard('skills.rail.error', 'error', t('capabilities.skills.loadFailed'), {
-              label: t('common.retry'),
-              onPress: library.retry,
-            })
-          : null}
-        {loading ? <CollectionSkeletonRows count={6} /> : null}
-        {noMatch
-          ? stateCard(
-              'skills.rail.noMatch',
-              'empty',
-              t('capabilities.skills.noMatch', {
-                query: query.trim() || (machineFilter?.name ?? ''),
-              }),
-            )
-          : null}
-        {sections.map(group)}
-      </View>
-    );
-  }
-
+  // Two views of one column (P8): what you added, and what other agents already run on your machines.
+  const viewSwitch = machines.length > 0 ? (
+    <CollectionViewSwitch
+      view={atFound ? 'found' : 'all'}
+      foundCount={foundCount}
+      foundLabel={t('capabilities.skillsFound.destination')}
+      onChange={(view) => open(view === 'found' ? SKILLS_FOUND_ROUTE : SKILLS_COLLECTION_ROUTE)}
+      testIDPrefix={rail ? 'skills.rail.view' : 'skills.page.view'}
+    />
+  ) : null;
   const body = (
     <>
-      <CollectionIndexRow
+      {!rail ? null : (
+        <CollectionIndexRow
           testID="skills.rail.all"
           detail={
             needLook > 0
@@ -394,6 +296,7 @@ export const SkillsList = React.memo(function SkillsList(
           selected={atRoot}
           onPress={() => open(SKILLS_COLLECTION_ROUTE)}
         />
+      )}
       {firstVisit ? (
         <CollectionIndexRow
           testID="skills.rail.choose"
@@ -415,46 +318,6 @@ export const SkillsList = React.memo(function SkillsList(
           onPress={() => open(SKILLS_UPDATES_ROUTE)}
         />
       ) : null}
-      {machines.length > 0 ? (
-        <CollectionIndexRow
-          testID="skills.rail.found"
-          icon="desktop"
-          title={t('capabilities.skillsFound.destination')}
-          detail={foundCount > 0 ? String(foundCount) : undefined}
-          selected={atFound}
-          onPress={() => open(SKILLS_FOUND_ROUTE)}
-        />
-      ) : null}
-      {machineFilter ? (
-        <Item
-          testID="skills.rail.machineFilter"
-          title={t('capabilities.skills.filterOn', {
-            machine: machineFilter.name ?? machineFilter.machineId,
-          })}
-          icon={
-            <HappierCollectionListMark>
-              <Icon
-                name="desktop"
-                size={20}
-                color={theme.colors.text.secondary}
-              />
-            </HappierCollectionListMark>
-          }
-          density="compact"
-          showChevron={false}
-          pressableStyle={collectionListStyles.row}
-          rightElement={
-            <IconButton
-              testID="skills.rail.machineFilter.clear"
-              iconName="x"
-              variant="plain"
-              accessibilityLabel={t('capabilities.skills.clearFilter')}
-              tooltip={t('capabilities.skills.clearFilter')}
-              onPress={clearFilter}
-            />
-          }
-        />
-      ) : null}
       {unavailable ? (
         <View style={collectionListStyles.stateLine}>
           <SurfaceStateCard
@@ -467,7 +330,7 @@ export const SkillsList = React.memo(function SkillsList(
           />
         </View>
       ) : null}
-      {loading ? <CollectionSkeletonRows count={6} /> : null}
+      {loading ? <CollectionSkeletonRows count={6} rowRole="catalogRow" /> : null}
       {empty ? (
         <View style={collectionListStyles.stateLine}>
           <SurfaceStateCard
@@ -485,59 +348,84 @@ export const SkillsList = React.memo(function SkillsList(
             size="line"
             kind="empty"
             title={t('capabilities.skills.noMatch', {
-              query: query.trim() || (machineFilter?.name ?? ''),
+              query: query.trim() || columnFilter.conditionWords,
             })}
           />
         </View>
       ) : null}
-      {sections.map((section) => (
-        <React.Fragment key={section.key}>
+      {sections.flatMap((section, index) => [
           <CollectionListGroupLabel
+            key={`group.${section.key}`}
             testID={`skills.rail.group.${section.key}`}
             title={section.title}
             count={section.rows.length}
-          />
-          {section.rows.map(renderRow)}
-        </React.Fragment>
-      ))}
+            // The first group closes the header block (search, the index rows): the shared first-group air.
+            first={index === 0}
+          />,
+          ...section.rows.map(renderRow),
+      ])}
     </>
   );
 
+  const addButton = (
+    <IconButton
+      testID="skills.rail.add"
+      iconName="plus"
+      variant="plain"
+      accessibilityLabel={t('capabilities.skills.addSkill')}
+      tooltip={t('capabilities.skills.addSkill')}
+      onPress={() => openAdd()}
+    />
+  );
+  const filterInHeader = library.items.length > 0 && !searchable ? columnFilter.filterButton : null;
+  const search = searchable
+    ? {
+        value: query,
+        onChangeText: setQuery,
+        placeholder: t('capabilities.skills.searchPlaceholder'),
+        testID: 'skills.rail.search',
+        trailing: columnFilter.filterButton,
+        anchorRef: columnFilter.searchAnchorRef,
+      }
+    : null;
+  const filters = viewSwitch ? { targetCount: Math.max(library.items.length, 1), content: viewSwitch } : null;
+  const count = loading ? null : library.items.length;
+
+  if (rail) {
+    return (
+      <CollectionList
+        testID="skills.rail"
+        title={t('capabilities.skills.title')}
+        count={count}
+        strip={columnFilter.tokenRow}
+        headerAction={<>{filterInHeader}{addButton}</>}
+        search={search}
+        filters={filters}
+      >
+        {body}
+        {columnFilter.editorOverlay}
+      </CollectionList>
+    );
+  }
+
+  // A phone's page is the rail's own list under a large title with its count and Add (lab sfcols:skillsP).
+  // Every capability home recomposes in one order (lab kp:home, np:home): the overview and Needs a look,
+  // then the list's search, view switch and rows, as MCP's phone page does.
   return (
-    <CollectionList
-      testID="skills.rail"
-      title={t('capabilities.skills.title')}
-      count={loading ? null : library.items.length}
-      headerAction={
-        <IconButton
-          testID="skills.rail.add"
-          iconName="plus"
-          variant="plain"
-          accessibilityLabel={t('capabilities.skills.addSkill')}
-          tooltip={t('capabilities.skills.addSkill')}
-          onPress={() => openAdd()}
-        />
-      }
-      search={
-        searchable
-          ? {
-              value: query,
-              onChangeText: setQuery,
-              placeholder: t('capabilities.skills.searchPlaceholder'),
-              testID: 'skills.rail.search',
-            }
-          : null
-      }
+    <SettingsCollectionPage
+      testID="skills.list"
+      headerTestID="skills.page.header"
+      count={count}
+      actions={<>{filterInHeader}{addButton}</>}
     >
-      {body}
-    </CollectionList>
+      <SkillsHomeOverviewView library={library} showHeader={false} reach={props.reach} />
+      <CollectionList
+        testID="skills.page.list"
+        strip={columnFilter.tokenRow}
+        search={search}
+        filters={filters}
+        scrollContent={<>{body}{columnFilter.editorOverlay}</>}
+      />
+    </SettingsCollectionPage>
   );
 });
-
-
-const pageStyles = StyleSheet.create((theme) => ({
-  // The search field lines up with the sheets below it (the grouped list's content edge).
-  search: { marginTop: theme.space.s8, paddingHorizontal: resolveItemGroupContentHorizontalInsetPx() },
-  state: { paddingVertical: theme.space.s8, paddingHorizontal: resolveItemGroupContentHorizontalInsetPx() },
-  count: { color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
-}));

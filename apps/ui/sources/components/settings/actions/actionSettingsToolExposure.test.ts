@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_ACTIONS_SETTINGS_V1, type ActionId, type ActionsSettingsV1 } from '@happier-dev/protocol';
+import { DEFAULT_ACTIONS_SETTINGS_V1} from '@happier-dev/protocol/account/settings/accountSettings';
+import { type ActionId} from '@happier-dev/protocol/actions/actionIds';
+import { type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 import * as actionSettingsTargets from './actionSettingsTargets';
 

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import type { IdentityConnectionTestDiagnosticsV1 } from '@happier-dev/protocol';
+import type { IdentityConnectionTestDiagnosticsV1 } from '@happier-dev/protocol/identity/testDiagnostics';
 
 import { IdentityTestDiagnosticsGroup } from '@/components/settings/identity/IdentityTestDiagnosticsGroup';
 import { HOME_IDENTITY_PROVIDER_SETTINGS } from '@/components/settings/identity/identitySettings';
@@ -18,7 +18,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import {
@@ -104,13 +104,14 @@ const DetailContent = React.memo(function DetailContent(props: Readonly<{
         }
     }, [mountedRef, props.context.scope.accountId, props.context.scope.serverId, props.providerId, refresh]);
     const copyFeedback = useHappierCopyFeedback();
+    const writeClipboard = useClipboardWrite(props.context.scope);
     const copyCallbackUrl = React.useCallback(async (url: string) => {
-        if (!await setClipboardStringSafe(url)) {
+        if (!await writeClipboard(url)) {
             await Modal.alertAsync(t('common.error'), t('items.failedToCopyToClipboard'));
             return;
         }
         copyFeedback.markCopied();
-    }, [copyFeedback]);
+    }, [copyFeedback, writeClipboard]);
 
     if (state.kind === 'loading') {
         return <ItemGroup><SurfaceStateCard testID="identity-provider-loading" kind="loading" size="line" title={t('common.loading')} /></ItemGroup>;

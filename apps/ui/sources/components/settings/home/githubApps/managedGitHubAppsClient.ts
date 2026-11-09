@@ -173,7 +173,7 @@ export function createManagedGitHubAppsClient(scope: ServerAccountScope): Manage
                     scope,
                     expectedInput: parsedInput.data,
                     onSucceeded: async (value) => await onApprovalSucceeded?.(value),
-                    ...(onApprovalFailed ? { onFailed: onApprovalFailed } : {}),
+                    onFailed: (code) => onApprovalFailed?.(code),
                 }),
             };
         }

@@ -86,7 +86,8 @@ export async function runThemePreferenceChange(input: ThemePreferenceChangeInput
         const documentLike = input.document ?? (typeof document === 'undefined' ? null : document);
         const startViewTransition = documentLike?.startViewTransition;
         const animate = documentLike?.documentElement?.animate;
-        if (!documentLike || typeof startViewTransition !== 'function' || typeof animate !== 'function') {
+        if (!documentLike || documentLike.visibilityState === 'hidden'
+            || typeof startViewTransition !== 'function' || typeof animate !== 'function') {
             input.mutation();
             return;
         }
@@ -97,10 +98,16 @@ export async function runThemePreferenceChange(input: ThemePreferenceChangeInput
         const transition = startViewTransition.call(documentLike, () => commitMutation(input.mutation));
         if (play) {
             play(transition);
+        }
+        try {
             await transition.ready;
+        } catch {
+            // Hidden/superseded transitions skip their reveal, but still run the update once.
+            // Keep mutation failures observable without replaying an already-applied change.
+            await transition.updateCallbackDone;
             return;
         }
-        await transition.ready;
+        if (play) return;
         animate.call(
             documentLike.documentElement,
             { clipPath: ['inset(0 0 100% 0)', 'inset(0)'] },

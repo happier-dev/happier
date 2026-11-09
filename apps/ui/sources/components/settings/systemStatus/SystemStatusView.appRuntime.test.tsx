@@ -6,6 +6,7 @@ import { act } from 'react-test-renderer';
 import { flushHookEffects, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installBrowserClipboardBoundary } from '@/dev/testkit/harness/browserClipboardBoundary';
 
 (
     globalThis as typeof globalThis & {
@@ -13,7 +14,8 @@ import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernance
     }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-const setClipboardStringSafeMock = vi.hoisted(() => vi.fn(async () => true));
+// The web copy path writes through the browser clipboard port, not expo-clipboard.
+const setClipboardStringSafeMock = vi.hoisted(() => vi.fn(async (_value: string) => {}));
 const modalAlertMock = vi.hoisted(() => vi.fn());
 const homeTransportDiagnostics = [{
     homeServerIdentityId: 'home_1',
@@ -26,7 +28,6 @@ const homeTransportDiagnostics = [{
 afterEach(() => {
     standardCleanup();
     setClipboardStringSafeMock.mockReset();
-    setClipboardStringSafeMock.mockResolvedValue(true);
     modalAlertMock.mockReset();
     retireIrohHomeTransportDiagnostics('home_1');
     storage.setState(initialStorageState, true);
@@ -80,10 +81,6 @@ vi.mock('expo-updates', async () => ({
     createdAt: new Date('2026-04-06T12:34:56.000Z'), isEmbeddedLaunch: false,
 }));
 
-vi.mock('expo-clipboard', () => ({
-    setStringAsync: setClipboardStringSafeMock,
-}));
-
 const network = await installSessionOpsNetworkBoundary();
 const { storage } = await import('@/sync/domains/state/storage');
 const { profileDefaults } = await import('@/sync/domains/profiles/profile');
@@ -114,6 +111,7 @@ afterAll(async () => { await network.dispose(); });
 
 describe('SystemStatusView app runtime info', () => {
     it('shows app runtime details and copies OTA runtime metadata into the system-status JSON payload', async () => {
+        installBrowserClipboardBoundary(setClipboardStringSafeMock);
         const screen = await renderScreen(<SystemStatusView />);
         await flushHookEffects({ cycles: 10 });
 

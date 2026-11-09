@@ -1,7 +1,8 @@
 import * as React from 'react';
 
 import { SettingsCollectionLayout } from '@/components/settings/shell/SettingsCollectionLayout';
-import { useProfile } from '@/sync/store/hooks';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 
 import { ConnectedServicesRail } from './ConnectedServicesRail';
 import { CONNECTED_SERVICES_COLLECTION_ROUTE, resolveConnectedServicesChildRoute } from './connectedServicesCollectionRoutes';
@@ -16,16 +17,16 @@ const CONNECTED_SERVICES_DETAIL_MIN_WIDTH_PX = 560;
  * or a pool opens it. Narrow: the index page is the list and pushes each detail.
  */
 export const ConnectedServicesSettingsLayout = React.memo(function ConnectedServicesSettingsLayout() {
-    // First run (lab P0): nothing connected yet, so no rail; the index is the whole page.
-    const profile = useProfile();
-    const hasAccounts = (profile.connectedAccountsV4?.length ?? 0) > 0
-        || (profile.connectedServicesV2 ?? []).some((service) => (service.profiles?.length ?? 0) > 0);
+    const presented = useLayoutPresentationActive();
     return (
         <SettingsCollectionLayout
             navigator="connected-services"
             rootPathname={CONNECTED_SERVICES_COLLECTION_ROUTE}
             resolveChildRoute={resolveConnectedServicesChildRoute}
-            rail={hasAccounts ? <ConnectedServicesRail /> : null}
+            // The column shows from the first visit (R6-2), so "+" is always in one place.
+            rail={<RetainedPanelSurface isActive={presented} suspendWhenHidden>
+                <ConnectedServicesRail />
+            </RetainedPanelSurface>}
             railWidth="standard"
             detailMinWidthPx={CONNECTED_SERVICES_DETAIL_MIN_WIDTH_PX}
             testID="settings-connected-services"

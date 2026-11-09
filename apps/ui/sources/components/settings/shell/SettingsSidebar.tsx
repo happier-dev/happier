@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -10,10 +12,11 @@ import {
 } from '@/components/ui/lists/collection/CollectionList';
 import { t } from '@/text';
 
-import { useResolvedSettingsPageCatalog } from '@/components/settings/catalog/runtime/useResolvedSettingsPageCatalog';
+import { useResolvedSettingsPageNavigation } from '@/components/settings/catalog/runtime/useResolvedSettingsPageIdentity';
 import type { ResolvedSettingsPageNode } from '@/components/settings/catalog/types';
-import { SettingsSearchResults, useSettingsSearch } from '@/components/settings/shell/SettingsSearchResults';
+import { SettingsQueryResults, useSettingsSearch } from '@/components/settings/shell/SettingsSearchResults';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { appShellColumnPlaneColor } from '@/components/navigation/shell/appRail/appShellColumnSurface';
@@ -80,8 +83,8 @@ function collectAncestors(id: string, parents: ParentMap): string[] {
 export const SettingsSidebar = React.memo(function SettingsSidebar() {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const resolved = useResolvedSettingsPageCatalog();
-    const search = useSettingsSearch(resolved, { clearOnOpen: true, tag: 'SettingsSidebar.search' });
+    const resolved = useResolvedSettingsPageNavigation();
+    const search = useSettingsSearch({ clearOnOpen: true, tag: 'SettingsSidebar.search' });
     const scrollFades = useScrollEdgeFades({ enabledEdges: { top: true, bottom: true } });
 
     const parents = React.useMemo(() => buildParentMap(resolved.tree), [resolved.tree]);
@@ -157,8 +160,10 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
             />
         );
 
+        // The caret is a control inside a row that is itself a target: it keeps its drawn size and its hit
+        // area reaches the pointer floor only through the row's own free space.
         const iconPressable = (child: React.ReactNode) => (
-            <Pressable
+            <HappierPressable
                 testID={`settings-sidebar.toggle.${node.id}`}
                 onPress={(event: any) => {
                     event?.preventDefault?.();
@@ -167,25 +172,22 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
                 }}
                 accessibilityRole="button"
                 accessibilityLabel={readSettingsPageTitle(node)}
-                accessibilityState={{ expanded }}
+                expanded={expanded}
+                hitTarget={HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE}
                 style={{ alignItems: 'center', justifyContent: 'center' }}
-                hitSlop={6}
             >
                 {child}
-            </Pressable>
+            </HappierPressable>
         );
 
         const disclosure = hasChildren ? iconPressable(
-            <Icon
-                name={expanded ? 'caret-down' : 'caret-right'}
-                size={ICON_SIZE.xs}
-                color={theme.colors.text.secondary}
-            />
+            <DisclosureCaret expanded={expanded} size={ICON_SIZE.xs} />
         ) : undefined;
 
         return (
             <React.Fragment key={node.id}>
                 <CollectionNavigationRow
+                    rowRole="item"
                     href={node.route ?? null}
                     testID={`settings-sidebar.item.${node.id}`}
                     title={readSettingsPageTitle(node)}
@@ -248,31 +250,33 @@ export const SettingsSidebar = React.memo(function SettingsSidebar() {
                     // content behind it. No caret: centred over a row of a navigation list it read as that
                     // row's second disclosure ("Prompts & Skills ⌄ ›", fidelity 2026-10-11).
                     <View style={styles.listHost}>
-                        <ItemList presentation="grouped"
-                            style={styles.listSurface}
-                            onLayout={scrollFades.onViewportLayout}
-                            onContentSizeChange={scrollFades.onContentSizeChange}
-                            onScroll={scrollFades.onScroll}
-                            onMomentumScrollEnd={scrollFades.onMomentumScrollEnd}
-                            scrollEventThrottle={16}
-                        >
-                            {search.active ? (
-                                <SettingsSearchResults
-                                    presentation="rail"
-                                    results={search.results}
-                                    tree={resolved.tree}
-                                    testIDPrefix="settings-sidebar.searchResult"
-                                    emptyTestID="settings-sidebar.searchEmpty"
-                                    onOpen={search.openRoute}
-                                />
-                            ) : resolved.tree.map((node) => renderRail(node))}
-                        </ItemList>
+                        {search.active ? (
+                            // The results list is its own recycler scroller: only rows in view mount.
+                            <SettingsQueryResults
+                                presentation="rail"
+                                query={search.normalizedQuery}
+                                testIDPrefix="settings-sidebar.searchResult"
+                                emptyTestID="settings-sidebar.searchEmpty"
+                                onOpen={search.openRoute}
+                            />
+                        ) : (
+                            <ItemList presentation="grouped"
+                                style={styles.listSurface}
+                                onLayout={scrollFades.onViewportLayout}
+                                onContentSizeChange={scrollFades.onContentSizeChange}
+                                onScroll={scrollFades.onScroll}
+                                onMomentumScrollEnd={scrollFades.onMomentumScrollEnd}
+                                scrollEventThrottle={16}
+                            >
+                                {resolved.tree.map((node) => renderRail(node))}
+                            </ItemList>
+                        )}
 
-                        <ScrollEdgeFades
+                        {search.active ? null : <ScrollEdgeFades
                             color={appShellColumnPlaneColor(theme.colors)}
                             size={18}
                             edges={scrollFades.visibility}
-                        />
+                        />}
                     </View>
                 )}
             />

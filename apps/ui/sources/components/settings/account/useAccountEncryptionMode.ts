@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { useOptionalAuth } from '@/auth/context/AuthContext';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import {
     fetchAccountEncryptionMode,
     getAccountEncryptionModeCacheRevision,
@@ -17,10 +18,14 @@ import {
 export function useAccountEncryptionMode(options: Readonly<{ enabled?: boolean }> = {}): 'e2ee' | 'plain' | null {
     const enabled = options.enabled !== false;
     const credentials = useOptionalAuth()?.credentials ?? null;
+    const { serverId } = useActiveServerSnapshot(enabled && credentials !== null);
+    const subscribe = React.useCallback((listener: () => void) =>
+        subscribeAccountEncryptionModeCacheInvalidation(listener, serverId), [serverId]);
+    const getRevision = React.useCallback(() => getAccountEncryptionModeCacheRevision(serverId), [serverId]);
     const revision = React.useSyncExternalStore(
-        subscribeAccountEncryptionModeCacheInvalidation,
-        getAccountEncryptionModeCacheRevision,
-        getAccountEncryptionModeCacheRevision,
+        subscribe,
+        getRevision,
+        getRevision,
     );
     const [projection, setProjection] = React.useState<Readonly<{
         credentials: AuthCredentials;

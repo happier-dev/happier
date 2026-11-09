@@ -128,6 +128,12 @@ describe('mergeAdmittedPluginSettingsPages', () => {
             }),
         ]));
         expect(pluginGroup).toBeUndefined();
+        // A page in a host group reads as one of the host's rows (Settings → Channels, owner Q2): it leads
+        // with its declared glyph, like its neighbours, not the plugin's mark.
+        const hostRowIcon = general?.children?.find((entry) => entry.id === 'pluginSettingsPage:acme.review:defaults')
+            ?.icon?.({ theme: { colors: { text: { secondary: 'ink' } } } as never }) as React.ReactElement<{ name?: string }> | undefined;
+        expect(hostRowIcon?.type).not.toBe(InstalledPluginMarkById);
+        expect(hostRowIcon?.props.name).toBe('gear');
         // Plugin destinations are disclosed under the Plugins page's own row, not a heading of their own.
         expect(root.children?.find((entry) => entry.id === 'groupPlugins')).toBeUndefined();
         const plugins = general?.children?.find((entry) => entry.id === 'plugins');

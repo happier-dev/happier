@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
+import type { QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 import type { ConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { connectedServiceProfileKey } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
@@ -128,5 +128,45 @@ describe('presentConnectedServicesIndexAccount privacy for released profiles', (
         expect(shown.title).toBe('ChatGPT account');
         expect(shown.identityLabel).toBe('00ae5•••64');
         expect(shown.accountIdLabel).toBe(providerId);
+    });
+});
+
+describe('presentConnectedServicesIndexAccount list identity (Credentials rows: email as title, name beside the plan)', () => {
+    function presentQualified(profiles: readonly QualifiedConnectedAccountProfileV4[], hidden = false) {
+        const model = buildConnectedServicesIndexModel({
+            transport: 'advertised-v4', entries: [ENTRY], qualifiedAccounts: [...profiles], qualifiedGroups: [],
+            legacyServices: [], defaultAccountByServiceKey: {}, resolveLabel: () => 'ChatGPT',
+            resolveFallbackEntry: () => null, presentDiagnostics: () => ({ primary: null, supportDetails: null }),
+            loadingLabel: 'Loading',
+        });
+        const sheet = model.sheets[0]!;
+        return Object.fromEntries(sheet.accounts.map((account) => [account.accountId, presentConnectedServicesIndexAccount(sheet, account, {}, (input) => presentConnectedAccountIdentity({
+            ...input, hidden, label: input.label ?? null, email: input.email ?? null, accountId: input.accountId ?? null,
+        }))]));
+    }
+    const base: QualifiedConnectedAccountProfileV4 = {
+        ref: { service: ENTRY.service!, accountId: 'a' },
+        status: 'connected', authenticationModeId: 'oauth', revisionSemantics: 'revisioned',
+        credentialRevision: 'credential-1', configurationReady: true, configurationRevision: null, scopes: [],
+    };
+
+    it('leads a named subscription with its email and keeps the name for the subtitle', () => {
+        const shown = presentQualified([{ ...base, displayName: 'Leeroy', providerIdentity: { email: 'leeroy@example.com' } }]);
+        expect(shown.a).toMatchObject({ title: 'Leeroy', listTitle: 'leeroy@example.com', listName: 'Leeroy' });
+    });
+
+    it('keeps an unnamed subscription on its email with no name, and a key on its own name', () => {
+        const shown = presentQualified([
+            { ...base, providerIdentity: { email: 'ai1@example.com' } },
+            { ...base, ref: { ...base.ref, accountId: 'k' }, kind: 'token', displayName: 'Work key', providerIdentity: { email: 'billing@example.com' } },
+        ]);
+        expect(shown.a).toMatchObject({ listTitle: 'ai1@example.com', listName: null });
+        expect(shown.k).toMatchObject({ listTitle: 'Work key', listName: null });
+    });
+
+    it('applies the privacy presenter to the email it promotes', () => {
+        const shown = presentQualified([{ ...base, displayName: 'Leeroy', providerIdentity: { email: 'leeroy@example.com' } }], true);
+        expect(shown.a?.listTitle).not.toContain('leeroy@example.com');
+        expect(shown.a?.listName).toBe('Leeroy');
     });
 });

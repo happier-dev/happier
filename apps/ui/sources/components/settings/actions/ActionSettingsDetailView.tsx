@@ -4,8 +4,9 @@ import { Stack, useLocalSearchParams } from '@/components/appShell/workspace/des
 import { StyleSheet } from 'react-native-unistyles';
 
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
-import type { ActionSettingsActionId } from '@happier-dev/protocol/actions/actionSettings';
+import { getActionSpec, listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { parseQualifiedPluginResourcePolicyId, formatQualifiedPluginResourcePolicyId, type ActionSettingsActionId } from '@happier-dev/protocol/actions/actionSettings';
 
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
@@ -24,6 +25,8 @@ import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines
 import { useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
+import { ActionApprovalLooseningNotice } from './ActionApprovalLooseningNotice';
+import { ActionMachineApprovalSection } from './ActionMachineApprovalSection';
 import { ActionSettingsTargetModeControl } from './ActionSettingsTargetModeControl';
 import { ActionSettingsToolExposureControl } from './ActionSettingsToolExposureControl';
 import {
@@ -38,6 +41,7 @@ import {
 } from './actionSettingsTargets';
 import {
     buildActionSettingsEntries,
+    ACTION_SETTINGS_PROJECTION_SECTIONS,
     buildActionSettingsContributedActions,
     type ActionSettingsEntry,
     type ActionSettingsTargetEntry,
@@ -78,9 +82,10 @@ function decodeActionIdParam(value: string | string[] | undefined): ActionSettin
         return spec.id;
     }
     const contributedAction = parseQualifiedPluginActionId(decoded);
+    const resource = parseQualifiedPluginResourcePolicyId(decoded);
     return contributedAction
         ? formatQualifiedPluginActionId(contributedAction)
-        : null;
+        : resource ? formatQualifiedPluginResourcePolicyId(resource) : null;
 }
 
 function getTargetSubtitle(
@@ -120,24 +125,9 @@ function targetMatchesSearch(target: ActionSettingsTargetEntry, query: string): 
         .every((token) => searchable.includes(token));
 }
 
-function groupTargetsByCategory(targets: readonly ActionSettingsTargetEntry[]) {
-    return categoryOrder
-        .map((category) => ({
-            category,
-            targets: targets.filter((target) => target.category === category),
-        }))
-        .filter((section) => section.targets.length > 0);
-}
-
-function getCategoryTitleKey(category: ActionSettingsTargetCategory) {
-    switch (category) {
-        case 'app':
-            return 'settingsActions.sections.app';
-        case 'voice':
-            return 'settingsActions.sections.voice';
-        case 'integrations':
-            return 'settingsActions.sections.integrations';
-    }
+/** Every surface in one "Who may use it" section: in-app first, then voice, then integrations. */
+function orderTargetsByCategory(targets: readonly ActionSettingsTargetEntry[]) {
+    return categoryOrder.flatMap((category) => targets.filter((target) => target.category === category));
 }
 
 type ActionSettingsDetailContentProps = Readonly<{
@@ -173,7 +163,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
     const voiceEnabled = useFeatureEnabled('voice');
     const sessionHandoffEnabled = useFeatureEnabled('sessions.handoff');
     const needsMachineProjection = props.actionId === 'capture.view'
-        || parseQualifiedPluginActionId(props.actionId) !== null;
+        || parseQualifiedPluginActionId(props.actionId) !== null || parseQualifiedPluginResourcePolicyId(props.actionId) !== null;
     const administrationTargetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.actions,
         { enabled: needsMachineProjection },
@@ -191,6 +181,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
         machineId: executionTarget?.machine.id ?? null,
         serverId: executionTarget?.serverId ?? null,
         enabled: executionTarget !== null,
+        sections: ACTION_SETTINGS_PROJECTION_SECTIONS,
     });
     const contributedActions = React.useMemo(() => (
         executionTarget && daemonMergedProjection.inputs
@@ -231,7 +222,12 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
     const filteredTargets = React.useMemo(() => (
         entry?.targets.filter((target) => targetMatchesSearch(target, searchQuery)) ?? []
     ), [entry?.targets, searchQuery]);
-    const targetSections = React.useMemo(() => groupTargetsByCategory(filteredTargets), [filteredTargets]);
+    const orderedTargets = React.useMemo(() => orderTargetsByCategory(filteredTargets), [filteredTargets]);
+    // Only Actions whose spec declares Machine approval scope offer per-Machine preferences.
+    const machineScoped = React.useMemo(() => {
+        const hostId = ActionIdSchema.safeParse(props.actionId);
+        return hostId.success && getActionSpec(hostId.data).approvalScope === 'machine' ? hostId.data : null;
+    }, [props.actionId]);
     const toolExposureTargets = React.useMemo(() => (
         filteredTargets
             .map((target) => {
@@ -334,7 +330,7 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                 placeholder={t('settingsActions.detailSearchPlaceholder')}
             />
 
-            {targetSections.length === 0 ? (
+            {orderedTargets.length === 0 ? (
                 <ItemGroup>
                     <Item
                         testID={`settings-actions:action:${entry.actionId}:no-targets`}
@@ -345,52 +341,75 @@ export const ActionSettingsDetailContent = React.memo(function ActionSettingsDet
                 </ItemGroup>
             ) : null}
 
-            {targetSections.map((section, index) => (
-                <ItemGroup
-                    key={section.category}
-                    title={t(getCategoryTitleKey(section.category))}
-                    // How "Ask first" and "Allowed" differ, said once above the first surfaces.
-                    description={index === 0 ? t('settingsActions.approvalHelpBody') : undefined}
-                >
-                    {section.targets.map((target) => {
-                        const targetTestIDPrefix = `settings-actions:action:${entry.actionId}:target:${target.id}`;
-                        const available = target.state !== 'unavailable';
-                        const controlState = resolveActionSettingsTargetControlState({
+            {orderedTargets.length > 0 ? (() => {
+                const rows = orderedTargets.map((target) => {
+                    const available = target.state !== 'unavailable';
+                    return {
+                        target,
+                        available,
+                        testIDPrefix: `settings-actions:action:${entry.actionId}:target:${target.id}`,
+                        controlState: resolveActionSettingsTargetControlState({
                             settings,
                             actionId: entry.actionId,
                             targetId: target.id,
                             target: target.definition,
                             available,
                             scmRemoteConfirmPolicy,
-                        });
-                        const shouldStackModeControl = compactLayout && controlState.kind === 'approval';
-                        const targetModeControl = (
-                            <ActionSettingsTargetModeControl
-                                testIDPrefix={targetTestIDPrefix}
-                                accessibilityLabel={t(target.titleKey)}
-                                controlState={controlState}
-                                disabled={!entry.enabled || !available}
-                                layout={shouldStackModeControl ? 'stacked' : 'inline'}
-                                onChange={(value) => handleTargetControlChange(target, value)}
-                            />
-                        );
+                        }),
+                    };
+                });
+                return (
+                    <ItemGroup
+                        title={t('settingsActions.sections.whoMayUseIt')}
+                        // How "Ask first" and "Allowed" differ, said once above the surfaces.
+                        description={parseQualifiedPluginResourcePolicyId(entry.actionId) ? undefined : t('settingsActions.approvalHelpBody')}
+                    >
+                        {/* The loosening warning leads the section holding the Allowed choice, one per exact
+                            key, so Keep Ask first restores only that surface. */}
+                        {rows.map(({ target, testIDPrefix, controlState }) => (
+                            controlState.kind === 'approval' && controlState.approvalLooseningNotice ? (
+                                <ActionApprovalLooseningNotice
+                                    key={`${target.id}:loosening`}
+                                    testID={`${testIDPrefix}:loosening`}
+                                    notice={controlState.approvalLooseningNotice}
+                                    disabled={!entry.enabled}
+                                />
+                            ) : null
+                        ))}
+                        {rows.map(({ target, available, testIDPrefix, controlState }) => {
+                            const shouldStackModeControl = compactLayout && controlState.kind === 'approval';
+                            const targetModeControl = (
+                                <ActionSettingsTargetModeControl
+                                    testIDPrefix={testIDPrefix}
+                                    accessibilityLabel={t(target.titleKey)}
+                                    controlState={controlState}
+                                    disabled={!entry.enabled || !available}
+                                    layout={shouldStackModeControl ? 'stacked' : 'inline'}
+                                    onChange={(value) => handleTargetControlChange(target, value)}
+                                />
+                            );
 
-                        return (
-                            <Item
-                                key={target.id}
-                                testID={targetTestIDPrefix}
-                                title={t(target.titleKey)}
-                                subtitle={getTargetSubtitle(target, controlState, entry.actionId)}
-                                mode={available ? 'interactive' : 'info'}
-                                disabled={!entry.enabled || !available}
-                                showChevron={false}
-                                subtitleAccessory={shouldStackModeControl ? targetModeControl : null}
-                                rightElement={shouldStackModeControl ? null : targetModeControl}
-                            />
-                        );
-                    })}
-                </ItemGroup>
-            ))}
+                            return (
+                                <Item
+                                    key={target.id}
+                                    testID={testIDPrefix}
+                                    title={t(target.titleKey)}
+                                    subtitle={getTargetSubtitle(target, controlState, entry.actionId)}
+                                    mode={available ? 'interactive' : 'info'}
+                                    disabled={!entry.enabled || !available}
+                                    showChevron={false}
+                                    subtitleAccessory={shouldStackModeControl ? targetModeControl : null}
+                                    rightElement={shouldStackModeControl ? null : targetModeControl}
+                                />
+                            );
+                        })}
+                    </ItemGroup>
+                );
+            })() : null}
+
+            {machineScoped && entry.kind === 'host' ? (
+                <ActionMachineApprovalSection actionId={machineScoped} settings={settings} disabled={!entry.enabled} />
+            ) : null}
 
             {(['automations', 'alwaysTrue'] as const).map((section) => {
                 const sectionFacts = facts.filter((fact) => fact.section === section);

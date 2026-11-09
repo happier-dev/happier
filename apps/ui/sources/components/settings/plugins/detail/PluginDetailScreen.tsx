@@ -46,6 +46,8 @@ import { PluginReadOnlySnapshotNotice } from '../PluginReadOnlySnapshotNotice';
 import { PluginEnablementSection } from './PluginEnablementSection';
 import { PluginUpdatePolicySection } from './PluginUpdatePolicySection';
 import { PluginRoutineOperationSettlementRow } from '../PluginMarketplaceSections';
+import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
+import { useInPlaceApprovalReview, type InPlaceApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
 
 /**
  * One screen-owned execution-origin controller feeds both its presentation and
@@ -59,6 +61,8 @@ import { PluginRoutineOperationSettlementRow } from '../PluginMarketplaceSection
  */
 function PluginDetailCurrentContent(props: Readonly<{
     pluginId: string;
+    /** The page's in-place review of its own Update; beside the Plugins page the page's notice stands. */
+    approvalReview?: InPlaceApprovalReview;
     presentation: PluginDetailPresentation;
     installed: InstalledPluginEntry | null;
     state: PluginSettingsScreenState;
@@ -132,6 +136,14 @@ function PluginDetailCurrentContent(props: Readonly<{
                     testID="settings.plugins.detail.readOnlySnapshot"
                     reason={state.readOnlySnapshotNotice.reason}
                     onRetry={state.refreshPluginTruth}
+                />
+            ) : null}
+            {props.approvalReview?.waiting ? (
+                <ActionApprovalPendingNotice
+                    testID="settings.plugins.detail.approvalWaiting"
+                    message={t('approvals.waitingForYou')}
+                    summary={state.pluginActionApproval.approvalSummary}
+                    onOpenApproval={props.approvalReview.reopen}
                 />
             ) : null}
             <PluginRoutineOperationSettlementRow
@@ -240,10 +252,12 @@ export const PluginDetailScreen = React.memo(function PluginDetailScreen(props: 
     // Settings or the app page: a missing plugin falls back to the Plugins home of the same host.
     const host = usePluginsSurfaceHost();
     const state = usePluginSettingsScreenState({ focused: isFocused });
+    // Update's evaluated review opens on this page, where it was pressed.
+    const approvalReview = useInPlaceApprovalReview(state.pluginActionApproval);
     if (!props.pluginId) {
         return <Redirect href={buildPluginsHomeRoute(host)} />;
     }
-    return <PluginDetailView pluginId={props.pluginId} state={state} presentation="page" />;
+    return <PluginDetailView pluginId={props.pluginId} state={state} presentation="page" approvalReview={approvalReview} />;
 });
 
 /**
@@ -254,6 +268,7 @@ export const PluginDetailView = React.memo(function PluginDetailView(props: Read
     pluginId: string;
     state: PluginSettingsScreenState;
     presentation: PluginDetailPresentation;
+    approvalReview?: InPlaceApprovalReview;
 }>) {
     const host = usePluginsSurfaceHost();
     const { state } = props;
@@ -348,6 +363,7 @@ export const PluginDetailView = React.memo(function PluginDetailView(props: Read
     if (installed || projection) {
         return (
             <PluginDetailCurrentContent
+                approvalReview={props.approvalReview}
                 pluginId={props.pluginId}
                 presentation={props.presentation}
                 installed={installed}

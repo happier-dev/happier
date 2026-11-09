@@ -1,8 +1,8 @@
 import * as React from 'react';
 import renderer from 'react-test-renderer';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { createDeferred, renderScreen } from '@/dev/testkit';
 import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
 
 (
@@ -34,7 +34,7 @@ const LOCAL_PARAMS = {
 
 async function createHarness() {
     const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-    const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+    const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
 
     let nextTaskId = 1;
     const listeners = new Map<string, {
@@ -79,6 +79,13 @@ async function createHarness() {
                 .find((node) => typeof node.type !== 'string' && node.props?.title !== undefined);
             return match?.props.subtitle;
         },
+        async pressRow(testID: string) {
+            const match = screen.findAllByTestId(testID)
+                .find((node) => typeof node.type !== 'string' && node.props?.title !== undefined);
+            const onPress: unknown = match?.props.onPress;
+            if (typeof onPress !== 'function') throw new Error(`no action for ${testID}`);
+            await onPress();
+        },
         async resolve(taskId: string, data: Record<string, unknown>) {
             await renderer.act(async () => {
                 listeners.get(taskId)?.onResult({ protocolVersion: 1, taskId, ok: true, data });
@@ -98,6 +105,100 @@ async function createHarness() {
 }
 
 describe('LocalCliPathExposureSection', () => {
+    let Modal: (typeof import('@/modal'))['Modal'];
+    beforeEach(async () => {
+        ({ Modal } = await import('@/modal'));
+        vi.mocked(Modal.confirm).mockReset();
+        vi.mocked(Modal.confirm).mockResolvedValue(false);
+    });
+
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('shows Desktop cleanup only inside the native Desktop app', async () => {
+        const browser = await createHarness();
+        expect(browser.screen.findByTestId('settings.localDesktop.cleanup')).toBeNull();
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: vi.fn() });
+        // Electron shares the command transport, but does not implement this Tauri cleanup action.
+        vi.stubGlobal('navigator', { userAgent: 'Electron/37.0' });
+        const electron = await createHarness();
+        expect(electron.screen.findByTestId('settings.localDesktop.cleanup')).toBeNull();
+        vi.stubGlobal('navigator', { userAgent: '' });
+        const desktop = await createHarness();
+        expect(desktop.screen.findByTestId('settings.localDesktop.cleanup')).not.toBeNull();
+    });
+
+    it('leaves Desktop components untouched when cleanup is cancelled', async () => {
+        const invoke = vi.fn();
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke });
+        const harness = await createHarness();
+        await harness.screen.pressByTestIdAsync('settings.localDesktop.cleanup');
+        expect(Modal.confirm).toHaveBeenCalledWith(
+            'machine.cliPath.cleanupConfirmTitle', 'machine.cliPath.cleanupConfirmBody',
+            expect.objectContaining({ destructive: true }),
+        );
+        expect(invoke).not.toHaveBeenCalled();
+        expect(harness.row('settings.localDesktop.cleanup')?.disabled).toBe(false);
+    });
+
+    it('cleans up on explicit confirmation and quits only after cleanup succeeds', async () => {
+        const cleanup = createDeferred<void>();
+        const invoke = vi.fn(async (command: string) => {
+            if (command === 'desktop_uninstall_components') await cleanup.promise;
+        });
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke });
+        vi.mocked(Modal.confirm).mockResolvedValue(true);
+        const harness = await createHarness();
+        let press: Promise<void> | undefined;
+        await renderer.act(async () => {
+            press = harness.pressRow('settings.localDesktop.cleanup');
+        });
+        expect(invoke.mock.calls.map(([command]) => command)).toEqual(['desktop_uninstall_components']);
+        expect(harness.row('settings.localDesktop.cleanup')?.disabled).toBe(true);
+        expect(harness.row('settings.localCliPath.add')?.disabled).toBe(true);
+        await renderer.act(async () => {
+            cleanup.resolve();
+            await press;
+        });
+        expect(invoke.mock.calls.map(([command]) => command)).toEqual(['desktop_uninstall_components', 'desktop_finish_shutdown']);
+    });
+
+    it('keeps failures visible and allows retry without quitting', async () => {
+        const invoke = vi.fn().mockRejectedValueOnce('Cannot remove Desktop service: access denied').mockResolvedValue(undefined);
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke });
+        vi.mocked(Modal.confirm).mockResolvedValue(true);
+        const harness = await createHarness();
+        await harness.screen.pressByTestIdAsync('settings.localDesktop.cleanup');
+        expect(harness.row('settings.localDesktop.cleanupStatus')?.subtitle)
+            .toContain('Cannot remove Desktop service: access denied');
+        expect(harness.row('settings.localDesktop.cleanup')?.disabled).toBe(false);
+        expect(invoke.mock.calls.map(([command]) => command)).toEqual(['desktop_uninstall_components']);
+        await harness.screen.pressByTestIdAsync('settings.localDesktop.cleanup');
+        expect(invoke.mock.calls.map(([command]) => command))
+            .toEqual(['desktop_uninstall_components', 'desktop_uninstall_components', 'desktop_finish_shutdown']);
+    });
+
+    it('admits one confirmation at a time and blocks cleanup during a PATH task', async () => {
+        const confirmation = createDeferred<boolean>();
+        const invoke = vi.fn();
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke });
+        vi.mocked(Modal.confirm).mockReturnValue(confirmation.promise);
+        const harness = await createHarness();
+        let first: Promise<void> | undefined;
+        await renderer.act(async () => {
+            first = harness.pressRow('settings.localDesktop.cleanup');
+            await harness.pressRow('settings.localDesktop.cleanup');
+        });
+        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        await renderer.act(async () => {
+            confirmation.resolve(false);
+            await first;
+        });
+        await harness.screen.pressByTestIdAsync('settings.localCliPath.add');
+        await harness.pressRow('settings.localDesktop.cleanup');
+        expect(Modal.confirm).toHaveBeenCalledTimes(1);
+        expect(invoke).not.toHaveBeenCalled();
+    });
+
     it('starts the ensure task from the add row and shows the returned reload hint', async () => {
         const harness = await createHarness();
 

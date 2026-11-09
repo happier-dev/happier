@@ -8,6 +8,14 @@ import { remoteConfirmationStorage } from '@happier-dev/protocol/actions/setting
 export const SOURCE_CONTROL_SETTINGS = defineSettingsPage({
     pageId: 'sourceControl',
     sections: {
+        aiSuggestions: {
+            titleKey: 'files.editing.aiSuggestions.title',
+            settings: {
+                aiSuggestionsEnabled: {}, aiSuggestionsProvider: {}, aiSuggestionsModel: {}, aiSuggestionsNextEdit: {}, aiSuggestionsNextEditModel: {},
+                aiSuggestionsMode: {}, aiSuggestionsDelay: {}, aiSuggestionsExcluded: {},
+                aiSuggestionsDisabledLanguages: {}, aiSuggestionsUsage: {},
+            },
+        },
         walkthroughs: {
             titleKey: 'walkthroughSettings.title',
             settings: {
@@ -36,6 +44,7 @@ export const SOURCE_CONTROL_SETTINGS = defineSettingsPage({
                 confirmBeforePushing: { storage: remoteConfirmationStorage('push'),  },
                 pushRejection: {},
                 pullRequestPlacement: {},
+                resourceOpenLocation: {},
             },
         },
         routing: {
@@ -76,6 +85,9 @@ export const SOURCE_CONTROL_SETTINGS = defineSettingsPage({
             titleKey: 'settingsSourceControl.editor',
             settings: {
                 editorAutoSave: {},
+                editorFormatOnSave: {},
+                editorInlayHints: {},
+                editorSemanticHighlighting: {},
             },
         },
         // The same Editor section on the page; this row renders only with the rich Markdown editor.

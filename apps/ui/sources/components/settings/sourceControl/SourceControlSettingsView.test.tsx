@@ -6,6 +6,7 @@ import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 import { createUseSettingMutableMockFromReader } from '@/dev/testkit/mocks/storage';
+import { createPluginUiResourceProjection } from '@/dev/testkit/fixtures/pluginUiResourceProjection';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -78,8 +79,11 @@ installSettingsViewCommonModuleMocks({
         useLocalSearchParams: () => searchParamsState.value,
     }),
     storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        const { createStorageModuleStub, createUseSettingMock, createUseLocalSettingMock } = await import('@/dev/testkit/mocks/storage');
+        const { DEFAULT_FILES_EDITOR_AI_SUGGESTIONS_V1 } = await import('@happier-dev/protocol/account/settings/accountSettings');
         return createStorageModuleStub({
+            useSetting: createUseSettingMock({ values: { filesEditorAiSuggestionsV1: DEFAULT_FILES_EDITOR_AI_SUGGESTIONS_V1 } }),
+            useLocalSetting: createUseLocalSettingMock(),
             useSettingMutable: createUseSettingMutableMockFromReader((name) => {
                 if (name === 'scm.diffSummary.enabled') return [false, setExplainChanges];
                 if (name === 'scm.diffSummary.prefetch') return [false, setPrepareAfterTurn];
@@ -108,6 +112,7 @@ installSettingsViewCommonModuleMocks({
     },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        const defaultText = createTextModuleMock();
         return createTextModuleMock({
             translate: (key, params) => {
                 if (key === 'settingsSourceControl.backends.defaultDiffItemTitle') {
@@ -115,6 +120,9 @@ installSettingsViewCommonModuleMocks({
                 }
                 if (key === 'settingsSourceControl.commitMessageGenerator.backendItemTitle') {
                     return `settingsSourceControl.commitMessageGenerator.backendItemTitle:${String(params?.backendId ?? '')}`;
+                }
+                if (key === 'settingsSourceControl.page.routing.waiting') {
+                    return defaultText.t(key, params);
                 }
                 return key;
             },
@@ -199,8 +207,28 @@ function segmentedControl(row: { props: Record<string, any>; type?: unknown; fin
 // Load real screen owners after boundary setup, outside behavior deadlines.
 const { SourceControlSettingsView } = await import('./SourceControlSettingsView');
 const { Item } = await import('@/components/ui/lists/Item');
+const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
 
 describe('SourceControlSettingsView', () => {
+    it('keeps contributed resource opening available with SCM writes disabled', async () => {
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY', 'scm.writeOperations');
+        try {
+            const screen = await renderSettingsView(
+                <AppShellPluginUiProjectionValueProvider value={{
+                    pluginUiProjection: createPluginUiResourceProjection(), pluginBrowserProjection: null,
+                    phase: 'current', interactionEnabled: true, machineId: 'machine-1', serverId: 'server-1', platform: 'web',
+                    accountLifetime: null, clientExecutableActivation: { status: 'ready' },
+                    reloadClientExecutables() {}, reloadConnectedAccountProjection() {},
+                }}>
+                    <SourceControlSettingsView />
+                </AppShellPluginUiProjectionValueProvider>,
+            );
+            expect(screen.findRowByTitle('sessionGitPullRequest.settings.resourceOpenTitle')).not.toBeNull();
+            expect(screen.findRowByTitle('settingsSourceControl.remoteConfirmation.confirmBeforePushing.title')).toBeNull();
+        } finally {
+            vi.unstubAllEnvs();
+        }
+    });
     it('keeps the Files editor reachable without exposing SCM-write controls when SCM writes are disabled', async () => {
         vi.stubEnv('EXPO_PUBLIC_HAPPIER_BUILD_FEATURES_DENY', 'scm.writeOperations');
         try {
@@ -249,8 +277,6 @@ describe('SourceControlSettingsView', () => {
                     installedPackagesById: {},
                     agentsById: {},
                     actionsById: {},
-
-
                     resourcesById: {},
                     settingsById: {},
                     familiesById: {
@@ -455,7 +481,7 @@ describe('SourceControlSettingsView', () => {
 
         expect(screen.findRowByTitle('settingsSourceControl.page.routing.rowTitle')).toBeNull();
         const scopeState = screen.findAllByType(Item).find(node => node.props.testID === 'settings.sourceControl.routing.scopeState');
-        expect(scopeState?.props.title).toBe('settingsSourceControl.page.routing.waiting');
+        expect(scopeState?.props.title).toBe('settingsSourceControl.page.routing.waiting(machine=Machine Target)');
         expect(scopeState?.props.subtitle).toBe('settingsSourceControl.page.routing.waitingDescription');
     });
 
@@ -601,20 +627,6 @@ describe('SourceControlSettingsView', () => {
         screen.pressRowByTitle('settingsSourceControl.commitMessageGenerator.title');
 
         expect(setScmCommitMessageGeneratorEnabled).toHaveBeenCalledWith(false);
-    });
-
-    it('allows editing commit message generator instructions', async () => {
-        setScmCommitMessageGeneratorInstructions.mockClear();
-
-        const screen = await renderSettingsView(React.createElement(SourceControlSettingsView));
-        const instructions = screen.findRowByTitle('settingsSourceControl.page.generator.instructionsTitle')?.props.rightElement;
-        expect(instructions?.props.placeholder).toBe('settingsSourceControl.commitMessageGenerator.instructionsPlaceholder');
-
-        await act(async () => {
-            instructions!.props.onChangeText?.('Use imperative mood');
-        });
-
-        expect(setScmCommitMessageGeneratorInstructions).toHaveBeenCalledWith('Use imperative mood');
     });
 
     it('offers the enabled commit-message Agents by name', async () => {

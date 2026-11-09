@@ -4,7 +4,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
 
-import type { MemoryStatusV1 } from '@happier-dev/protocol';
+import type { MemoryStatusV1 } from '@happier-dev/protocol/memory/memoryStatus';
 import { readMemoryStatusTelemetry } from '@/sync/domains/memory/memoryStatusTelemetry';
 
 function count(value: number | null | undefined): number {

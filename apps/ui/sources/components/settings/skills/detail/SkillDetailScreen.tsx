@@ -1,13 +1,14 @@
 import * as React from 'react';
-import * as Clipboard from 'expo-clipboard';
+import { useStore } from 'zustand';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import {
   isReadOnlySkillProvenanceV1,
   readSkillFrontmatterV1,
   type SkillProvenanceV1,
 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
-import { SKILL_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useAuthoringDraftExitGuard } from '@/utils/navigation/useAuthoringDraftExitGuard';
 import { CapabilityBlockingBanner } from '@/components/capabilities/detail/CapabilityBlockingBanner';
 import { CapabilityDetailHeader } from '@/components/capabilities/detail/CapabilityDetailHeader';
 import {
@@ -21,7 +22,6 @@ import {
 } from '@/components/capabilities/status/capabilityStatusPresentation';
 import {
   WhereItsOnControl,
-  useDraftReachRules,
 } from '@/components/capabilities/where/WhereItsOnControl';
 import { useFoundSkillsCache } from '@/sync/domains/skills/useFoundSkills';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -30,6 +30,8 @@ import { PageLeaveActions } from '@/components/ui/layout/PageLeaveActions';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { ItemLoadStateRows, type ItemLoadState } from '@/components/ui/lists/ItemLoadStateRows';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal } from '@/modal';
 import { useUnistyles } from 'react-native-unistyles';
 import { Text } from '@/components/ui/text/Text';
@@ -38,7 +40,6 @@ import { Typography } from '@/constants/Typography';
 import {
   projectReachOnMachines,
   useReachProjection,
-  type ReachMachine,
 } from '@/sync/domains/capabilities/reach/useReachProjection';
 import { useReachRules } from '@/sync/domains/capabilities/reach/useReachRules';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
@@ -54,11 +55,9 @@ import { SkillDetailsDisclosure } from './SkillDetailsDisclosure';
 import { SkillFilesSection, readSkillFileText } from './SkillFilesSection';
 import {
   SkillInstructionsSection,
-  lintSkillMarkdown,
 } from './SkillInstructionsSection';
 import { SkillSourceSection } from './SkillSourceSection';
 import { useSkillSourceNames } from '../useSkillSourceNames';
-import { SKILL_DRAFT_TEMPLATE } from './skillDraftTemplate';
 import { skillTextFile } from './skillFileContent';
 import {
   readSkillActionRefusal,
@@ -73,7 +72,14 @@ import {
 } from './useSkillMachineTruth';
 import { useSkillPlaces } from '../useSkillPlaces';
 import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { acknowledgeSkillCreation, describeSkillInstallIncomplete, retrySkillInstallRules, type SkillInstallAcknowledgment } from '../add/skillInstall';
+import { useSkillDraft } from '../add/useSkillDraft';
+import { SkillWriteInput } from '../add/SkillWriteInput';
+import { useSkillMakers } from '../useSkillMakers';
+import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 
+
+const LOADING: ItemLoadState = Object.freeze({ kind: 'loading' });
 
 function formatDay(ms: number): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -117,8 +123,9 @@ function hostOwnedNote(provenance: SkillProvenanceV1): string | undefined {
   return provenance.kind === 'plugin' ? t('capabilities.skillDetail.instructions.readOnlyPlugin') : undefined;
 }
 
-function SavedSkill(props: Readonly<{ skillId: string }>) {
+function SavedSkill(props: Readonly<{ skillId: string; creationNotice?: React.ReactNode }>) {
   const { skillId } = props;
+  const writeClipboard = useClipboardWrite(useAccountSettingsScope());
   const pluginUiProjection = useAppShellPluginUiDeclarationProjection();
   const sourceNameFor = useSkillSourceNames();
   const router = useRouter();
@@ -155,11 +162,21 @@ function SavedSkill(props: Readonly<{ skillId: string }>) {
     ready: detail.ready,
   });
   const { read, listItem } = detail;
+  const makerItems = React.useMemo(() => read ? [read] : listItem ? [listItem] : [], [read, listItem]);
+  const makerFor = useSkillMakers(makerItems, detail.library.scope);
+  const maker = makerItems[0] ? makerFor(makerItems[0]) : undefined;
+  const creatorHref = maker?.openSessionId && detail.library.scope ? buildScopedSessionRouteHref({
+    sessionId: maker.openSessionId, serverId: detail.library.scope.serverId,
+  }) : null;
   const provenance = read?.provenance ?? listItem?.provenance;
   const registrySourceName = provenance ? sourceNameFor({ provenance }) : undefined;
   // Built-in and plugin Skills are host-owned: list, read and copy only.
   const hostOwned = provenance ? isReadOnlySkillProvenanceV1(provenance) : false;
   const [removing, setRemoving] = React.useState(false);
+  const [copy, setCopy] = React.useState<Readonly<{ sourceId: string; receipt: SkillInstallAcknowledgment }> | null>(null);
+  const pendingCopy = copy?.sourceId === skillId ? copy.receipt : null;
+  const [copying, setCopying] = React.useState(false);
+  const [repairingCopy, setRepairingCopy] = React.useState(false);
 
   // Never a raw id: until the library answers, the title stays empty (its space is kept).
   const name = read?.name ?? listItem?.name ?? '';
@@ -201,10 +218,18 @@ function SavedSkill(props: Readonly<{ skillId: string }>) {
         title: hostOwned
           ? t('capabilities.skillDetail.menu.makeCopy')
           : t('capabilities.skillDetail.menu.duplicate'),
+        disabled: pendingCopy !== null,
+        loading: copying,
         onSelect: async () => {
-          const copy = await detail.duplicate();
-          if (copy) router.push(skillHref(copy) as never);
-          else Modal.alert(t('common.error'), t('errors.unknownError'));
+          if (copying || pendingCopy) return;
+          setCopying(true);
+          try {
+            const created = await detail.duplicate();
+            if (!created) { Modal.alert(t('common.error'), t('errors.unknownError')); return; }
+            const receipt = acknowledgeSkillCreation(created);
+            if (receipt.incomplete.length > 0) setCopy({ sourceId: skillId, receipt });
+            else router.push(skillHref(created.skillId) as never);
+          } finally { setCopying(false); }
         },
       },
     ];
@@ -257,12 +282,25 @@ function SavedSkill(props: Readonly<{ skillId: string }>) {
         id: 'copyLink',
         testID: 'skill.detail.copyLink',
         title: t('capabilities.skillDetail.menu.copyLink'),
-        onSelect: () => {
-          void Clipboard.setStringAsync(link);
+        onSelect: async () => {
+          await writeClipboard(link);
         },
       });
     return items;
-  }, [detail, hostOwned, listItem?.folderId, provenance, router]);
+  }, [copying, detail, hostOwned, listItem?.folderId, pendingCopy, provenance, router, skillId, writeClipboard]);
+
+  const repairCopy = async () => {
+    if (!pendingCopy || repairingCopy) return;
+    setRepairingCopy(true);
+    try {
+      const receipt = await retrySkillInstallRules(detail.execute, pendingCopy);
+      setCopy({ sourceId: skillId, receipt });
+      if (receipt.incomplete.length === 0) {
+        setCopy(null);
+        router.push(skillHref(receipt.skillIds[0]!) as never);
+      }
+    } finally { setRepairingCopy(false); }
+  };
 
   const remove = React.useCallback(async () => {
     setRemoving(true);
@@ -317,6 +355,12 @@ function SavedSkill(props: Readonly<{ skillId: string }>) {
         // Nothing to act on until the library has answered for this skill.
         menuItems={read || listItem ? menuItems : undefined}
       />
+      {props.creationNotice}
+      {pendingCopy ? (
+        <SurfaceStateCard testID="skill.detail.partial" kind="error" size="line"
+          title={describeSkillInstallIncomplete(pendingCopy)}
+          action={{ label: t('capabilities.skillAdd.partial.tryAgain'), onPress: repairCopy, busy: repairingCopy }} />
+      ) : null}
       {unavailable ? (
         <CapabilityBlockingBanner
           testID="skill.detail.banner"
@@ -335,6 +379,7 @@ function SavedSkill(props: Readonly<{ skillId: string }>) {
         rules={reach.rules}
         defaultEnabled={reach.resolveReach([], { machineId: '', machinePlatform: null, directory: null, projectKey: null, agentId: null }).enabled}
         status={reach.status}
+        valueAvailable={reach.valueAvailable}
         projection={reach.status === 'ready' ? projection : null}
         places={{
           agentIds: places.agentIds,
@@ -371,6 +416,8 @@ function SavedSkill(props: Readonly<{ skillId: string }>) {
             read={read}
             pluginSource={facts.source?.kind === 'plugin' ? facts.source : undefined}
             registrySourceName={registrySourceName}
+            maker={maker}
+            onOpenCreator={creatorHref ? () => router.push(creatorHref) : undefined}
             updatePolicy={listItem?.updatePolicy ?? 'manual'}
             machineName={places.names.machineName}
             checkNow={() => {
@@ -387,16 +434,26 @@ function SavedSkill(props: Readonly<{ skillId: string }>) {
           />
         </>
       ) : !unavailable ? (
-        <ItemGroup title={t('capabilities.skillDetail.instructions.title')}>
-          <Item
-            testID="skill.detail.loading"
-            title={t('capabilities.skillDetail.files.loading')}
-            showChevron={false}
-            mode="info"
-          />
-        </ItemGroup>
+        // The sections a skill always has hold their place while it opens, so the page does not grow later.
+        <>
+          <ItemGroup title={t('capabilities.skillDetail.instructions.title')}>
+            <ItemLoadStateRows
+              testID="skill.detail.loading"
+              state={LOADING}
+              rows={3}
+              lines={1}
+              accessibilityLabel={t('capabilities.skillDetail.files.loading')}
+            />
+          </ItemGroup>
+          <ItemGroup title={t('capabilities.skillDetail.files.title')}>
+            <ItemLoadStateRows state={LOADING} rows={1} lines={1} />
+          </ItemGroup>
+          <ItemGroup title={t('capabilities.skillDetail.source.title')}>
+            <ItemLoadStateRows state={LOADING} rows={2} lines={2} />
+          </ItemGroup>
+        </>
       ) : null}
-      <SkillMachines truth={truth} names={places.names} />
+      <SkillMachines truth={truth} names={places.names} loading={!reach.valueAvailable} />
       {read ? (
         <SkillDetailsDisclosure
           testID="skill.detail.details"
@@ -521,9 +578,11 @@ function SkillMachines(
   props: Readonly<{
     truth: readonly SkillMachineTruth[];
     names: Pick<WhereItsOnNames, 'agentName' | 'agentNames'>;
+    /** The reach rules are unread: the machines are not known to be none. */
+    loading: boolean;
   }>,
 ) {
-  const { truth, names } = props;
+  const { truth, names, loading } = props;
   // Online machines first (their answers are live), then offline ones with last-known facts.
   const shown = truth
     .filter((entry) => entry.machine.agentIds.length > 0)
@@ -533,6 +592,7 @@ function SkillMachines(
   return (
     <CapabilityMachineTruth
       testID="skill.detail.machines"
+      loading={loading}
       description={`${t('capabilities.skillDetail.machines.description')} ${t('capabilities.skillDetail.machines.projectNote')}`}
       rows={rows}
       summary={summary}
@@ -543,143 +603,32 @@ function SkillMachines(
   );
 }
 
-/** The draft's one file, drawn like a Files row (mono path and its glyph). */
-function DraftSkillFile() {
-  const { theme } = useUnistyles();
-  return (
-    <Item testID="skill.draft.file" title="SKILL.md" titleStyle={{ ...Typography.mono() }}
-      icon={<Icon name="file-text" size={18} color={theme.colors.text.secondary} />} showChevron={false} />
-  );
-}
-
-/** The new-skill draft: the same page before the skill exists; "Add to library" creates it once. */
 function SkillDraft() {
   const router = useRouter();
-  const scope = useAccountSettingsScope();
-  const { execute } = useMountedActionExecution(scope?.serverId ?? null);
-  const places = useSkillPlaces();
-  const draftReach = useDraftReachRules('skill');
-  const [text, setText] = React.useState(SKILL_DRAFT_TEMPLATE);
-  const [adding, setAdding] = React.useState(false);
-  const frontmatter = React.useMemo(() => readSkillFrontmatterV1(text), [text]);
-  const lint = React.useMemo(() => lintSkillMarkdown(text), [text]);
-  const projection = React.useMemo(
-    () =>
-      projectReachOnMachines(
-        draftReach.rules,
-        places.machines as readonly ReachMachine[],
-        undefined,
-        places.workspaceRefs,
-      ),
-    [draftReach.rules, places.machines, places.workspaceRefs],
-  );
-
-  const add = React.useCallback(async () => {
-    if (!frontmatter.name || adding) return;
-    setAdding(true);
-    try {
-      const result = await execute('skills.create', {
-        name: frontmatter.name,
-        ...(frontmatter.description
-          ? { description: frontmatter.description }
-          : {}),
-        files: [skillTextFile('SKILL.md', text)],
-        ...(draftReach.where ? { where: draftReach.where } : {}),
-      });
-      if (readSkillActionRefusal(result)) {
-        Modal.alert(
-          t('common.error'),
-          t('capabilities.skillDetail.draft.addFailed'),
-        );
-        return;
-      }
-      const created = SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.create'].parse(
-        result.ok ? result.result : null,
-      );
-      if (created.incomplete === 'rules')
-        Modal.alert(t('capabilities.skillDetail.draft.whereIncomplete'));
-      router.replace(skillHref(created.skillId) as never);
-    } catch {
-      Modal.alert(
-        t('common.error'),
-        t('capabilities.skillDetail.draft.addFailed'),
-      );
-    } finally {
-      setAdding(false);
-    }
-  }, [
-    adding,
-    draftReach.where,
-    execute,
-    frontmatter.description,
-    frontmatter.name,
-    router,
-    text,
-  ]);
-
-  const neverSaves = React.useCallback(
-    async () => ({ ok: true as const, revision: '' }),
-    [],
-  );
-  const noTheirs = React.useCallback(async () => null, []);
-  const noAdopt = React.useCallback(async () => undefined, []);
-  const noDirty = React.useCallback(() => undefined, []);
-  const draft = React.useMemo(() => ({ text, onChange: setText }), [text]);
-
-  return (
-    <ItemList keyboardShouldPersistTaps="handled">
-      <CapabilityDetailHeader
-        testID="skill.draft.header"
-        title={
-          frontmatter.name?.trim() || t('capabilities.skillDetail.draft.title')
-        }
-        purpose={t('capabilities.skillDetail.draft.purpose')}
-        facts={{ source: { kind: 'you' } }}
-        primaryAction={{
-          testID: 'skill.draft.add',
-          title: adding
-            ? t('capabilities.skillDetail.draft.adding')
-            : t('capabilities.skillDetail.draft.add'),
-          onPress: add,
-          disabled: !lint.ok || adding,
-          loading: adding,
-        }}
-      />
-      <WhereItsOnControl
-        testID="skill.draft.where"
-        kind="skill"
-        presentation="section"
-        rules={draftReach.rules}
-        status="ready"
-        projection={projection}
-        places={{
-          agentIds: places.agentIds,
-          machines: places.placeMachines,
-          projects: places.projects,
-        }}
-        agentTakes={places.agentTakes}
-        onChange={draftReach.onChange}
-      />
-      <SkillInstructionsSection
-        testID="skill.draft.instructions"
-        skillId="new"
-        skillMd={text}
-        readOnly={false}
-        draft={draft}
-        onSave={neverSaves}
-        onDirtyChange={noDirty}
-        readTheirs={noTheirs}
-        adoptTheirs={noAdopt}
-      />
-      <ItemGroup
-        title={t('capabilities.skillDetail.files.title')}
-        description={t('capabilities.skillDetail.files.afterAdd')}
-        density="compact"
-      >
-        <DraftSkillFile />
-      </ItemGroup>
-    </ItemList>
-  );
+  const navigation = useNavigation() as Readonly<{ dispatch?: (action: unknown) => void; setOptions?: (options: { gestureEnabled: boolean }) => void }>;
+  const draft = useSkillDraft();
+  const dirty = useStore(draft.store, state => state.dirty);
+  const dirtyRef = React.useRef(dirty);
+  dirtyRef.current = dirty;
+  const discard = React.useCallback(() => { draft.reset(); dirtyRef.current = false; }, [draft.reset]);
+  const save = React.useCallback(async () => (await draft.create()) !== null, [draft.create]);
+  const continueNavigation = React.useCallback((action: unknown) => {
+    if (action && navigation.dispatch) navigation.dispatch(action);
+    else router.replace(SKILLS_COLLECTION_ROUTE);
+  }, [navigation.dispatch, router]);
+  const guard = useAuthoringDraftExitGuard({ isDirty: dirty, isDirtyRef: dirtyRef, onDiscard: discard,
+    onSave: save, onContinue: continueNavigation });
+  React.useEffect(() => {
+    navigation.setOptions?.({ gestureEnabled: !dirty });
+    return () => navigation.setOptions?.({ gestureEnabled: true });
+  }, [dirty, navigation.setOptions]);
+  const open = (id: string) => {
+    guard.ignoreRef.current = true;
+    dirtyRef.current = false;
+    router.replace(skillHref(id) as never);
+  };
+  return <SkillWriteInput draft={draft} onCreated={open} onOpen={open}
+    renderCreated={(skillId, creationNotice) => <SavedSkill skillId={skillId} creationNotice={creationNotice} />} />;
 }
 
 export type { SkillDetailModel };

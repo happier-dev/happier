@@ -36,11 +36,12 @@ describe('SettingsHistorySection Action composition', () => {
         vi.restoreAllMocks();
     });
 
-    async function open(expanded = true, policy?: ReturnType<typeof ActionsSettingsV1Schema.parse>) {
+    async function open(expanded = true, policy?: ReturnType<typeof ActionsSettingsV1Schema.parse>, holdHistory?: Promise<void>) {
         home = await serveAccountHomes({
             homes: [{ key: 'a', serverUrl: `https://settings-history-${crypto.randomUUID()}.test`, accountId: 'account-a', currentAccount: true,
                 ...(policy ? { settings: { actionsSettingsV1: policy } } : {}) }],
-            route: request => {
+            route: async request => {
+                if (request.path === '/v2/account/settings/history' && holdHistory) await holdHistory;
                 if (request.path === '/v2/account/settings/history') return Response.json({ snapshots: [
                     { version: 3, createdAt: '2026-01-01T00:00:00.000Z', contentKind: 'plain', byteLength: 50 },
                 ] });
@@ -96,6 +97,17 @@ describe('SettingsHistorySection Action composition', () => {
         await view.pressByTestIdAsync('settings-account-history-restore-3');
         await vi.waitFor(() => expect(storage.getState().settingsScope?.accountId).toBe('account-b'));
         expect(home.requests.some(row => row.path === '/v2/account/settings/history/3')).toBe(false);
+    });
+
+    it('says loading once, in the header, while the open body holds the versions\' place', async () => {
+        let release!: () => void;
+        const view = await open(true, undefined, new Promise<void>(resolve => { release = resolve; }));
+        try {
+            await vi.waitFor(() => expect(view.findByTestId('settings-account-history-loading')).not.toBeNull());
+            expect(view.getTextContent().split('Loading history…').length - 1).toBe(1);
+        } finally { await act(async () => { release(); }); }
+        await vi.waitFor(() => expect(view.findByTestId('settings-account-history-restore-3')).not.toBeNull());
+        expect(view.findByTestId('settings-account-history-loading')).toBeNull();
     });
 
     it('keeps saved versions behind the existing disclosure', async () => {

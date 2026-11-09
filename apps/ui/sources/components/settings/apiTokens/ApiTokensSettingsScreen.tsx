@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol';
+import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { RefreshControl, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -37,7 +37,6 @@ import { useApiTokenSettingsClock } from './useApiTokenSettingsClock';
 import { useApiTokenSettingsControllerState } from './useApiTokenSettingsControllerState';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
-import { ApiTokensCliPolicy } from './ApiTokensCliPolicySection';
 import { API_TOKEN_SETTINGS } from './apiTokensSettings';
 
 function resolveOperationNotice(notice: 'revoked' | 'revokedAll' | 'signedOutEverywhere'): string {
@@ -299,9 +298,6 @@ const ApiTokensListPage = React.memo(function ApiTokensListPage(props: Readonly<
                     />
                 </ItemGroup>
             ) : null}
-
-            {/* What commands on this account's computers may do with its sign-in (plan 01 §6.1). */}
-            <ApiTokensCliPolicy />
 
             {/* Leaving and destroying close the page as a quiet button row, and only when there is
                 something to revoke (a control over an empty set is not offered). */}

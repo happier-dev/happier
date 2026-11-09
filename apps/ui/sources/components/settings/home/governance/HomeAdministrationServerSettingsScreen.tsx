@@ -17,7 +17,7 @@ import { useHomeRuntimeExecutor } from '@/components/settings/home/runtime/homeR
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
-import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows, type ItemLoadState } from '@/components/ui/lists/ItemLoadStateRows';
@@ -251,8 +251,6 @@ function SettingsGroupDisclosure(props: Readonly<{
                     {...state.headerProps}
                     title={props.title}
                     subtitle={props.subtitle}
-                    rightElement={<ExpandableItemCaret expanded={state.expanded} />}
-                    showChevron={false}
                 />
             )}
         >

@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { ConnectedServiceId, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
+import type { ConnectedServiceId} from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 
 import {
     resolveQualifiedConnectedAccountProfilePreference,

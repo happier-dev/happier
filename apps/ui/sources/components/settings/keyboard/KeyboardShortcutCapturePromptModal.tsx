@@ -61,11 +61,24 @@ export function KeyboardShortcutCapturePromptModal(props: KeyboardShortcutCaptur
     }, [props]);
 
     const captureShortcut = React.useCallback((event: KeybindingCaptureEvent) => {
+        if ((event.key ?? event.nativeEvent?.key) === 'Escape') {
+            stopCapturedShortcutEvent(event);
+            resolveAndClose(null);
+            return;
+        }
         const nextValue = formatKeybindingCaptureEvent(event, props.platform);
         if (nextValue == null) return;
         stopCapturedShortcutEvent(event);
         setValue(nextValue);
-    }, [props.platform]);
+    }, [props.platform, resolveAndClose]);
+
+    React.useEffect(() => {
+        if (Platform.OS !== 'web' || typeof window === 'undefined') return;
+        const recorderWindow = window;
+        const cancel = () => resolveAndClose(null);
+        recorderWindow.addEventListener('blur', cancel);
+        return () => recorderWindow.removeEventListener('blur', cancel);
+    }, [resolveAndClose]);
 
     // The capture field is the shared field box; only its key handling is this dialog's own.
     const fieldColors = resolveFieldBoxColors(theme);

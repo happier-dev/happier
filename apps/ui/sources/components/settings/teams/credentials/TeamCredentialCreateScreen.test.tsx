@@ -2,7 +2,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { ProviderConnectionIdSchema, ProviderConnectionSecurityFingerprintV1Schema } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema} from '@happier-dev/protocol/providers/ids';
+import { ProviderConnectionSecurityFingerprintV1Schema } from '@happier-dev/protocol/providers/fingerprints';
 
 import { collectRenderedTestIds, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialResourceFixture, teamCredentialSourceCandidateFixture, teamCredentialViewerFixture, teamSummaryFixture } from '@/dev/testkit';
 import { createProviderConnectionViewFixture, createProviderConnectionsDescribeFixture, createProviderSettingsHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
@@ -342,6 +343,50 @@ describe('TeamCredentialCreateScreen', () => {
             memberGrants: [],
             usageLimits: [],
         });
+    });
+
+    it('keeps settled connected sources available while optional Provider discovery is pending', async () => {
+        const serverId = await addHome();
+        answerViewer(serverId, true);
+        const candidate = teamCredentialSourceCandidateFixture({
+            source: {
+                v: 1,
+                kind: 'connected_account',
+                target: {
+                    kind: 'account',
+                    account: {
+                        service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+                        accountId: 'connected-codex-account',
+                    },
+                },
+                credentialIncarnation: 'credential-life-1',
+            },
+            candidateId: 'candidate-connected-account',
+            label: 'Connected Codex',
+            memberCount: null,
+        });
+        harness.answer(serverId, SOURCES_PATH, {
+            body: {
+                candidates: [candidate],
+                supportedKinds: ['connected_account', 'connected_pool', 'provider_connection'],
+                brokerPresentation: emptyBrokerPresentation(),
+            },
+        });
+        providerHarness.intercept(
+            RPC_METHODS.DAEMON_PROVIDERS_CONNECTIONS_DESCRIBE,
+            async () => await new Promise<never>(() => {}),
+        );
+
+        const screen = await renderCreate(serverId);
+        await waitForTestId(screen, 'team-credential-create-source');
+        await vi.waitFor(() => expect(harness.requestsFor(SOURCES_PATH)).toHaveLength(1));
+
+        const source = screen.findByTestId('team-credential-create-source');
+        expect(source?.props.disabled, String(source?.props.accessibilityLabel)).not.toBe(true);
+        await screen.pressByTestIdAsync('team-credential-create-source');
+        const picker = shownModals.find((modal) => modal.chrome?.testID === 'team-credential-source-picker:modal');
+        const step = picker?.props?.rootStep as { sections: { options: { label: string }[] }[] };
+        expect(step.sections[0]?.options.map((option) => option.label)).toContain('Connected Codex');
     });
 
     it('discovers Provider offers without a route hint and authors policy from the selected source catalog', async () => {

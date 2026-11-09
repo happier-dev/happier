@@ -104,7 +104,7 @@ export function useIdentityAdministration(
             && !event.entityIds?.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)
             : event.entityIds !== undefined && !event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)) return;
         refresh();
-    }), [refresh, scope.serverId, teamId]);
+    }, { reconnect: 'refresh' }), [refresh, scope.serverId, teamId]);
 
     return React.useMemo(() => ({ state, refresh }), [state, refresh]);
 }

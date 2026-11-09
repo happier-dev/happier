@@ -11,6 +11,7 @@ import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { PublishRiseLine } from './publicProfilePublishRise';
 
 export type PublicProfileEditorView = Omit<
   PublicProfileLocalPreviewViewV1,
@@ -40,8 +41,17 @@ export type PublicProfileEditorProps = Readonly<{
   unavailable?: Readonly<{ reason: string; onRetry: () => void }> | null;
   /** The outcome of the last Publish, Apply or consent request. */
   notice: string | null;
+  /** A completed outcome reads as success; anything else needs the owner's attention. */
+  noticeTone?: 'success' | 'warning';
   /** Undo for an acknowledged Apply: the notice then reports success and offers it. */
-  noticeAction?: Readonly<{ label: string; onPress: () => void }> | null;
+  noticeAction?: Readonly<{ label: string; onPress: () => void; testID?: string }> | null;
+  /** After a first Publish the line is the result itself: the page's link, then Copy link and Badge. */
+  noticeDetail?: string | null;
+  noticeSecondaryAction?: Readonly<{ label: string; onPress: () => void; testID?: string }> | null;
+  /** The first Publish's moment: the result line enters after the band's rise. */
+  noticeMoment?: number | null;
+  /** The result line finished entering for `noticeMoment`; a later remount shows it settled. */
+  onNoticeEntered?: () => void;
   submitting: boolean;
   /** A pending or unavailable private-area copy cannot Apply an older local layout. */
   canSubmit?: boolean;
@@ -87,14 +97,18 @@ export function PublicProfileEditor(
     />
   ) : null;
   const notice = props.notice ? (
+    <PublishRiseLine moment={props.noticeMoment ?? null} onEntered={props.onNoticeEntered}>
     <SurfaceStateCard
       testID="public-profile-editor-notice"
-      kind={props.noticeAction ? 'success' : 'warning'}
+      kind={props.noticeAction || props.noticeTone === 'success' ? 'success' : 'warning'}
       layout="inline"
       size="line"
       title={props.notice}
-      {...(props.noticeAction ? { action: { ...props.noticeAction, testID: 'public-profile-editor-undo' } } : {})}
+      {...(props.noticeDetail ? { reason: props.noticeDetail } : {})}
+      {...(props.noticeAction ? { action: { testID: 'public-profile-editor-undo', ...props.noticeAction } } : {})}
+      {...(props.noticeSecondaryAction ? { secondaryAction: props.noticeSecondaryAction } : {})}
     />
+    </PublishRiseLine>
   ) : null;
   const toolbar = (
     <View style={styles.toolbar}>

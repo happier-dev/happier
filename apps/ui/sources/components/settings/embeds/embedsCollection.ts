@@ -1,4 +1,4 @@
-import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol';
+import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { createHappierCollectionVisitMemory, resolveHappierCollectionInitialKey } from '@happier-dev/plugin-ui/presentation';
 
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';

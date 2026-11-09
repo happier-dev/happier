@@ -77,7 +77,7 @@ export function buildConnectServicesSetupItem(input: Readonly<{
                 glyph={(
                     <View style={styles.marks}>
                         {services.slice(0, 2).map((service) => (
-                            <ConnectedServiceMark key={service.serviceKey} legacyServiceId={service.entry.legacyServiceId} size="inline" />
+                            <ConnectedServiceMark key={service.serviceKey} legacyServiceId={service.entry.legacyServiceId} pluginId={service.service.pluginId} size="inline" />
                         ))}
                     </View>
                 )}

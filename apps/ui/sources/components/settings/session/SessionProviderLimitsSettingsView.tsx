@@ -6,7 +6,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { SettingTextInput } from '@/components/settings/shell/SettingTextInput';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { t } from '@/text';
@@ -29,19 +29,6 @@ export const SessionProviderLimitsSettingsView = React.memo(function SessionProv
             ? usageLimitRecoverySettings.resumePromptMode
             : 'standard';
     const usageLimitRecoveryCustomResumePrompt = usageLimitRecoverySettings?.customResumePrompt ?? '';
-    const [customResumePromptDraft, setCustomResumePromptDraft] = React.useState(usageLimitRecoveryCustomResumePrompt);
-    const customResumePromptDraftRef = React.useRef(customResumePromptDraft);
-    const updateCustomResumePromptDraft = React.useCallback((text: string) => {
-        customResumePromptDraftRef.current = text;
-        setCustomResumePromptDraft(text);
-    }, []);
-    React.useEffect(() => {
-        customResumePromptDraftRef.current = usageLimitRecoveryCustomResumePrompt;
-        setCustomResumePromptDraft(usageLimitRecoveryCustomResumePrompt);
-    }, [usageLimitRecoveryCustomResumePrompt]);
-    const commitCustomResumePromptDraft = React.useCallback((draft: string) => {
-        void setSetting(SESSION_PROVIDER_LIMITS_SETTINGS.settings.customResumePrompt, draft.trim());
-    }, [setSetting]);
 
     return (
         <ItemList ref={popoverBoundaryRef} style={{ paddingTop: 0 }}>
@@ -83,13 +70,12 @@ export const SessionProviderLimitsSettingsView = React.memo(function SessionProv
                             accessoryLayout="stacked"
                             showChevron={false}
                             rightElement={(
-                                <FieldTextInput
+                                <SettingTextInput
                                     testID="settings-session-usageLimitRecovery-customResumePrompt-input"
                                     accessibilityLabel={t('settingsSession.usageLimitRecovery.customResumePromptTitle')}
-                                    value={customResumePromptDraft}
-                                    onChangeText={updateCustomResumePromptDraft}
-                                    onBlur={() => commitCustomResumePromptDraft(customResumePromptDraftRef.current)}
-                                    onSubmitEditing={() => commitCustomResumePromptDraft(customResumePromptDraftRef.current)}
+                                    value={usageLimitRecoveryCustomResumePrompt}
+                                    normalize={draft => draft.trim()}
+                                    onCommit={draft => setSetting(SESSION_PROVIDER_LIMITS_SETTINGS.settings.customResumePrompt, draft)}
                                     placeholder={t('settingsSession.usageLimitRecovery.customResumePromptPlaceholder')}
                                     autoCapitalize="sentences"
                                     multiline

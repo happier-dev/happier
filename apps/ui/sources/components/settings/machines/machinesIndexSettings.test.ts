@@ -4,7 +4,8 @@ import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 
 // The device key-value store is the persistence boundary; the local settings schema and owner stay real.
 const values = vi.hoisted(() => new Map<string, string>());
-vi.mock('@/sync/domains/state/persistenceStorage', () => ({
+vi.mock('@/sync/domains/state/persistenceStorage', async importOriginal => ({
+    ...await importOriginal<typeof import('@/sync/domains/state/persistenceStorage')>(),
     getPersistenceStorage: () => ({
         getString: (key: string) => values.get(key),
         set: (key: string, value: string) => values.set(key, value),

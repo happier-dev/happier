@@ -13,9 +13,12 @@ import { useMachine } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import type { CapabilitySource } from '@/components/capabilities/facts/CapabilityFacts';
+import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
+import type { SkillMaker } from '../skillMaker';
 
 import { SkillOutsideReferencesItem } from '../outsideReferences';
 import { skillSource, skillSourceVerification } from '../skillsCollectionModel';
+import { contentRefLabel } from '../updates/useSkillsUpdates';
 import type { SkillChange, SkillChangeResult } from './useSkillDetail';
 
 function formatTime(ms: number): string {
@@ -51,8 +54,7 @@ function sourceRow(
   switch (provenance.kind) {
     case 'written':
       return {
-        title: t('capabilities.skillDetail.source.writtenByYou'),
-        subtitle: t('capabilities.skillDetail.source.writtenByYouBody'),
+        title: t('capabilities.skills.maker.createdHere'),
         icon: 'user-circle',
       };
     case 'upload':
@@ -93,12 +95,14 @@ function sourceRow(
     case 'registry': {
       const ref = provenance.registry.ref;
       if (ref.kind === 'wellKnown') return sourceRow({ ...read, provenance: ref }, machineName, homeDir, undefined, registrySourceName);
+      const title = sourceTitle ?? provenance.registry.sourceUrl;
+      if (title === undefined) return null;
       const at =
         ref.kind === 'gitTree'
           ? `${ref.path ? `${ref.path} ` : ''}@${ref.commit.slice(0, 7)}`
-          : ref.version;
+          : contentRefLabel(ref);
       return {
-        title: sourceTitle ?? provenance.registry.sourceUrl,
+        title,
         subtitle: `${at} · ${t('capabilities.skillDetail.source.added', { date: formatDay(provenance.registry.importedAt) })}`,
         icon: 'github-logo',
       };
@@ -109,7 +113,7 @@ function sourceRow(
       return {
         title: source?.kind === 'registry' ? source.label : provenance.url,
         subtitle:
-          ref.kind === 'gitTree' ? `@${ref.commit.slice(0, 7)}` : ref.version,
+          ref.kind === 'gitTree' ? `@${ref.commit.slice(0, 7)}` : contentRefLabel(ref) ?? undefined,
         icon: 'link',
       };
     }
@@ -119,7 +123,7 @@ function sourceRow(
 /**
  * "Source and updates" (sd D): where the skill came from and, for registry and link sources only, its
  * update state with Check now (P4's one checker), "Update automatically" (off by default for others'
- * skills, D19) and "Pin to this version". A skill written by the person says so and offers nothing to update.
+ * skills, D19) and "Pin to this version". Creator attribution is separate from source.
  */
 export function SkillSourceSection(
   props: Readonly<{
@@ -128,6 +132,8 @@ export function SkillSourceSection(
     machineName: (machineId: string) => string;
     pluginSource?: Extract<CapabilitySource, { kind: 'plugin' }>;
     registrySourceName?: string;
+    maker?: SkillMaker;
+    onOpenCreator?: () => void;
     checkNow: () => void;
     checking: boolean;
     checkedAt: number | null;
@@ -230,6 +236,24 @@ export function SkillSourceSection(
         references={outsideReferences}
         testID={`${props.testID}:outsideReferences`}
       />
+      {props.maker ? (
+        <Item
+          testID={`${props.testID}:maker`}
+          title={t('capabilities.skills.maker.title')}
+          subtitle={props.maker.label}
+          icon={props.maker.face ? <SessionBotFace facts={props.maker.face} size={20} motion={false} /> : undefined}
+          rightElement={props.maker.openSessionId && props.onOpenCreator ? (
+            <RoundButton
+              testID={`${props.testID}:openCreator`}
+              size="small"
+              display="secondary"
+              title={t('capabilities.skills.maker.openSession')}
+              onPress={props.onOpenCreator}
+            />
+          ) : undefined}
+          showChevron={false}
+        />
+      ) : null}
       {tracked ? (
         <>
           <Item

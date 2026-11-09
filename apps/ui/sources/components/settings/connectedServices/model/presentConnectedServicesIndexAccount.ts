@@ -16,6 +16,13 @@ export type ConnectedServicesIndexAccountPresentation = Readonly<{
     identityLabel: string | null;
     /** Raw provider account id, for the detail header. */
     accountIdLabel: string | null;
+    /**
+     * A Credentials row's title: a subscription's email (as the privacy presenter shows it), so every
+     * account of every service reads the same way; a key, or an account without an email, keeps `title`.
+     */
+    listTitle: string;
+    /** The name someone gave an account whose row leads with its email, said beside its plan; else null. */
+    listName: string | null;
 }>;
 
 /**
@@ -66,11 +73,19 @@ export function presentConnectedServicesIndexAccount(
         presentIdentity: present,
     });
     const providerAccountId = profile.providerIdentity?.accountId?.trim() || null;
-    const shown = present({ accountId: providerAccountId });
+    const providerEmail = profile.providerIdentity?.email?.trim() || null;
+    const shown = present({ accountId: providerAccountId, email: providerEmail });
+    const title = presentation.primaryLabel;
+    const identityLabel = presentation.identityLabel ?? null;
+    const isKey = account.kind === 'qualified' && account.profile.kind === 'token';
+    // The naming owner already put the shown email beside a name; a row turns that pair around.
+    const leadsWithEmail = !isKey && shown.email !== null && identityLabel === shown.email;
     return {
-        title: presentation.primaryLabel,
-        identityLabel: presentation.identityLabel ?? null,
+        title,
+        identityLabel,
         accountIdLabel: account.kind === 'qualified' ? shown.accountId : null,
+        listTitle: leadsWithEmail ? identityLabel : title,
+        listName: leadsWithEmail ? title : null,
     };
 }
 

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol';
+import { BUILT_IN_ROLES_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 
 import { createDeferred, renderInCollectionLayout, standardCleanup } from '@/dev/testkit';
 

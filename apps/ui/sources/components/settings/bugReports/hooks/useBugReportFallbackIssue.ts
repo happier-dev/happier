@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import type { BugReportDeploymentType, BugReportFrequency, BugReportSeverity } from '../bugReportFallback';
 import { openBugReportFallbackFromDraft } from '../bugReportFallbackSubmission';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 
 export function useBugReportFallbackIssue(input: Readonly<{
   route: string;
@@ -24,8 +25,9 @@ export function useBugReportFallbackIssue(input: Readonly<{
   serverVersion?: string;
   deploymentType: BugReportDeploymentType;
 }) => Promise<void> {
+  const writeClipboard = useClipboardWrite();
   return React.useCallback(async (environment) => {
-    await openBugReportFallbackFromDraft({ ...input, environment, acceptedPrivacyNotice: false }, input.route);
+    await openBugReportFallbackFromDraft({ ...input, environment, acceptedPrivacyNotice: false }, writeClipboard, input.route);
   }, [
     input.currentBehavior,
     input.expectedBehavior,
@@ -38,5 +40,6 @@ export function useBugReportFallbackIssue(input: Readonly<{
     input.summary,
     input.title,
     input.whatChangedRecently,
+    writeClipboard,
   ]);
 }

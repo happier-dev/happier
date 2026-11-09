@@ -18,13 +18,13 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOrigina
     return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
 });
 
-const { MachineCollectionRail } = await import('./MachineCollectionList');
+const { MachineCollectionRail, MachineCollectionList } = await import('./MachineCollectionList');
 const { storage } = await import('@/sync/domains/state/storage');
 const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
 
 afterEach(() => standardCleanup());
 
-it('gives the name the whole row: what the machine reports sits on the line beneath, never beside the name', async () => {
+it.each([false, true])('gives the machine its identity glyph and whole name row (this computer: %s)', async isThisComputer => {
     await home.reset();
     const profileId = await home.addHome({
         name: 'Studio Home', serverUrl: 'https://studio.example',
@@ -46,17 +46,28 @@ it('gives the name the whole row: what the machine reports sits on the line bene
         machineListByServerId: { [profileId]: [machine] },
         machineListStatusByServerId: { [profileId]: 'idle' },
     });
+    const { getSystemTasksRunner } = await import('@/components/systemTasks/systemTasksRuntime');
+    const { publishLocalDaemonStatus } = await import('../localControl/localDaemonSharedState');
+    publishLocalDaemonStatus(getSystemTasksRunner(), { machineId: isThisComputer ? machine.id : null });
     const screen = await renderScreen(<MachineCollectionRail />);
     await waitForHomeGovernance(() => {
         expect(screen.getTextContent()).toContain('Studio');
     });
     expect(screen.getTextContent()).toContain('studio.internal');
     const row = screen.findByTestId(`settings.machines.row.${profileId}.studio-machine`)!;
+    const { Icon } = await import('@/components/ui/icons/Icon');
+    expect(row.findAll(node => node.type === Icon).some(node => node.props.name === (isThisComputer ? 'laptop' : 'hard-drives'))).toBe(true);
     expect(row.props.rightElement).toBeUndefined();
     expect(screen.findByTestId(`settings.machines.row.${profileId}.studio-machine.summary`)).not.toBeNull();
     // The word the summary says for an offline machine; the glyph already says what kind of machine it is.
     expect(screen.getTextContent()).toContain('machineDetailPage.offline');
     expect(screen.getTextContent()).not.toContain('Linux');
+    expect(screen.getTextContent()).toContain('managedRetention.pageDescriptionShort');
     expect(screen.getTextContent()).toContain('settings.overview');
     expect(screen.getTextContent()).not.toContain('allMachines.rowTitle');
+    // React Test Renderer erases the component's props at its instance boundary.
+    const listProps = screen.tree.findByType(MachineCollectionList).props as React.ComponentProps<typeof MachineCollectionList>;
+    await screen.update(<MachineCollectionList {...listProps} variant="page" />);
+    const pageRow = screen.findByTestId(`settings.machines.row.${profileId}.studio-machine`)!;
+    expect(pageRow.findAll(node => node.type === Icon).some(node => node.props.name === (isThisComputer ? 'laptop' : 'hard-drives'))).toBe(true);
 });

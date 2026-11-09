@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
-import { accountSettingsParse } from '@happier-dev/protocol';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import { applyLocalSettings, localSettingsParse } from '@/sync/domains/settings/localSettings';

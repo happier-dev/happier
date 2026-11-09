@@ -7,7 +7,6 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
   ExpandableItem,
-  ExpandableItemCaret,
 } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -100,7 +99,7 @@ export function SkillDetailsDisclosure(
     const result = await props.execute(
       'skills.machine.uninstall',
       { skillId: props.skillId, machineId: machine.machineId, ...(force ? { force: true } : {}) },
-      { presentUserConfirmation: { actionId: 'skills.machine.uninstall' } },
+      { confirmed: true },
     );
     if (result.ok) {
       setPaths(machine.machineId, []);
@@ -139,7 +138,7 @@ export function SkillDetailsDisclosure(
             {...(headerProps as Readonly<Record<string, unknown>>)}
             testID={`${props.testID}:header`}
             title={t('capabilities.skillDetail.details.title')}
-            leftElement={<ExpandableItemCaret expanded={expanded} />}
+            keepChevronWithRightElement
             rightElement={
               expanded ? null : (
                 <Text variant="meta" style={styles.summary}>
@@ -147,7 +146,6 @@ export function SkillDetailsDisclosure(
                 </Text>
               )
             }
-            showChevron={false}
           />
         )}
       >

@@ -7,6 +7,7 @@ import {
   type ResolvedAgentCatalogEntry,
 } from '@/agents/backendCatalog/agentCatalogProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -112,6 +113,7 @@ export const SearchSettingsView = React.memo(function SearchSettingsView() {
     serverId,
     enabled: indexing,
     refreshKey: projectionRefreshKey,
+    sections: DAEMON_AGENT_CATALOG_SECTIONS,
   });
   const projectionInputs = projection.inputs;
   const { execute: executeAction, ready: actionReady, isCurrent, approval } = useMountedActionExecution(serverId);

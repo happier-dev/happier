@@ -1,6 +1,7 @@
 export {
     getActionSettingsTargetContext,
     getActionSettingsTargetDefinition,
+    resolveActionSettingsTargetDefinition,
     isRunScopedPlacement,
     isVoiceTargetId,
     listActionSettingsTargetDefinitions,

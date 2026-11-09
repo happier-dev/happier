@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
+import { useIsFocused, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -93,6 +94,7 @@ function PluginSourceRootDraft(props: Readonly<{
  * there is no second plugin store.
  */
 export const PluginDevelopmentScreen = React.memo(function PluginDevelopmentScreen() {
+    const router = useRouter();
     const isFocused = useIsFocused();
     const shouldContinue = useMountedShouldContinue();
     const state = usePluginSettingsScreenState({ focused: isFocused });
@@ -269,6 +271,11 @@ export const PluginDevelopmentScreen = React.memo(function PluginDevelopmentScre
                 onDevelopSourceRoot={developPluginSourceRoot}
                 onEditWithAgent={editDevelopmentPluginWithAgent}
                 onRunAction={state.runDevelopmentAction}
+                onPublish={(projectRoot) => {
+                    const target = state.administrationTargetSelection.selectedTarget;
+                    if (target) router.push({ pathname: SETTINGS_ROUTES.pluginPublish, params: { projectRoot,
+                        machineId: target.machineId, serverIdentityId: target.serverIdentityId } });
+                }}
             />
         </ItemList>
     );

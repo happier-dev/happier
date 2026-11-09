@@ -1,5 +1,5 @@
 import { isHomeGovernanceSettingKey, isHomeSignInPlatformSetting } from '@happier-dev/protocol/serverConfig/homeSettingsOwnership';
-import { type FeatureId } from '@happier-dev/protocol';
+import { type FeatureId } from '@happier-dev/protocol/features/catalog';
 import type { HomeSettingEntryV1, HomeSettingsProjectionV1 } from '@happier-dev/protocol/home/governance';
 import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';
 

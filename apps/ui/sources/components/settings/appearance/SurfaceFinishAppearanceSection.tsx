@@ -65,9 +65,8 @@ export function SurfaceFinishAppearanceSection() {
             </SettingAnchor>
             <SettingAnchor settings={[settings.surfaceFinishCustomize, ...Object.values(roleSettings)]}>
                 <ExpandableItem expanded={expanded} onExpandedChange={setExpanded} header={({ headerProps, expanded: open }) => <Item {...headerProps}
-                    title={t(settings.surfaceFinishCustomize.titleKey)} testID="settings-appearance-finish-customize" showChevron={false}
+                    title={t(settings.surfaceFinishCustomize.titleKey)} testID="settings-appearance-finish-customize"
                     detail={open ? undefined : finishLabel(finish)}
-                    rightElement={<Icon name={open ? 'caret-up' : 'caret-down'} color={theme.colors.text.secondary} size={theme.iconSize.medium} />}
                 />}>
                     {THEME_SURFACE_FINISH_ROLES.map(role => <SettingAnchor key={role} setting={roleSettings[role]}>
                         <SegmentedChoiceItem

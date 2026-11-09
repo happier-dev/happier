@@ -16,13 +16,12 @@ function declared(anchor: string) {
 }
 
 describe('API tokens and Embeds settings search', () => {
-    it('declares the API tokens page rows, the CLI and daemon approvals switch among them', () => {
-        const { page, setting } = declared('apiTokens.cliApprovals');
+    it('declares the API tokens page rows', () => {
+        const { page, setting } = declared('apiTokens.revokeAll');
         expect(page.subpage).toBeUndefined();
-        expect(buildSettingHref(SETTINGS_ROUTES.apiTokens, setting)).toBe(`${SETTINGS_ROUTES.apiTokens}?setting=apiTokens.cliApprovals`);
-        declared('apiTokens.revokeAll');
-        // One owner: the switch is no longer declared on Sign-in & security.
-        expect(SETTINGS_PAGE_DECLARATIONS.some((candidate) => Object.values(candidate.settings).some((entry) => entry.anchor === 'accountSecurity.cliApprovals'))).toBe(false);
+        expect(buildSettingHref(SETTINGS_ROUTES.apiTokens, setting)).toBe(`${SETTINGS_ROUTES.apiTokens}?setting=apiTokens.revokeAll`);
+        // The CLI/daemon approvals switch is retired: a terminal login is always the person.
+        expect(SETTINGS_PAGE_DECLARATIONS.some((candidate) => Object.values(candidate.settings).some((entry) => entry.anchor.endsWith('.cliApprovals')))).toBe(false);
     });
 
     it('offers an embed’s rows for the embed that is open, and none when no embed is open', () => {

@@ -7,7 +7,7 @@ import {
   type CollectionEntityKindV1,
 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 
-import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useLocalSearchParams, useRouter, type Href } from '@/components/appShell/workspace/destinationRoute';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -142,7 +142,7 @@ function ManagedSpaces<K extends CollectionEntityKindV1>(
   const editing = useCollectionSpaceEditing({
     entityKind,
     testIDPrefix: 'collection-spaces-settings',
-    serverId: binding.spaceSettingsScope?.serverId ?? null,
+    scope: binding.spaceSettingsScope,
     spaces,
     selectedSpace: editingSpace,
     // Editing a space here changes its name, icon and scope, never its conditions.
@@ -198,7 +198,10 @@ export const CollectionSpacesSettingsSection = React.memo(function CollectionSpa
                     subtitle={!binding.spacesReady ? undefined
                         : binding.spacesEnabled ? binding.spaces.map(space => space.name).join(', ')
                             : t(masterEnabled ? 'sessionsList.spacesListDisabledDescription' : 'sessionsList.spacesDisabledDescription')}
-                    onPress={() => router.push(collectionSpacesManageHref(entityKind))}
+                    onPress={() => {
+                        // The Spaces route exists on disk; Expo's watched declaration can lag its inventory.
+                        router.push(collectionSpacesManageHref(entityKind) as Href);
+                    }}
                 />
             </SettingAnchor>
         </ItemGroup>

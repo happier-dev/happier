@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol';
+import type { SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import { redactSensitiveSystemTaskJsonValue } from '@happier-dev/cli-common/systemTasks/interactiveTaskKinds';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 

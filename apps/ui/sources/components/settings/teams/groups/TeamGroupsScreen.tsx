@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import type { TeamGroupV1 } from '@happier-dev/protocol/teams';
-import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -12,8 +11,7 @@ import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
-import { VirtualizedList } from '@/components/ui/lists/virtualized';
-import { usePageListBottomPadding } from '@/components/ui/lists/pageListBottomPadding';
+import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
 import { useTeamGroups } from '@/hooks/teams/useTeamGroups';
 import { t } from '@/text';
 
@@ -70,7 +68,6 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
     header?: React.ReactNode;
 }>) {
     const { theme } = useUnistyles();
-    const bottomPadding = usePageListBottomPadding();
     const router = useRouter();
     const readFailureAction = useTeamReadFailureAction();
     const { context } = props;
@@ -274,18 +271,12 @@ const GroupsList = React.memo(function GroupsList(props: Readonly<{
     );
 
     return (
-        <VirtualizedList
+        <VirtualizedItemList
             testID="team-groups-virtualized-list"
             data={rows}
             keyExtractor={(item) => item.key}
             renderItem={renderRow}
             ListHeaderComponent={props.header === undefined ? null : <>{props.header}</>}
-            style={{
-                flex: 1,
-                backgroundColor: theme.colors.surface.base,
-                ...(Platform.OS === 'web' ? { minHeight: 0 } : {}),
-            }}
-            contentContainerStyle={{ paddingBottom: bottomPadding }}
             initialNumToRender={6}
             maxToRenderPerBatch={4}
             windowSize={7}

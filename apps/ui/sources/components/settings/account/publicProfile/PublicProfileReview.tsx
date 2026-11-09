@@ -6,14 +6,16 @@ import {
   type PublicProfileField,
 } from '@happier-dev/protocol/account/publicProfile';
 import type { PublicProfilePreparationUnavailableReasonV1 } from '@happier-dev/protocol/account/publicProfileIntents';
+import type { PublicProfileLocalPreviewViewV1, PublicProfileViewV1 } from '@happier-dev/protocol/account/publicProfilePublication';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import {
   ExpandableItem,
-  ExpandableItemCaret,
 } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { Text } from '@/components/ui/text/Text';
 import type { CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
@@ -21,14 +23,13 @@ import { t } from '@/text';
 
 export type PublicProfileReviewProps = Readonly<{
   kind: 'publish' | 'apply';
-  service: string;
   /** Where the page lives, from the service's canonical public URL. */
   pageUrl: string | null;
   /** The captured window the published numbers cover. */
   period: string;
   sharedFields: readonly PublicProfileField[];
   /** Exactly what visitors would read, as captured for this review. */
-  disclosure: unknown;
+  disclosure: PublicProfileLocalPreviewViewV1 | PublicProfileViewV1 | null;
   preparationReason?: PublicProfilePreparationUnavailableReasonV1 | null;
   /** The retained picture copy Confirm sends; absent when no picture leaves the device. */
   renderPicture?: () => React.ReactNode;
@@ -70,7 +71,19 @@ export function PublicProfileReview(
     props.indexable ? null : t('publicIdentity.review.noindex'),
   ].filter((line): line is string => line !== null);
   const json = React.useMemo(
-    () => (showData ? preparationNotice ?? JSON.stringify(props.disclosure, null, 2) : ''),
+    () => {
+      if (!showData) return '';
+      if (preparationNotice) return preparationNotice;
+      const disclosure = props.disclosure;
+      const atmosphere = disclosure?.appearance.atmosphere;
+      if (disclosure && atmosphere?.source === 'picture' && 'content' in atmosphere.picture) {
+        // Pixels are inspected above; the storage-generated public ref does not exist until commit.
+        const { content: _content, ...picture } = atmosphere.picture;
+        return JSON.stringify({ ...disclosure, appearance: { ...disclosure.appearance,
+          atmosphere: { ...atmosphere, picture } } }, null, 2);
+      }
+      return JSON.stringify(disclosure, null, 2);
+    },
     [showData, preparationNotice, props.disclosure],
   );
   const { confirming, kind, onCancel, onConfirm } = props;
@@ -103,6 +116,8 @@ export function PublicProfileReview(
     { kind: 'card' as const, scrollHost: 'bounded' as const, bodyScroll: 'auto' as const, footer: actions }
   ), [actions]));
   return (
+    // A card body owns its padding: its lists keep the paragraphs' edge instead of adding a page inset.
+    <ListPresentationProvider value="page" pageInsets="contained">
     <View style={styles.body} testID="public-profile-review">
       {props.pageUrl ? (
         <Text variant="body" style={styles.secondary}>
@@ -112,30 +127,25 @@ export function PublicProfileReview(
           })}
         </Text>
       ) : null}
-      <View style={styles.section}>
-        <Text variant="label" emphasis="semiBold" style={styles.primary}>
-          {t('publicIdentity.review.intro', { service: props.service })}
-        </Text>
-        <Text variant="body" style={styles.primary} testID="public-profile-review-items">
-          {props.sharedFields.length > 0
-            ? names(props.sharedFields)
-            : t('publicIdentity.review.none')}
-        </Text>
-      </View>
-      {hidden.length > 0 ? (
-        <View style={styles.section}>
-          <Text variant="label" emphasis="semiBold" style={styles.primary}>
-            {t('publicIdentity.review.hidden')}
-          </Text>
-          <Text
-            variant="body"
-            style={styles.secondary}
+      {/* What becomes public and what stays hidden, one row each (lab F2d). The card body owns the spacing. */}
+      <ItemGroup header="none">
+        <Item
+          testID="public-profile-review-items"
+          title={t('publicIdentity.review.public')}
+          subtitle={props.sharedFields.length > 0 ? names(props.sharedFields) : t('publicIdentity.review.none')}
+          subtitleLines={0}
+          showChevron={false}
+        />
+        {hidden.length > 0 ? (
+          <Item
             testID="public-profile-review-hidden"
-          >
-            {names(hidden)}
-          </Text>
-        </View>
-      ) : null}
+            title={t('publicIdentity.review.hidden')}
+            subtitle={names(hidden)}
+            subtitleLines={0}
+            showChevron={false}
+          />
+        ) : null}
+      </ItemGroup>
       {props.renderPicture ? (
         <View style={styles.section} testID="public-profile-review-picture">
           <View style={styles.picture}>{props.renderPicture()}</View>
@@ -152,6 +162,8 @@ export function PublicProfileReview(
           </Text>
         ))}
       </View>
+      {/* A row like the ones above, on the same inner edge, instead of a bare row inset from the paragraphs. */}
+      <ItemGroup header="none">
       <ExpandableItem
         expanded={showData}
         onExpandedChange={setShowData}
@@ -162,8 +174,6 @@ export function PublicProfileReview(
             testID="public-profile-review-data"
             title={t('publicIdentity.review.viewData')}
             subtitle={preparationNotice ?? t('publicIdentity.review.viewDataDetail')}
-            showChevron={false}
-            rightElement={<ExpandableItemCaret expanded={state.expanded} />}
           />
         )}
       >
@@ -176,9 +186,11 @@ export function PublicProfileReview(
           />
         ) : null}
       </ExpandableItem>
+      </ItemGroup>
       {/* Without card chrome (an embedding host), the actions end the body. */}
       {props.setChrome ? null : actions}
     </View>
+    </ListPresentationProvider>
   );
 }
 

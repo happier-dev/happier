@@ -1,71 +1,61 @@
 import * as React from 'react';
-import type { CapabilityId } from '@happier-dev/protocol';
-
-import { useMachineCapabilitiesCache } from '@/hooks/server/useMachineCapabilitiesCache';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import { useScopedPluginSettingsDaemonTargetBinding } from '@/sync/domains/machines/administration/scopedPluginSettingsTarget';
+import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 
-import { MARKETPLACE_CAPABILITY_ID } from './pluginMarketplaceModel';
-
-/** The marketplace capability read: which plugins a machine has installed, and their state. */
-export const MARKETPLACE_CAPABILITY_REQUEST: Readonly<{ requests: { id: CapabilityId }[] }> = Object.freeze({ requests: [{ id: MARKETPLACE_CAPABILITY_ID }] });
+import { usePluginMachineDetails } from './usePluginMachineDetails';
+import { readDevelopmentPlugins } from './pluginMarketplaceModel';
+export { MARKETPLACE_CAPABILITY_REQUEST } from './usePluginMachineDetails';
 
 /**
  * The machine the Plugins surfaces administer and its marketplace capability snapshot: the one
- * reader of which plugins are installed there. The Plugins page and the Plugins column both read it,
- * so they list and count the same plugins on the same machine; the snapshot is the shared machine
- * capability cache, keyed by that machine, so a second reader asks the daemon nothing new.
+ * reader shared with explicit Store Machine detail. Administration supplies its preference-bound
+ * target; the extracted reader owns the cache/reconnect lifecycle without selecting a Machine.
  */
-export function usePluginsAdministrationTarget() {
+export function usePluginsAdministrationTarget(params: Readonly<{ enabled?: boolean; projectionRefreshKey?: number }> = {}) {
     // The one administration-target owner. It supplies the selection, the exact Settings/Secrets
     // record target, and the single currentness fence every asynchronous write re-checks.
     const administration = useScopedPluginSettingsDaemonTargetBinding(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.plugins,
     );
     const executionTarget = administration.executionTarget;
-    const selectedTarget = administration.selection.selectedTarget;
-    /**
-     * This is a cache identity only. It deliberately uses the portable target, so an offline exact
-     * selection retains its own last-known snapshot without falling back to the active server or
-     * another machine.
-     */
-    const selectedMachineScopeKey = selectedTarget
-        ? `${selectedTarget.serverIdentityId}:${selectedTarget.machineId}`
-        : null;
-    const daemonTransportOnline = executionTarget !== null;
-    const [daemonReconnectFreshness, setDaemonReconnectFreshness] = React.useState(() => ({
-        scopeKey: selectedMachineScopeKey,
-        isOnline: daemonTransportOnline,
-        reconnectSequence: 0,
-    }));
-    if (
-        daemonReconnectFreshness.scopeKey !== selectedMachineScopeKey
-        || daemonReconnectFreshness.isOnline !== daemonTransportOnline
-    ) {
-        setDaemonReconnectFreshness({
-            scopeKey: selectedMachineScopeKey,
-            isOnline: daemonTransportOnline,
-            reconnectSequence: daemonReconnectFreshness.scopeKey !== selectedMachineScopeKey
-                ? 0
-                : !daemonReconnectFreshness.isOnline && daemonTransportOnline
-                    ? daemonReconnectFreshness.reconnectSequence + 1
-                    : daemonReconnectFreshness.reconnectSequence,
-        });
-    }
-    const daemonCacheFreshnessKey = `${executionTarget?.machine.daemonStateVersion ?? 0}:${daemonReconnectFreshness.reconnectSequence}`;
-    const machineCapabilities = useMachineCapabilitiesCache({
-        machineId: executionTarget?.machine.id ?? null,
-        serverId: executionTarget?.serverId ?? null,
-        cacheKeySalt: daemonCacheFreshnessKey,
-        enabled: executionTarget !== null,
-        request: MARKETPLACE_CAPABILITY_REQUEST,
+    const details = usePluginMachineDetails({ selectedTarget: administration.selection.selectedTarget,
+        executionTarget, enabled: params.enabled !== false });
+    const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        machineId: executionTarget?.machine.id,
+        serverId: executionTarget?.serverId,
+        enabled: params.enabled !== false && params.projectionRefreshKey !== undefined && executionTarget !== null,
+        refreshKey: `${params.projectionRefreshKey ?? 0}:${details.daemonCacheFreshnessKey}`,
+        // Plugins administration presents every plugin's Actions, Resources, settings and contribution kinds.
+        sections: 'complete',
     });
+    const state = details.machineCapabilities.state;
+    const hasCapabilitySnapshot = (state.status === 'loaded' || state.status === 'loading' || state.status === 'error')
+        && state.snapshot !== undefined;
+    const developmentPlugins = React.useMemo(() => readDevelopmentPlugins(state, details.installedPlugins),
+        [state, details.installedPlugins]);
+    // Retain display facts for one exact Account/Machine; admission always uses current native readiness.
+    const retained = React.useRef({ scopeKey: details.selectedMachineScopeKey,
+        installedPlugins: details.installedPlugins, developmentPlugins, projectionInputs: daemonMergedProjection.inputs });
+    if (retained.current.scopeKey !== details.selectedMachineScopeKey) {
+        retained.current = { scopeKey: details.selectedMachineScopeKey,
+            installedPlugins: hasCapabilitySnapshot ? details.installedPlugins : [],
+            developmentPlugins: hasCapabilitySnapshot ? developmentPlugins : [],
+            projectionInputs: daemonMergedProjection.inputs };
+    } else {
+        retained.current = { scopeKey: details.selectedMachineScopeKey,
+            installedPlugins: hasCapabilitySnapshot ? details.installedPlugins : retained.current.installedPlugins,
+            developmentPlugins: hasCapabilitySnapshot ? developmentPlugins : retained.current.developmentPlugins,
+            projectionInputs: daemonMergedProjection.inputs ?? retained.current.projectionInputs };
+    }
     return {
         administration,
         executionTarget,
-        selectedMachineScopeKey,
-        daemonTransportOnline,
-        daemonCacheFreshnessKey,
-        machineCapabilities,
+        ...details,
+        hasCapabilitySnapshot,
+        installedPlugins: retained.current.installedPlugins,
+        developmentPlugins: retained.current.developmentPlugins,
+        daemonMergedProjection,
+        projectionInputs: retained.current.projectionInputs,
     };
 }

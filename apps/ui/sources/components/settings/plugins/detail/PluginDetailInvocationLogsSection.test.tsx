@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import type {
     PluginInvocationLogRecordV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/plugin-invocation-logs';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 

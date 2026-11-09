@@ -6,7 +6,7 @@ import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { MEMORY_SETTINGS } from '@/components/settings/memory/memorySettings';
 import { t } from '@/text';
 
-import type { MemorySettingsV1 } from '@happier-dev/protocol';
+import type { MemorySettingsV1 } from '@happier-dev/protocol/memory/memorySettings';
 
 /** A budget is a positive whole number of MB; anything else keeps the saved budget. */
 function parseBudgetMb(draft: string): number | null {

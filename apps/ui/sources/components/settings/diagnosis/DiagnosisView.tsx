@@ -17,7 +17,7 @@ import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { Modal } from '@/modal';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
-import { useMachineListByServerId, useProfile } from '@/sync/domains/state/storage';
+import { useProfile, useMachineListByServerId } from '@/sync/domains/state/storage';
 import type { ServerFetch } from '@/sync/http/client';
 import { t } from '@/text';
 import { getMachineDisplayName, resolveMachineDisplayNames } from '@/utils/sessions/machineUtils';

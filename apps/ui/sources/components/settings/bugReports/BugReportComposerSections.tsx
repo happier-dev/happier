@@ -1,4 +1,6 @@
 import React from 'react';
+import { resolveBugReportLogSelection, type BugReportLogSelection } from '@happier-dev/protocol/bugs/reports/machineDiagnostics';
+import type { collectBugReportDiagnosticsArtifacts } from './bugReportDiagnostics';
 
 import { parseDoctorSnapshotSafe } from '@happier-dev/protocol/diagnostics/doctorSnapshot';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -10,35 +12,14 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { t, type TranslationKey } from '@/text';
 
+import { BUG_REPORT_CURRENT_BEHAVIOR_MAX_LENGTH } from './bugReportComposerDraft';
+
 import { type BugReportDeploymentType, type BugReportFrequency, type BugReportSeverity } from './bugReportFallback';
 
-type BugReportDiagnosticsKind = 'ui-mobile' | 'daemon' | 'server' | 'stack-service';
-
-const DIAGNOSTICS_KIND_OPTIONS: Array<{
-    kind: BugReportDiagnosticsKind;
-    titleKey: TranslationKey;
-    detailKey: TranslationKey;
-}> = [
-    {
-        kind: 'ui-mobile',
-        titleKey: 'bugReports.composer.diagnostics.kinds.app.title',
-        detailKey: 'bugReports.composer.diagnostics.kinds.app.detail',
-    },
-    {
-        kind: 'daemon',
-        titleKey: 'bugReports.composer.diagnostics.kinds.daemon.title',
-        detailKey: 'bugReports.composer.diagnostics.kinds.daemon.detail',
-    },
-    {
-        kind: 'stack-service',
-        titleKey: 'bugReports.composer.diagnostics.kinds.stackService.title',
-        detailKey: 'bugReports.composer.diagnostics.kinds.stackService.detail',
-    },
-    {
-        kind: 'server',
-        titleKey: 'bugReports.composer.diagnostics.kinds.server.title',
-        detailKey: 'bugReports.composer.diagnostics.kinds.server.detail',
-    },
+const LOG_OPTIONS: ReadonlyArray<{ kind: keyof BugReportLogSelection; title: TranslationKey; detail: TranslationKey }> = [
+    { kind: 'daemon', title: 'bugReports.composer.logOptions.daemonTitle', detail: 'bugReports.composer.logOptions.daemonDetail' },
+    { kind: 'session', title: 'bugReports.composer.logOptions.sessionTitle', detail: 'bugReports.composer.logOptions.sessionDetail' },
+    { kind: 'provider', title: 'bugReports.composer.logOptions.providerTitle', detail: 'bugReports.composer.logOptions.providerDetail' },
 ];
 
 /** A labelled text field row: the field sits beside a short label and beneath a long one. */
@@ -70,6 +51,7 @@ function BugReportFieldRow(props: Readonly<{
                     value={props.value}
                     onChangeText={props.onChange}
                     accessibilityLabel={props.label}
+                    accessibilityHint={props.placeholder}
                     placeholder={props.placeholder}
                     multiline={props.multiline}
                     minLines={props.minLines}
@@ -87,28 +69,14 @@ function BugReportFieldRow(props: Readonly<{
 export function BugReportDiagnosticsSection(props: Readonly<{
     includeDiagnostics: boolean;
     onIncludeDiagnosticsChange: (value: boolean) => void;
-    acceptedKinds: string[];
-    selectedKinds: string[];
-    onSelectedKindsChange: (kinds: string[]) => void;
+    logSelection: BugReportLogSelection;
+    onLogSelectionChange: (selection: BugReportLogSelection) => void;
+    collectionStatuses?: Awaited<ReturnType<typeof collectBugReportDiagnosticsArtifacts>>['collectionStatuses'];
     onPreviewDiagnostics: () => void;
     previewDisabled: boolean;
-    pastedCliDoctorSnapshotJson: string;
-    onPastedCliDoctorSnapshotJsonChange: (value: string) => void;
+    disabled?: boolean;
 }>): React.JSX.Element {
-    const acceptedSet = new Set(props.acceptedKinds);
-    const selectedSet = new Set(props.selectedKinds);
-
-    const toggleKind = (kind: BugReportDiagnosticsKind, enabled: boolean) => {
-        const next = new Set(selectedSet);
-        if (enabled) next.add(kind);
-        else next.delete(kind);
-        props.onSelectedKindsChange(Array.from(next));
-    };
-
-    const pasted = props.pastedCliDoctorSnapshotJson.trim().length > 0
-        ? parseDoctorSnapshotSafe(props.pastedCliDoctorSnapshotJson)
-        : null;
-
+    const technicalOnly = !Object.values(props.logSelection).some(Boolean);
     return (
         <ItemGroup
             title={t('bugReports.composer.diagnostics.title')}
@@ -129,72 +97,79 @@ export function BugReportDiagnosticsSection(props: Readonly<{
                 subtitle={t('bugReports.composer.diagnostics.includeSubtitle')}
                 subtitleLines={0}
                 showChevron={false}
-                rightElement={(
-                    <Switch
-                        accessibilityLabel={t('bugReports.composer.diagnostics.includeTitle')}
-                        value={props.includeDiagnostics}
-                        onValueChange={props.onIncludeDiagnosticsChange}
-                    />
-                )}
+                rightElement={<Switch
+                    accessibilityLabel={t('bugReports.composer.diagnostics.includeTitle')}
+                    accessibilityHint={t('bugReports.composer.diagnostics.includeSubtitle')}
+                    value={props.includeDiagnostics}
+                    disabled={props.disabled}
+                    onValueChange={props.onIncludeDiagnosticsChange}
+                />}
             />
-            {props.includeDiagnostics ? (
-                <CountedDisclosureItem
-                    testID="bug-report-diagnostics-sources"
-                    title={t('bugReports.composer.diagnostics.chooseIncluded')}
-                    count={DIAGNOSTICS_KIND_OPTIONS.filter((option) => acceptedSet.has(option.kind) && selectedSet.has(option.kind)).length}
-                    showDivider={false}
-                >
-            {DIAGNOSTICS_KIND_OPTIONS.map((option) => {
-                const allowed = acceptedSet.has(option.kind);
-                const selected = selectedSet.has(option.kind);
-                return (
-                    <Item
-                        key={option.kind}
-                        title={t(option.titleKey)}
-                        subtitle={`${t(option.detailKey)}${allowed ? '' : t('bugReports.composer.diagnostics.disabledByServerSuffix')}`}
-                        subtitleLines={0}
-                        showChevron={false}
-                        rightElement={(
-                            <Switch
-                                accessibilityLabel={t(option.titleKey)}
-                                value={selected && allowed}
-                                onValueChange={(value) => toggleKind(option.kind, value)}
-                                disabled={!allowed}
-                            />
-                        )}
-                    />
-                );
-            })}
-            {acceptedSet.has('daemon') ? (
+            {props.includeDiagnostics ? <>
+                {props.collectionStatuses?.scope ? <Item title={t('bugReports.composer.scopeChanged')} titleLines={0} showChevron={false} /> : null}
                 <Item
-                    title={t('bugReports.composer.diagnostics.pasteDoctorJson.title')}
-                    // The field shows its own refusal; the row says what the paste is for, or that it is accepted.
-                    subtitle={pasted?.ok
-                        ? t('bugReports.composer.diagnostics.pasteDoctorJson.valid')
-                        : t('bugReports.composer.diagnostics.pasteDoctorJson.subtitle')}
+                    title={t('bugReports.composer.logOptions.technicalOnly')}
+                    subtitle={t('bugReports.composer.logOptions.technicalOnlyDetail')}
                     subtitleLines={0}
                     showChevron={false}
-                    accessoryLayout="stacked"
-                    rightElement={(
-                        <FieldTextInput
-                            testID="bug-report-doctor-json"
-                            value={props.pastedCliDoctorSnapshotJson}
-                            onChangeText={props.onPastedCliDoctorSnapshotJsonChange}
-                            accessibilityLabel={t('bugReports.composer.diagnostics.pasteDoctorJson.title')}
-                            placeholder={t('bugReports.composer.diagnostics.pasteDoctorJson.placeholder')}
-                            error={pasted && !pasted.ok ? t('bugReports.composer.diagnostics.pasteDoctorJson.invalid', { error: pasted.error }) : null}
-                            multiline
-                            minLines={4}
-                            maxLength={200_000}
-                            monospace
-                        />
-                    )}
+                    rightElement={<Switch
+                        testID="bug-report-technical-only"
+                        accessibilityLabel={t('bugReports.composer.logOptions.technicalOnly')}
+                        accessibilityHint={t('bugReports.composer.logOptions.technicalOnlyDetail')}
+                        value={technicalOnly}
+                        disabled={props.disabled}
+                        onValueChange={value => props.onLogSelectionChange(value
+                            ? { daemon: false, session: false, provider: false }
+                            : resolveBugReportLogSelection())}
+                    />}
                 />
-            ) : null}
-                </CountedDisclosureItem>
-            ) : null}
+                {LOG_OPTIONS.map(option => {
+                    const status = props.collectionStatuses?.[option.kind]?.status;
+                    return <Item
+                        key={option.kind}
+                        title={t(option.title)}
+                        subtitle={[t(option.detail), status ? t(`bugReports.composer.collection.${status}`) : null].filter(Boolean).join(' ')}
+                        subtitleLines={0}
+                        showChevron={false}
+                        rightElement={<Switch
+                            testID={`bug-report-log-${option.kind}`}
+                            accessibilityLabel={t(option.title)}
+                            accessibilityHint={t(option.detail)}
+                            value={props.logSelection[option.kind]}
+                            disabled={props.disabled}
+                            onValueChange={value => props.onLogSelectionChange({ ...props.logSelection, [option.kind]: value })}
+                        />}
+                    />;
+                })}
+            </> : null}
         </ItemGroup>
     );
+}
+
+export function BugReportDoctorSnapshotField(props: Readonly<{
+    value: string;
+    onChange: (value: string) => void;
+    disabled: boolean;
+}>): React.JSX.Element {
+    const pasted = props.value.trim() ? parseDoctorSnapshotSafe(props.value) : null;
+    return <Item
+        title={t('bugReports.composer.diagnostics.pasteDoctorJson.title')}
+        subtitle={pasted?.ok ? t('bugReports.composer.diagnostics.pasteDoctorJson.valid') : t('bugReports.composer.diagnostics.pasteDoctorJson.subtitle')}
+        subtitleLines={0}
+        showChevron={false}
+        accessoryLayout="stacked"
+        rightElement={<FieldTextInput
+            testID="bug-report-doctor-json"
+            value={props.value}
+            onChangeText={props.onChange}
+            accessibilityLabel={t('bugReports.composer.diagnostics.pasteDoctorJson.title')}
+            accessibilityHint={t('bugReports.composer.diagnostics.pasteDoctorJson.subtitle')}
+            placeholder={t('bugReports.composer.diagnostics.pasteDoctorJson.placeholder')}
+            error={pasted && !pasted.ok ? t('bugReports.composer.diagnostics.pasteDoctorJson.invalid', { error: pasted.error }) : null}
+            multiline minLines={4} maxLength={200_000} monospace autoCapitalize="none"
+            editable={!props.disabled}
+        />}
+    />;
 }
 
 export function BugReportIssueDetailsSection(props: Readonly<{
@@ -242,6 +217,8 @@ export function BugReportIssueDetailsSection(props: Readonly<{
 
 /** The optional fields, together under one heading that says they are optional, instead of a "(optional)" on each label. */
 export function BugReportMoreDetailSection(props: Readonly<{
+    showCurrentBehavior?: boolean;
+    children?: React.ReactNode;
     reporterGithubUsername: string;
     onReporterGithubUsernameChange: (value: string) => void;
     currentBehavior: string;
@@ -254,27 +231,31 @@ export function BugReportMoreDetailSection(props: Readonly<{
     onWhatChangedRecentlyChange: (value: string) => void;
     disabled: boolean;
 }>): React.JSX.Element {
-    const filledCount = [props.currentBehavior, props.expectedBehavior, props.reproductionStepsText,
+    const currentBehaviorField = (
+        <BugReportFieldRow
+            label={t('bugReports.composer.issueDetails.currentBehaviorLabel')}
+            value={props.currentBehavior}
+            onChange={props.onCurrentBehaviorChange}
+            placeholder={t('bugReports.composer.issueDetails.currentBehaviorPlaceholder')}
+            multiline
+            maxLength={BUG_REPORT_CURRENT_BEHAVIOR_MAX_LENGTH}
+            disabled={props.disabled}
+        />
+    );
+    const filledCount = [props.showCurrentBehavior ? '': props.currentBehavior, props.expectedBehavior, props.reproductionStepsText,
         props.whatChangedRecently, props.reporterGithubUsername].filter((value) => value.trim().length > 0).length;
     return (
         <ItemGroup
             title={t('bugReports.composer.issueDetails.moreDetailTitle')}
             description={t('bugReports.composer.issueDetails.moreDetailDescription')}
         >
+            {props.showCurrentBehavior ? currentBehaviorField : null}
             <CountedDisclosureItem
                 testID="bug-report-more-detail"
                 title={t('bugReports.composer.issueDetails.addMoreDetail')}
                 subtitle={filledCount > 0 ? t('bugReports.composer.issueDetails.filledCount', { count: filledCount }) : undefined}
             >
-            <BugReportFieldRow
-                label={t('bugReports.composer.issueDetails.currentBehaviorLabel')}
-                value={props.currentBehavior}
-                onChange={props.onCurrentBehaviorChange}
-                placeholder={t('bugReports.composer.issueDetails.currentBehaviorPlaceholder')}
-                multiline
-                maxLength={5000}
-                disabled={props.disabled}
-            />
+            {!props.showCurrentBehavior ? currentBehaviorField : null}
             <BugReportFieldRow
                 label={t('bugReports.composer.issueDetails.expectedBehaviorLabel')}
                 value={props.expectedBehavior}
@@ -313,6 +294,7 @@ export function BugReportMoreDetailSection(props: Readonly<{
                 disabled={props.disabled}
                 showDivider={false}
             />
+            {props.children}
             </CountedDisclosureItem>
         </ItemGroup>
     );
@@ -323,10 +305,12 @@ export function BugReportFrequencySeveritySection(props: Readonly<{
     onFrequencyChange: (value: BugReportFrequency) => void;
     severity: BugReportSeverity;
     onSeverityChange: (value: BugReportSeverity) => void;
+    disabled?: boolean;
 }>): React.JSX.Element {
     return (
-        <ItemGroup title={t('bugReports.composer.frequencySeverity.title')}>
+        <>
             <SegmentedChoiceItem<BugReportFrequency>
+                disabled={props.disabled}
                 testIDPrefix="bug-report-frequency"
                 title={t('bugReports.composer.frequencySeverity.frequencyLabel')}
                 value={props.frequency}
@@ -339,6 +323,7 @@ export function BugReportFrequencySeveritySection(props: Readonly<{
                 ]}
             />
             <SegmentedChoiceItem<BugReportSeverity>
+                disabled={props.disabled}
                 testIDPrefix="bug-report-severity"
                 title={t('bugReports.composer.frequencySeverity.severityLabel')}
                 value={props.severity}
@@ -350,7 +335,7 @@ export function BugReportFrequencySeveritySection(props: Readonly<{
                     { id: 'low', label: t('bugReports.composer.frequencySeverity.severity.low') },
                 ]}
             />
-        </ItemGroup>
+        </>
     );
 }
 
@@ -369,15 +354,16 @@ export function BugReportEnvironmentSection(props: Readonly<{
     onServerVersionChange: (value: string) => void;
     deploymentType: BugReportDeploymentType;
     onDeploymentTypeChange: (value: BugReportDeploymentType) => void;
+    children?: React.ReactNode;
     disabled: boolean;
 }>): React.JSX.Element {
     return (
         <ItemGroup
-            title={t('bugReports.composer.environment.title')}
+            title={t('bugReports.composer.technicalInformation')}
             description={t('bugReports.composer.environment.description')}
         >
             <CountedDisclosureItem
-                testID="bug-report-environment"
+                testID="bug-report-technical-information"
                 // What is sent, at a glance; the fields open in place to correct it.
                 title={[
                     props.appVersion,
@@ -399,6 +385,7 @@ export function BugReportEnvironmentSection(props: Readonly<{
             <BugReportFieldRow label={t('bugReports.composer.environment.serverUrlLabel')} value={props.serverUrl} onChange={props.onServerUrlChange} disabled={props.disabled} autoCapitalize="none" monospace />
             <BugReportFieldRow label={t('bugReports.composer.environment.serverVersionLabel')} value={props.serverVersion} onChange={props.onServerVersionChange} disabled={props.disabled} autoCapitalize="none" />
             <SegmentedChoiceItem<BugReportDeploymentType>
+                disabled={props.disabled}
                 testIDPrefix="bug-report-deployment"
                 title={t('bugReports.composer.environment.deploymentTypeLabel')}
                 value={props.deploymentType}
@@ -409,6 +396,7 @@ export function BugReportEnvironmentSection(props: Readonly<{
                     { id: 'enterprise', label: t('bugReports.composer.environment.deploymentType.enterprise') },
                 ]}
             />
+            {props.children}
             </CountedDisclosureItem>
         </ItemGroup>
     );
@@ -434,6 +422,7 @@ export function BugReportConsentSection(props: Readonly<{
                     // its label.
                     <Switch
                         accessibilityLabel={t('bugReports.composer.consent.understandTitle')}
+                        accessibilityHint={t('bugReports.composer.consent.understandSubtitle')}
                         value={props.acceptedPrivacyNotice}
                         onValueChange={props.onAcceptedPrivacyNoticeChange}
                     />

@@ -1,23 +1,15 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { GlassSurface } from '@/components/ui/glass/GlassSurface';
+import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { Icon } from '@/components/ui/icons/Icon';
-import { FLOATING_OVERLAY_METRICS } from '@/components/ui/overlays/floatingOverlayMetrics';
-import { resolveThemeSurfaceBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
-import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
-import { surfaceUsesRim } from '@/components/ui/surfaces/surfaceEdgeTreatment';
-import { resolveThemeRaisedEdge } from '@/components/ui/surfaces/themeRaisedEdge';
-import { shadowLevelStyle } from '@/shadowElevation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { useFloatingChromeClearance } from '@/components/ui/layout/useFloatingChromeClearance';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
@@ -137,17 +129,11 @@ function SummaryBar(
     testID: string;
   }>,
 ) {
-  const insets = useSafeAreaInsets();
   const { theme } = useUnistyles();
-  // The phone's floating tab bar covers the page's bottom by its measured height: the bar stands above it,
-  // as a pinned page bar does, and above the system safe area where no such chrome overlays the page.
-  const chromeClearance = useFloatingChromeClearance();
-  const bottomClearance = chromeClearance > 0 ? theme.space.s12 + chromeClearance : Math.max(insets.bottom, 12);
-  // A floating, inset bar (lab m-config Ap): it stands on the floating material and rim, like every
-  // surface that floats over the page, and its summary says it opens the receipt.
+  // The page's pinned bar owns the floating tab bar's clearance and the safe area; its summary says it opens the receipt.
   return (
-    <View testID={`${props.testID}.frame`} style={[styles.barFrame, { marginBottom: bottomClearance }]}>
-      <GlassSurface surfaceGroup="floating" style={styles.bar}>
+    <PagePinnedBar testID={`${props.testID}.frame`}>
+      <View style={styles.bar}>
         <HappierPressable
           testID={props.testID}
           accessibilityRole="button"
@@ -189,9 +175,8 @@ function SummaryBar(
             onPress={props.primary.onPress}
           />
         ) : null}
-        <SurfaceRim role="floating" radius={FLOATING_OVERLAY_METRICS.radiusPx} border="modal" />
-      </GlassSurface>
-    </View>
+      </View>
+    </PagePinnedBar>
   );
 }
 
@@ -224,24 +209,10 @@ const styles = StyleSheet.create((theme) => ({
   phoneList: {
     flex: 1,
   },
-  barFrame: {
-    marginHorizontal: theme.space.s12,
-    borderRadius: FLOATING_OVERLAY_METRICS.radiusPx,
-    ...shadowLevelStyle(theme.colors.shadowLevels[2]),
-  },
   bar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.space.s12,
-    paddingHorizontal: theme.space.s16,
-    paddingVertical: theme.space.s10,
-    borderRadius: FLOATING_OVERLAY_METRICS.radiusPx,
-    overflow: 'hidden',
-    ...resolveThemeSurfaceBorderStyle({
-      borderColor: theme.colors.border.modal,
-      edge: resolveThemeRaisedEdge(theme, 'modal'),
-      rim: surfaceUsesRim('floating', theme.dark),
-    }),
   },
   barSummary: {
     flex: 1,

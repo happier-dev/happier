@@ -1,5 +1,5 @@
 import { applyActionPolicyMutation } from '@happier-dev/protocol/actions/actionAudiencePolicy';
-import { isActionSettingsOptInPlacement, type ActionSettingsActionId, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { isActionEnabledByActionsSettings, isActionSettingsOptInPlacement, type ActionSettingsActionId, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 import {
     resolveActionSettingsTargetDefinition,
@@ -25,6 +25,9 @@ export function getActionSettingsTargetPreferenceSelected(params: Readonly<{
         return actionEntry?.disabledPlacements.includes(target.placement) !== true;
     }
 
+    if (target.surface === 'foreign_session_html') return isActionEnabledByActionsSettings(
+        params.actionId, params.settings, { surface: 'ui', callerSurface: target.surface },
+    );
     return actionEntry?.disabledSurfaces.includes(target.surface) !== true;
 }
 

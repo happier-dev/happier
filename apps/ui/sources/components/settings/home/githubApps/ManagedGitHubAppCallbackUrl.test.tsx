@@ -3,14 +3,16 @@ import { homeAdministrationGitHubAppPath, homeAdministrationGitHubAppEditPath, h
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeContainingText } from '@/dev/testkit/render/renderScreen';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installBrowserClipboardBoundary, renderScreen, standardCleanup } from '@/dev/testkit';
 
 const executeMock = vi.hoisted(() => vi.fn());
 const refreshMock = vi.hoisted(() => vi.fn());
-const setClipboardMock = vi.hoisted(() => vi.fn(async () => true));
+const setClipboardMock = vi.hoisted(() => vi.fn(async (_text: string) => true));
 const callbackUrlMock = vi.hoisted(() => ({ value: 'https://home.example.test/v1/oauth/github-app/callback' as string | undefined }));
 
-vi.mock('@/utils/ui/clipboard', () => ({ setClipboardStringSafe: setClipboardMock }));
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+
+vi.mock('expo-clipboard', () => ({ setStringAsync: setClipboardMock }));
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock().module;
@@ -71,6 +73,7 @@ beforeEach(() => {
     executeMock.mockReset();
     refreshMock.mockReset();
     setClipboardMock.mockClear();
+    installBrowserClipboardBoundary(async text => { await setClipboardMock(text); });
     callbackUrlMock.value = 'https://home.example.test/v1/oauth/github-app/callback';
 });
 

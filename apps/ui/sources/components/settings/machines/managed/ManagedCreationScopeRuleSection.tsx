@@ -1,5 +1,3 @@
-import { useManagedCreationScopeBirth } from './useManagedCreationScopeBirth';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -7,19 +5,16 @@ import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/ma
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { resolveTriggerEditorHref } from '@/components/workflows/triggers/triggerEditorDestination';
-import { useWorkflowTriggerSets } from '@/components/workflows/triggers/useWorkflowTriggerSets';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import {
   useSession,
-  getStorage,
 } from '@/sync/domains/state/storage';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import {
   readManagedCreationScopeRule,
-  isManagedCreationScopeBirthSession,
-  readManagedCreationScopeBirthSessionId,
   type ManagedCreationScopeRule,
 } from '@/sync/ops/actions/managedCreationScopeBinding';
 import {
@@ -31,6 +26,7 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 
 import { ManagedScopeRuleRow } from './ManagedMachineDetailSections';
 import { formatRetentionDuration } from './managedRetentionPresentation';
+import { useManagedCreationScopeBirth } from './useManagedCreationScopeBirth';
 
 /** The machine's Home retention owner supplies the choice; birth supplies its source. */
 export function ManagedCreationScopeRuleSection(
@@ -159,14 +155,16 @@ function ScopeSessionRow(
 ) {
   const { theme } = useUnistyles();
   const session = useSession(props.sessionId, props.serverId);
+  const isSessionVisible = useSessionRecordingVisibility();
+  const visible = isSessionVisible(props);
   const navigateToSession = useNavigateToSession();
   // An unloaded session has no local name to show; the exact birth still supplies its scope.
   if (!session) return null;
   return (
     <Item
       testID="managed-machine.scope-session"
-      title={getSessionName(session, props.serverId)}
-      subtitle={getSessionSubtitle(session, props.serverId)}
+      title={visible ? getSessionName(session, props.serverId) : t('session.untitled')}
+      subtitle={visible ? getSessionSubtitle(session, props.serverId) : undefined}
       icon={
         <Icon
           name="chat-circle-dots"

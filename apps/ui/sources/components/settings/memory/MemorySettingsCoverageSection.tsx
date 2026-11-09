@@ -3,7 +3,7 @@ import * as React from 'react';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { t } from '@/text';
 
-import type { MemorySettingsV1 } from '@happier-dev/protocol';
+import type { MemorySettingsV1 } from '@happier-dev/protocol/memory/memorySettings';
 import {
     readMemoryCoveragePolicy,
     withMemoryCoveragePolicy,

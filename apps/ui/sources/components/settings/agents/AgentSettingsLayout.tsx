@@ -4,6 +4,7 @@ import { resolveCustomAcpAgentRoute } from '@/agents/catalog/agentSettingsRoutes
 import { SettingsCollectionLayout } from '@/components/settings/shell/SettingsCollectionLayout';
 
 import { AgentCollectionRail } from './collection/AgentCollectionList';
+import { AgentAdministrationCatalogBoundary } from './collection/AgentAdministrationCatalogBoundary';
 
 /** The narrowest detail that still fits a segmented permission row beside its label. */
 const AGENT_DETAIL_MIN_WIDTH_PX = 480;
@@ -23,6 +24,7 @@ function resolveAgentsChildRoute(pathname: string): string {
  */
 export const AgentSettingsLayout = React.memo(function AgentSettingsLayout() {
     return (
+        <AgentAdministrationCatalogBoundary>
         <SettingsCollectionLayout
             navigator="agents"
             rootPathname={AGENTS_COLLECTION_ROUTE}
@@ -32,5 +34,6 @@ export const AgentSettingsLayout = React.memo(function AgentSettingsLayout() {
             detailMinWidthPx={AGENT_DETAIL_MIN_WIDTH_PX}
             testID="settings-agents"
         />
+        </AgentAdministrationCatalogBoundary>
     );
 });

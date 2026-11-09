@@ -285,7 +285,11 @@ export function HomeDeviceApprovalSection({ homes }: Readonly<{ homes: readonly 
                 || event.entityIds.includes(HOME_LOGIN_APPROVALS_HTTP_PATH_V1) || event.entityIds.some(isAccountCurrentnessEntityIdV1)) {
                 void load('background', true);
             }
-        }, { serverIds: homes.map(resolveServerProfileScopeId) });
+        }, {
+            serverIds: homes.map(resolveServerProfileScopeId),
+            // Approvals are feed-covered; only a failed or never-completed read retries on reconnect.
+            reconnect: { readNotCurrent: () => approvalSnapshotKeyRef.current === null },
+        });
         const stopCredentials = subscribeHomeCredentialChange(event => {
             if (matchesHome(event.serverId)) void load('background', true);
         });

@@ -12,6 +12,7 @@ import {
 } from './pluginMarketplaceModel';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
 const UNKNOWN_SUMMARY = { known: false, awaitingDecision: 0, userInstalled: 0 } as const;
 
@@ -48,15 +49,17 @@ export function usePluginAdministrationSummary(): PluginAdministrationSummary {
     const target = selection.resolveExecutionTarget();
     const machineId = target?.machine.id ?? null;
     const serverId = target?.serverId ?? null;
+    const { binding } = useServerCredentialAccountScopeBinding(serverId);
+    const accountId = binding?.scope.accountId;
     const subscribe = React.useCallback(
         (listener: () => void) => (machineId
-            ? subscribeLatestMachineCapabilityCacheState(machineId, serverId, MARKETPLACE_CAPABILITY_ID, listener)
+            ? subscribeLatestMachineCapabilityCacheState(machineId, serverId, MARKETPLACE_CAPABILITY_ID, listener, accountId)
             : noopSubscribe()),
-        [machineId, serverId],
+        [machineId, serverId, accountId],
     );
     const getState = React.useCallback(
-        () => (machineId ? getLatestMachineCapabilityCacheState(machineId, serverId, MARKETPLACE_CAPABILITY_ID) : null),
-        [machineId, serverId],
+        () => (machineId && binding?.isCurrent() ? getLatestMachineCapabilityCacheState(machineId, serverId, MARKETPLACE_CAPABILITY_ID, accountId) : null),
+        [machineId, serverId, accountId, binding],
     );
     const state = React.useSyncExternalStore(subscribe, getState, getState);
     return React.useMemo(() => (state ? summarizePluginAdministration(state) : UNKNOWN_SUMMARY), [state]);

@@ -32,7 +32,6 @@ installSettingsViewCommonModuleMocks({
             Dimensions: {
                 get: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
             },
-            useWindowDimensions: () => ({ width: 390, height: 844, scale: 2, fontScale: 1 }),
             Platform: {
                 OS: 'ios',
                 select: (options: any) => (options && 'default' in options ? options.default : undefined),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_BUG_REPORTS_CAPABILITIES as DEFAULT_PROTOCOL_BUG_REPORTS_CAPABILITIES } from '@happier-dev/protocol';
+import { DEFAULT_BUG_REPORTS_CAPABILITIES as DEFAULT_PROTOCOL_BUG_REPORTS_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/bugReportsCapabilities';
 
 import { DEFAULT_BUG_REPORT_CAPABILITIES } from './bugReportFeatureDefaults';
 

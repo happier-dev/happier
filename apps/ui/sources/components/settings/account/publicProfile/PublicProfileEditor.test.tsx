@@ -9,6 +9,8 @@ import {
   DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1,
   PublicProfileLayoutV1Schema,
 } from '@happier-dev/protocol/account/publicProfilePublication';
+import { projectPublicProfilePreview } from '@happier-dev/protocol/account/projectPublicProfile';
+import { PublicProfilePreparedAtmosphereV1Schema } from '@happier-dev/protocol/account/publicProfileAtmosphere';
 
 import { renderScreen } from '@/dev/testkit';
 import { Text } from '@/components/ui/text/Text';
@@ -18,6 +20,7 @@ import {
   type PublicProfileEditorProps,
 } from './PublicProfileEditor';
 import { PublicProfileReview } from './PublicProfileReview';
+import { prepareAppliedProfileAppearance, preparedPictureCopy } from './publicPictureCopy';
 
 const coverage = {
   status: 'complete_for_supplied_facts',
@@ -132,6 +135,15 @@ function editor(overrides: Partial<PublicProfileEditorProps> = {}) {
 }
 
 describe('PublicProfileEditor', () => {
+  it('says a successful outcome as success, with or without Undo, and a failure as a warning', async () => {
+    const noticeKind = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
+      screen.findAll((node) => node.props?.testID === 'public-profile-editor-notice' && typeof node.props.kind === 'string')[0]?.props.kind;
+    const published = await renderScreen(editor({ notice: 'Your page is public.', noticeTone: 'success' }));
+    expect(noticeKind(published)).toBe('success');
+    const failed = await renderScreen(editor({ notice: 'Couldn’t prepare.', noticeTone: 'warning' }));
+    expect(noticeKind(failed)).toBe('warning');
+  });
+
   it('arranges the owner’s widget area in place on Edit, also before a preview exists, and shows visitors’ blocks on Preview', async () => {
     const area = () => <Text testID="owner-area">area</Text>;
     const edit = await renderScreen(editor({ renderEditBlocks: area }));
@@ -210,6 +222,40 @@ describe('PublicProfileEditor', () => {
       expect(isDisabled(screen.findByTestId('public-profile-editor-submit'))).toBe(true);
     }
   });
+
+  // The publish result line enters once, after the band's rise: never painted before the rise starts.
+  const lineOpacity = (screen: Awaited<ReturnType<typeof renderScreen>>) => {
+    let node = screen.findByTestId('public-profile-editor-notice');
+    while (node) {
+      const style = [node.props?.style].flat(Infinity).find(s => s && typeof s === 'object' && 'opacity' in s);
+      if (style) return (style as { opacity: number }).opacity;
+      node = node.parent;
+    }
+    return undefined;
+  };
+
+  it('holds the publish result line hidden in its first frame while the rise plays, and shows other outcomes at once', async () => {
+    const published = await renderScreen(editor({ status: 'published', notice: 'Published', noticeTone: 'success', noticeMoment: 1 }));
+    expect(lineOpacity(published)).toBe(0);
+    const applied = await renderScreen(editor({ status: 'published', notice: 'Applied', noticeTone: 'success', noticeMoment: null }));
+    expect(lineOpacity(applied)).toBe(1);
+  });
+
+  it('restarts a line that is already shown hidden when a new publish moment arrives', async () => {
+    function Harness() {
+      const [moment, setMoment] = React.useState<number | null>(null);
+      return (
+        <>
+          <Text testID="publish-again" onPress={() => setMoment(1)}>again</Text>
+          {editor({ notice: moment ? 'Published' : 'Unpublished elsewhere', noticeTone: 'success', noticeMoment: moment })}
+        </>
+      );
+    }
+    const screen = await renderScreen(<Harness />);
+    expect(lineOpacity(screen)).toBe(1);
+    await screen.pressByTestIdAsync('publish-again');
+    expect(lineOpacity(screen)).toBe(0);
+  });
 });
 
 describe('PublicProfileReview', () => {
@@ -218,7 +264,6 @@ describe('PublicProfileReview', () => {
   ) => (
     <PublicProfileReview
       kind="publish"
-      service="Happier Cloud"
       pageUrl="https://happier.dev/@leeroy"
       period="Jul – Oct"
       sharedFields={['tokens', 'calendar']}
@@ -286,6 +331,52 @@ describe('PublicProfileReview', () => {
     expect(screen.getTextContent()).not.toContain('87654321');
     await screen.pressByTestIdAsync('public-profile-review-data');
     expect(screen.getTextContent()).toContain('87654321');
+  });
+
+  it('discloses the complete public appearance for picture, planet and none without copying prepared pixels into JSON', async () => {
+    const picture = PublicProfilePreparedAtmosphereV1Schema.parse({ source: 'picture', picture: {
+      layout: 'horizon', content: { mimeType: 'image/png', base64: 'cHJlcGFyZWQtcGl4ZWxz' },
+      descriptor: { kind: 'photo', title: 'Evening light', adaptiveHaze: false,
+        horizon: {}, focus: {}, hour: 18, grades: { light: 0, dusk: 0, night: 0 }, dark: 'dusk',
+        look: { effect: 'original', params: {}, strength: 1, dissolve: { style: 'gradient', from: 0, to: 1 } },
+        credit: { author: 'Picture author', source: 'Own photo', licence: 'CC0', url: 'https://example.com/photo' } },
+    } });
+    for (const atmosphere of [picture, PublicProfilePreparedAtmosphereV1Schema.parse(DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1.atmosphere),
+      PublicProfilePreparedAtmosphereV1Schema.parse({ source: 'none' })]) {
+      const projected = projectPublicProfilePreview({ context, metadata: {}, snapshot, layout,
+        appearance: { theme: 'dark', atmosphere }, policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1 });
+      expect(projected).not.toBeNull();
+      const screen = await renderScreen(review({ disclosure: projected }));
+      await screen.pressByTestIdAsync('public-profile-review-data');
+      // React's test renderer unwraps memo components; read the real code surface's public props.
+      const code: unknown = screen.tree.root.findAllByProps({ language: 'json', showCopyButton: true })[0]?.props.code;
+      if (typeof code !== 'string') throw new Error('Review disclosure code was not rendered');
+      const disclosed: unknown = JSON.parse(code);
+      if (atmosphere.source === 'picture') {
+        const { content: _content, ...publicPicture } = atmosphere.picture;
+        expect(disclosed).toEqual({ ...projected, appearance: { theme: 'dark',
+          atmosphere: { source: 'picture', picture: publicPicture } } });
+      } else {
+        expect(disclosed).toEqual(projected);
+      }
+      await screen.unmount();
+    }
+    if (picture.source !== 'picture') throw new Error('Expected prepared picture');
+    const { content: _content, ...publicPicture } = picture.picture;
+    const published = projectPublicProfile({ context, metadata: {}, snapshot, layout,
+      appearance: { theme: 'dark', atmosphere: { source: 'picture', picture: {
+        ...publicPicture, ref: { kind: 'publication', id: 'retained-public-picture' },
+      } } }, policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1 });
+    expect(published).not.toBeNull();
+    expect(prepareAppliedProfileAppearance(published!.appearance, preparedPictureCopy(picture.picture).data))
+      .toEqual({ theme: 'dark', atmosphere: picture });
+    expect(prepareAppliedProfileAppearance(published!.appearance, null)).toBeNull();
+    const screen = await renderScreen(review({ disclosure: published }));
+    await screen.pressByTestIdAsync('public-profile-review-data');
+    const code: unknown = screen.tree.root.findAllByProps({ language: 'json', showCopyButton: true })[0]?.props.code;
+    if (typeof code !== 'string') throw new Error('Published disclosure code was not rendered');
+    expect(JSON.parse(code)).toEqual(published);
+    await screen.unmount();
   });
 
   it('pins Cancel and Publish in the card footer while the long review scrolls between header and footer', async () => {

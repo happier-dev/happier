@@ -1,18 +1,19 @@
 import * as React from 'react';
-import { patchExternalSessionsSettingsV1, readExternalSessionsSettingsV1 } from '@happier-dev/protocol/sessions/external/followLifecycleV1';
+import { readExternalSessionsSettingsV1 } from '@happier-dev/protocol/sessions/external/followLifecycleV1';
 import { readExternalSessionFollowStatusV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { SettingRow } from '@/components/settings/shell/SettingRow';
 import { EXTERNAL_SESSIONS_SETTINGS } from '@/components/settings/externalSessions/externalSessionsSettings';
 import { Modal } from '@/modal';
+import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import {
     readExternalSessionFollowPolicy,
 } from '@/sync/domains/session/external/externalSessionFollowMetadata';
@@ -25,12 +26,11 @@ import {
     useMachineAdministrationTargetSelection,
 } from '@/sync/domains/machines/administration/useTargetSelection';
 import { isMachineAdministrationExecutionTargetCurrent } from '@/sync/domains/machines/administration/operationCurrentness';
-import { useActiveServerAccountScope, useAllMachines, useAllSessions, useSetting } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useAllSessions, useSetting, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
-import { sync } from '@/sync/sync';
-import { useSettingsVersion } from '@/sync/store/hooks';
-import { requireOneShotAccountSettingsMutationApplied } from '@/sync/engine/settings/syncSettings';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
+import type { SessionRecordingVisibility } from '@/sync/domains/session/listing/recordingPrivacy';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
@@ -44,6 +44,7 @@ import {
 } from './ExternalSessionsIntegrationSection';
 import { useExternalSessionsIntegrationController } from './externalSessionsIntegrationController';
 import { useExternalSessionsAutoLinkSources } from './useExternalSessionsAutoLinkSources';
+import { useRestartFollowSetting } from './useRestartFollowSetting';
 import type {
     ExternalSessionsAutoLinkSourceDescriptor,
     ExternalSessionsIntegrationDescriptor,
@@ -90,6 +91,7 @@ function resolveFollowStatusSubtitle(status: FollowRow['status']): string {
 function buildFollowRows(
     sessions: readonly Session[],
     machinePresenceById: ReadonlyMap<string, Readonly<{ presence: MachinePickerPresence; canChange: boolean }>>,
+    isRecordingVisible: SessionRecordingVisibility,
 ): FollowRow[] {
     const rows: FollowRow[] = [];
     for (const session of sessions) {
@@ -102,7 +104,7 @@ function buildFollowRows(
             ? 'machine_offline'
             : machine?.presence.status !== 'online' ? 'unknown'
                 : readExternalSessionFollowStatusV1(link.followStatusV1)?.status ?? 'unknown';
-        const title = getSessionName(session);
+        const title = isRecordingVisible({ sessionId: session.id, serverId: session.serverId }) ? getSessionName(session) : t('session.untitled');
         rows.push({
             session,
             title,
@@ -132,6 +134,7 @@ const ExternalSessionFollowItem = React.memo(function ExternalSessionFollowItem(
         machineId: link?.machineId ?? null,
         serverId: props.row.session.serverId ?? null,
         enabled: link !== null,
+        sections: DAEMON_AGENT_CATALOG_SECTIONS,
     });
     const capabilityPhase = daemonMergedProjection.phase;
     const supportsBackgroundFollow = link !== null
@@ -209,14 +212,18 @@ export type ExternalSessionsSettingsViewProps = Readonly<{
 export const ExternalSessionsSettingsView = React.memo(function ExternalSessionsSettingsView(
     props: ExternalSessionsSettingsViewProps,
 ) {
-    const machines = useAllMachines();
+    const machines = useActiveMachineFacts();
     const accountScope = useActiveServerAccountScope();
+    const followApproval = useActionApprovalContinuation({
+        scopeKey: JSON.stringify([accountScope?.serverId ?? null, accountScope?.accountId ?? null]),
+        serverId: accountScope?.serverId ?? '', onExecuted: () => {},
+    });
     const reachabilityRevision = useMachineReachabilityRevision();
     const nowMs = useMachinePresenceNowMs(machines);
     const sessions = useAllSessions();
+    const isRecordingVisible = useSessionRecordingVisibility();
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const rawSettings = useSetting('externalSessionsSettingsV1');
-    const settingsVersion = useSettingsVersion();
     const expectedSettingsScope = useAccountSettingsScope();
     const settings = readExternalSessionsSettingsV1(rawSettings) ?? {
         v: 1 as const,
@@ -231,8 +238,8 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
         [machines, accountScope, reachabilityRevision, nowMs],
     );
     const rows = React.useMemo(
-        () => buildFollowRows(sessions, machinePresenceById),
-        [machinePresenceById, sessions],
+        () => buildFollowRows(sessions, machinePresenceById, isRecordingVisible),
+        [machinePresenceById, sessions, isRecordingVisible],
     );
     const administrationTargetSelection = useMachineAdministrationTargetSelection(
         MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.externalSessions,
@@ -249,6 +256,7 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
         machineId: executionTarget?.machine.id ?? null,
         serverId: executionTarget?.serverId ?? null,
         enabled: executionTarget !== null,
+        sections: DAEMON_AGENT_CATALOG_SECTIONS,
     });
     const daemonMergedProjectionInputs = daemonMergedProjection.phase === 'ready'
         ? daemonMergedProjection.inputs
@@ -320,44 +328,7 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
     const [mutationStatusBySessionId, setMutationStatusBySessionId] = React.useState<
         ReadonlyMap<string, 'error' | 'unsupported'>
     >(() => new Map());
-    const restartFollowMutationPendingRef = React.useRef(false);
-    const [restartFollowMutationPending, setRestartFollowMutationPending] = React.useState(false);
-
-    const setRestartFollowEnabled = React.useCallback(async (enabled: boolean) => {
-        if (restartFollowMutationPendingRef.current) return;
-
-        restartFollowMutationPendingRef.current = true;
-        setRestartFollowMutationPending(true);
-        try {
-            if (settingsVersion === null) throw new Error('Account settings version is unavailable');
-            requireOneShotAccountSettingsMutationApplied(
-                await sync.mutateAccountSettingsOnce({
-                    expectedSettingsScope,
-                    expectedSettingsVersion: settingsVersion,
-                    // One field's explicit value: it applies over whichever settings version won meanwhile.
-                    rebaseOnConflict: true,
-                    mutate: (raw) => ({
-                        settings: {
-                            ...raw,
-                            externalSessionsSettingsV1: patchExternalSessionsSettingsV1(
-                                raw.externalSessionsSettingsV1,
-                                { keepPassivelyFollowingAfterRestart: enabled },
-                            ),
-                        },
-                        value: undefined,
-                    }),
-                }),
-            );
-        } catch {
-            await Modal.alertAsync(
-                t('common.error'),
-                t('externalSessions.settingsRestoreUpdateFailed'),
-            );
-        } finally {
-            restartFollowMutationPendingRef.current = false;
-            setRestartFollowMutationPending(false);
-        }
-    }, [expectedSettingsScope, settingsVersion]);
+    const { pending: restartFollowMutationPending, setEnabled: setRestartFollowEnabled } = useRestartFollowSetting();
 
     const setSessionFollowEnabled = React.useCallback(async (row: FollowRow, enabled: boolean) => {
         const signal = followControllerRef.current?.signal;
@@ -387,6 +358,7 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
                 serverId: row.session.serverId ?? null,
                 link,
                 policy: enabled ? 'background_follow' : 'attached_only',
+                registerApproval: followApproval.requestApproval,
                 signal,
             });
             if (outcome.kind === 'stale') return;
@@ -421,7 +393,7 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
                 return next;
             });
         }
-    }, [mutationStatusBySessionId]);
+    }, [followApproval.requestApproval, mutationStatusBySessionId]);
 
     const supplementalRows = React.useMemo<readonly ExternalSessionsSettingsSupplementalRow[]>(() => {
         const result: ExternalSessionsSettingsSupplementalRow[] = [{
@@ -527,8 +499,6 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
     ]);
 
     return (
-        // A virtualized page: the list is not an `ItemList`, so it takes the page anatomy here.
-        <ListPresentationProvider value="page">
         <ExternalSessionsIntegrationSection
             virtualized
             virtualizedHeader={(
@@ -571,7 +541,6 @@ export const ExternalSessionsSettingsView = React.memo(function ExternalSessions
                 : null}
             supplementalRows={supplementalRows}
         />
-        </ListPresentationProvider>
     );
 });
 

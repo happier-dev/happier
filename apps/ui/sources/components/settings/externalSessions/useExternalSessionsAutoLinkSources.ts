@@ -1,13 +1,11 @@
 import * as React from 'react';
 import {
     readExternalSessionsSettingsV1,
-    removeExternalSessionsAutoLinkSourcePolicyV1,
 } from '@happier-dev/protocol/sessions/external/followLifecycleV1';
 
-import { sync } from '@/sync/sync';
-import { useSettingsVersion } from '@/sync/store/hooks';
-import { requireOneShotAccountSettingsMutationApplied } from '@/sync/engine/settings/syncSettings';
-import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { useSettingActionWriter } from '@/components/settings/catalog/useSettingActionWriter';
+import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { storage } from '@/sync/domains/state/storageStore';
 
 import type {
     ExternalSessionsAutoLinkSourceDescriptor,
@@ -45,8 +43,7 @@ export function useExternalSessionsAutoLinkSources(params: Readonly<{
     const scopedMachineId = params.scope?.machineId;
     const scopedAgentPluginId = params.scope?.agent.pluginId;
     const scopedAgentLocalId = params.scope?.agent.localId;
-    const settingsVersion = useSettingsVersion();
-    const expectedSettingsScope = useAccountSettingsScope();
+    const writeSetting = useSettingActionWriter();
     const agentTitleByKey = React.useMemo(
         () => new Map(params.knownAgents.map((knownAgent) => [
             agentKey(knownAgent.agent),
@@ -84,28 +81,13 @@ export function useExternalSessionsAutoLinkSources(params: Readonly<{
                 setEnabled: async (enabled: boolean) => {
                     if (params.accountOperationsAvailable === false) return;
                     if (enabled) return;
+                    const settingsVersion = storage.getState().settingsVersion;
                     if (settingsVersion === null) throw new Error('Account settings version is unavailable');
-                    requireOneShotAccountSettingsMutationApplied(
-                        await sync.mutateAccountSettingsOnce({
-                            expectedSettingsScope,
-                            expectedSettingsVersion: settingsVersion,
-                            mutate: (raw) => ({
-                                settings: {
-                                    ...raw,
-                                    externalSessionsSettingsV1:
-                                        removeExternalSessionsAutoLinkSourcePolicyV1(
-                                            raw.externalSessionsSettingsV1,
-                                            {
-                                                machineId: policy.machineId,
-                                                qualifiedIdentity: policy.qualifiedIdentity,
-                                                sourcePolicyId: policy.sourcePolicyId,
-                                            },
-                                        ),
-                                },
-                                value: undefined,
-                            }),
-                        }),
-                    );
+                    requireActionSuccess(await writeSetting({ anchor: 'externalSessions.autoLinkSources' }, {
+                        machineId: policy.machineId,
+                        qualifiedIdentity: policy.qualifiedIdentity,
+                        sourcePolicyId: policy.sourcePolicyId,
+                    }, { expectedSettingsVersion: settingsVersion }));
                 },
             }));
     }, [
@@ -116,7 +98,6 @@ export function useExternalSessionsAutoLinkSources(params: Readonly<{
         scopedAgentLocalId,
         scopedAgentPluginId,
         scopedMachineId,
-        expectedSettingsScope,
-        settingsVersion,
+        writeSetting,
     ]);
 }

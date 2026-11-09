@@ -228,6 +228,58 @@ describe('NotificationsSettingsView catalog control authority', () => {
         expect(commits).toBeGreaterThan(0);
     });
 
+    it('ignores unrelated device preferences while delivering a real device notification change', async () => {
+        let commits = 0;
+        const fixture = await openCatalogScreen('builtin', false, undefined, () => { commits++; });
+        await act(async () => {
+            const overrides = storage.getState().localSettings.attentionDeviceOverridesV1;
+            storage.getState().applyLocalSettings({ attentionDeviceOverridesV1: { ...overrides, enabled: true,
+                localNotifications: { ...overrides.localNotifications, enabled: true } } });
+        });
+        if (fixture.screen.findByTestId('settings-notifications-remote-refresh')) {
+            await vi.waitFor(() => expect(fixture.screen.findByTestId('settings-notifications-remote-refresh')?.props.disabled).toBe(false));
+        }
+        commits = 0;
+        for (let index = 0; index < 5; index++) {
+            await act(async () => { storage.getState().applyLocalSettings({ widgetFrameStyleBoard: index % 2 ? 'card' : 'plain' }); });
+        }
+        expect(commits).toBe(0);
+        await act(async () => {
+            const overrides = storage.getState().localSettings.attentionDeviceOverridesV1;
+            storage.getState().applyLocalSettings({ attentionDeviceOverridesV1: { ...overrides,
+                localNotifications: { ...overrides.localNotifications, enabled: false } } });
+        });
+        expect(commits).toBeGreaterThan(0);
+        expect(fixture.screen.findRow('settings-notifications-local-enabled')?.props.rightElement.props.value).toBe(false);
+    });
+
+    it('offers Send test and manual Retry without changing channel settings when its executor is unreachable', async () => {
+        const webhook = WebhookNotificationChannelRecordV1Schema.parse({ v: 1, id: 'test-channel', kind: 'webhook',
+            url: 'https://hooks.example.test/notify', signingSecretRef: null, topics: {} });
+        const fixture = await restoreNotificationsSettingsCatalog({ accountId: 'notification-test-send',
+            serverUrl: 'https://notification-test-send.example.test', rawSettings: {
+                actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'notifications.webhooks.test': ['ui'] } },
+            }, catalog: { status: 'present', record: { v: 1, channels: [webhook] } } });
+        disposeHome = fixture.dispose;
+        const { NotificationsSettingsView } = await import('./NotificationsSettingsView');
+        const screen = await renderSettingsView(<NotificationsSettingsView />);
+        disposeScreen = screen.unmount;
+        const { refreshNotificationChannelCatalog } = await import('@/sync/engine/settings/notificationChannelCatalogEngine');
+        await act(async () => { await refreshNotificationChannelCatalog(fixture.scope); });
+        await act(async () => { screen.pressRow('settings-notifications-webhook-test-channel'); });
+        const testId = 'settings-notifications-webhook-test-channel-test';
+        expect(screen.findByTestId(testId)).toBeTruthy();
+        await act(async () => { await screen.findByTestId(testId)?.props.onPress(); });
+        await vi.waitFor(() => { expect(screen.findByTestId(`${testId}-retry`)).toBeTruthy(); });
+        expect(screen.findRow('settings-notifications-webhook-test-channel-test-result-unreachable')).toBeTruthy();
+        await act(async () => { await screen.findByTestId(`${testId}-retry`)?.props.onPress(); });
+        expect(screen.findByTestId(`${testId}-retry`)).toBeTruthy();
+        expect(fixture.readRecord().channels).toEqual([webhook]);
+        expect(fixture.settingsWrites).toEqual([]);
+        expect(fixture.pairedWrites).toEqual([]);
+        expect(modalAlert).not.toHaveBeenCalled();
+    });
+
     it('keeps URL and signing drafts on declined disclosure and departure, then discards only when accepted', async () => {
         const webhook = WebhookNotificationChannelRecordV1Schema.parse({ v: 1, id: 'webhook-primary', kind: 'webhook',
             url: 'https://hooks.example.test/notify', signingSecretRef: null, topics: {} });

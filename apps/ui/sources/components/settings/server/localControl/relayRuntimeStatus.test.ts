@@ -1,4 +1,4 @@
-import type { SystemTaskJsonObject, SystemTaskResult } from '@happier-dev/protocol';
+import type { SystemTaskJsonObject, SystemTaskResult } from '@happier-dev/protocol/system/tasks/spec';
 import { describe, expect, it } from 'vitest';
 
 import { readRelayRuntimeStatusData } from './relayRuntimeStatus';

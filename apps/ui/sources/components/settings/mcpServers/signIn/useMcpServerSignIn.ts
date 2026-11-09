@@ -21,6 +21,7 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { normalizeInternalReturnPath } from '@/utils/path/routeUtils';
 import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { resolveMcpServerAdministrationMachineId } from '@/sync/ops/actions/mcpServerAdministrationTarget';
 
 import type { McpServerSignInFact } from '../status/mcpServerStatus';
 import { aggregateMcpMachineOnline, findMcpSignInGrant, mcpSignInGrantView, mcpSignInFact, type McpSignInView } from './mcpSignInGrantView';
@@ -65,19 +66,17 @@ type Local =
   | Readonly<{ kind: 'finishing'; attempt: Attempt; baseline: string | null }>
   | Readonly<{
       kind: 'failed';
-      state: 'did_not_finish' | 'no_machine_online' | 'client_refused' | 'invalid_client';
+      view: ReturnType<typeof failureView>;
       baseline: string | null;
     }>;
 
 const IDLE: Local = { kind: 'idle' };
 
-function failureState(
+function failureView(
   code: string | undefined,
-): 'did_not_finish' | 'no_machine_online' | 'client_refused' | 'invalid_client' {
-  if (code === 'no_machine_online') return 'no_machine_online';
-  if (code === 'client_refused') return 'client_refused';
-  if (code === 'invalid_client') return 'invalid_client';
-  return 'did_not_finish';
+): Extract<McpSignInView, { state: 'did_not_finish' | 'no_machine_online' | 'client_refused' | 'invalid_client' }> {
+  if (code === 'no_machine_online' || code === 'client_refused' || code === 'invalid_client') return { state: code };
+  return { state: 'did_not_finish', ...(code ? { diagnosticCode: code } : {}) };
 }
 
 /**
@@ -105,7 +104,7 @@ export function useMcpServerSignIn(
   const execute = execution.execute;
   const profiles = getStorage()((state) => areServerAccountScopesEqual(scope, state.profileScope) ? state.profile.connectedAccountsV4 : null);
   const grant = server ? findMcpSignInGrant(profiles, server.id) : null;
-  const diagnostics = useMcpSignInGrantDiagnostics(profiles, scope, machines.find(machine => machine.online)?.machineId ?? machines[0]?.machineId ?? null);
+  const diagnostics = useMcpSignInGrantDiagnostics(signsIn && grant ? [grant] : null, scope);
   // A configuration CAS can precede a provider refusal. Only a new credential
   // receipt, not configuration or health changes, proves that this flow connected.
   const fingerprint = grant ? grant.credentialRevision ?? '' : null;
@@ -155,7 +154,7 @@ export function useMcpServerSignIn(
       () =>
         setLocal((current) =>
           current.kind === 'signing' && current.attempt === signingAttempt
-            ? { kind: 'failed', state: 'did_not_finish', baseline: current.baseline }
+            ? { kind: 'failed', view: failureView(undefined), baseline: current.baseline }
             : current,
         ),
       Math.max(0, remaining),
@@ -171,12 +170,11 @@ export function useMcpServerSignIn(
       const finishing: Local = { kind: 'finishing', attempt, baseline };
       setLocal(finishing);
       const fail = (code?: string) => setLocal(current => current === finishing
-        ? { kind: 'failed', state: failureState(code), baseline } : current);
+        ? { kind: 'failed', view: failureView(code), baseline } : current);
       try {
         const response = await runConnectedAccountAuthenticationAction({
           serverId: scope.serverId,
           expectedAccountId: scope.accountId,
-          machineId: attempt.machineId,
           executeAction: execute,
           command: {
             operation: 'completeOAuth',
@@ -232,14 +230,14 @@ export function useMcpServerSignIn(
       });
       if (!isLocalCurrent(starting) || !execution.isCurrent()) return;
       if (!result.ok) {
-        setLocal({ kind: 'failed', state: failureState(result.errorCode), baseline: fingerprint });
+        setLocal({ kind: 'failed', view: failureView(result.errorCode), baseline: fingerprint });
         return;
       }
       const parsed = MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1[
         'mcp.servers.signIn.start'
       ].safeParse(result.result);
       if (!parsed.success) {
-        setLocal({ kind: 'failed', state: 'did_not_finish', baseline: fingerprint });
+        setLocal({ kind: 'failed', view: failureView(undefined), baseline: fingerprint });
         return;
       }
       const signing: Local = {
@@ -254,7 +252,7 @@ export function useMcpServerSignIn(
         const retained = await TokenStorage.setPendingExternalConnect({ provider: `mcp:${parsed.data.attemptId}`,
           returnTo, serverId: scope.serverId, serverUrl: getServerProfileById(scope.serverId)?.serverUrl });
         if (!isLocalCurrent(signing) || !execution.isCurrent()) return;
-        if (!retained) { setLocal({ kind: 'failed', state: 'did_not_finish', baseline: fingerprint }); return; }
+        if (!retained) { setLocal({ kind: 'failed', view: failureView(undefined), baseline: fingerprint }); return; }
       }
       await openExternalUrl(parsed.data.authorizationUrl).catch(() => false);
     },
@@ -269,19 +267,18 @@ export function useMcpServerSignIn(
     await runConnectedAccountAuthenticationAction({
       serverId: scope.serverId,
       expectedAccountId: scope.accountId,
-      machineId: attempt.machineId,
       executeAction: execute,
       command: { operation: 'cancel', attemptId: attempt.attemptId },
     }).catch(() => undefined);
   }, [execute, isLocalCurrent, local, scope, setLocal]);
 
   const signOut = React.useCallback(async (): Promise<boolean> => {
-    const machine = machines.find((candidate) => candidate.online);
-    if (!grant || !machine) return false;
+    const machineId = scope ? resolveMcpServerAdministrationMachineId(scope, { intent: 'retry' }) : null;
+    if (!grant || !machineId) return false;
     setSigningOut(true);
     try {
       const result = await execute('connectedServices.accounts.revoke', {
-        machineId: machine.machineId,
+        machineId,
         account: grant.ref,
         cleanupGroupReferences: true,
         ...(grant.revisionSemantics === 'revisioned'
@@ -299,7 +296,7 @@ export function useMcpServerSignIn(
     } finally {
       setSigningOut(false);
     }
-  }, [execute, grant, machines, targetKey]);
+  }, [execute, grant, scope, targetKey]);
 
   const view = React.useMemo((): McpSignInView | null => {
     if (!signsIn || !server) return null;
@@ -322,7 +319,12 @@ export function useMcpServerSignIn(
             )?.name ?? local.attempt.machineId,
         };
       case 'failed':
-        return { state: local.state };
+        // The refusal describes the last attempt. Once presence recovers, keep
+        // its diagnostic and offer Retry instead of disabling Sign in forever.
+        if (local.view.state === 'no_machine_online' && anyOnline === true) {
+          return { state: 'did_not_finish', diagnosticCode: 'no_machine_online' };
+        }
+        return local.view;
       case 'idle':
         break;
     }

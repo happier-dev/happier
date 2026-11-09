@@ -70,7 +70,7 @@ describe('resolveHomeDisplayName', () => {
             'devbox:8443',
         ]) {
             expect(resolveHomeDisplayName(profile({ name, ...moved })), name).toBeNull();
-            expect(resolveHomeDisplayLabel(profile({ name, ...moved }), 'home-a'), name)
+            expect(resolveHomeDisplayLabel(profile({ name, ...moved }), 'home-a', 'home-a'), name)
                 .toBe('settingsAccount.thisHomeTitle');
         }
         // Words stay names, including single words and names with version dots.
@@ -94,6 +94,18 @@ describe('resolveHomeDisplayName', () => {
 });
 
 describe('resolveHomeDisplayLabel', () => {
+    it('updates mounted unnamed labels when the current Home switches', async () => {
+        const { upsertServerProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+        const { useHomeDisplayLabel } = await import('./homeDisplayName');
+        const current = await upsertServerProfile({ serverUrl: 'https://current.example.test' });
+        const peer = await upsertServerProfile({ serverUrl: 'https://peer.example.test' });
+        await setActiveServerId(current.id, { scope: 'device' });
+        const hook = await renderHook(() => [useHomeDisplayLabel(current), useHomeDisplayLabel(peer)]);
+        expect(hook.getCurrent()).toEqual(['settingsAccount.thisHomeTitle', 'https://peer.example.test']);
+        await act(async () => { await setActiveServerId(peer.id, { scope: 'device' }); });
+        expect(hook.getCurrent()).toEqual(['https://current.example.test', 'settingsAccount.thisHomeTitle']);
+    });
+
     it('updates subscribed labels only when this Home name changes', async () => {
         const { primeServerFeaturesSnapshot, deleteServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
         const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
@@ -126,17 +138,23 @@ describe('resolveHomeDisplayLabel', () => {
             .toBe('personalHome.settings.defaultHomeLabel');
     });
 
-    it('keeps unnamed Home titles human, leaving the address to distinguishing metadata', async () => {
+    it('labels only the current unnamed Home This Home and visibly identifies its unnamed peer', async () => {
         const { resolveHomeDisplayLabel } = await import('./homeDisplayName');
-        expect(resolveHomeDisplayLabel(profile({}), 'home-a')).toBe('settingsAccount.thisHomeTitle');
-        expect(resolveHomeDisplayLabel(profile({
+        const current = profile({});
+        const peer = profile({
+            id: 'home-b',
             name: 'devbox.internal',
-            serverUrl: 'https://devbox.internal/',
-        }), 'home-a')).toBe('settingsAccount.thisHomeTitle');
+            serverUrl: 'https://devbox.internal/happier',
+        });
+        expect([current, peer].map((home) => resolveHomeDisplayLabel(home, home.id, current.id)))
+            .toEqual(['settingsAccount.thisHomeTitle', 'https://devbox.internal/happier']);
+        expect([current, peer].map((home) => resolveHomeDisplayLabel(home, home.id, peer.id)))
+            .toEqual(['http://127.0.0.1:53288', 'settingsAccount.thisHomeTitle']);
     });
 
     it('keeps a missing Home profile human rather than exposing its internal id', async () => {
         const { resolveHomeDisplayLabel } = await import('./homeDisplayName');
-        expect(resolveHomeDisplayLabel(null, 'home-a')).toBe('settingsAccount.thisHomeTitle');
+        expect(resolveHomeDisplayLabel(null, 'home-a', 'home-a')).toBe('settingsAccount.thisHomeTitle');
+        expect(resolveHomeDisplayLabel(null, 'home-b', 'home-a')).toBe('common.homeProductName');
     });
 });

@@ -11,7 +11,7 @@ import type { HomeAdministrationContext } from '@/components/settings/home/gover
 
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import type { SystemTaskResult } from '@happier-dev/protocol';
+import type { SystemTaskResult } from '@happier-dev/protocol/system/tasks/spec';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import type { HomeRuntimeExecutor } from './resolveHomeRuntimeExecutor';
 import type { SystemTaskBridgeListenerSet } from '@/components/systemTasks/types';

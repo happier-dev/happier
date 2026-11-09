@@ -2,13 +2,14 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     ApprovalRequestV2Schema,
-    decodePlainArtifactStoredContent,
     type ApprovalRequestV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import {
+    decodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
 import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceDiscoveryPageV1Schema } from '@happier-dev/protocol/teams';
 
 import { collectRenderedTestIds } from '@/dev/testkit/render/collectRenderedTestIds';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -26,6 +27,7 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 
 const clipboardSet = vi.hoisted(() => vi.fn(async () => true));
 const modalConfirm = vi.hoisted(() => vi.fn<typeof import('@/modal')['Modal']['confirm']>(async () => true));
+const modalAlert = vi.hoisted(() => vi.fn<typeof import('@/modal')['Modal']['alert']>());
 const routerReplace = vi.hoisted(() => vi.fn());
 const shownModals = vi.hoisted(() => [] as { chrome?: { testID?: string }; props?: Record<string, unknown> }[]);
 const navigationState = vi.hoisted(() => ({
@@ -57,6 +59,12 @@ vi.mock('@react-navigation/native', async () => {
 });
 
 installSettingsViewCommonModuleMocks({
+    // This suite exercises Expo clipboard and native navigation; the shared
+    // settings harness otherwise defaults to browser clipboard/navigation.
+    reactNative: async () => {
+        const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeNativeMock({ platformOS: 'ios' });
+    },
     router: async () => ({
         useRouter: () => ({ push: vi.fn(), back: vi.fn(), replace: routerReplace }),
         useNavigation: () => ({ dispatch: navigationState.dispatch, setOptions: navigationState.setOptions }),
@@ -67,6 +75,7 @@ installSettingsViewCommonModuleMocks({
         return createModalModuleMock({
             spies: {
                 confirm: modalConfirm,
+                alert: modalAlert,
                 show: (config) => {
                     shownModals.push(config as (typeof shownModals)[number]);
                     return 'modal-id';
@@ -84,6 +93,9 @@ vi.doUnmock('@/sync/domains/state/storage');
 const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
 const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
 const { resetTeamActionClientForTests } = await import('@/sync/ops/teams/teamActionClient');
+// Load the real screen after transport boundaries, before timed test execution.
+const { TeamCredentialExternalApiScreen } = await import('./TeamCredentialExternalApiScreen');
+const { TeamCredentialAudiencePicker } = await import('./TeamCredentialAudiencePicker');
 
 const TEAM_GET_PATH = '/v1/teams/get';
 const CREDENTIAL_GET_PATH = '/v1/teams/credential-resources/get';
@@ -179,6 +191,7 @@ async function chooseMember(
     screen: Awaited<ReturnType<typeof renderScreen>>,
     member: Readonly<{ id?: string; accountId?: string; name?: string }> = {},
 ): Promise<void> {
+    await waitForHomeGovernance(() => expect(screen.findAllByType(TeamCredentialAudiencePicker).find(node => node.props.testID === 'team-credential-external-assignee')?.props.disabled).toBe(false));
     await screen.pressByTestIdAsync('team-credential-external-assignee');
     const picker = shownModals.find((modal) => modal.chrome?.testID === 'team-credential-audience-picker:modal');
     if (!picker) throw new Error('external_key_assignee_picker_missing');
@@ -203,6 +216,7 @@ beforeEach(async () => {
     clipboardSet.mockClear();
     modalConfirm.mockReset();
     modalConfirm.mockResolvedValue(true);
+    modalAlert.mockReset();
     routerReplace.mockReset();
     navigationState.dispatch.mockReset();
     navigationState.setOptions.mockReset();
@@ -229,23 +243,22 @@ describe('TeamCredentialExternalApiScreen', () => {
             } },
         }] }) });
         harness.answer(serverId, EXTERNAL_KEY_AUTHORIZE_PATH, { status: 403, body: { error: 'team_authentication_required' } });
-        const { TeamCredentialExternalApiScreen } = await import('./TeamCredentialExternalApiScreen');
         const screen = await renderScreen(<TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />);
 
-        await vi.waitFor(() => expect(screen.findByTestId(`team-credential-external-authorize:${CREATED_KEY_ID}`)).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`team-credential-external-authorize:${CREATED_KEY_ID}`)).not.toBeNull());
         expect(screen.findByTestId('team-credential-external-create')).toBeNull();
         expect(screen.findByTestId(`team-credential-external-revoke:${CREATED_KEY_ID}`)).toBeNull();
         expect(screen.findByTestId(`team-credential-external-replace:${CREATED_KEY_ID}`)).toBeNull();
         expect(harness.requestsFor(MEMBERS_LIST_PATH)).toHaveLength(0);
         expect(screen.getTextContent()).not.toContain('teams.unavailable.updateRequired');
         await screen.pressByTestIdAsync(`team-credential-external-authorize:${CREATED_KEY_ID}`);
-        await vi.waitFor(() => expect(harness.requestsFor(EXTERNAL_KEY_AUTHORIZE_PATH)).toHaveLength(1));
+        await waitForHomeGovernance(() => expect(harness.requestsFor(EXTERNAL_KEY_AUTHORIZE_PATH)).toHaveLength(1));
         expect(harness.requestsFor(EXTERNAL_KEY_AUTHORIZE_PATH)[0]?.input).toEqual({ resourceId: 'resource-1', keyId: CREATED_KEY_ID });
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain('teams.credentials.errors.teamAuthenticationRequired'));
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('teams.credentials.errors.teamAuthenticationRequired'));
         expect(screen.findByTestId(`team-credential-external-key:${CREATED_KEY_ID}`)).not.toBeNull();
         harness.answer(serverId, EXTERNAL_KEY_AUTHORIZE_PATH, { body: { key: { ...pendingKey, authenticationStatus: 'satisfied', canAuthorize: true } } });
         await screen.pressByTestIdAsync(`team-credential-external-authorize:${CREATED_KEY_ID}`);
-        await vi.waitFor(() => expect(screen.findByTestId(`team-credential-external-authorize:${CREATED_KEY_ID}`)).toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`team-credential-external-authorize:${CREATED_KEY_ID}`)).toBeNull());
         expect(screen.findByTestId(`team-credential-external-key:${CREATED_KEY_ID}`)).not.toBeNull();
         expect(screen.findByTestId('team-credential-external-value:token')).toBeNull();
     });
@@ -256,9 +269,8 @@ describe('TeamCredentialExternalApiScreen', () => {
         harness.answer(serverId, MEMBERS_LIST_PATH, { body: { items: [teamMembershipFixture({
             id: 'membership-maya', accountId: 'account-maya', account: accountDisplayProfileFixture('Maya'),
         })], nextCursor: null } });
-        const { TeamCredentialExternalApiScreen } = await import('./TeamCredentialExternalApiScreen');
         const screen = await renderScreen(<TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />);
-        await vi.waitFor(() => expect(screen.findByTestId(`team-credential-external-key:${CREATED_KEY_ID}`)).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`team-credential-external-key:${CREATED_KEY_ID}`)).not.toBeNull());
         expect(screen.getTextContent()).toContain('teams.credentials.externalApi.authenticationRequired');
         expect(screen.findByTestId(`team-credential-external-authorize:${CREATED_KEY_ID}`)).toBeNull();
         expect(screen.findByTestId(`team-credential-external-revoke:${CREATED_KEY_ID}`)).not.toBeNull();
@@ -267,12 +279,11 @@ describe('TeamCredentialExternalApiScreen', () => {
     it('discloses the Home readability, bearer authority, and incomplete terminal accounting before key creation', async () => {
         const serverId = await addManagedHome();
 
-        const { TeamCredentialExternalApiScreen } = await import('./TeamCredentialExternalApiScreen');
         const screen = await renderScreen(
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
         );
 
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-empty')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-empty')).not.toBeNull());
         expect(screen.getTextContent()).toContain('teams.credentials.externalApi.homeDisclosure');
         expect(screen.getTextContent()).toContain('teams.credentials.externalApi.bearerDisclosure');
         expect(screen.getTextContent()).toContain('teams.credentials.externalApi.usageDisclosure');
@@ -282,12 +293,11 @@ describe('TeamCredentialExternalApiScreen', () => {
         const serverId = await addManagedHome();
         harness.answer(serverId, EXTERNAL_KEYS_LIST_PATH, { status: 503, body: { error: 'unavailable' } });
 
-        const { TeamCredentialExternalApiScreen } = await import('./TeamCredentialExternalApiScreen');
         const screen = await renderScreen(
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
         );
 
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-retry')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-retry')).not.toBeNull());
         expect(screen.findByTestId('team-credential-external-empty')).toBeNull();
         expect(screen.findHostByTestId('team-credential-external-assignee')?.props.disabled).toBe(true);
         expect(screen.findHostByTestId('team-credential-external-create')?.props.disabled).toBe(true);
@@ -295,7 +305,7 @@ describe('TeamCredentialExternalApiScreen', () => {
 
         harness.answer(serverId, EXTERNAL_KEYS_LIST_PATH, { body: { keys: [] } });
         await screen.pressByTestIdAsync('team-credential-external-retry');
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-empty')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-empty')).not.toBeNull());
         act(() => screen.changeTextByTestId('team-credential-external-label', 'CI runner'));
         await chooseMember(screen);
         expect(screen.findHostByTestId('team-credential-external-create')?.props.disabled).not.toBe(true);
@@ -345,12 +355,11 @@ describe('TeamCredentialExternalApiScreen', () => {
             body: teamCredentialResourceFixture({ id: 'resource-1' }),
         });
 
-        const { TeamCredentialExternalApiScreen } = await import('./TeamCredentialExternalApiScreen');
         const screen = await renderScreen(
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
         );
 
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-unavailable')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-unavailable')).not.toBeNull());
         expect(screen.getTextContent()).toContain(expected);
         expect(screen.getTextContent()).not.toContain('generic-profile-url.example/api/provider-broker/v1');
         expect(harness.requestsFor(EXTERNAL_KEYS_LIST_PATH)).toHaveLength(0);
@@ -381,12 +390,11 @@ describe('TeamCredentialExternalApiScreen', () => {
             }),
         });
 
-        const { TeamCredentialExternalApiScreen } = await import('./TeamCredentialExternalApiScreen');
         const screen = await renderScreen(
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
         );
 
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-forbidden')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-forbidden')).not.toBeNull());
         expect(screen.getTextContent()).not.toContain('teams.credentials.externalApi.publicHttpsRequired');
         expect(harness.requestsFor(EXTERNAL_KEYS_LIST_PATH)).toHaveLength(0);
     });
@@ -397,17 +405,16 @@ describe('TeamCredentialExternalApiScreen', () => {
             body: { token: CREATED_TOKEN, key: { ...key(CREATED_KEY_ID, 'resource-1', 'CI runner'), expiresAt: '2026-10-07T10:00:00.000Z' } },
         });
 
-        const { TeamCredentialExternalApiScreen } = await import('./TeamCredentialExternalApiScreen');
         const screen = await renderScreen(
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
         );
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-assignee')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-assignee')).not.toBeNull());
         act(() => screen.changeTextByTestId('team-credential-external-label', 'CI runner'));
         await chooseMember(screen);
         await screen.pressByTestIdAsync('team-credential-external-expiry:30d');
         await screen.pressByTestIdAsync('team-credential-external-create');
 
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-value:token')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-value:token')).not.toBeNull());
         expect(screen.getTextContent()).toContain('https://external-api-approval.example/prefix/api/provider-broker/v1');
         expect(screen.getTextContent()).toContain(CREATED_TOKEN);
         expect(screen.getTextContent()).toContain('OPENAI_BASE_URL=https://external-api-approval.example/prefix/api/provider-broker/v1');
@@ -418,14 +425,82 @@ describe('TeamCredentialExternalApiScreen', () => {
 
         modalConfirm.mockResolvedValueOnce(false);
         await screen.pressByTestIdAsync('team-credential-external-value:base-url');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-value:base-url')?.props.accessibilityLabel).toContain('common.copied'));
         await screen.pressByTestIdAsync('team-credential-external-reveal-done');
         expect(screen.findByTestId('team-credential-external-value:token')).not.toBeNull();
         await screen.pressByTestIdAsync('team-credential-external-value:token');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-value:token')?.props.accessibilityLabel).toContain('common.copied'));
         expect(clipboardSet).toHaveBeenLastCalledWith(CREATED_TOKEN);
         await screen.pressByTestIdAsync('team-credential-external-reveal-done');
         expect(screen.findByTestId('team-credential-external-value:token')).toBeNull();
         expect(screen.getTextContent()).toContain('teams.credentials.externalApi.assignLabel');
         expect(screen.getTextContent()).toContain('Ada');
+        expect(navigationState.preventRemove).toBe(false);
+    });
+
+    it('honors disabled clipboard admission and keeps the one-time bearer uncopied until a copy succeeds', async () => {
+        const serverId = await addManagedHome();
+        await harness.setActionPolicy(serverId, 'clipboard.write', 'ui', 'off');
+        harness.answer(serverId, EXTERNAL_KEY_CREATE_PATH, {
+            body: { token: CREATED_TOKEN, key: key(CREATED_KEY_ID, 'resource-1', 'CI runner') },
+        });
+        const { Modal } = await import('@/modal');
+        const screen = await renderScreen(
+            <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
+        );
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-assignee')).not.toBeNull());
+        act(() => screen.changeTextByTestId('team-credential-external-label', 'CI runner'));
+        await chooseMember(screen);
+        await screen.pressByTestIdAsync('team-credential-external-create');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-value:token')).not.toBeNull());
+
+        await screen.pressByTestIdAsync('team-credential-external-value:token');
+        expect(clipboardSet).not.toHaveBeenCalled();
+        expect(Modal.alertAsync).toHaveBeenCalled();
+        expect(screen.findByTestId('team-credential-external-value:token')?.props.accessibilityLabel).toContain('common.copy');
+        modalConfirm.mockResolvedValueOnce(false);
+        await screen.pressByTestIdAsync('team-credential-external-reveal-done');
+        expect(screen.getTextContent()).toContain(CREATED_TOKEN);
+
+        await harness.setActionPolicy(serverId, 'clipboard.write', 'ui', 'allowed');
+        await screen.pressByTestIdAsync('team-credential-external-value:token');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-value:token')?.props.accessibilityLabel).toContain('common.copied'));
+        expect(clipboardSet).toHaveBeenLastCalledWith(CREATED_TOKEN);
+        await screen.pressByTestIdAsync('team-credential-external-reveal-done');
+        expect(screen.getTextContent()).not.toContain(CREATED_TOKEN);
+        expect(JSON.stringify(harness.requests.filter(request => request.path !== EXTERNAL_KEY_CREATE_PATH)))
+            .not.toContain(CREATED_TOKEN);
+    });
+
+    it('copies an approved bearer through live-only Action custody without retaining it in the approval Artifact', async () => {
+        const serverId = await addManagedHome();
+        await harness.requireUiApproval(serverId, 'clipboard.write');
+        harness.answer(serverId, EXTERNAL_KEY_CREATE_PATH, {
+            body: { token: CREATED_TOKEN, key: key(CREATED_KEY_ID, 'resource-1', 'CI runner') },
+        });
+        const screen = await renderScreen(
+            <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
+        );
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-assignee')).not.toBeNull());
+        act(() => screen.changeTextByTestId('team-credential-external-label', 'CI runner'));
+        await chooseMember(screen);
+        await screen.pressByTestIdAsync('team-credential-external-create');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-value:token')).not.toBeNull());
+
+        const copy = screen.pressByTestIdAsync('team-credential-external-value:token');
+        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
+        const pending = readStoredApproval(serverId);
+        expect(pending.request).toMatchObject({ actionId: 'clipboard.write', status: 'open' });
+        expect(pending.storedJson).not.toContain(CREATED_TOKEN);
+        expect(clipboardSet).not.toHaveBeenCalled();
+        await expect(decideApprovalAsInbox(serverId, pending.id, 'approve')).resolves.toMatchObject({ ok: true });
+        await copy;
+        expect(clipboardSet).toHaveBeenLastCalledWith(CREATED_TOKEN);
+        await waitForHomeGovernance(() => expect(readStoredApproval(serverId).request.status).toBe('executed'));
+        expect(readStoredApproval(serverId).storedJson).not.toContain(CREATED_TOKEN);
+        expect(readStoredApproval(serverId).storedJson).not.toContain('a'.repeat(43));
+        await screen.pressByTestIdAsync('team-credential-external-reveal-done');
+        expect(screen.getTextContent()).not.toContain(CREATED_TOKEN);
     });
 
     // The creation answer is the only copy of a bearer. Creating another key
@@ -438,15 +513,14 @@ describe('TeamCredentialExternalApiScreen', () => {
             body: { token: CREATED_TOKEN, key: key(CREATED_KEY_ID, 'resource-1', 'CI runner') },
         });
 
-        const { TeamCredentialExternalApiScreen } = await import('./TeamCredentialExternalApiScreen');
         const screen = await renderScreen(
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
         );
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-assignee')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-assignee')).not.toBeNull());
         act(() => screen.changeTextByTestId('team-credential-external-label', 'CI runner'));
         await chooseMember(screen);
         await screen.pressByTestIdAsync('team-credential-external-create');
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain(CREATED_TOKEN));
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(CREATED_TOKEN));
         expect(harness.requestsFor(EXTERNAL_KEY_CREATE_PATH)).toHaveLength(1);
 
         // The Home mints v4 key ids; the bearer grammar rejects any other.
@@ -468,18 +542,53 @@ describe('TeamCredentialExternalApiScreen', () => {
 
         modalConfirm.mockResolvedValueOnce(true);
         await screen.pressByTestIdAsync('team-credential-external-create');
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain(secondToken));
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(secondToken));
         expect(harness.requestsFor(EXTERNAL_KEY_CREATE_PATH)).toHaveLength(2);
         expect(screen.getTextContent()).not.toContain(CREATED_TOKEN);
 
         // A copied bearer needs no local reveal-loss decision. The create
         // Action still owns its independently configured confirmation.
         await screen.pressByTestIdAsync('team-credential-external-value:token');
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-value:token')?.props.accessibilityLabel).toContain('common.copied'));
         modalConfirm.mockClear();
         act(() => screen.changeTextByTestId('team-credential-external-label', 'Third runner'));
         await screen.pressByTestIdAsync('team-credential-external-create');
-        await vi.waitFor(() => expect(harness.requestsFor(EXTERNAL_KEY_CREATE_PATH)).toHaveLength(3));
+        await waitForHomeGovernance(() => expect(harness.requestsFor(EXTERNAL_KEY_CREATE_PATH)).toHaveLength(3));
         expect(modalConfirm.mock.calls.filter(([title]) => title === 'teams.credentials.externalApi.revealDismiss.title')).toHaveLength(0);
+    });
+
+    it.each(['label', 'member', 'expiry', 'replacement'] as const)('guards an unsaved %s before navigation without creating a credential', async (field) => {
+        const oldKey = key('6ba7b810-9dad-11d1-80b4-00c04fd430c8', 'resource-1', 'Old runner');
+        const serverId = await addManagedHome([oldKey]);
+        const screen = await renderScreen(
+            <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
+        );
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-assignee')).not.toBeNull());
+        expect(navigationState.preventRemove).toBe(false);
+        if (field === 'label') act(() => screen.changeTextByTestId('team-credential-external-label', 'Unsaved runner'));
+        else if (field === 'member') await chooseMember(screen);
+        else if (field === 'expiry') await screen.pressByTestIdAsync('team-credential-external-expiry:30d');
+        else await screen.pressByTestIdAsync(`team-credential-external-replace:${oldKey.keyId}`);
+
+        expect(navigationState.preventRemove).toBe(true);
+        const action = { type: 'GO_BACK' };
+        await act(async () => {
+            navigationState.onPreventRemove?.({ data: { action } });
+            await Promise.resolve();
+        });
+        const buttons = modalAlert.mock.lastCall?.[2];
+        expect(buttons).toHaveLength(2);
+        await act(async () => { await buttons?.find(button => button.style === 'cancel')?.onPress?.(); });
+        expect(navigationState.dispatch).not.toHaveBeenCalled();
+        expect(navigationState.preventRemove).toBe(true);
+        await act(async () => {
+            navigationState.onPreventRemove?.({ data: { action } });
+            await Promise.resolve();
+        });
+        await act(async () => { await modalAlert.mock.lastCall?.[2]?.find(button => button.style === 'destructive')?.onPress?.(); });
+        await waitForHomeGovernance(() => expect(navigationState.dispatch).toHaveBeenCalledWith(action));
+        expect(harness.requestsFor(EXTERNAL_KEY_CREATE_PATH)).toHaveLength(0);
+        expect(modalConfirm).not.toHaveBeenCalled();
     });
 
     it('uses one reveal-loss confirmation for native/browser navigation removal and keeps the bearer when canceled', async () => {
@@ -488,19 +597,18 @@ describe('TeamCredentialExternalApiScreen', () => {
             body: { token: CREATED_TOKEN, key: key(CREATED_KEY_ID, 'resource-1', 'CI runner') },
         });
 
-        const { TeamCredentialExternalApiScreen } = await import('./TeamCredentialExternalApiScreen');
         const screen = await renderScreen(
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
         );
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-assignee')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-assignee')).not.toBeNull());
         act(() => screen.changeTextByTestId('team-credential-external-label', 'CI runner'));
         await chooseMember(screen);
         await screen.pressByTestIdAsync('team-credential-external-create');
-        await vi.waitFor(() => {
+        await waitForHomeGovernance(() => {
             expect(screen.findByTestId('team-credential-external-value:token')).not.toBeNull();
             expect(navigationState.preventRemove).toBe(true);
+            expect(navigationState.setOptions).toHaveBeenCalledWith({ gestureEnabled: false });
         });
-        expect(navigationState.setOptions).toHaveBeenCalledWith({ gestureEnabled: false });
 
         modalConfirm.mockResolvedValueOnce(false);
         await act(async () => {
@@ -516,7 +624,7 @@ describe('TeamCredentialExternalApiScreen', () => {
             await Promise.resolve();
             await Promise.resolve();
         });
-        await vi.waitFor(() => expect(navigationState.dispatch).toHaveBeenCalledWith({
+        await waitForHomeGovernance(() => expect(navigationState.dispatch).toHaveBeenCalledWith({
             type: 'REPLACE',
             payload: { target: 'resource-2' },
         }));
@@ -528,15 +636,14 @@ describe('TeamCredentialExternalApiScreen', () => {
             body: { token: CREATED_TOKEN, key: key(CREATED_KEY_ID, 'resource-1', 'CI runner') },
         });
 
-        const { TeamCredentialExternalApiScreen } = await import('./TeamCredentialExternalApiScreen');
         const screen = await renderScreen(
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
         );
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-assignee')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-assignee')).not.toBeNull());
         act(() => screen.changeTextByTestId('team-credential-external-label', 'CI runner'));
         await chooseMember(screen);
         await screen.pressByTestIdAsync('team-credential-external-create');
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-value:token')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-value:token')).not.toBeNull());
 
         modalConfirm.mockResolvedValueOnce(false);
         harness.answer(serverId, CREDENTIAL_GET_PATH, {
@@ -546,9 +653,13 @@ describe('TeamCredentialExternalApiScreen', () => {
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-2" />,
         );
 
-        await vi.waitFor(() => expect(routerReplace).toHaveBeenCalledWith(
+        await waitForHomeGovernance(() => expect(routerReplace).toHaveBeenCalledWith(
             `/settings/teams/${serverId}/team-1/credentials/resource-1/external-api`,
         ));
+        // The router spy records replacement; render the route it restored.
+        await screen.update(
+            <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
+        );
         expect(screen.findByTestId('team-credential-external-value:token')).not.toBeNull();
         expect(screen.getTextContent()).toContain(CREATED_TOKEN);
     });
@@ -559,15 +670,14 @@ describe('TeamCredentialExternalApiScreen', () => {
             body: { token: CREATED_TOKEN, key: key(CREATED_KEY_ID, 'resource-1', 'CI runner') },
         });
 
-        const { TeamCredentialExternalApiScreen } = await import('./TeamCredentialExternalApiScreen');
         const screen = await renderScreen(
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
         );
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-assignee')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-assignee')).not.toBeNull());
         act(() => screen.changeTextByTestId('team-credential-external-label', 'CI runner'));
         await chooseMember(screen);
         await screen.pressByTestIdAsync('team-credential-external-create');
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-value:token')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-value:token')).not.toBeNull());
 
         harness.answer(serverId, CREDENTIAL_GET_PATH, {
             body: teamCredentialResourceFixture({ id: 'resource-2' }),
@@ -579,11 +689,11 @@ describe('TeamCredentialExternalApiScreen', () => {
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-2" />,
         );
 
-        await vi.waitFor(() => expect(harness.requestsFor(EXTERNAL_KEYS_LIST_PATH)).toHaveLength(
+        await waitForHomeGovernance(() => expect(harness.requestsFor(EXTERNAL_KEYS_LIST_PATH)).toHaveLength(
             listRequestsBeforeReplacement + 1,
         ));
         expect(harness.requestsFor(EXTERNAL_KEYS_LIST_PATH).at(-1)?.input).toMatchObject({ resourceId: 'resource-2' });
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-empty')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-empty')).not.toBeNull());
         expect(screen.findByTestId('team-credential-external-value:token')).toBeNull();
     });
 
@@ -592,11 +702,10 @@ describe('TeamCredentialExternalApiScreen', () => {
         const serverId = await addManagedHome([oldKey]);
         harness.answer(serverId, EXTERNAL_KEY_CREATE_PATH, { status: 503, body: { error: 'unavailable' } });
 
-        const { TeamCredentialExternalApiScreen } = await import('./TeamCredentialExternalApiScreen');
         const screen = await renderScreen(
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
         );
-        await vi.waitFor(() => expect(screen.findByTestId(`team-credential-external-key:${oldKey.keyId}`)).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`team-credential-external-key:${oldKey.keyId}`)).not.toBeNull());
         await screen.pressByTestIdAsync(`team-credential-external-replace:${oldKey.keyId}`);
         await screen.pressByTestIdAsync('team-credential-external-create');
         expect(screen.findByTestId(`team-credential-external-key:${oldKey.keyId}`)).not.toBeNull();
@@ -606,7 +715,7 @@ describe('TeamCredentialExternalApiScreen', () => {
             body: { token: CREATED_TOKEN, key: key(CREATED_KEY_ID, 'resource-1', 'Old runner') },
         });
         await screen.pressByTestIdAsync('team-credential-external-create');
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-replace-revoke-old')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-replace-revoke-old')).not.toBeNull());
         expect(screen.findByTestId(`team-credential-external-key:${oldKey.keyId}`)).not.toBeNull();
 
         harness.answer(serverId, EXTERNAL_KEY_REVOKE_PATH, { status: 503, body: { error: 'unavailable' } });
@@ -615,7 +724,7 @@ describe('TeamCredentialExternalApiScreen', () => {
 
         harness.answer(serverId, EXTERNAL_KEY_REVOKE_PATH, { body: { keyId: oldKey.keyId, revoked: true } });
         await screen.pressByTestIdAsync('team-credential-external-replace-revoke-old');
-        await vi.waitFor(() => expect(screen.findByTestId(`team-credential-external-key:${oldKey.keyId}`)).toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`team-credential-external-key:${oldKey.keyId}`)).toBeNull());
     });
 
     it('shows which key a staged replacement targets and lets it be cleared before creating', async () => {
@@ -625,11 +734,10 @@ describe('TeamCredentialExternalApiScreen', () => {
             body: { token: CREATED_TOKEN, key: key(CREATED_KEY_ID, 'resource-1', 'Old runner') },
         });
 
-        const { TeamCredentialExternalApiScreen } = await import('./TeamCredentialExternalApiScreen');
         const screen = await renderScreen(
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
         );
-        await vi.waitFor(() => expect(screen.findByTestId(`team-credential-external-key:${oldKey.keyId}`)).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`team-credential-external-key:${oldKey.keyId}`)).not.toBeNull());
 
         // Replace stages a target. Before this it was invisible state that silently
         // changed what the next Create offered to revoke.
@@ -642,7 +750,7 @@ describe('TeamCredentialExternalApiScreen', () => {
         await screen.pressByTestIdAsync('team-credential-external-replace-staged');
         expect(screen.findByTestId('team-credential-external-replace-staged')).toBeNull();
         await screen.pressByTestIdAsync('team-credential-external-create');
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-reveal-done')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-reveal-done')).not.toBeNull());
         expect(screen.findByTestId('team-credential-external-replace-revoke-old')).toBeNull();
         expect(screen.findByTestId(`team-credential-external-key:${oldKey.keyId}`)).not.toBeNull();
     });
@@ -662,16 +770,15 @@ describe('TeamCredentialExternalApiScreen', () => {
             body: { token: CREATED_TOKEN, key: key(CREATED_KEY_ID, 'resource-1', 'CI runner') },
         });
 
-        const { TeamCredentialExternalApiScreen } = await import('./TeamCredentialExternalApiScreen');
         const screen = await renderScreen(
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
         );
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-assignee')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-assignee')).not.toBeNull());
         act(() => screen.changeTextByTestId('team-credential-external-label', 'CI runner'));
         await chooseMember(screen);
         await screen.pressByTestIdAsync('team-credential-external-create');
 
-        await vi.waitFor(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
+        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
         const pending = readStoredApproval(serverId);
         expect(pending.request).toMatchObject({
             status: 'open',
@@ -683,13 +790,13 @@ describe('TeamCredentialExternalApiScreen', () => {
 
         await expect(decideApprovalAsInbox(serverId, pending.id, 'approve')).resolves.toMatchObject({ ok: true });
 
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-value:token')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-value:token')).not.toBeNull());
         expect(screen.getTextContent()).toContain(CREATED_TOKEN);
         expect(harness.requestsFor(EXTERNAL_KEY_CREATE_PATH)).toHaveLength(1);
         expect(harness.requestsFor(EXTERNAL_KEY_CREATE_PATH)[0]?.input).toMatchObject({
             teamMembershipId: 'membership-1', label: 'CI runner',
         });
-        await vi.waitFor(() => expect(readStoredApproval(serverId).request.status).toBe('executed'));
+        await waitForHomeGovernance(() => expect(readStoredApproval(serverId).request.status).toBe('executed'));
         const settled = readStoredApproval(serverId);
         expect(settled.request).toMatchObject({ decision: { kind: 'approve' }, execution: { ok: true } });
         expect(settled.storedJson).not.toContain(CREATED_TOKEN);
@@ -703,20 +810,19 @@ describe('TeamCredentialExternalApiScreen', () => {
             body: { token: CREATED_TOKEN, key: key(CREATED_KEY_ID, 'resource-1', 'CI runner') },
         });
 
-        const { TeamCredentialExternalApiScreen } = await import('./TeamCredentialExternalApiScreen');
         const screen = await renderScreen(
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
         );
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-assignee')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-assignee')).not.toBeNull());
         act(() => screen.changeTextByTestId('team-credential-external-label', 'CI runner'));
         await chooseMember(screen);
         await screen.pressByTestIdAsync('team-credential-external-create');
-        await vi.waitFor(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
+        await waitForHomeGovernance(() => expect(harness.artifacts(serverId).list()).toHaveLength(1));
         const pending = readStoredApproval(serverId);
 
         await expect(decideApprovalAsInbox(serverId, pending.id, 'reject')).resolves.toMatchObject({ ok: true });
 
-        await vi.waitFor(() => expect(
+        await waitForHomeGovernance(() => expect(
             screen.findHostByTestId('team-credential-external-create')?.props.disabled,
         ).toBe(false));
         expect(harness.requestsFor(EXTERNAL_KEY_CREATE_PATH)).toHaveLength(0);
@@ -750,15 +856,14 @@ describe('TeamCredentialExternalApiScreen', () => {
         await harness.requireUiApproval(serverId, scenario.actionId);
         harness.answer(serverId, scenario.mutationPath, { body: scenario.result });
 
-        const { TeamCredentialExternalApiScreen } = await import('./TeamCredentialExternalApiScreen');
         const screen = await renderScreen(
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
         );
-        await vi.waitFor(() => expect(screen.findByTestId(`team-credential-external-key:${CREATED_KEY_ID}`)).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`team-credential-external-key:${CREATED_KEY_ID}`)).not.toBeNull());
         modalConfirm.mockClear();
         await screen.pressByTestIdAsync(scenario.pressId);
-        await vi.waitFor(() => expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(1));
-        await vi.waitFor(() => expect(screen.findByTestId('team-approval')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(1));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-approval')).not.toBeNull());
         expect(screen.findHostByTestId(`team-credential-external-revoke:${CREATED_KEY_ID}`)?.props.disabled).toBe(true);
         expect(harness.requestsFor(scenario.mutationPath)).toHaveLength(0);
         expect(modalConfirm).not.toHaveBeenCalled();
@@ -774,8 +879,8 @@ describe('TeamCredentialExternalApiScreen', () => {
             ok: true, result: { status: 'executed' },
         });
 
-        await vi.waitFor(() => expect(screen.findByTestId(`team-credential-external-key:${CREATED_KEY_ID}`)).toBeNull());
-        await vi.waitFor(() => expect(screen.findByTestId('team-approval')).toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId(`team-credential-external-key:${CREATED_KEY_ID}`)).toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-approval')).toBeNull());
         // Exactly the one replayed effect: the mounted continuation consumed the
         // settled result and dispatched nothing of its own.
         expect(harness.requestsFor(scenario.mutationPath)).toHaveLength(1);
@@ -804,11 +909,10 @@ describe('TeamCredentialExternalApiScreen', () => {
         harness.answer(serverId, CREDENTIAL_GET_PATH, { status: 503, body: { error: 'unavailable' } });
         harness.answer(serverId, EXTERNAL_KEYS_LIST_PATH, { body: { keys: [] } });
 
-        const { TeamCredentialExternalApiScreen } = await import('./TeamCredentialExternalApiScreen');
         const screen = await renderScreen(
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
         );
-        await vi.waitFor(() => {
+        await waitForHomeGovernance(() => {
             expect(screen.findByTestId('team-credential-external-resource-retry')).not.toBeNull();
         });
         expect(harness.requestsFor(EXTERNAL_KEYS_LIST_PATH)).toHaveLength(0);
@@ -817,7 +921,7 @@ describe('TeamCredentialExternalApiScreen', () => {
             body: teamCredentialResourceFixture({ id: 'resource-1' }),
         });
         await screen.pressByTestIdAsync('team-credential-external-resource-retry');
-        await vi.waitFor(() => expect(screen.findByTestId('team-credential-external-empty')).not.toBeNull());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('team-credential-external-empty')).not.toBeNull());
     });
 
     it('does not let an older resource response overwrite a newly selected target', async () => {
@@ -846,11 +950,10 @@ describe('TeamCredentialExternalApiScreen', () => {
             body: { keys: [key('550e8400-e29b-41d4-a716-446655440000', 'resource-1', 'Old target')] },
         });
 
-        const { TeamCredentialExternalApiScreen } = await import('./TeamCredentialExternalApiScreen');
         const screen = await renderScreen(
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-1" />,
         );
-        await vi.waitFor(() => expect(harness.requestsFor(EXTERNAL_KEYS_LIST_PATH)).toHaveLength(1));
+        await waitForHomeGovernance(() => expect(harness.requestsFor(EXTERNAL_KEYS_LIST_PATH)).toHaveLength(1));
 
         harness.answer(serverId, EXTERNAL_KEYS_LIST_PATH, {
             body: { keys: [key('6ba7b810-9dad-11d1-80b4-00c04fd430c8', 'resource-2', 'Current target')] },
@@ -861,14 +964,14 @@ describe('TeamCredentialExternalApiScreen', () => {
         await screen.update(
             <TeamCredentialExternalApiScreen serverId={serverId} teamId="team-1" resourceId="resource-2" />,
         );
-        await vi.waitFor(() => {
+        await waitForHomeGovernance(() => {
             expect(collectRenderedTestIds(screen.tree.toJSON())).toContain(
                 'team-credential-external-key:6ba7b810-9dad-11d1-80b4-00c04fd430c8',
             );
         });
 
         releaseFirst();
-        await vi.waitFor(() => {
+        await waitForHomeGovernance(() => {
             expect(screen.getTextContent()).toContain('Current target');
             expect(screen.getTextContent()).not.toContain('Old target');
         });

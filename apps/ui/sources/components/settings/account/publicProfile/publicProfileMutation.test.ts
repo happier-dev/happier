@@ -17,12 +17,9 @@ describe('publicProfileMutationNotice', () => {
     })).toBe(t('publicIdentity.profile.reasons.no_eligible_personal_usage'));
   });
 
-  it('keeps an acknowledged update distinct from its unavailable follow-on refresh and explains that cause', () => {
-    const notice = publicProfileMutationNotice({ kind: 'updated', record: null,
-      refresh: 'unavailable', refreshReason: 'no_eligible_personal_usage' });
-    expect(notice).toContain(t('publicIdentity.profile.savedRefreshPending'));
-    expect(notice).toContain(t('publicIdentity.profile.reasons.no_eligible_personal_usage'));
-    expect(publicProfileMutationNotice({ kind: 'updated', record: null,
-      refresh: 'unavailable', refreshReason: 'private diagnostic' })).toBe(t('publicIdentity.profile.savedRefreshPending'));
+  it('settles an acknowledged update without a follow-on refresh, and preserves a refused preparation cause', () => {
+    expect(publicProfileMutationNotice({ kind: 'updated', record: null })).toBeNull();
+    expect(publicProfileMutationNotice({ kind: 'unavailable', reason: 'not_published' }))
+      .toBe(t('publicIdentity.profile.reasons.not_published'));
   });
 });

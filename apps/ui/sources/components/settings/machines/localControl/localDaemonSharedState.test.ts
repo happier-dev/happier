@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import type { SystemTaskSpec } from '@happier-dev/protocol';
+import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import { useThisComputerCliUpdate } from '@/updates/useThisComputerCliUpdate';
 import { getSystemTasksRunner } from '@/components/systemTasks/systemTasksRuntime';
 import { createSystemTaskRunner } from '@/components/systemTasks/createSystemTaskRunner';
@@ -85,7 +85,7 @@ afterEach(async () => {
 it('retains checklist failure when Home and account change during admission and the task settles before returning', async () => {
     const { SetupThisComputerChecklistStep } = await import('@/components/onboarding/checklists/setupThisComputer/SetupThisComputerChecklistStep');
     const { setActiveServer } = await import('@/sync/domains/server/serverRuntime');
-    const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+    const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
     const home = await upsertAndActivateServer({ serverUrl: 'https://checklist-retained-origin.example', name: 'Origin' });
     const previousProfile = storage.getState().profile;
     storage.setState({ profile: { ...profileDefaults, id: 'checklist-owner-a' } });
@@ -182,64 +182,8 @@ it('retains checklist failure when Home and account change during admission and 
     }
 });
 
-it.each(['repair', 'command-line'] as const)('retains Settings %s prompts and progress after navigation and surfaces terminal failure on return', async (intent) => {
-    const home = await upsertAndActivateServer({ serverUrl: `https://retained-${intent}.example`, name: 'Home' });
-    const manual = createManualSystemTaskRunner();
-    const mounted = await renderHook(() => useLocalDaemonControl({ runner: manual.runner }));
-    let finishStart!: (taskId: string) => void;
-    manual.bridge.start.mockImplementationOnce(() => new Promise<string>((resolve) => { finishStart = resolve; }));
-    let starting!: Promise<string | null>;
-    await act(async () => {
-        starting = intent === 'repair' ? mounted.getCurrent().repairBackgroundService() : mounted.getCurrent().changeCommandLine();
-    });
-    await mounted.unmount();
-    const waiting = await renderHook(() => useLocalDaemonControl({ runner: manual.runner }));
-    expect(waiting.getCurrent().isBusy).toBe(true);
-    let taskId: string | null = null;
-    await act(async () => { finishStart('delayed-setup'); taskId = await starting; });
-    expect(waiting.getCurrent().activeTaskSnapshot?.taskId).toBe(taskId);
-    await waiting.unmount();
-    manual.emitEvent(taskId!, { type: 'progress', message: 'Preparing computer' });
-    manual.emitEvent(taskId!, { type: 'prompt', message: 'Choose command line', data: {
-        kind: 'setup.cliChoice', command: '/usr/local/bin/happier', version: '0.3.1', origin: 'npm',
-        removalCommand: null, updateCommand: null, belowSetupFloor: false, missing: false, keepBlockedBy: null,
-    } });
-    await flushHookEffects();
-    expect(manual.bridge.respond).toHaveBeenCalledWith(taskId, { choice: 'managed' });
-    // A request for another Home fails closed using the initiating Home even with no Settings mounted.
-    manual.emitEvent(taskId!, { type: 'prompt', message: 'Pair computer', data: {
-        kind: 'authRequest', responseKind: 'tokenOnly', publicKey: 'request-key', response: 'opaque-response',
-        relayUrl: 'https://different-home.example', cliProvenance: 'managed',
-    } });
-    await flushHookEffects();
-    expect(manual.bridge.respond).toHaveBeenCalledWith(taskId, { approved: false, reason: 'relay_mismatch' });
-    const returned = await renderHook(() => useLocalDaemonControl({ runner: manual.runner }));
-    expect(returned.getCurrent().activeTaskSnapshot?.taskId).toBe(taskId);
-    expect(returned.getCurrent().isBusy).toBe(true);
-    await act(async () => { await returned.getCurrent().repairBackgroundService(); });
-    expect(readLocalDaemonSharedState(manual.runner).setup.taskId).toBe(taskId);
-    expect(manual.bridge.start.mock.calls.filter(([spec]) => spec.kind.startsWith('setup.'))).toHaveLength(1);
-    await act(async () => {
-        await upsertAndActivateServer({ serverUrl: 'https://other-settings-home.example', name: 'Other' });
-    });
-    expect(returned.getCurrent().activeTaskSnapshot).toBeNull();
-    expect(returned.getCurrent().isBusy).toBe(true);
-    let otherRun: string | null = null;
-    await act(async () => { otherRun = await returned.getCurrent().repairBackgroundService(); });
-    expect(otherRun).toBeNull();
-    await act(async () => {
-        await upsertAndActivateServer({ serverUrl: `https://retained-${intent}.example`, name: 'Home' });
-    });
-    expect(returned.getCurrent().activeTaskSnapshot?.taskId).toBe(taskId);
-    await returned.unmount();
-    manual.emitResult(taskId!, { protocolVersion: 1, taskId: taskId!, ok: false,
-        error: { code: 'test_setup_failure', message: 'Named setup failure' } });
-    await flushHookEffects();
-    const failed = await renderHook(() => useLocalDaemonControl({ runner: manual.runner }));
-    expect(failed.getCurrent().lastErrorMessage).toBe('Named setup failure');
-    expect(failed.getCurrent().isBusy).toBe(false);
-    expect(readLocalDaemonSharedState(manual.runner).setup.scope?.serverId).toBe(home.id);
-});
+// Plan 71 §4: Settings repair/reconsideration enter Action admission. Both retained-task
+// journeys live in localDaemonServiceAction.test.ts with a signed-in Home and real executor.
 
 it.each(['known-identity', 'url-only'] as const)('rereads a successful setup at its initiating Home (%s) while preventing its result from replacing another account scope', async (identityKind) => {
     const { adoptHomeProfile } = await import('@/sync/domains/server/serverProfiles');
@@ -332,7 +276,7 @@ it.each(['Home', 'account'] as const)('retains a queued Updates CLI target and a
     vi.stubEnv('EXPO_PUBLIC_SYSTEM_TASKS_RUNNER_MODE', 'tauri');
     vi.stubGlobal('__TAURI_INTERNALS__', { invoke: async (command: string, args?: Record<string, unknown>) => {
         if (command === 'start_system_task') {
-            const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+            const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
             const spec = SystemTaskSpecSchema.parse(JSON.parse(String(args?.specJson)));
             starts.push(spec);
             return { taskId: spec.kind === 'cli.update.v1' ? cliTaskId : statusTaskId };
@@ -407,7 +351,7 @@ it('uses a refreshed Home endpoint for the next mounted CLI action without chang
     vi.stubEnv('EXPO_PUBLIC_SYSTEM_TASKS_RUNNER_MODE', 'tauri');
     vi.stubGlobal('__TAURI_INTERNALS__', { invoke: async (command: string, args?: Record<string, unknown>) => {
         if (command === 'start_system_task') {
-            const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+            const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
             const spec = SystemTaskSpecSchema.parse(JSON.parse(String(args?.specJson)));
             starts.push(spec);
             return { taskId: spec.kind === 'cli.update.v1' ? cliTaskId : statusTaskId };

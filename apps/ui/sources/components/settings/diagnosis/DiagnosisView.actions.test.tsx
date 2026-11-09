@@ -89,7 +89,7 @@ it('does not disclose a diagnosis after its mounted Account retires', async () =
     home.answer(serverId, probePath, { status: 401, respondAfter: new Promise<void>(resolve => { release = resolve; }) });
     const screen = await renderScreen(<DiagnosisView />);
     // Fail immediately for a missing Action; a held transport is only meaningful once it exists.
-    const { getActionSpec } = await import('@happier-dev/protocol');
+    const { getActionSpec} = await import('@happier-dev/protocol/actions/actionSpecs');
     expect(getActionSpec('diagnostics.diagnosis.run').id).toBe('diagnostics.diagnosis.run');
     const executor = createDefaultActionExecutor();
     let pending!: ReturnType<typeof executor.execute>;

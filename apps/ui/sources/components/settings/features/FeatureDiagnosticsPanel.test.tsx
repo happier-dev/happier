@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { ReactTestRenderer } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import type { FeatureDecision, FeatureId } from '@happier-dev/protocol';
+import type { FeatureDecision} from '@happier-dev/protocol/features/decision';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import { renderScreen } from '@/dev/testkit';
 
 

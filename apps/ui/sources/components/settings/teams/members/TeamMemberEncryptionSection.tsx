@@ -3,7 +3,7 @@ import * as React from 'react';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { useSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
+import { useSessionCollaborationAvailabilityState, type SessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import {
     membershipHistoryPreparationScopeKey,
     type MembershipSessionDataKeyEnvelopeTarget,
@@ -170,7 +170,9 @@ export function TeamMemberEncryptionSection(props: Readonly<{
     autoStartPreparation?: boolean;
 }>) {
     const { context } = props;
-    const availability = useSessionCollaborationAvailability(context.scope.serverId);
+    const availabilityState = useSessionCollaborationAvailabilityState(context.scope.serverId);
+    // The preparation request is an action admission and stays fail-closed while presentation remains loading.
+    const availability: SessionCollaborationAvailability = availabilityState === 'available' ? 'available' : 'unavailable';
     const [state, setState] = React.useState<EncryptedAccess>(CHECKING);
     const [refreshing, setRefreshing] = React.useState(false);
     // One generation guards every async write: a Home, Account or membership change makes an
@@ -225,7 +227,13 @@ export function TeamMemberEncryptionSection(props: Readonly<{
     }, [request]);
 
     React.useEffect(() => {
-        if (availability !== 'available') {
+        if (availabilityState === 'loading') {
+            generation.current += 1;
+            setRefreshing(false);
+            setState(CHECKING);
+            return;
+        }
+        if (availabilityState !== 'available') {
             generation.current += 1;
             setRefreshing(false);
             setState(UNSUPPORTED);
@@ -235,7 +243,7 @@ export function TeamMemberEncryptionSection(props: Readonly<{
         return () => {
             generation.current += 1;
         };
-    }, [discover, availability]);
+    }, [discover, availabilityState]);
 
     const prepare = React.useCallback(() => {
         const previousState = state;

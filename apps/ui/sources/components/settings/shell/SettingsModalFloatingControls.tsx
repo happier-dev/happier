@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
+import { Platform, View, type StyleProp, type ViewStyle } from 'react-native';
 import { usePathname } from '@/components/appShell/workspace/destinationRoute';
 import { useDestinationFocus, useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -15,6 +15,7 @@ import { resolveSettingsRouteTitleKey } from '@/components/settings/navigation/s
 import { NavigationBackChromeProvider } from '@/components/ui/layout/NavigationBackChrome';
 import { useSettingsRailVisible } from './settingsRailVisibility';
 import { useNavigationTitleChromePublisher, useNavigationTitleChromeShowsTitle } from '@/components/ui/layout/navigationTitleChrome';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * The settings back affordance on tablet/desktop, where the settings modal has no navigator header.
@@ -46,24 +47,24 @@ function useSettingsBackControl(collectionRootPathname: string | undefined) {
 const SettingsBackButton = React.memo(function SettingsBackButton(props: Readonly<{
     onPress: () => void;
     iconSize: number;
-    style?: StyleProp<ViewStyle>;
+    /** On a page header's title line: the glyph's own inset, not the floating control's. */
+    inline?: boolean;
 }>) {
     const { theme } = useUnistyles();
     return (
-        <Pressable
+        <HappierPressable
             testID="settings-modal-back"
             accessibilityRole="button"
             accessibilityLabel={t('common.back')}
-            hitSlop={10}
             onPress={props.onPress}
-            style={[styles.backButton, props.style]}
+            style={[styles.backButton, props.inline === true ? styles.inlineBackButton : null]}
         >
             <Icon
                 name={Platform.OS === 'ios' ? 'caret-left' : 'arrow-left'}
                 size={props.iconSize}
                 color={theme.colors.chrome.header.foreground}
             />
-        </Pressable>
+        </HappierPressable>
     );
 });
 
@@ -141,7 +142,12 @@ export const NavigationInlineBackButton = React.memo(function NavigationInlineBa
     onPress: () => void;
     style: StyleProp<ViewStyle>;
 }>) {
-    return <SettingsBackButton onPress={props.onPress} iconSize={ICON_SIZE.md} style={[styles.inlineBackButton, props.style]} />;
+    // The header's style places the control on its title line; the portable pressable keeps its own paint.
+    return (
+        <View style={[styles.inlineBackPlacement, props.style]}>
+            <SettingsBackButton onPress={props.onPress} iconSize={ICON_SIZE.md} inline />
+        </View>
+    );
 });
 
 const styles = StyleSheet.create(() => ({
@@ -161,6 +167,9 @@ const styles = StyleSheet.create(() => ({
     inlineBackButton: {
         paddingHorizontal: 4,
         paddingVertical: 0,
+    },
+    // ...its inset taken back by its placement, which the header may override (the gutter puts it at 0).
+    inlineBackPlacement: {
         marginLeft: -4,
     },
 }));

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { PluginManifestV2Schema } from '@happier-dev/protocol';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createPluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';

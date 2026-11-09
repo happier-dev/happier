@@ -1,9 +1,11 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { MachineAgentInventoryItemSchema, PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { MachineAgentInventoryItemSchema} from '@happier-dev/protocol/capabilities/machineAgentInventory';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { AcpBackendDefinitionV1Schema } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -45,7 +47,7 @@ it('offers retry after a cold inventory projection failure and recovers to the d
         agentsById: { review: { id: 'review', title: 'Review', capabilities: {
             surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
         } } },
-        actionsById: {},   resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
+        actionsById: {}, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
     });
     network.setRpcResponder(async ({ method, targetId }) => {
         if (method.includes('contributionRegistryProjection.describe')) {
@@ -87,6 +89,61 @@ it('offers retry after a cold inventory projection failure and recovers to the d
     expect(screen.findByTestId('cold-agents:machine:cold-machine:action:checkAgain')).toBeNull();
 });
 
+it('says a failed check once for several machines: one Try again in the section, none on the rows, and it asks them all again', async () => {
+    const home = await network.addHome('https://agent-detail-many-failures.example.test', 'many-account');
+    const scope = { serverId: home.id, accountId: 'many-account' };
+    const first = createMachineFixture({ id: 'first-machine', activeAt: Date.now() });
+    const second = createMachineFixture({ id: 'second-machine', activeAt: Date.now() });
+    storage.setState({ machineListByServerId: { [home.id]: [first, second] }, profileScope: scope });
+    let failed = true;
+    const projection = PluginProjectionV2Schema.parse({
+        v: 2, generation: 1, installedPackagesById: {},
+        agentsById: { review: { id: 'review', title: 'Review', capabilities: {
+            surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
+        } } },
+        actionsById: {}, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
+    });
+    network.setRpcResponder(async ({ method }) => {
+        if (method.includes('contributionRegistryProjection.describe')) {
+            if (failed) throw new Error('transport disconnected');
+            return { protocolVersion: 1, projection };
+        }
+        if (method === 'capabilities.detect') return { protocolVersion: 1, results: {
+            'cli.review': { ok: true, checkedAt: 12, data: MachineAgentInventoryItemSchema.parse({
+                agentId: 'review', title: 'Review', managed: true, installed: false, version: null, latestVersion: null,
+                update: { supported: false, command: null },
+                signIn: { status: 'signedOut', required: true, loginSupport: 'login_terminal' },
+                platform: { supported: true },
+                install: { available: true, mode: 'managed', sizeBytes: null, guideUrl: null }, dependencies: [],
+            }) },
+        } };
+        return { jobs: [] };
+    });
+    const selection = createMachineAdministrationTargetSelectionMock({
+        serverId: home.id, serverIdentityId: home.id, machines: [
+            { machineId: first.id, displayName: 'Workstation' }, { machineId: second.id, displayName: 'Spare workstation' },
+        ],
+    });
+    function Detail() {
+        const targetSelection = selection.module.useMachineAdministrationTargetSelection('agents');
+        return <ListPresentationProvider value="page"><AgentMachinesSection agentTitle="Review" agentId="review" pinnedVersion={null}
+            serverId={home.id} targetSelection={targetSelection} testID="many-agents" /></ListPresentationProvider>;
+    }
+    const screen = await renderScreen(<Detail />);
+    for (const id of [first.id, second.id]) {
+        await vi.waitFor(() => expect(machineAgentInventoryStore.read(serverAccountScopedResourceKey(scope, 'machine-agents', id)))
+            .toMatchObject({ status: 'error', agents: [] }));
+    }
+    await vi.waitFor(() => expect(screen.findByTestId('many-agents:action')).toBeTruthy());
+    expect(screen.findByTestId('many-agents:machine:first-machine:action:checkAgain')).toBeNull();
+    expect(screen.findByTestId('many-agents:machine:second-machine:action:checkAgain')).toBeNull();
+    failed = false;
+    await screen.pressByTestIdAsync('many-agents:action');
+    await vi.waitFor(() => expect(screen.findByTestId('many-agents:machine:first-machine:action:install')).toBeTruthy());
+    expect(screen.findByTestId('many-agents:machine:second-machine:action:install')).toBeTruthy();
+    expect(screen.findByTestId('many-agents:action')).toBeNull();
+});
+
 it('shows each machine’s Install, Update, Remove and Sign in and opens that machine’s setup form', async () => {
     const home = await network.addHome('https://agent-detail-sections.example.test', 'detail-account');
     const scope = { serverId: home.id, accountId: 'detail-account' };
@@ -99,7 +156,7 @@ it('shows each machine’s Install, Update, Remove and Sign in and opens that ma
         agentsById: { review: { id: 'review', title: 'Review', capabilities: {
             surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true },
         } } },
-        actionsById: {},   resourcesById: {},
+        actionsById: {}, resourcesById: {},
         settingsById: {}, familiesById: {}, diagnostics: [],
     });
     network.setRpcResponder(async ({ method, targetId }) => {

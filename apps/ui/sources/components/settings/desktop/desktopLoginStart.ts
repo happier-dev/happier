@@ -7,7 +7,7 @@ import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { buildLocalDaemonServiceSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildLocalDaemonServiceSystemTaskSpec';
 import { readActiveServerTaskScope } from '@/sync/domains/server/activeServerTaskScope';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
-import type { SystemTaskResult } from '@happier-dev/protocol';
+import type { SystemTaskResult } from '@happier-dev/protocol/system/tasks/spec';
 import type { LocalDaemonServiceScope } from '@/components/systemTasks/specs/localControl/buildLocalDaemonServiceSystemTaskSpec';
 
 /** Both the desktop row and Settings Actions change the existing native service login trigger. */

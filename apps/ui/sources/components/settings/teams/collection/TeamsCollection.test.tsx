@@ -158,9 +158,13 @@ describe('Team collection loaded-page search', () => {
         harness.answer(unavailable, LIST_PATH, { body: { items: [], nextCursor: null } });
         await screen.pressByTestIdAsync(surface === 'rail' ? 'teams-home-unavailable-retry' : 'teams-directory-retry');
         await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain(`teams-home-unavailable:${unavailable}`));
-        const completeText = JSON.stringify(screen.tree.toJSON(), (key, value) => key === 'props' ? undefined : value);
-        expect(completeText).toContain('teams.directory.noMatches');
-        expect(completeText).not.toContain('teams.directory.noLoadedMatches');
+        // Retry refreshes every contributing Home. The failed Home can recover
+        // before its neighbour's refresh settles; search stays partial until both answer.
+        await vi.waitFor(() => {
+            const completeText = JSON.stringify(screen.tree.toJSON(), (key, value) => key === 'props' ? undefined : value);
+            expect(completeText).toContain('teams.directory.noMatches');
+            expect(completeText).not.toContain('teams.directory.noLoadedMatches');
+        });
     });
 
     it('lets the recycler bound mounted Team rows and retains selection when the route changes', async () => {

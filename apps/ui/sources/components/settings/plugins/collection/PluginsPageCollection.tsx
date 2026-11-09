@@ -12,8 +12,10 @@ import type { PluginsCollectionPresentation } from '../PluginMarketplaceSections
 /** Narrowest a plugin card may become before the Plugins grid drops a column. */
 export const PLUGIN_CARD_MIN_WIDTH_PX = 240;
 
-/** The page's content column, so the page header, the items and the entries below share one edge. */
-/** The Plugins page's one scroller: the settings page anatomy, the page's content column. */
+/**
+ * The Plugins page's one scroller: the settings page anatomy, the page's content column, so the page header, the
+ * items and the entries below share one edge (the column resets the settings page's column edge itself).
+ */
 function renderPluginsPageScroller(children: React.ReactNode, pageNoticeActive: boolean): React.ReactNode {
     return (
         <ItemList style={{ paddingTop: 0 }} pageColumn="wide" pageNoticeActive={pageNoticeActive}>

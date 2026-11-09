@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { formatHappierCapabilityCount as formatCapabilityCount } from '@happier-dev/plugin-ui/presentation';
-import { Image, View, type LayoutChangeEvent } from 'react-native';
+import { formatHappierCapabilityCount as formatCapabilityCount, HAPPIER_COLLECTION_LIST_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -10,16 +10,17 @@ import { CapabilityRow } from '@/components/capabilities/row/CapabilityRow';
 import { CapabilityStatusChip } from '@/components/capabilities/status/CapabilityStatusChip';
 import { presentCapabilityStatus } from '@/components/capabilities/status/capabilityStatusPresentation';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { Icon } from '@/components/ui/icons/Icon';
 import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
-import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemList } from '@/components/ui/lists/ItemList';
 import { PageContentColumn } from '@/components/ui/lists/PageContentColumn';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
-import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { t } from '@/text';
 import { joinList } from '@/utils/text/joinList';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
@@ -28,8 +29,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
   mcpServerRoute,
 } from '../collection/mcpServerCollectionModel';
-import { McpServerMark } from '../identity/McpServerMark';
-import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
+import { HappierBrandMark, type HostCatalogMark } from '@/components/ui/media/HappierBrandMark';
 import {
   MCP_RING_MORE_KEY,
   type McpHome,
@@ -50,7 +50,7 @@ const MAP_BOX = {
   planetRadius: 36,
   ring: 104,
 } as const;
-/** Phone hero: the map alone across the column, a little smaller (lab hm-A2p). */
+/** The phone's map spans its column: the same ring, a touch tighter (lab hm-A2p). */
 const PHONE_MAP = { height: 244, planetRadius: 32, ring: 92 } as const;
 const RING_MARK_PX = 22;
 /** The legend's narrowest useful column (lab hm-A2 holds map and legend side by side at 1440); under it the legend moves beneath the map. */
@@ -99,6 +99,7 @@ const McpServersHomeBody = React.memo(function McpServersHomeBody(
   props: Readonly<{ home: McpHomeData }>,
 ) {
   const { home } = props;
+  const { theme } = useUnistyles();
   const go = useGo();
   const openAdd = useOpenMcpAddModal();
   const { model } = home;
@@ -136,7 +137,21 @@ const McpServersHomeBody = React.memo(function McpServersHomeBody(
                 />
               ),
             }
-          : {})}
+          : brandNew || home.loading || home.unavailable
+            ? {}
+            : {
+                // The page's one primary action (lab n:home); brand new, Browse and Paste below are the first add.
+                actionsPlacement: 'page' as const,
+                actions: (
+                  <RoundButton
+                    testID="mcp.home.add"
+                    size="normal"
+                    title={t('mcpSettings.add')}
+                    leading={<Icon name="plus" size={16} color={theme.colors.button.primary.tint} />}
+                    onPress={() => openAdd()}
+                  />
+                ),
+              })}
       />
       {/* What needs the person leads; the map says how the rest reaches the agents. */}
       {home.loading || home.unavailable ? null : (
@@ -159,7 +174,6 @@ const McpServersHomeBody = React.memo(function McpServersHomeBody(
         ) : (
           <ReachBlock
             home={model}
-            phone={false}
             loading={home.loading}
             brandNew={brandNew}
             suggestions={home.suggestions}
@@ -169,21 +183,12 @@ const McpServersHomeBody = React.memo(function McpServersHomeBody(
           <PresentLine home={model} />
         )}
         {brandNew ? (
-          <RoundButtonSizeScope size="normal" presentation="uniform">
-            <View style={styles.acts}>
-            <RoundButton
-              testID="mcp.home.browse"
-              title={t('capabilities.mcpHome.browse')}
-              onPress={() => openAdd({ modeKey: 'catalog' })}
-            />
-            <RoundButton
-              testID="mcp.home.paste"
-              display="secondary"
-              title={t('capabilities.mcpHome.paste')}
-              onPress={() => openAdd({ modeKey: 'paste' })}
-            />
-          </View>
-          </RoundButtonSizeScope>
+          <BrandNewActs
+            browseTestID="mcp.home.browse"
+            pasteTestID="mcp.home.paste"
+            onBrowse={() => openAdd({ modeKey: 'catalog' })}
+            onPaste={() => openAdd({ modeKey: 'paste' })}
+          />
         ) : null}
       </View>
       {home.loading || home.unavailable ? null : (
@@ -194,6 +199,7 @@ const McpServersHomeBody = React.memo(function McpServersHomeBody(
             openAdd({ modeKey: 'catalog', sourceId: card.sourceId, query: card.title })
           }
           onOpen={(serverId) => go(mcpServerRoute(serverId))}
+          onBrowseAll={() => openAdd({ modeKey: 'catalog', ...(home.shelf.sourceId ? { sourceId: home.shelf.sourceId } : {}) })}
         />
       )}
       {home.loading || home.unavailable ? null : (
@@ -234,8 +240,9 @@ export const McpServersHomeSummary = React.memo(function McpServersHomeSummary()
 });
 
 /**
- * No servers where no homepage stands beside a rail (a phone's list page, a narrow pane): the page-level
- * empty state with its built-in scene (lab mp-E), then what is already on the machines and the registry's
+ * No servers where no homepage stands beside a rail (a phone's list page, a narrow pane): the wide homepage's
+ * brand-new composition (lab n:new, RETAIN M8) — the invitation, the ring of ghost suggestions with the two ways a
+ * server reaches the agents, Browse and Paste — then what is already on the machines and the registry's
  * suggestions, so the first add is one press away.
  */
 export const McpServersEmpty = React.memo(function McpServersEmpty() {
@@ -256,23 +263,29 @@ export const McpServersEmpty = React.memo(function McpServersEmpty() {
   }
   return (
     <>
-      <EmptyState
+      <ItemGroup
         testID="settings.mcpServers.invitation"
-        layout="page"
-        scene="nothingListening"
         title={t('capabilities.mcpHome.newTitle')}
-        subtitle={t('capabilities.mcpHome.newBody')}
-        primaryAction={{
-          testID: 'settings.mcpServers.invitation.add',
-          label: t('capabilities.mcpHome.browse'),
-          onPress: () => openAdd({ modeKey: 'catalog' }),
-        }}
-        secondaryAction={{
-          testID: 'settings.mcpServers.invitation.paste',
-          label: t('capabilities.mcpHome.paste'),
-          onPress: () => openAdd({ modeKey: 'paste' }),
-        }}
-      />
+        description={t('capabilities.mcpHome.newBody')}
+        surface="none"
+      >
+        {null}
+      </ItemGroup>
+      <View style={styles.inset}>
+        <ReachBlock
+          home={home.model}
+          loading={false}
+          brandNew
+          phone
+          suggestions={home.suggestions}
+        />
+        <BrandNewActs
+          browseTestID="settings.mcpServers.invitation.add"
+          pasteTestID="settings.mcpServers.invitation.paste"
+          onBrowse={() => openAdd({ modeKey: 'catalog' })}
+          onPaste={() => openAdd({ modeKey: 'paste' })}
+        />
+      </View>
       <McpFoundBlock presentation="line" />
       <McpRegistryShelf
         shelf={home.shelf}
@@ -285,6 +298,30 @@ export const McpServersEmpty = React.memo(function McpServersEmpty() {
     </>
   );
 });
+
+/** Brand new: the first add, from the registry or from a config the person already has (lab hm-A4). */
+function BrandNewActs(
+  props: Readonly<{
+    browseTestID: string;
+    pasteTestID: string;
+    onBrowse: () => void;
+    onPaste: () => void;
+  }>,
+) {
+  return (
+    <RoundButtonSizeScope size="normal" presentation="uniform">
+      <View style={styles.acts}>
+        <RoundButton testID={props.browseTestID} title={t('capabilities.mcpHome.browse')} onPress={props.onBrowse} />
+        <RoundButton
+          testID={props.pasteTestID}
+          display="secondary"
+          title={t('capabilities.mcpHome.paste')}
+          onPress={props.onPaste}
+        />
+      </View>
+    </RoundButtonSizeScope>
+  );
+}
 
 /**
  * Needs you (lab n:home, S30-R05): below the map and its line, above the suggestions. Each server that needs the
@@ -394,17 +431,20 @@ function givesBack(server: McpHomeServer): string | null {
 const ReachBlock = React.memo(function ReachBlock(
   props: Readonly<{
     home: McpHome;
-    phone: boolean;
     loading: boolean;
     brandNew: boolean;
+    /** A phone's root: the map spans the column, its legend beneath, above the server list. */
+    phone?: boolean;
     suggestions: readonly Readonly<{
       key: string;
       iconUrl: string | null;
+      brandMark?: HostCatalogMark;
       title: string;
     }>[];
   }>,
 ) {
   const { home } = props;
+  const phone = props.phone === true;
   const go = useGo();
   const [width, setWidth] = React.useState(0);
   const onLayout = React.useCallback(
@@ -416,15 +456,9 @@ const ReachBlock = React.memo(function ReachBlock(
   const previewed = usePreviewedMcpServer();
   // Leaving the homepage mid-hover never leaves a stale preview behind.
   React.useEffect(() => () => setPreviewedMcpServer(null), []);
-  const sideBySide = !props.phone && width >= SIDE_BY_SIDE_MIN_PX;
-  const mapWidth = props.phone ? width : MAP_BOX.width;
-  const box = props.phone
-    ? PHONE_MAP
-    : {
-        height: MAP_BOX.height,
-        planetRadius: MAP_BOX.planetRadius,
-        ring: MAP_BOX.ring,
-      };
+  const sideBySide = !phone && width >= SIDE_BY_SIDE_MIN_PX;
+  const mapWidth = phone ? width : MAP_BOX.width;
+  const box = phone ? PHONE_MAP : MAP_BOX;
   const scene = React.useMemo(
     () =>
       layoutHomeOrbitRing(mapWidth, box.height, home.ring.marks, {
@@ -458,21 +492,20 @@ const ReachBlock = React.memo(function ReachBlock(
       const server = byId.get(key);
       if (server)
         return (
-          <McpServerMark
-            transport={server.server.transport}
-            size={RING_MARK_PX - 2}
+          <HappierBrandMark
+            brand={server.brandMark ?? { displayName: server.title }} externallyLabelled
+            pixelSize={RING_MARK_PX - 2}
           />
         );
       const suggestion = suggestionsByKey.get(key);
-      if (suggestion?.iconUrl)
+      if (suggestion)
         return (
-          <Image
-            source={{ uri: suggestion.iconUrl }}
-            style={styles.ringImage}
-            accessibilityIgnoresInvertColors
+          <HappierBrandMark
+            brand={suggestion.brandMark ?? { displayName: suggestion.title }} externallyLabelled
+            pixelSize={RING_MARK_PX - 2}
           />
         );
-      return <McpServerMark transport="http" size={RING_MARK_PX - 2} />;
+      return null;
     },
     [byId, home.ring.more, suggestionsByKey],
   );
@@ -499,20 +532,18 @@ const ReachBlock = React.memo(function ReachBlock(
       ) : (
         <View style={{ height: box.height }} />
       )}
-      {props.phone ? null : (
-        <View style={sideBySide ? styles.legendSide : styles.legendBelow}>
-          {props.brandNew ? (
-            <NewLegend />
-          ) : (
-            <Legend
-              home={home}
-              loading={props.loading}
-              onPreview={setPreviewedMcpServer}
-              onOpen={open}
-            />
-          )}
-        </View>
-      )}
+      <View style={sideBySide ? styles.legendSide : styles.legendBelow}>
+        {props.brandNew ? (
+          <NewLegend />
+        ) : (
+          <Legend
+            home={home}
+            loading={props.loading}
+            onPreview={setPreviewedMcpServer}
+            onOpen={open}
+          />
+        )}
+      </View>
     </View>
   );
 });
@@ -572,6 +603,8 @@ function Legend(
     (kind) => props.home.legend[kind].length > 0,
   );
   return (
+    // A key, not a page section: its rows stay compact (lab hm-A2 32 px keys) rather than taking the page row floor.
+    <ListPresentationProvider value="grouped">
     <View style={styles.legend} testID="mcp.home.legend">
       {groups.map((kind) => (
         <View key={kind} style={styles.legendGroup}>
@@ -589,6 +622,7 @@ function Legend(
         </View>
       ))}
     </View>
+    </ListPresentationProvider>
   );
 }
 
@@ -642,9 +676,10 @@ const LegendRow = React.memo(function LegendRow(
       testID={`mcp.home.legend.${server.id}`}
       title={server.title}
       {...(fact ? { qualifier: fact } : {})}
-      mark={<McpServerMark transport={server.server.transport} size={16} />}
+      mark={<HappierBrandMark brand={server.brandMark ?? { displayName: server.title }} pixelSize={16} externallyLabelled />}
       {...(action ? { action } : {})}
       density="rail"
+      rowRole="item"
       divider={false}
       onPress={open}
       onPreviewChange={(active) => onPreview(active ? server.id : null)}
@@ -708,12 +743,10 @@ function toolCountText(count: number): string {
 
 function previewLine(server: McpHomeServer): string {
   if (server.off) return t('capabilities.mcpHome.previewOff');
-  if (server.status?.kind === 'key')
-    return t('capabilities.mcpHome.previewNeedsKey');
-  if (server.status?.kind === 'signin')
-    return t('capabilities.mcpHome.previewSignIn');
-  if (server.status)
-    return t('capabilities.mcpHome.previewExpired');
+  if (server.status) {
+    const status = presentCapabilityStatus(server.status);
+    if (status.pill) return [status.pill.label, status.pill.detail, status.reason].filter(Boolean).join(' · ');
+  }
   const tools =
     server.toolCount === null
       ? ''
@@ -772,12 +805,12 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.7,
   },
   keyDotted: { borderStyle: 'dotted' },
-  newBody: { color: theme.colors.text.secondary, paddingLeft: theme.space.s24 },
+  // The explainer starts under its key, where the key's header row starts (lab n:new): no rows sit between them.
+  newBody: { color: theme.colors.text.secondary, marginHorizontal: HAPPIER_COLLECTION_LIST_METRICS.rowInset },
   groupCount: { color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
   summaryEnd: { marginBottom: theme.space.s16 },
   tools: { color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
   more: { color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
-  ringImage: { width: RING_MARK_PX - 2, height: RING_MARK_PX - 2 },
   sentence: {
     color: theme.colors.text.secondary,
     marginTop: theme.space.s16,

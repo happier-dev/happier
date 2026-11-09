@@ -1,7 +1,7 @@
 import { t } from '@/text';
 import * as React from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import type { AccountSecurityGetResponseV1 } from '@happier-dev/protocol';
+import type { AccountSecurityGetResponseV1 } from '@happier-dev/protocol/auth/accountSecurity';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
@@ -103,7 +103,6 @@ it('reads the Account Security projection exactly once through its one mounted o
     boundary.projection = {
         v: 1,
         encryptionMode: 'e2ee',
-        terminalPresentUserPolicy: 'allowed',
         nativeEmail: 'person@example.test',
         password: { status: 'enrolled', revision: 3 },
     };
@@ -119,7 +118,6 @@ it('explains an unavailable recovery key instead of leaving the row inert', asyn
     boundary.projection = {
         v: 1,
         encryptionMode: 'e2ee',
-        terminalPresentUserPolicy: 'allowed',
         nativeEmail: null,
         password: { status: 'not_enrolled', revision: null },
     };
@@ -138,7 +136,6 @@ it('opens the recovery-key unlock host for an E2EE Account that still has a sign
     boundary.projection = {
         v: 1,
         encryptionMode: 'e2ee',
-        terminalPresentUserPolicy: 'allowed',
         nativeEmail: 'person@example.test',
         password: { status: 'enrolled', revision: 2 },
     };
@@ -167,7 +164,7 @@ it('withdraws the recovery-key row when the canonical projection becomes unavail
 
 it('preserves a known E2EE recovery action when its projection refresh fails', async () => {
     await readAccountSecurityProjection(accountSecurityProjectionScopeKey('home-a', 'account-a'), async () => ({
-        v: 1, encryptionMode: 'e2ee', terminalPresentUserPolicy: 'allowed', nativeEmail: 'person@example.test', password: { status: 'enrolled', revision: 2 },
+        v: 1, encryptionMode: 'e2ee', nativeEmail: 'person@example.test', password: { status: 'enrolled', revision: 2 },
     }));
     boundary.projection = null;
     const screen = await renderScreen(<AccountSecuritySettingsScreen />);
@@ -176,7 +173,7 @@ it('preserves a known E2EE recovery action when its projection refresh fails', a
 });
 
 it('does not carry the previous Account recovery action into a pending new scope', async () => {
-    boundary.projection = { v: 1, encryptionMode: 'e2ee', terminalPresentUserPolicy: 'allowed', nativeEmail: 'old@example.test', password: { status: 'enrolled', revision: 2 } };
+    boundary.projection = { v: 1, encryptionMode: 'e2ee', nativeEmail: 'old@example.test', password: { status: 'enrolled', revision: 2 } };
     const screen = await renderScreen(<AccountScopeContext.Provider value={{ serverId: 'home-a', accountId: 'account-a' }}>
         <AccountSecuritySettingsScreen />
     </AccountScopeContext.Provider>);
@@ -203,7 +200,7 @@ it('holds the recovery-key place while the projection is still loading, so nothi
 });
 
 it('uses the bound credential Account while the previous profile is still visible', async () => {
-    boundary.projection = { v: 1, encryptionMode: 'e2ee', terminalPresentUserPolicy: 'allowed', nativeEmail: 'old@example.test', password: { status: 'enrolled', revision: 2 } };
+    boundary.projection = { v: 1, encryptionMode: 'e2ee', nativeEmail: 'old@example.test', password: { status: 'enrolled', revision: 2 } };
     const screen = await renderScreen(<AccountScopeContext.Provider value={{ serverId: 'home-a', accountId: 'account-a' }}>
         <AccountSecuritySettingsScreen />
     </AccountScopeContext.Provider>);

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { ChartDatum, HappierDataMetric, HappierDataRows, RankedRows, StackedSeriesChart, UsageConstellation } from '@happier-dev/plugin-ui/presentation';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveUsageComparisonQuery, resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
@@ -14,7 +14,10 @@ import { projectUsageAnalyticsSummary } from '@happier-dev/protocol/usage/usageC
 import { ScmPullRequestWorkEvidenceSchema } from '@happier-dev/protocol/scm/pullRequests';
 import { summarizeUsageWork } from './usageWorkPresentation';
 import { usagePageCostTrend } from '../usageCostPresentation';
-import { renderScreen } from '@/dev/testkit';
+import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 import { UsagePeriodSummaryWidget } from './UsagePeriodSummaryWidget';
 import { UsageFootprintWidget } from './UsageFootprintWidget';
@@ -30,6 +33,16 @@ import { leadingUsageRows, UsageCoverageLine, UsageShowAllRows, usagePartialHist
 import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccountingFixture';
 import { UsageEfficiencyWidget } from './UsageEfficiencyWidget';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
+
+let controlsHome: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
+afterEach(async () => { standardCleanup(); await controlsHome?.dispose(); controlsHome = undefined; });
+async function renderControls(children: React.ReactNode) {
+  controlsHome = await serveActionHomes({ homes: [{ key: 'cost', serverUrl: 'https://usage-cost-controls.test', accountId: 'cost-account' }],
+    route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+  const server = controlsHome.homes.cost!;
+  publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+  return renderMountedCurrentUiContext(children);
+}
 
 const day = 86_400_000;
 const tokens = { input: 10, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 10 };
@@ -241,7 +254,7 @@ describe('one selected money basis across Usage bodies', () => {
       slice={coverageOf([...Array.from({ length: 30 }, () => ({ ...source, source: 'claude-assistant-usage' })), { ...source, source: 'codex-token-count' }])} />);
     expect(twins.findByType(HappierDataRows).props.rows).toHaveLength(2);
     expect(twins.getTextContent()).toContain('30');
-    const distinct = await renderScreen(<UsageSourceCoverageWidget {...props} id="usage_source_coverage" testID="coverage"
+    const distinct = await renderControls(<UsageSourceCoverageWidget {...props} id="usage_source_coverage" testID="coverage"
       slice={coverageOf(Array.from({ length: 10 }, (_, index) => ({ ...source, source: `source-${index}` })))} />);
     expect(distinct.findByType(HappierDataRows).props.rows.length).toBeLessThan(10);
     await distinct.pressByTestIdAsync('coverage.showAll.toggle');
@@ -483,7 +496,7 @@ describe('one selected money basis across Usage bodies', () => {
     const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: usageQaAccountingFixture() }] }).results[0]!;
     const model: UsageWidgetBodyModel = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
       freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
-    const screen = await renderScreen(<UsageBreakdownsWidget query={query} slice={slice} model={model} serverId="home" id="usage_breakdowns" testID="qa-machines" />);
+    const screen = await renderControls(<UsageBreakdownsWidget query={query} slice={slice} model={model} serverId="home" id="usage_breakdowns" testID="qa-machines" />);
     expect(screen.findByType(RankedRows).props.rows).toHaveLength(6);
     // The folded list has one disclosure; the omitted-source count appears once its available rows are open.
     expect(screen.findByType(UsageShowAllRows).props).toMatchObject({ total: 20, hidden: 14, complete: false,

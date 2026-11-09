@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { useResolvedSettingsPageCatalog } from '@/components/settings/catalog/runtime/useResolvedSettingsPageCatalog';
+import { useResolvedSettingsPageNavigation } from '@/components/settings/catalog/runtime/useResolvedSettingsPageIdentity';
 import type { ResolvedSettingsPageNode, SettingsPageId } from '@/components/settings/catalog/types';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -135,7 +135,7 @@ function SettingsCatalogDestinationRows({
 /**
  * One Settings-overview consumer for each catalog group. It does not select,
  * gate, order, or synthesize page destinations: those decisions already belong
- * to `useResolvedSettingsPageCatalog`.
+ * to `useResolvedSettingsPageNavigation`.
  */
 export const SettingsCatalogOverviewGroup = React.memo(function SettingsCatalogOverviewGroup({
     append,
@@ -144,7 +144,7 @@ export const SettingsCatalogOverviewGroup = React.memo(function SettingsCatalogO
     resolveSubtitle,
     router,
 }: SettingsCatalogOverviewGroupProps) {
-    const catalog = useResolvedSettingsPageCatalog();
+    const catalog = useResolvedSettingsPageNavigation();
     const group = React.useMemo(
         () => resolveSettingsCatalogOverviewGroup(catalog.tree, groupId),
         [catalog.tree, groupId],
@@ -179,7 +179,7 @@ export const SettingsCatalogPageChildren = React.memo(function SettingsCatalogPa
     title,
     router,
 }: SettingsCatalogPageChildrenProps) {
-    const catalog = useResolvedSettingsPageCatalog();
+    const catalog = useResolvedSettingsPageNavigation();
     const pages = React.useMemo(
         () => (resolveSettingsCatalogPage(catalog.tree, parentPageId)?.children ?? [])
             .filter((page) => typeof page.route === 'string' && page.route.length > 0),

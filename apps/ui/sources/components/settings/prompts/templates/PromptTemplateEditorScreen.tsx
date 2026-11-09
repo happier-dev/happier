@@ -36,7 +36,7 @@ export const PromptTemplateEditorScreen = React.memo((props: Readonly<{ invocati
   const router = useRouter();
   const navigation = useNavigation();
   const isNew = props.invocationId === null;
-  const artifacts = useArtifacts();
+  const artifacts = useArtifacts('promptLibrary');
   const scope = useAccountSettingsScope();
   const { execute: executeAction, isCurrent: isActionCurrent, ready: actionReady } = useMountedActionExecution(scope);
   const { value: invocations, revision, status, stale } = usePromptLibraryCatalogValue('invocations', scope);

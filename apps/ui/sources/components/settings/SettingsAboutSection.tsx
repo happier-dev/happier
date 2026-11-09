@@ -1,5 +1,5 @@
-import { Linking } from 'react-native';
 import * as React from 'react';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import type { SettingsBelowFoldSectionsProps } from '@/components/settings/settingsBelowFoldSectionTypes';
 import { OVERVIEW_SETTINGS } from '@/components/settings/overview/overviewSettings';
@@ -22,13 +22,6 @@ type SettingsAboutSectionProps = Readonly<Pick<SettingsBelowFoldSectionsProps,
     | 'showRateUs'
     | 'supportUs'
 >>;
-
-async function openExternalUrl(url: string) {
-    const supported = await Linking.canOpenURL(url);
-    if (supported) {
-        await Linking.openURL(url);
-    }
-}
 
 const ABOUT = OVERVIEW_SETTINGS.settings;
 

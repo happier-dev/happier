@@ -5,10 +5,15 @@ import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/m
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { createDeferred, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { publishHomeAccountChange, publishHomeAccountChangeWake } from '@/sync/runtime/orchestration/homeAccountChange';
 import { plannedChangesAffectMachineResources, plannedChangesAffectManagedMachineInventory, planSyncActionsFromChanges } from '@/sync/runtime/orchestration/changesPlanner';
 import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { applyUsageSocketUpdate } from '@/sync/engine/socket/usageUpdates';
@@ -18,6 +23,106 @@ installApprovalCommonModuleMocks();
 afterEach(async () => {
     await standardCleanup(); retireActiveServerAccountScopeLifetime(); resetRuntimeFetch();
     invalidateAccountEncryptionModeCache(); vi.restoreAllMocks();
+});
+
+it('settles only the addressed failed detail after one shared exact-row recovery', async () => {
+    const homeId = 'srv_managed_detail_recovery';
+    const rows = ['managed-1', 'managed-2'].map(id => ManagedMachineV1Schema.parse({
+        id, homeId, custodianAccountId: 'owner',
+        launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+        controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'may-exist', creationState: 'active',
+        desired: 'start', desiredWhen: 'now', intentRevision: 1,
+        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+    }));
+    let failDetails = true;
+    const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://managed-detail-recovery.test',
+        serverIdentityId: homeId, accountId: 'owner' }], route: request => {
+        if (request.path === '/v1/machines/managed/actions/list') return Response.json({ machines: rows });
+        if (request.path !== '/v1/machines/managed/actions/get') return undefined;
+        if (failDetails) return Response.json({ error: 'temporary_failure' }, { status: 503 });
+        const row = rows.find(row => request.body && typeof request.body === 'object'
+            && 'managedId' in request.body && row.id === request.body.managedId);
+        return row ? Response.json(row) : Response.json({ error: 'managed_not_found' }, { status: 404 });
+    } });
+    const serverId = homes.homes.a!.id;
+    const ids = [serverId];
+    const execute = createDefaultActionExecutor().execute;
+    const hook = await renderHook(() => ({ list: useManagedMachineInventory(ids, undefined, execute),
+        detail: useManagedMachineInventory(ids, 'managed-1', execute),
+        unrelated: useManagedMachineInventory(ids, 'managed-2', execute) }), { flushOptions: { cycles: 30 } });
+    try {
+        await vi.waitFor(() => expect(hook.getCurrent().list.entries[serverId]?.status).toBe('ready'));
+        await vi.waitFor(() => expect(hook.getCurrent().detail.entries[serverId]?.status).toBe('error'));
+        await vi.waitFor(() => expect(hook.getCurrent().unrelated.entries[serverId]?.status).toBe('error'));
+        const unrelated = hook.getCurrent().unrelated.entries[serverId];
+        const before = homes.requests.length;
+        failDetails = false;
+        rows[0] = { ...rows[0]!, intentRevision: 2 };
+        const plan = planSyncActionsFromChanges([{ kind: 'account', entityId: 'managed-1', cursor: 5, changedAt: 0,
+            hint: { managedMachinePolicy: true, machineId: 'controller' } }]);
+        await act(async () => publishHomeAccountChange(serverId, ['managed-1'], { ...plan, changeKinds: ['account'],
+            managedMachineInventoryAffect: plannedChangesAffectManagedMachineInventory(plan) }));
+        await vi.waitFor(() => expect(hook.getCurrent().detail.machinesByServerId[serverId]?.[0]?.intentRevision).toBe(2));
+        expect(hook.getCurrent().detail.entries[serverId]).toMatchObject({ status: 'ready', errorCode: undefined });
+        expect(hook.getCurrent().unrelated.entries[serverId]).toBe(unrelated);
+        expect(homes.requests.slice(before).map(request => request.path)).toEqual(['/v1/machines/managed/actions/get']);
+    } finally { await hook.unmount(); await homes.dispose(); }
+});
+
+it('keeps a detail approval pending when a shared exact-row read succeeds', async () => {
+    const homeId = 'srv_managed_detail_approval';
+    const row = ManagedMachineV1Schema.parse({ id: 'managed-1', homeId, custodianAccountId: 'owner',
+        launch: { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+        controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'may-exist', creationState: 'active',
+        desired: 'start', desiredWhen: 'now', intentRevision: 1,
+        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
+    const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
+    const homes = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://managed-detail-approval.test',
+        serverIdentityId: homeId, accountId: 'owner', currentAccount: true,
+        settings: { actionsSettingsV1: { v: 1, actions: { 'machines.managed.get': { approvalRequiredSurfaces: ['ui'] } } } },
+    }], route: request => {
+        if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+        const artifact = artifacts.handle(request.url.pathname + request.url.search, { method: request.method,
+            headers: request.headers, ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) });
+        if (artifact) return artifact;
+        if (request.path === '/v1/machines/managed/actions/list') return Response.json({ machines: [row] });
+        if (request.path === '/v1/machines/managed/actions/get') return Response.json(row);
+        return undefined;
+    } });
+    const serverId = homes.homes.a!.id;
+    const ids = [serverId];
+    const execute = createDefaultActionExecutor().execute;
+    const hook = await renderHook(() => ({ list: useManagedMachineInventory(ids, undefined, execute),
+        detail: useManagedMachineInventory(ids, row.id, execute) }), { flushOptions: { cycles: 30 } });
+    const approve = async (registration: ActionApprovalContinuation) => {
+        await expect(decideApprovalAsInbox(serverId, registration.artifactId, 'approve')).resolves.toMatchObject({ ok: true });
+        const account = await captureLazyActionAccountContext(serverId);
+        try {
+            const artifact = await account.fetchArtifact(registration.artifactId);
+            if (!artifact) throw new Error('Expected persisted read approval');
+            await act(async () => { await registration.onExecuted(artifact); });
+        } finally { account.dispose(); }
+    };
+    try {
+        await vi.waitFor(() => expect(hook.getCurrent().list.entries[serverId]?.status).toBe('ready'));
+        await vi.waitFor(() => expect(hook.getCurrent().detail.entries[serverId]?.approval).toBeDefined());
+        const pendingDetail = hook.getCurrent().detail.entries[serverId];
+        const detailApproval = pendingDetail?.approval;
+        if (!detailApproval || typeof detailApproval === 'string') throw new Error('Expected detail read approval');
+        await act(async () => publishHomeAccountChange(serverId, [row.id], {
+            changeKinds: ['account'], managedMachineChangedIds: [row.id], managedMachineInventoryAffect: true,
+        }));
+        await vi.waitFor(() => expect(hook.getCurrent().list.entries[serverId]?.approval).toBeDefined());
+        const sharedApproval = hook.getCurrent().list.entries[serverId]?.approval;
+        if (!sharedApproval || typeof sharedApproval === 'string') throw new Error('Expected shared exact-row approval');
+        expect(sharedApproval.artifactId).not.toBe(detailApproval.artifactId);
+        await approve(sharedApproval);
+        await vi.waitFor(() => expect(hook.getCurrent().list.entries[serverId]?.status).toBe('ready'));
+        expect(hook.getCurrent().detail.entries[serverId]).toBe(pendingDetail);
+        expect(homes.requests.filter(request => request.path === '/v1/machines/managed/actions/get')).toHaveLength(1);
+        await approve(detailApproval);
+        await vi.waitFor(() => expect(hook.getCurrent().detail.entries[serverId]?.status).toBe('ready'));
+    } finally { await hook.unmount(); await homes.dispose(); }
 });
 
 it('shares one active/archive inventory and ignores unrelated socket and consumed-page arrivals without losing real changes', async () => {
@@ -93,6 +198,20 @@ it('shares one active/archive inventory and ignores unrelated socket and consume
             await flushHookEffects({ cycles: 30 });
             expect({ requests: requests(), admissions }).toEqual(before);
         }
+        const beforeSettings = { lists: requests(), exact: exactReads(), admissions };
+        for (let index = 1; index <= 4; index += 1) {
+            await act(async () => publishHomeAccountChangeWake(serverId,
+                { t: 'account-settings-changed', settingsVersion: index }, 'socket'));
+            const plan = planSyncActionsFromChanges([{ kind: 'account', entityId: 'self', cursor: index, changedAt: 0,
+                hint: { settingsVersion: index } }]);
+            await act(async () => publishHomeAccountChange(serverId, ['self'], {
+                source: 'socket', feedPageConsumed: true, changeKinds: ['account'],
+                machineResourcesAffect: plannedChangesAffectMachineResources(plan),
+                managedMachineInventoryAffect: plannedChangesAffectManagedMachineInventory(plan),
+            }));
+            await flushHookEffects({ cycles: 30 });
+        }
+        expect({ lists: requests(), exact: exactReads(), admissions }, 'Settings versions change no managed rows').toEqual(beforeSettings);
         const beforeExact = exactReads();
         rows[64] = { ...rows[64]!, intentRevision: 2 };
         const changedPlan = planSyncActionsFromChanges([{ kind: 'account', entityId: 'managed-64', cursor: 5, changedAt: 0,

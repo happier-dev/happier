@@ -1,5 +1,5 @@
 import type * as React from 'react';
-import type { PetPackageSourceV1 } from '@happier-dev/protocol';
+import type { PetPackageSourceV1 } from '@happier-dev/protocol/pets/source';
 
 import type { BuiltInPetPackage } from '@/components/pets/builtIns/builtInPetRegistry';
 import type { SelectedPetPackageSource } from '@/components/pets/source/resolveSelectedPetPackage';

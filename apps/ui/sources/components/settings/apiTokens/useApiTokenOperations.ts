@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol';
+import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 
 import type { ApiTokenSettingsController } from './apiTokenSettingsController';
 import { showApiTokenCreateModal, showApiTokenEditAccessModal } from './showApiTokenCreateModal';

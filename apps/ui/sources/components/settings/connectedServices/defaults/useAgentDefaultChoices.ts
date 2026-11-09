@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { useConnectedAccountPurposeDefaults } from '@/hooks/server/connectedServices/useConnectedAccountPurposeDefaults';
 import type { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol';
+import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { t } from '@/text';
 
 import { useConnectedServicesAgents } from '../model/useConnectedServicesAgents';

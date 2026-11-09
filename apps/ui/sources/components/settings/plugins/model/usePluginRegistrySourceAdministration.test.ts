@@ -5,6 +5,7 @@ import { installPromptRegistriesCommonModuleMocks } from '../../prompts/registri
 
 installPromptRegistriesCommonModuleMocks({ storage: original => original() });
 const { createPlainPromptLibraryCatalogHomeFixture } = await import('@/dev/testkit/harness/promptLibraryCatalogBoundary');
+const { usePluginRegistrySourceAdministration } = await import('./usePluginRegistrySourceAdministration');
 
 async function setup(outcome: 'updated' | 'conflict' = 'updated') {
     const fixture = await createPlainPromptLibraryCatalogHomeFixture(`https://plugin-sources-${outcome}.test`, {
@@ -13,9 +14,7 @@ async function setup(outcome: 'updated' | 'conflict' = 'updated') {
             token: { secretRef: 'catalog-token' } }] },
     }, outcome);
     onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
-    const { usePluginRegistrySourceAdministration } = await import('./usePluginRegistrySourceAdministration');
-    const hook = await renderHook(() => usePluginRegistrySourceAdministration({ scopeKey: null, enabled: true, focused: true,
-        executionTarget: null, resolveCurrentExecutionTarget: () => null }));
+    const hook = await renderHook(() => usePluginRegistrySourceAdministration({ enabled: true, focused: true }));
     await vi.waitFor(() => expect(hook.getCurrent().registry?.sources).toContainEqual(expect.objectContaining({ id: 'user-source' })));
     return { fixture, hook };
 }

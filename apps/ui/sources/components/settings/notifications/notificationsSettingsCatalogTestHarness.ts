@@ -9,6 +9,7 @@ import { createArtifactStoreBoundary, type ArtifactStoreBoundary } from '@/dev/t
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { storage as notificationStorage } from '@/sync/domains/state/storage';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { SharedSavedSecretPromoteInputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
@@ -38,6 +39,7 @@ export type NotificationsSettingsCatalogTestHarness = {
     readRecord(): NotificationChannelCatalogRecordV1;
     readRaw(): Record<string, unknown>;
     refuseCatalogWrites(reason: 'conflict' | 'settings-conflict' | null): void;
+    deferNextSettingsWrite(): { started: Promise<void>; release(): void };
     deferNextSecretPromotion(): {
         started: Promise<ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse>>;
         release(): void;
@@ -68,6 +70,7 @@ export async function restoreNotificationsSettingsCatalog(params: Readonly<{
     let revision = 3;
     let settingsVersion = 7;
     let catalogRefusal: 'conflict' | 'settings-conflict' | null = null;
+    let settingsWriteGate: { entered: () => void; released: Promise<void>; release: () => void } | null = null;
     const pairedWrites: unknown[] = [];
     const settingsWrites: unknown[] = [];
     const catalogWrites: ReturnType<typeof NotificationChannelCatalogMutationV1Schema.parse>[] = [];
@@ -153,6 +156,8 @@ export async function restoreNotificationsSettingsCatalog(params: Readonly<{
             }));
             if (path === '/v2/account/settings' && method === 'POST') {
                 const mutation = AccountSettingsV2UpdateRequestSchema.parse(JSON.parse(String(init?.body)));
+                const gate = settingsWriteGate;
+                if (gate) { gate.entered(); await gate.released; settingsWriteGate = null; }
                 settingsWrites.push(mutation);
                 if (mutation.expectedVersion !== settingsVersion) return Response.json({ success: false, error: 'version-mismatch',
                     currentVersion: settingsVersion, currentContent: { t: 'plain', v: raw } });
@@ -183,7 +188,10 @@ export async function restoreNotificationsSettingsCatalog(params: Readonly<{
             if (path === NOTIFICATION_CHANNELS_ROUTE_V1) return Response.json(authority === 'present'
                 ? { status: 'present', revision, content: { t: 'plain', v: record } }
                 : authority === 'deleted' ? { status: 'deleted', revision } : { status: 'absent' });
-            return Response.json({ error: 'not_found' }, { status: 404 });
+            // Unrelated empty Account sources still complete real bootstrap;
+            // a missing Session list otherwise marks this reachable Home unavailable.
+            return createEmptyAccountBootstrapHttpResponse(`${path}${requestUrl.search}`, init)
+                ?? Response.json({ error: 'not_found' }, { status: 404 });
         },
     });
     const scope = { serverId: home.home.id, accountId: params.accountId };
@@ -203,6 +211,15 @@ export async function restoreNotificationsSettingsCatalog(params: Readonly<{
     return { scope, storage, policy: accountSettingsParse(raw).attentionDeliveryPolicyV1, pairedWrites, settingsWrites, catalogWrites, secretPromotions, requests, artifacts,
         readRecord: () => record, readRaw: () => raw,
         refuseCatalogWrites: (reason: typeof catalogRefusal) => { catalogRefusal = reason; },
+        deferNextSettingsWrite: () => {
+            if (settingsWriteGate) throw new Error('A Settings HTTP response is already deferred');
+            let entered!: () => void;
+            let release!: () => void;
+            const started = new Promise<void>(resolve => { entered = resolve; });
+            const released = new Promise<void>(resolve => { release = resolve; });
+            settingsWriteGate = { entered, released, release };
+            return { started, release };
+        },
         deferNextSecretPromotion: () => {
             if (secretPromotionGate) throw new Error('A signing HTTP response is already deferred');
             let entered!: (input: ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse>) => void;
@@ -212,5 +229,5 @@ export async function restoreNotificationsSettingsCatalog(params: Readonly<{
             secretPromotionGate = { entered, released, release };
             return { started, release };
         },
-        dispose: async () => { secretPromotionGate?.release(); await home.dispose(); } };
+        dispose: async () => { settingsWriteGate?.release(); secretPromotionGate?.release(); await home.dispose(); } };
 }

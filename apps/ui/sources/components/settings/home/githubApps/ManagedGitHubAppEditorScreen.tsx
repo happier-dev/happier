@@ -6,7 +6,7 @@ import type {
     ManagedGitHubAppManifestSetupStartOutputV1,
     ManagedGitHubAppRegistrationV1,
     ManagedGitHubAppUpdateOutputV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/identity/githubApps';
 
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import {
@@ -15,7 +15,7 @@ import {
 } from '@/components/settings/identity/revisionedSettingsDraft';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { SettingAnchor, SettingRow, SettingSection } from "@/components/settings/shell/SettingRow";
@@ -298,13 +298,14 @@ export const ManagedGitHubAppEditorContent = React.memo(function ManagedGitHubAp
     }, [client, finishManifestSetup, manifestAppName, manifestForOrganization, manifestOrganization, owner, props.surface.mutationsAvailable, reportApprovalFailure, reportApprovalPending]);
 
     const copyFeedback = useHappierCopyFeedback();
+    const writeClipboard = useClipboardWrite(props.surface.scope);
     const copyCallbackUrl = React.useCallback(async (url: string) => {
-        if (!await setClipboardStringSafe(url)) {
+        if (!await writeClipboard(url)) {
             await Modal.alertAsync(t('common.error'), t('items.failedToCopyToClipboard'));
             return;
         }
         copyFeedback.markCopied();
-    }, [copyFeedback]);
+    }, [copyFeedback, writeClipboard]);
 
     const saveBeforeLeave = React.useCallback(
         async () => manifestDirty && !draftDirty ? await startManifestSetup() : await save(),

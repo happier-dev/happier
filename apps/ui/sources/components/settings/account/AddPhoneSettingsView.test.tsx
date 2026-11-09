@@ -2,7 +2,9 @@ import * as React from 'react';
 import { isDeepStrictEqual } from 'node:util';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computeHomeQrBindingProofV2, tryWriteServerEnabledBitInPlace, type HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
+import { computeHomeQrBindingProofV2} from '@happier-dev/protocol/crypto/qrProvisioningV2';
+import { tryWriteServerEnabledBitInPlace} from '@happier-dev/protocol/features/serverEnabledBit';
+import { type HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
@@ -362,7 +364,7 @@ describe('AddPhoneSettingsView', () => {
             disclosedCredential: Boolean(connection && JSON.stringify(body ?? {}).includes(connection.credentials.token)),
         }).toEqual({ matchingHome: true, authenticated: true, matchingPair: true, matchingRequester: true,
             matchingIdentity: true, correctResponseKind: true, hasSealedResponse: true, disclosedCredential: false });
-        const { inspectTerminalProvisioningV3Payload } = await import('@happier-dev/protocol');
+        const { inspectTerminalProvisioningV3Payload} = await import('@happier-dev/protocol/crypto/terminalProvisioningV2');
         expect(inspectTerminalProvisioningV3Payload(decodeBase64(String(body?.response)))?.type).toBe('tokenOnly');
         expect(requestsFor('/v1/auth/pairing/consume').length).toBe(0);
         expect(requestsFor('/v1/auth/account/response').length).toBe(1);

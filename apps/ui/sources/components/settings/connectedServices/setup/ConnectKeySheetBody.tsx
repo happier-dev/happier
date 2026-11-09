@@ -8,6 +8,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SavedSecretCreateEditor } from '@/components/secrets/SavedSecretCreateEditor';
 import { sharedSecretProvenanceSegments } from '@/components/secrets/savedSecretRowCopy';
 import type { SavedSecretCatalogProjection } from '@/components/secrets/useSavedSecretCatalog';
+import { ConnectedAccountGuide, type ConnectedAccountGuideContent } from '../account/ConnectedAccountGuide';
 import {
   RoundButton,
   RoundButtonSizeScope,
@@ -47,6 +48,8 @@ export function ConnectKeySheetBody(
     sameTargetRefs?: readonly string[];
     /** The name a new key starts with ("DeepSeek key"); the person can change it. */
     suggestedName?: string;
+    /** How to create this key, when what asked for it declares that; nothing to create for a saved one. */
+    guide?: ConnectedAccountGuideContent | null;
     /** The primary's words for a requested key ("Save key"); a bare secret keeps "Save secret". */
     submitLabel?: string;
     onResult: (
@@ -160,6 +163,7 @@ export function ConnectKeySheetBody(
           keyboardShouldPersistTaps="handled"
           testID="connect-key-sheet:new"
         >
+          {props.guide ? <ConnectedAccountGuide guide={props.guide} /> : null}
           <SavedSecretCreateEditor
             scope={props.scope}
             presentation="sheet"

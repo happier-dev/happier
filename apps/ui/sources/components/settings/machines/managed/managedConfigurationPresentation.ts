@@ -163,7 +163,9 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
     const caption = input.caption ?? (input.created ? presetLine ?? t('managedMachines.receipt.asCreated') : t('managedMachines.receipt.yourNewMachine'));
     return { caption, mark: input.mark ?? null,
         name: input.launch.name, spec: sizeSpec ?? (nativeLabels.length ? nativeLabels.join(' · ')
-            : lastSaved ? t('managedMachines.receipt.lastSaved', { facts: lastSaved }) : input.providerTitle ?? ''), facts: rows,
+            : lastSaved ? t('managedMachines.receipt.lastSaved', { facts: lastSaved })
+                // A machine still named after its provider doesn't say the same words twice.
+                : input.providerTitle && input.providerTitle !== input.launch.name ? input.providerTitle : ''), facts: rows,
         ...(facts?.setup ?? input.setup ? { setup: facts?.setup ?? input.setup } : {}),
         cost: cost.kind === 'price' ? { ...cost, provider: input.providerTitle ?? null,
             prices: [presentPrice(cost.prices[0]), ...cost.prices.slice(1).map(presentPrice)] }

@@ -1,7 +1,8 @@
 import { localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { settingsDefaults, type SettingsWriteDelta, type WritableSettingsKey } from '@/sync/domains/settings/settings';
 import type { SettingOperationContext, SettingOperationResult } from '@/components/settings/catalog/settingDeclarations';
-import { clearActiveThemeProfiles } from '@/theme/profiles/themeProfilePersistence';
+import { DEFAULT_THEME_PROFILE_SELECTION_BY_MODE } from '@/theme/profiles/themeProfilePersistence';
+import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { readReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
 /**
@@ -22,6 +23,7 @@ const APPEARANCE_LOCAL_KEYS = [
     'settingsNavSidebarEnabled',
     'titleStripThemeToggleVisible',
     'hapticsEnabled',
+    'systemTabBarEnabled',
     'loadingIndicatorStyle',
     'loadingIndicatorSpeed',
     'loadingIndicatorPause',
@@ -30,6 +32,8 @@ const APPEARANCE_LOCAL_KEYS = [
 const APPEARANCE_ACCOUNT_KEYS = [
     'avatarStyle',
     'homeBotFacesEnabled',
+    'botFaceStyle',
+    'botMotion',
     'showFlavorIcons',
     'tabBarGitBadgeMode',
     'tabBarFriendsBadgeEnabled',
@@ -42,6 +46,7 @@ const APPEARANCE_ACCOUNT_KEYS = [
     'glassBlurIntensity',
     'glassTintIntensity',
     'glassSurfaceMaterials',
+    'newSessionBackdropStrengthV1',
     'visualEffectsLevel',
     'contextGaugeStyle',
     'animatedNumbers',
@@ -77,9 +82,14 @@ export async function resetAppearanceSettings(context: SettingOperationContext):
     await commitThemeSelection({
         currentPreference: local.themePreference,
         nextPreference: defaults.themePreference,
-        nextThemeProfiles: clearActiveThemeProfiles(local.themeProfiles),
+        nextThemeProfiles: { profiles: [], activeProfileIds: DEFAULT_THEME_PROFILE_SELECTION_BY_MODE },
         reduceMotion: readReducedMotionPreference(),
-        writeLocal: context.writeLocalSettings,
+        writeLocal: selection => {
+            throwIfAborted(context.signal);
+            if (!context.isCurrent()) throw Object.assign(new Error('setting_not_bound'), { code: 'setting_not_bound' });
+            context.writeLocalSettings?.({ themePreference: selection.themePreference,
+                themeProfileSelection: selection.themeProfiles.activeProfileIds });
+        },
     });
     context.writeLocalSettings(defaults.local);
     await context.mutateSettings(() => defaults.account);

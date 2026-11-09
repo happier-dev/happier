@@ -225,7 +225,7 @@ function McpAddModalContent(props: McpAddContentProps & Readonly<{ inputs: McpAd
   const { sources: allSources } = useRegistrySources('mcpServer');
   const sourceTitle = React.useCallback(
     (sourceId: string) =>
-      allSources.find((source) => source.id === sourceId)?.title ?? sourceId,
+      allSources.find((source) => source.id === sourceId)?.title ?? t('capabilities.store.unnamedCatalog'),
     [allSources],
   );
 

@@ -1,5 +1,7 @@
 import { pluginActionRequiresPresentUserIntent } from '@happier-dev/protocol/plugins/actions/invocation';
-import { setActionApprovalOverride, type ActionSettingsActionId, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { setActionAudiencePolicy } from '@happier-dev/protocol/actions/actionAudiencePolicy';
+import { readScopedActionApprovalPreference, setScopedActionApprovalPreference, setActionApprovalOverride,
+    actionPolicyAudienceContextV1, type ActionApprovalScopeV1, type ActionSettingsActionId, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 import { isActionApprovalRequiredByAccountSettings } from '@/sync/domains/settings/actionsSettings';
 import { normalizeActionsSettings } from './normalizeActionsSettings';
@@ -37,9 +39,9 @@ export function resolveActionSettingsExecutionSurface(
     actionId: ActionSettingsActionId,
     targetId: ActionSettingsTargetId,
     target?: ActionSettingsTargetDefinition,
-): ActionSettingsSurface {
+): ReturnType<typeof actionPolicyAudienceContextV1>['surface'] {
     const resolvedTarget = resolveActionSettingsTargetDefinition({ actionId, targetId, target });
-    return resolvedTarget.kind === 'surface' ? resolvedTarget.surface
+    return resolvedTarget.kind === 'surface' ? actionPolicyAudienceContextV1(resolvedTarget.surface).surface
         : isVoiceTargetId(resolvedTarget.id) ? 'voice' : 'ui';
 }
 
@@ -49,16 +51,16 @@ export function resolveActionSettingsExecutionSurface(
  * restatement of it.
  *
  * Every `ui` target on this screen is an in-app surface, and the app's own Action
- * executor admits those invocations with `authority: 'present_user'`
+ * executor admits those invocations with `authority: 'present_user'` and a host caller
  * (`sync/api/session/sessionAccessApi.ts`, `sync/ops/actions/defaultActionExecutor.ts`).
- * The policy suppresses its dangerous-Action confirmation floor for that pair only
- * where the app hosts its own confirmation, and keeps it as the default where it
- * does not (Session responsibility assignment), so the row must ask with the same
- * authority the runtime supplies. The canonical policy also determines whether
- * an explicit waiver can change that confirmation.
+ * The row and preference serializer must supply that same attribution: own reversible
+ * UI actions default direct, while irreversible effects and explicit Ask remain
+ * governed by the shared policy. Other surfaces do not acquire host authority here.
+ * The canonical policy also determines whether a waiver can change confirmation.
  */
 export function getActionTargetApprovalRequired(params: Readonly<{
     settings: ActionsSettingsV1;
+    scope?: ActionApprovalScopeV1;
     actionId: ActionSettingsActionId;
     targetId: ActionSettingsTargetId;
     target?: ActionSettingsTargetDefinition;
@@ -74,6 +76,7 @@ export function getActionTargetApprovalRequired(params: Readonly<{
  */
 export function getActionTargetApprovalPolicy(params: Readonly<{
     settings: ActionsSettingsV1;
+    scope?: ActionApprovalScopeV1;
     actionId: ActionSettingsActionId;
     targetId: ActionSettingsTargetId;
     target?: ActionSettingsTargetDefinition;
@@ -81,22 +84,28 @@ export function getActionTargetApprovalPolicy(params: Readonly<{
 }>): Readonly<{ approvalRequiredByPolicy: boolean; approvalWaivable: boolean; approvalAskedBySourceControl: boolean }> {
     const normalizedSettings = normalizeActionsSettings(params.settings);
     const surface = resolveActionSettingsExecutionSurface(params.actionId, params.targetId, params.target);
-    const context = {
+    const foreign = params.targetId === 'foreign_session_html';
+    const context: Parameters<typeof isActionApprovalRequiredByAccountSettings>[2] = {
         surface,
-        ...(surface === 'ui' ? { authority: 'present_user' as const } : {}),
+        ...(foreign ? { authority: 'account_automation' as const, callerSurface: 'foreign_session_html' as const }
+            : surface === 'ui' ? { authority: 'present_user' as const, actionCaller: { kind: 'host' as const } } : {}),
     };
     // The same manifest default used by the daemon's contributed Action gate.
     const contributedApprovalDefault = params.target?.contributedAction
         ? pluginActionRequiresPresentUserIntent(params.target.contributedAction, surface, undefined, context.authority)
         : undefined;
-    const waivedSettings = setActionApprovalOverride({
+    const waivedSettings = foreign ? setActionAudiencePolicy(normalizedSettings, params.actionId,
+        'foreign_session_html', 'allowed') : params.scope ? setScopedActionApprovalPreference({
+        settings: normalizedSettings, actionId: params.actionId, surface, scope: params.scope, mode: 'waived',
+    }) : setActionApprovalOverride({
         settings: normalizedSettings,
         actionId: params.actionId,
         surface,
         approvalRequired: false,
     });
     const requiredBy = (actionsSettingsV1: ActionsSettingsV1, scmRemoteConfirmPolicy: unknown) => isActionApprovalRequiredByAccountSettings(
-        params.actionId, { actionsSettingsV1, scmRemoteConfirmPolicy }, context, { contributedApprovalDefault });
+        params.actionId, { actionsSettingsV1, scmRemoteConfirmPolicy }, context,
+        { contributedApprovalDefault, approvalScope: params.scope });
     const approvalRequiredByPolicy = requiredBy(normalizedSettings, params.scmRemoteConfirmPolicy);
     return {
         approvalRequiredByPolicy,
@@ -112,6 +121,7 @@ export function getActionTargetApprovalPolicy(params: Readonly<{
  */
 export function getActionTargetApprovalOverride(params: Readonly<{
     settings: ActionsSettingsV1;
+    scope?: ActionApprovalScopeV1;
     actionId: ActionSettingsActionId;
     targetId: ActionSettingsTargetId;
     target?: ActionSettingsTargetDefinition;
@@ -119,6 +129,15 @@ export function getActionTargetApprovalOverride(params: Readonly<{
     const normalizedSettings = normalizeActionsSettings(params.settings);
     const surface = resolveActionSettingsApprovalSurface(params.actionId, params.targetId, params.target);
     if (!surface) return null;
+    if (surface === 'foreign_session_html') {
+        const mode = normalizedSettings.callerSurfacePolicies?.foreign_session_html?.[params.actionId];
+        return mode === 'ask_first' ? true : mode === 'allowed' ? false : null;
+    }
+    if (params.scope) {
+        const scoped = readScopedActionApprovalPreference(normalizedSettings, params.actionId, params.scope);
+        return scoped?.approvalRequiredSurfaces.includes(surface) ? true
+            : scoped?.approvalWaivedSurfaces.includes(surface) ? false : null;
+    }
     if (normalizedSettings.actions[params.actionId]?.approvalRequiredSurfaces.includes(surface)) return true;
     if (normalizedSettings.approvalWaivedSurfaces?.[params.actionId]?.includes(surface)) return false;
     return null;
@@ -126,6 +145,7 @@ export function getActionTargetApprovalOverride(params: Readonly<{
 
 export function setActionTargetApprovalRequired(params: Readonly<{
     settings: ActionsSettingsV1;
+    scope?: ActionApprovalScopeV1;
     actionId: ActionSettingsActionId;
     targetId: ActionSettingsTargetId;
     target?: ActionSettingsTargetDefinition;
@@ -136,13 +156,21 @@ export function setActionTargetApprovalRequired(params: Readonly<{
     if (!surface) {
         return normalizedSettings;
     }
+    if (surface === 'foreign_session_html') return setActionAudiencePolicy(
+        normalizedSettings, params.actionId, surface,
+        params.approvalRequired === null ? 'default' : params.approvalRequired ? 'ask_first' : 'allowed',
+    );
 
+    const approvalRequired = params.approvalRequired === false && !getActionTargetApprovalPolicy(params).approvalWaivable
+        ? null : params.approvalRequired;
+    if (params.scope) return setScopedActionApprovalPreference({
+        settings: normalizedSettings, actionId: params.actionId, scope: params.scope, surface,
+        mode: approvalRequired === true ? 'required' : approvalRequired === false ? 'waived' : 'inherit',
+    });
     return setActionApprovalOverride({
         settings: normalizedSettings,
         actionId: params.actionId,
         surface,
-        approvalRequired: params.approvalRequired === false && !getActionTargetApprovalPolicy(params).approvalWaivable
-            ? null
-            : params.approvalRequired,
+        approvalRequired,
     });
 }

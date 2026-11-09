@@ -2,9 +2,9 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import type { PromptFoldersV1 } from '@happier-dev/protocol';
+import type { PromptFoldersV1 } from '@happier-dev/protocol/prompts/library/promptFoldersV1';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
-import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createPlainArtifactHomeFixture, seedAdmittedArtifactRows } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { storage } from '@/sync/domains/state/storage';
 import { resetPromptLibraryCatalogSnapshotsForTests } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
@@ -58,12 +58,13 @@ async function setup() {
         header: encodePlainArtifactStoredContent({ kind: 'prompt_doc.v2', title: 'Legacy', folderId: 'parent', tags: ['legacy'] }),
         body: encodePlainArtifactStoredContent({ body: '{' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER }) });
     // The listed Artifacts are the synced store's; the Home holds the same `legacy` row for the Actions.
-    storage.setState({ isDataReady: true, artifacts: { legacy: { id: 'legacy', title: 'Legacy',
+    storage.setState({ isDataReady: true });
+    seedAdmittedArtifactRows([{ id: 'legacy', title: 'Legacy',
         header: { title: 'Legacy', kind: 'prompt_doc.v2', folderId: 'parent', tags: ['legacy'] }, access: 'owner',
         ownerAccountId: 'artifact-account', isDecrypted: true, headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 },
-        received: { id: 'received', title: 'Received',
+        { id: 'received', title: 'Received',
         header: { title: 'Received', kind: 'workflow-definition.v1', folderId: 'foreign' }, access: 'view',
-        isDecrypted: true, headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 } } });
+        isDecrypted: true, headerVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 }], storage);
     return { read: () => { const record = catalog.read('folders'); if (record.key !== 'folders') throw new Error('Wrong catalog'); return record.value; },
         fixture, mutations: catalog.requests, folderWrites };
 }

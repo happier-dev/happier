@@ -9,7 +9,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 
 /**
  * The Account ID this device is signed in with on the current Home, with a copy action. It is the
@@ -17,13 +17,14 @@ import { setClipboardStringSafe } from '@/utils/ui/clipboard';
  */
 export const AccountIdentifier = React.memo(function AccountIdentifier(props: Readonly<{ accountId: string }>) {
     const copyFeedback = useHappierCopyFeedback();
+    const writeClipboard = useClipboardWrite();
     const copy = React.useCallback(async () => {
-        if (!await setClipboardStringSafe(props.accountId)) {
+        if (!await writeClipboard(props.accountId)) {
             Modal.alert(t('common.error'), t('items.failedToCopyToClipboard'));
             return;
         }
         copyFeedback.markCopied();
-    }, [copyFeedback, props.accountId]);
+    }, [copyFeedback, props.accountId, writeClipboard]);
 
     return (
         <View testID="settings-account-id" style={styles.row}>

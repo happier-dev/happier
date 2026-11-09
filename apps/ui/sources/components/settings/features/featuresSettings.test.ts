@@ -7,7 +7,20 @@ import { listUiFeatureToggleDefinitions } from '@/sync/domains/features/featureR
 import { FEATURES_SETTINGS, resolveFeatureToggleHref } from './featuresSettings';
 
 describe('Features page search declarations', () => {
-    it.each(['voice.agent', 'voice.daemonInference'] as const)('keeps %s discoverable in optional features with Experiments off', (featureId) => {
+    it('has one Workflows setting and sends the released alias to that control', () => {
+        expect(FEATURES_SETTINGS.settings.workflows.anchor).toBe('features.workflows');
+        expect(FEATURES_SETTINGS.settings).not.toHaveProperty('automations');
+        expect(resolveFeatureToggleHref('workflows', false)).toBe('/settings/features?setting=features.workflows');
+        expect(resolveFeatureToggleHref('automations', false)).toBe('/settings/features?setting=features.workflows');
+    });
+
+    it('does not advertise a retired attachment-upload opt-in', () => {
+        expect(Object.values(FEATURES_SETTINGS.settings).some((setting) => setting.anchor === 'features.attachments.uploads')).toBe(false);
+        expect(resolveFeatureToggleHref('attachments.uploads', false)).toBeUndefined();
+        expect(resolveFeatureToggleHref('attachments.uploads', true)).toBeUndefined();
+    });
+
+    it.each(['execution.runs', 'voice.agent', 'voice.daemonInference'] as const)('keeps %s discoverable in optional features with Experiments off', (featureId) => {
         expect(FEATURES_SETTINGS.settings[featureId].sectionId).toBe('features.optionalFeatures');
         expect(resolveFeatureToggleHref(featureId, false)).toBe(`/settings/features?setting=features.${featureId}`);
     });

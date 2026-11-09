@@ -4,6 +4,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 
@@ -12,8 +13,8 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { ConnectedServicesGatewayRow, useConnectedServicesIndex } from '../model/useConnectedServicesIndex';
 
 /**
- * Gateways on the Connected services index (lab `rgateway` GW1p): the phone's way in, since the rail
- * that lists them on wide screens is not shown there. Each opens the gateway's one page. With none
+ * Gateways on the Credentials overview (lab `cr` crHome A, `rgateway` GW1p): a section like the others, and
+ * the phone's way in. Each opens the gateway's one page. With none
  * yet, one quiet row adds the first (D19); while that waits on an approval, the approval takes the
  * row's place, where the user asked for it. When the gateways cannot be read the group stays and says
  * so, with Retry (D19: the place never disappears).
@@ -33,7 +34,22 @@ export const ConnectedServicesGatewaysGroup = React.memo(function ConnectedServi
     const { theme } = useUnistyles();
     if (props.gateways.length === 0 && !props.onAdd && !props.approval && !props.loading && !props.unavailable) return null;
     return (
-        <ItemGroup title={t('settingsProvidersCollection.gateway.railGroup')}>
+        <ItemGroup
+            testID="connected-services-index:gateways"
+            title={t('settingsProvidersCollection.gateway.railGroup')}
+            description={t('connectedServicesCollection.gatewaysDescription')}
+            surface="none"
+            // With gateways listed, adding another is the section's action, like New pool; with none, the quiet row below.
+            action={props.gateways.length > 0 && props.onAdd && !props.approval ? (
+                <SectionActionButton
+                    testID="connected-services-index:add-gateway-action"
+                    icon="plus"
+                    title={t('settingsProvidersCollection.gateway.addGateway')}
+                    disabled={props.adding}
+                    onPress={props.onAdd}
+                />
+            ) : undefined}
+        >
             {props.approval ?? null}
             {props.loading && props.gateways.length === 0 && !props.approval ? (
                 <Item

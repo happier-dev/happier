@@ -85,7 +85,7 @@ describe('ManagedMachineConfigurator on a phone', () => {
   it('stands above the phone\u2019s floating tab bar instead of partly under it', async () => {
     const { StyleSheet } = await import('react-native');
     const screen = await renderConfigurator(vi.fn(), 'Create', undefined, 84);
-    expect(Number(StyleSheet.flatten(screen.findByTestId('cfg.summary.frame')!.props.style)?.marginBottom)).toBeGreaterThanOrEqual(84);
+    expect(Number(StyleSheet.flatten(screen.findByTestId('cfg.summary.frame')!.props.style)?.paddingBottom)).toBeGreaterThanOrEqual(84);
     await screen.unmount();
   });
   it('keeps the managing machine in view as its own row, since the header folds its actions away on a phone', async () => {

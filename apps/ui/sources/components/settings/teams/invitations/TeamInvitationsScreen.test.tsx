@@ -545,7 +545,7 @@ describe('TeamInvitationsScreen', () => {
         const before = harness.requestsFor(INVITATIONS_LIST_PATH).length;
 
         const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
-        const { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } = await import('@happier-dev/protocol');
+        const { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1} = await import('@happier-dev/protocol/changes');
 
         // A wake naming other entities is not this list's business.
         await act(async () => {

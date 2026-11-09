@@ -6,9 +6,9 @@ export type {
     BugReportArtifactPayload,
     BugReportEnvironmentPayload,
     BugReportFormPayload,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/bugs/reports/types';
 
-export type { BugReportSimilarIssue } from '@happier-dev/protocol';
+export type { BugReportSimilarIssue } from '@happier-dev/protocol/bugs/reports/similarIssues';
 
 export async function submitBugReportToService(input: {
     providerUrl: string;

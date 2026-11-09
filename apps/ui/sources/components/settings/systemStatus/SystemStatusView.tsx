@@ -40,6 +40,8 @@ import { normalizeFileSystemPath } from '@/sync/domains/fileSystem/normalizeFile
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
+import { useMachineActivity } from '@/hooks/machine/useMachineActivity';
+import { readMachineActivity, type MachineActivityFacts } from '@/sync/domains/machines/machineActivity';
 import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet } from 'react-native-unistyles';
@@ -80,6 +82,11 @@ import { machinePageHref } from '@/components/settings/machines/collection/machi
 
 function resolveServerProfileLabel(profile: ServerProfile): string {
   return resolveHomeDisplayLabel(profile, profile.id);
+}
+
+function MachineStatusItem({ machine, ...props }: Omit<React.ComponentProps<typeof Item>, 'detail'> & Readonly<{ machine: MachineActivityFacts }>) {
+  const activity = useMachineActivity(machine);
+  return <Item {...props} detail={activity?.activeAt ? formatRelativeTimeShort(activity.activeAt, Date.now()) : UNKNOWN_VALUE} />;
 }
 
 export const SystemStatusView = React.memo(function SystemStatusView() {
@@ -250,11 +257,12 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
             machineId: machine.id,
           });
           const entry = machineDoctorSnapshotByTargetKey[snapshotKey];
+          const activity = readMachineActivity(machine);
           return {
             id: machine.id,
             serverId,
-            active: machine.active,
-            activeAt: machine.activeAt,
+            active: activity.active,
+            activeAt: activity.activeAt,
             updatedAt: machine.updatedAt,
             metadata: machine.metadata
               ? {
@@ -613,7 +621,8 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
 
               return (
                 <React.Fragment key={snapshotKey}>
-                  <Item
+                  <MachineStatusItem
+                    machine={machine}
                     title={displayName}
                     subtitle={subtitle}
                     icon={<Icon name="laptop" size={24} color={theme.colors.text.secondary} />}
@@ -627,7 +636,6 @@ export const SystemStatusView = React.memo(function SystemStatusView() {
                         machineId: machine.id,
                       }]), { tag: 'SystemStatusView.fetchDoctorSnapshotForMachine' });
                     }}
-                    detail={machine.activeAt ? formatRelativeTimeShort(machine.activeAt, Date.now()) : UNKNOWN_VALUE}
                   />
                   {fetchEntry.status === 'ready' ? (
                     <MachineDoctorRuntimeInventorySection snapshotState={fetchEntry} mode="summary" />

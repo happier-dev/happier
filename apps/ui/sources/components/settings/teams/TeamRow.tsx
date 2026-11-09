@@ -48,6 +48,7 @@ export const TeamRow = React.memo(function TeamRow(props: Readonly<{
 
     return (
         <Item
+            rowRole="catalogRow"
             testID={`teams-row:${row.address.serverId}:${row.address.teamId}`}
             title={row.team.name}
             subtitle={subtitle.length > 0 ? subtitle : undefined}
@@ -58,7 +59,7 @@ export const TeamRow = React.memo(function TeamRow(props: Readonly<{
             })}
             {...(rail ? {
                 icon: (
-                    <HappierCollectionListMark>
+                    <HappierCollectionListMark rowRole="catalogRow">
                         <Avatar
                             id={row.address.teamId}
                             monogram={row.team.name}

@@ -1,3 +1,4 @@
+import { useThemeProfilesSnapshot } from '@/sync/store/useThemeProfiles';
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { File } from 'expo-file-system';
@@ -9,7 +10,6 @@ import { Item } from '@/components/ui/lists/Item';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { useLocalSetting } from '@/sync/domains/state/storage';
 import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
 import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { t } from '@/text';
@@ -31,7 +31,7 @@ async function readPickedThemeFile(entry: NativePickedFile): Promise<string> {
 export const ThemeProfileImportScreen = React.memo(function ThemeProfileImportScreen() {
     const { theme } = useUnistyles();
     const router = useRouter();
-    const themeProfiles = useLocalSetting('themeProfiles');
+    const { themeProfiles, legacyProfileIds } = useThemeProfilesSnapshot();
     const { setSetting } = useSettingActionFeedback();
     const [json, setJson] = React.useState('');
     const [error, setError] = React.useState<string | null>(null);
@@ -53,12 +53,12 @@ export const ThemeProfileImportScreen = React.memo(function ThemeProfileImportSc
         }
         setError(null);
         if (!await setSetting(THEMES_SETTINGS.settings.yourThemes,
-            SettingsDeclarationValueV1Schema.parse(upsertThemeProfile(themeProfiles, result.profile)))) return;
+            SettingsDeclarationValueV1Schema.parse({ edit: { before: themeProfiles, next: upsertThemeProfile(themeProfiles, result.profile), legacyProfileIds } }))) return;
         setWarnings(result.warnings.length);
         if (result.warnings.length === 0) {
             router.back();
         }
-    }, [json, router, setSetting, themeProfiles]);
+    }, [json, legacyProfileIds, router, setSetting, themeProfiles]);
 
     const pickFile = React.useCallback(async () => {
         try {

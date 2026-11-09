@@ -20,9 +20,10 @@ describe('summarizeMachines', () => {
   it('names the Agents once per group of machines, never repeating a machine name, and keeps the offline count apart', () => {
     expect(summarizeMachines([entry('NLDW6', false, ['claude', 'codex']), entry('away-1', true), entry('away-2', true)], agentNames))
       .toEqual({ summary: 'Claude, Codex on NLDW6', note: '2 offline' });
+    // One Agent list for the page's one fact, then how many machines: a second list would repeat names and truncate.
     expect(summarizeMachines([
       entry('a', false, ['claude', 'codex']), entry('b', false, ['claude', 'codex']), entry('c', false, ['claude']),
-    ], agentNames).summary).toBe('Claude, Codex on 2 machines · Claude on c');
+    ], agentNames).summary).toBe('Claude, Codex on 3 machines');
   });
 
   it('says it is checking while previews are pending, and nothing was delivered otherwise', () => {

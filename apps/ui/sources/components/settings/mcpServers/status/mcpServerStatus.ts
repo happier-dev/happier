@@ -127,24 +127,29 @@ export function mcpServerStatus(input: McpServerStatusInput): readonly Capabilit
 }
 
 /**
- * What a list says about a server: the most blocking status the person must act on (sign-in family or key), the
+ * What a list says about a server: the most blocking sign-in, key or held Test status the person must act on, the
  * same one the page's banner leads with. Quiet while signing in, when connected and for a server that needs nothing;
  * null when it needs nothing. `open` is where every fix leads (the server's page); without it the status is drawn
  * fix-less, for a list whose action column owns the fix.
  */
-export function mcpServerAttentionStatus(input: Pick<McpServerStatusInput, 'entry' | 'signIn' | 'savedSecretCatalog'> & Readonly<{ open?: () => void }>): CapabilityStatus | null {
+export function mcpServerAttentionStatus(input: Pick<McpServerStatusInput, 'entry' | 'signIn' | 'savedSecretCatalog'>
+    & Partial<Pick<McpServerStatusInput, 'tests' | 'machines'>> & Readonly<{ open?: () => void }>): CapabilityStatus | null {
     const go = input.open ?? (() => {});
     const needsYou = mcpServerStatus({
         entry: input.entry,
         signIn: input.signIn,
         savedSecretCatalog: input.savedSecretCatalog,
-        tests: {},
-        machines: [],
+        tests: input.tests ?? {},
+        machines: input.machines ?? [],
         fixes: { signIn: go, reconnect: go, grantAccess: go, addKey: go, howToFix: go, tryAgain: go },
-    }).filter((status) => presentCapabilityStatus(status, 'row').tone === 'needs_you');
+    }).filter((status) => {
+        const tone = presentCapabilityStatus(status, 'row').tone;
+        return tone === 'needs_you' || tone === 'failed';
+    });
     const top = pickMostBlockingCapabilityStatus(needsYou, 'row');
     if (top === null || input.open !== undefined) return top;
-    return { kind: top.kind, ...(top.detail ? { detail: top.detail } : {}) };
+    return { kind: top.kind, ...(top.detail ? { detail: top.detail } : {}),
+        ...(top.machineName ? { machineName: top.machineName } : {}) };
 }
 
 /** Each machine's own status (offline, can't run, stopped), keyed by machine id; healthy machines are absent. */

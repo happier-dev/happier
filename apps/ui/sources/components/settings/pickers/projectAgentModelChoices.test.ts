@@ -17,6 +17,23 @@ describe('shared background Agent/model choices', () => {
     const sources: readonly AgentModelChoiceSource[] = entries.map(entry => ({ entry, models, catalogModels: models, runnerCapable: true, discoverable: true }));
     const configuredKey = 'agent:happier.agent.custom-acp/custom-acp:definition:codex';
 
+    it('keeps an installed Agent canonical key across offered, selected and default model profiles', () => {
+        const [entry] = getResolvedBackendCatalogEntries({ enabledAgentIds: [], mergedProviderProjectionById: {
+            'sample-agent': { agentId: 'sample-agent', identity: { pluginId: 'example.agent', localId: 'sample' }, title: 'Sample' },
+        } });
+        if (!entry) throw new Error('Expected the installed Agent catalog entry');
+        const canonicalKey = 'agent:example.agent/sample';
+        expect(entry.backendTargetKey).toBe(canonicalKey);
+        const selected = ProviderBoundModelRefSchema.parse({ agentTargetKey: canonicalKey, providerConnectionId: null, modelId: 'custom/model' });
+        const result = projectAgentModelChoices({ purpose: 'runner', sources: [{ entry, models, catalogModels: models,
+            runnerCapable: true, discoverable: true }], selected, defaultModelTitle: 'Default' });
+        const [group] = result.groups;
+        expect(group?.targetKey).toBe(canonicalKey);
+        expect(group?.offered.every(profile => profile.modelSelector?.backendTargetKey === canonicalKey)).toBe(true);
+        expect(result.defaultProfile?.modelSelector).toEqual({ backendTargetKey: canonicalKey, modelId: 'default' });
+        expect([...result.selections.values()].find(choice => choice.modelSelector.modelId === 'custom/model')?.modelSelection).toEqual(selected);
+    });
+
     it('retains stale configured display models without admitting them as selectable models', () => {
         const result = projectAgentModelChoices({ purpose: 'runner',
             sources: sources.map(source => ({ ...source, selectable: source.entry.kind !== 'configuredBackend' })),

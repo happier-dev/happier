@@ -8,7 +8,9 @@ import {
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { Profile } from '@/sync/domains/profiles/profile';
 
-import { collectBugReportDiagnosticsArtifacts } from '../bugReportDiagnostics';
+import type { BugReportSessionTarget } from '../bugReportDiagnostics';
+import type { BugReportLogSelection } from '@happier-dev/protocol/bugs/reports/machineDiagnostics';
+import { usePreparedBugReportDiagnostics } from './usePreparedBugReportDiagnostics';
 import type { BugReportsFeature } from '../bugReportFeatureDefaults';
 import type {
   BugReportDeploymentType,
@@ -31,6 +33,8 @@ export function useBugReportComposerModel(input: Readonly<{
   profile: Profile | null;
   serverUrlDefault: string;
   route: string;
+  sessionTarget?: BugReportSessionTarget | null;
+  reportServerId?: string;
 }>): {
   title: string;
   setTitle: (value: string) => void;
@@ -64,6 +68,9 @@ export function useBugReportComposerModel(input: Readonly<{
   setServerUrl: (value: string) => void;
   serverVersion: string;
   setServerVersion: (value: string) => void;
+  logSelection: BugReportLogSelection;
+  setLogSelection: (value: BugReportLogSelection) => void;
+  collectionStatuses: ReturnType<typeof usePreparedBugReportDiagnostics>['collectionStatuses'];
   includeDiagnostics: boolean;
   setIncludeDiagnostics: (value: boolean) => void;
   diagnosticsKinds: string[];
@@ -83,6 +90,9 @@ export function useBugReportComposerModel(input: Readonly<{
   submitHint: 'required' | 'problem' | null;
   fieldErrors: BugReportDraftFieldErrors;
   handleSubmit: () => Promise<void>;
+  crashReportStatus: ReturnType<typeof useBugReportComposerDraftState>['crashReportStatus'];
+  discardSavedCrash: () => Promise<void>;
+  copySavedCrash: () => Promise<void>;
 } {
   const draft = useBugReportComposerDraftState({
     profile: input.profile,
@@ -91,6 +101,7 @@ export function useBugReportComposerModel(input: Readonly<{
   const { buildDraftInput, ...draftFields } = draft;
 
   const {
+    logSelection, setLogSelection,
     includeDiagnostics,
     setIncludeDiagnostics,
     diagnosticsKinds,
@@ -115,18 +126,11 @@ export function useBugReportComposerModel(input: Readonly<{
     includeDiagnostics,
   });
 
-  const collectDiagnosticsArtifacts = React.useCallback(async (args: {
-    machines: Machine[];
-    includeDiagnostics: boolean;
-    acceptedKinds: string[];
-    maxArtifactBytes: number;
-    contextWindowMs?: number;
-  }) => {
-    return await collectBugReportDiagnosticsArtifacts({
-      ...args,
-      pastedCliDoctorSnapshotJson,
-    });
-  }, [pastedCliDoctorSnapshotJson]);
+  const { collectDiagnosticsArtifacts, collectionStatuses } = usePreparedBugReportDiagnostics({
+    machines: input.machines, includeDiagnostics, acceptedKinds: diagnosticsKinds,
+    maxArtifactBytes: input.feature.maxArtifactBytes, contextWindowMs: input.feature.contextWindowMs,
+    pastedCliDoctorSnapshotJson, sessionTarget: input.sessionTarget, logSelection,
+  });
 
   const { submitting, handleSubmit } = useBugReportComposerSubmit({
     feature: input.feature,
@@ -137,7 +141,9 @@ export function useBugReportComposerModel(input: Readonly<{
     issueRepo: BUG_REPORT_DEFAULT_ISSUE_REPO,
     existingIssueNumber,
     openFallbackIssue,
-    pastedCliDoctorSnapshotJson,
+    collectDiagnosticsArtifacts,
+    sessionTarget: input.sessionTarget,
+    reportServerId: input.reportServerId,
     buildDraftInput,
   });
 
@@ -153,13 +159,7 @@ export function useBugReportComposerModel(input: Readonly<{
     disabled: submitting,
     includeDiagnostics,
     selectedKinds: diagnosticsKinds,
-    collectDiagnosticsArtifacts: async () => await collectDiagnosticsArtifacts({
-      machines: input.machines,
-      includeDiagnostics,
-      acceptedKinds: diagnosticsKinds,
-      maxArtifactBytes: input.feature.maxArtifactBytes,
-      contextWindowMs: input.feature.contextWindowMs,
-    }),
+    collectDiagnosticsArtifacts,
   });
 
   const similarIssues = useBugReportSimilarIssues({
@@ -171,11 +171,13 @@ export function useBugReportComposerModel(input: Readonly<{
     summary: draftFields.summary,
     currentBehavior: draftFields.currentBehavior,
     expectedBehavior: draftFields.expectedBehavior,
-    disabled: submitting || existingIssueNumber !== null,
+    // Captured exception text stays on device until the user explicitly submits.
+    disabled: submitting || existingIssueNumber !== null || draft.crashReportStatus !== 'none',
   });
 
   return {
     ...draftFields,
+    logSelection, setLogSelection, collectionStatuses,
     includeDiagnostics,
     setIncludeDiagnostics,
     diagnosticsKinds,

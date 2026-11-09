@@ -1,4 +1,4 @@
-import type { MachinePoolMemberInputV1 } from '@happier-dev/protocol';
+import type { MachinePoolMemberInputV1 } from '@happier-dev/protocol/machines/pools/v1';
 
 export type MachinePoolHomeStatus = 'idle' | 'loading' | 'signedOut' | 'error';
 

@@ -6,8 +6,9 @@ import type { ResolvedSettingsPageNode } from '@/components/settings/catalog/typ
 
 const catalogState = vi.hoisted(() => ({ tree: [] as ResolvedSettingsPageNode[] }));
 
-vi.mock('@/components/settings/catalog/runtime/useResolvedSettingsPageCatalog', () => ({
-    useResolvedSettingsPageCatalog: () => ({
+vi.mock('@/components/settings/catalog/runtime/useResolvedSettingsPageIdentity', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/components/settings/catalog/runtime/useResolvedSettingsPageIdentity')>(),
+    useResolvedSettingsPageNavigation: () => ({
         tree: catalogState.tree,
         activePageId: null,
         search: () => [],

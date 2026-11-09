@@ -8,8 +8,8 @@ import {
   type AcpRegistryAgentV1,
   type RegistryAgentDistributionV1,
   type RegistryItemProblemV1,
-  type RegistryItemSummaryV1,
 } from '@happier-dev/protocol/registries';
+import type { RegistryCatalogItemSummary as RegistryItemSummaryV1 } from '@/registries/registryBrandMark';
 
 import type { ResolvedAgentCatalogEntry } from '@/agents/backendCatalog/agentCatalogProjection';
 import { resolveBuiltInAgentForRegistryId } from '@/agents/registry/resolveBuiltInAgentForRegistryId';
@@ -85,6 +85,32 @@ export function resolveAgentMachineFits(
       arch: machine.arch,
     }),
   }));
+}
+
+/**
+ * The machines column's lines: machines a build can't run on for the same stated reason are one line ("14 machines ·
+ * goose's download for this system isn't a format Happier can unpack"), placed at the first one; a machine that can
+ * run it, or can't for a reason of its own, keeps its own line. `lineOf` is the reason as the page says it.
+ */
+const NAMED_MACHINE_ROWS = 3;
+
+export function groupAgentMachineFits(
+  fits: readonly AgentMachineFit[],
+  lineOf: (fit: AgentMachineFit) => string,
+): readonly Readonly<{ key: string; machines: readonly AgentMachineFit[] }>[] {
+  const lines: { key: string; machines: AgentMachineFit[] }[] = [];
+  const byReason = new Map<string, { key: string; machines: AgentMachineFit[] }>();
+  for (const entry of fits) {
+    const reason = `${entry.fit.kind}\u0000${entry.machine.offline ? 'away' : 'online'}\u0000${lineOf(entry)}`;
+    const line = byReason.get(reason);
+    if (line) { line.machines.push(entry); continue; }
+    const created = { key: entry.machine.machineId, machines: [entry] };
+    byReason.set(reason, created);
+    lines.push(created);
+  }
+  // Names help only while they can be read: a handful of runnable Machines stay named, a fleet folds to its count.
+  return lines.flatMap(line => line.machines[0]!.fit.kind !== 'cant_run' && line.machines.length <= NAMED_MACHINE_ROWS
+    ? line.machines.map(entry => ({ key: entry.machine.machineId, machines: [entry] })) : [line]);
 }
 
 /**

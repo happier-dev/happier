@@ -13,7 +13,7 @@ import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/
 import type { PromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { AIBackendProfileSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import { ProfileRecordV1Schema } from '@happier-dev/protocol/profiles/profileRecordV1';
-import { StoredApprovalRequestSchema } from '@happier-dev/protocol';
+import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { resolveApprovalRequestApproveAdmission } from '@happier-dev/protocol/actions';
 const promptStacksRouterPushSpy = vi.hoisted(() => vi.fn());
 // The real store, translation, modal, navigation hook and approval owner remain mounted.

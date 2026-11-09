@@ -16,12 +16,15 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { Text } from '@/components/ui/text/Text';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 
 import type { McpServerSignIn, McpSignInView } from './useMcpServerSignIn';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 type Props = Readonly<{
   testID?: string;
@@ -48,14 +51,25 @@ function formatLeft(ms: number): string {
 }
 
 /** Minutes and seconds left on the authorization link, ticking once a second while shown. */
-function useTimeLeft(expiresAtMs: number | null): string | null {
+function useTimeLeft(expiresAtMs: number): string {
   const [now, setNow] = React.useState(() => Date.now());
+  const presented = useLayoutPresentationActive();
+  const viewed = useHostActivelyViewed();
+  const active = presented && viewed;
   React.useEffect(() => {
-    if (expiresAtMs === null) return;
+    if (!active) return;
+    setNow(Date.now());
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
-  }, [expiresAtMs]);
-  return expiresAtMs === null ? null : formatLeft(expiresAtMs - now);
+  }, [expiresAtMs, active]);
+  return formatLeft(expiresAtMs - now);
+}
+
+function SigningTimeLeft(props: Readonly<{ expiresAtMs: number }>) {
+  const left = useTimeLeft(props.expiresAtMs);
+  return <Text variant="meta" style={stylesheet.meta}>
+    {t('capabilities.mcpSignIn.timeLeft', { time: left })}
+  </Text>;
 }
 
 /** The words, the one action and its weight, for every state but the in-flight ones. */
@@ -127,10 +141,10 @@ function Signing(
     'browser',
   );
   const [copied, setCopied] = React.useState(false);
-  const left = useTimeLeft(props.expiresAtMs);
+  const writeClipboard = useClipboardWrite();
   const copyLink = React.useCallback(async () => {
-    setCopied(await setClipboardStringSafe(props.authorizationUrl));
-  }, [props.authorizationUrl]);
+    setCopied(await writeClipboard(props.authorizationUrl));
+  }, [props.authorizationUrl, writeClipboard]);
   const waiting = (label: string, trailing?: React.ReactNode) => (
     <View style={styles.waitingRow}>
       <ActivitySpinner size="small" />
@@ -182,11 +196,7 @@ function Signing(
             </Text>
             {waiting(
               t('capabilities.mcpSignIn.phoneWaiting'),
-              left ? (
-                <Text variant="meta" style={styles.meta}>
-                  {t('capabilities.mcpSignIn.timeLeft', { time: left })}
-                </Text>
-              ) : null,
+              <SigningTimeLeft expiresAtMs={props.expiresAtMs} />,
             )}
             <View style={styles.links}>
               <Link
@@ -281,13 +291,12 @@ function Link(
 ) {
   const styles = stylesheet;
   return (
-    <Pressable
+    <HappierPressable
       testID={props.testID}
       accessibilityRole="link"
-      accessibilityState={{ disabled: props.disabled === true }}
+      
       disabled={props.disabled}
       onPress={props.onPress}
-      hitSlop={8}
       style={props.quiet ? styles.quietLinkBox : undefined}
     >
       {(state) => (
@@ -303,7 +312,7 @@ function Link(
           {props.label}
         </Text>
       )}
-    </Pressable>
+    </HappierPressable>
   );
 }
 
@@ -312,6 +321,7 @@ function Link(
  * The grant belongs to the Account, so the copy speaks of every machine; the button becomes the wait.
  */
 export function McpSignInSection(props: Props) {
+  const writeClipboard = useClipboardWrite();
   const { view } = props.signIn;
   const testID = props.testID ?? 'mcp.server.signin';
   const { theme } = useUnistyles();
@@ -530,7 +540,7 @@ export function McpSignInSection(props: Props) {
             accessibilityLabel={t('capabilities.mcpSignIn.callbackUrl')}
             trailing={<IconButton testID={`${testID}:copy-callback`} iconName={callbackCopied ? 'check' : 'copy'} variant="plain" size={20}
               accessibilityLabel={t(callbackCopied ? 'common.copied' : 'common.copy')}
-              onPress={() => void setClipboardStringSafe(MCP_OAUTH_CALLBACK_URL_V1).then(setCallbackCopied)} />} />
+              onPress={() => void writeClipboard(MCP_OAUTH_CALLBACK_URL_V1).then(setCallbackCopied)} />} />
         </FieldItem>
         <FieldItem label={t('capabilities.mcpSignIn.clientId')} labelNativeID={`${testID}:client-id-label`}>
           <FieldTextInput testID={`${testID}:client-id`} value={clientId} onChangeText={setClientId} monospace

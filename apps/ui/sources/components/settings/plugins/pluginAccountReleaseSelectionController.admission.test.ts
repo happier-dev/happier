@@ -12,7 +12,6 @@ import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSet
 import { renderScreen } from '@/dev/testkit';
 import { createElement } from 'react';
 import { act } from 'react-test-renderer';
-import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import { ApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 // HTTP/credentials/socket and the native modal host are system boundaries.
@@ -121,7 +120,13 @@ describe('Account plugin administration admission through the production UI fron
             const request = ApprovalRequestSchema.parse(JSON.parse(homes.artifacts(serverId).readPlainBody(artifactId) ?? 'null'));
             expect(request).toMatchObject({ actionId: 'plugins.account.hosting.remove',
                 executionOriginV1: { serverId: lifetime.scope.serverId, accountId: lifetime.scope.accountId } });
-            expect(navigation.push).toHaveBeenCalledWith(buildApprovalHref(artifactId, lifetime.scope.serverId));
+            await vi.waitFor(() => expect(Modal.show).toHaveBeenCalledWith(expect.objectContaining({
+                props: expect.objectContaining({ artifactId, serverId }),
+                chrome: expect.objectContaining({ testID: 'approvals.in-place.modal' }),
+            })));
+            await vi.waitFor(() => expect(homes.requestsFor(`/v1/artifacts/${artifactId}`))
+                .toContainEqual(expect.objectContaining({ serverUrl: 'https://plugin-admission.test' })));
+            expect(navigation.push).not.toHaveBeenCalled();
             await act(async () => {
                 expect(await createDefaultActionExecutor().execute('approval.request.decide', { artifactId, decision: 'reject' }, {
                     serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId,

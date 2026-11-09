@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     encodePasswordCredentialFieldV1,
     type PlainAccountPasswordCredentialV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/accountPasswordCredential';
 
 import {
     AccountSecurityActionApprovalPendingError,
@@ -35,7 +35,6 @@ describe('accountSecurityActionClient', () => {
                     result: {
                         v: 1 as const,
                         encryptionMode: 'plain' as const,
-                        terminalPresentUserPolicy: 'allowed' as const,
                         nativeEmail: 'person@example.test',
                         password: { status: 'enrolled' as const, revision: 3 },
                     },

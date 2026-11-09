@@ -21,7 +21,8 @@ const account = createProviderSettingsAccountHarness();
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { OverviewMachinesSection } = await import('./OverviewMachinesSection');
-const { useMachineFleetModel } = await import('@/components/machines/widgets/MachineFleetWidget');
+const { useMachineFleetModel, MachineFleetWidget } = await import('@/components/machines/widgets/MachineFleetWidget');
+const { machineResourceStore } = await import('@/sync/domains/machines/resources/machineResourceStore');
 const { recordMachineRequestFailed, clearMachineRequestReachabilityForTest } = await import('@/sync/domains/machines/reachability/machineReachability');
 let releaseInventoryRead: (() => void) | null = null;
 
@@ -42,6 +43,44 @@ afterEach(async () => {
 });
 
 describe('Settings › Overview Machines', () => {
+    it('keeps a Home-A fleet widget and its demand on A while Home B is focused', async () => {
+        const homeA = getActiveServerSnapshot().serverId;
+        const machines = (prefix: string) => ['one', 'two'].map(name => createMachineFixture({
+            id: `${prefix}-${name}`, active: true, activeAt: Date.now(),
+            metadata: { ...createMachineFixture().metadata!, host: `${prefix}-${name}` },
+        }));
+        await account.publishMachines(homeA, machines('a'));
+        const homeB = await account.addHome({ name: 'Fleet B', serverUrl: 'https://fleet-b.test', accountId: 'account-b', active: true });
+        await account.publishMachines(homeB, machines('b'));
+        expect(getActiveServerSnapshot().serverId).toBe(homeB);
+        // The old hook accepts no arguments and ignores this owning Home at runtime; the RED stays type-safe.
+        const scopedFleet: (serverId?: string) => ReturnType<typeof useMachineFleetModel> = useMachineFleetModel;
+        const model = await renderHook(() => scopedFleet(homeA));
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        machineResourceStore.reset();
+        try {
+            await vi.waitFor(() => expect(model.getCurrent().fleet.map(entry => [entry.serverId, entry.machine.id]))
+                .toEqual([[homeA, 'a-one'], [homeA, 'a-two']]));
+            const censusRequests = () => account.home.requests.filter(request => new URL(request.path, request.serverUrl).pathname === '/v1/machines');
+            const beforeRefresh = censusRequests().length;
+            await act(async () => { model.getCurrent().refresh(); });
+            await vi.waitFor(() => expect(censusRequests().slice(beforeRefresh)
+                .map(request => request.serverId)).toEqual([homeA]));
+            screen = await renderScreen(<MachineFleetWidget serverId={homeA} input={{ metrics: ['cpu'] }} testID="fleet-a" />);
+            const readA = { serverId: homeA, expectedAccountId: 'account-a', machineId: 'a-one', view: 'summary' as const };
+            const readB = { serverId: homeB, expectedAccountId: 'account-b', machineId: 'b-one', view: 'summary' as const };
+            await vi.waitFor(() => expect(machineResourceStore.isRefreshing(readA)
+                || machineResourceStore.getState(readA).status !== 'loading').toBe(true));
+            expect(machineResourceStore.isRefreshing(readB)).toBe(false);
+            expect(machineResourceStore.getState(readB).status).toBe('loading');
+            expect(screen.findByTestId('fleet-a.machine.b-one')).toBeNull();
+            expect(getActiveServerSnapshot().serverId).toBe(homeB);
+        } finally {
+            await screen?.unmount();
+            await model.unmount();
+            machineResourceStore.reset();
+        }
+    });
     it('lists only the machines that need the person as rows, and counts the rest on the All machines row', async () => {
         const home = getActiveServerSnapshot().serverId;
         const memory = { key: 'memory', level: 'needs_you', since: Date.now() - 60_000, metric: 'memory',

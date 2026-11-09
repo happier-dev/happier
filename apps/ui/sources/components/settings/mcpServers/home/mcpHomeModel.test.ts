@@ -4,7 +4,7 @@ import { resolveSavedSecretReference } from '@/sync/store/settings/savedSecretCa
 import type {
   McpServerCatalogEntryV1,
   McpServersSettingsV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/mcp/servers/settingsV1';
 
 import { buildMcpServerCollection } from '../collection/mcpServerCollectionModel';
 import { buildMcpHome, MCP_RING_MORE_KEY } from './mcpHomeModel';
@@ -92,6 +92,7 @@ function home(
     secrets?: readonly string[];
     dismissed?: boolean;
     suggestions?: readonly string[];
+    machineFactsOf?: Parameters<typeof buildMcpHome>[0]['machineFactsOf'];
   }>,
 ) {
   return buildMcpHome({
@@ -101,6 +102,7 @@ function home(
       (input.secrets ?? []).map(id => SavedSecretSchema.parse({ id, name: id, kind: 'apiKey',
         encryptedValue: { _isSecretValue: true, value: 'test-value' }, createdAt: 1, updatedAt: 1 })), ref) },
     firstVisitDismissed: input.dismissed ?? false,
+    machineFactsOf: input.machineFactsOf,
     suggestions: (input.suggestions ?? []).map((key) => ({
       key,
       iconUrl: null,
@@ -148,12 +150,29 @@ describe('MCP homepage model (P7 U7.11, lab hm-A)', () => {
       model.servers.find((server) => server.id === 'github')?.identity,
     ).toBe('leeroy-brun');
     expect(model.needsYou).toBe(1);
+    expect(model.attention).toEqual([model.servers.find(server => server.id === 'sentry')]);
     expect(model.present).toEqual({
       servers: 5,
       tools: 64,
       tokens: 6400,
       toolsKnown: true,
     });
+  });
+
+  it('projects attention from the same admitted rows in shared blocking order, excluding Off and healthy servers', () => {
+    const model = home({
+      servers: [entry('alpha-key', 'key'), entry('zulu-runtime', 'local'), entry('healthy', 'remote'), entry('off', 'key')],
+      off: ['off'],
+      machineFactsOf: row => row.server.transport === 'stdio' ? {
+        tests: { m1: { ok: false, errorCode: 'mcp_connect_failed', checkedAt: 1 } },
+        machines: [{ machineId: 'm1', name: 'Build', online: true }],
+      } : { tests: {}, machines: [] },
+    });
+    expect(model.attention.map(server => [server.id, server.status?.kind])).toEqual([
+      ['zulu-runtime', 'error'], ['alpha-key', 'key'],
+    ]);
+    expect(model.attention.every(server => model.servers.includes(server))).toBe(true);
+    expect(model.needsYou).toBe(model.attention.length);
   });
 
   it('a missing key and a server never signed in both need the person', () => {

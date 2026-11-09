@@ -22,6 +22,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { AgentMachineActionButtons } from './AgentMachineActionButtons';
 import {
   buildAgentMachineRows,
+  countAgentMachineRowsToShow,
   listAgentMachines,
   type AgentMachineAction,
   type AgentMachineRow,
@@ -124,54 +125,69 @@ export function AgentMachinesSection(
     [pickerRows, selectTarget, selectedMachineId],
   );
 
-  const truthRows = rows.map((row): CapabilityMachineTruthRow => ({
-    machineId: row.machine.machineId,
-    machineName: row.machine.name,
-    namePending: row.machine.namePending,
-    deviceIcon: 'desktop',
-    ...(row.machine.os ? { os: row.machine.os } : {}),
-    who: (
-      <AgentMachineWho
-        row={row}
-        testID={`${props.testID}:machine:${row.machine.machineId}:who`}
-      />
-    ),
-    offline: !row.machine.online,
-    ...(row.actions.length > 0
-      ? {
-          actions: (
-            <AgentMachineRowActions
-              serverId={serverId}
-              machine={row.machine}
-              agent={row.agent}
-              actions={row.actions}
-              onOpenForm={() => onExpandedMachineChange(row.machine.machineId)}
-              onCheckAgain={() => {
-                void refreshMachine(row.machine.machineId);
-              }}
-              testID={`${props.testID}:machine:${row.machine.machineId}`}
-            />
-          ),
-        }
-      : {}),
-    ...(row.expandable
-      ? {
-          detail: (
-            <AgentSetupForm
-              testID={`${props.testID}:machine:${row.machine.machineId}:setup`}
-              serverId={serverId}
-              machineId={row.machine.machineId}
-              machineName={row.machine.sentenceName}
-              agentId={props.agentId}
-              {...(props.definitionId
-                ? { definitionId: props.definitionId }
-                : {})}
-              layout="full"
-            />
-          ),
-        }
-      : {}),
-  }));
+  // One cause says itself once: when several machines could not be checked, the section offers one Try again
+  // for them and the rows keep only their status, instead of a wall of identical buttons.
+  const failedMachineIds = rows
+    .filter((row) => row.actions.some((action) => action.kind === 'checkAgain'))
+    .map((row) => row.machine.machineId);
+  const retryTogether = failedMachineIds.length > 1;
+  const retryAll = React.useCallback(() => {
+    for (const machineId of failedMachineIds) void refreshMachine(machineId);
+  }, [failedMachineIds, refreshMachine]);
+
+  const truthRows = rows.map((sourceRow): CapabilityMachineTruthRow => {
+    const row = retryTogether
+      ? { ...sourceRow, actions: sourceRow.actions.filter((action) => action.kind !== 'checkAgain') }
+      : sourceRow;
+    return {
+      machineId: row.machine.machineId,
+      machineName: row.machine.name,
+      namePending: row.machine.namePending,
+      deviceIcon: 'desktop',
+      ...(row.machine.os ? { os: row.machine.os } : {}),
+      who: (
+        <AgentMachineWho
+          row={row}
+          testID={`${props.testID}:machine:${row.machine.machineId}:who`}
+        />
+      ),
+      offline: !row.machine.online,
+      ...(row.actions.length > 0
+        ? {
+            actions: (
+              <AgentMachineRowActions
+                serverId={serverId}
+                machine={row.machine}
+                agent={row.agent}
+                actions={row.actions}
+                onOpenForm={() => onExpandedMachineChange(row.machine.machineId)}
+                onCheckAgain={() => {
+                  void refreshMachine(row.machine.machineId);
+                }}
+                testID={`${props.testID}:machine:${row.machine.machineId}`}
+              />
+            ),
+          }
+        : {}),
+      ...(row.expandable
+        ? {
+            detail: (
+              <AgentSetupForm
+                testID={`${props.testID}:machine:${row.machine.machineId}:setup`}
+                serverId={serverId}
+                machineId={row.machine.machineId}
+                machineName={row.machine.sentenceName}
+                agentId={props.agentId}
+                {...(props.definitionId
+                  ? { definitionId: props.definitionId }
+                  : {})}
+                layout="full"
+              />
+            ),
+          }
+        : {}),
+    };
+  });
 
   // An agent no machine knows (no CLI to install, e.g. an auxiliary-only Agent) has nothing per machine.
   const knownNowhere =
@@ -191,15 +207,14 @@ export function AgentMachinesSection(
     <CapabilityMachineTruth
       testID={props.testID}
       presentation="list"
-      // Offline machines that never reported this agent say nothing useful: they wait behind "N more".
-      visibleCount={Math.min(
-        8,
-        rows.filter((row) => row.machine.online || row.agent !== null).length,
-      )}
+      visibleCount={Math.min(8, countAgentMachineRowsToShow(rows))}
       description={t('settingsAgents.detailPage.machinesDescription', {
         agent: props.agentTitle,
       })}
       rows={truthRows}
+      {...(retryTogether
+        ? { sectionAction: { label: t('machineAgents.actionRetry'), onPress: retryAll } }
+        : {})}
       summary=""
       expandedMachineId={expandedMachineId}
       onExpandedMachineChange={onExpandedMachineChange}

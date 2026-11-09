@@ -8,8 +8,7 @@ import { setPublicProfileDraftField, type PublicProfileDraft } from './publicPro
 export type PublicProfileConsentState =
   | Readonly<{ kind: 'idle' }>
   | Readonly<{ kind: 'pending'; field: PublicProfileField; shown: boolean }>
-  | Readonly<{ kind: 'acknowledged'; field: PublicProfileField; previousShown: boolean;
-      refresh: 'not_needed' | 'complete' | 'unavailable' | 'pending_approval' | 'failed' }>
+  | Readonly<{ kind: 'acknowledged'; field: PublicProfileField; previousShown: boolean }>
   | Readonly<{ kind: 'failed'; field: PublicProfileField; shown: boolean; errorCode: string }>;
 
 /** Published consent is acknowledged independently; placement and Look remain private until Apply. */
@@ -55,7 +54,7 @@ export function usePublicProfileConsent(input: Readonly<{
       const acknowledgedPolicy = result.record.policy;
       input.onAcknowledged(result.record);
       input.setDraft(current => current ? { ...current, policy: acknowledgedPolicy } : current);
-      setState({ kind: 'acknowledged', field, previousShown: policy.fields[field], refresh: result.refresh });
+      setState({ kind: 'acknowledged', field, previousShown: policy.fields[field] });
     } catch {
       // An uncertain dispatch is never represented as a confirmed hide or automatically replayed.
       setState({ kind: 'failed', field, shown, errorCode: 'action_uncertain' });

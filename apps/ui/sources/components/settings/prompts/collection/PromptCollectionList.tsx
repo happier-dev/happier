@@ -22,7 +22,7 @@ import { useArtifacts, useArtifactsLoaded } from '@/sync/domains/state/storage';
 import { PROMPT_LIBRARY_ARTIFACT_KINDS } from '@/sync/domains/artifacts/artifactInventory';
 import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
-import { refreshPromptLibraryCatalog } from '@/sync/engine/settings/promptLibraryCatalogEngine';
+import { invalidatePromptLibraryCatalogProjection } from '@/sync/engine/settings/promptLibraryCatalogEngine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { t } from '@/text';
@@ -103,7 +103,7 @@ export function usePromptCollection(kind: PromptCollectionKind, query: string): 
     stale: boolean;
     retry?: () => Promise<void>;
 }> {
-    const artifacts = useArtifacts();
+    const artifacts = useArtifacts('promptLibrary');
     const artifactsLoaded = useArtifactsLoaded(PROMPT_LIBRARY_ARTIFACT_KINDS);
     const scope = useAccountSettingsScope();
     const { value: folders } = usePromptLibraryCatalogValue('folders');
@@ -114,7 +114,7 @@ export function usePromptCollection(kind: PromptCollectionKind, query: string): 
         : buildPromptLibraryCollection({ kind, artifacts, folders, query, untitledTitle: untitled })),
     [artifacts, folders, invocations.value, kind, query, untitled]);
     const retry = React.useCallback(async () => {
-        if (scope) await refreshPromptLibraryCatalog(scope);
+        if (scope) await invalidatePromptLibraryCatalogProjection(scope);
     }, [scope]);
     const status = kind === 'template' ? invocations.status : artifactsLoaded ? 'ready' : 'loading';
     const stale = kind === 'template' ? invocations.stale : !artifactsLoaded;
@@ -171,6 +171,7 @@ const PromptCollectionDraftRow = React.memo(function PromptCollectionDraftRow(pr
     const copy = collectionCopy(props.kind);
     return (
         <CollectionDraftRow
+            rowRole="item"
             testID={`${copy.testID}.draft`}
             titles={titles}
             placeholder={copy.draft}
@@ -179,7 +180,7 @@ const PromptCollectionDraftRow = React.memo(function PromptCollectionDraftRow(pr
     );
 });
 
-/** The rail beside a prompt, skill or template: name-only rows, grouped by folder when any item has one. */
+/** The rail beside a prompt, skill or template, grouped by folder when any item has one. */
 export const PromptCollectionRail = React.memo(function PromptCollectionRail(props: Readonly<{ kind: PromptCollectionKind }>) {
     const router = useRouter();
     const pathname = usePathname();
@@ -194,6 +195,7 @@ export const PromptCollectionRail = React.memo(function PromptCollectionRail(pro
     const rows = collection.groups.flatMap((group) => group.rows);
     const renderRow = (row: PromptCollectionRow) => (
         <Item
+            rowRole={props.kind === 'template' ? 'catalogRow' : 'item'}
             key={row.id}
             testID={`${copy.testID}.row.${row.id}`}
             title={row.title}

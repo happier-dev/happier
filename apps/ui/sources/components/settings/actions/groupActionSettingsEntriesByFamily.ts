@@ -9,6 +9,7 @@ import { AGENT_INITIATED_APPROVAL_REQUIRED_ACTION_IDS } from '@happier-dev/proto
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { parseQualifiedPluginResourcePolicyId } from '@happier-dev/protocol/actions/actionSettings';
 import type { ActionSettingsEntry } from './buildActionSettingsEntries';
 import type { TranslationKey } from '@/text';
 
@@ -81,7 +82,7 @@ export function groupActionSettingsEntriesByFamily(
             // come from. A plugin the projection does not name keeps the family's title.
             const byPlugin = new Map<string, ActionSettingsEntry[]>();
             for (const entry of familyEntries) {
-                const pluginId = parseQualifiedPluginActionId(entry.actionId)?.pluginId ?? '';
+                const pluginId = (parseQualifiedPluginActionId(entry.actionId) ?? parseQualifiedPluginResourcePolicyId(entry.actionId))?.pluginId ?? '';
                 const bucket = byPlugin.get(pluginId);
                 if (bucket) bucket.push(entry); else byPlugin.set(pluginId, [entry]);
             }

@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeContainingText } from '@/dev/testkit/render/renderScreen';
 
-import type { ManagedIdentityProviderV1 } from '@happier-dev/protocol';
+import type { ManagedIdentityProviderV1 } from '@happier-dev/protocol/identity/providers';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 

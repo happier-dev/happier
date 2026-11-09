@@ -9,7 +9,6 @@ import {
     type TeamGroupMemberV1,
     type TeamGroupV1,
 } from '@happier-dev/protocol/teams';
-import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Avatar } from '@/components/ui/avatar/Avatar';
@@ -24,8 +23,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
-import { VirtualizedList } from '@/components/ui/lists/virtualized';
-import { usePageListBottomPadding } from '@/components/ui/lists/pageListBottomPadding';
+import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useTeamGroup, useTeamGroupMembers } from '@/hooks/teams/useTeamGroups';
 import { useTeamMembersRoster } from '@/hooks/teams/useTeamMembersRoster';
@@ -252,7 +250,6 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
     header?: React.ReactNode;
 }>) {
     const { theme } = useUnistyles();
-    const bottomPadding = usePageListBottomPadding();
     const router = useRouter();
     const readFailureAction = useTeamReadFailureAction();
     const { context, groupId } = props;
@@ -1005,18 +1002,12 @@ const GroupDetail = React.memo(function GroupDetail(props: Readonly<{
     );
 
     return (
-        <VirtualizedList
+        <VirtualizedItemList
             testID="team-group-detail-virtualized-list"
             data={rows}
             keyExtractor={(item) => item.key}
             renderItem={renderRow}
             ListHeaderComponent={pageHeader}
-            style={{
-                flex: 1,
-                backgroundColor: theme.colors.surface.base,
-                ...(Platform.OS === 'web' ? { minHeight: 0 } : {}),
-            }}
-            contentContainerStyle={{ paddingBottom: bottomPadding }}
             initialNumToRender={6}
             maxToRenderPerBatch={4}
             windowSize={7}

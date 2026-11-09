@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { IdentityConnectionTestDiagnosticsV1 } from '@happier-dev/protocol';
+import type { IdentityConnectionTestDiagnosticsV1 } from '@happier-dev/protocol/identity/testDiagnostics';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';

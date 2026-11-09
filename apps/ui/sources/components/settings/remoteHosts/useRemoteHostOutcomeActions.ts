@@ -4,7 +4,7 @@ import type { RelayAccessTaskTarget } from '@happier-dev/cli-common/systemTasks'
 import type { RemoteHostActionIdV1 } from '@happier-dev/protocol/remoteHosts/remoteHostActionIdsV1';
 
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
-import { buildSshHostKeyPromptBody } from '@/components/ssh/buildSshHostKeyPromptBody';
+import { confirmSshHostKey } from '@/components/ssh/SshHostKeyTrustSheet';
 import { useSystemTaskSnapshot } from '@/components/systemTasks/useSystemTaskSnapshot';
 import { readLatestSystemTaskPrompt } from '@/components/systemTasks/prompts/readLatestSystemTaskPrompt';
 import { useSshSystemTaskPromptModals } from '@/components/systemTasks/ssh/useSshSystemTaskPromptModals';
@@ -63,22 +63,12 @@ export function useRemoteHostOutcomeActions(options: Readonly<{
         }
         setNativeSshTunnelHostKeyPromptResolver(async (event) => {
             const isReplacement = event.status === 'changed';
-            const accepted = await Modal.confirm(
-                isReplacement
-                    ? t('settings.remoteHostsReplaceHostKeyTitle')
-                    : t('setupOnboarding.remoteSshChecklist.trustHostTitle'),
-                buildSshHostKeyPromptBody({
-                    host: event.host,
-                    fingerprint: event.fingerprintSha256,
-                    existingFingerprint: isReplacement ? event.existingFingerprintSha256 ?? null : null,
-                }),
-                {
-                    confirmText: isReplacement
-                        ? t('settings.remoteHostsReplaceHostKeyAction')
-                        : t('setupOnboarding.remoteSshChecklist.trustHostTitle'),
-                    cancelText: t('common.cancel'),
-                },
-            );
+            const accepted = await confirmSshHostKey({
+                host: event.host,
+                keyType: event.algorithm ?? null,
+                fingerprint: event.fingerprintSha256,
+                existingFingerprint: isReplacement ? event.existingFingerprintSha256 ?? null : null,
+            });
             return accepted
                 ? {
                     decision: 'accept-once',

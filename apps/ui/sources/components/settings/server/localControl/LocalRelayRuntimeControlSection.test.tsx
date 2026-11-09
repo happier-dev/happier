@@ -150,7 +150,7 @@ describe('LocalRelayRuntimeControlSection', () => {
 
     it('loads relay runtime status on mount and surfaces the latest local state', async () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
 
         let nextTaskId = 1;
         const listeners = new Map<string, {
@@ -216,7 +216,7 @@ describe('LocalRelayRuntimeControlSection', () => {
 
     it('starts install and stop tasks from the control rows and renders task progress', async () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
 
         let nextTaskId = 1;
         const listeners = new Map<string, {

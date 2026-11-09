@@ -1,4 +1,4 @@
-import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import * as React from 'react';
 import { ScrollView } from 'react-native';
 import { act } from 'react-test-renderer';

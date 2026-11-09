@@ -10,7 +10,7 @@ import { motionTokens, slideTransitionTokens } from '@/components/ui/motion';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 
 /**
  * The shown-once API token reveal: success, the secret with Copy, and the warning, staged in, then
@@ -246,6 +246,7 @@ export function ApiTokenRevealBody(props: Readonly<{
     const copyFeedback = useHappierCopyFeedback(1_500);
     const [copyError, setCopyError] = React.useState(false);
     const { onCopied, token } = props;
+    const writeClipboard = useClipboardWrite();
     const copied = copyFeedback.isCopied('token');
     const copyLabel = copied ? t('settingsApiTokens.reveal.copied') : props.copy?.copy ?? t('settingsApiTokens.reveal.copy');
 
@@ -253,13 +254,13 @@ export function ApiTokenRevealBody(props: Readonly<{
     // write settles; only a real copy acknowledges the reveal.
     const copy = React.useCallback(async () => {
         setCopyError(false);
-        const didCopy = await setClipboardStringSafe(token);
+        const didCopy = await writeClipboard(token);
         setCopyError(!didCopy);
         if (!didCopy) return;
         onCopied();
         copyFeedback.markCopied('token');
         announceAccessibilityMessage(t('settingsApiTokens.reveal.copied'));
-    }, [copyFeedback, onCopied, token]);
+    }, [copyFeedback, onCopied, token, writeClipboard]);
 
     return (
         <ApiTokenRevealStages

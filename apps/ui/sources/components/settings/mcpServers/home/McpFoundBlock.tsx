@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { DetectedMcpServerV1 } from '@happier-dev/protocol';
+import type { DetectedMcpServerV1 } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { CapabilityRow } from '@/components/capabilities/row/CapabilityRow';
@@ -25,7 +25,7 @@ import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { MCP_FOUND_ROUTE } from '../collection/mcpServerCollectionModel';
-import { McpServerMark } from '../identity/McpServerMark';
+import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import { useMcpServersSettings } from '../useMcpServersSettings';
 
 type FoundOnMachine = Readonly<{
@@ -146,6 +146,7 @@ export const McpFoundBlock = React.memo(function McpFoundBlock(
               color={theme.colors.text.secondary}
             />
           }
+          rightElementOutsidePressable
           rightElement={
             <RoundButton
               testID="mcp.empty.found.review"
@@ -172,7 +173,7 @@ export const McpFoundBlock = React.memo(function McpFoundBlock(
           testID={`mcp.home.found.${item.server.name}`}
           title={item.server.name}
           description={`${names.agentName(item.server.provider)} · ${machineName(item.machine)}`}
-          mark={<McpServerMark transport={item.server.transport} />}
+          mark={<HappierBrandMark brand={{ displayName: item.server.name }} pixelSize={20} externallyLabelled />}
           facts={{
             presentation: 'row',
             extra: [

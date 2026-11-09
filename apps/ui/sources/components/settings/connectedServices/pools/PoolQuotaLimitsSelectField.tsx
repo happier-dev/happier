@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { ConnectedServiceQuotaLimitSelectionV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceQuotaLimitSelectionV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 
 import { getPreferredLanguage, t } from '@/text';
 

@@ -35,6 +35,15 @@ describe('the configuration Action producer to shared MCP grant/status projectio
     expect(mcpSignInGrantView(server, grant, true, { configuration: await configuration('https://other.example/mcp') })).toEqual({ state: 'expired', reason: 'address_changed' });
     expect(mcpSignInGrantView(server, grant, true, { configuration: await configuration('https://mcp.linear.app:443/mcp') })).toMatchObject({ state: 'connected' });
   });
+  it('names a sign-in by its email or name, and by nothing when the provider only gave an opaque account id', async () => {
+    const safe = await configuration(server.remote!.url);
+    const identityOf = (providerIdentity: Record<string, string>) => {
+      const view = mcpSignInGrantView(server, { ...grant, providerIdentity }, true, { configuration: safe });
+      return view?.state === 'connected' ? view.identity : undefined;
+    };
+    expect(identityOf({ email: 'leeroy@acme.dev', accountId: '8d516553-3119-48fa-ab2b-b000cbd634fd' })).toBe('leeroy@acme.dev');
+    expect(identityOf({ accountId: '8d516553-3119-48fa-ab2b-b000cbd634fd' })).toBeNull();
+  });
   it('projects the daemon scope challenge as Grant access, and clears after the union grant lands', async () => {
     const safe = await configuration(server.remote!.url, ['write']);
     const view = mcpSignInGrantView(server, grant, true, { configuration: safe });

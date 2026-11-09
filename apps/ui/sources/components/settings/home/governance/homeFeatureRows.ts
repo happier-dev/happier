@@ -1,4 +1,4 @@
-import { FEATURE_IDS, isFeatureServerRepresented, type FeatureId } from '@happier-dev/protocol/features/catalog';
+import { FEATURE_IDS, getCanonicalFeatureId, isFeatureServerRepresented, type FeatureId } from '@happier-dev/protocol/features/catalog';
 import { listFeatureDependents } from '@happier-dev/protocol/features/featureDecisionEngine';
 import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
 import type { HomeSettingEntryV1, HomeSettingsProjectionV1 } from '@happier-dev/protocol/home/governance';
@@ -14,11 +14,10 @@ import { isHomeSettingWritable } from './homeSettingDeclaration';
  * a typed `blockingDependencyId` — read as given: the page never recomputes the closure (I9).
  */
 
-/** The approved Common ten, in the order the console lists them. */
+/** The Common features, in the order the console lists them. */
 export const HOME_COMMON_FEATURE_IDS = [
     'teams',
     'sharing.session',
-    'automations',
     'workflows',
     'search',
     'voice',
@@ -165,6 +164,7 @@ export function selectHomeFeatureRows(settings: HomeSettingsProjectionV1): HomeF
 
     const rows: HomeFeatureSwitchRow[] = [];
     for (const featureId of FEATURE_IDS) {
+        if (getCanonicalFeatureId(featureId) !== featureId) continue;
         if (!isFeatureServerRepresented(featureId)) continue;
         const entry = switches.get(featureId) ?? null;
         const decision = decisionsById.get(featureId) ?? null;

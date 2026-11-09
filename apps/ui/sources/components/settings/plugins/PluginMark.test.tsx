@@ -5,14 +5,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PluginMark } from './PluginMark';
 import { createValidPluginBrandPngFixture } from '@/dev/testkit';
 import { materializeHappierRenderableImage } from '@happier-dev/plugin-ui/advanced';
+import { getAgentUiConfig } from '@/agents/registry/registryUi';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 
-// SVG is a native/platform rendering boundary; keep catalog and AgentIcon resolution real.
-vi.mock('react-native-svg', async () => await import('@/dev/testkit/mocks/reactNativeSvg'));
 const bundledBrands = vi.hoisted(() => [] as { pluginId: string; resourceId: string; releaseVersion: string; displayName: string; digest: string; bytes: Uint8Array }[]);
 vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts', () => ({
     BUNDLED_PLUGIN_UI_APP_ARTIFACTS: [],
@@ -34,7 +33,7 @@ function render(element: React.ReactElement): ReactTestRenderer {
     return tree;
 }
 
-const agentLogos = (tree: ReactTestRenderer) => tree.root.findAll((node) => (node.type as unknown) === 'SvgXml');
+const images = (tree: ReactTestRenderer) => tree.root.findAll((node) => typeof node.type === 'string' && node.type === 'Image');
 const glyphs = (tree: ReactTestRenderer) => tree.root.findAll((node) => node.props?.name === 'puzzle-piece');
 const letters = (tree: ReactTestRenderer, letter: string) => tree.root.findAll((node) => (
     typeof node.type === 'string' && node.children.length === 1 && node.children[0] === letter
@@ -55,16 +54,18 @@ describe('PluginMark', () => {
     });
     it('shows the contributed Agent logo when that Agent has one', () => {
         const tree = render(<PluginMark title="Some Plugin" iconAgentId="claude" />);
-        expect(agentLogos(tree)).toHaveLength(1);
+        expect(images(tree)).toHaveLength(1);
+        expect(images(tree)[0].props.source).toEqual(getAgentUiConfig('claude').brandArtwork?.light);
+        expect(letters(tree, 'S')).toHaveLength(0);
         expect(glyphs(tree)).toHaveLength(0);
     });
 
     it('keeps bundled Agent identity without a connected machine projection, without guessing unknown package identities', () => {
         const bundled = render(<PluginMark title="Claude" pluginId="happier.agent.claude" iconAgentId={null} />);
-        expect(agentLogos(bundled)).toHaveLength(1);
-        expect(agentLogos(bundled)[0].props.width).toBe(28);
+        expect(images(bundled)).toHaveLength(1);
+        expect(images(bundled)[0].props.source).toEqual(getAgentUiConfig('claude').brandArtwork?.light);
         const external = render(<PluginMark title="Claude fork" pluginId="acme.agent.claude" />);
-        expect(agentLogos(external)).toHaveLength(0);
+        expect(images(external)).toHaveLength(0);
         expect(letters(external, 'C').length).toBeGreaterThan(0);
     });
 
@@ -72,7 +73,7 @@ describe('PluginMark', () => {
         // Unknown installed Agents and packages without an Agent retain the neutral identity.
         for (const iconAgentId of ['acme/reviewer', null]) {
             const tree = render(<PluginMark title="Some Plugin" iconAgentId={iconAgentId} />);
-            expect(agentLogos(tree)).toHaveLength(0);
+            expect(images(tree)).toHaveLength(0);
             expect(glyphs(tree)).toHaveLength(0);
             expect(letters(tree, 'S').length).toBeGreaterThan(0);
         }
@@ -80,13 +81,17 @@ describe('PluginMark', () => {
 
     it.each(['coderabbit', 'deepsec'])('shows the descriptor-owned %s review mark through the real Agent catalog', (iconAgentId) => {
         const tree = render(<PluginMark title="Reviewer" iconAgentId={iconAgentId} />);
-        expect(agentLogos(tree)).toHaveLength(1);
-        expect(agentLogos(tree)[0].props.xml).toContain('<path');
-        expect(agentLogos(tree)[0].props.width).toBe(28);
+        expect(images(tree)).toHaveLength(1);
+        const artwork = getAgentUiConfig(iconAgentId).brandArtwork;
+        expect(artwork?.light).toBeDefined();
+        expect(images(tree)[0].props.source).toEqual(artwork?.light);
+        expect(letters(tree, 'R')).toHaveLength(0);
     });
 
     it('draws the same rule at the head of the plugin page', () => {
-        expect(agentLogos(render(<PluginMark title="Claude" iconAgentId="claude" size="page" />))).toHaveLength(1);
+        const tree = render(<PluginMark title="Claude" iconAgentId="claude" size="page" />);
+        expect(images(tree)).toHaveLength(1);
+        expect(images(tree)[0].props.source).toEqual(getAgentUiConfig('claude').brandArtwork?.light);
         expect(letters(render(<PluginMark title="Notes" size="page" />), 'N').length).toBeGreaterThan(0);
     });
 });

@@ -3,12 +3,16 @@ import { describe, expect, it } from 'vitest';
 import type {
     QualifiedConnectedAccountGroupV4,
     QualifiedConnectedAccountProfileV4,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 import type { ConnectedServiceRegistryEntry } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { getConnectedServiceRegistryIdentityFallback } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { presentConnectedServiceIndexDiagnostics } from './presentConnectedServiceIndexDiagnostics';
 
 import { buildConnectedServicesIndexModel, type ConnectedServicesIndexAgentUse } from './buildConnectedServicesIndexModel';
 import { buildConnectedServiceSetupCatalog } from '../setup/buildConnectedServiceSetupCatalog';
+import { PluginConnectedAccountDescriptorContributionV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 
 const CLAUDE = { pluginId: 'happier.agent.claude', localId: 'anthropic' };
 const CODEX = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
@@ -74,6 +78,70 @@ const AGENTS: readonly ConnectedServicesIndexAgentUse[] = [
 ];
 
 describe('buildConnectedServicesIndexModel · who uses what', () => {
+    it.each([1, 2])('keeps declared multi-account services addable with %s saved accounts and no Machine execution', (count) => {
+        const services = [CODEX, { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }];
+        const model = buildConnectedServicesIndexModel({ transport: 'advertised-v4', entries: [], registryStatus: 'ready',
+            qualifiedAccounts: services.flatMap(service => Array.from({ length: count }, (_, index) => account(service, `saved-${index}`))),
+            qualifiedGroups: [], legacyServices: [], defaultAccountByServiceKey: {},
+            resolveLabel: (_entry, service) => service.localId, resolveFallbackEntry: getConnectedServiceRegistryIdentityFallback,
+            presentDiagnostics: () => ({ primary: null, supportDetails: null }), loadingLabel: 'Loading', agentUses: [] });
+        expect(model.sheets).toHaveLength(2);
+        expect(model.sheets.map(sheet => ({ canAdd: sheet.canAdd, count: sheet.connectedCount, executable: sheet.entry?.executable })))
+            .toEqual([{ canAdd: true, count, executable: false }, { canAdd: true, count, executable: false }]);
+        expect(buildConnectedServiceSetupCatalog(model).every(service => service.canAdd && service.connectedCount === count)).toBe(true);
+    });
+
+    it('keeps a saved service pending while its descriptor registry has not answered, not waiting for an offline Machine', () => {
+        const service = { pluginId: 'external.mail', localId: 'mail' };
+        const model = buildConnectedServicesIndexModel({ transport: 'advertised-v4', entries: [], registryStatus: 'loading',
+            qualifiedAccounts: [account(service, 'saved')], qualifiedGroups: [], legacyServices: [], defaultAccountByServiceKey: {},
+            resolveLabel: () => 'Mail', resolveFallbackEntry: getConnectedServiceRegistryIdentityFallback,
+            presentDiagnostics: entry => presentConnectedServiceIndexDiagnostics({ entry }), loadingLabel: 'Loading' });
+        expect(model.sheets[0]).toMatchObject({ canAdd: false, statusLine: 'Loading', accounts: [{ accountId: 'saved' }] });
+    });
+
+    it('distinguishes a missing descriptor from a complete installation census and an explicit disable', () => {
+        const service = { pluginId: 'acme.ledger', localId: 'ledger' };
+        const project = (census: Readonly<{ pluginIds: ReadonlySet<string>; complete: boolean }> | null,
+            descriptor: ConnectedServiceRegistryEntry | null = null) => buildConnectedServicesIndexModel({
+                transport: 'advertised-v4', entries: descriptor ? [descriptor] : [],
+                qualifiedAccounts: [account(service, 'saved')], qualifiedGroups: [], legacyServices: [],
+                defaultAccountByServiceKey: {}, resolveLabel: () => 'Ledger', resolveFallbackEntry: () => null,
+                presentDiagnostics: () => ({ primary: null, supportDetails: null }), loadingLabel: 'Loading',
+                pluginInstallationCensus: census,
+            }).sheets[0];
+        expect(project(null)).toMatchObject({ installationState: 'unknown', accounts: [{ accountId: 'saved' }] });
+        expect(project({ pluginIds: new Set(), complete: false })).toMatchObject({ installationState: 'unknown' });
+        expect(project({ pluginIds: new Set(), complete: true })).toMatchObject({ installationState: 'not-installed' });
+        expect(project({ pluginIds: new Set([service.pluginId]), complete: false })).toMatchObject({ installationState: 'installed' });
+        expect(project(null, { ...entry(service, 'Ledger'), executable: false, projectionStatus: 'ready',
+            availability: { state: 'disabled', reason: 'plugin_disabled' } })).toMatchObject({ installationState: 'disabled' });
+        expect(project({ pluginIds: new Set(), complete: true }, { ...entry(service, 'Ledger'), executable: false,
+            projectionStatus: 'loading', availability: { state: 'disabled', reason: 'plugin_disabled' } }))
+            .toMatchObject({ installationState: 'unknown' });
+    });
+    it('carries an authored Cloud machines category to setup without granting sign-in availability', () => {
+        const service = { pluginId: 'external.cloud', localId: 'cloud' };
+        const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({
+            id: service.localId, title: 'Cloud', ui: { category: 'cloud-machines' },
+            authentication: { defaultModeId: 'manual', modes: [{ id: 'manual', kind: 'manual', outcomeReconciliation: 'none', fields: [] }] },
+        });
+        const projectedDescriptor = projectConnectedAccountDescriptorV1({ descriptor, serviceId: service.localId, pluginId: service.pluginId,
+            provenance: 'external', sourceKind: 'installed', availability: { state: 'blocked', reason: 'configuration-required' }, diagnostics: [] });
+        const model = buildConnectedServicesIndexModel({
+            transport: 'advertised-v4', entries: [{ ...entry(service, 'Cloud'), projectedDescriptor, executable: false }],
+            qualifiedAccounts: [account(service, 'work')], qualifiedGroups: [], legacyServices: [], defaultAccountByServiceKey: {},
+            resolveLabel: candidate => String(candidate?.projectedTitle ?? 'Unknown'), resolveFallbackEntry: () => null,
+            presentDiagnostics: () => ({ primary: null, supportDetails: null }), loadingLabel: 'Loading', agentUses: [],
+        });
+        expect(buildConnectedServiceSetupCatalog(model)).toMatchObject([{ service, category: 'cloud-machines', section: 'tools', canAdd: false }]);
+        expect(Object.fromEntries(buildConnectedServiceSetupCatalog(build(AGENTS)).map(row => [row.serviceKey, row.category]))).toEqual({
+            'happier.agent.claude/anthropic': 'agent-sign-in',
+            'happier.agent.codex/openai-codex': 'agent-sign-in',
+            'happier.agent.gemini/gemini': 'agent-sign-in',
+            'happier.scm-github/github': 'code-tools',
+        });
+    });
     it('keeps service order independent of descriptor arrival, labels and account health', () => {
         const project = (arrived: boolean) => buildConnectedServicesIndexModel({
             transport: 'advertised-v4',
@@ -146,10 +214,16 @@ describe('buildConnectedServicesIndexModel · who uses what', () => {
         expect(claude.pools.map((group) => [group.ref.groupId, group.defaultFor])).toEqual([['work-pool', ['Claude Code']]]);
     });
 
-    it('keeps every sheet with the agent accounts while it is not yet known which agents use what', () => {
+    it('keeps unknown Agent usage distinct from Agent accounts and tools without losing saved accounts', () => {
         const model = build(null);
 
-        expect(model.sheets.every((sheet) => sheet.section === 'agents' && sheet.usedBy.length === 0)).toBe(true);
+        expect(model.sheets.map(sheet => [sheet.section, sheet.usedBy])).toEqual([
+            ['unknown', []], ['unknown', []], ['unknown', []],
+        ]);
+        expect(model.sheets.flatMap(sheet => sheet.accounts).map(account => account.accountId).sort())
+            .toEqual(['gh', 'me', 'personal', 'work']);
+        expect(buildConnectedServiceSetupCatalog(model).every(entry => entry.category === 'unknown')).toBe(true);
+        expect(build([]).sheets.every(sheet => sheet.section === 'tools')).toBe(true);
     });
 
     it('leaves out a service with nothing in it and nothing to do yet, instead of an empty sheet', () => {
@@ -174,7 +248,7 @@ describe('buildConnectedServicesIndexModel · who uses what', () => {
         expect(model.connectable).toEqual([]);
     });
 
-    it('keeps known stale services navigable with credential health and diagnostics without admitting setup', () => {
+    it('keeps known auth declarations addable with retained health and diagnostics without admitting native execution', () => {
         const staleEntries = [entry(CODEX, 'ChatGPT'), entry(GEMINI, 'Gemini')].map((candidate): ConnectedServiceRegistryEntry => ({
             ...candidate,
             executable: false,
@@ -199,7 +273,7 @@ describe('buildConnectedServicesIndexModel · who uses what', () => {
         const codex = model.sheets.find((sheet) => sheet.serviceKey === 'happier.agent.codex/openai-codex');
         expect(codex).toMatchObject({
             canOpen: true,
-            canAdd: false,
+            canAdd: true,
             attentionAccountId: 'work',
             statusLine: diagnostic,
             accounts: [{ accountId: 'work', status: 'needs_reauth' }],
@@ -214,7 +288,7 @@ describe('buildConnectedServicesIndexModel · who uses what', () => {
         });
         expect(buildConnectedServiceSetupCatalog(model).map((candidate) => [candidate.serviceKey, candidate.canAdd]))
             .toEqual([
-                ['happier.agent.codex/openai-codex', false],
+                ['happier.agent.codex/openai-codex', true],
                 ['happier.agent.gemini/gemini', false],
             ]);
     });

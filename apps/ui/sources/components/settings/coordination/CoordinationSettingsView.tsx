@@ -2,8 +2,6 @@ import * as React from 'react';
 import { ExchangeCheckInBannerPreview } from '@/components/sessions/pending/ExchangeCheckInBanner';
 import { View, type ScrollView } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { DEFAULT_SESSION_FOLLOW_CREATION_POLICIES_V1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
-import type { FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { COORDINATOR_KEEP_DEFAULT_VALUES, type CoordinatorKeepDefault } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -12,8 +10,6 @@ import { useRoleCatalog } from '@/components/roles/catalog/useRoleCatalog';
 import { useRoleMark } from '@/components/roles/catalog/useRoleMark';
 import { SettingAnchor, SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
-import { useSessionAutoFollowPreferences } from '@/components/sessions/follow/useSessionAutoFollowPreferences';
-import { SessionAutoFollowPreferencesSection } from '@/components/sessions/follow/SessionAutoFollowPreferencesSection';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
@@ -23,13 +19,13 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Text } from '@/components/ui/text/Text';
-import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 
 import { parseCheckInTurns, withNeverPause } from './coordinationCheckIn';
 import { COORDINATION_SETTINGS } from './coordinationSettings';
+import { CoordinationFollowPreferences } from './CoordinationFollowPreferences';
 import { CoordinatorKeepListPreview, CoordinatorKeepRailPreview } from './CoordinatorKeepPreviews';
 
 const SETTINGS = COORDINATION_SETTINGS.settings;
@@ -50,8 +46,7 @@ export const CoordinationSettingsView = React.memo(function CoordinationSettings
             <SettingsPageHeader description={t('settingsCoordination.pageDescription')} />
             <ShowCoordinatorsGroup />
             <NewCoordinatorsGroup popoverBoundaryRef={popoverBoundaryRef} />
-            <DefaultLevelsGroup popoverBoundaryRef={popoverBoundaryRef} />
-            <FollowAutomaticallyGroup />
+            <CoordinationFollowPreferences popoverBoundaryRef={popoverBoundaryRef} />
             <CheckInGroup />
         </ItemList>
     );
@@ -220,94 +215,6 @@ function RoleRow(props: Readonly<{ popoverBoundaryRef: React.RefObject<ScrollVie
             />
         </SettingAnchor>
     );
-}
-
-type CreationLevelField = 'managerPolicy' | 'runReportPolicy' | 'discussionReceivePolicy';
-const LEVEL_ROWS = [
-    { field: 'managerPolicy', title: 'settingsCoordination.levelUnderLead', subtitle: 'settingsCoordination.levelUnderLeadDescription' },
-    { field: 'runReportPolicy', title: 'settingsCoordination.levelRunReport', subtitle: 'settingsCoordination.levelRunReportDescription' },
-    { field: 'discussionReceivePolicy', title: 'settingsCoordination.levelDiscussion', subtitle: 'settingsCoordination.levelDiscussionDescription' },
-] as const satisfies readonly Readonly<{ field: CreationLevelField; title: string; subtitle: string }>[];
-const LEVEL_HINTS = {
-    everything: 'settingsCoordination.levelEverythingHint',
-    important: 'settingsCoordination.levelImportantHint',
-    quiet: 'settingsCoordination.levelQuietHint',
-} as const;
-type LevelPreset = keyof typeof LEVEL_HINTS;
-const LEVEL_PRESETS = Object.keys(LEVEL_HINTS) as readonly LevelPreset[];
-
-/**
- * The levels a follow starts with. They live in the Home's Follow preferences (`follow.preferences.get/set`),
- * the same payload and retry owner as the relationship defaults on Notifications; without the Home's answer
- * the group says so (loading, offline, failed) rather than showing a level it has not read.
- */
-function DefaultLevelsGroup(props: Readonly<{ popoverBoundaryRef: React.RefObject<ScrollView | null> }>) {
-    const activeServer = useActiveServerSnapshot();
-    const { enabled, displayed, online, saving, error, save, retry } = useSessionAutoFollowPreferences(activeServer.serverId);
-    const [openField, setOpenField] = React.useState<CreationLevelField | null>(null);
-    if (!enabled) return null;
-    return (
-        <ItemGroup title={t('settingsCoordination.defaultLevelsTitle')} description={t('settingsCoordination.defaultLevelsDescription')}>
-            {displayed ? LEVEL_ROWS.map((row) => {
-                const policy: FollowPolicyV1 = displayed[row.field] ?? DEFAULT_SESSION_FOLLOW_CREATION_POLICIES_V1[row.field];
-                const items: DropdownMenuItem[] = [
-                    ...LEVEL_PRESETS.map((preset) => ({
-                        id: preset,
-                        title: t(`session.follow.policy.${preset}`),
-                        subtitle: t(LEVEL_HINTS[preset]),
-                    })),
-                    ...(policy.preset === 'custom' ? [{ id: 'custom', title: t('session.follow.policy.custom'), disabled: true }] : []),
-                ];
-                return (
-                    <DropdownMenu
-                        key={row.field}
-                        testID={`settings-coordination-level-${row.field}`}
-                        open={openField === row.field}
-                        onOpenChange={(next) => setOpenField(next ? row.field : null)}
-                        variant="selectable"
-                        search={false}
-                        selectedId={policy.preset}
-                        showCategoryTitles={false}
-                        matchTriggerWidth={true}
-                        connectToTrigger={true}
-                        rowKind="item"
-                        popoverBoundaryRef={props.popoverBoundaryRef}
-                        itemTrigger={{
-                            title: t(row.title),
-                            subtitle: t(row.subtitle),
-                            showSelectedSubtitle: false,
-                            itemProps: { subtitleLines: 0, disabled: !online || saving },
-                        }}
-                        items={items}
-                        onSelect={(id) => {
-                            setOpenField(null);
-                            if (id === policy.preset || !LEVEL_PRESETS.includes(id as LevelPreset)) return;
-                            void save({ patch: { [row.field]: { preset: id as LevelPreset } } });
-                        }}
-                    />
-                );
-            }) : <Item title={t('common.loading')} loading={!error && online} mode="info" />}
-            {!online || error ? <Item
-                testID="settings-coordination-levels-error"
-                title={!online ? t('session.follow.offline') : t('errors.unknownError')}
-                titleLines={0}
-                mode="info"
-                accessibilityLiveRegion="polite"
-            /> : null}
-            {online && error ? <Item
-                testID="settings-coordination-levels-retry"
-                title={t('common.retry')}
-                onPress={retry}
-                showChevron={false}
-            /> : null}
-        </ItemGroup>
-    );
-}
-
-/** The four default rules, each a level, for the active Home (moved here from Notifications). */
-function FollowAutomaticallyGroup() {
-    const activeServer = useActiveServerSnapshot();
-    return <SessionAutoFollowPreferencesSection key={activeServer.serverId} serverId={activeServer.serverId} />;
 }
 
 function CheckInGroup() {

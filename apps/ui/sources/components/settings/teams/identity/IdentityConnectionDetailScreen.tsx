@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useFocusEffect } from '@/components/appShell/workspace/destinationRoute';
 import { AppState } from 'react-native';
-import type { IdentityConnectionTestDiagnosticsV1 } from '@happier-dev/protocol';
+import type { IdentityConnectionTestDiagnosticsV1 } from '@happier-dev/protocol/identity/testDiagnostics';
 import type { IdentityConnectionV1, TeamPolicyV1 } from '@happier-dev/protocol/teams';
 
 import { runTeamIdentityProviderTestReturn } from '@/components/settings/home/identity/identityProviderTestReturn';

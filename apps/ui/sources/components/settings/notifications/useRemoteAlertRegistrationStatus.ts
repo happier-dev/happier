@@ -1,5 +1,7 @@
 import * as React from 'react';
-import type { AttentionDeliveryPolicyV1, PushTokensRemoteAlertProjectionV2 } from '@happier-dev/protocol';
+import type { AttentionDeliveryPolicyV1} from '@happier-dev/protocol/account/settings/attentionDeliveryPolicy';
+import type { PushTokensRemoteAlertProjectionV2 } from '@happier-dev/protocol/push/pushTokenRegistration';
+import { deriveAccountRemoteAlertPolicyV1 } from '@happier-dev/protocol/account/settings/accountRemoteAlertPolicy';
 
 import { readActivityNotificationCapabilities } from '../../../../modules/happier-activity-notifications';
 import { resolveDeviceRemoteAlertNativeConsumer } from '@/activity/delivery/deriveDeviceRemoteAlertPolicy';
@@ -9,7 +11,7 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { AttentionDeviceOverridesV1 } from '@/sync/domains/settings/attentionDeviceOverridesV1';
-import { useAccountSettingsSyncStatus, useSettingsVersion } from '@/sync/domains/state/storage';
+import { getStorage, useSetting } from '@/sync/domains/state/storage';
 import { serverFetch } from '@/sync/http/client';
 import { runWithServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
@@ -36,8 +38,22 @@ export function useRemoteAlertRegistrationStatus(input: Readonly<{
     deviceOverrides: AttentionDeviceOverridesV1;
 }>): Readonly<{ registration: RemoteAlertRegistrationStatus; refresh: () => void }> {
     const scope = useAccountSettingsScope();
-    const settingsVersion = useSettingsVersion();
-    const syncStatus = useAccountSettingsSyncStatus();
+    const policyStatus = getStorage()(state => state.settingsRemoteAlertPolicyStatus);
+    // Supported older servers omit the optional currentness fact. Only that
+    // seam needs the incumbent exact-version re-read.
+    const unmarkedSettingsVersion = getStorage()(state => state.settingsRemoteAlertPolicyStatus == null ? state.settingsVersion : null);
+    const policySyncPending = getStorage()(state => {
+        const status = state.accountSettingsSyncStatus;
+        return (status.state === 'retrying' || status.state === 'failed')
+            && (status.pendingServerKeys === undefined || status.pendingServerKeys.some(key =>
+                key === 'sessionRemoteAlertsEnabled' || key === 'attentionDeliveryPolicyV1' || key === 'machineOfflineAlertsV1'));
+    });
+    const machineOfflineAlerts = useSetting('machineOfflineAlertsV1');
+    const expectsPolicy = React.useMemo(() => deriveAccountRemoteAlertPolicyV1({
+        sessionRemoteAlertsEnabled: input.accountEnabled,
+        attentionDeliveryPolicyV1: input.policy,
+        machineOfflineAlertsV1: machineOfflineAlerts,
+    }) !== null, [input.accountEnabled, input.policy, machineOfflineAlerts]);
     const [native, setNative] = React.useState(readCurrentNativeCapabilities);
     const [confirmed, setConfirmed] = React.useState<ConfirmedRegistration | null>(null);
     const [refreshing, setRefreshing] = React.useState(false);
@@ -93,14 +109,13 @@ export function useRemoteAlertRegistrationStatus(input: Readonly<{
     React.useEffect(() => {
         refresh();
         return () => requestRef.current?.abort();
-    }, [refresh, settingsVersion, syncStatus, input.accountEnabled, input.policy, input.deviceEnabled, input.deviceOverrides]);
+    }, [refresh, unmarkedSettingsVersion, input.accountEnabled, input.policy, machineOfflineAlerts, input.deviceEnabled, input.deviceOverrides]);
 
     const current = confirmed && areServerAccountScopesEqual(confirmed.scope, scope)
         && areServerProfileIdentifiersEquivalent(confirmed.scope.serverId, input.serverId) ? confirmed : null;
-    const pending = syncStatus?.state === 'retrying' || syncStatus?.state === 'failed'
-        || Boolean(current && input.accountEnabled !== (current.policy.status !== 'disabled'));
+    const pending = policySyncPending || Boolean(current && expectsPolicy !== ((policyStatus ?? current.policy.status) !== 'disabled'));
     const accountPolicy = !current ? (refreshing ? 'loading' : 'unavailable')
-        : pending ? 'pending' : current.policy.status;
+        : pending ? 'pending' : policyStatus ?? current.policy.status;
     const deviceEnrollment: RemoteAlertRegistrationStatus['deviceEnrollment'] = !native
         ? 'unavailable'
         : !current

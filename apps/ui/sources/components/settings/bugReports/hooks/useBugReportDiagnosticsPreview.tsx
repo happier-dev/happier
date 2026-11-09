@@ -5,9 +5,10 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 
 import { BugReportDiagnosticsPreviewModal, type BugReportDiagnosticsPreviewArtifact } from '../BugReportDiagnosticsPreviewModal';
+import { bugReportErrorMessage, isBugReportDiagnosticsSuperseded } from '../bugReportErrorMessage';
 import { exportBugReportDiagnosticsBundle } from '../bugReportExport';
 import type { BugReportDiagnosticsArtifact } from '../bugReportDiagnostics';
-import type { BugReportEnvironmentPayload } from '@happier-dev/protocol';
+import type { BugReportEnvironmentPayload } from '@happier-dev/protocol/bugs/reports/types';
 
 function utf8ByteLength(value: string): number {
   try {
@@ -54,7 +55,7 @@ export function useBugReportDiagnosticsPreview(input: {
         } catch (error) {
           await Modal.alert(
             t('common.error'),
-            error instanceof Error ? error.message : 'Diagnostics export failed.',
+            bugReportErrorMessage(error, t('bugReports.composer.alerts.previewUnavailableBody')),
           );
         }
       };
@@ -74,9 +75,10 @@ export function useBugReportDiagnosticsPreview(input: {
         closeOnBackdrop: true,
       });
     } catch (error) {
+      if (isBugReportDiagnosticsSuperseded(error)) return;
       await Modal.alert(
         t('bugReports.composer.alerts.previewUnavailableTitle'),
-        error instanceof Error ? error.message : t('bugReports.composer.alerts.previewUnavailableBody'),
+        bugReportErrorMessage(error, t('bugReports.composer.alerts.previewUnavailableBody')),
       );
     } finally {
       setPreviewing(false);

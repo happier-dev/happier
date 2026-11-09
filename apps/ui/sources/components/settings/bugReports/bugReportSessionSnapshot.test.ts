@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildLatestSessionSnapshot } from './bugReportSessionSnapshot';
+import { buildSelectedSessionSnapshot } from './bugReportSessionSnapshot';
 
 describe('bugReportSessionSnapshot', () => {
+    it('summarizes the explicitly selected session rather than the most recent one', () => {
+        const snapshot = buildSelectedSessionSnapshot({
+            sessionId: 'selected',
+            sessions: { selected: { id: 'selected', updatedAt: 1 }, latest: { id: 'latest', updatedAt: 2 } },
+            sessionMessages: {}, sessionPending: {},
+        });
+        expect(snapshot?.sessionId).toBe('selected');
+    });
+
     it('returns null when no sessions exist', () => {
-        const snapshot = buildLatestSessionSnapshot({
+        const snapshot = buildSelectedSessionSnapshot({
+            sessionId: 'missing',
             sessions: {},
             sessionMessages: {},
             sessionPending: {},
@@ -12,14 +22,15 @@ describe('bugReportSessionSnapshot', () => {
         expect(snapshot).toBeNull();
     });
 
-    it('builds a sanitized summary for the latest session', () => {
+    it('builds a sanitized summary for the selected session', () => {
         const message = {
             id: 'message-1', kind: 'assistant-text', createdAt: 29, localId: 'local-1',
             text: 'private assistant content',
             tool: { input: { token: 'private tool credential' }, result: 'private tool result' },
         };
         const pending = { id: 'pending-1', localId: 'pending-local', text: 'private pending prompt' };
-        const snapshot = buildLatestSessionSnapshot({
+        const snapshot = buildSelectedSessionSnapshot({
+            sessionId: 'latest',
             sessions: {
                 older: {
                     id: 'older',
@@ -66,8 +77,9 @@ describe('bugReportSessionSnapshot', () => {
         });
     });
 
-    it('chooses the latest user-facing session when a newer hidden carrier exists', () => {
-        const snapshot = buildLatestSessionSnapshot({
+    it('summarizes the selected user-facing session when a newer hidden carrier exists', () => {
+        const snapshot = buildSelectedSessionSnapshot({
+            sessionId: 'visible',
             sessions: {
                 visible: {
                     id: 'visible',
@@ -114,7 +126,8 @@ describe('bugReportSessionSnapshot', () => {
             localId: null,
         }));
 
-        const snapshot = buildLatestSessionSnapshot({
+        const snapshot = buildSelectedSessionSnapshot({
+            sessionId: 'latest',
             sessions: {
                 latest: {
                     id: 'latest',

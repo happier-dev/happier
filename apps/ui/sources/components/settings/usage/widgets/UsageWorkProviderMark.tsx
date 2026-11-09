@@ -24,6 +24,7 @@ export function UsageWorkProviderMark(
   const cached = readReusableDaemonMergedProjectionCacheEntry({
     machineId: props.machineId,
     serverId: props.serverId,
+    sections: ['familiesById.providers'],
   });
   const contribution =
     cached?.kind === 'ready'

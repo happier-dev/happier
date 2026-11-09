@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { PluginConfigurationSettingFieldV2 } from '@happier-dev/protocol';
+import type { PluginConfigurationSettingFieldV2 } from '@happier-dev/protocol/plugins/contributions/settings';
 
 import {
     buildConnectedAccountConfigurationSubmission,
@@ -54,6 +54,24 @@ const fields = [
 ] satisfies PluginConfigurationSettingFieldV2[];
 
 describe('connectedAccountConfigurationDraft', () => {
+    it('stages reference replacement and clearing independently of raw secret values', () => {
+        const secretFields = fields.filter(field => field.secret);
+        const draft = createConnectedAccountConfigurationDraft({ fields: secretFields, values: {} });
+        const selection = { ref: 'happier:shared-secret:v1:replacement', resourceRevision: 3 };
+        expect(buildConnectedAccountConfigurationSubmission({ fields: secretFields, draft,
+            configuredSecretFieldIds: ['clientSecret'], secretRefs: { clientSecret: 'existing' }, selectedSecrets: {},
+        })).toEqual({ ok: true, values: {}, secretValues: {}, selectedSecrets: {} });
+        expect(buildConnectedAccountConfigurationSubmission({ fields: secretFields, draft,
+            configuredSecretFieldIds: [], secretRefs: {}, selectedSecrets: { clientSecret: selection },
+        })).toEqual({ ok: true, values: {}, secretValues: {}, selectedSecrets: { clientSecret: selection } });
+        expect(buildConnectedAccountConfigurationSubmission({ fields: secretFields, draft,
+            configuredSecretFieldIds: ['clientSecret'], secretRefs: { clientSecret: 'existing' }, selectedSecrets: { clientSecret: null },
+        })).toEqual({ ok: false, missingFieldIds: ['clientSecret'], invalidFieldIds: [] });
+        expect(buildConnectedAccountConfigurationSubmission({ fields: secretFields.map(field => ({ ...field, required: false })), draft,
+            configuredSecretFieldIds: ['clientSecret'], secretRefs: { clientSecret: 'existing' }, selectedSecrets: { clientSecret: null },
+        })).toEqual({ ok: true, values: {}, secretValues: {}, selectedSecrets: { clientSecret: null } });
+    });
+
     it('derives every generic control from descriptor presentation and schema facts', () => {
         expect(fields.map(resolveConnectedAccountConfigurationControl)).toEqual([
             'text',

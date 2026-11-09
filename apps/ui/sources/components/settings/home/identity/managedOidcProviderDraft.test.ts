@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ManagedOidcIdentityProviderV1 } from '@happier-dev/protocol';
+import type { ManagedOidcIdentityProviderV1 } from '@happier-dev/protocol/identity/providers';
 import {
     EMPTY_MANAGED_OIDC_PROVIDER_DRAFT,
     managedOidcConfigFromDraft,

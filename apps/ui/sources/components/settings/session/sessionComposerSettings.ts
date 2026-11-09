@@ -10,6 +10,7 @@ export const SESSION_COMPOSER_SETTINGS = defineSettingsPage({
             titleKey: 'settingsSessionPages.composer.newSessionsSection',
             settings: {
                 draftEntry: {},
+                afterSend: {},
                 presentation: {},
             },
         },
@@ -17,6 +18,7 @@ export const SESSION_COMPOSER_SETTINGS = defineSettingsPage({
             titleKey: 'settingsSessionPages.composer.typingSection',
             settings: {
                 enterToSend: {},
+                keepFocus: {},
                 historyScope: { host: settingsHosts.web },
             },
         },
@@ -39,7 +41,7 @@ export const SESSION_COMPOSER_SETTINGS = defineSettingsPage({
         layout: {
             titleKey: 'settingsSessionPages.composer.layoutSection',
             settings: {
-                promptLibraryButton: {},
+                customize: { operation: { kind: 'interaction', requiresHumanInteraction: true } },
                 actionBar: {},
                 chipDensity: {},
                 glass: {},

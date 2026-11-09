@@ -11,6 +11,7 @@ import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelp
 type ShownModal = Readonly<{
     component: React.ComponentType<Record<string, unknown>>;
     props: Record<string, unknown>;
+    chrome?: Readonly<{ anchor?: unknown; phonePresentation?: string; title?: string }>;
 }>;
 
 const shownModals = vi.hoisted(() => [] as ShownModal[]);
@@ -163,5 +164,32 @@ describe('TeamCredentialAudiencePicker exact member mode', () => {
         expect(onChoose).toHaveBeenCalledWith({
             kind: 'member', id: 'membership-2', accountId: 'account-grace', name: 'Grace',
         });
+    });
+});
+
+describe('TeamCredentialAudiencePicker presentation', () => {
+    it('opens as the shared share sheet, hanging from the row that opened it (a bottom sheet on a phone)', async () => {
+        const serverId = await addHome();
+        const { TeamCredentialAudiencePicker } = await import('./TeamCredentialAudiencePicker');
+        const trigger = await renderScreen(
+            <TeamCredentialAudiencePicker
+                scope={{ serverId, accountId: 'account-owner' }}
+                address={{ serverId, teamId: 'team-1' }}
+                excludedGroupIds={[]}
+                excludedMemberIds={[]}
+                disabled={false}
+                label="Add people or Groups"
+                onChoose={vi.fn()}
+                testID="audience-trigger"
+            />,
+        );
+        // The press event's target is the row the person pressed (the platform's measurable host).
+        const row = { getBoundingClientRect: () => ({ x: 900, y: 40, width: 280, height: 44 }) };
+        const { act } = await import('react-test-renderer');
+        const pressable = trigger.findAll(node => node.props?.testID === 'audience-trigger' && typeof node.props?.onPress === 'function')[0]!;
+        await act(async () => { pressable.props.onPress({ currentTarget: row }); });
+        const shown = shownModals.at(-1);
+        expect(shown?.chrome).toMatchObject({ title: 'Add people or Groups', phonePresentation: 'sheet' });
+        expect(shown?.chrome?.anchor).toMatchObject({ kind: 'view', ref: { current: row } });
     });
 });

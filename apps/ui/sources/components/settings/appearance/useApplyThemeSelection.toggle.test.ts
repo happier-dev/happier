@@ -3,6 +3,7 @@ import 'fake-indexeddb/auto';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
+import { settingsParse } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storageStore';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -59,7 +60,7 @@ async function toggleFrom(params: Readonly<{ preference: 'adaptive' | 'light' | 
 }
 
 let account: Awaited<ReturnType<typeof createSecretSettingsTestHarness>>;
-beforeEach(async () => { account = await createSecretSettingsTestHarness(); });
+beforeEach(async () => { account = await createSecretSettingsTestHarness({ settings: settingsParse({}) }); });
 afterEach(async () => {
     standardCleanup();
     await account.dispose();
@@ -98,6 +99,7 @@ describe('useToggleThemeMode', () => {
         const fromDark = await toggleFrom({ preference: 'dark', screenDark: true, systemScheme: 'light' });
         expect(fromDark.themePreference).toBe('light');
         expect(fromDark.themeProfiles).toEqual(CUSTOM_PROFILES);
+        expect(fromDark.themeProfileSelection).toEqual(CUSTOM_PROFILES.activeProfileIds);
 
         expect((await toggleFrom({ preference: 'light', screenDark: false, systemScheme: 'dark' })).themePreference).toBe('dark');
     });

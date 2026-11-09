@@ -7,7 +7,7 @@ import { LookPanelBlock, LookSegments } from '@/components/atmosphere/look/LookC
 import { Typography } from '@/constants/Typography';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import { HAPPIER_DESKTOP_DOWNLOAD_URL } from '@/constants/downloadUrls';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { isNativeBlurAvailable } from '@/components/ui/glass/blurMaterial';
 import { resolveGlassCapability } from '@/components/ui/glass/resolveGlassCapability';
 import { useLiquidGlassAvailable } from '@/components/ui/glass/liquidGlass';
@@ -26,6 +26,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Slider } from '@/components/ui/forms/Slider';
+import { useSettingPreview } from '@/sync/store/settingsPreview';
 import { SettingAnchor, SettingRow, SettingSection } from '@/components/settings/shell/SettingRow';
 import { openDesktopReduceTransparencySettings } from '@/utils/platform/desktopGlassMaterial';
 import { Modal } from '@/modal';
@@ -34,7 +35,9 @@ import { lightTheme } from '@/theme';
 import { ThemePalettePreview } from './ThemeModePreview';
 import { APPEARANCE_SETTINGS } from './appearanceSettings';
 import { AtmosphereAppearanceRows, AtmosphereWhereItShows } from './AtmosphereAppearanceRows';
-import { useHomeAtmosphereEditor } from '@/components/atmosphere/look/atmosphereEditor';
+import { useSetting } from '@/sync/store/settingsReadHooks';
+import { useSettingMutable } from '@/sync/store/hooks';
+import type { NewSessionBackdropStrengthV1 } from '@happier-dev/protocol/account/settings/accountSettings';
 import { lookCopy } from '@/components/atmosphere/look/LookControls';
 
 type GlassPresetPreviewProps = Readonly<{
@@ -85,6 +88,7 @@ const surfaceSettings = [
 export function GlassAppearanceControls(props: Readonly<{ presentation: 'tiles' | 'compact' | 'panel' }>) {
     const { theme } = useUnistyles();
     const appearance = useGlassAppearance();
+    const previewTint = useSettingPreview('glassTintIntensity');
     const environment = useGlassRuntimeEnvironment();
     const compact = props.presentation === 'compact';
     const showBlurIntensity = Platform.OS === 'web' || isNativeBlurAvailable();
@@ -104,6 +108,7 @@ export function GlassAppearanceControls(props: Readonly<{ presentation: 'tiles' 
         value={appearance.tint}
         formatValueText={value => `${value}%`}
         onValueChange={appearance.setTint}
+        onValuePreview={previewTint}
         disabled={tintDisabled}
     />;
     if (props.presentation === 'panel') {
@@ -171,6 +176,7 @@ export function GlassAppearanceControls(props: Readonly<{ presentation: 'tiles' 
         <GlassEffectiveStateLine settings={appearance.settings} />
         {showBlurIntensity ? compact ? blur : <SettingAnchor setting={APPEARANCE_SETTINGS.settings.glassIntensity}>{blur}</SettingAnchor> : null}
         {compact ? tint : <SettingAnchor setting={APPEARANCE_SETTINGS.settings.glassTint}>{tint}</SettingAnchor>}
+        {!compact ? <NewSessionBackdropStrengthRow solid={appearance.preset === 'solid'} /> : null}
         {!compact ? <SettingSection section={APPEARANCE_SETTINGS.sectionRefs.glass}>
             {surfaceSettings.filter(({ group }) => group !== 'content' || environment.desktopWindow === true).map(({ group, setting }) => <SettingAnchor key={group} setting={setting}>
                 <SegmentedChoiceItem<'glass' | 'solid'>
@@ -185,6 +191,24 @@ export function GlassAppearanceControls(props: Readonly<{ presentation: 'tiles' 
             </SettingAnchor>)}
         </SettingSection> : null}
     </>;
+}
+
+/** The frost behind New session, Modal and Docked alike; Solid glass has no frost to set. */
+function NewSessionBackdropStrengthRow(props: Readonly<{ solid: boolean }>) {
+    const [strength, setStrength] = useSettingMutable('newSessionBackdropStrengthV1');
+    const setting = APPEARANCE_SETTINGS.settings.newSessionBackdropStrength;
+    return <SettingAnchor setting={setting}>
+        <SegmentedChoiceItem<NewSessionBackdropStrengthV1>
+            title={t(setting.titleKey)}
+            subtitle={t('settingsAppearance.newSessionBackdropStrength.description')}
+            subtitleLines={0}
+            testIDPrefix="appearance-new-session-backdrop"
+            options={(['subtle', 'soft', 'medium', 'rich'] as const).map(id => ({ id, label: t(`settingsAppearance.newSessionBackdropStrength.${id}`) }))}
+            value={strength}
+            onChange={setStrength}
+            disabled={props.solid}
+        />
+    </SettingAnchor>;
 }
 
 /**
@@ -213,7 +237,7 @@ export function useGlassAppearancePurpose(): string {
 /** The current material and backdrop in a few words, for the row that opens the page. */
 export function useGlassAppearanceSummary(): string {
     const appearance = useGlassAppearance();
-    const { value } = useHomeAtmosphereEditor();
+    const value = useSetting('homeAtmosphere');
     const backdrop = lookCopy(value.source === 'planet' ? 'sourcePlanet' : value.source === 'picture' ? 'sourcePicture' : 'sourceNone');
     return `${t(`settingsAppearance.glassControls.${appearance.preset}`)} · ${backdrop}`;
 }

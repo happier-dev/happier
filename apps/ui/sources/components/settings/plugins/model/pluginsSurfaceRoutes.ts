@@ -83,6 +83,17 @@ export function storeMachineRouteParams(machine: QualifiedMachineV1 | null) {
     return { machine: machine ? JSON.stringify({ serverId: machine.serverId, machineId: machine.machineId }) : undefined };
 }
 
+/** The browser profile a profile's Extensions section opened the Store for: an install-form seed beside `machine`, never authority. */
+export function readStoreBrowserProfileRoute(params: Readonly<Record<string, unknown>>): string | null {
+    return readParam(params.browserProfile) ?? null;
+}
+
+/** One saved browser profile's page inside Store (its Extensions), until the profile page itself exists. */
+export function buildStoreBrowserProfileRoute(machine: QualifiedMachineV1, profileId: string): string {
+    return `/plugins/browser-profile?machine=${encodeURIComponent(storeMachineRouteParams(machine).machine!)}`
+        + `&browserProfile=${encodeURIComponent(profileId)}`;
+}
+
 /** The host a pathname belongs to. Anything outside `/settings` is the app page. */
 export function resolvePluginsSurfaceHost(pathname: string | null | undefined): PluginsSurfaceHost {
     if (typeof pathname !== 'string') return 'settings';
@@ -125,11 +136,13 @@ export function storeOpenItemParams(item: StoreListingReference | null) {
         selection: item ? JSON.stringify(item) : undefined };
 }
 
-export function buildStoreListingRoute(item: StoreListingReference, project?: QualifiedProjectKeyV1 | null, continuationId?: string, machine?: QualifiedMachineV1 | null) {
+export function buildStoreListingRoute(item: StoreListingReference, project?: QualifiedProjectKeyV1 | null, continuationId?: string,
+    machine?: QualifiedMachineV1 | null, browserProfile?: string | null) {
     return { pathname: LISTING_PATHNAMES.app, params: { selection: JSON.stringify(item),
         ...(continuationId ? { continuation: continuationId } : {}),
         ...(project ? storeProjectRouteParams(project) : {}),
-        ...(machine ? storeMachineRouteParams(machine) : {}) } } as const;
+        ...(machine ? storeMachineRouteParams(machine) : {}),
+        ...(browserProfile ? { browserProfile } : {}) } } as const;
 }
 
 export type StoreListingRouteSelection =
@@ -189,6 +202,7 @@ export function buildPluginsHomeRoute(host: PluginsSurfaceHost, options?: Readon
     catalogSourceId?: string;
     project?: QualifiedProjectKeyV1 | null;
     machine?: QualifiedMachineV1 | null;
+    browserProfile?: string | null;
     /** Shared Store conditions (`readStoreDirectoryRoute` reads them back): Open in Installed keeps a Machine. */
     filters?: SettingsCollectionFilter;
 }>) {
@@ -205,6 +219,7 @@ export function buildPluginsHomeRoute(host: PluginsSurfaceHost, options?: Readon
         options?.catalogSourceId ? `catalogSource=${encodeURIComponent(options.catalogSourceId)}` : null,
         options?.project ? `project=${encodeURIComponent(storeProjectRouteParams(options.project).project!)}` : null,
         options?.machine ? `machine=${encodeURIComponent(storeMachineRouteParams(options.machine).machine!)}` : null,
+        options?.browserProfile ? `browserProfile=${encodeURIComponent(options.browserProfile)}` : null,
         open.plugin ? `plugin=${encodeURIComponent(open.plugin)}` : null,
         sourceId ? `source=${encodeURIComponent(sourceId)}` : null,
         open.itemId ? `itemId=${encodeURIComponent(open.itemId)}` : null,

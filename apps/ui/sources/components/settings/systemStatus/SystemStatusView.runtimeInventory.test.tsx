@@ -147,6 +147,7 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
     (await import('@/dev/testkit/mocks/serverScopedRpc')).createServerScopedMachineRpcBoundaryMock(machineCollectBugReportDiagnosticsMock));
 
 const { storage } = await import('@/sync/domains/state/storageStore');
+const { Item } = await import('@/components/ui/lists/Item');
 const { getVoiceSessionSnapshot, setVoiceSessionSnapshot } = await import('@/voice/session/voiceSessionStore');
 const { SystemStatusView } = await import('./SystemStatusView');
 const { OverviewMachinesSection } = await import('../overview/OverviewMachinesSection');
@@ -384,7 +385,7 @@ describe('SystemStatusView runtime inventory', () => {
             await pressTestInstanceAsync(header, 'open calm machines');
         }
         await flushHookEffects({ cycles: 2, turns: 2 });
-        const titles = screen.findAll((node) => typeof node.props?.title === 'string').map((node) => String(node.props.title));
+        const titles = screen.findAllByType(Item).map((node) => String(node.props.title));
         expect(titles.filter((title) => title.startsWith('Studio ·')).length).toBe(2);
         expect(titles).not.toContain('systemStatus.ui.realtime');
     });

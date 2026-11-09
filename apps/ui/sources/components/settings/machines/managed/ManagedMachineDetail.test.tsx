@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { AgentActionButton } from '@happier-dev/plugin-ui/components';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
@@ -28,13 +29,14 @@ import { resetRuntimeFetch, setRuntimeFetch as installRuntimeFetch } from '@/uti
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { ManagedMachineDetail } from './ManagedMachineDetail';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 
 /** Pages render under the app shell, which owns the Account's one Investigate owner (D5). */
 const renderScreen: typeof renderTestScreen = (element, options = {}) => {
     const Outer = options.wrapper;
     return renderTestScreen(element, { ...options, wrapper: Outer
-        ? ({ children }) => <AccountNoticeInvestigationBoundary><Outer>{children}</Outer></AccountNoticeInvestigationBoundary>
-        : AccountNoticeInvestigationBoundary });
+        ? ({ children }) => <AccountNoticeInvestigationBoundary><ListPresentationProvider value="page"><Outer>{children}</Outer></ListPresentationProvider></AccountNoticeInvestigationBoundary>
+        : ({ children }) => <AccountNoticeInvestigationBoundary><ListPresentationProvider value="page">{children}</ListPresentationProvider></AccountNoticeInvestigationBoundary> });
 };
 import { t } from '@/text';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
@@ -252,7 +254,7 @@ describe('managed Machine detail', () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-shared-use.test', scope: 'tab' });
         const homeId = 'srv_managed_shared_use';
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('viewer', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('viewer', { currentAccount: true }) });
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
         const controller = { machineId: 'shared-controller', installationId: 'installation' };
         const launch = { provider, schemaVersion: 1, name: 'Shared sandbox', choices: {} };
@@ -304,7 +306,7 @@ describe('managed Machine detail', () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-account-detail.test', scope: 'tab' });
         const homeId = 'srv_managed_account_detail';
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner') });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner') });
         const machine = ManagedMachineV1Schema.parse({ id: 'account-owned', homeId, custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Account guest', choices: {} },
             allocation: 'bound', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
@@ -333,7 +335,7 @@ describe('managed Machine detail', () => {
         const target = await upsertAndActivateServer({ serverUrl: `https://managed-removed-${door}.test`, scope: 'tab' });
         const homeId = `srv_managed_removed_${door}`;
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner') });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner') });
         let machine = ManagedMachineV1Schema.parse({ id: 'removed-enrolled', homeId, custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Removed guest', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'deleted-guest',
@@ -368,8 +370,10 @@ describe('managed Machine detail', () => {
         const { WorkspaceShell } = await import('@/components/appShell/workspace/WorkspaceShell');
         const { KeyboardShortcutProvider } = await import('@/keyboard/KeyboardShortcutProvider');
         const { registerWorkspaceRouteContext } = await import('@/components/appShell/workspace/workspaceRouteContext');
+        const machineLayout = await import('@/app/(app)/settings/machines/_layout');
         // Expo's module loader is the boundary; destination admission, retention and redirects remain real.
         const routeModules = {
+            './(app)/settings/machines/_layout.tsx': machineLayout,
             './(app)/machines/managed/[id].tsx': { WorkspaceRouteBody: ManagedMachineRouteBody },
             './(app)/settings/machines/managed/[id].tsx': { WorkspaceRouteBody: SettingsManagedMachineRouteBody },
             './(app)/settings/machines/[id]/index.tsx': { WorkspaceRouteBody: MachinePageScreen },
@@ -422,7 +426,7 @@ describe('managed Machine detail', () => {
         const target = await upsertAndActivateServer({ serverUrl: `https://enrolled-removed-${door}.test`, scope: 'tab' });
         const homeId = `srv_enrolled_removed_${door}`;
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner') });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner') });
         const machine = ManagedMachineV1Schema.parse({ id: 'retained-removed', homeId, custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Removed guest', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'deleted-guest',
@@ -457,7 +461,8 @@ describe('managed Machine detail', () => {
             focused visible navigation={navigation}><MachinesDoorProvider door={door}><MachineSubPageScreen /></MachinesDoorProvider></DestinationInstanceHost>);
         try {
             await flushHookEffects({ cycles: 30 });
-            expect(sharing.findByTestId('machine-detail-not-found')).not.toBeNull();
+            // MACH-COMPOSE D1 (d441ea4a98): the old Sharing page opens its place in Security.
+            expect(navigation.replace).toHaveBeenLastCalledWith(`${pathname}?serverId=${homeId}&tab=security&page=sharing`);
             expect(sharing.findByTestId('machine-detail-sharing')).toBeNull();
         } finally { await sharing.unmount(); }
     });
@@ -465,7 +470,7 @@ describe('managed Machine detail', () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-cold-destination.test', scope: 'tab' });
         const homeId = 'srv_managed_cold_destination';
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const machine = ManagedMachineV1Schema.parse({ id: 'cold-managed', homeId, custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Cold managed receipt', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'unsubmitted', creationState: 'active',
@@ -508,7 +513,7 @@ describe('managed Machine detail', () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-retry.test', scope: 'tab' });
         const homeId = 'srv_managed_retry';
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, {
             token: createAccountTokenForTests('owner', { currentAccount: true }),
         });
         const machine = ManagedMachineV1Schema.parse({
@@ -548,7 +553,7 @@ describe('managed Machine detail', () => {
     it('holds the managing computer as a pending value, never "Loading…" in its sentences, until its name is read', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-controller-pending.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_controller_pending');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
         const controller = { machineId: 'controller', installationId: 'installation' };
         const launch = { provider, schemaVersion: 1, name: 'Local sandbox', choices: {} };
@@ -591,7 +596,7 @@ describe('managed Machine detail', () => {
         vi.spyOn(await import('react-native'), 'useWindowDimensions').mockReturnValue({ width: 1440, height: 900, scale: 1, fontScale: 1 });
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-ended-record.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_ended_record');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
         const controller = { machineId: 'controller', installationId: 'installation' };
         const launch = { provider, schemaVersion: 1, name: 'Local sandbox', choices: {} };
@@ -630,7 +635,7 @@ describe('managed Machine detail', () => {
     it('offers Create another on an ended resource, opening its configurator made like the same preset and controller (lab m-life/L#4)', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-ended-another.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_ended_another');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
         const controller = { machineId: 'controller', installationId: 'installation' };
         const launch = { provider, schemaVersion: 1, name: 'Finite sandbox', choices: {} };
@@ -663,7 +668,7 @@ describe('managed Machine detail', () => {
     it.each(['provider', 'credential', 'credential-many'] as const)('offers the canonical %s recovery from current native facts without installation retry', async removed => {
         const target = await upsertAndActivateServer({ serverUrl: `https://managed-missing-${removed}.test`, scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, `srv_managed_missing_${removed}`);
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         if (removed !== 'provider') await upsertAndActivateServer({ serverUrl: 'https://managed-recovery-other-home.test', scope: 'tab' });
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
         const account = { service: { pluginId: 'custom.credentials', localId: 'cloud' }, accountId: 'refused-cloud-account' };
@@ -733,7 +738,7 @@ describe('managed Machine detail', () => {
             || ownership === 'unloaded-no-birth-bound' || conflicting;
         const target = await upsertAndActivateServer({ serverUrl: `https://managed-birth-${ownership}.test`, scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, `srv_managed_birth_${ownership}`);
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
         const machine = { id: 'birth-resource', homeId: `srv_managed_birth_${ownership}`,
             custodianAccountId: ownership === 'shared' ? 'foreign-owner' : 'owner',
@@ -973,7 +978,8 @@ describe('managed Machine detail', () => {
     it('keeps Delete available for a canceled Account creation with pending paid-resource cleanup', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-canceled-cleanup.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_canceled_cleanup');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id },
+            { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
         const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'srv_managed_canceled_cleanup',
             custodianAccountId: 'owner',
@@ -1008,7 +1014,7 @@ describe('managed Machine detail', () => {
     it('offers Remove only where Delete cannot end the resource and reads pending Delete from admitted approvals without scanning unrelated Artifact arrivals (UIR5)', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-remove-gate.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_remove_gate');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
         let machine: ManagedMachineV1 = { id: 'healthy-bound', homeId: 'srv_managed_remove_gate', custodianAccountId: 'owner',
             launch: { provider, schemaVersion: 1, name: 'Studio', choices: {} },
@@ -1075,7 +1081,7 @@ describe('managed Machine detail', () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-acquire-host-key-failure.test', scope: 'tab' });
         const homeId = 'srv_managed_host_key_failure';
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const controller = { machineId: 'host-key-controller', installationId: 'host-key-installation' };
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: controller.machineId,
@@ -1119,19 +1125,20 @@ describe('managed Machine detail', () => {
         try {
             await waitForHomeGovernance(async () => {
                 await flushHookEffects();
-                expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation-error'
-                    && node.props.diagnosticCode === failed.error!.errorCode).length, screen.getTextContent()).toBeGreaterThan(0);
+                expect(screen.findByTestId('managed-machine.installation-error'), screen.getTextContent()).not.toBeNull();
                 expect(screen.findByTestId('managed-machine.installation-retry')).not.toBeNull();
                 expect(screen.findByTestId('managed-machine.delete')).not.toBeNull();
                 expect(screen.findByTestId('managed-machine.delete')?.props.disabled).not.toBe(true);
             });
             expect(screen.getTextContent()).not.toContain(t('managedMachines.creation.resourceReady'));
             expect(screen.findByTestId('managed-machine.installation-prompt-approve')).toBeNull();
+            await screen.pressByTestIdAsync('managed-machine.installation-error.details');
+            expect(screen.getTextContent()).toContain(failed.error!.errorCode);
             expect(screen.findByTestId('managed-machine.installation-retry')).not.toBeNull();
             expect(retries).toEqual([]);
             // A failed install task is evidence: Investigate sits beside Retry and hands this exact operation to
             // configured Triage. This Home has none, so the shared owner's typed refusal is shown (D5).
-            await screen.pressByTestIdAsync('managed-machine.installation-investigate');
+            await act(async () => { screen.findAllByType(AgentActionButton)[0]!.props.onLaunch('review'); });
             await waitForHomeGovernance(async () => {
                 await flushHookEffects();
                 expect(screen.findByTestId('managed-machine.investigate.unavailable')).not.toBeNull();
@@ -1148,7 +1155,7 @@ describe('managed Machine detail', () => {
     it('keeps an archived enrolled resource at its retained recovery destination', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-archived-detail.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_archived_detail');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
         let machine: ManagedMachineV1 = { id: 'archived-enrolled', homeId: 'srv_managed_archived_detail', custodianAccountId: 'owner',
             launch: { provider, schemaVersion: 1, name: 'Archived resource', choices: {} },
@@ -1186,7 +1193,7 @@ describe('managed Machine detail', () => {
         vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-policy-conflict.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_policy_conflict');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
         let machine: ManagedMachineV1 = { id: 'conflicted-policy', homeId: 'srv_managed_policy_conflict', custodianAccountId: 'owner',
             launch: { provider, schemaVersion: 1, name: 'Retained resource', choices: {} },
@@ -1301,7 +1308,7 @@ describe('managed Machine detail', () => {
         await setServerProfileIdentityForUrl(target.serverUrl, `srv_managed_policy_ask_${status}`);
         const token = createAccountTokenForTests('owner', { currentAccount: true });
         const authentication = readOriginalAccountActionAuthentication(token);
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token });
         const controller = { machineId: 'controller', installationId: 'installation' };
         const provider = { pluginId: 'custom.provisioner', localId: 'native' };
         let machine: ManagedMachineV1 = { id: 'ask-policy', homeId: `srv_managed_policy_ask_${status}`, custodianAccountId: 'owner',
@@ -1494,7 +1501,7 @@ describe('managed Machine detail', () => {
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_shared_move');
         const token = createAccountTokenForTests('manager', { currentAccount: true });
         const authentication = readOriginalAccountActionAuthentication(token);
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token });
         const controller = { machineId: 'shared-original', installationId: 'shared-original-installation' };
         const destination = { machineId: 'custodian-destination', installationId: 'custodian-destination-installation' };
         const requesterOwned = { machineId: 'requester-owned', installationId: 'requester-owned-installation' };
@@ -1598,7 +1605,7 @@ describe('managed Machine detail', () => {
     it('reloads the canonical moved controller after native binding repair fails, without replaying Move or applying failure details locally', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-move-partial.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_move_partial');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const controller = { machineId: 'partial-original', installationId: 'partial-original-installation' };
         const destination = { machineId: 'partial-destination', installationId: 'partial-destination-installation' };
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
@@ -1698,7 +1705,7 @@ describe('managed Machine detail', () => {
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_parent_approval');
         const token = createAccountTokenForTests('owner', { currentAccount: true });
         const authentication = readOriginalAccountActionAuthentication(token);
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token });
         const controller = { machineId: 'parent-controller', installationId: 'parent-installation' };
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
@@ -1827,7 +1834,7 @@ describe('managed Machine detail', () => {
         const target = await upsertAndActivateServer({ serverUrl: `https://managed-live-variant-${variant}.test`, scope: 'tab' });
         const homeId = `srv_managed_live_variant_${variant}`;
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const controller = { machineId: 'variant-controller', installationId: 'variant-installation' };
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
@@ -1997,7 +2004,7 @@ describe('managed Machine detail', () => {
       'discloses native Ends facts without offering creation-duration changes (observed: $observed, configured: $configured)', async ({ observed, configured }) => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-finite-detail.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_finite');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const controller = { machineId: 'finite-controller', installationId: 'finite-installation' };
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
@@ -2076,7 +2083,7 @@ describe('managed Machine detail', () => {
         vi.stubGlobal('open', openConsole);
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-retire-review.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_retire');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const controller = { machineId: 'retire-controller', installationId: 'retire-installation' };
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: controller.machineId,
@@ -2119,8 +2126,9 @@ describe('managed Machine detail', () => {
                 nativeActions.push(actionId);
                 const request = readNativeControllerRequest(init);
                 if (actionId === 'machines.managed.retire') retired.push(request.input);
-                if ('providerListed' in scenario && actionId === 'machines.provisioners.list') {
-                    return staticRetentionQualification(machine, url, { ...init, body: JSON.stringify(request) })!;
+                if ('providerListed' in scenario) {
+                    const qualification = staticRetentionQualification(machine, url, { ...init, body: JSON.stringify(request) });
+                    if (qualification) return qualification;
                 }
                 const result = actionId === 'machines.provisioners.list' ? { provisioners: [] }
                     : { kind: 'approval_request_created', artifactId: 'retire-approval', actionId };
@@ -2191,7 +2199,7 @@ describe('managed Machine detail', () => {
     it.each(['offline', 'missing', 'missing-local', 'missing-nonmanager'] as const)('offers Move only with current authority and a same-credential destination (%s)', async controllerState => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-move-candidates.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_move');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests(
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests(
             controllerState === 'missing-nonmanager' ? 'viewer' : 'owner', { currentAccount: true }) });
         const controller = { machineId: 'original', installationId: 'original-installation' };
         const next = { machineId: 'reachable', installationId: 'reachable-installation' };
@@ -2304,7 +2312,7 @@ describe('managed Machine detail', () => {
         const token = createAccountTokenForTests('owner', { currentAccount: true });
         const authentication = readOriginalAccountActionAuthentication(token);
         expect(authentication).toEqual({ kind: 'account', tokenEpoch: 0 });
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token });
         const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.compute', localId: 'vm' }, schemaVersion: 1, name: 'Paid guest', choices: {} };
         const controller = { machineId: 'controller', installationId: 'installation' };
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
@@ -2420,17 +2428,22 @@ describe('managed Machine detail', () => {
         } finally { account.dispose(); }
         const screen = await renderScreen(<ManagedEnrolledMachineSections enrolledMachineId="guest" serverId={target.id}
             executeAction={createFrontDoorActionExecute(createDefaultActionExecutor())} />);
+        if (authority === 'guest') {
+            // OWNER-RULINGS 2026-10-31: Use has no Machine-wide resource controls.
+            await flushHookEffects({ cycles: 30 });
+            expect(screen.findByTestId('managed-machine.detail')).not.toBeNull();
+            expect(screen.findByTestId('managed-machine.delete')).toBeNull();
+            expect(nativeRequests).toEqual([]);
+            expect(minted).toEqual([]);
+            await screen.unmount();
+            return;
+        }
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
             expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.delete' && typeof node.props.onPress === 'function')).not.toHaveLength(0);
         });
         const remove = screen.tree.findAll(node => node.props?.testID === 'managed-machine.delete' && typeof node.props.onPress === 'function')[0];
         expect(remove).toBeDefined();
-        if (authority === 'guest') {
-            expect(remove?.props.disabled).toBe(true);
-            expect(nativeRequests).toEqual([]);
-            return;
-        }
         expect(remove?.props.disabled).not.toBe(true);
         reviewingDelete = true;
         if (authority === 'stalled-target') vi.stubEnv('EXPO_PUBLIC_HAPPIER_SERVER_READ_INACTIVITY_TIMEOUT_MS', '50');
@@ -2501,7 +2514,7 @@ describe('managed Machine detail', () => {
     it.each(['approval-pending', 'saved'] as const)('resets live Keep from the fresh parent, clearing a failed proposal only on success (%s)', async outcome => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-reset-parent.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_reset');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const controller = { machineId: 'controller', installationId: 'installation' };
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
@@ -2612,7 +2625,7 @@ describe('managed Machine detail', () => {
         const homeId = `srv_bootstrap_${basis}`;
         const target = await upsertAndActivateServer({ serverUrl: `https://managed-bootstrap-${basis}.test`, scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const controller = { machineId: 'boot-controller', installationId: 'boot-installation' };
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
@@ -2712,7 +2725,8 @@ describe('managed Machine detail', () => {
             await act(async () => storage.getState().applyMachines([{ ...guest, active: true, activeAt: Date.now(), updatedAt: Date.now() }], false,
                 { sourceServerId: serverId }));
             await flushHookEffects({ cycles: 10 });
-            expect(screen.findByTestId('managed-machine.installation-error')).toBeNull();
+            expect(screen.findByTestId('managed-machine.installation-error'), JSON.stringify({ enrolled: screen.tree.findByType(ManagedCreationProgress).props.enrolledMachine,
+                guest: storage.getState().machineListByServerId[serverId]?.find(candidate => candidate.id === 'enrolled-guest') })).toBeNull();
             expect(screen.findByTestId('managed-machine.installation-retry')).toBeNull();
             expect([...actionOperationStore.getSnapshot().operationsByKey.values()]
                 .find(candidate => candidate.snapshot.operationId === failed.operationId)?.snapshot.state).toBe('failed');
@@ -2726,10 +2740,13 @@ describe('managed Machine detail', () => {
             expect(screen.tree.findByType(ManagedCreationProgress).props.operation?.snapshot.operationId).toBe(failed.operationId);
         });
         if (!incomplete) {
-            const errors = screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation-error'
-                && String(node.props.diagnosticCode).split(' · ')[0] === 'native_boot_unconfirmed');
-            if (basis === 'enrolled-failure') expect(errors.length).toBeGreaterThan(0);
-            else expect(errors).toHaveLength(0);
+            // Failed operations use the shared banner's Details disclosure.
+            if (screen.findByTestId('managed-machine.installation-error.details'))
+                await screen.pressByTestIdAsync('managed-machine.installation-error.details');
+            if (basis === 'enrolled-failure') {
+                expect(screen.findByTestId('managed-machine.installation-error')).not.toBeNull();
+                expect(screen.getTextContent()).toContain('native_boot_unconfirmed');
+            } else expect(screen.getTextContent()).not.toContain('native_boot_unconfirmed');
             const checks = screen.tree.findAllByType(RoundButton).filter(button =>
                 button.props.testID === 'managed-machine.progress:checkNow' || button.props.testID === 'managed-machine.observation-check');
             expect(checks).toHaveLength(1);
@@ -2773,7 +2790,7 @@ describe('managed Machine detail', () => {
         const homeId = `srv_stale_${surface}`;
         const target = await upsertAndActivateServer({ serverUrl: `https://managed-stale-${surface}.test`, scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
             schemaVersion: 1, name: 'Stopped resource', choices: {} };
         const machine: ManagedMachineV1 = { id: 'stale-existing', homeId, custodianAccountId: 'owner', launch,
@@ -2781,7 +2798,8 @@ describe('managed Machine detail', () => {
             ...(surface === 'enrolled' ? { enrolledMachineId: 'stale-guest' } : {}),
             resource: { contributionRef: launch.provider, schemaVersion: 1, value: { resourceId: 'same-native' } },
             desired: 'stop', desiredWhen: 'now', intentRevision: 4, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
-            observation: { availability: 'present', observedAt: 2, power: 'stopped', storage: 'retained' },
+            // ACCEPT-1109 puts Start on the joined stopped/retained row. Unknown storage still needs Check now.
+            observation: { availability: 'present', observedAt: 2, power: 'stopped', storage: surface === 'enrolled' ? 'unknown' : 'retained' },
             reviewedFacts: { launch, controller: { machineId: 'controller', installationId: 'installation' }, optionStatus: 'current',
                 billing: { location: 'cloud', stoppedBilling: 'not-billed' }, prerequisites: [],
                 retentionCapabilities: { supportedIntents: ['start', 'stop'] }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
@@ -2855,7 +2873,7 @@ describe('managed Machine detail', () => {
         const homeId = 'srv_creator_installation';
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
         const token = createAccountTokenForTests('requester', { currentAccount: true });
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token });
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
         storage.setState({ machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' } });
         const controller = { machineId: 'company-controller', installationId: 'company-installation' };
@@ -2966,7 +2984,7 @@ describe('managed Machine detail', () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-trust.test', scope: 'tab' });
         const homeId = 'srv_managed_trust';
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const controller = { machineId: 'trust-controller', installationId: 'trust-installation' };
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: controller.machineId,
@@ -3054,7 +3072,7 @@ describe('managed Machine detail', () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-establish.test', scope: 'tab' });
         const homeId = 'srv_managed_establish';
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const controller = { machineId: 'establish-controller', installationId: 'establish-installation' };
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
         await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: controller.machineId,
@@ -3256,8 +3274,9 @@ describe('managed Machine detail', () => {
                     domainRef: { kind: 'managedMachine', id: machine.id }, progress: undefined,
                     error: { errorCode: 'provider_unavailable', error: 'Untrusted native response content',
                         details: { kind: 'managedNative', nativeCause } } } } }} /></AccountNoticeInvestigationBoundary>));
-            expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation-error'
-                && node.props.diagnosticCode === `provider_unavailable · ${diagnostic}`).length).toBeGreaterThan(0);
+            if (!screen.findByTestId('managed-machine.installation-error.detailsContent'))
+                await screen.pressByTestIdAsync('managed-machine.installation-error.details');
+            expect(screen.getTextContent()).toContain(`provider_unavailable · ${diagnostic}`);
             expect(screen.getTextContent()).not.toContain('Untrusted native response content');
         }
         await act(async () => screen.tree.update(<AccountNoticeInvestigationBoundary><ManagedCreationProgress {...{ machine,
@@ -3265,8 +3284,8 @@ describe('managed Machine detail', () => {
                 progress: { kind: 'phase', phase: 'ssh.auth.wait', label: 'Waiting for pairing' },
                 error: { errorCode: 'provider_unavailable', error: 'provider_unavailable' } } } }} /></AccountNoticeInvestigationBoundary>));
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation-error'
-            && node.props.title === t('managedMachines.creation.enrollmentUnavailable')
-            && node.props.diagnosticCode === 'provider_unavailable').length).toBeGreaterThan(0);
+            && node.props.title === t('managedMachines.creation.enrollmentUnavailable')).length).toBeGreaterThan(0);
+        expect(screen.getTextContent()).toContain('provider_unavailable');
         for (const errorCode of ['database_connection_unavailable', 'database_transaction_conflict_exhausted', 'internal_error']) {
             await act(async () => screen.tree.update(<AccountNoticeInvestigationBoundary><ManagedCreationProgress {...{ machine,
                 operation: { ...failed, snapshot: { ...failed.snapshot,
@@ -3276,8 +3295,8 @@ describe('managed Machine detail', () => {
                         status: errorCode === 'internal_error' ? 500 : 503, code: errorCode } } } },
                 handlers: { reinstall: () => retried.push('same-resource-after-home-failure') } }} /></AccountNoticeInvestigationBoundary>));
             expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation-error'
-                && node.props.title === t('managedMachines.creation.homeRequestFailed')
-                && node.props.diagnosticCode === errorCode).length).toBeGreaterThan(0);
+                && node.props.title === t('managedMachines.creation.homeRequestFailed')).length).toBeGreaterThan(0);
+            expect(screen.getTextContent()).toContain(errorCode);
             const homeRetry = screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation-retry'
                 && typeof node.props.onPress === 'function')[0];
             expect(homeRetry).toBeDefined();
@@ -3291,8 +3310,8 @@ describe('managed Machine detail', () => {
             operation: { ...failed, snapshot: { ...failed.snapshot,
                 error: { errorCode: 'native_boot_unconfirmed', error: 'Native boot configuration failed after enrollment' } } },
             handlers: { reinstall: () => retried.push('same-enrolled-resource') } }} /></AccountNoticeInvestigationBoundary>));
-        expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation-error'
-            && String(node.props.diagnosticCode).split(' · ')[0] === 'native_boot_unconfirmed').length).toBeGreaterThan(0);
+        expect(screen.findByTestId('managed-machine.installation-error')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('native_boot_unconfirmed');
         const enrolledRetry = screen.tree.findAll(node => node.props?.testID === 'managed-machine.installation-retry'
             && typeof node.props.onPress === 'function')[0];
         expect(enrolledRetry).toBeDefined();
@@ -3356,7 +3375,7 @@ describe('managed Machine detail', () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-start-approval.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_start');
         await upsertAndActivateServer({ serverUrl: 'https://other-managed-start.test', scope: 'tab' });
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
             schemaVersion: 1, name: 'Stopped resource', choices: {} };
         const machine: ManagedMachineV1 = { id: 'start-existing', homeId: 'srv_managed_start', custodianAccountId: 'owner', launch,
@@ -3416,7 +3435,7 @@ describe('managed Machine detail', () => {
     it.each(['online', 'offline', 'replaced', 'missing-schema'] as const)('reviews fresh Devcontainer effects only on the same reachable controller (%s)', async controllerState => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-rebuild.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_rebuild');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const provider = { pluginId: 'custom.container', localId: 'native' };
         const selectors = { workspaceFolder: '/source', configPath: '/source/.devcontainer/devcontainer.json' };
         const launch: ManagedMachineV1['launch'] = { provider, schemaVersion: 1, name: 'Existing child',
@@ -3441,16 +3460,19 @@ describe('managed Machine detail', () => {
             workspaceFolder: { type: 'string' }, configPath: { type: 'string' } },
             required: ['workspaceFolder', 'configPath'], additionalProperties: false } };
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
-        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'controller',
+        const controllerMachine = createMachineFixture({ id: 'controller',
             installationId: controllerState === 'replaced' ? 'replacement' : 'installation',
-            active: controllerState !== 'offline', updatedAt: controllerState === 'offline' ? 1 : Date.now() })]);
+            active: controllerState !== 'offline', updatedAt: controllerState === 'offline' ? 1 : Date.now() });
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [controllerMachine]);
         const rebuilds: unknown[] = [];
         const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'owner', encryptionMode: 'plain' });
         setRuntimeFetch(async (input, init) => {
             const url = new URL(String(input));
             expect(url.origin).toBe('https://managed-rebuild.test');
-            const machines = managedControllerReadBatch(machine, url, init);
-            if (machines) return machines;
+            // Exact reads and inventory describe the same controller, including its offline/replaced state.
+            if (url.pathname === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body, id =>
+                id === controllerMachine.id ? { ...createPlainMachineRowFixture({ id, accountId: 'owner', machine: controllerMachine }),
+                    installationId: controllerMachine.installationId, installationPublicKey: controllerInstallationPublicKey } : null);
             const authorization = managedControllerAuthorization(machine, url, init);
             if (authorization) return authorization;
             const artifact = artifacts.handle(url.pathname, init);
@@ -3527,7 +3549,7 @@ describe('managed Machine detail', () => {
     it('keeps an Ask-first policy Action pending in the ordinary approval owner without applying its policy', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-policy-approval.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_policy_approval');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const machine = { id: 'ask-policy', homeId: 'srv_managed_policy_approval', custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Ask resource', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
@@ -3585,7 +3607,7 @@ describe('managed Machine detail', () => {
     it('settles a failed Keep parent read into the existing unavailable state', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-keep-timeout.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_keep_timeout');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
             schemaVersion: 1, name: 'Timeout resource', choices: {} };
         const machine = { id: 'managed-keep-timeout', homeId: 'srv_managed_keep_timeout', custodianAccountId: 'owner', launch,
@@ -3620,7 +3642,7 @@ describe('managed Machine detail', () => {
     it('keeps one Keep parent read running across a Home change that revalidates the same resource', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-keep-revalidate.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_keep_revalidate');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
             schemaVersion: 1, name: 'Revalidated resource', choices: {} };
         const machine = { id: 'managed-keep-revalidate', homeId: 'srv_managed_keep_revalidate', custodianAccountId: 'owner', launch,
@@ -3683,7 +3705,7 @@ describe('managed Machine detail', () => {
     it('mounts the enrolled association with the immutable receipt and removes it on read refusal', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://enrolled-managed-detail.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_enrolled_detail');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner') });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner') });
         const launch: ManagedMachineV1['launch'] = { provider: { pluginId: 'custom.provisioner', localId: 'native' },
             schemaVersion: 1, name: 'Original recipe', choices: { cpu: 4, image: 'captured-image' } };
         const machine = { id: 'managed-enrolled', homeId: 'srv_enrolled_detail', custodianAccountId: 'owner', launch,
@@ -3856,7 +3878,7 @@ describe('managed Machine detail', () => {
         const target = await upsertAndActivateServer({ serverUrl: `https://retained-setup-${outcome}.test`, scope: 'tab' });
         const homeId = `srv_retained_setup_${outcome}`;
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner', { currentAccount: true }) });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner', { currentAccount: true }) });
         const controller = { machineId: 'controller', installationId: 'controller-installation' };
         const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
         storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: controller.machineId,
@@ -4053,9 +4075,11 @@ describe('managed Machine detail', () => {
                     state: 'failed', scope: { accountId: 'owner', machineId: 'controller' }, title: 'Create Boat',
                     createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'supported',
                     domainRef: { kind: 'managedMachine', id: machine.id }, error: { errorCode: code, error: code } } }} />);
-        const failure = screen.tree.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'managed-machine.installation-error');
-        expect(failure?.props.title).toBe(t('managedMachines.inspect.notCreated'));
-        expect(failure?.props.diagnosticCode).toContain(code);
+        expect(screen.findByTestId('managed-machine.installation-error')).not.toBeNull();
+        expect(screen.getTextContent()).toContain(t('managedMachines.inspect.notCreated'));
+        await screen.pressByTestIdAsync(absenceObserved
+            ? 'managed-machine.installation-error-details-toggle' : 'managed-machine.installation-error.details');
+        expect(screen.getTextContent()).toContain(code);
         expect(screen.getTextContent()).not.toContain(t('managedMachines.creation.installFailedTitle', { name: machine.launch.name }));
         expect(screen.getTextContent()).not.toContain(t('managedPower.resourceAbsent'));
         expect(screen.getTextContent()).not.toContain(t('managedMachines.creation.mayBill'));
@@ -4073,15 +4097,18 @@ describe('managed Machine detail', () => {
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.progress')).toHaveLength(0);
         // A healthy created machine is named by its size and image; native identity is only for recovery.
         expect(screen.tree.findAll(node => node.props?.testID === 'managed-machine.recovery')).toHaveLength(0);
+        const start = vi.fn();
         const stopped = await renderScreen(<ManagedCreationProgress machine={{ ...machine,
-            observation: { ...machine.observation!, power: 'stopped' } }} />);
+            observation: { ...machine.observation!, power: 'stopped' } }} handlers={{ start }} />);
         expect(stopped.tree.findAll(node => node.props?.testID === 'managed-machine.progress').length).toBeGreaterThan(0);
+        await stopped.pressByTestIdAsync('managed-machine.progress:start');
+        expect(start).toHaveBeenCalledOnce();
     });
     it('reads the saved Home, clears refused content, and hands verified enrollment to the ordinary Machine route', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-detail.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_detail');
         await upsertAndActivateServer({ serverUrl: 'https://other-focused.test', scope: 'tab' });
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner') });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner') });
         const machine = { id: 'pending', homeId: 'srv_detail', custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Retained resource', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
@@ -4138,7 +4165,7 @@ describe('managed Machine detail', () => {
     it('keeps an already admitted inventory identity in the header without listing for a saved-resource read', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-detail-identity.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_detail_identity');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner') });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner') });
         let machine = ManagedMachineV1Schema.parse({ id: 'pending-identity', homeId: 'srv_detail_identity', custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Known Cua resource', choices: {} },
             controller: { machineId: 'controller', installationId: 'installation' }, allocation: 'bound', creationState: 'active',
@@ -4188,7 +4215,7 @@ describe('managed Machine detail', () => {
     it('opens on a neutral header that claims no state while the exact read is pending', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-detail-pending-header.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_detail_pending_header');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner') });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner') });
         const detail = createDeferred<Response>();
         setRuntimeFetch(async (input) => {
             const path = new URL(String(input)).pathname;
@@ -4213,7 +4240,7 @@ describe('managed Machine detail', () => {
     it.each(['managed_not_found', 'not_found', 'unavailable'] as const)('uses exact get as absence authority and never lists for a cold retained archived resource (%s)', async code => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-detail-deleted.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_detail_deleted');
-        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token: createAccountTokenForTests('owner') });
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, { token: createAccountTokenForTests('owner') });
         let listReads = 0;
         setRuntimeFetch(async (input) => {
             const path = new URL(String(input)).pathname;

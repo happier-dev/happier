@@ -17,7 +17,6 @@ import { t } from '@/text';
 import type { CollectionRowStatus } from '@/components/ui/lists/collection/CollectionStatusGlyph';
 
 export const HOMES_COLLECTION_ROOT = SETTINGS_ROUTES.servers;
-export const HOMES_ADD_ROUTE = `${HOMES_COLLECTION_ROOT}/add` as const;
 export const HOMES_DEVICE_ROUTE = `${HOMES_COLLECTION_ROOT}/device` as const;
 export const HOMES_GROUP_NEW_ROUTE = `${HOMES_COLLECTION_ROOT}/groups/new` as const;
 
@@ -101,7 +100,7 @@ export function buildHomeCollection(input: Readonly<{
         return {
             id,
             profile,
-            title: resolveHomeDisplayLabel(profile, profile.id),
+            title: resolveHomeDisplayLabel(profile, profile.id, input.activeServerId),
             serverUrl: profile.canonicalServerUrl ?? profile.serverUrl,
             current,
             deviceDefault: input.deviceDefaultServerId != null

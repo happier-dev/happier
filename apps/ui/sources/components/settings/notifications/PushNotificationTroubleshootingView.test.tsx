@@ -31,7 +31,7 @@ async function renderSettingsView(node: React.ReactElement) {
         actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, ...(deleteDisabled
             ? { actions: { 'notifications.push.tokens.remove': { disabledSurfaces: ['ui'] } } }
             : { approvalWaivedSurfaces: {
-            'notifications.push.tokens.remove': ['ui'], 'notifications.push.register': ['ui'],
+            'notifications.push.tokens.remove': ['ui'], 'notifications.push.register': ['ui'], 'notifications.push.test': ['ui'],
         } }) }) });
     const scope = { serverId: resolveServerProfileScopeIdForIdentifier(home), accountId: 'push-owner' };
     storage.setState({ profileScope: scope, settingsScope: scope, settings, settingsVersion: 1 });
@@ -176,6 +176,22 @@ describe('PushNotificationTroubleshootingView', () => {
         expect(Notifications.getExpoPushTokenAsync).toHaveBeenCalled();
         const accountSettingRow = screen.findRowByTitle('settingsNotifications.pushTroubleshooting.status.accountSettingTitle');
         expect(accountSettingRow?.props?.detail).toBe('common.disabled');
+    });
+
+    it('sends the deliberate remote test through Action admission to this phone only', async () => {
+        const Notifications = await import('expo-notifications');
+        vi.mocked(Notifications.getPermissionsAsync).mockResolvedValue({ status: PermissionStatus.GRANTED, expires: 'never', granted: true, canAskAgain: false });
+        vi.mocked(Notifications.getExpoPushTokenAsync).mockResolvedValue({ type: 'expo', data: 'ExponentPushToken[current]' });
+        answerPushTokens([{ id: 'phone', token: 'ExponentPushToken[current]', createdAt: 1, updatedAt: 1 }]);
+        harness.answer(home, 'POST /v1/push-tokens/phone/test', { body: { status: 'accepted' } });
+        const { PushNotificationTroubleshootingView } = await import('./PushNotificationTroubleshootingView');
+        const screen = await renderSettingsView(<PushNotificationTroubleshootingView />);
+        await waitForHomeGovernance(() => expect(screen.findRow('settings-notifications-push-troubleshooting-device-phone')).toBeTruthy());
+        const button = screen.findRow('settings-notifications-push-troubleshooting-test-remote');
+        expect(button).toBeTruthy();
+        await act(async () => { await button!.props.action(); });
+        await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/push-tokens/phone/test')).toHaveLength(1));
+        await waitForHomeGovernance(() => expect(modalAlertMock).toHaveBeenLastCalledWith(expect.any(String), 'settingsNotifications.pushTroubleshooting.remoteTest.accepted'));
     });
 
     it('marks the current token as this device', async () => {

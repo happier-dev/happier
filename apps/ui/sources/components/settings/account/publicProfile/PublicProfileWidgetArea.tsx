@@ -106,6 +106,7 @@ export function PublicProfileWidgetArea(
           onSelect={bar.onSelect}
           onCreate={bar.onCreate}
           actions={bar.actions}
+          readFailure={bar.readFailure}
           labels={LAYOUT_LABELS}
           heading="section"
           testID="public-profile-area-layouts"

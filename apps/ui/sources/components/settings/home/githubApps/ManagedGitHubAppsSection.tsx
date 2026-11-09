@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import type { ManagedGitHubAppRegistrationV1 } from '@happier-dev/protocol';
+import type { ManagedGitHubAppRegistrationV1 } from '@happier-dev/protocol/identity/githubApps';
 
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Icon } from '@/components/ui/icons/Icon';

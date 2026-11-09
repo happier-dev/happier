@@ -7,7 +7,7 @@ import { glassIntensityStorageBinding, glassPresetStorageBinding, glassSurfaceSt
 import { invokeNavigationPlacementCustomizer, navigationPlacementStorageBinding } from './navigationPlacementSettingBinding';
 import { surfaceFinishOverrideStorageBinding } from './surfaceFinishSettingBindings';
 import { machineSummaryMetricsStorageBinding } from '@/components/machines/summary/machineSummarySettingBindings';
-import { atmosphereFieldStorageBinding, homeAtmosphereStorageBinding, invokeAtmospherePictureOperation } from '@/components/atmosphere/atmosphereSettings';
+import { atmosphereFieldStorageBinding, invokeAtmospherePictureOperation } from '@/components/atmosphere/atmosphereSettings';
 
 /**
  * A page reached from Appearance that holds rows which used to sit on Appearance itself. They keep
@@ -80,14 +80,20 @@ export const APPEARANCE_PAGE_SETTINGS = defineSettingsPage({
             titleKey: 'tabs.sessions',
             settings: {
                 avatarStyle: {},
+                botFaceStyle: {},
+                botMotion: {},
                 agentIcons: {},
                 alwaysShowContextSize: {},
                 contextGaugeStyle: {},
+                sessionListNeedsYouHighlight: {},
+                sessionListWorkingIndicator: {},
+                sessionListWorkingStatusAnimatedText: {},
             },
         },
         tabBar: {
             titleKey: 'settingsAppearance.tabBarAppearance.title',
             settings: {
+                systemTabBar: { host: settingsHosts.ios },
                 tabBarSize: {},
                 tabBarLabels: {},
                 tabBarBadges: {},
@@ -116,14 +122,15 @@ export const APPEARANCE_GLASS_SETTINGS = defineSettingsPage({
             titleKey: 'settingsAppearance.glassControls.sectionTitle',
             settings: {
                 glassPreset: { storage: glassPresetStorageBinding },
-                homeAtmosphere: { storage: homeAtmosphereStorageBinding('appearance.homeAtmosphere') },
+                newSessionBackdropStrength: {},
+                homeAtmosphere: {},
                 atmosphereSource: { storage: atmosphereFieldStorageBinding('appearance.atmosphereSource') },
                 atmospherePlanetPlacement: { storage: atmosphereFieldStorageBinding('appearance.atmospherePlanetPlacement') },
                 atmospherePlanetStyle: { storage: atmosphereFieldStorageBinding('appearance.atmospherePlanetStyle') },
                 atmospherePlanetDigits: { storage: atmosphereFieldStorageBinding('appearance.atmospherePlanetDigits') },
                 atmospherePictureRef: { storage: atmosphereFieldStorageBinding('appearance.atmospherePictureRef') },
                 atmospherePictureLayout: { storage: atmosphereFieldStorageBinding('appearance.atmospherePictureLayout') },
-                atmosphereLooks: { storage: homeAtmosphereStorageBinding('appearance.atmosphereLooks') },
+                atmosphereLooks: {},
                 atmosphereShowOn: { storage: atmosphereFieldStorageBinding('appearance.atmosphereShowOn') },
                 projectAtmosphere: {},
                 atmospherePictureLibrary: {},

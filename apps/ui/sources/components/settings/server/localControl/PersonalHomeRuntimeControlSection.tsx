@@ -3,7 +3,7 @@ import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprov
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { View } from 'react-native';
-import type { SystemTaskSpec } from '@happier-dev/protocol';
+import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import { isHappierRuntimePathWithinRoot } from '@happier-dev/cli-common/happierRuntime/runtimePathMatching';
 
 import { Modal } from '@/modal';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ManagedIdentityProviderV1 } from '@happier-dev/protocol';
+import type { ManagedIdentityProviderV1 } from '@happier-dev/protocol/identity/providers';
 
 import {
     beginManagedIdentityProviderRefresh,

@@ -34,13 +34,14 @@ describe('resolveActionSettingsEntryStatusSummary', () => {
             audiences: [
                 { audience: 'human', allowedCount: 0, askFirstCount: 1, offCount: 0 },
                 { audience: 'agent', allowedCount: 0, askFirstCount: 1, offCount: 0 },
-                { audience: 'integration', allowedCount: 1, askFirstCount: 2, offCount: 0 },
+                { audience: 'integration', allowedCount: 1, askFirstCount: 2, offCount: 1 },
             ],
             danger: 'external',
         });
         expect(listActionSettingsEntryStatusParts(summary).map((part) => part.labelKey)).toEqual([
             'settingsActions.status.humanAskFirst', 'settingsActions.status.agentAskFirst',
             'settingsActions.status.integrationAllowed', 'settingsActions.status.integrationAskFirst',
+            'settingsActions.status.integrationOff',
             'settingsActions.status.external',
         ]);
     });

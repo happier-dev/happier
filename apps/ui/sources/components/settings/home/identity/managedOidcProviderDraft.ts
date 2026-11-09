@@ -1,4 +1,4 @@
-import type { ManagedIdentityProviderV1, ManagedOidcProviderConfigV1 } from '@happier-dev/protocol';
+import type { ManagedIdentityProviderV1, ManagedOidcProviderConfigV1 } from '@happier-dev/protocol/identity/providers';
 
 export type ManagedOidcProviderDraft = Readonly<{
     displayName: string;

@@ -1,7 +1,6 @@
 import * as React from 'react';
 import type { RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
 import { normalizeRegistrySourceUrlV1 } from '@happier-dev/protocol/registries';
-import type { FreshMachineAdministrationExecutionTargetV1 } from '@/sync/domains/machines/administration/useTargetSelection';
 import { useRegistrySources } from '@/registries/useRegistrySources';
 import { useRegistrySourceMutations } from '@/registries/useRegistrySourceMutations';
 
@@ -30,29 +29,28 @@ export type PluginRegistrySourceAdministrationV1 = Readonly<{
     removeSource: (sourceId: string) => Promise<MarketplaceSourceRegistryMutationSettlementV1>;
     setSourceRegistryProfile: (sourceId: string, profileId: string | null) => Promise<MarketplaceSourceRegistryMutationSettlementV1>;
 }>;
-/** Machine fields remain only for the retained install-profile dialog's props until U5/U8. */
 export type PluginRegistrySourceAdministrationParamsV1 = Readonly<{
-    scopeKey: string | null; enabled: boolean; focused: boolean;
-    executionTarget: FreshMachineAdministrationExecutionTargetV1 | null;
-    resolveCurrentExecutionTarget: (expected: FreshMachineAdministrationExecutionTargetV1 | null) => FreshMachineAdministrationExecutionTargetV1 | null;
+    enabled: boolean; focused: boolean;
 }>;
 
 /** Thin old-screen projection over the one Account source Action owner. */
 export function usePluginRegistrySourceAdministration(
-    _params: PluginRegistrySourceAdministrationParamsV1,
+    params: PluginRegistrySourceAdministrationParamsV1,
 ): PluginRegistrySourceAdministrationV1 {
-    const read = useRegistrySources('plugin');
+    const read = useRegistrySources('plugin', params.enabled && params.focused);
     const mutations = useRegistrySourceMutations();
     const [mutationInFlight, setMutationInFlight] = React.useState(false);
     const inFlight = React.useRef(false);
     const [mutationOutcomeUnknown, setMutationOutcomeUnknown] = React.useState(false);
     const registry = React.useMemo(() => read.hasValue ? { sources: read.sources
         // The old screen already has a separate community-npm information row.
-        .filter(source => source.format !== 'happier-npm')
-        .map(source => ({ id: source.id, title: source.title, sourceUrl: source.url, enabled: source.enabled,
+        .flatMap(source => {
+            if ('packageContent' in source || source.format === 'happier-npm') return [];
+            return [{ id: source.id, title: source.title, sourceUrl: source.url, enabled: source.enabled,
             origin: source.origin.kind === 'user' ? 'user' as const : 'curated' as const,
             addedAtMs: source.addedAt, updatedAtMs: source.addedAt,
-            ...(source.npmRegistryProfileId ? { registryProfileId: source.npmRegistryProfileId } : {}) })) } : null, [read.hasValue, read.sources]);
+            ...(source.npmRegistryProfileId ? { registryProfileId: source.npmRegistryProfileId } : {}) }];
+        }) } : null, [read.hasValue, read.sources]);
     const apply = React.useCallback(async (run: () => Promise<unknown>): Promise<MarketplaceSourceRegistryMutationSettlementV1> => {
         if (!mutations.ready || inFlight.current) return { status: 'unavailable' };
         inFlight.current = true; setMutationInFlight(true);
@@ -72,7 +70,7 @@ export function usePluginRegistrySourceAdministration(
         if (input.sourceId) {
             const source = read.sources.find(source => source.id === input.sourceId);
             if (!source) return { status: 'unavailable' };
-            if (source.url !== url) return { status: 'unavailable', reason: 'not_supported' };
+            if ('packageContent' in source || source.url !== url) return { status: 'unavailable', reason: 'not_supported' };
             return apply(async () => {
               await mutations.update({ sourceId: source.id,
                 ...(input.title?.trim() ? { title: input.title.trim() } : {}),

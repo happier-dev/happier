@@ -19,6 +19,7 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { Text } from '@/components/ui/text/Text';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
+import { publicProfileLinkLabel } from './publicProfilePresentation';
 import {
   PUBLIC_PROFILE_PERIODS,
   type PublicProfilePeriod,
@@ -41,11 +42,6 @@ const THEME_KEYS = {
   light: 'themeLight',
   dark: 'themeDark',
 } as const;
-
-/** "github.com/leeroy": the scheme adds nothing a visitor reads. */
-export function publicProfileLinkLabel(url: string): string {
-  return url.replace(/^https:\/\//, '').replace(/\/$/, '');
-}
 
 function isPublicLink(text: string): boolean {
   return PublicProfileHttpsUrlV1Schema.safeParse(text.trim()).success;
@@ -87,12 +83,12 @@ export function PublicProfileDetailsPanel(
     },
     [],
   );
-  const notShared = (field: 'bio' | 'links' | 'avatar' | 'projects') =>
-    props.policy.fields[field]
-      ? undefined
-      : t('publicIdentity.details.notShared', {
-          item: t(`publicIdentity.publicData.fields.${field}`),
-        });
+  // One line per section names whichever of its items Public data keeps private (never one per row).
+  const notShared = (fields: readonly ('bio' | 'links' | 'avatar' | 'projects')[]) => {
+    const off = fields.filter((field) => !props.policy.fields[field]).map((field) => t(`publicIdentity.publicData.fields.${field}`));
+    return off.length === 0 ? undefined : off.length === 1 ? t('publicIdentity.details.notShared', { item: off[0]! })
+      : t('publicIdentity.details.notSharedMany', { items: off.join(', ') });
+  };
 
   // The typed links are kept as written; only complete https addresses reach the draft.
   const [linkTexts, setLinkTexts] = React.useState<string[]>(
@@ -145,10 +141,9 @@ export function PublicProfileDetailsPanel(
 
   return (
     <View testID="public-profile-details">
-      <ItemGroup title={t('publicIdentity.details.aboutTitle')}>
+      <ItemGroup title={t('publicIdentity.details.aboutTitle')} description={notShared(['bio', 'links', 'avatar'])}>
         <Item
           title={t('publicIdentity.publicData.fields.bio')}
-          subtitle={notShared('bio')}
           showChevron={false}
           accessoryLayout="stacked"
           rightElement={
@@ -168,7 +163,6 @@ export function PublicProfileDetailsPanel(
         />
         <Item
           title={t('publicIdentity.publicData.fields.links')}
-          subtitle={notShared('links')}
           showChevron={false}
           accessoryLayout="stacked"
           rightElement={
@@ -195,8 +189,9 @@ export function PublicProfileDetailsPanel(
         />
         <SegmentedChoiceItem<'account' | 'planet'>
           testIDPrefix="public-profile-details-photo"
+          // A narrow panel: the reason and descriptions wrap rather than end mid-word.
+          subtitleLines={0}
           title={t('publicIdentity.publicData.fields.avatar')}
-          subtitle={notShared('avatar')}
           value={
             metadata.avatar?.kind ??
             (props.hasAccountPhoto ? 'account' : 'planet')
@@ -222,13 +217,7 @@ export function PublicProfileDetailsPanel(
         />
       </ItemGroup>
 
-      <ItemGroup
-        title={t('publicIdentity.publicData.fields.projects')}
-        description={
-          notShared('projects') ??
-          t('publicIdentity.publicData.details.projects')
-        }
-      >
+      <ItemGroup title={t('publicIdentity.publicData.fields.projects')} description={notShared(['projects']) ?? t('publicIdentity.publicData.details.projects')}>
         {projects.map((selection) => (
           <Item
             key={selection.repository.nameWithOwner}
@@ -306,6 +295,7 @@ export function PublicProfileDetailsPanel(
       <ItemGroup title={t('publicIdentity.details.pageTitle')}>
         <SegmentedChoiceItem<PublicProfilePeriod>
           testIDPrefix="public-profile-details-period"
+          subtitleLines={0}
           title={t('publicIdentity.profile.period')}
           subtitle={t('publicIdentity.details.periodDescription')}
           value={props.period}
@@ -317,6 +307,7 @@ export function PublicProfileDetailsPanel(
         />
         <SegmentedChoiceItem<PublicProfileVisitorTheme>
           testIDPrefix="public-profile-details-theme"
+          subtitleLines={0}
           title={t('publicIdentity.details.theme')}
           subtitle={
             props.themeUnavailableReason ??

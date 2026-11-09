@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { createBuiltinRelayAccessSelection } from '@happier-dev/cli-common/relayAccess/catalog';
 import renderer from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -49,7 +50,7 @@ installMachinesSettingsCommonModuleMocks({
 });
 
 vi.mock('@/utils/url/openExternalUrl', () => ({
-    openExternalUrl: (url: string, options?: Record<string, unknown>) => openExternalUrlSpy(url, options),
+    openExternalUrl: openExternalUrlSpy,
 }));
 
 vi.mock('@expo/vector-icons', () => ({
@@ -166,7 +167,7 @@ describe('LocalRelayAccessControlSection', () => {
 
     it('uses the wizard chrome primary action to advance into provider details for LAN (no embedded fields)', async () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION} = await import('@happier-dev/protocol/system/tasks/spec');
 
         const startedSpecs: unknown[] = [];
         const runner = createSystemTaskRunner({
@@ -303,7 +304,7 @@ describe('LocalRelayAccessControlSection', () => {
 
     it('advances the wizard after successful Tailscale secure access once the inline snapshot settles', async () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION} = await import('@happier-dev/protocol/system/tasks/spec');
 
         let nextTaskId = 1;
         const listeners = new Map<string, {
@@ -358,6 +359,7 @@ describe('LocalRelayAccessControlSection', () => {
                 data: {
                     configured: false,
                     providerId: null,
+                    selection: null,
                     status: {
                         state: 'disabled',
                         shareUrl: null,
@@ -413,7 +415,7 @@ describe('LocalRelayAccessControlSection', () => {
     it('runs relay.access.configure.v1 for LAN and updates the active shareable URL on success', async () => {
 
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION} = await import('@happier-dev/protocol/system/tasks/spec');
 
         let nextTaskId = 1;
         const listeners = new Map<string, {
@@ -471,11 +473,7 @@ describe('LocalRelayAccessControlSection', () => {
             kind: 'relay.access.configure.v1',
             params: {
                 target: { kind: 'local' },
-                providerId: 'lan',
-                config: {
-                    providerId: 'lan',
-                    url: 'https://relay.lan.example.test',
-                },
+                config: createBuiltinRelayAccessSelection('lan', { url: 'https://relay.lan.example.test' }),
             },
         });
 
@@ -488,6 +486,7 @@ describe('LocalRelayAccessControlSection', () => {
                 data: {
                     configured: true,
                     providerId: 'lan',
+                    selection: createBuiltinRelayAccessSelection('lan', { url: 'https://relay.lan.example.test' }),
                     status: {
                         state: 'enabled',
                         shareUrl: 'https://relay.lan.example.test',
@@ -503,7 +502,7 @@ describe('LocalRelayAccessControlSection', () => {
     it('persists a configured share URL onto the provided server profile without updating the active profile', async () => {
 
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION} = await import('@happier-dev/protocol/system/tasks/spec');
 
         let nextTaskId = 1;
         const listeners = new Map<string, {
@@ -560,6 +559,7 @@ describe('LocalRelayAccessControlSection', () => {
                 data: {
                     configured: true,
                     providerId: 'lan',
+                    selection: createBuiltinRelayAccessSelection('lan', { url: 'https://relay.lan.example.test' }),
                     status: {
                         state: 'enabled',
                         shareUrl: 'https://relay.lan.example.test',
@@ -579,7 +579,7 @@ describe('LocalRelayAccessControlSection', () => {
     it('runs secure access for Tailscale providers and includes upstreamUrl in the task spec', async () => {
 
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION} = await import('@happier-dev/protocol/system/tasks/spec');
 
         let nextTaskId = 1;
         const startedSpecs: unknown[] = [];
@@ -637,7 +637,7 @@ describe('LocalRelayAccessControlSection', () => {
 
     it('supports Tailscale Funnel through the secure access system task spec', async () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION} = await import('@happier-dev/protocol/system/tasks/spec');
 
         let nextTaskId = 1;
         const startedSpecs: unknown[] = [];
@@ -699,7 +699,7 @@ describe('LocalRelayAccessControlSection', () => {
         openExternalUrlSpy.mockClear();
 
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION} = await import('@happier-dev/protocol/system/tasks/spec');
 
         let nextTaskId = 1;
         const listeners = new Map<string, {
@@ -742,6 +742,7 @@ describe('LocalRelayAccessControlSection', () => {
                 data: {
                     configured: false,
                     providerId: null,
+                    selection: null,
                     status: {
                         state: 'disabled',
                         shareUrl: null,
@@ -793,15 +794,13 @@ describe('LocalRelayAccessControlSection', () => {
             await screen.findByTestId('settings.server.relayAccess.promptCard-primary')?.props.onPress?.();
         });
 
-        expect(openExternalUrlSpy).toHaveBeenCalledWith(
-            'https://login.tailscale.com/a/example',
-            { platformOS: 'web' },
-        );
+        expect(openExternalUrlSpy).toHaveBeenCalledTimes(1);
+        expect(openExternalUrlSpy).toHaveBeenCalledWith('https://login.tailscale.com/a/example');
     });
 
     it('allows switching relay access providers after an existing configuration is loaded', async () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema, SYSTEM_TASK_PROTOCOL_VERSION} = await import('@happier-dev/protocol/system/tasks/spec');
 
         const listeners = new Map<string, {
             onEvent: (payload: unknown) => void;
@@ -839,6 +838,7 @@ describe('LocalRelayAccessControlSection', () => {
                 data: {
                     configured: true,
                     providerId: 'localOnly',
+                    selection: createBuiltinRelayAccessSelection('localOnly'),
                     status: {
                         state: 'enabled',
                         shareUrl: 'https://relay.localonly.example.test',

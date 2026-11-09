@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { projectDemoHomesController } from '@/demoMode/runtime/demoSettingsReadProjection';
 import { Platform } from 'react-native';
 import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
@@ -24,9 +25,9 @@ import { CollectionStatusGlyph } from '@/components/ui/lists/collection/Collecti
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { openAddHome } from '@/components/homes/add/openAddHome';
 
 import {
-    HOMES_ADD_ROUTE,
     HOMES_COLLECTION_ROOT,
     HOMES_DEVICE_ROUTE,
     HOMES_GROUP_NEW_ROUTE,
@@ -54,7 +55,8 @@ const HomesCollectionContext = React.createContext<HomesCollectionContextValue |
  * groups and actions), shared by the rail and every page beside it so they read the same answer.
  */
 export function HomesCollectionProvider(props: Readonly<{ children: React.ReactNode }>) {
-    const controller = useServerSettingsScreenController();
+    const sourceController = useServerSettingsScreenController();
+    const controller = React.useMemo(() => projectDemoHomesController(sourceController), [sourceController]);
     const collection = React.useMemo(() => buildHomeCollection({
         servers: controller.servers,
         groups: controller.serverGroups,
@@ -105,7 +107,11 @@ export const AddHomesMenu = React.memo(function AddHomesMenu(props: Readonly<{ r
             items={items}
             onSelect={(id) => {
                 setOpen(false);
-                openHref(router, id === 'group' ? HOMES_GROUP_NEW_ROUTE : HOMES_ADD_ROUTE, props.replace, 'AddHomesMenu.select');
+                if (id === 'group') openHref(router, HOMES_GROUP_NEW_ROUTE, props.replace, 'AddHomesMenu.select');
+                else {
+                    const result = runGuardedNavigation(() => openAddHome(router, { replace: props.replace }));
+                    if (result !== true) fireAndForget(result, { tag: 'AddHomesMenu.select' });
+                }
             }}
             placement="bottom"
             popoverAnchorAlign="end"
@@ -143,6 +149,7 @@ export const HomesCollectionList = React.memo(function HomesCollectionList(props
     const onDetailRoute = pathname.startsWith(`${HOMES_COLLECTION_ROOT}/`) || (rail && pathname === HOMES_COLLECTION_ROOT);
 
     const rowProps = (selected: boolean) => ({
+        rowRole: 'catalogRow' as const,
         selected: rail ? selected : undefined,
         density: rail ? ('compact' as const) : undefined,
         showChevron: !rail,
@@ -155,7 +162,7 @@ export const HomesCollectionList = React.memo(function HomesCollectionList(props
             title={t('addFlows.thisDeviceTitle')}
             subtitle={t('addFlows.thisDeviceSubtitle')}
             icon={(
-                <HappierCollectionListMark>
+                <HappierCollectionListMark rowRole="catalogRow">
                     <Icon name={Platform.OS === 'ios' || Platform.OS === 'android' ? 'device-mobile' : 'laptop'} size={20} color={theme.colors.text.secondary} />
                 </HappierCollectionListMark>
             )}
@@ -166,22 +173,22 @@ export const HomesCollectionList = React.memo(function HomesCollectionList(props
 
     const homeRows = collection.homes.map((row) => {
         const state = describeHomeStatus(row);
+        const subtitle = describeHomeRow(row);
         return (
             <Item
                 key={row.id}
                 testID={`settings.homes.row.${row.id}`}
                 title={row.title}
-                subtitle={describeHomeRow(row)}
-                subtitleLines={1}
+                subtitle={subtitle}
                 icon={(
-                    <HappierCollectionListMark>
+                    <HappierCollectionListMark rowRole="catalogRow">
                         <HomeMark serverUrl={row.serverUrl} size="list" />
                     </HappierCollectionListMark>
                 )}
                 rightElement={state ? (
                     <CollectionStatusGlyph testID={`settings.homes.row.${row.id}.status`} status={state.status} label={state.label} />
                 ) : undefined}
-                accessibilityLabel={state ? `${row.title}, ${state.label}` : undefined}
+                accessibilityLabel={state ? [row.title, subtitle, state.label].filter(Boolean).join(', ') : undefined}
                 {...rowProps(selectedKey === `home:${row.id}` || selectedKey === `home:${row.profile.id}`)}
                 onPress={() => openHref(router, homeCollectionHref(row.id), rail && onDetailRoute, 'HomesCollectionList.home')}
             />
@@ -198,7 +205,7 @@ export const HomesCollectionList = React.memo(function HomesCollectionList(props
                 row.current ? t('addFlows.homesInUse') : null,
             ].filter(Boolean).join(' · ')}
             icon={(
-                <HappierCollectionListMark>
+                <HappierCollectionListMark rowRole="catalogRow">
                     <HomeMark glyph="stack" size="list" />
                 </HappierCollectionListMark>
             )}
@@ -219,7 +226,10 @@ export const HomesCollectionList = React.memo(function HomesCollectionList(props
                             testID="settings.homes.add"
                             disabled={homePolicy.disabled}
                             title={t('addFlows.addHome')}
-                            onPress={() => openHref(router, HOMES_ADD_ROUTE, false, 'HomesCollectionList.add')}
+                            onPress={() => {
+                                const result = runGuardedNavigation(() => openAddHome(router));
+                                if (result !== true) fireAndForget(result, { tag: 'HomesCollectionList.add' });
+                            }}
                         />
                     )}
                 </ItemGroup>
@@ -254,6 +264,7 @@ const HomeDraftRow = React.memo(function HomeDraftRow() {
     const { theme } = useUnistyles();
     return (
         <CollectionDraftRow
+            rowRole="item"
             testID="settings.homes.rail.draft"
             titles={homeAddDraftTitle}
             placeholder={t('addFlows.newHomeDraft')}
@@ -271,6 +282,7 @@ const GroupDraftRow = React.memo(function GroupDraftRow() {
     const { theme } = useUnistyles();
     return (
         <CollectionDraftRow
+            rowRole="item"
             testID="settings.homes.rail.groupDraft"
             titles={homeGroupDraftTitle}
             placeholder={t('addFlows.newGroup')}

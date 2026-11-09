@@ -2,6 +2,7 @@ import {
     API_TOKEN_FULL_GRANT_V1,
     ApiTokenGrantOriginV1Schema,
     ApiTokenGrantV1Schema,
+    isApiTokenDeploymentGrantV1,
     isApiTokenGrantActionAllowedV1,
     type ApiTokenGrantV1,
 } from '@happier-dev/protocol/auth/apiTokenGrant';
@@ -28,7 +29,7 @@ export function resolveApiTokenGrantDraftIssues(grant: ApiTokenGrantV1): readonl
     const issues: ApiTokenGrantDraftIssue[] = [];
     if (grant.actions && grant.actions.families.length === 0 && grant.actions.ids.length === 0) issues.push('actions_required');
     if (grant.automationIds && grant.automationIds.length === 0) issues.push('automations_required');
-    if (grant.targets && grant.targets.sessions.length === 0 && grant.targets.machines.length === 0) issues.push('targets_required');
+    if (grant.targets && grant.targets.sessions.length === 0 && grant.targets.machines.length === 0 && !grant.targets.environments?.length) issues.push('targets_required');
     if (grant.models && grant.models.length === 0) issues.push('models_required');
     return issues;
 }
@@ -95,14 +96,20 @@ export function setApiTokenGrantAllTargets(grant: ApiTokenGrantV1, all: boolean)
 
 export function toggleApiTokenGrantTarget(
     grant: ApiTokenGrantV1,
-    target: Readonly<{ kind: 'session'; sessionId: string } | { kind: 'machine'; machineId: string }>,
+    target: Readonly<
+        | { kind: 'session'; sessionId: string }
+        | { kind: 'machine'; machineId: string }
+        | { kind: 'environment'; environmentId: string }
+    >,
 ): ApiTokenGrantV1 {
     const targets = grant.targets ?? { sessions: [], machines: [] };
     return {
         ...grant,
         targets: target.kind === 'session'
             ? { ...targets, sessions: toggle(targets.sessions, target.sessionId) }
-            : { ...targets, machines: toggle(targets.machines, target.machineId) },
+            : target.kind === 'machine'
+                ? { ...targets, machines: toggle(targets.machines, target.machineId) }
+                : { ...targets, environments: toggle(targets.environments ?? [], target.environmentId) },
     };
 }
 
@@ -139,6 +146,25 @@ export function toggleApiTokenGrantAutomation(grant: ApiTokenGrantV1, automation
     return { ...grant, automationIds: toggle(grant.automationIds ?? [], automationId) };
 }
 
+/** The saved deployment choice: Automatic, or Ask (the field absent). The protocol decides where Automatic is valid. */
+export function setApiTokenGrantDeployApproval(grant: ApiTokenGrantV1, approval: 'automatic' | 'ask'): ApiTokenGrantV1 {
+    if (approval === 'automatic') return grant.deployApproval === 'automatic' ? grant : { ...grant, deployApproval: 'automatic' };
+    if (grant.deployApproval === undefined) return grant;
+    const { deployApproval: _cleared, ...ask } = grant;
+    return ask;
+}
+
+/**
+ * The editor's one coherence step after any edit: Automatic deployment belongs only to the exact
+ * single-Environment deployment grant (the protocol's own predicate). An edit that widens the grant
+ * returns it with Ask and `cleared`, so the editor says so in place instead of leaving an unsendable
+ * draft or dropping the choice silently.
+ */
+export function reconcileApiTokenGrantDeployApproval(grant: ApiTokenGrantV1): Readonly<{ grant: ApiTokenGrantV1; cleared: boolean }> {
+    if (grant.deployApproval !== 'automatic' || isApiTokenDeploymentGrantV1(grant)) return { grant, cleared: false };
+    return { grant: setApiTokenGrantDeployApproval(grant, 'ask'), cleared: true };
+}
+
 export function setApiTokenGrantApprove(grant: ApiTokenGrantV1, approve: boolean): ApiTokenGrantV1 {
     return grant.approve === approve ? grant : { ...grant, approve };
 }
@@ -161,7 +187,7 @@ function canonicalGrant(grant: ApiTokenGrantV1) {
     return {
         ...grant,
         actions: grant.actions ? { families: sorted(grant.actions.families), ids: sorted(grant.actions.ids) } : null,
-        targets: grant.targets ? { sessions: sorted(grant.targets.sessions), machines: sorted(grant.targets.machines) } : null,
+        targets: grant.targets ? { sessions: sorted(grant.targets.sessions), machines: sorted(grant.targets.machines), environments: sorted(grant.targets.environments ?? []) } : null,
         origins: sorted(grant.origins),
         models: grant.models ? sorted(grant.models.map(apiTokenGrantModelKey)) : null,
         automationIds: grant.automationIds ? sorted(grant.automationIds) : null,

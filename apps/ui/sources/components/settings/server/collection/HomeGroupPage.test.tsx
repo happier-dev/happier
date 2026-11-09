@@ -65,6 +65,19 @@ async function renderDraft(chromeShowsTitle = false) {
 }
 
 describe('Home group draft', () => {
+    it.each(['rail', 'page'] as const)('includes a Home address and sign-in state in its %s collection row accessible name', async (variant) => {
+        const { HomesCollectionList, HomesCollectionProvider } = await import('./HomesCollection');
+        const screen = await renderScreen(<HomesCollectionProvider><HomesCollectionList variant={variant} /></HomesCollectionProvider>);
+        await vi.waitFor(() => {
+            const row = screen.findHostByTestId('settings.homes.row.home-b');
+            expect(row?.props.accessibilityLabel ?? row?.props['aria-label']).toContain('connectionStatus.summary.signInAgain');
+        });
+        const row = screen.findHostByTestId('settings.homes.row.home-b')!;
+        const label = row.props.accessibilityLabel ?? row.props['aria-label'];
+        expect(label).toContain('home-b');
+        expect(label).toContain('home-b.example.test');
+    });
+
     it('leaves the generic creation title to phone navigation and retains a named draft identity', async () => {
         const screen = await renderDraft(true);
         const headingTexts = () => screen.root.findAll((node) =>

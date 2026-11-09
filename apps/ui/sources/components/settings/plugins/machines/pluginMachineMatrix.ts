@@ -1,4 +1,4 @@
-import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol';
+import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
 
 import {
     buildPluginMachineExecutionOriginCandidates,

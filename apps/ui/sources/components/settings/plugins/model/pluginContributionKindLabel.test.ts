@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { getTranslationValue, preloadTranslationsForSettings, SUPPORTED_LANGUAGE_CODES } from '@/text';
 import { pluginListingAdds, resolvePluginKindShelf } from './pluginContributionKindLabel';
 
 describe('plugin kind shelf', () => {
@@ -15,6 +16,8 @@ describe('plugin kind shelf', () => {
         expect(resolvePluginKindShelf(['pluginUi', 'voiceProviders'])?.key).toBe('voice');
         expect(resolvePluginKindShelf(['inputTypes', 'agent'])?.key).toBe('agent');
         expect(resolvePluginKindShelf(['connectedAccounts'])?.key).toBe('connectedAccounts');
+        expect(resolvePluginKindShelf(['machineRecipes'])?.key).toBe('machines');
+        expect(resolvePluginKindShelf(['machineSetupPresets'])?.key).toBe('machines');
     });
 
     it('skips plumbing contributions and leaves plumbing-only plugins without a shelf', () => {
@@ -25,6 +28,30 @@ describe('plugin kind shelf', () => {
 });
 
 describe('what a listing adds', () => {
+    it('distinguishes Machine recipe data from reusable setup presets', () => {
+        const rows = pluginListingAdds(['machineRecipes', 'machineSetupPresets']);
+        expect(rows.map(row => row.key)).toEqual(['machineRecipes', 'machineSetupPresets']);
+        expect(rows.map(row => row.title)).toEqual(['Machine recipes', 'Machine setup presets']);
+        for (const row of rows) {
+            expect(row.description.length).toBeGreaterThan(0);
+            expect(row.description).not.toMatch(/^settingsPlugins\./);
+        }
+        expect(rows[0]?.description).not.toBe(rows[1]?.description);
+    });
+
+    it('provides both Machine listing titles and descriptions in every supported locale without English fallback', async () => {
+        for (const locale of SUPPORTED_LANGUAGE_CODES) {
+            await preloadTranslationsForSettings(locale);
+            for (const family of ['machineRecipes', 'machineSetupPresets'] as const) {
+                for (const key of [`settingsPlugins.surfaces.kinds.${family}`, `settingsPlugins.catalog.addsLine.${family}`] as const) {
+                    const translated = getTranslationValue(key, locale);
+                    expect(translated, `${locale}: ${key}`).toEqual(expect.any(String));
+                    expect(translated, `${locale}: ${key}`).not.toBe('');
+                    if (locale !== 'en') expect(translated, `${locale}: ${key}`).not.toBe(getTranslationValue(key, 'en'));
+                }
+            }
+        }
+    });
     it('says the manifest families in people words, once each, and leaves plumbing families out', () => {
         expect(pluginListingAdds(['agents', 'skills', 'mcp']).map((row) => row.title)).toEqual(['Agents', 'Skills', 'MCP tools']);
         expect(pluginListingAdds(['voiceProviders', 'actions', 'voiceModelPacks', 'settings']).map((row) => row.title)).toEqual(['Voice']);

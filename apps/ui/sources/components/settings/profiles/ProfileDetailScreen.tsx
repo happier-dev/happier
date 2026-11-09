@@ -19,7 +19,9 @@ import { useProfilesListModel } from '@/components/profiles/useProfilesListModel
 import { MachineAdministrationTargetSelector } from '@/components/settings/machines/MachineAdministrationTargetSelector';
 import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
-import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
+import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
+import { ProfileCompatibilityIcon } from '@/components/sessions/new/components/ProfileCompatibilityIcon';
+import { PageHeaderMenu, type PageHeaderMenuAction, type PageHeaderMenuIntent } from '@/components/ui/layout/PageHeaderEntityParts';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal } from '@/modal';
@@ -162,12 +164,12 @@ export const ProfileDetailScreen = React.memo(function ProfileDetailScreen(props
     }
 
     if (!profile) {
-        if (draft.status === 'loading' || (target.kind === 'profile'
-            && (!collection.catalog || collection.catalog.catalog.status === 'loading'))) {
+        if (draft.status === 'loading' || (target.kind === 'profile' && collection.isInitialLoading)) {
             return <ItemList><SurfaceStateCard testID="settings.profiles.detail.loading"
                 kind="loading" title={t('common.loading')} /></ItemList>;
         }
-        return <ProfileNotFound reason={draft.status === 'unavailable' ? draft.reason : undefined} />;
+        return <ProfileReadRefusal reason={draft.status === 'unavailable' ? draft.reason : undefined}
+            onRetry={scope ? () => refreshProfileCatalog(scope) : undefined} />;
     }
     return <ProfileDetail key={profile.id} profile={profile} isDraft={draft.status === 'ready'}
         draftSecretBindings={draft.status === 'ready' ? draft.secretBindings : undefined}
@@ -175,19 +177,20 @@ export const ProfileDetailScreen = React.memo(function ProfileDetailScreen(props
         collection={collection} onDiscardDraft={discard} />;
 });
 
-const ProfileNotFound = React.memo(function ProfileNotFound(props: Readonly<{ reason?: string }>) {
+const ProfileReadRefusal = React.memo(function ProfileReadRefusal(props: Readonly<{ reason?: string; onRetry?: () => Promise<void> }>) {
     const router = useRouter();
+    const missing = props.reason === undefined || props.reason === 'profile-not-found';
     return (
         <ItemList>
             <SurfaceStateCard
-                testID="settings.profiles.detail.notFound"
+                testID={missing ? 'settings.profiles.detail.notFound' : 'settings.profiles.detail.unavailable'}
                 kind="unavailable"
-                title={t('profilesPage.notFoundTitle')}
-                reason={t('profilesPage.notFoundDescription')}
+                title={t(missing ? 'profilesPage.notFoundTitle' : 'profilesPage.readFailedTitle')}
+                reason={t(missing ? 'profilesPage.notFoundDescription' : 'profilesPage.readFailedDescription')}
                 diagnosticCode={props.reason}
-                action={{
+                action={!missing && props.onRetry ? { label: t('common.retry'), onPress: props.onRetry } : {
                     label: t('profilesPage.backToProfiles'),
-                    onPress: () => openProfileCollectionHref(router, PROFILES_COLLECTION_ROOT, true, 'ProfileNotFound.back'),
+                    onPress: () => openProfileCollectionHref(router, PROFILES_COLLECTION_ROOT, true, 'ProfileReadRefusal.back'),
                 }}
             />
         </ItemList>
@@ -276,10 +279,10 @@ const ProfileDetail = React.memo(function ProfileDetail(props: Readonly<{
         return true;
     }, [isDraft, leaveTo, nameStore, profile.name, props.onDiscardDraft]);
 
-    const catalog = collection.catalog?.catalog;
-    const rowRevision = catalog?.status === 'ready' && catalog.source === 'destination'
-        ? catalog.records.find(row => row.record.id === profile.id)?.revision ?? 'absent' : undefined;
-    const artifactRevision = profile.artifactId ? collection.catalog?.artifactsById.get(profile.artifactId)?.revision : undefined;
+    // The displayed Profile carries its reviewed row/body receipt. Admission still
+    // checks the canonical current catalog at the moment an Action uses this draft.
+    const rowRevision = profile.profileRecordRevision ?? 'absent';
+    const artifactRevision = profile.artifactId ? profile.revision : undefined;
     React.useEffect(() => {
         const lifetime = captureActiveServerAccountScopeLifetime();
         if (!lifetime || !areServerAccountScopesEqual(lifetime.scope, accountScope) || rowRevision === undefined
@@ -358,7 +361,7 @@ const ProfileDetail = React.memo(function ProfileDetail(props: Readonly<{
      * published first; publishing reads the saved profile, so unsaved edits are settled through the
      * same unsaved-changes prompt as leaving the page. Who may manage grants is the sheet's answer.
      */
-    const share = React.useCallback(async () => {
+    const share = React.useCallback(async (intent?: PageHeaderMenuIntent) => {
         if (isDirtyRef.current) {
             const decision = await promptLaunchProfileUnsavedChanges(profile);
             if (decision === 'keepEditing') return;
@@ -374,6 +377,7 @@ const ProfileDetail = React.memo(function ProfileDetail(props: Readonly<{
         );
         if (!artifactId) return;
         showDocumentShareSheet({
+            anchor: intent?.anchor,
             kind: 'launch-profile.v1',
             artifactId,
             name: profile.name,
@@ -546,6 +550,12 @@ const ProfileDetailHeader = React.memo(function ProfileDetailHeader(props: Reado
             testID="settings.profiles.detail.header"
             alwaysShowTitle
             title={title}
+            // The profile's mark, as its rail row draws it: the agents it runs, or the profile glyph.
+            leading={(
+                <PageHeaderMarkSlot>
+                    <ProfileCompatibilityIcon profile={legacy} size={22} />
+                </PageHeaderMarkSlot>
+            )}
             description={props.builtIn ? t('profilesPage.builtInDetailDescription') : t('profilesPage.detailDescription')}
             meta={props.isDraft ? undefined : meta}
             primaryAction={{
@@ -575,7 +585,6 @@ const styles = StyleSheet.create((theme) => ({
     migration: {
         flex: 1,
         minHeight: 0,
-        backgroundColor: theme.colors.surface.base,
     },
     actions: {
         flexDirection: 'row',

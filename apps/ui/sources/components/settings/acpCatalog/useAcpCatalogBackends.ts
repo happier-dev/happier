@@ -16,5 +16,5 @@ export function useAcpCatalogBackends() {
         () => (definitions ?? []).slice().sort((a, b) => (a.title || a.name).localeCompare(b.title || b.name)),
         [definitions],
     );
-    return { backends } as const;
+    return { backends, brandMarks: snapshot?.brandMarks } as const;
 }

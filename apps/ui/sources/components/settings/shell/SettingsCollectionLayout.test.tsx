@@ -4,7 +4,7 @@ import { act } from 'react-test-renderer';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { flattenTestStyle, renderScreen } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -15,7 +15,9 @@ installSettingsViewCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
-            useWindowDimensions: () => ({ width: windowState.width, height: windowState.height, scale: 1, fontScale: windowState.fontScale }),
+            Dimensions: {
+                get: () => ({ width: windowState.width, height: windowState.height, scale: 1, fontScale: windowState.fontScale }),
+            },
         });
     },
     router: async () => {
@@ -24,6 +26,7 @@ installSettingsViewCommonModuleMocks({
     },
 });
 
+const { HorizontalSafeAreaProvider } = await import('@/components/navigation/safeArea/HorizontalSafeArea');
 const { SettingsCollectionLayout } = await import('./SettingsCollectionLayout');
 const { SettingsFloatingControlsHost } = await import('./SettingsModalFloatingControls');
 const { COLLECTION_RAIL_MIN_WIDTH_PX, useHappierCollectionLayout } = await import('@happier-dev/plugin-ui/presentation');
@@ -75,11 +78,61 @@ function currentMode(screen: Awaited<ReturnType<typeof renderCollection>>): unkn
 }
 
 describe('SettingsCollectionLayout', () => {
+    it.each(['band', 'wallpaper'] as const)('inherits the page reading coat over a %s without hiding it behind collection paint', async (atmosphereBehind) => {
+        const { GlassSurface } = await import('@/components/ui/glass/GlassSurface');
+        const { GlassRuntimeEnvironmentProvider } = await import('@/components/ui/glass/glassRuntimeEnvironment');
+        const { GlassMaterialSettingsProvider } = await import('@/components/ui/glass/useGlassMaterialSettings');
+        const { glassPresetMaterials } = await import('@/components/ui/glass/glassMaterial');
+        const scene = (backing: 'band' | 'wallpaper' | 'none') => <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('everywhere') }}>
+            <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind: backing }}>
+                <GlassSurface plane surfaceGroup="content" atmosphereCoat={backing === 'none' ? undefined : 'reading'}>
+                    <SettingsCollectionLayout navigator="machines" rootPathname="/settings/machines"
+                        resolveChildRoute={() => '[id]'} rail={<View />} railWidth="standard"
+                        detailMinWidthPx={480} testID="settings-machines" detailTop={<DetailProbe />} />
+                </GlassSurface>
+            </GlassRuntimeEnvironmentProvider>
+        </GlassMaterialSettingsProvider>;
+        const screen = await renderScreen(scene(atmosphereBehind));
+        const collectionGround = () => {
+            let node = screen.findHostByTestId('settings-machines-layout')?.parent;
+            while (node && typeof node.type !== 'string') node = node.parent;
+            // Web binds this paint to the containing surface's plane variable, which that surface clears over a backing.
+            expect(flattenTestStyle(node?.props.style).backgroundColor).toContain('var(--happier-glass-content-plane-background-color,');
+            while (node && flattenTestStyle(node.props.style)['--happier-glass-content-plane-background-color'] === undefined) node = node.parent;
+            return flattenTestStyle(node?.props.style)['--happier-glass-content-plane-background-color'];
+        };
+        expect(collectionGround()).toBe('transparent');
+        const mounted = detailMounts.count;
+        await screen.update(scene('none'));
+        expect(collectionGround()).not.toBe('transparent');
+        expect(detailMounts.count).toBe(mounted);
+    });
     beforeEach(() => {
         windowState.fontScale = 1;
         windowState.width = 1200;
         windowState.height = 800;
         getStorage().getState().applyLocalSettings({ collectionRailWidthsV1: {} });
+    });
+
+    it('keeps intrinsic collection chrome safe while the surrounding planes reach the window edge', async () => {
+        const screen = await renderScreen(<HorizontalSafeAreaProvider value={{ left: 16, right: 84, padded: false }}>
+            <SettingsCollectionLayout navigator="machines" rootPathname="/settings/machines"
+                resolveChildRoute={() => '[id]'} rail={<View />} railWidth="standard"
+                detailMinWidthPx={480} testID="settings-machines"
+                detailTop={<View testID="collection-detail-notice" />} />
+        </HorizontalSafeAreaProvider>);
+        await layoutAt(screen, 1200);
+        const paddingAt = (testID: string) => {
+            const insets = { left: 0, right: 0 };
+            for (let node: ReactTestInstance | null = screen.findHostByTestId(testID); node; node = node.parent) {
+                if (typeof node.type !== 'string') continue;
+                const style = flattenTestStyle(node.props.style);
+                if (typeof style.paddingLeft === 'number') insets.left += style.paddingLeft;
+                if (typeof style.paddingRight === 'number') insets.right += style.paddingRight;
+            }
+            return insets;
+        };
+        expect(paddingAt('collection-detail-notice')).toEqual({ left: 0, right: 84 });
     });
 
     it('restores each navigator width and keeps the preference when a narrow pane temporarily clamps it', async () => {
@@ -133,7 +186,7 @@ describe('SettingsCollectionLayout', () => {
             ?.props.options as Record<string, unknown> | undefined;
     }
 
-    it('leaves the phone header untitled on an entity page that names itself, and titles every other page', async () => {
+    it('leaves the phone header untitled on every collection subpage, entity or list, keeping its Back control', async () => {
         windowState.width = 390;
         windowState.height = 844;
         const renderAt = (childRoute: string) => renderScreen(
@@ -159,9 +212,10 @@ describe('SettingsCollectionLayout', () => {
             act(() => screen.tree.unmount());
         }
 
-        // A collection page keeps its title in the phone header.
+        // A collection page names itself too: every Settings subpage leaves the phone bar to Back (one title on the page).
         const members = await renderAt('[serverId]/[teamId]/members/index');
-        expect(outerHeaderOptions(members)?.headerTitle).toBe('teams.tabs.members');
+        expect(outerHeaderOptions(members)?.headerTitle).toBe('');
+        expect(outerHeaderOptions(members)?.headerLeft).toBeDefined();
     });
 
     it('puts the rail beside the detail when both fit, and shows the detail stack alone when they do not, keeping the detail mounted', async () => {

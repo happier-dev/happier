@@ -13,6 +13,15 @@ export const COORDINATION_SETTINGS = defineSettingsPage({
                 newCoordinatorAnswersWorkerQuestions: {},
             },
         },
+        defaultLevels: {
+            titleKey: 'settingsCoordination.defaultLevelsTitle',
+            featureId: 'sessions.following',
+            settings: {
+                managerPolicy: {},
+                runReportPolicy: {},
+                discussionReceivePolicy: {},
+            },
+        },
         // Follow automatically: the four default rules, each a level (lab P5), moved here from Notifications.
         autoFollow: {
             titleKey: 'session.follow.preferences.title',

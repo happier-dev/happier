@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FEATURE_CATALOG, FEATURE_IDS, isFeatureServerRepresented, type FeatureId } from '@happier-dev/protocol';
+import { FEATURE_CATALOG, FEATURE_IDS, isFeatureServerRepresented, type FeatureId } from '@happier-dev/protocol/features/catalog';
 
 // The server registry's feature family is the one list of Home feature keys; reading it here (it
 // imports only the protocol and its own two modules) makes a new server key without a label fail

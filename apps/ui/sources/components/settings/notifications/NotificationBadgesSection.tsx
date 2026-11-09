@@ -6,10 +6,10 @@ import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { t } from '@/text';
 import { SettingRow } from '@/components/settings/shell/SettingRow';
 import { NOTIFICATIONS_SETTINGS } from '@/components/settings/notifications/notificationsSettings';
-import type { DeclaredSettingsWrite } from '@/components/settings/shell/useDeclaredSettingsWrite';
+import type { DeclaredSettingsWrite } from '@/components/settings/shell/useSettingActionFeedback';
 
 type NotificationBadgesSectionProps = Readonly<{
-    localSettings: LocalSettings;
+    localSettings: Pick<LocalSettings, 'attentionDeviceOverridesV1'>;
     setSetting: DeclaredSettingsWrite;
 }>;
 

@@ -14,11 +14,8 @@ import { createDeferredOnce } from '@/modal/async/createDeferredOnce';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { t } from '@/text';
 
-import { NpmRegistryProfilesSection, type NpmRegistryProfilesSectionProps } from './NpmRegistryProfilesSection';
-import {
-    usePluginRegistrySourceAdministration,
-    type PluginRegistrySourceAdministrationParamsV1,
-} from './model/usePluginRegistrySourceAdministration';
+import { NpmRegistryProfilesSection, type NpmRegistryProfilesSectionProps } from '@/components/settings/connectedServices/npm/NpmRegistryProfilesSection';
+import { usePluginRegistrySourceAdministration } from './model/usePluginRegistrySourceAdministration';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
 type PluginRegistryProfileSelectionParams = Readonly<{
@@ -31,10 +28,6 @@ type PluginRegistryProfileSelectionParams = Readonly<{
     target: Readonly<{ machine: string; server: string }>;
     daemonOperationsAvailable: boolean;
     targetSelection: NpmRegistryProfilesSectionProps['targetSelection'];
-    sourceRegistry: Pick<
-        PluginRegistrySourceAdministrationParamsV1,
-        'scopeKey' | 'executionTarget' | 'resolveCurrentExecutionTarget'
-    >;
 }>;
 
 type PluginRegistryProfileSelectionDialogProps = CustomModalInjectedProps & PluginRegistryProfileSelectionParams & Readonly<{
@@ -55,7 +48,6 @@ export function PluginRegistryProfileSelectionDialog(props: PluginRegistryProfil
     const { theme } = useUnistyles();
     const { onClose, onResolve } = props;
     const sourceRegistry = usePluginRegistrySourceAdministration({
-        ...props.sourceRegistry,
         enabled: props.daemonOperationsAvailable,
         focused: true,
     });

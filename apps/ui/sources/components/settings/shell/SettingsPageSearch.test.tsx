@@ -61,6 +61,12 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 
+// Only the native recycler is substituted (jsdom has no viewport); result rows, windowing data and presentation stay real.
+vi.mock('@legendapp/list/react-native', async (importOriginal) => {
+    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
+    return createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>() }).module;
+});
+
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
 }));

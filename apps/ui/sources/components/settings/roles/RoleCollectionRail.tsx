@@ -8,7 +8,8 @@ import { useDescribeRoleRow } from '@/components/roles/catalog/rolePresentation'
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Item } from '@/components/ui/lists/Item';
 import { CollectionDraftRow, CollectionList, CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
-import type { RoleCatalogEntry } from '@/sync/domains/roles/roleCatalog';
+import { roleDisplayName, type RoleCatalogEntry } from '@/sync/domains/roles/roleCatalog';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -19,7 +20,7 @@ import { RoleCollectionRow } from './RoleCollectionRow';
 
 /** The roles migrated from 0.2 sub-agents guidance, named once under the list (lab `settings-R3`). */
 export function readMigratedRoleNames(entries: ReadonlyArray<RoleCatalogEntry>): readonly string[] {
-    return entries.filter((entry) => entry.migratedFromV0_2).map((entry) => entry.role.name);
+    return entries.filter((entry) => entry.migratedFromV0_2).map((entry) => roleDisplayName(entry.role));
 }
 
 /** A new role starts as a session role with no engine of its own, and is marked as one. */
@@ -38,7 +39,7 @@ type RoleGroup = Readonly<{ id: RoleCatalogEntry['source']; title: string; entri
 /** Built-in, yours, shared with you and from plugins, in that order; empty groups drop out. */
 export function groupRoleCatalog(entries: ReadonlyArray<RoleCatalogEntry>, query: string): ReadonlyArray<RoleGroup> {
     const needle = query.trim().toLowerCase();
-    const matches = (entry: RoleCatalogEntry) => !needle || entry.role.name.toLowerCase().includes(needle);
+    const matches = (entry: RoleCatalogEntry) => !needle || roleDisplayName(entry.role).toLowerCase().includes(needle);
     const groups: RoleGroup[] = [
         { id: 'built_in', title: t('roles.settings.groupBuiltIn'), entries: [] },
         { id: 'user', title: t('roles.settings.groupYours'), entries: [] },
@@ -92,6 +93,7 @@ export const RoleCollectionRail = React.memo(function RoleCollectionRail() {
         >
             {selection.kind === 'draft' ? (
                 <CollectionDraftRow
+                    rowRole="item"
                     testID="settings.roles.rail.draft"
                     titles={roleDraftTitle}
                     placeholder={t('roles.settings.newRoleName')}
@@ -103,14 +105,14 @@ export const RoleCollectionRail = React.memo(function RoleCollectionRail() {
                 />
             ) : null}
             {groups.length === 0 ? (
-                <Item
-                    testID="settings.roles.rail.empty"
+                // Loading, failed and empty are the rail's one quiet line (as every settings collection rail).
+                <EmptyState
+                    testID={catalog.status === 'loading' ? 'settings.roles.rail.loading' : 'settings.roles.rail.empty'}
+                    layout="line"
+                    lineLoading={catalog.status === 'loading'}
                     title={catalog.status === 'loading' ? t('common.loading') : catalog.status === 'failed'
                         ? t('roles.settings.loadFailed')
                         : searchable && query.trim() ? t('common.noMatches') : t('roles.rail.empty')}
-                    density="compact"
-                    showChevron={false}
-                    mode="info"
                 />
             ) : groups.map((group, index) => (
                 <React.Fragment key={group.id}>

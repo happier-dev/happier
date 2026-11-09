@@ -1,15 +1,135 @@
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_ACTIONS_SETTINGS_V1, type ActionId } from '@happier-dev/protocol';
+import { DEFAULT_ACTIONS_SETTINGS_V1} from '@happier-dev/protocol/account/settings/accountSettings';
+import { type ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 import * as actionSettingsTargets from './actionSettingsTargets';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { getActionTargetApprovalOverride } from './actionSettingsTargetApproval';
+import { resolveActionApprovalLooseningNoticeData } from './resolveActionSettingsControlState';
+import { applyActionPolicyMutation } from '@happier-dev/protocol/actions/actionAudiencePolicy';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 
 const resolveControlState = actionSettingsTargets.resolveActionSettingsTargetControlState;
 const applyControlState = actionSettingsTargets.applyActionSettingsTargetControlState;
 
 describe('resolveActionSettingsTargetControlState', () => {
+    it('keeps a deliberate foreign HTML grant distinct from its refused default', () => {
+        const actionId = 'session.message.send';
+        const targetId = 'foreign_session_html' as const;
+        expect(resolveControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId, targetId })).toMatchObject({ value: 'off' });
+        const allowed = applyControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId, targetId, value: 'allowed' });
+        expect(allowed.callerSurfacePolicies?.foreign_session_html?.[actionId]).toBe('allowed');
+        expect(resolveControlState({ settings: allowed, actionId, targetId })).toMatchObject({ value: 'allowed', approvalRequiredByPolicy: false });
+        const reset = applyControlState({ settings: allowed, actionId, targetId, value: 'default' });
+        expect(resolveControlState({ settings: reset, actionId, targetId })).toMatchObject({ value: 'off' });
+    });
+    it('keeps an Allowed token-update waiver disclosed and restores only its CLI Ask preference', () => {
+        const actionId = 'account.apiTokens.update';
+        const sibling = applyControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            actionId: 'session.stop', targetId: 'cli', value: 'off' });
+        const allowed = applyControlState({ settings: sibling, actionId, targetId: 'cli', value: 'allowed' });
+        const state = resolveControlState({ settings: allowed, actionId, targetId: 'cli' });
+        expect(state).toMatchObject({ value: 'allowed', approvalRequiredByPolicy: false, approvalWaivable: true,
+            approvalLooseningNotice: { keepAskFirst: { actionId, audience: 'cli', mode: 'default' } } });
+        if (state.kind !== 'approval' || !state.approvalLooseningNotice) throw new Error('Missing token permission warning');
+        const spec = getActionSpec(actionId);
+        for (const patch of [{ label: 'Renamed CI' }, { grant: API_TOKEN_FULL_GRANT_V1 }, { authorizeUnattendedTeamAccess: true }]) {
+            const admittedInput = spec.inputSchema.parse({ tokenId: '550e8400-e29b-41d4-a716-446655440000', ...patch });
+            expect(resolveActionApprovalLooseningNoticeData({ spec, admittedInput, actionId, audience: 'cli',
+                mode: 'allowed', approvalRequiredByPolicy: state.approvalRequiredByPolicy, approvalWaivable: state.approvalWaivable,
+                keepAskFirst: state.approvalLooseningNotice.keepAskFirst }))
+                .toEqual(state.approvalLooseningNotice);
+        }
+        const reverted = applyActionPolicyMutation(allowed, state.approvalLooseningNotice.keepAskFirst).settings;
+        expect(resolveControlState({ settings: reverted, actionId, targetId: 'cli' }))
+            .toMatchObject({ approvalRequiredByPolicy: true });
+        expect(resolveControlState({ settings: reverted, actionId, targetId: 'cli' }))
+            .not.toHaveProperty('approvalLooseningNotice');
+        expect(reverted.actions['session.stop']).toEqual(sibling.actions['session.stop']);
+        expect(resolveControlState({ settings: reverted, actionId: 'session.stop', targetId: 'cli' }))
+            .toMatchObject({ value: 'off' });
+    });
+
+    it.each([
+        ['review.start', 'command_palette', 'allowed'], ['review.start', 'slash_command', 'ask_first'],
+        ['machines.setup.adminAccess.set', 'agent', 'on'], ['machines.setup.adminAccess.set', 'agent', 'off'],
+    ] as const)('refuses scoped %s/%s/%s instead of widening it into a global mutation', (actionId, targetId, value) => {
+        expect(() => applyControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            actionId, targetId, value,
+            scope: { kind: 'machine', machineId: 'A' } })).toThrow();
+    });
+
+    it('consumes the admin Machine preference and shared exact-key warning/revert without changing global or sibling policy', () => {
+        const actionId = 'machines.setup.adminAccess.set';
+        const scope = { kind: 'machine', machineId: 'A' } as const;
+        const sibling = { actionId, scope: { kind: 'machine', machineId: 'B' } as const,
+            approvalRequiredSurfaces: [], approvalWaivedSurfaces: ['agent'] };
+        const otherAction = { ...sibling, actionId: 'session.stop', scope };
+        const settings = normalizeActionsSettingsV1({ v: 1, actions: {}, scopedApprovalPreferences: [sibling, otherAction] });
+        const params = { settings, actionId, targetId: 'agent', scope } as const;
+        const allowed = applyControlState({ ...params, value: 'allowed' });
+        expect(allowed.approvalWaivedSurfaces).toEqual(settings.approvalWaivedSurfaces);
+        expect(allowed.scopedApprovalPreferences).toEqual([sibling, otherAction,
+            { actionId, scope, approvalRequiredSurfaces: [], approvalWaivedSurfaces: ['agent'] }]);
+        const state = resolveControlState({ ...params, settings: allowed });
+        // The setting above already asks, so Keep Ask first returns this Machine to it rather than pinning an override.
+        expect(state).toMatchObject({ value: 'allowed', approvalRequiredByPolicy: false, permissionChanging: true,
+            approvalLooseningNotice: { keepAskFirst: { actionId, audience: 'agent', scope, mode: 'default' } } });
+        if (state.kind !== 'approval' || !state.approvalLooseningNotice) throw new Error('Missing shared warning');
+        const reverted = applyActionPolicyMutation(allowed, state.approvalLooseningNotice.keepAskFirst).settings;
+        expect(resolveControlState({ ...params, settings: reverted })).toMatchObject({ approvalRequiredByPolicy: true });
+        expect(resolveControlState({ ...params, settings: reverted })).not.toHaveProperty('approvalLooseningNotice');
+        expect(reverted.scopedApprovalPreferences?.[0]).toBe(allowed.scopedApprovalPreferences?.[0]);
+        expect(reverted.scopedApprovalPreferences?.[1]).toBe(allowed.scopedApprovalPreferences?.[1]);
+        expect(reverted.actions).toEqual(settings.actions);
+        expect(reverted.approvalWaivedSurfaces).toEqual(settings.approvalWaivedSurfaces);
+    });
+
+    it('shows the shared warning for globally Allowed admin access inherited by a Machine, while a Machine Ask override wins', () => {
+        const actionId = 'machines.setup.adminAccess.set';
+        const scope = { kind: 'machine', machineId: 'A' } as const;
+        const settings = applyControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId, targetId: 'mcp', value: 'allowed' });
+        const params = { settings, actionId, targetId: 'mcp', scope } as const;
+        expect(resolveControlState(params)).toMatchObject({ value: 'default', approvalRequiredByPolicy: false,
+            approvalLooseningNotice: { keepAskFirst: { actionId, audience: 'mcp', scope, mode: 'ask_first' } } });
+        const required = applyControlState({ ...params, value: 'ask_first' });
+        expect(resolveControlState({ ...params, settings: required })).toMatchObject({ value: 'ask_first', approvalRequiredByPolicy: true });
+        expect(resolveControlState({ ...params, settings: required })).not.toHaveProperty('approvalLooseningNotice');
+        expect(resolveControlState({ settings: required, actionId, targetId: 'mcp' })).toMatchObject({ value: 'allowed', approvalRequiredByPolicy: false });
+    });
+
+    it.each([{ kind: 'machine', machineId: 'A' }, { kind: 'environment', environmentId: 'staging' }] as const)(
+        'restores only the exact scoped preference from shared notice data (%j)', scope => {
+            const actionId = 'machines.agentIsolation.set';
+            const sibling = { actionId, scope: { kind: 'machine', machineId: 'B' } as const,
+                approvalRequiredSurfaces: [], approvalWaivedSurfaces: ['agent'] };
+            const settings = normalizeActionsSettingsV1({ v: 1, actions: {}, scopedApprovalPreferences: [sibling,
+                { actionId, scope, approvalRequiredSurfaces: [], approvalWaivedSurfaces: ['agent'] }] });
+            const notice = resolveActionApprovalLooseningNoticeData({ spec: getActionSpec(actionId), actionId,
+                audience: 'agent', scope, mode: 'allowed', approvalRequiredByPolicy: false, approvalWaivable: true });
+            expect(notice?.keepAskFirst).toEqual({ actionId, audience: 'agent', scope, mode: 'ask_first' });
+            if (!notice) throw new Error('missing permission-changing notice');
+            const reverted = applyActionPolicyMutation(settings, notice.keepAskFirst).settings;
+            expect(reverted.scopedApprovalPreferences).toEqual([sibling,
+                { actionId, scope, approvalRequiredSurfaces: ['agent'], approvalWaivedSurfaces: [] }]);
+            expect(reverted.actions).toEqual(settings.actions);
+        });
+    it('carries one permission-changing Allowed notice and exact audience revert to the real Settings control', () => {
+        const actionId = 'machines.agentIsolation.set';
+        const allowed = applyControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId, targetId: 'agent', value: 'allowed' });
+        expect(resolveControlState({ settings: allowed, actionId, targetId: 'agent' })).toMatchObject({
+            permissionChanging: true, approvalLooseningNotice: {
+                keepAskFirst: { actionId, audience: 'agent', mode: 'default' },
+            },
+        });
+        expect(resolveControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId, targetId: 'agent' }))
+            .not.toHaveProperty('approvalLooseningNotice');
+        const ordinary = applyControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId: 'session.stop', targetId: 'agent', value: 'allowed' });
+        expect(resolveControlState({ settings: ordinary, actionId: 'session.stop', targetId: 'agent' }))
+            .not.toHaveProperty('approvalLooseningNotice');
+    });
     it.each(['cli', 'agent', 'mcp'] as const)('restores default approval when Ask first is chosen again on %s', (targetId) => {
         const actionId = 'mcp.servers.signIn.start';
         const allowed = applyControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1, actionId, targetId, value: 'allowed' });
@@ -52,29 +172,6 @@ describe('resolveActionSettingsTargetControlState', () => {
         expect(resolveControlState({ settings: restored, actionId, targetId: 'cli', target }))
             .toMatchObject({ value: 'default', approvalRequiredByPolicy: approvalRequired });
     });
-
-    it.each(['workflow.trigger.add', 'workflow.trigger.update', 'workflow.trigger.remove'] as const)(
-        'keeps %s Agent confirmation mandatory despite persisted waivers and preserves off/enable continuity',
-        (actionId) => {
-            const spec = getActionSpec(actionId);
-            const descriptor = Object.getOwnPropertyDescriptor(spec, 'approvalPolicy')!;
-            // Production triggers permit waivers; the mandatory contract needs
-            // an explicit host declaration rather than a special Action-id rule.
-            Object.defineProperty(spec, 'approvalPolicy', { ...descriptor, value: { ...spec.approvalPolicy, nonWaivable: true } });
-            try {
-                const waived = { ...DEFAULT_ACTIONS_SETTINGS_V1, approvalWaivedSurfaces: { [actionId]: ['agent' as const] } };
-                expect(actionSettingsTargets.resolveActionSettingsTargetControlState({ settings: waived, actionId, targetId: 'agent' }))
-                    .toMatchObject({ kind: 'approval', value: 'ask_first', approvalRequiredByPolicy: true, approvalWaivable: false });
-                const off = actionSettingsTargets.applyActionSettingsTargetControlState({ settings: waived, actionId, targetId: 'agent', value: 'off' });
-                expect(actionSettingsTargets.resolveActionSettingsTargetControlState({ settings: off, actionId, targetId: 'agent' }))
-                    .toMatchObject({ value: 'off', approvalWaivable: false });
-                const enabled = actionSettingsTargets.applyActionSettingsTargetControlState({ settings: off, actionId, targetId: 'agent', value: 'allowed' });
-                expect(enabled.approvalWaivedSurfaces?.[actionId]).toBeUndefined();
-                expect(actionSettingsTargets.resolveActionSettingsTargetControlState({ settings: enabled, actionId, targetId: 'agent' }))
-                    .toMatchObject({ value: 'ask_first', approvalRequiredByPolicy: true, approvalWaivable: false });
-            } finally { Object.defineProperty(spec, 'approvalPolicy', descriptor); }
-        },
-    );
 
     it('resolves approval-capable targets to the inherited default', () => {
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import type { ServerSelectionGroup } from '@/sync/domains/server/selection/serverSelectionTypes';
+import { t } from '@/text';
 
 import {
     buildHomeCollection,
@@ -16,15 +17,17 @@ function profile(id: string, overrides: Partial<ServerProfile> = {}): ServerProf
 }
 
 describe('buildHomeCollection', () => {
-    it('keeps unnamed Home addresses in metadata even when a status fact is present', () => {
+    it('distinguishes unnamed peer Homes in their visible titles even when health occupies the status slot', () => {
         const collection = buildHomeCollection({
             servers: [profile('home-a'), profile('home-b')], groups: [], activeServerId: 'home-a',
             activeTargetKey: null, deviceDefaultServerId: null,
             authStatusByServerId: { 'home-a': 'signedIn', 'home-b': 'signedOut' },
             homeConnectionSummaryByServerId: {},
         });
+        expect(collection.homes.map((row) => row.title)).toEqual([
+            t('settingsAccount.thisHomeTitle'), 'https://home-b.example.test',
+        ]);
         for (const row of collection.homes) {
-            expect(row.title).not.toContain(row.serverUrl);
             expect(describeHomeRow(row)).toContain(`${row.id}.example.test`);
         }
     });

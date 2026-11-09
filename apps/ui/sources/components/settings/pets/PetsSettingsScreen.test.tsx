@@ -347,7 +347,6 @@ vi.mock('@/sync/domains/state/storage', async (importOriginal) => {
                 petsDetectCodexPets: localSettingsState.petsDetectCodexPets,
                 desktopPetOverlayEnabledOverride: 'inherit',
                 desktopPetOverlayAnchor: 'bottomRight',
-                desktopPetOverlayOffset: { x: 0, y: 0 },
                 desktopPetOverlayLocked: false,
             })[name],
             useAllMachines: () => machinesState.current,

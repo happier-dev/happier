@@ -55,8 +55,9 @@ describe('DesktopAppSettingsScreen', () => {
         <DesktopAppSettingsScreen />
     </InjectedAuthProvider>);
 
-    it('keeps startup settings beside the enabled Notch controls', async () => {
+    it('keeps capture and startup settings beside the enabled Notch controls', async () => {
         const screen = await render();
+        expect(screen.findGroup('screenCapture.settings.title')).toBeTruthy();
         expect(screen.findByTestId('settings-desktop-autostart-enabled')).toBeTruthy();
         expect(screen.findRow('settings-desktop-overlay-enabled')).toBeTruthy();
         expect(screen.findRow('settings-desktop-overlay-visibility-mode')).toBeTruthy();

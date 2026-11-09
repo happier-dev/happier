@@ -16,6 +16,7 @@ import { t } from '@/text';
 
 import {
   buildAgentMachineRows,
+  countAgentMachineRowsToShow,
   listAgentMachines,
   type AgentMachinesMachine,
 } from './agentMachinesModel';
@@ -101,6 +102,22 @@ const kinds = (row: { actions: readonly { kind: string }[] }) =>
   row.actions.map((action) => action.kind);
 
 describe('buildAgentMachineRows', () => {
+  it('says "couldn\'t check" once at most: the unanswered machines wait behind "N more", after the ones with news', () => {
+    const answers = new Map([['ready', 'ready'], ['a', 'error'], ['b', 'error'], ['c', 'error']] as const);
+    const machines = [machine('a'), machine('b'), machine('ready'), machine('c')];
+    const rows = buildAgentMachineRows({
+      machines,
+      agentsByMachineId: new Map(machines.map((m) => [m.machineId, m.machineId === 'ready' ? agent(facts()) : null])),
+      inventoryStatusByMachineId: answers,
+      pinnedVersion: null,
+    });
+    expect(rows[0]?.machine.machineId).toBe('ready');
+    expect(countAgentMachineRowsToShow(rows)).toBe(1);
+    const unanswered = rows.filter((row) => row.status.kind === 'unknown');
+    expect(unanswered).toHaveLength(3);
+    expect(countAgentMachineRowsToShow(unanswered)).toBe(1);
+  });
+
   it('distinguishes a cold inventory failure from checking, offline and a detected missing install', () => {
     const rows = buildAgentMachineRows({
       machines: [machine('failed'), machine('checking'), machine('away', { online: false }), machine('missing')],
@@ -230,9 +247,37 @@ describe('buildAgentMachineRows', () => {
     ]);
 
     expect(rows.map((row) => [row.machine.machineId, row.status.kind, kinds(row)])).toEqual([
-      ['failed', 'unknown', ['checkAgain']],
       ['away', 'offline', []],
+      ['failed', 'unavailable', ['checkAgain']],
     ]);
+    expect(rows[1]?.status).toMatchObject({ kind: 'unavailable', reason: { reason: 'probe_failed' } });
+  });
+
+  it('offers no Try again on a machine whose check is already on its way', () => {
+    const rows = buildAgentMachineRows({
+      machines: [machine('rechecking')],
+      agentsByMachineId: new Map([['rechecking', agent(facts(), { probeFailed: true })]]),
+      inventoryStatusByMachineId: new Map([['rechecking', 'loading']]),
+      pinnedVersion: null,
+    });
+    expect(kinds(rows[0]!)).toEqual([]);
+  });
+
+  it('holds the machines\' own order until every online check has answered, then ranks them', () => {
+    const entries = [
+      [machine('bare'), agent(facts({ installed: false, version: null }))],
+      [machine('pending'), null],
+      [machine('installed'), agent(facts())],
+    ] as const;
+    const build = (pendingStatus: 'loading' | 'ready') => buildAgentMachineRows({
+      machines: entries.map(([m]) => m),
+      agentsByMachineId: new Map(entries.map(([m, a]) => [m.machineId, a])),
+      inventoryStatusByMachineId: new Map([['bare', 'ready'], ['pending', pendingStatus], ['installed', 'ready']]),
+      pinnedVersion: null,
+    }).map((row) => row.machine.machineId);
+
+    expect(build('loading')).toEqual(['bare', 'pending', 'installed']);
+    expect(build('ready')).toEqual(['installed', 'bare', 'pending']);
   });
 
   it('keeps an offline machine last, with its last-known state and no actions', () => {

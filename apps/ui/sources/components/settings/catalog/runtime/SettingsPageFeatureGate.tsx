@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { FeatureId } from '@happier-dev/protocol';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';

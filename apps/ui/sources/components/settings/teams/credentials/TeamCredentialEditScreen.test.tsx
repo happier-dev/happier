@@ -2,10 +2,12 @@ import * as React from 'react';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-    decodePlainArtifactStoredContent,
-    machinePoolActionEndpointPathV1,
+    decodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import {
+    machinePoolActionEndpointPathV1} from '@happier-dev/protocol/machines/pools/actionsV1';
+import {
     type MachinePoolViewV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/pools/v1';
 import { TEAM_CREDENTIAL_RESOURCE_DISCOVERY_PATH_V1, TeamCredentialResourceDiscoveryPageV1Schema } from '@happier-dev/protocol/teams';
 
 import { collectRenderedTestIds, createDeferred, renderScreen, standardCleanup, teamCapabilitiesFixture, teamCredentialResourceFixture, teamCredentialSourceCandidateFixture, teamCredentialViewerFixture, teamSummaryFixture } from '@/dev/testkit';
@@ -272,6 +274,11 @@ async function renderEditor(params?: Readonly<{
         text: screen.getTextContent(), requests: harness.requests.map(request => request.path),
     }))
         .toContain('team-credential-edit-save'));
+    if (params?.sourceOwner !== false && params?.poolsEnabled !== false && !params?.section
+        && resource.brokerPresentation.eligiblePools.length > 0) {
+        await vi.waitFor(() => expect(findDeclaredRow(screen,
+            `team-credential-edit-broker:machine_pool:${resource.brokerPresentation.eligiblePools[0]!.poolId}`)).not.toBeNull());
+    }
     return { screen, firstPoolId, secondPoolId, resource, serverId };
 }
 
@@ -346,6 +353,72 @@ describe('TeamCredentialEditScreen broker placement', () => {
         await vi.waitFor(() => expect(screen.findByTestId('team-credential-edit-name')?.props.value).toBe(resource.displayName));
         expect(screen.findByTestId('team-credential-edit-unavailable')).toBeNull();
         expect(screen.root.findAllByType('MachineAdministrationTargetSelector')).toHaveLength(0);
+    });
+
+    it.each([
+        { confirmed: false, ask: false },
+        { confirmed: true, ask: false },
+        { confirmed: true, ask: true },
+    ])('uses one reviewed native source intent and preserves explicit Ask ($confirmed/$ask)', async ({ confirmed, ask }) => {
+        const { screen, serverId, resource } = await renderEditor({ sourceReadFails: true,
+            approvalRequired: ask,
+            resourceOverrides: { deliveryPolicy: { preferredAllowedModes: ['vendor-native'] } },
+        });
+        const source = teamCredentialSourceCandidateFixture().source;
+        expect(source.kind).toBe('connected_pool');
+        if (source.kind !== 'connected_pool') throw new Error('pool_fixture_required');
+        const candidate = teamCredentialSourceCandidateFixture({ label: 'Replacement key',
+            source: { ...source, poolIncarnation: 'replacement-source' },
+        });
+        harness.answer(serverId, '/v1/teams/credential-resources/sources/list', {
+            body: { candidates: [candidate], supportedKinds: ['connected_pool'], brokerPresentation: resource.brokerPresentation },
+        });
+        await screen.pressByTestIdAsync('team-credential-edit-source-retry');
+        await vi.waitFor(() => expect(findDeclaredRow(screen, 'team-credential-create-source')?.props.disabled).toBe(false));
+        const originalLabel = findDeclaredRow(screen, 'team-credential-create-source')?.props.detail;
+        await screen.pressByTestIdAsync('team-credential-create-source');
+        const { Modal } = await import('@/modal');
+        // Modal is the system presentation boundary; the picker and draft owners remain real.
+        const picker = vi.mocked(Modal.show).mock.calls.at(-1)?.[0] as unknown as Readonly<{
+            props: { rootStep: { sections: readonly { options: readonly { id: string; label: string }[] }[] }; onSelect: (id: string) => void };
+        }>;
+        const option = picker.props.rootStep.sections.flatMap(section => section.options).find(row => row.label === 'Replacement key');
+        expect(option).toBeDefined();
+        vi.mocked(Modal.confirm).mockClear().mockResolvedValueOnce(confirmed);
+        await act(async () => picker.props.onSelect(option!.id));
+        expect(Modal.confirm).toHaveBeenCalledOnce();
+        expect(findDeclaredRow(screen, 'team-credential-create-source')?.props.detail).toBe(confirmed ? 'Replacement key' : originalLabel);
+        if (!confirmed) {
+            expect(harness.requestsFor(CREDENTIAL_UPDATE_PATH)).toHaveLength(0);
+            return;
+        }
+        harness.answer(serverId, CREDENTIAL_UPDATE_PATH, { body: { resourceId: resource.id, revision: resource.revision + 1 } });
+        await vi.waitFor(() => expect(screen.findByTestId('team-credential-edit-save')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('team-credential-edit-save');
+        if (ask) {
+            await vi.waitFor(() => expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(1));
+            expect(harness.requestsFor(CREDENTIAL_UPDATE_PATH)).toHaveLength(0);
+        } else {
+            await vi.waitFor(() => expect(harness.requestsFor(CREDENTIAL_UPDATE_PATH)).toHaveLength(1));
+            expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
+        }
+    });
+
+    it('renames an existing native resource without restating its disclosure or audience authority', async () => {
+        const { screen, serverId, resource } = await renderEditor({ resourceOverrides: {
+            deliveryPolicy: { preferredAllowedModes: ['vendor-native'] }, allMembersAllowedRoutes: ['vendor-native'],
+        } });
+        harness.answer(serverId, CREDENTIAL_UPDATE_PATH, { body: { resourceId: resource.id, revision: resource.revision + 1 } });
+        act(() => screen.changeTextByTestId('team-credential-edit-name', 'Renamed key'));
+        await screen.pressByTestIdAsync('team-credential-edit-save');
+        await vi.waitFor(() => expect(harness.requestsFor(CREDENTIAL_UPDATE_PATH)).toHaveLength(1));
+        const input = harness.requestsFor(CREDENTIAL_UPDATE_PATH)[0]?.input as { replacement: Record<string, unknown> };
+        expect(input.replacement.displayName).toBe('Renamed key');
+        expect(input.replacement).not.toHaveProperty('custodian');
+        expect(input.replacement).not.toHaveProperty('allMembersAllowedRoutes');
+        expect(input.replacement).not.toHaveProperty('groupGrants');
+        expect(input.replacement).not.toHaveProperty('memberGrants');
+        expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
     });
 
     it('retries an initial source read without replacing the resource draft', async () => {
@@ -434,6 +507,7 @@ describe('TeamCredentialEditScreen broker placement', () => {
 
     it('keeps duplicate Pool names exact and accessible, including an unverified source decision', async () => {
         const { screen, firstPoolId, secondPoolId } = await renderEditor();
+        await vi.waitFor(() => expect(findDeclaredRow(screen, `team-credential-edit-broker:machine_pool:${firstPoolId}`), screen.getTextContent()).not.toBeNull());
         const first = findDeclaredRow(screen, `team-credential-edit-broker:machine_pool:${firstPoolId}`);
         const second = findDeclaredRow(screen, `team-credential-edit-broker:machine_pool:${secondPoolId}`);
         expect(first?.props.title).toBe('Development');
@@ -471,6 +545,7 @@ describe('TeamCredentialEditScreen broker placement', () => {
 
     it('preserves its Pool draft across refresh and adopts the current Pool only on explicit reload', async () => {
         const { screen, firstPoolId, secondPoolId, resource, serverId } = await renderEditor();
+        await vi.waitFor(() => expect(findDeclaredRow(screen, `team-credential-edit-broker:machine_pool:${firstPoolId}`)).not.toBeNull());
         await screen.pressByTestIdAsync(`team-credential-edit-broker:machine_pool:${firstPoolId}`);
 
         act(() => applyTeamCredentialResource({
@@ -541,6 +616,7 @@ describe('TeamCredentialEditScreen broker placement', () => {
 
     it('keeps broker Machines in the canonical selector and Pools in their own named group', async () => {
         const { screen, firstPoolId, secondPoolId } = await renderEditor({ placement: 'none' });
+        await vi.waitFor(() => expect(brokerChoiceTestIds(screen)).toContain(`team-credential-edit-broker:machine_pool:${firstPoolId}`));
 
         const group = brokerLocationRadioGroup(screen);
         expect(group.props['aria-label'] ?? group.props.accessibilityLabel).toBe('My machine pools');
@@ -639,10 +715,60 @@ describe('TeamCredentialEditScreen broker placement', () => {
         const actionArgs = approvalRequestFromLastArtifact().actionArgs as Record<string, unknown>;
         expect(actionArgs).not.toHaveProperty('displayName');
         expect(actionArgs).not.toHaveProperty('brokerPlacement');
+        expect(actionArgs.replacement).not.toHaveProperty('allMembersAllowedRoutes');
+        expect(actionArgs.replacement).not.toHaveProperty('groupGrants');
+        expect(actionArgs.replacement).not.toHaveProperty('memberGrants');
+    });
+
+    it('preserves native policy order and audience allowance when saving an existing resource', async () => {
+        const { screen, resource } = await renderEditor({
+            approvalRequired: true,
+            resourceOverrides: {
+                deliveryPolicy: { preferredAllowedModes: ['vendor-native', 'brokered'] },
+                allMembersAllowedRoutes: ['vendor-native', 'brokered'],
+            },
+        });
+        expect(findDeclaredRow(screen, 'team-credential-edit-ceiling:brokered_only')?.props.disabled).toBe(true);
+        expect(findDeclaredRow(screen, 'team-credential-edit-ceiling:direct_allowed')?.props.disabled).toBe(true);
+        selectBrokerMachine(screen, 'machine-offline');
+        await vi.waitFor(() => expect(screen.findByTestId('team-credential-edit-save')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('team-credential-edit-save');
+        await vi.waitFor(() => expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(1));
+        const input = approvalRequestFromLastArtifact().actionArgs as { replacement: Record<string, unknown> };
+        expect(input.replacement).toMatchObject({
+            custodian: { source: resource.source, deliveryPolicy: { preferredAllowedModes: ['vendor-native', 'brokered'] },
+                brokerPlacement: { kind: 'machine', machineId: 'machine-offline' } },
+        });
+        expect(input.replacement).not.toHaveProperty('disclosureCeiling');
+        expect(input.replacement).not.toHaveProperty('allMembersDeliveryMode');
+    });
+
+    it('submits only custodian authority when manager fields are masked', async () => {
+        const { screen, resource } = await renderEditor({
+            approvalRequired: true,
+            resourceOverrides: { capabilities: {
+                ...teamCredentialResourceFixture().capabilities,
+                managePolicy: false, manageAudience: false, manageLimits: false,
+            } },
+        });
+        selectBrokerMachine(screen, 'machine-offline');
+        await vi.waitFor(() => expect(screen.findByTestId('team-credential-edit-save')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('team-credential-edit-save');
+        await vi.waitFor(() => expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(1));
+        expect(approvalRequestFromLastArtifact()).toMatchObject({
+            actionId: 'teams.credentials.update',
+            actionArgs: { resourceId: resource.id, expectedRevision: resource.revision, replacement: {
+                custodian: { source: resource.source, deliveryPolicy: resource.deliveryPolicy,
+                    brokerPlacement: { kind: 'machine', machineId: 'machine-offline' } },
+            } },
+        });
+        const input = approvalRequestFromLastArtifact().actionArgs as { replacement: Record<string, unknown> };
+        expect(Object.keys(input.replacement)).toEqual(['custodian']);
     });
 
     it('keeps a Pool projection failure actionable and preserves the credential draft while retrying', async () => {
         const { screen, serverId } = await renderEditor();
+        await vi.waitFor(() => expect(brokerChoiceTestIds(screen)).toHaveLength(2));
         const response = createDeferred<void>();
         const listPath = machinePoolActionEndpointPathV1('machines.pools.list');
         const priorReads = harness.requestsFor(listPath).length;
@@ -683,6 +809,7 @@ describe('TeamCredentialEditScreen broker placement', () => {
         });
 
         await screen.pressByTestIdAsync('team-credential-audience-everyone');
+        await vi.waitFor(() => expect(screen.findByTestId('team-credential-audience-mode:everyone:brokered')).not.toBeNull());
         await screen.pressByTestIdAsync('team-credential-audience-mode:everyone:brokered');
         await vi.waitFor(() => expect(screen.findByTestId('team-credential-edit-save')?.props.disabled).toBe(false));
         await screen.pressByTestIdAsync('team-credential-edit-save');

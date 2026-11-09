@@ -34,6 +34,7 @@ installSettingsViewCommonModuleMocks({
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { resetServerFeaturesClientForTests } = await import("@/sync/api/capabilities/serverFeaturesClient");
+const { TeamsDirectoryScreen } = await import('./TeamsDirectoryScreen');
 
 const ELIGIBILITY_PATH = '/v1/home/governance/eligibility/get';
 const TEAMS_LIST_PATH = '/v1/teams/list';
@@ -43,7 +44,6 @@ function archivedRead(input: unknown): boolean {
 }
 
 async function renderDirectory() {
-    const { TeamsDirectoryScreen } = await import('./TeamsDirectoryScreen');
     return renderScreen(<TeamsDirectoryScreen />);
 }
 
@@ -69,12 +69,11 @@ beforeEach(async () => {
 afterEach(() => standardCleanup());
 
 /**
- * "Show archived" is offered only when there is something behind it: an archive with Teams, or one
- * that could not be read (which is not known to be empty). Opening it always answers the question
- * it asked, including a Home that could not answer.
+ * Opening the archive declares demand for its separate directory sequence. The active list never
+ * reads that sequence just to decide whether to offer the control.
  */
 describe('TeamsDirectoryScreen archived Teams', () => {
-    it('does not offer Show archived when the Home has no archived Teams', async () => {
+    it('reads no archived Teams until requested, then distinguishes a settled empty archive', async () => {
         const home = await harness.addHome({
             name: 'Home A',
             serverUrl: 'https://home-a.example',
@@ -85,19 +84,23 @@ describe('TeamsDirectoryScreen archived Teams', () => {
         harness.answer(home, ELIGIBILITY_PATH, { body: { teamsEnabled: true, createTeam: false, createTeamForChosenAccount: false } });
         harness.answer(home, TEAMS_LIST_PATH, {
             body: { items: [teamSummaryFixture({ id: 'team-1' })], nextCursor: null },
+            select: input => archivedRead(input) ? { body: { items: [], nextCursor: null } } : undefined,
         });
 
         const screen = await renderDirectory();
         await vi.waitFor(() => {
             expect(collectRenderedTestIds(screen.tree.toJSON())).toContain(`teams-row:${home}:team-1`);
-            // The archived read answered too, so the control's absence is an answer, not a wait.
-            expect(harness.requestsFor(TEAMS_LIST_PATH).some((request) => archivedRead(request.input))).toBe(true);
+            expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('teams-directory-toggle-archived');
         });
+        const reads = () => harness.requestsFor(TEAMS_LIST_PATH).filter(request => archivedRead(request.input)).length;
+        expect(reads()).toBe(0);
+        await screen.pressByTestIdAsync('teams-directory-toggle-archived');
         await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON()))
-            .not.toContain('teams-directory-toggle-archived'));
+            .toContain('teams-directory-archived-empty'));
+        expect(reads()).toBe(1);
     });
 
-    it('offers Show archived once the archive has Teams, and opening it lists them', async () => {
+    it('opens the archive on demand and retains its rows across hiding and reopening', async () => {
         const home = await harness.addHome({
             name: 'Home A',
             serverUrl: 'https://home-a.example',
@@ -116,6 +119,12 @@ describe('TeamsDirectoryScreen archived Teams', () => {
         const screen = await renderDirectory();
         await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON()))
             .toContain('teams-directory-toggle-archived'));
+        expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain(`teams-row:${home}:old`);
+        expect(harness.requestsFor(TEAMS_LIST_PATH).filter(request => archivedRead(request.input))).toHaveLength(0);
+        await screen.pressByTestIdAsync('teams-directory-toggle-archived');
+        await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain(`teams-row:${home}:old`));
+        expect(harness.requestsFor(TEAMS_LIST_PATH).filter(request => archivedRead(request.input))).toHaveLength(1);
+        await screen.pressByTestIdAsync('teams-directory-toggle-archived');
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain(`teams-row:${home}:old`);
         await screen.pressByTestIdAsync('teams-directory-toggle-archived');
         await vi.waitFor(() => expect(collectRenderedTestIds(screen.tree.toJSON())).toContain(`teams-row:${home}:old`));

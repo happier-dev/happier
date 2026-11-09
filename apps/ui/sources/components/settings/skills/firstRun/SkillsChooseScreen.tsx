@@ -235,7 +235,7 @@ export const SkillsChoosePage = React.memo(function SkillsChoosePage(
 });
 
 const styles = StyleSheet.create((theme) => ({
-  page: { flex: 1, backgroundColor: theme.colors.surface.base },
+  page: { flex: 1 },
   // The column carries the page gutter, as the list above it does.
   barInset: { paddingHorizontal: 0 },
   barRow: { width: '100%', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s16, paddingHorizontal: theme.space.s16 },

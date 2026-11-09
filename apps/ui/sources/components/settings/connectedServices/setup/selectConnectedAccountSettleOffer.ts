@@ -1,4 +1,4 @@
-import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol';
+import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 
 import type { ConnectedServicesIndexPool } from '../model/buildConnectedServicesIndexModel';
 import type { suggestAgentDefaultForNewAccount } from './suggestAgentDefaultForNewAccount';

@@ -1,27 +1,36 @@
 import * as React from 'react';
-import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
-
 import { useSettingActionWriter, type SettingActionAddress } from '@/components/settings/catalog/useSettingActionWriter';
 import type { SettingValue } from '@/components/settings/catalog/settingDeclarations';
-import { presentActionTurnedOffNoticeIfOff } from '@/sync/ops/actions/actionTurnedOffNotice';
-import { Modal } from '@/modal';
-import { t } from '@/text';
+import { presentSettingWriteFailure } from './writeFailure';
+import { holdSettingWrite } from '@/sync/store/settingsPreview';
+import { readBuiltInSettingUiStorage } from '@/components/settings/catalog/settingDeclarations';
+
+export type DeclaredSettingsWrite = ReturnType<typeof useSettingActionFeedback>['setSetting'];
 
 /** Presentation only: declared-setting admission and custody stay with the canonical writer. */
 export function useSettingActionFeedback(options?: Parameters<typeof useSettingActionWriter>[0]) {
     const write = useSettingActionWriter(options);
-    const setSetting = React.useCallback(async (setting: SettingActionAddress, value: SettingValue): Promise<boolean> => {
+    const setSetting = React.useCallback(async (setting: SettingActionAddress, value: SettingValue,
+        operation?: Parameters<typeof write>[2]): Promise<boolean> => {
+        if (!write.isCurrent(setting)) return false;
+        const binding = readBuiltInSettingUiStorage(setting.anchor);
+        const withdraw = holdSettingWrite(setting, value, binding?.scope === 'account' && 'kind' in binding && binding.kind === 'owner'
+            ? current => {
+                const parsed = binding.parse(value);
+                return parsed.success ? binding.mutate(current, parsed.value) : null;
+            } : undefined);
         try {
-            const result = await write(setting, value);
-            if (!write.isCurrent(setting)) return false;
+            const result = await write(setting, value, { ...operation, onApprovalPending: () => {
+                withdraw(); operation?.onApprovalPending?.();
+            } });
+            if (!write.isAccountCurrent(setting)) return false;
             if (result.ok) return true;
-            if (isActionApprovalDeclinedErrorCode(result.errorCode)) return false;
-            if (presentActionTurnedOffNoticeIfOff(result, 'settings.set')) return false;
-        } catch {
-            if (!write.isCurrent(setting)) return false;
-        }
-        Modal.alert(t('common.error'), t('common.unavailable'));
+            presentSettingWriteFailure(result);
+        } catch (error) {
+            if (!write.isAccountCurrent(setting)) return false;
+            presentSettingWriteFailure(error);
+        } finally { withdraw(); }
         return false;
     }, [write]);
-    return { setSetting, isCurrent: write.isCurrent };
+    return { setSetting, isCurrent: write.isCurrent, ready: write.ready, approval: write.approval };
 }

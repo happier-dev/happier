@@ -1,12 +1,14 @@
 import type {
-    DaemonMcpServersDetectWarningV1,
+    DaemonMcpServersDetectWarningV1} from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
+import type {
     DetectedMcpPreviewEntryV1,
-    McpServerCatalogEntryTransportV1,
     McpPreviewAuthModeV1,
-    McpPreviewScopeKindV1,
+    McpPreviewScopeKindV1} from '@happier-dev/protocol/mcp/servers/previewV1';
+import type {
+    McpServerCatalogEntryTransportV1,
     McpServerRuleV1,
     McpServerCatalogEntryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/mcp/servers/settingsV1';
 import type { AgentToolsDelivery } from '@happier-dev/agents';
 
 import { resolveAgentIdFromFlavor } from '@/agents/registry/registryCore';
@@ -51,10 +53,20 @@ export function resolveManagedServerAuthMode(server: Pick<McpServerCatalogEntryV
     return resolveAuthBadgeLabel(inferMcpServerAuthModeV1(server));
 }
 
+/** A Found warning in words: what went wrong and whose settings, then where or why, never its raw code. */
 export function formatDetectedWarning(warning: DaemonMcpServersDetectWarningV1): string {
-    // A detection warning that no agent owns carries no provider segment at all,
-    // rather than rendering an absent agent id.
-    const base = warning.provider ? `${warning.provider} · ${warning.code}` : warning.code;
+    // A warning that no agent owns names no agent, rather than an absent agent id.
+    const agent = warning.provider ? resolveDetectedProviderName(warning.provider) : null;
+    const base = (() => {
+        switch (warning.code) {
+            case 'read_failed':
+                return agent ? t('capabilities.mcpFound.warningReadFailed', { agent }) : t('capabilities.mcpFound.warningReadFailedNoAgent');
+            case 'parse_failed':
+                return agent ? t('capabilities.mcpFound.warningParseFailed', { agent }) : t('capabilities.mcpFound.warningParseFailedNoAgent');
+            case 'unsupported':
+                return agent ? t('capabilities.mcpFound.warningUnsupported', { agent }) : t('capabilities.mcpFound.warningUnsupportedNoAgent');
+        }
+    })();
     if (warning.path) return `${base} · ${warning.path}`;
     if (warning.detail) return `${base} · ${warning.detail}`;
     return base;

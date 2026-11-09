@@ -24,7 +24,7 @@ installSettingsViewCommonModuleMocks({
 // The clipboard and the share sheet are the two genuine platform boundaries on
 // this screen; everything below them — the Action transport, the strict result
 // schemas and the confined-bearer rules — stays real.
-vi.mock('@/utils/ui/clipboard', () => ({ setClipboardStringSafe: setClipboardStringSafeMock }));
+vi.mock('expo-clipboard', () => ({ setStringAsync: setClipboardStringSafeMock }));
 vi.mock('@/utils/ui/shareText', () => ({
     isTextSharingAvailable: () => sharingAvailableMock.current,
     shareTextSafe: shareTextSafeMock,

@@ -14,7 +14,6 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import {
   ExpandableItem,
-  ExpandableItemCaret,
 } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -293,8 +292,6 @@ const PlatformKeyDisclosure = React.memo(function PlatformKeyDisclosure(
             detail={t('homeSettings.groupSummary', {
               count: props.entries.length,
             })}
-            rightElement={<ExpandableItemCaret expanded={state.expanded} />}
-            showChevron={false}
           />
         )}
       >
@@ -492,10 +489,6 @@ const SignInPlatformRow = React.memo(function SignInPlatformRow(
             subtitle={summary}
             subtitleLeading={leading}
             subtitleLines={0}
-            rightElement={
-              <ExpandableItemCaret expanded={headerState.expanded} />
-            }
-            showChevron={false}
           />
         )}
       >

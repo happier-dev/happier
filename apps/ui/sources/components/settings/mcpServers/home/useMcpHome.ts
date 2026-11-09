@@ -2,13 +2,14 @@ import * as React from 'react';
 
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { useRegistrySuggestions } from '@/registries/useRegistrySuggestions';
-import { useLocalSetting } from '@/sync/domains/state/storage';
-import { getStorage } from '@/sync/domains/state/storageStore';
+import { capabilityDismissalState, usePersistentUiStateValue } from '@/sync/domains/state/persistentUiState';
+import { useReachMachines } from '@/sync/domains/capabilities/reach/useReachProjection';
 
-import { buildMcpServerCollection } from '../collection/mcpServerCollectionModel';
+import { buildMcpServerCollection, type McpServerCollectionRow } from '../collection/mcpServerCollectionModel';
 import { useMcpSignInViewOf } from '../signIn/useMcpSignInViewOf';
 import { useMcpServersSettings } from '../useMcpServersSettings';
-import { buildMcpHome } from './mcpHomeModel';
+import { useMcpServerMachineFacts } from '../status/useMcpServerMachineFacts';
+import { buildMcpHome, type McpHome } from './mcpHomeModel';
 
 /**
  * The homepage's data: the Account's servers, their sign-in grants and saved keys, the registry's
@@ -16,27 +17,31 @@ import { buildMcpHome } from './mcpHomeModel';
  */
 export function useMcpHome() {
   const { settings, snapshot, scope, reload } = useMcpServersSettings();
+  const previousRows = React.useRef<readonly McpServerCollectionRow[]>([]);
   const rows = React.useMemo(
-    () => buildMcpServerCollection(settings, ''),
-    [settings],
+    () => buildMcpServerCollection(settings, '', previousRows.current, snapshot.brandMarks),
+    [settings, snapshot.brandMarks],
   );
+  React.useEffect(() => { previousRows.current = rows; }, [rows]);
   const signInOf = useMcpSignInViewOf(settings, scope);
+  const { machines } = useReachMachines();
+  const machineFactsOf = useMcpServerMachineFacts(machines);
   const savedSecretCatalog = useSavedSecretCatalog({ scope });
   const { resolveReference } = savedSecretCatalog;
   const secretAvailability = React.useMemo(() => ({ resolveReference }), [resolveReference]);
   const shelf = useRegistrySuggestions('mcpServer');
-  const dismissedAt = useLocalSetting(
-    'mcpFirstVisitDismissedAt',
-  );
+  const dismissedAt = usePersistentUiStateValue(capabilityDismissalState, 'mcpFirstVisitDismissedAt') ?? null;
   const suggestions = React.useMemo(
     () =>
       shelf.items.map((item) => ({
         key: `suggestion:${item.sourceId}:${item.itemId}`,
         iconUrl: item.iconUrl ?? null,
+        brandMark: item.brandMark,
         title: item.title,
       })),
     [shelf.items],
   );
+  const previousModel = React.useRef<McpHome | undefined>(undefined);
   const model = React.useMemo(
     () =>
       buildMcpHome({
@@ -45,11 +50,14 @@ export function useMcpHome() {
         savedSecretCatalog: secretAvailability,
         firstVisitDismissed: dismissedAt !== null,
         suggestions,
+        machineFactsOf,
+        previous: previousModel.current,
       }),
-    [dismissedAt, rows, secretAvailability, signInOf, suggestions],
+    [dismissedAt, machineFactsOf, rows, secretAvailability, signInOf, suggestions],
   );
+  React.useEffect(() => { previousModel.current = model; }, [model]);
   const dismissFirstVisit = React.useCallback(
-    () => getStorage().getState().applyLocalSettings({ mcpFirstVisitDismissedAt: Date.now() }, { source: 'ui' }),
+    () => capabilityDismissalState.set('mcpFirstVisitDismissedAt', Date.now()),
     [],
   );
   const loading = snapshot.status === 'loading' && settings.servers.length === 0;

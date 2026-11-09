@@ -250,6 +250,8 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
     const { context, membershipId } = props;
     const [load, setLoad] = React.useState<MembershipLoad>(LOADING);
     const [readFailure, setReadFailure] = React.useState<HomeDomainFailure | null>(null);
+    const readStateRef = React.useRef({ load, readFailure });
+    readStateRef.current = { load, readFailure };
     const [busy, setBusy] = React.useState(false);
     const transitionInFlightRef = React.useRef(false);
     /** The Home's own refusal, kept until the next attempt clears it. */
@@ -317,7 +319,7 @@ const MemberDetail = React.memo(function MemberDetail(props: Readonly<{
         if (event.entityIds !== undefined
             && !event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)) return;
         reload();
-    }), [serverId, reload]);
+    }, { reconnect: { readNotCurrent: () => readStateRef.current.load.kind !== 'ready' || readStateRef.current.readFailure !== null } }), [serverId, reload]);
 
     /**
      * One place where a membership transition is run. A refused transition

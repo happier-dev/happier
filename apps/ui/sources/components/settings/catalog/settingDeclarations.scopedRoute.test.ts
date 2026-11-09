@@ -3,8 +3,35 @@ import { describe, expect, it } from 'vitest';
 import { buildSettingHref, collectDeclaredFeatureIds, defineSettingsPage } from './settingDeclarations';
 import { SESSION_SETTINGS } from '@/components/settings/session/sessionSettings';
 import { SOURCE_CONTROL_SETTINGS } from '@/components/settings/sourceControl/sourceControlSettings';
+import { COORDINATION_SETTINGS } from '@/components/settings/coordination/coordinationSettings';
+import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 
 describe('scoped setting links', () => {
+    it.each(['managerPolicy', 'runReportPolicy', 'discussionReceivePolicy'] as const)('discovers and links the %s creation default through the Follow owner', field => {
+        const anchor = `coordination.${field}`;
+        const ref = Object.values(COORDINATION_SETTINGS.settings).find(setting => setting.anchor === anchor);
+        expect(ref).toBeDefined();
+        expect(readBuiltInSettingDeclarationV1(anchor)).toMatchObject({ pageId: 'coordination', targetKinds: ['home'],
+            storage: { scope: 'home', kind: 'sessionAutoFollowPreferences', field, access: 'read_write' } });
+        expect(buildSettingHref('/settings/coordination', ref!)).toBe(`/settings/coordination?setting=${anchor}`);
+    });
+    it('places Sessions attention and status controls in their declared sections without changing search anchors', () => {
+        for (const [setting, section, titleKey] of [
+            [SESSION_SETTINGS.settings.attentionPromotion, SESSION_SETTINGS.sectionRefs.listOrganization,
+                'settingsSession.rootGroups.listOrganization.title'],
+            [SESSION_SETTINGS.settings.statusWords, SESSION_SETTINGS.sectionRefs.rowDetails,
+                'settingsSession.rootGroups.rowDetails.title'],
+        ] as const) {
+            expect(setting.sectionId).toBe(section.id);
+            expect(setting.sectionTitleKey).toBe(titleKey);
+            expect(section.settingAnchors).toContain(setting.anchor);
+            expect(SESSION_SETTINGS.sectionRefs.activitySignals.settingAnchors).not.toContain(setting.anchor);
+        }
+        expect(buildSettingHref('/settings/session', SESSION_SETTINGS.settings.attentionPromotion))
+            .toBe('/settings/session?setting=session.list.attentionPlacement');
+        expect(buildSettingHref('/settings/session', SESSION_SETTINGS.settings.statusWords))
+            .toBe('/settings/session?setting=session.list.statusWords');
+    });
     it('keeps a mixed section’s feature decisions per row regardless of row order', () => {
         const mixed = defineSettingsPage({ pageId: 'sourceControl', sections: { files: { settings: {
             showLineNumbersInDiffs: {},

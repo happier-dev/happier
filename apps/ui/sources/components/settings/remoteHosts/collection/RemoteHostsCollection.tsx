@@ -132,12 +132,13 @@ export const RemoteHostsCollectionList = React.memo(function RemoteHostsCollecti
 
     const hostRows = hosts.map((host) => (
         <Item
+            rowRole="catalogRow"
             key={host.id}
             testID={`settings.remoteHosts.hostRow.${host.id}`}
             title={host.name}
             subtitle={hostTargetLine(host)}
             icon={(
-                <HappierCollectionListMark>
+                <HappierCollectionListMark rowRole="catalogRow">
                     <Icon name="desktop" size={20} color={theme.colors.text.secondary} />
                 </HappierCollectionListMark>
             )}
@@ -150,11 +151,12 @@ export const RemoteHostsCollectionList = React.memo(function RemoteHostsCollecti
     ));
     const accessRow = (
         <Item
+            rowRole="catalogRow"
             testID="settings.remoteHosts.accessRow"
             title={t('settingsRemoteHostsPage.accessTitle')}
             subtitle={t('settingsRemoteHostsPage.accessRowSubtitle')}
             icon={(
-                <HappierCollectionListMark>
+                <HappierCollectionListMark rowRole="catalogRow">
                     <Icon name="key" size={20} color={theme.colors.text.secondary} />
                 </HappierCollectionListMark>
             )}
@@ -204,6 +206,7 @@ const RemoteHostDraftRow = React.memo(function RemoteHostDraftRow() {
     const { theme } = useUnistyles();
     return (
         <CollectionDraftRow
+            rowRole="item"
             testID="settings.remoteHosts.rail.draft"
             titles={remoteHostDraftTitle}
             placeholder={t('settingsRemoteHostsPage.newHostTitle')}

@@ -5,9 +5,10 @@ import 'fake-indexeddb/auto';
 
 import {
     DEFAULT_PEER_MEDIATION_PREFERENCES_V1,
-    PeerMediationFlowKindV1Schema,
+    PeerMediationFlowKindV1Schema} from '@happier-dev/protocol/account/settings/peerMediationPreferencesV1';
+import {
     tryWriteServerEnabledBitInPlace,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/features/serverEnabledBit';
 
 import { createDeferred, flushHookEffects, renderSettingsView, standardCleanup } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';

@@ -1,4 +1,4 @@
-import type { FeatureId } from '@happier-dev/protocol';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 
 import { t, type TranslationKeyNoParams } from '@/text';
 import { en } from '@/text/translations/en';

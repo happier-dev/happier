@@ -3,7 +3,8 @@ import { ActionUiPlacementSchema, type ActionUiPlacement } from '@happier-dev/pr
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId, type QualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import type { ActionSettingsActionId, ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { formatQualifiedPluginResourcePolicyId, parseQualifiedPluginResourcePolicyId,
+    type QualifiedPluginResourcePolicyId, type ActionSettingsActionId, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 import {
     getActionSettingsTargetContext,
@@ -11,6 +12,7 @@ import {
     isRunScopedPlacement,
     isVoiceTargetId,
     listActionSettingsTargetDefinitions,
+    resolveActionSettingsTargetDefinition,
     type ActionSettingsTargetCategory,
     type ActionSettingsTargetDefinition,
     type ActionSettingsTargetId,
@@ -45,6 +47,7 @@ export type ActionSettingsContributedAction = Readonly<{
     placementBindings?: readonly string[];
     slash?: unknown;
     contributedAction?: ActionSettingsTargetSource['contributedAction'];
+    resource?: true;
 }>;
 
 export type ActionSettingsTargetState = 'on' | 'off' | 'unavailable';
@@ -73,7 +76,7 @@ type ActionSettingsEntryBase<TKind extends 'host' | 'contributed' | 'retained', 
 /** Host catalog entries are the only rows eligible for host-specific controls. */
 export type ActionSettingsEntry =
     | ActionSettingsEntryBase<'host', ActionId>
-    | ActionSettingsEntryBase<'contributed' | 'retained', QualifiedPluginActionId>;
+    | ActionSettingsEntryBase<'contributed' | 'retained', QualifiedPluginActionId | QualifiedPluginResourcePolicyId>;
 
 type BuildActionSettingsEntriesParams = Readonly<{
     query: string;
@@ -219,6 +222,7 @@ function buildTargetEntries(params: Readonly<{
 }
 
 function contributionTargetSource(action: ActionSettingsContributedAction): ActionSettingsTargetSource {
+    if (action.resource) return { surfaces: {}, placements: [], resource: true };
     // API and trusted-plugin invocation are host-owned broad surfaces. A contribution's declared
     // presentation surfaces add UI-specific targets but must not withdraw either control.
     const surfaces: Partial<ActionSurfaces> = { api: true, plugin: true };
@@ -238,6 +242,9 @@ function contributionTargetSource(action: ActionSettingsContributedAction): Acti
     return { surfaces, placements, slash: action.slash, contributedAction: action.contributedAction };
 }
 
+/** The projection sections `buildActionSettingsContributedActions` reads (titles come from installed packages). */
+export const ACTION_SETTINGS_PROJECTION_SECTIONS = ['actionsById', 'resourcesById'] as const;
+
 /**
  * Extract current action declarations from one daemon projection. Projection provenance already
  * encodes built-in versus external plugins, so both receive the identical settings path here.
@@ -245,7 +252,7 @@ function contributionTargetSource(action: ActionSettingsContributedAction): Acti
 export function buildActionSettingsContributedActions(
     pluginProjectionById: Readonly<Record<string, PluginProjectionEntry>>,
 ): readonly ActionSettingsContributedAction[] {
-    return Object.values(pluginProjectionById).flatMap((plugin) => plugin.actions.map((action) => ({
+    return Object.values(pluginProjectionById).flatMap((plugin) => [...plugin.actions.map((action) => ({
         pluginId: plugin.pluginId,
         localId: action.id,
         title: action.title,
@@ -258,7 +265,10 @@ export function buildActionSettingsContributedActions(
             dangerLevel: action.dangerLevel,
             ...(action.confirmation ? { confirmation: action.confirmation } : {}),
         },
-    })));
+    })), ...plugin.resources.map(resource => ({
+        pluginId: plugin.pluginId, localId: resource.id, title: resource.id,
+        description: null, icon: null, surfaces: [], resource: true as const,
+    }))]);
 }
 
 function buildHostDescriptors(): readonly ActionSettingsDescriptor[] {
@@ -278,7 +288,8 @@ function buildContributedDescriptors(
 ): readonly ActionSettingsDescriptor[] {
     const descriptors = new Map<ActionSettingsActionId, ActionSettingsDescriptor>();
     for (const action of contributedActions) {
-        const actionId = formatQualifiedPluginActionId({ pluginId: action.pluginId, localId: action.localId });
+        const identity = { pluginId: action.pluginId, localId: action.localId };
+        const actionId = action.resource ? formatQualifiedPluginResourcePolicyId(identity) : formatQualifiedPluginActionId(identity);
         descriptors.set(actionId, {
             kind: 'contributed',
             actionId,
@@ -297,8 +308,10 @@ function buildRetainedDescriptors(params: Readonly<{
 }>): readonly ActionSettingsDescriptor[] {
     const currentActionIds = new Set(params.currentDescriptors.map((descriptor) => descriptor.actionId));
     const description = (params.translate ?? ((key: TranslationKey) => key))('settingsActions.contributed.removedDescription');
-    return Object.keys(params.settings.actions)
-        .filter((actionId): actionId is ActionSettingsActionId => parseQualifiedPluginActionId(actionId) !== null)
+    return [...new Set([...Object.keys(params.settings.actions),
+        ...Object.keys(params.settings.callerSurfacePolicies?.foreign_session_html ?? {})])]
+        .filter((actionId): actionId is QualifiedPluginActionId | QualifiedPluginResourcePolicyId =>
+            parseQualifiedPluginActionId(actionId) !== null || parseQualifiedPluginResourcePolicyId(actionId) !== null)
         .filter((actionId) => !currentActionIds.has(actionId))
         .map((actionId) => ({
             kind: 'retained' as const,
@@ -327,7 +340,8 @@ export function buildActionSettingsEntries(params: BuildActionSettingsEntriesPar
     return descriptors.flatMap((descriptor) => {
         const targetDefinitions = descriptor.source
             ? listActionSettingsTargetDefinitions(descriptor.source)
-            : [];
+            : params.settings.callerSurfacePolicies?.foreign_session_html?.[descriptor.actionId] !== undefined
+                ? [resolveActionSettingsTargetDefinition({ actionId: descriptor.actionId, targetId: 'foreign_session_html' })] : [];
         if (descriptor.kind !== 'retained' && targetDefinitions.length === 0) return [];
 
         const searchText = buildSearchText({

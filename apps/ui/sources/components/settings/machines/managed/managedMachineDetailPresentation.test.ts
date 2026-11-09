@@ -17,17 +17,20 @@ const machine = ManagedMachineV1Schema.parse({
 
 describe('managed Machine detail presentation', () => {
     it('uses the current list row as header identity while the exact read is pending', () => {
-        expect(projectManagedMachineDetailRead({ managedId: machine.id, detailStatus: 'loading', inventoryMachines: [machine],
-            inventoryStatus: 'ready' })).toEqual({ headerMachine: machine, missing: false });
+        expect(projectManagedMachineDetailRead({ managedId: machine.id, detailStatus: 'loading', admittedMachine: machine }))
+            .toEqual({ headerMachine: machine, missing: false });
     });
 
-    it('treats an exact read failure as missing only when the current inventory confirms absence', () => {
-        expect(projectManagedMachineDetailRead({ managedId: machine.id, detailStatus: 'error', inventoryMachines: [],
-            inventoryStatus: 'ready' }).missing).toBe(true);
-        expect(projectManagedMachineDetailRead({ managedId: machine.id, detailStatus: 'error', inventoryMachines: [machine],
-            inventoryStatus: 'ready' }).missing).toBe(false);
-        expect(projectManagedMachineDetailRead({ managedId: machine.id, detailStatus: 'error', inventoryMachines: [],
-            inventoryStatus: 'loading' }).missing).toBe(false);
+    it('does not infer missing from an active list that excludes an archived resource when exact get fails', () => {
+        const archived = { ...machine, archivedAt: 1 };
+        expect(projectManagedMachineDetailRead({ managedId: machine.id, detailStatus: 'error' }).missing).toBe(false);
+        expect(projectManagedMachineDetailRead({ managedId: archived.id, detailStatus: 'error', admittedMachine: archived }))
+            .toEqual({ headerMachine: archived, missing: false });
+        expect(projectManagedMachineDetailRead({ managedId: machine.id, detailStatus: 'unsupported' }).missing).toBe(false);
+        expect(projectManagedMachineDetailRead({ managedId: machine.id, detailStatus: 'missing', admittedMachine: archived }))
+            .toEqual({ headerMachine: undefined, missing: true });
+        expect(projectManagedMachineDetailRead({ managedId: machine.id, detailStatus: 'denied', admittedMachine: archived }))
+            .toEqual({ headerMachine: undefined, missing: false });
     });
 
     it('projects an admitted Delete through the managed pending-Ask presentation, not the generic card', () => {

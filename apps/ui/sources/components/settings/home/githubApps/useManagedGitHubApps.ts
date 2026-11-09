@@ -60,6 +60,6 @@ export function useManagedGitHubApps(
                 || (event.entityIds?.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1) ?? false)
             : event.entityIds === undefined || event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1);
         if (shouldRefresh) refresh();
-    }), [refresh, scope.serverId]);
+    }, { reconnect: 'refresh' }), [refresh, scope.serverId]);
     return React.useMemo(() => ({ state, refresh }), [refresh, state]);
 }

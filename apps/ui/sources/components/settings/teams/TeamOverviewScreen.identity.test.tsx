@@ -7,6 +7,7 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -69,6 +70,7 @@ beforeEach(async () => {
 });
 
 afterEach(() => {
+    setScreenSharingPrivacyActive(false);
     standardCleanup();
 });
 
@@ -85,7 +87,7 @@ describe('TeamOverviewScreen Team identity', () => {
     it('shows only the lab slice of retained Team sessions and opens each on its exact Home', async () => {
         const serverId = await addHome({ viewerRole: 'member', capabilities: teamCapabilitiesFixture({ viewRoster: true }) });
         const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
-        const { tryWriteServerEnabledBitInPlace } = await import('@happier-dev/protocol');
+        const { tryWriteServerEnabledBitInPlace} = await import('@happier-dev/protocol/features/serverEnabledBit');
         const features = createRootLayoutFeaturesResponse();
         expect(tryWriteServerEnabledBitInPlace(features, 'sessions.filteredListing', true)).toBe(true);
         expect(tryWriteServerEnabledBitInPlace(features, 'teams', true)).toBe(true);
@@ -113,6 +115,15 @@ describe('TeamOverviewScreen Team identity', () => {
         expect(ids).toContain('team-overview-session:session-b');
         expect(ids).not.toContain('team-overview-session:session-c');
         expect(ids).not.toContain('team-overview-sessions-empty');
+        await (await import('react-test-renderer')).act(async () => {
+            storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [serverId]: ['private'] } });
+            storage.getState().setSessionTagAssignmentsOptimistic(serverId, 'session-a', ['private']);
+            setScreenSharingPrivacyActive(true);
+        });
+        const privateIds = collectRenderedTestIds(screen.tree.toJSON());
+        expect(privateIds).not.toContain('team-overview-session:session-a');
+        expect(privateIds).toContain('team-overview-session:session-c');
+        await (await import('react-test-renderer')).act(async () => setScreenSharingPrivacyActive(false));
         await screen.pressByTestIdAsync('team-overview-session:session-a');
         expect(routerPush).toHaveBeenLastCalledWith(`/session/session-a?serverId=${encodeURIComponent(serverId)}`);
     });

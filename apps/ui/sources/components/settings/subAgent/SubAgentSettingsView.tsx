@@ -13,7 +13,7 @@ import { useSettingMutable } from '@/sync/domains/state/storage';
 import { useSetting } from '@/sync/domains/state/storage';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
-import { useAllMachines } from '@/sync/store/hooks';
+import { useActiveMachineFacts } from '@/sync/store/hooks';
 import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
@@ -42,7 +42,7 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
     const executionRunsEnabled = useFeatureEnabled('execution.runs');
     const [notifyParentOnCompletion, setNotifyParentOnCompletion] = useSettingMutable('executionRunsNotifyParentOnCompletionDefault');
     const [approvalReviewerEnabled, setApprovalReviewerEnabled] = useSettingMutable('approvalReviewerEnabled');
-    const machines = useAllMachines();
+    const machines = useActiveMachineFacts();
     const scope = useActiveServerAccountScope();
     const reachabilityRevision = useMachineReachabilityRevision();
     const recentMachinePaths = useAuthoringMemoryField('recentMachinePaths');
@@ -56,7 +56,8 @@ export const SubAgentSettingsView = React.memo(function SubAgentSettingsView() {
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
         machineId: preferredMachineId,
         enabled: Boolean(preferredMachineId),
-        staleMs: 60_000,
+        // Only the Agent-targeted editable settings groups' sub-agent sections are read.
+        sections: ['settingsById'],
     });
 
     const agentSubagentSections = React.useMemo(() => (

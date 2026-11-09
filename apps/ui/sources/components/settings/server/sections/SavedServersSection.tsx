@@ -100,7 +100,7 @@ export function SavedServersSection(props: SavedServersSectionProps) {
             && areServerProfileIdentifiersEquivalent(scopeId, props.deviceDefaultServerId);
         return {
             profile,
-            label: resolveHomeDisplayLabel(profile, profile.id),
+            label: resolveHomeDisplayLabel(profile, profile.id, props.activeServerId),
             isActive,
             isDeviceDefault,
             administrable: props.onOpenAdministration != null && (

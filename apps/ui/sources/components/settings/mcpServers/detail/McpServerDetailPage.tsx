@@ -13,7 +13,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useRegistrySources } from '@/registries/useRegistrySources';
 import { Modal } from '@/modal';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { ValueRefEditorModal, getValueRefEditorModalTitle } from '@/components/ui/forms/valueRefs/ValueRefEditorModal';
 import { createMcpServerRecovery } from './mcpServerRecovery';
 import { useMcpServerInstallLink } from './useMcpServerInstallLink';
@@ -21,7 +21,7 @@ import { useMcpServerInstallLink } from './useMcpServerInstallLink';
 import { McpServerConfigurationSection, type McpConfigurationSaveState } from '../McpServerConfigurationSection';
 import { mcpServerMissingKeyNames, type McpSavedSecretAvailability } from '../status/mcpServerStatus';
 import { mcpServerDisplayName } from '../collection/mcpServerCollectionModel';
-import { McpServerMark } from '../identity/McpServerMark';
+import { HappierBrandMark, type HostCatalogMark } from '@/components/ui/media/HappierBrandMark';
 import { McpServerConflictReview, type McpServerConflict } from './McpServerConflictReview';
 import { McpServerMachineDifferences } from './McpServerMachineDifferences';
 import { McpServerUpdateSection } from './McpServerUpdateSection';
@@ -42,6 +42,7 @@ const INSTALL_LINK_NOTICE_KEY = 'mcp.server.installLinkCopy';
 export const McpServerDetailPage = React.memo(function McpServerDetailPage(
   props: Readonly<{
     server: McpServerCatalogEntryV1;
+    brandMark?: HostCatalogMark;
     draftServer: McpServerCatalogEntryV1;
     configurationBaseServer?: McpServerCatalogEntryV1 | null;
     catalogRevision: number | 'absent' | null;
@@ -84,6 +85,7 @@ export const McpServerDetailPage = React.memo(function McpServerDetailPage(
   );
   const installLink = useMcpServerInstallLink(detail.execution, server.id, props.catalogRevision);
   const { onDuplicate } = props;
+  const writeClipboard = useClipboardWrite(props.scope);
   // Rare operations behind the header's ⋯. The link is offered only when the Home produced one.
   const menuItems = React.useMemo((): readonly PageHeaderMenuAction[] => [
     {
@@ -98,7 +100,7 @@ export const McpServerDetailPage = React.memo(function McpServerDetailPage(
           testID: 'mcp.server.copyInstallLink',
           title: t('capabilities.mcp.detail.copyInstallLink'),
           onSelect: async () => {
-            const copied = await setClipboardStringSafe(installLink);
+            const copied = await writeClipboard(installLink);
             publishPresentationNotice({
               key: INSTALL_LINK_NOTICE_KEY,
               severity: copied ? 'info' : 'error',
@@ -109,7 +111,7 @@ export const McpServerDetailPage = React.memo(function McpServerDetailPage(
           },
         }]
       : []),
-  ], [installLink, onDuplicate]);
+  ], [installLink, onDuplicate, writeClipboard]);
   const missingKeys = React.useMemo(
     () => mcpServerMissingKeyNames(server, secretAvailability),
     [secretAvailability, server],
@@ -162,7 +164,7 @@ export const McpServerDetailPage = React.memo(function McpServerDetailPage(
     <ItemList keyboardShouldPersistTaps="handled">
       <CapabilityDetailHeader
         testID="mcp.server.editor.header"
-        mark={<McpServerMark transport={server.transport} size={28} />}
+        mark={<HappierBrandMark brand={props.brandMark ?? { displayName: name }} pixelSize={28} externallyLabelled />}
         title={name}
         purpose={server.description}
         facts={facts}

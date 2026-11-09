@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
+import * as React from 'react';
+import { act, createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import type { CodeEditorProps, TextEditorHandle } from '@/components/ui/code/editor/codeEditorTypes';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
@@ -21,6 +23,29 @@ const modalSpies = vi.hoisted(() => ({
   confirm: vi.fn(async () => false),
   alert: vi.fn(),
 }));
+const skillEditorBoundary = vi.hoisted(() => ({ flush: vi.fn(async () => undefined) }));
+const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }));
+const removal = vi.hoisted(() => ({ enabled: false, callback: null as null | ((event: { data: { action: unknown } }) => void) }));
+vi.mock('@react-navigation/native', async () =>
+  (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock({
+    usePreventRemove: (enabled, callback) => { removal.enabled = enabled; removal.callback = callback; },
+  }));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: navigation }).module);
+const clipboardPlatform = vi.hoisted(() => ({ os: 'web' }));
+const clipboard = vi.hoisted(() => ({ setStringAsync: vi.fn(async (_text: string) => true) }));
+vi.mock('expo-clipboard', () => clipboard);
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+  Platform: { get OS() { return clipboardPlatform.os; } },
+}));
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+// The native/browser editor engine is external; its real Markdown field and skill save owners remain mounted.
+vi.mock('@/components/ui/code/editor/CodeEditor', async () => {
+  const React = await import('react');
+  return { CodeEditor: React.forwardRef<TextEditorHandle, CodeEditorProps>((props, ref) => {
+    React.useImperativeHandle(ref, () => ({ getValue: () => props.value, flushPendingChange: skillEditorBoundary.flush }), [props.value]);
+    return React.createElement('SkillEditorBoundary', { testID: 'skill.test.editor', value: props.value, onChangeText: props.onChange });
+  }) };
+});
 vi.mock('@/modal', async () => {
   const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
   return createModalModuleMock({ spies: modalSpies }).module;
@@ -41,7 +66,8 @@ const { useReachRules } = await import('@/sync/domains/capabilities/reach/useRea
 const { useSkillsLibrary } = await import('@/sync/domains/skills/useSkillsLibrary');
 const { getPromptLibraryCatalogValue } = await import('@/sync/store/settings/promptLibraryCatalogSnapshot');
 const { readPresentationNotice, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
-const { useSkillTextAutosave } = await import('./SkillInstructionsSection');
+const { SkillInstructionsSection, useSkillTextAutosave } = await import('./SkillInstructionsSection');
+const { ItemList } = await import('@/components/ui/lists/ItemList');
 const { skillTextFile, readSkillText } = await import('./skillFileContent');
 const { groupSkillsByFolder } = await import('../skillsCollectionModel');
 const { useSkillsUpdates } = await import('../updates/useSkillsUpdates');
@@ -51,6 +77,7 @@ const { useDraftReachRules } = await import('@/components/capabilities/where/Whe
 const { SKILL_ACTION_OUTPUT_SCHEMAS_V1 } = await import('@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1');
 
 afterEach(() => {
+  clipboardPlatform.os = 'web';
   standardCleanup();
   resetPromptLibraryCatalogEngineForTests();
   resetPromptLibraryCatalogSnapshotsForTests();
@@ -61,10 +88,85 @@ afterEach(() => {
 const SKILL_MD =
   '---\nname: release-notes\ndescription: Draft release notes from merged pull requests.\n---\n\n# Release notes\n';
 
+it('honors native clipboard policy for the skill source link', async () => {
+  clipboardPlatform.os = 'ios';
+  const { normalizeActionsSettingsV1, setActionApprovalOverride } = await import('@happier-dev/protocol/actions/actionSettings');
+  let policy: 'off' | 'allowed' = 'off';
+  const url = 'https://github.com/fixture/skills';
+  const fixture = createPromptRegistrySkillFixture({ sourceId: 'clipboard', itemId: 'review', title: 'release-notes',
+    files: [{ path: 'SKILL.md', content: SKILL_MD }] });
+  if (fixture.item.payload.kind !== 'skill') throw new Error('Expected skill fixture');
+  const home = await seededHome('https://skill-clipboard.test', async path => path === '/v2/account/settings'
+    ? Response.json({ version: 1, content: { t: 'plain', v: { actionsSettingsV1:
+      normalizeActionsSettingsV1({ ...setActionApprovalOverride({ settings: normalizeActionsSettingsV1({}),
+        actionId: 'clipboard.write', surface: 'ui', approvalRequired: false }),
+        actions: { 'clipboard.write': { disabledSurfaces: policy === 'off' ? ['ui'] : [] } } }),
+    } } }) : null, { header: { skillLock: {
+      provenance: { kind: 'link', url, ref: fixture.item.payload.skill.ref }, updatePolicy: 'manual',
+    } } });
+  await home.hydrateAccountSettings();
+  const { SkillDetailScreen } = await import('./SkillDetailScreen');
+  const { CapabilityDetailHeader } = await import('@/components/capabilities/detail/CapabilityDetailHeader');
+  const screen = await renderScreen(<SkillDetailScreen skillId="release-notes" />);
+  try {
+    await vi.waitFor(() => expect(screen.findByType(CapabilityDetailHeader).props.menuItems
+      .some((item: { id: string }) => item.id === 'copyLink')).toBe(true));
+    clipboard.setStringAsync.mockClear();
+    const copyLink = () => screen.findByType(CapabilityDetailHeader).props.menuItems
+      .find((item: { id: string }) => item.id === 'copyLink').onSelect();
+    await act(async () => { await copyLink(); });
+    expect(clipboard.setStringAsync).not.toHaveBeenCalled();
+    policy = 'allowed';
+    await home.hydrateAccountSettings();
+    await act(async () => { await copyLink(); });
+    expect(clipboard.setStringAsync).toHaveBeenCalledWith(url);
+  } finally { await screen.unmount(); await home.dispose(); }
+});
+
+it('the existing new route guards an edited Write draft and keeps its text when departure is cancelled', async () => {
+  const home = await seededHome('https://skill-new-exit.test');
+  const { SkillDetailScreen } = await import('./SkillDetailScreen');
+  const screen = await renderScreen(<SkillDetailScreen skillId={null} />);
+  const text = `${SKILL_MD}\nNew instructions.`;
+  await vi.waitFor(() => expect(screen.findByTestId('skill.draft.header')).not.toBeNull());
+  await act(async () => screen.findByType(SkillInstructionsSection).props.draft.onChange(text));
+  expect(removal.enabled).toBe(true);
+  await act(async () => removal.callback!({ data: { action: { type: 'GO_BACK' } } }));
+  expect(modalSpies.alert).toHaveBeenCalled();
+  await act(async () => modalSpies.alert.mock.calls.at(-1)![2].find((button: { style?: string }) => button.style === 'cancel').onPress());
+  expect(screen.findByType(SkillInstructionsSection).props.draft.text).toBe(text);
+  expect(home.boundary.list()).toHaveLength(1);
+  await home.dispose();
+});
+
+it('locks the explicit Write document while its create is pending so an acknowledgement cannot discard newer typing', async () => {
+  const started = createDeferred<void>(), release = createDeferred<void>();
+  const home = await seededHome('https://skill-write-pending.test', async (path, init) => {
+    if (path === '/v1/artifacts' && init?.method === 'POST') { started.resolve(); await release.promise; }
+    return null;
+  });
+  const { SkillDetailScreen } = await import('./SkillDetailScreen');
+  const { CodeEditor } = await import('@/components/ui/code/editor/CodeEditor');
+  const screen = await renderScreen(<SkillDetailScreen skillId={null} />);
+  try {
+    await vi.waitFor(() => expect(screen.findByTestId('skill.draft.header')).not.toBeNull());
+    await act(async () => screen.findByType(SkillInstructionsSection).props.draft.onChange(SKILL_MD));
+    await act(async () => { screen.pressByTestId('skill.draft.add'); });
+    await started.promise;
+    expect(screen.findByType(CodeEditor).props.readOnly).toBe(true);
+    await act(async () => screen.findByType(SkillInstructionsSection).props.draft.onChange(`${SKILL_MD}\nNew text.`));
+    expect(screen.findByType(SkillInstructionsSection).props.draft.text).toBe(SKILL_MD);
+  } finally {
+    await act(async () => release.resolve());
+    await screen.unmount();
+    await home.dispose();
+  }
+});
+
 async function seededHome(
   origin: string,
   handleRequest?: (path: string, init?: RequestInit) => Promise<Response | null>,
-  options: Readonly<{ records?: readonly PromptLibraryRecordV1[]; header?: Record<string, unknown>;
+  options: Readonly<{ records?: readonly PromptLibraryRecordV1[]; header?: Record<string, unknown>; text?: string;
     handleExternalRequest?: (url: string) => Promise<Response | null> }> = {},
 ) {
   const catalog = createPromptLibraryCatalogBoundary({ records: options.records });
@@ -94,7 +196,7 @@ async function seededHome(
       {
         path: 'SKILL.md',
         contentKind: 'utf8',
-        contentBase64: encodeBase64(new TextEncoder().encode(SKILL_MD)),
+        contentBase64: encodeBase64(new TextEncoder().encode(options.text ?? SKILL_MD)),
       },
     ],
   });
@@ -114,6 +216,37 @@ async function seededHome(
 }
 
 describe('SkillDetailScreen instructions autosave', () => {
+  it.each(['done', 'preview'] as const)('keeps the skill editor and draft when %s cannot confirm its snapshot', async target => {
+    const home = await seededHome(`https://skill-unconfirmed-${target}.test`);
+    function Instructions() {
+      const detail = useSkillDetail('release-notes');
+      // The section receives an already loaded body in the real detail page. Keep that input
+      // explicit here: this test exercises the native flush, not asynchronous library discovery.
+      return <ItemList><SkillInstructionsSection skillId="release-notes" skillMd={SKILL_MD} readOnly={false}
+        onSave={text => detail.update({ files: [{ kind: 'upsert', file: skillTextFile('SKILL.md', text) }] })}
+        onDirtyChange={detail.setHold} readTheirs={async () => {
+          const latest = await detail.readLatest();
+          return latest ? { text: latest.skillMd, revision: latest.revision } : null;
+        }} adoptTheirs={async () => { const latest = await detail.readLatest(); if (latest) detail.adopt(latest); }} testID="instructions" /></ItemList>;
+    }
+    const screen = await renderScreen(<Instructions />);
+    try {
+      expect(screen.findByTestId('instructions:edit')).not.toBeNull();
+      await screen.pressByTestIdAsync('instructions:edit');
+      expect(screen.findByTestId('instructions:editor')).not.toBeNull();
+      modalSpies.alert.mockClear();
+      skillEditorBoundary.flush.mockRejectedValueOnce(new Error('snapshot_unconfirmed'));
+      if (target === 'done') await screen.pressByTestIdAsync('instructions:done');
+      else {
+        const { SegmentedTabBar } = await import('@/components/ui/navigation/SegmentedTabBar');
+        await act(async () => { screen.findByType(SegmentedTabBar).props.onSelectTab('preview'); });
+      }
+      await vi.waitFor(() => expect(modalSpies.alert).toHaveBeenCalled());
+      expect(screen.findByTestId('instructions:editor')).not.toBeNull();
+      expect(screen.findAllByTestId('instructions:preview')).toHaveLength(0);
+    } finally { await screen.unmount(); await home.dispose(); }
+  });
+
   it('keeps the draft Off choice through the mounted create Action, stored rules and library projection', async () => {
     const home = await seededHome('https://skill-draft-off.test');
     const draft = await renderHook(() => ({ reach: useDraftReachRules('skill'), action: useMountedActionExecution(home.home.id) }));
@@ -187,6 +320,103 @@ describe('SkillDetailScreen instructions autosave', () => {
 });
 
 describe('SkillDetailScreen over the real skills Actions', () => {
+  it.each(['keepMine', 'takeTheirs'] as const)('retains dirty instructions and outside-reference warnings through width/focus changes, then resolves %s against the current revision', async choice => {
+    const original = `${SKILL_MD}\nRead [the checklist](../../shared/checklist.md).\n`;
+    const mine = `${original}\nMy unsaved instructions.\n`;
+    const theirs = `${original}\nAnother device's instructions.\n`;
+    const home = await seededHome(`https://skill-editor-continuity-${choice.toLowerCase()}.test`, undefined, {
+      text: original, header: { skillLock: { provenance: { kind: 'upload', importedAt: 1 }, updatePolicy: 'manual' } },
+    });
+    const { SkillDetailScreen } = await import('./SkillDetailScreen');
+    const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+    const { Dimensions } = await import('react-native');
+    const windowSize = Dimensions.get('window');
+    const dimensions = vi.spyOn(Dimensions, 'get');
+    const view = (active: boolean) => <PluginSurfaceFocusEligibilityProvider active={active}>
+      <SkillDetailScreen skillId="release-notes" />
+    </PluginSurfaceFocusEligibilityProvider>;
+    const screen = await renderScreen(view(true));
+    const otherDevice = await renderHook(() => useSkillDetail('release-notes'));
+    const editor = () => screen.findHostByTestId('skill.test.editor')!;
+    try {
+      await vi.waitFor(() => expect(screen.findByTestId('skill.detail.instructions:edit')).not.toBeNull());
+      await vi.waitFor(() => expect(otherDevice.getCurrent().status).toBe('ready'));
+      await screen.pressByTestIdAsync('skill.detail.instructions:edit');
+      await act(async () => { editor().props.onChangeText(mine); });
+      for (const [width, active] of [[390, true], [1440, false], [390, true]] as const) {
+        dimensions.mockReturnValue({ ...windowSize, width });
+        await screen.update(view(active));
+        expect(editor().props.value).toBe(mine);
+        expect(screen.findByTestId('skill.detail.source:outsideReferences')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('../../shared/checklist.md');
+        expect(screen.findByTestId('skill.detail.files')).not.toBeNull();
+        expect(screen.findByTestId('skill.detail.where')).not.toBeNull();
+        expect(screen.findByTestId('skill.detail.remove')).not.toBeNull();
+      }
+      await act(async () => {
+        expect(await otherDevice.getCurrent().update({ files: [{ kind: 'upsert', file: skillTextFile('SKILL.md', theirs) }] }))
+          .toMatchObject({ ok: true });
+      });
+      await vi.waitFor(() => expect(screen.findByTestId('skill.detail.instructions:reviewBoth')).not.toBeNull());
+      expect(editor().props.value).toBe(mine);
+      await screen.pressByTestIdAsync('skill.detail.instructions:reviewBoth');
+      await vi.waitFor(() => expect(screen.findByTestId('skill.detail.instructions:review')).not.toBeNull());
+      const { DiffViewer } = await import('@/components/ui/code/diff/DiffViewer');
+      expect(screen.findByType(DiffViewer).props).toMatchObject({ oldText: theirs, newText: mine });
+      await screen.pressByTestIdAsync(`skill.detail.instructions:${choice}`);
+      const expected = choice === 'keepMine' ? mine : theirs;
+      await vi.waitFor(async () => expect((await otherDevice.getCurrent().readLatest())?.skillMd).toBe(expected));
+      await vi.waitFor(() => expect(editor().props.value).toBe(expected));
+      expect(screen.findByTestId('skill.detail.instructions:review')).toBeNull();
+      expect(screen.findByTestId('skill.detail.instructions:conflict')).toBeNull();
+      expect(screen.findByTestId('skill.detail.source:outsideReferences')).not.toBeNull();
+    } finally { dimensions.mockRestore(); await otherDevice.unmount(); await screen.unmount(); await home.dispose(); }
+  });
+
+  it.each(['draft', 'duplicate'] as const)('retains the %s acknowledgment and repairs only rules after a refused CAS', async entry => {
+    let refuse = true;
+    let refusedWrites = 0;
+    modalSpies.confirm.mockResolvedValue(true);
+    navigation.push.mockClear(); navigation.replace.mockClear();
+    const home = await seededHome(`https://skill-${entry}-partial.test`, async (path, init) => {
+      if (refuse && path.endsWith('/prompt-library/skill-rules') && init?.method === 'POST') {
+        refusedWrites++;
+        return Response.json({ status: 'conflict', revision: 2 });
+      }
+      return null;
+    });
+    const { SkillDetailScreen } = await import('./SkillDetailScreen');
+    const { CapabilityDetailHeader } = await import('@/components/capabilities/detail/CapabilityDetailHeader');
+    const screen = await renderScreen(<SkillDetailScreen skillId={entry === 'draft' ? null : 'release-notes'} />);
+    try {
+      if (entry === 'draft') await screen.pressByTestIdAsync('skill.draft.add');
+      else {
+        await vi.waitFor(() => expect(screen.findByType(CapabilityDetailHeader).props.menuItems).toBeDefined());
+        await act(async () => { await screen.findByType(CapabilityDetailHeader).props.menuItems.find((item: { id: string }) => item.id === 'duplicate').onSelect(); });
+      }
+      await vi.waitFor(() => expect(refusedWrites).toBeGreaterThan(0));
+      const ids = home.boundary.list().map(row => row.id);
+      expect(ids).toHaveLength(2);
+      const createdId = ids.find(id => id !== 'release-notes')!;
+      const partialID = `skill.${entry === 'draft' ? 'draft' : 'detail'}.partial`;
+      expect(screen.findByTestId(partialID)).not.toBeNull();
+      expect(navigation.push).not.toHaveBeenCalled();
+      expect(navigation.replace).not.toHaveBeenCalled();
+      const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+      const repair = () => screen.findAllByType(SurfaceStateCard).find(node => node.props.testID === partialID)!.props.action.onPress();
+      // A refused retry stays recoverable; it must never repeat the content write.
+      await act(async () => { await repair(); });
+      expect(home.boundary.list().map(row => row.id)).toEqual(ids);
+      expect(screen.findByTestId(partialID)).not.toBeNull();
+      refuse = false;
+      await act(async () => { await repair(); });
+      expect(home.boundary.list().map(row => row.id)).toEqual(ids);
+      const record = home.catalog.read('skill-rules');
+      expect(record.value).toMatchObject({ rules: expect.arrayContaining([expect.objectContaining({ skillId: createdId, enabled: true })]) });
+      expect(entry === 'draft' ? navigation.replace : navigation.push).toHaveBeenCalledWith(expect.stringContaining(createdId));
+    } finally { await screen.unmount(); await home.dispose(); modalSpies.confirm.mockResolvedValue(false); }
+  });
+
   it('honors the delete Action waiver without a local removal dialog', async () => {
     modalSpies.confirm.mockClear();
     const home = await seededHome('https://skill-delete-waived.test', async (path) => path === '/v2/account/settings'
@@ -323,11 +553,15 @@ describe('SkillDetailScreen over the real skills Actions', () => {
       await act(async () => { readPresentationNotice()!.undo!.run(); });
       await vi.waitFor(() => expect(reader.getCurrent().rules).toEqual([]));
       await vi.waitFor(() => expect(library.getCurrent().items.find(item => item.skillId === 'release-notes')?.rules).toEqual([]));
+      // Empty display is optimistic: the next refusal must start only after Undo's HTTP receipt.
+      await vi.waitFor(() => expect(home.catalog.read('skill-rules').value).toMatchObject({
+        rules: expect.not.arrayContaining([expect.objectContaining({ skillId: 'release-notes' })]),
+      }));
       retirePresentationNotice();
       refuse = true;
       await act(async () => { expect(await author.getCurrent().change({ kind: 'replace', rules: [{ target: { t: 'allMachines' }, enabled: true }] })).toEqual({ ok: false, message: 'conflict' }); });
-      expect(reader.getCurrent().rules).toEqual([]);
-      expect(library.getCurrent().items.find(item => item.skillId === 'release-notes')?.rules).toEqual([]);
+      await vi.waitFor(() => expect(reader.getCurrent().rules).toEqual([]));
+      await vi.waitFor(() => expect(library.getCurrent().items.find(item => item.skillId === 'release-notes')?.rules).toEqual([]));
       expect(readPresentationNotice()?.undo).toBeUndefined();
     } finally {
       reply.resolve();

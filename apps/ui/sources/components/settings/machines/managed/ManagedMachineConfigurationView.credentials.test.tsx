@@ -20,12 +20,20 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 
 const route = vi.hoisted(() => ({ params: {} as Record<string, string | undefined>, replace: vi.fn(), push: vi.fn(), back: vi.fn(), dismissTo: vi.fn() }));
 const nativeBoundary = vi.hoisted(() => ({ rpc: vi.fn() }));
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({ renderItems: true });
+});
 let projectionReply: ReturnType<typeof DaemonContributionRegistryProjectionDescribeResponseSchema.parse>;
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
     const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
     return createServerScopedMachineRpcBoundaryMock(nativeBoundary.rpc);
 });
 installApprovalCommonModuleMocks({ text: async () => vi.importActual<typeof import('@/text')>('@/text'),
+    reactNative: async () => {
+        const { createReactNativeWebMock, createMeasuredViewMock } = await import('@/dev/testkit/mocks/reactNative');
+        return createReactNativeWebMock({ View: createMeasuredViewMock({ width: 960, height: 600 }, testID => testID.endsWith(':stage')) });
+    },
     modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ renderCustomModals: true }).module,
     router: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: route, params: () => route.params }).module });
 const harness = createHomeGovernanceHarness();
@@ -569,7 +577,10 @@ describe('managed provisioner credential purposes', () => {
                 || account.ref.service.pluginId !== cloud.service.pluginId) } }));
         await act(async () => choose({ kind: 'account', account: cloud }));
         await waitForHomeGovernance(() => expect(vi.mocked(Modal.alert)).toHaveBeenCalledWith(
-            t('common.error'), t('connectedServices.errors.accountServiceUnavailable')));
+            t('common.error'), t('connectedServices.errors.accountServiceUnavailable'), [
+                { text: t('approvals.technicalDetails'), onPress: expect.any(Function) },
+                { text: t('common.ok'), style: 'cancel' },
+            ]));
         expect(actionInputs('machines.managed.acquire')).toHaveLength(0);
         expect(harness.requestsFor('/v1/actions/connectedServices.purposes.default.set')).toHaveLength(0);
         await screen.unmount();

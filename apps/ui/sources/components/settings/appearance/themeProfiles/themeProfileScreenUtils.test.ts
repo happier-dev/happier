@@ -43,6 +43,12 @@ describe('theme profile screen utilities', () => {
         expect(result.profiles[0]?.name).toBe('Updated profile');
     });
 
+    it('preserves valid opaque override tokens when updating a profile', () => {
+        const state = emptyThemeProfiles();
+        const profile = baseProfile('theme_future', { light: { 'future.custom.color': '#123456' }, dark: {} });
+        expect(upsertThemeProfile(state, profile).profiles[0]?.overrides).toEqual(profile.overrides);
+    });
+
     it('does not persist invalid editable profile state', () => {
         const state = emptyThemeProfiles();
 

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, View, type GestureResponderEvent } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
@@ -42,7 +42,7 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
     layout: 'card' | 'row';
     /** "3 connected" (the page's catalog); Home's first accounts have none to count. */
     showCount: boolean;
-    onConnect: () => void;
+    onConnect: (event?: GestureResponderEvent) => void;
 }>) {
     const { entry } = props;
     const card = props.layout === 'card';
@@ -79,7 +79,7 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
                     highlighted={entry.canAdd && (pressed || hovered === true)}
                 >
                     <View style={styles.top}>
-                        <ConnectedServiceMark legacyServiceId={entry.legacyServiceId} size="card" />
+                        <ConnectedServiceMark legacyServiceId={entry.legacyServiceId} pluginId={entry.service.pluginId} size="card" />
                         {count ? <Text style={styles.count}>{count}</Text> : null}
                     </View>
                     <View>
@@ -98,7 +98,7 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
                                 accessibilityLabel={t('connectedServicesSettings.setupServiceTitle', { service: entry.label })}
                                 accessibilityHint={entry.usedBy.length > 0 ? entry.usedBy.join(', ') : undefined}
                                 disabled={!entry.canAdd}
-                                onPress={(event) => { event?.stopPropagation?.(); if (entry.canAdd) props.onConnect(); }} />
+                                onPress={(event) => { event?.stopPropagation?.(); if (entry.canAdd) props.onConnect(event); }} />
                         </View>
                     </View>
                 </SetupBlockPaper>
@@ -110,7 +110,7 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
                     highlighted={entry.canAdd && (pressed || hovered === true)}
                 >
                     <View style={styles.rowIdentity}>
-                        <ConnectedServiceMark legacyServiceId={entry.legacyServiceId} size="card" />
+                        <ConnectedServiceMark legacyServiceId={entry.legacyServiceId} pluginId={entry.service.pluginId} size="card" />
                         {count ? <Text style={styles.count}>{count}</Text> : null}
                     </View>
                     <View style={styles.rowText}>
@@ -126,7 +126,7 @@ export const ConnectedServiceCatalogBlock = React.memo(function ConnectedService
                         accessibilityLabel={t('connectedServicesSettings.setupServiceTitle', { service: entry.label })}
                         accessibilityHint={entry.usedBy.length > 0 ? entry.usedBy.join(', ') : undefined}
                         disabled={!entry.canAdd}
-                        onPress={(event) => { event?.stopPropagation?.(); if (entry.canAdd) props.onConnect(); }} />
+                        onPress={(event) => { event?.stopPropagation?.(); if (entry.canAdd) props.onConnect(event); }} />
                     </View>
                 </SetupBlockPaper>
             )}

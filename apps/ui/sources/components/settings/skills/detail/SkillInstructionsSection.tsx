@@ -15,6 +15,7 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { MarkdownCodeEditorField } from '@/components/ui/markdown/editor/MarkdownCodeEditorField';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
+import { Modal } from '@/modal';
 import { t } from '@/text';
 
 import type { SkillChangeResult } from './useSkillDetail';
@@ -228,10 +229,14 @@ export function SkillInstructionsSection(
   const clipHeight = PAGE_LIST_METRICS.readingClipHeightPx;
 
   const done = React.useCallback(async () => {
-    await editorRef.current?.flushPendingChange();
-    await autosave.flush();
-    setEditing(false);
-    setTab('edit');
+    try {
+      await editorRef.current?.flushPendingChange();
+      await autosave.flush();
+      setEditing(false);
+      setTab('edit');
+    } catch {
+      await Modal.alert(t('common.error'), t('errors.operationFailed'));
+    }
   }, [autosave]);
 
   const openReview = React.useCallback(async () => {
@@ -306,10 +311,14 @@ export function SkillInstructionsSection(
                   },
                 ]}
                 activeTabId={tab}
-                onSelectTab={(next) => {
-                  if (next === 'preview')
-                    void editorRef.current?.flushPendingChange();
-                  setTab(next);
+                onSelectTab={async (next) => {
+                  try {
+                    if (next === 'preview')
+                      await editorRef.current?.flushPendingChange();
+                    setTab(next);
+                  } catch {
+                    await Modal.alert(t('common.error'), t('errors.operationFailed'));
+                  }
                 }}
                 compact
                 segmentSizing="content"
@@ -416,6 +425,7 @@ export function SkillInstructionsSection(
                 resetKey={props.skillId}
                 testID={`${props.testID}:field`}
                 value={text}
+                readOnly={Boolean(props.readOnly)}
                 filePath="SKILL.md"
                 onChange={setText}
                 editorRef={editorRef}

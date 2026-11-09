@@ -4,6 +4,11 @@ import { defineSettingsPage, settingsHosts } from '@/components/settings/catalog
 export const PLUGINS_SETTINGS = defineSettingsPage({
     pageId: 'plugins',
     sections: {
+        collection: {
+            settings: {
+                collectionView: {},
+            },
+        },
         updates: {
             titleKey: 'settingsPlugins.surfaces.updatesTitle',
             settings: {

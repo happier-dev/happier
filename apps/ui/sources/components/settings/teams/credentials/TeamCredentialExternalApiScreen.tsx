@@ -4,8 +4,10 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import {
     type TeamCredentialExternalApiKeySummaryV1,
 } from '@happier-dev/protocol/teams';
+import { ClipboardWriteResultSchema } from '@happier-dev/protocol/actions/clipboardActionFamily';
 
 import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import {
     resolveApiTokenExpiryInstant,
     type ApiTokenExpiryPreset,
@@ -28,8 +30,8 @@ import {
     revokeTeamCredentialExternalApiKey,
 } from '@/sync/ops/teams/teamCredentialOperations';
 import { t, type TranslationKey } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
+import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 import {
     runUnsavedChangesGuard,
     type ActiveUnsavedChangesGuard,
@@ -109,9 +111,14 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
     const [membershipName, setMembershipName] = React.useState<string | null>(null);
     const [expiry, setExpiry] = React.useState<ApiTokenExpiryPreset>('none');
     const [replacing, setReplacing] = React.useState<TeamCredentialExternalApiKeySummaryV1 | null>(null);
+    const creationBaseline = React.useRef<Readonly<{ membershipId: string | null; expiry: ApiTokenExpiryPreset }>>({ membershipId: null, expiry: 'none' });
     const [reveal, setReveal] = React.useState<Reveal | null>(null);
     const [secretCopied, setSecretCopied] = React.useState(false);
     const copyFeedback = useHappierCopyFeedback(1_500);
+    const copyAction = useMountedActionExecution(context.scope, {
+        onApprovalPending: context.requestApproval,
+        retainInvocation: true,
+    });
     const [notice, setNotice] = React.useState<string | null>(null);
     const navigation = useNavigation();
     const router = useRouter();
@@ -159,26 +166,40 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
         requestDecision: requestRevealLossDecision,
         tag: 'TeamCredentialExternalApiScreen.reveal.beforeRemove',
     }), [requestRevealLossDecision]);
+    const draftWouldBeLost = label.length > 0 || replacing !== null
+        || membershipId !== creationBaseline.current.membershipId || expiry !== creationBaseline.current.expiry;
+    const departureWouldLoseWork = revealWouldBeLost || draftWouldBeLost;
+    const departureDirtyRef = React.useRef(departureWouldLoseWork);
+    departureDirtyRef.current = departureWouldLoseWork;
+    const requestDepartureDecision = React.useCallback(() => revealWouldBeLost
+        ? requestRevealLossDecision()
+        : promptUnsavedChangesAlert((title, message, buttons) => Modal.alert(title, message, buttons), {
+            title: t('common.discardChanges'), message: t('common.unsavedChangesWarning'),
+            discardText: t('common.discard'), keepEditingText: t('common.keepEditing'),
+        }), [requestRevealLossDecision, revealWouldBeLost]);
+    const departureGuard = React.useMemo(() => ({
+        isDirtyRef: departureDirtyRef,
+        requestDecision: requestDepartureDecision,
+        tag: 'TeamCredentialExternalApiScreen.beforeRemove',
+    } satisfies ActiveUnsavedChangesGuard), [requestDepartureDecision]);
     const continuePreventedNavigation = React.useCallback((action: unknown) => {
         if (!action) return;
         (navigation as { dispatch?: (value: unknown) => void }).dispatch?.(action);
     }, [navigation]);
 
     useUnsavedChangesBeforeRemoveGuard({
-        isDirty: revealWouldBeLost,
-        isDirtyRef: revealWouldBeLostRef,
-        requestDecision: requestRevealLossDecision,
+        isDirty: departureWouldLoseWork,
+        ...departureGuard,
         onContinue: continuePreventedNavigation,
-        tag: revealLossGuard.tag,
     });
 
     React.useEffect(() => {
         // Native-stack swipe dismissal can bypass beforeRemove on some platform
-        // versions. While the only clear bearer has not been copied, keep exits
+        // versions. Keep departures that lose a draft or the only clear bearer
         // on the guarded header/system navigation path.
         (navigation as { setOptions?: (options: { gestureEnabled: boolean }) => void })
-            .setOptions?.({ gestureEnabled: !revealWouldBeLost });
-    }, [navigation, revealWouldBeLost]);
+            .setOptions?.({ gestureEnabled: !departureWouldLoseWork });
+    }, [navigation, departureWouldLoseWork]);
 
     React.useEffect(() => () => {
         (navigation as { setOptions?: (options: { gestureEnabled: boolean }) => void })
@@ -194,7 +215,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
             path: targetPath,
         };
         let active = true;
-        void Promise.resolve(runUnsavedChangesGuard(revealLossGuard, () => {
+        void Promise.resolve(runUnsavedChangesGuard(departureGuard, () => {
             if (!active) return;
             acceptedTarget.current = nextTarget;
             currentTargetKey.current = nextTarget.key;
@@ -204,6 +225,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
             setListing(false);
             listingTargetKey.current = null;
             setBusy(false);
+            creationBaseline.current = { membershipId: null, expiry: 'none' };
             setLabel('');
             setMembershipId(null);
             setMembershipName(null);
@@ -221,7 +243,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
         return () => {
             active = false;
         };
-    }, [copyFeedback.clearCopiedFeedback, replaceRoute, revealLossGuard, targetKey, targetPath]);
+    }, [copyFeedback.clearCopiedFeedback, replaceRoute, departureGuard, targetKey, targetPath]);
 
     const reload = React.useCallback(async () => {
         const requestedTargetKey = targetKey;
@@ -440,7 +462,17 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
                     detail={copyFeedback.isCopied(item.id) ? t('common.copied') : t('common.copy')}
                     accessibilityLabel={`${item.title}, ${copyFeedback.isCopied(item.id) ? t('common.copied') : t('common.copy')}`}
                     onPress={async () => {
-                        const ok = await setClipboardStringSafe(item.value);
+                        if (acceptedTarget.current.key !== targetKey) return;
+                        const requestedTargetKey = targetKey;
+                        const signal = actionLifetime.current?.signal;
+                        let ok = false;
+                        try {
+                            const result = await copyAction.execute('clipboard.write', { text: item.value }, { signal });
+                            ok = result.ok && ClipboardWriteResultSchema.safeParse(result.result).success;
+                        } catch {
+                            // Admission and platform failures use the same existing copy feedback.
+                        }
+                        if (signal?.aborted || currentTargetKey.current !== requestedTargetKey) return;
                         if (!ok) {
                             await Modal.alertAsync(t('common.error'), t('items.failedToCopyToClipboard'));
                             return;
@@ -609,6 +641,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
                                         ]);
                                         setReveal({ token: value.token, replacedKey: replacing });
                                         setSecretCopied(false);
+                                        creationBaseline.current = { membershipId, expiry };
                                         setLabel('');
                                         setReplacing(null);
                                     },
@@ -626,6 +659,7 @@ const ExternalApiContent = React.memo(function ExternalApiContent(props: Readonl
                                 ]);
                                 setReveal({ token: outcome.value.token, replacedKey: replacing });
                                 setSecretCopied(false);
+                                creationBaseline.current = { membershipId, expiry };
                                 setLabel('');
                                 setReplacing(null);
                             } else applyMutationFailure(outcome.failure);

@@ -86,15 +86,32 @@ function setGrants(grants: readonly unknown[]) {
   } as never);
 }
 
-beforeEach(() => {
+async function activateSignInHome(serverUrl: string, serverIdentityId: string) {
+  const { adoptHomeProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+  const home = await adoptHomeProfile({ source: 'manual', descriptor: { v: 1,
+    homeServerIdentityId: serverIdentityId, canonicalServerUrl: serverUrl, revision: 1,
+    endpoints: [{ kind: 'https', url: serverUrl }] } });
+  await setActiveServerId(home.id);
+  return home;
+}
+
+beforeEach(async () => {
   boundary.execute.mockReset();
   boundary.execute.mockImplementation(async (id: string) => id === 'connectedServices.configuration.get'
     ? { ok: true, result: configuration() } : undefined);
   boundary.open.mockClear();
+  const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+  const home = await activateSignInHome('https://mcp-signin-hook.test', 'srv_mcp_signin_hook');
+  const machine = createMachineFixture({ id: 'm1', active: true, activeAt: Date.now() });
   getStorage().setState({
-    settingsScope: { serverId: 'home', accountId: 'account' },
-    profileScope: { serverId: 'home', accountId: 'account' },
-  } as never);
+    settingsScope: { serverId: home.id, accountId: 'account' },
+    profileScope: { serverId: home.id, accountId: 'account' },
+    machines: { [machine.id]: machine }, machineListByServerId: { [home.id]: [machine] },
+    machineListStatusByServerId: { [home.id]: 'idle' },
+    settings: { ...getStorage().getState().settings, machineAdministrationTargetsLocalV1: {
+      'mcpServers.settings': { serverIdentityId: home.serverIdentityId!, machineId: machine.id },
+    } },
+  });
   setGrants([]);
 });
 afterEach(async () => {
@@ -102,6 +119,28 @@ afterEach(async () => {
 });
 
 describe('useMcpServerSignIn', () => {
+  it('signs out through the saved second Administration Machine rather than presentation order', async () => {
+    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const home = await activateSignInHome('https://mcp-signout-target.test', 'srv_mcp_signout_target');
+    const scope = { serverId: home.id, accountId: 'account' };
+    const machines = ['m1', 'saved-second'].map(id => createMachineFixture({ id, active: true, activeAt: Date.now() }));
+    getStorage().setState({ settingsScope: scope, profileScope: scope,
+      machines: Object.fromEntries(machines.map(m => [m.id, m])), machineListByServerId: { [home.id]: machines },
+      machineListStatusByServerId: { [home.id]: 'idle' }, settings: { ...getStorage().getState().settings,
+        machineAdministrationTargetsLocalV1: { 'mcpServers.settings': { serverIdentityId: home.serverIdentityId!, machineId: 'saved-second' } } } });
+    setGrants([grant('connected', 1)]);
+    boundary.execute.mockImplementation(async (id: string) => id === 'connectedServices.configuration.get'
+      ? { ok: true, result: configuration() }
+      : { ok: true, result: CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1['connectedServices.accounts.revoke'].parse({
+        status: 'revoked', account: grant('connected', 1).ref, remoteStatus: 'remoteUnsupported', metadataCleanup: { status: 'complete' },
+      }) });
+    const hook = await renderHook(() => useMcpServerSignIn(server,
+      machines.map(m => ({ machineId: m.id, name: m.id, online: true })), { scope }));
+    await act(async () => { expect(await hook.getCurrent().signOut()).toBe(true); });
+    expect(boundary.execute.mock.calls.filter(([id]) => id === 'connectedServices.accounts.revoke').map(([, input]) => input.machineId)).toEqual(['saved-second']);
+    expect(hook.getCurrent().view?.state).toBe('revoked');
+  });
+
   it('passes the supplied app through the same Action and retains a typed editable client failure', async () => {
     boundary.execute.mockResolvedValueOnce({ ok: true, result: started });
     const client = { clientId: 'person-app', clientSecret: crypto.randomUUID() };
@@ -174,10 +213,18 @@ describe('useMcpServerSignIn', () => {
     const hook = await renderHook(() => useMcpServerSignIn(server, online));
     await act(async () => { expect(await hook.getCurrent().signOut()).toBe(true); });
     expect(hook.getCurrent().view?.state).toBe('revoked');
-    await act(async () => { getStorage().setState({
-      settingsScope: { serverId: 'other-home', accountId: 'other-account' },
-      profileScope: { serverId: 'other-home', accountId: 'other-account' },
-    }); });
+    await act(async () => {
+      const other = await activateSignInHome('https://mcp-signin-other.test', 'srv_mcp_signin_other');
+      getStorage().setState({
+        settingsScope: { serverId: other.id, accountId: 'other-account' },
+        profileScope: { serverId: other.id, accountId: 'other-account' },
+        machineListByServerId: { [other.id]: Object.values(getStorage().getState().machines) },
+        machineListStatusByServerId: { [other.id]: 'idle' },
+        settings: { ...getStorage().getState().settings, machineAdministrationTargetsLocalV1: {
+          'mcpServers.settings': { serverIdentityId: other.serverIdentityId!, machineId: 'm1' },
+        } },
+      });
+    });
     expect(hook.getCurrent().view?.state).toBe('connected');
   });
   it('signs in: opens the browser, waits, and becomes Connected when the grant lands', async () => {
@@ -207,7 +254,7 @@ describe('useMcpServerSignIn', () => {
     });
   });
 
-  it('a pasted answer finishes on the attempt machine; a refusal says it did not finish', async () => {
+  it('a pasted answer addresses the existing attempt; a refusal says it did not finish', async () => {
     boundary.execute.mockResolvedValueOnce({ ok: true, result: started });
     const hook = await renderHook(() => useMcpServerSignIn(server, online));
     await act(async () => {
@@ -233,18 +280,17 @@ describe('useMcpServerSignIn', () => {
     });
     expect(boundary.execute).toHaveBeenLastCalledWith(
       'connectedServices.authentication.completeOAuth',
-      expect.objectContaining({
-        machineId: 'm1',
+      {
         attemptId: 'attempt-1',
         completion: expect.objectContaining({
           code: 'c',
           iss: 'https://linear.app',
         }),
-      }),
+      },
       expect.anything(),
     );
     expect(accepted).toBe(false);
-    expect(hook.getCurrent().view).toEqual({ state: 'did_not_finish' });
+    expect(hook.getCurrent().view).toEqual({ state: 'did_not_finish', diagnosticCode: 'invalid_grant' });
   });
 
   it('accepts a connected grant after the completion response failed to arrive', async () => {
@@ -381,7 +427,7 @@ describe('useMcpServerSignIn', () => {
     expect(boundary.open).toHaveBeenCalledWith(replacement.authorizationUrl);
   });
 
-  it('cancel reverses the attempt on its machine and returns to Not connected', async () => {
+  it('cancel addresses the existing attempt and returns to Not connected', async () => {
     boundary.execute.mockResolvedValueOnce({ ok: true, result: started });
     const hook = await renderHook(() => useMcpServerSignIn(server, online));
     await act(async () => {
@@ -396,7 +442,7 @@ describe('useMcpServerSignIn', () => {
     });
     expect(boundary.execute).toHaveBeenLastCalledWith(
       'connectedServices.authentication.cancel',
-      { machineId: 'm1', attemptId: 'attempt-1' },
+      { attemptId: 'attempt-1' },
       expect.anything(),
     );
     expect(hook.getCurrent().view).toEqual({ state: 'not_connected' });

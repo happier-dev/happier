@@ -5,6 +5,7 @@ import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers
 import type { PluginMarketplaceCatalogEntry, PluginMarketplaceDiscoverSourceStatus } from './readPluginMarketplaceCatalog';
 
 installSettingsViewCommonModuleMocks();
+const { DiscoverListingsSection, DiscoverStatusSummary } = await import('./PluginMarketplaceSections');
 
 const unreachable: PluginMarketplaceDiscoverSourceStatus = {
     id: 'happier-curated',
@@ -24,39 +25,46 @@ const unreachable: PluginMarketplaceDiscoverSourceStatus = {
 describe('Browse source issues', () => {
     afterEach(standardCleanup);
 
+    it('presents a failed read as a named source issue with recovery and no transport text', async () => {
+        const retry = vi.fn();
+        const raw = 'Scoped RPC socket disconnected during Machine preparation';
+        const screen = await renderScreen(<DiscoverStatusSummary loading={false} error={raw} stale={false} entryCount={0}
+            sourceStatuses={[]} diagnostics={[]} nonInstallable={[]} selectedSourceTitle="Happier marketplace"
+            onRetry={retry} />);
+        expect(screen.findByTestId('settings.plugins.marketplace.discover.status.summary')).toBeNull();
+        expect(screen.getTextContent()).not.toContain(raw);
+        expect(screen.getTextContent()).toContain('Happier marketplace');
+        await screen.pressByTestIdAsync('settings.plugins.marketplace.discover.issue.index.action');
+        expect(retry).toHaveBeenCalledTimes(1);
+    });
+
     it.each(['', 'missing plugin'])('does not infer an empty search from an unanswered source (%s)', async (searchText) => {
-        const { DiscoverStatusSummary } = await import('./PluginMarketplaceSections');
         const screen = await renderScreen(<DiscoverStatusSummary loading={false} error={null} stale={false} entryCount={0}
             sourceStatuses={[unreachable]} diagnostics={[]} nonInstallable={[]} selectedSourceTitle={null}
             searchText={searchText} onRetry={() => {}} onOpenSources={() => {}} />);
         expect(screen.findByTestId('settings.plugins.marketplace.discover.status.summary')).toBeNull();
         expect(screen.findByTestId('settings.plugins.marketplace.discover.noMatch')).toBeNull();
-        expect(screen.findByTestId('settings.plugins.marketplace.discover.issue.happier-curated')).not.toBeNull();
+        expect(screen.findByTestId('settings.plugins.marketplace.discover.sources')).not.toBeNull();
         expect(screen.getTextContent()).not.toContain('settingsPlugins.discover.diagnostic.otherSourcesShown');
     });
 
-    it('shows one notice per source and keeps the technical detail behind Details', async () => {
-        const { DiscoverStatusSummary } = await import('./PluginMarketplaceSections');
+    it('says an unreachable source once, on the quiet outage line, and keeps the technical detail behind Details', async () => {
         const screen = await renderScreen(<DiscoverStatusSummary loading={false} error={null} stale={false} entryCount={3}
             sourceStatuses={[unreachable]} diagnostics={[]} nonInstallable={[]} selectedSourceTitle={null}
             onRetry={() => {}} onOpenSources={() => {}} />);
-        const notices = new Set(screen.findAll((node) => typeof node.props.testID === 'string'
-            && /^settings\.plugins\.marketplace\.discover\.issue\.[^.]+$/.test(node.props.testID))
-            .map((node) => node.props.testID as string));
-        expect([...notices]).toEqual(['settings.plugins.marketplace.discover.issue.happier-curated']);
+        expect(screen.findByTestId('settings.plugins.marketplace.discover.issue.happier-curated')).toBeNull();
         const before = screen.getTextContent();
         expect(screen.findByTestId('settings.plugins.marketplace.discover.status.summary')).not.toBeNull();
         expect(before).toContain('settingsPlugins.discover.diagnostic.unreachableTitle');
         expect(before).not.toContain('getaddrinfo ENOTFOUND');
         expect(before).not.toContain('settingsPlugins.diagnosticsTechnicalCode');
-        await screen.pressByTestIdAsync('settings.plugins.marketplace.discover.issue.happier-curated.details');
+        await screen.pressByTestIdAsync('settings.plugins.marketplace.discover.sources.details');
         const after = screen.getTextContent();
         expect(after).toContain('getaddrinfo ENOTFOUND marketplace.happier.dev');
         expect(after).toContain('settingsPlugins.diagnosticsTechnicalCode');
     });
 
     it.each(['grid', 'list'] as const)('keeps one independent Install control in the %s presentation', async (presentation) => {
-        const { DiscoverListingsSection } = await import('./PluginMarketplaceSections');
         const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
         const entry: PluginMarketplaceCatalogEntry = {
             id: 'sample.plugin', title: 'Sample plugin', description: null, version: '1.2.3',
@@ -74,7 +82,7 @@ describe('Browse source issues', () => {
         /></ListPresentationProvider>);
         await measureMountedCollections(screen);
         if (presentation === 'grid') {
-            expect(screen.findByTestId('settings.plugins.marketplace.entry.curated.sample.plugin:description')?.props.children).toBe('');
+            expect(screen.findByTestId('settings.plugins.marketplace.entry.curated.sample.plugin:description')).toBeNull();
         }
         const actionTestID = 'settings.plugins.marketplace.action.install.curated.sample.plugin';
         expect(screen.findAllHostsByTestId(actionTestID)).toHaveLength(1);

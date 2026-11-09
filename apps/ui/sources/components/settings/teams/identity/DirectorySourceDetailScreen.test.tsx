@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { collectRenderedTestIds, renderScreen, standardCleanup } from '@/dev/testkit';
-import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol';
+import { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 
 const directoryBinding = vi.hoisted(() => ({
     version: 0,
@@ -65,7 +65,7 @@ vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     return createModalModuleMock({ spies: { confirm: modalConfirmMock } }).module;
 });
-vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({ ActivitySpinner: 'ActivitySpinner' }));
+vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({ ActivitySpinner: 'ActivitySpinner', iconMatchedSpinnerSize: (size: number) => size }));
 vi.mock('@/components/ui/forms/CompactSearchField', () => ({ CompactSearchField: 'CompactSearchField' }));
 vi.mock('@/components/ui/lists/Item', async () => {
     const React = await import('react');

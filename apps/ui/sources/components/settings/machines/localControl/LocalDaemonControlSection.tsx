@@ -14,7 +14,7 @@ import { t } from '@/text';
 import type { ThisComputerConnection } from '@/sync/domains/server/relayDrift/thisComputerConnection';
 import { resolveHomeDisplayNameForRelayUrl } from '@/components/settings/server/homeDisplayName';
 
-import { confirmThisComputerAccountMove, presentThisComputerConnection } from './thisComputerConnectionPresentation';
+import { presentThisComputerConnection } from './thisComputerConnectionPresentation';
 import { ThisComputerServersGroup } from './ThisComputerServersGroup';
 import { readKeptCliUpdateCommand, useLocalDaemonControl, type LocalCliUpdateStatus, type LocalDaemonStatusData } from './useLocalDaemonControl';
 import { useThisComputerConnection } from './useThisComputerConnection';
@@ -131,11 +131,7 @@ export const LocalDaemonControlSection = React.memo(function LocalDaemonControlS
         ? readKeptCliUpdateCommand(status)
         : null;
     const showChangeCommandLine = status?.cliChoice?.otherCli != null;
-    const handleRepair = React.useCallback(async () => {
-        // R10 D1: switching this computer away from the account it is signed in to asks first.
-        if (!(await confirmThisComputerAccountMove(connection))) return;
-        await repairBackgroundService();
-    }, [connection, repairBackgroundService]);
+    const handleRepair = repairBackgroundService;
 
     return (
         <>

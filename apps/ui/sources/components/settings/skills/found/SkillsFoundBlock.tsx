@@ -7,6 +7,7 @@ import { useWhereItsOnNames } from '@/components/capabilities/where/useWhereItsO
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal } from '@/modal';
 import type { ReachMachine } from '@/sync/domains/capabilities/reach/useReachProjection';
 import {
@@ -23,6 +24,9 @@ import {
   pickFoundHomeRows,
   type FoundHomeRow,
 } from './foundSkillsModel';
+import { describeSkillInstallIncomplete, type SkillCreationAcknowledgment } from '../add/skillInstall';
+
+const foundKey = (row: FoundHomeRow) => `${row.machineId}:${row.item.path}`;
 
 /** The block shows the thing itself, a few rows (lab hs A2); "See all" opens the rest. */
 const HOME_ROOM = 3;
@@ -60,6 +64,7 @@ export const SkillsFoundBlock = React.memo(function SkillsFoundBlock(
   const [adding, setAdding] = React.useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  const [acknowledged, setAcknowledged] = React.useState<ReadonlyMap<string, Readonly<{ name: string; receipt: SkillCreationAcknowledgment }>>>(() => new Map());
   const { adopt, scan } = found;
 
   const results = React.useMemo(
@@ -85,25 +90,23 @@ export const SkillsFoundBlock = React.memo(function SkillsFoundBlock(
   // Adding keeps the row busy until its machine has been read again; then it leaves (it is in the library).
   const add = React.useCallback(
     async (row: FoundHomeRow) => {
-      setAdding((prev) => new Set(prev).add(row.item.path));
+      const key = foundKey(row);
+      setAdding((prev) => new Set(prev).add(key));
       try {
         const outcome = await adopt(row.machineId, [row.item]);
-        if (outcome === null || outcome.incomplete) {
+        if (outcome === null) {
           Modal.alert(
             t('common.error'),
-            outcome === null
-              ? t('capabilities.skillsFound.addFailed', { name: row.item.name })
-              : t('capabilities.skillsFound.addedPartial', {
-                  name: row.item.name,
-                }),
+            t('capabilities.skillsFound.addFailed', { name: row.item.name }),
           );
-          if (outcome === null) return;
+          return;
         }
+        if (outcome.incomplete.length > 0) setAcknowledged(previous => new Map(previous).set(key, { name: row.item.name, receipt: outcome }));
         await scan(row.machineId);
       } finally {
         setAdding((prev) => {
           const next = new Set(prev);
-          next.delete(row.item.path);
+          next.delete(key);
           return next;
         });
       }
@@ -111,7 +114,8 @@ export const SkillsFoundBlock = React.memo(function SkillsFoundBlock(
     [adopt, scan],
   );
 
-  if (rows.length === 0) return null;
+  const partials = [...acknowledged].filter(([, { receipt }]) => receipt.incomplete.length > 0);
+  if (rows.length === 0 && partials.length === 0) return null;
   return (
     <ItemGroup
       testID="skills.home.found"
@@ -128,9 +132,24 @@ export const SkillsFoundBlock = React.memo(function SkillsFoundBlock(
         />
       }
     >
+      {partials.map(([key, { name, receipt }]) => <SurfaceStateCard key={key} testID={`skills.home.found.partial.${key}`} kind="error" size="line"
+        title={`${name} · ${describeSkillInstallIncomplete(receipt)}`}
+        action={{ label: t('capabilities.skillAdd.partial.tryAgain'), busy: adding.has(key), onPress: async () => {
+          if (adding.has(key)) return;
+          setAdding(previous => new Set(previous).add(key));
+          try {
+            const repaired = await found.retryRules(receipt);
+            setAcknowledged(previous => {
+              const next = new Map(previous);
+              if (repaired.incomplete.length > 0) next.set(key, { name, receipt: repaired });
+              else next.delete(key);
+              return next;
+            });
+          } finally { setAdding(previous => { const next = new Set(previous); next.delete(key); return next; }); }
+        } }} />)}
       {rows.map((row) => {
         const machine = machineById.get(row.machineId);
-        const busy = adding.has(row.item.path);
+        const busy = adding.has(foundKey(row));
         const agents = names.agentNames(foundAgentIds(row.item));
         return (
           <CapabilityRow
@@ -163,7 +182,7 @@ export const SkillsFoundBlock = React.memo(function SkillsFoundBlock(
                     : t('capabilities.skillsFound.add')
                 }
                 loading={busy}
-                disabled={busy || machine?.online !== true}
+                disabled={busy || acknowledged.has(foundKey(row)) || machine?.online !== true}
                 onPress={() => void add(row)}
               />
             }

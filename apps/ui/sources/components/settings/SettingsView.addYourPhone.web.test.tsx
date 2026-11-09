@@ -37,7 +37,6 @@ installSettingsViewCommonModuleMocks({
             Dimensions: {
                 get: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
             },
-            useWindowDimensions: () => ({ width: windowDimensions.width, height: windowDimensions.height, scale: 2, fontScale: 1 }),
             Platform: {
                 OS: 'web',
                 select: (options: { web?: unknown; default?: unknown; ios?: unknown; android?: unknown }) =>

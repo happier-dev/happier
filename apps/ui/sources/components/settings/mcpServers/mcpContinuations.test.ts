@@ -106,7 +106,7 @@ describe('Found adoption continuation', () => {
     it.each([{ t: 'savedSecret', secretId: 'chosen-ref' }, { t: 'literal', v: '${API_KEY}' }, { t: 'literal', v: 'entered-value' }] as const)
     ('waits for an explicit value choice then recovers an already-added server without a write: %j', async choice => {
         const owner = harness();
-        const hook = await renderHook(() => useMcpFoundAdoption({ machineId: 'machine-1', catalog: owner.catalog, catalogRevision: owner.revision, execution: owner.execution }));
+        const hook = await renderHook(() => useMcpFoundAdoption({ machineOnline: true, machineId: 'machine-1', catalog: owner.catalog, catalogRevision: owner.revision, execution: owner.execution }));
         await act(async () => { await hook.getCurrent().begin(found); });
         expect(hook.getCurrent().state.status).toBe('choosing');
         expect(hook.getCurrent().openValues).toBe(1);
@@ -124,7 +124,7 @@ describe('Found adoption continuation', () => {
     });
     it('keeps choices on an admission refusal, and cancels without committing them', async () => {
         const owner = harness();
-        const hook = await renderHook(() => useMcpFoundAdoption({ machineId: 'machine-1', catalog: owner.catalog, catalogRevision: owner.revision, execution: owner.execution }));
+        const hook = await renderHook(() => useMcpFoundAdoption({ machineOnline: true, machineId: 'machine-1', catalog: owner.catalog, catalogRevision: owner.revision, execution: owner.execution }));
         await act(async () => { await hook.getCurrent().begin(found); });
         await act(async () => { hook.getCurrent().setValue('one:env:API_KEY', { t: 'literal', v: '${API_KEY}' }); });
         owner.disable();
@@ -139,7 +139,7 @@ describe('Found adoption continuation', () => {
         const owner = harness();
         const item = DetectedMcpServerV1Schema.parse({ ...found, transport: 'http', stdio: undefined,
             remote: { url: 'https://found.example.test/mcp', headers: ['Authorization'] }, envKeys: ['REGION'] });
-        const hook = await renderHook(() => useMcpFoundAdoption({ machineId: 'machine-1', catalog: owner.catalog,
+        const hook = await renderHook(() => useMcpFoundAdoption({ machineOnline: true, machineId: 'machine-1', catalog: owner.catalog,
             catalogRevision: owner.revision, execution: owner.execution }));
         await act(async () => { await hook.getCurrent().begin(item); await hook.getCurrent().submit(); });
         expect(owner.writes).toBe(0);
@@ -155,7 +155,7 @@ describe('Found adoption continuation', () => {
     });
     it('withdraws a continuation on machine change and rejects retired admission', async () => {
         const owner = harness();
-        const hook = await renderHook((machineId: string) => useMcpFoundAdoption({ machineId, catalog: owner.catalog,
+        const hook = await renderHook((machineId: string) => useMcpFoundAdoption({ machineOnline: true, machineId, catalog: owner.catalog,
             catalogRevision: owner.revision, execution: owner.execution }), { initialProps: 'machine-1' });
         await act(async () => { await hook.getCurrent().begin(found); });
         await hook.rerender('machine-2');

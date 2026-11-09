@@ -5,15 +5,22 @@ import {
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { ManagedListOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { mergeMachineSetupsV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import type { MachineSetupSourceV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 
 import { scopedHomeActionExecutor } from '@/sync/ops/actions/scopedHomeActionExecutor';
-import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
+import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { observeHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { storage } from '@/sync/domains/state/storageStore';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { readMachineName } from '@/utils/sessions/machineDisplayNames';
 import {
-    awaitActionApprovalResult, createActionApprovalContinuation,
+    awaitActionApprovalResult,
     type ActionApprovalContinuation, type ActionApprovalRegistration,
 } from '@/components/approvals/actionApprovalContinuation';
+import { machinePresetEditDraftContent, machinePresetEditDraftUpdatePatch, type MachinePresetEditDraft } from './machinePresetEditDraft';
 
 export type MachinePresetCollectionResult<T> =
     | Readonly<{ kind: 'succeeded'; value: T }>
@@ -22,6 +29,8 @@ export type MachinePresetCollectionResult<T> =
 export type MachinePresetCollectionSettledResult<T> = Exclude<MachinePresetCollectionResult<T>, { kind: 'approval_pending' }>;
 export type MachinePresetCollectionOptions<T> = Readonly<{
     signal?: AbortSignal;
+    /** Existing record context for content-only edits; never a native controller mutation. */
+    preset?: Readonly<Pick<ManagedMachinePresetV1, 'owner' | 'controller' | 'teamAcquireDelegated'>>;
     onApprovalPending?: (approval: ActionApprovalRegistration) => void;
     /** A deferred read has finished; subsequent ordinary reads are refreshable again. */
     onApprovalSettled?: () => void;
@@ -29,6 +38,11 @@ export type MachinePresetCollectionOptions<T> = Readonly<{
     onApprovalFailed?: (code: string) => void;
 }>;
 export type MachinePresetHistoryData = Readonly<{ preset: ManagedMachinePresetV1; machines: readonly ManagedMachineV1[] }>;
+export type MachinePresetDraftSaveInput = Readonly<{ draft: MachinePresetEditDraft } & (
+    | { preset: Readonly<Pick<ManagedMachinePresetV1, 'id' | 'revision'>
+        & Partial<Pick<ManagedMachinePresetV1, 'owner' | 'controller' | 'teamAcquireDelegated'>>> }
+    | { id: string; owner: ManagedMachinePresetV1['owner'] }
+)>;
 
 function readPresetDomainFailureResult<T extends MachinePresetActionIdV1>(actionId: T, code: string,
     details: unknown): MachinePresetActionOutputV1<T> | null {
@@ -48,31 +62,76 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
     const context = (signal?: AbortSignal) => ({ surface: 'ui' as const, authority: 'present_user' as const,
         serverId: scope.serverId, expectedAccountId: scope.accountId, ...(signal ? { signal } : {}) });
 
+    const readControllerDisplayName = (controller: NonNullable<ManagedMachinePresetV1['controller']>) => {
+        const machine = resolveServerScopedMachine(storage.getState(), scope.serverId, controller.machineId);
+        return machine?.installationId === controller.installationId ? readMachineName(machine) : null;
+    };
+
+    async function isPlainAuthor(signal?: AbortSignal): Promise<boolean> {
+        try {
+            const account = await captureLazyActionAccountContext(scope.serverId, signal);
+            try {
+                if (account.accountId !== scope.accountId) return false;
+                return await account.resolveAccountMode() === 'plain';
+            } finally { account.dispose(); }
+        } catch { return false; } // An unavailable mode never authorizes plaintext disclosure.
+    }
+
     async function execute<T extends MachinePresetActionIdV1>(actionId: T, input: MachinePresetActionInputV1<T>,
         options?: MachinePresetCollectionOptions<MachinePresetActionOutputV1<T>>): Promise<MachinePresetCollectionResult<MachinePresetActionOutputV1<T>>> {
-        const parsed = MachinePresetActionInputSchemasV1[actionId].safeParse(input);
+        // Keep mutation arms concrete while parsing each request exactly once.
+        // Disclosure and dispatch below consume that same parsed object.
+        const update = actionId === 'machines.presets.update'
+            ? MachinePresetActionInputSchemasV1['machines.presets.update'].safeParse(input) : null;
+        const create = actionId === 'machines.presets.create'
+            ? MachinePresetActionInputSchemasV1['machines.presets.create'].safeParse(input) : null;
+        const parsed = update ?? create ?? MachinePresetActionInputSchemasV1[actionId].safeParse(input);
         if (!parsed.success || parsed.data.homeId !== homeId) return { kind: 'failed', code: 'invalid_parameters' };
-        const outcome = classifyHomeActionOutcome(await executeAction(actionId, parsed.data, context(options?.signal)));
+        // Only a Plain author's delegated Team recipe publishes this plaintext label.
+        // Approval continuation retains these captured bytes without another disclosure.
+        if (update?.success) {
+            const patch = update.data.patch;
+            const delegated = patch.teamAcquireDelegated ?? options?.preset?.teamAcquireDelegated;
+            const controller = patch.controller === undefined && (patch.name !== undefined || patch.setup !== undefined || patch.launch !== undefined)
+                ? options?.preset?.controller : patch.controller;
+            if (options?.preset?.owner.kind !== 'team' || delegated !== true
+                || (controller || typeof patch.controllerDisplayName === 'string') && !await isPlainAuthor(options?.signal)) {
+                delete patch.controllerDisplayName;
+            } else if (controller) {
+                const name = readControllerDisplayName(controller);
+                if (name === null) delete patch.controllerDisplayName;
+                else patch.controllerDisplayName = name;
+            }
+        } else if (create?.success) {
+            const presetInput = create.data;
+            if (presetInput.owner.kind !== 'team' || presetInput.teamAcquireDelegated !== true
+                || !await isPlainAuthor(options?.signal)) delete presetInput.controllerDisplayName;
+            else if (presetInput.controller) {
+                const name = readControllerDisplayName(presetInput.controller);
+                if (name === null) delete presetInput.controllerDisplayName;
+                else presetInput.controllerDisplayName = name;
+            }
+        }
+        const outcome = observeHomeActionOutcome<MachinePresetActionOutputV1<T>, T>({
+            result: await executeAction(actionId, parsed.data, context(options?.signal)),
+            actionId, actionInput: parsed.data, scope, signal: options?.signal,
+            onSucceeded: async value => await options?.onApprovalSucceeded?.(value),
+            onFailed: (code, failure) => {
+                const value = readPresetDomainFailureResult(actionId, code, failure?.details);
+                if (value) {
+                    void Promise.resolve().then(() => options?.onApprovalSucceeded?.(value))
+                        .catch(() => options?.onApprovalFailed?.('operation_failed'));
+                } else options?.onApprovalFailed?.(code);
+            },
+        });
         if (outcome.kind === 'failed') {
             const code = homeDomainFailureCode(outcome.failure);
             const value = readPresetDomainFailureResult(actionId, code, outcome.failure.details);
             return value ? { kind: 'succeeded', value } : { kind: 'failed', code };
         }
         if (outcome.kind === 'approval_pending') {
-            const approval = createActionApprovalContinuation<MachinePresetActionOutputV1<T>, T>({
-                artifactId: outcome.artifactId, actionId, scope, expectedInput: parsed.data,
-                ...(options?.signal ? { signal: options.signal } : {}),
-                onSucceeded: async value => await options?.onApprovalSucceeded?.(value),
-                onFailed: (code, failure) => {
-                    const value = readPresetDomainFailureResult(actionId, code, failure?.details);
-                    if (value) {
-                        void Promise.resolve().then(() => options?.onApprovalSucceeded?.(value))
-                            .catch(() => options?.onApprovalFailed?.('operation_failed'));
-                    } else options?.onApprovalFailed?.(code);
-                },
-            });
-            options?.onApprovalPending?.(approval);
-            return { kind: 'approval_pending', approval };
+            options?.onApprovalPending?.(outcome.approval);
+            return outcome;
         }
         const output = MachinePresetActionOutputSchemasV1[actionId].safeParse(outcome.result);
         return output.success ? { kind: 'succeeded', value: output.data as MachinePresetActionOutputV1<T> }
@@ -117,20 +176,19 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         // Archived managed rows are not part of the ordinary inventory response. Both reads
         // are required for history; neither modifies a resource or counts client-side capacity.
         const results = await Promise.all([false, true].map(async archived => {
-            const input = { homeId, ...(archived ? { archived: true } : {}) };
+            const input = { homeId, presetId: id, ...(archived ? { archived: true } : {}) };
             let awaitingApproval = false;
             return awaitActionApprovalResult<ManagedMachineV1[], MachinePresetCollectionSettledResult<ManagedMachineV1[]>>({
                 execute: async callbacks => {
-                    const outcome = classifyHomeActionOutcome(await executeAction('machines.managed.list', input, context(options?.signal)));
+                    const outcome = observeHomeActionOutcome<{ machines: ManagedMachineV1[] }, 'machines.managed.list'>({
+                        result: await executeAction('machines.managed.list', input, context(options?.signal)),
+                        actionId: 'machines.managed.list', actionInput: input, scope, signal: options?.signal,
+                        onSucceeded: value => callbacks.onApprovalSucceeded(value.machines), onFailed: callbacks.onApprovalFailed,
+                    });
                     if (outcome.kind === 'failed') return { kind: 'failed', code: homeDomainFailureCode(outcome.failure) };
                     if (outcome.kind === 'approval_pending') {
-                        const approval = createActionApprovalContinuation<{ machines: ManagedMachineV1[] }, 'machines.managed.list'>({
-                            artifactId: outcome.artifactId, actionId: 'machines.managed.list', scope, expectedInput: input,
-                            ...(options?.signal ? { signal: options.signal } : {}),
-                            onSucceeded: value => callbacks.onApprovalSucceeded(value.machines), onFailed: callbacks.onApprovalFailed,
-                        });
                         awaitingApproval = true;
-                        options?.onApprovalPending?.(approval);
+                        options?.onApprovalPending?.(outcome.approval);
                         return { approvalPending: true };
                     }
                     const output = ManagedListOutputV1Schema.safeParse(outcome.result);
@@ -143,12 +201,34 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         }));
         const failed = results.find(item => item.kind === 'failed');
         if (failed?.kind === 'failed') return failed;
-        const rows = results.flatMap(item => item.kind === 'succeeded' ? item.value : [])
-            .filter(machine => machine.homeId === homeId && machine.preset?.id === id);
+        const rows = results.flatMap(item => item.kind === 'succeeded' ? item.value : []);
+        if (rows.some(machine => machine.homeId !== homeId || machine.preset?.id !== id)) return { kind: 'failed', code: 'invalid_action_output' };
         // A row can move to archive between the two reads; it remains one resource.
         const machines = [...new Map(rows.map(machine => [machine.id, machine])).values()];
         return { kind: 'succeeded', value: { preset: result.value.preset, machines } };
     }
 
-    return Object.freeze({ execute, read, list, detail });
+    /** The editor's full draft has the same Save path with or without creation. */
+    function saveDraft(input: MachinePresetDraftSaveInput,
+        options?: MachinePresetCollectionOptions<MachinePresetActionOutputV1<'machines.presets.update'>>) {
+        return 'preset' in input ? execute('machines.presets.update', {
+            homeId, id: input.preset.id, expectedRevision: input.preset.revision,
+            patch: machinePresetEditDraftUpdatePatch(input.draft),
+        }, { ...options, ...(input.preset.owner ? { preset: { owner: input.preset.owner,
+            controller: input.preset.controller, teamAcquireDelegated: input.preset.teamAcquireDelegated } } : {}) }) : execute('machines.presets.create', {
+            homeId, id: input.id, owner: input.owner, ...machinePresetEditDraftContent(input.draft),
+        }, options);
+    }
+
+    /** Save the reviewed retained copies without resolving their original Presets again. */
+    function capture(input: Omit<MachinePresetActionInputV1<'machines.presets.create'>, 'setup'>,
+        sources: MachineSetupSourceV1,
+        options?: MachinePresetCollectionOptions<MachinePresetActionOutputV1<'machines.presets.create'>>) {
+        const merged = mergeMachineSetupsV1(sources.map(source => source.setup));
+        return merged.ok ? execute('machines.presets.create', { ...input, setup: merged.setup }, options)
+            : Promise.resolve<MachinePresetCollectionResult<MachinePresetActionOutputV1<'machines.presets.create'>>>(
+                { kind: 'failed', code: merged.errorCode });
+    }
+
+    return Object.freeze({ execute, read, list, detail, capture, saveDraft });
 }

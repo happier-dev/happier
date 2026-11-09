@@ -1,10 +1,10 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { createDeferred, createModalModuleMock, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createModalModuleMock, createRenderCommitCounter, countStoreNotifications, renderHook, renderScreen, standardCleanup, useRenderCommitCounter } from '@/dev/testkit';
 import { Modal } from '@/modal';
 import { getStorage } from '@/sync/domains/state/storageStore';
-import { applyProfileCatalogSnapshot, getProfileCatalogSnapshot, resetProfileCatalogSnapshotsForTests } from '@/sync/store/settings/profileCatalogSnapshot';
+import { applyProfileCatalogSnapshot, beginProfileCatalogLoad, getProfileCatalogSnapshot, resetProfileCatalogSnapshotsForTests } from '@/sync/store/settings/profileCatalogSnapshot';
 import { useAiLaunchProfiles, useAiLaunchProfilesForLegacyUi, useHomeAiLaunchProfiles } from '@/sync/store/useAiLaunchProfiles';
 import { useApplyProfileSave, useDeleteAiLaunchProfile } from '@/sync/store/settingsWriters';
 import { useSaveLaunchProfile } from '@/components/profiles/edit/useSaveLaunchProfile';
@@ -14,7 +14,7 @@ import { AIBackendProfileSchema } from '@happier-dev/protocol/profiles/backendPr
 import { migrateLegacyAiLaunchProfilesV1 } from '@happier-dev/protocol/providers/migrations/legacyProfilesV1';
 import { DEFAULT_PROVIDER_SETTINGS_V1 } from '@happier-dev/protocol/providers/settings/v1';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
-import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { refreshAcpCatalog, resetAcpCatalogEngineForTests } from '@/sync/engine/settings/acpCatalogEngine';
 import { resetAcpCatalogSnapshotsForTests, getAcpCatalogSnapshot } from '@/sync/store/settings/acpCatalogSnapshot';
 import { buildSlimProfileSave } from '@/components/profiles/edit/slimProfileDraft';
@@ -25,6 +25,8 @@ import { isProfileEnabled, readProfileEnabledById } from '@/sync/domains/profile
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createArtifactListHttpResponse } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -52,13 +54,11 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from
 import type { Artifact } from '@/sync/domains/artifacts/artifactTypes';
 import { refreshProfileCatalog, resetProfileCatalogEngineForTests } from '@/sync/engine/settings/profileCatalogEngine';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import { refreshProviderCatalog } from '@/sync/engine/settings/providerCatalogEngine';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { refreshSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCatalogEngine';
 
 installDisconnectedServerSocketBoundary();
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
-    const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
-    return { ...original, createFrontDoorActionExecute:
-        (await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary')).createFrontDoorActionExecuteForVitest(original) };
-});
 
 const scope = { serverId: 'entity-profile-home', accountId: 'entity-profile-account' };
 const profile = { v: 2 as const, id: 'entity', name: 'Entity', extraEnvironmentVariables: [],
@@ -243,16 +243,16 @@ describe('Profile editor entity writer', () => {
                     : { status: 'present', revision: current.revision, content: current.content });
             }
             if (path === '/v1/account/saved-secrets/resources/materials') return Response.json(secretMaterials);
+            if (path === '/v1/account/saved-secrets/resources') return Response.json({
+                resources: secretMaterials.resources.map(resource => resource.entry),
+            });
             if (path === '/v2/account/settings' && init?.method !== 'POST') return Response.json({ content: { t: 'plain', v: accountSettings }, version: accountSettingsVersion });
             if (path === '/v2/account/settings/history') return Response.json({ snapshots: [] });
             // The Home classifies every row it serves (coarse kind and exact kind hint), so inventory sync has no hint
             // to repair; an exact-kind read answers the filtered envelope.
             if (path === '/v1/artifacts' && init?.method !== 'POST') {
-                const rows = [...artifacts.values()].map(row => ({ ...row, kind: 'other', kindHint: 'launch-profile.v1' }));
-                const kinds = new URL(String(url)).searchParams.get('kinds');
-                return Response.json(kinds === null ? rows
-                    : { items: rows.filter(row => (JSON.parse(kinds) as string[]).includes(row.kindHint)), hasUnclassified: false,
-                        coverage: { status: 'complete', unclassifiedCount: 0 } });
+                const rows = [...artifacts.values()].map(row => ({ ...row, kind: 'other' as const, kindHint: 'launch-profile.v1' }));
+                return createArtifactListHttpResponse(new URL(String(url)), rows);
             }
             if (path.startsWith('/v1/artifacts/') && init?.method !== 'POST' && init?.method !== 'PUT') {
                 const artifact = artifacts.get(decodeURIComponent(path.slice('/v1/artifacts/'.length)));
@@ -272,7 +272,7 @@ describe('Profile editor entity writer', () => {
             return Response.json({ error: 'not_found' }, { status: 404 });
         });
         const home = await upsertAndActivateServer({ serverUrl: 'https://profile-writer-home.example.test', name: 'Profile writer' });
-        credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'profile-writer-account' })).toString('base64url')}.signature` };
+        credentials = { token: createAccountTokenForTests('profile-writer-account', { currentAccount: true }) };
         await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, credentials);
         await restoreConnectionToActiveServer(credentials);
         homeScope = { serverId: home.id, accountId: 'profile-writer-account' };
@@ -298,6 +298,119 @@ describe('Profile editor entity writer', () => {
         if (snapshot?.catalog.status !== 'ready') throw new Error('Expected an admitted Profile catalog');
         applyProfileCatalogSnapshot(homeScope, { ...snapshot.catalog, records: [{ record, revision }] }, true);
     }
+
+    it('keeps an already selectable Profile visible in the collection during a catalog refresh', async () => {
+        const { useProfilesCollection } = await import('./useProfilesCollection');
+        const hook = await renderHook(useProfilesCollection);
+        try {
+            await vi.waitFor(() => expect(hook.getCurrent().profiles).toContainEqual(expect.objectContaining({ id: profile.id })));
+            await act(async () => { beginProfileCatalogLoad(homeScope); });
+            expect(getProfileCatalogSnapshot(homeScope)?.catalog.status).toBe('loading');
+            expect(hook.getCurrent().isInitialLoading).toBe(false);
+            expect(hook.getCurrent().profiles).toContainEqual(expect.objectContaining({ id: profile.id }));
+            await act(async () => { await refreshProfileCatalog(homeScope); });
+            expect(hook.getCurrent().isInitialLoading).toBe(false);
+        } finally { await hook.unmount(); }
+    });
+
+    it('keeps Profile consumers and enablement callbacks idle for unrelated settings while reading the current mutation version', async () => {
+        const { useProfilesCollection } = await import('./useProfilesCollection');
+        const { useSlimProfileAgentEntries } = await import('@/components/profiles/edit/useSlimProfileAgentEntries');
+        const { useLegacyProfileSecretRequirements } = await import('@/components/profiles/edit/legacy/useLegacyProfileSecretRequirements');
+        const builtin = getBuiltInBackendProfile('azure-openai');
+        if (!builtin) throw new Error('Expected the canonical Azure builtin');
+        const counter = createRenderCommitCounter();
+        const hook = await renderHook(() => {
+            useRenderCommitCounter(counter);
+            const collection = useProfilesCollection();
+            const editor = useLaunchProfileEditorDraft({ enabled: true, cloneFrom: record.id, saveAsBuiltin: true });
+            const source = collection.launchProfiles.find(candidate => candidate.id === record.id);
+            if (!source || !isLaunchProfileV2(source)) throw new Error('Expected the admitted inline Profile');
+            const requirements = useLegacyProfileSecretRequirements({ profile: source, profileName: source.name,
+                environmentVariables: source.extraEnvironmentVariables });
+            const agentEntries = useSlimProfileAgentEntries(null, homeScope.serverId);
+            return { ...collection, editorDraft: editor.draft, requirements, agentEntries };
+        });
+        // Initial catalog observations may publish independently of Settings.
+        // Settle the real owners before measuring this unrelated publication.
+        const settleCatalogs = () => Promise.all([refreshProfileCatalog(homeScope), refreshProviderCatalog(homeScope),
+            refreshAcpCatalog(homeScope), refreshSavedSecretCatalog(homeScope)]);
+        await act(async () => { await settleCatalogs(); });
+        const notifications = countStoreNotifications(getStorage());
+        try {
+            const setEnabled = hook.getCurrent().setEnabled;
+            const isEnabled = hook.getCurrent().isEnabled;
+            counter.reset();
+            const showLineNumbers = !getStorage().getState().settings.showLineNumbers;
+            accountSettings = { ...accountSettings, showLineNumbers };
+            accountSettingsVersion += 1;
+            await act(async () => {
+                const state = getStorage().getState();
+                state.applySettings({ ...state.settings, showLineNumbers }, accountSettingsVersion);
+            });
+            expect(notifications.read()).toHaveLength(1);
+            expect(notifications.read()[0]).toEqual(expect.arrayContaining(['settings', 'settingsVersion']));
+            expect(counter.read()).toEqual({ renders: 0, commits: 0 });
+            expect(hook.getCurrent().setEnabled).toBe(setEnabled);
+            expect(hook.getCurrent().isEnabled).toBe(isEnabled);
+
+            // A loaded Settings write also reaches the real catalog wake owner.
+            // Its unchanged row refresh must not repaint collection/editor consumers.
+            expect(hook.getCurrent().editorDraft.status).toBe('idle');
+            await act(async () => {
+                publishHomeAccountChange(homeScope.serverId, ['self'], {
+                    changeKinds: ['account'], accountSettingsAffects: true, profileCatalogAffects: true,
+                });
+                await settleCatalogs();
+            });
+            expect(counter.read()).toEqual({ renders: 0, commits: 0 });
+            expect(hook.getCurrent().setEnabled).toBe(setEnabled);
+            expect(hook.getCurrent().isEnabled).toBe(isEnabled);
+
+            settingsWrites.mockImplementation(async (_url, init) => {
+                const request = AccountSettingsV2UpdateRequestSchema.parse(JSON.parse(String(init?.body)));
+                expect(request.expectedVersion).toBe(accountSettingsVersion);
+                if (request.content?.t !== 'plain') throw new Error('Expected a Plain builtin preference');
+                accountSettings = request.content.v;
+                accountSettingsVersion += 1;
+                return Response.json({ success: true, version: accountSettingsVersion });
+            });
+            await act(async () => { await setEnabled(builtin, false); });
+            expect(settingsWrites).toHaveBeenCalledOnce();
+            expect(hook.getCurrent().isEnabled(builtin)).toBe(false);
+            expect(counter.read().commits).toBeGreaterThan(0);
+            expect(hook.getCurrent().isEnabled).not.toBe(isEnabled);
+            expect(mutation).not.toHaveBeenCalled();
+        } finally {
+            notifications.stop();
+            await hook.unmount();
+        }
+    });
+
+    it('keeps Profile Agent choices idle across unchanged ACP refreshes while observing changed definitions', async () => {
+        const { useSlimProfileAgentEntries } = await import('@/components/profiles/edit/useSlimProfileAgentEntries');
+        const counter = createRenderCommitCounter();
+        const hook = await renderHook(() => {
+            useRenderCommitCounter(counter);
+            return useSlimProfileAgentEntries(null, homeScope.serverId);
+        });
+        try {
+            await act(async () => { await refreshAcpCatalog(homeScope); });
+            counter.reset();
+            await act(async () => {
+                publishHomeAccountChange(homeScope.serverId, ['self'], { changeKinds: ['account'], accountSettingsAffects: true });
+                await refreshAcpCatalog(homeScope);
+            });
+            expect(counter.read()).toEqual({ renders: 0, commits: 0 });
+            const changed = AcpCatalogRecordV1Schema.parse({ v: 1,
+                definitions: [{ id: 'choice-fixture', name: 'choice-fixture', title: 'Choice fixture',
+                    launch: { kind: 'command', command: 'example-acp', args: [] }, createdAt: 1, updatedAt: 2 }] });
+            acpRead = () => Response.json({ status: 'present', revision: 1, content: { t: 'plain', v: changed } });
+            await act(async () => { await refreshAcpCatalog(homeScope); });
+            expect(hook.getCurrent().entries.some(entry => entry.backendId === 'choice-fixture')).toBe(true);
+            expect(counter.read().commits).toBeGreaterThan(0);
+        } finally { await hook.unmount(); }
+    });
 
     it('honors the profile delete waiver without an additional local confirmation', async () => {
         accountSettings = { actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'launch_profiles.delete': ['ui'] } } };
@@ -638,21 +751,26 @@ describe('Profile editor entity writer', () => {
         }));
         await vi.waitFor(() => expect(saveRef.current).not.toBeNull());
         form.changeTextByTestId('profile-legacy-name', 'Named Machine login copy');
-        let finishAcpRefresh!: (response: Response) => void;
-        acpRead = () => new Promise(resolve => { finishAcpRefresh = resolve; });
-        const refreshing = refreshAcpCatalog(homeScope);
         const readyAcpResponse = () => Response.json({ status: 'present', revision: 1,
             content: { t: 'plain', v: { v: 1, definitions: [] } } });
+        const acpReadStarted = createDeferred<void>();
+        const releaseAcpReads = createDeferred<void>();
+        acpRead = async () => {
+            acpReadStarted.resolve();
+            await releaseAcpReads.promise;
+            return readyAcpResponse();
+        };
+        const refreshing = refreshAcpCatalog(homeScope);
         try {
             await vi.waitFor(() => expect(getAcpCatalogSnapshot(homeScope)?.catalog.status).toBe('loading'));
             await vi.waitFor(() => expect(form.findHostByTestId('profile-legacy-catalog-availability')).not.toBeNull());
             await expect(Promise.resolve(saveRef.current?.())).resolves.toBe(false);
             expect(mutation).not.toHaveBeenCalled();
-            await vi.waitFor(() => expect(finishAcpRefresh).toBeTypeOf('function'));
+            await acpReadStarted.promise;
         } finally {
             // A later real reference-census read must not inherit a deferred IO boundary.
             acpRead = readyAcpResponse;
-            finishAcpRefresh?.(readyAcpResponse());
+            releaseAcpReads.resolve();
         }
         await refreshing;
         await vi.waitFor(() => expect(getAcpCatalogSnapshot(homeScope)?.catalog.status).toBe('ready'));

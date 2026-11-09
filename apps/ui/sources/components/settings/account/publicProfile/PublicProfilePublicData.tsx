@@ -9,6 +9,7 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';
+import { PublicProfilePanelHeader } from './PublicProfilePanelHeader';
 import type { PublicFieldPlacement } from './publicProfileDraft';
 
 /** Reading order of the one leaf-policy panel; every switch edits exactly one consent item. */
@@ -72,6 +73,7 @@ function placementLine(
   placement: PublicFieldPlacement | undefined,
 ): string | null {
   if (!placement) return null;
+  if (placement.shown && placement.heading) return t('publicIdentity.publicData.heading');
   if (placement.shown)
     return placement.blocks > 0
       ? t('publicIdentity.publicData.blocks', { count: placement.blocks })
@@ -101,6 +103,7 @@ export function PublicProfilePublicData(
   const { theme } = useUnistyles();
   return (
     <>
+      <PublicProfilePanelHeader title={t('publicIdentity.publicData.title')} description={t('publicIdentity.publicData.description')} />
       {props.status}
       {SECTIONS.map(([section, fields]) => (
         <ItemGroup

@@ -3,7 +3,8 @@ import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi } from 'vitest';
-import { API_TOKEN_FULL_GRANT_V1, AccountApiTokenSummaryV1Schema } from '@happier-dev/protocol';
+import { API_TOKEN_FULL_GRANT_V1} from '@happier-dev/protocol/auth/apiTokenGrant';
+import { AccountApiTokenSummaryV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
 
 import { measureWebLayout } from '@/dev/testkit/render/measureWebLayout';
 import { CustomModal } from '@/modal/components/CustomModal';

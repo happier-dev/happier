@@ -295,7 +295,7 @@ async function renderSettingsView(element: React.ReactElement) {
         await Promise.all([...new Set([...effectBoundary.machines.map(machine => machine.id),
             ...effectBoundary.sessions.map(session => readExternalSessionLink(session.metadata)?.machineId).filter((id): id is string => Boolean(id))])]
             .map(async machineId => {
-                const result = await projection.loadDaemonMergedProjectionCacheEntry({ machineId, serverId: scopeIdOf(account.serverId) });
+                const result = await projection.loadDaemonMergedProjectionCacheEntry({ sections: 'complete', machineId, serverId: scopeIdOf(account.serverId) });
                 expect(result, 'The fixture daemon must publish a schema-admitted current projection').toMatchObject({ kind: 'ready' });
             }));
     } else if (effectBoundary.daemonProjection.phase === 'loading') {
@@ -377,6 +377,32 @@ describe('ExternalSessionsSettingsView passive shell', () => {
         projectionGate = null;
         settingsHttp = null;
         await account.reset();
+    });
+
+    it('conceals hidden follow identities without changing the retained follow policy', async () => {
+        effectBoundary.sessions = [createExternalSession({ id: 'private-follow', policy: 'background_follow',
+            status: 'active', title: 'Private follow project' })];
+        const { ExternalSessionsSettingsView } = await import('./ExternalSessionsSettingsView');
+        const screen = await renderSettingsView(<ExternalSessionsSettingsView />);
+        const { storage } = await import('@/sync/domains/state/storage');
+        const { setScreenSharingPrivacyActive } = await import('@/desktop/capture/useNativeRecordingActive');
+        try {
+            expect(screen.getTextContent()).toContain('Private follow project');
+            await act(async () => {
+                storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [account.serverId]: ['private'] } });
+                storage.getState().setSessionTagAssignmentsOptimistic(account.serverId, 'private-follow', ['private']);
+                setScreenSharingPrivacyActive(true);
+            });
+            const { readSessionRecordingVisibility } = await import('@/sync/store/sessionRecordingVisibility');
+            expect(readSessionRecordingVisibility()({ sessionId: 'private-follow', serverId: account.serverId })).toBe(false);
+            expect(readSessionRecordingVisibility()({ sessionId: 'private-follow', serverId: storage.getState().sessions['private-follow']?.serverId })).toBe(false);
+            expect(screen.getTextContent()).not.toContain('Private follow project');
+            expect(readExternalSessionFollowPolicy(readSessionOwnerMetadataView(storage.getState().sessions['private-follow']!)))
+                .toBe('background_follow');
+            expect(effectBoundary.followPolicySet).not.toHaveBeenCalled();
+            await act(async () => { setScreenSharingPrivacyActive(false); });
+            expect(screen.getTextContent()).toContain('Private follow project');
+        } finally { setScreenSharingPrivacyActive(false); await screen.unmount(); }
     });
 
     it('keeps 1k integration and follow inventories as lazy descriptors behind the virtualized window', async () => {
@@ -859,6 +885,23 @@ describe('ExternalSessionsSettingsView passive shell', () => {
         await screen.unmount();
     });
 
+    it('honors Settings Action Off before changing restart-follow policy', async () => {
+        effectBoundary.accountSettings = { actionsSettingsV1: { v: 1,
+            actions: { 'settings.set': { enabled: false } } } };
+        const { ExternalSessionsSettingsView } = await import('./ExternalSessionsSettingsView');
+        const screen = await renderSettingsView(<ExternalSessionsSettingsView />);
+        const row = screen.findRow('settings-external-sessions-restore-item');
+        expect(row).not.toBeNull();
+        // Await the owner callback itself: the painted press adapter does not retain its Promise.
+        await act(async () => { await row?.props.onPress(); });
+        expect(settingsPosts).not.toHaveBeenCalled();
+        expect(modalMock.spies.alert).toHaveBeenCalledWith(
+            'actionConfirmations.turnedOffTitle', 'actionConfirmations.turnedOffMessage', expect.any(Array));
+        expect(effectBoundary.accountSettings.externalSessionsSettingsV1)
+            .toMatchObject({ keepPassivelyFollowingAfterRestart: false });
+        await screen.unmount();
+    });
+
     it('patches the latest account-settings CAS winner after the explicit accessible toggle', async () => {
         effectBoundary.sessions = [];
         effectBoundary.settings = {
@@ -912,7 +955,7 @@ describe('ExternalSessionsSettingsView passive shell', () => {
             futureRoot: { revision: 3 },
         };
 
-        await screen.pressByTestIdAsync('settings-external-sessions-restore-item');
+        await act(async () => { await screen.findRow('settings-external-sessions-restore-item')?.props.onPress(); });
 
         expect(settingsPosts).toHaveBeenCalledTimes(1);
         expect(effectBoundary.accountSettings).toEqual({
@@ -972,7 +1015,7 @@ describe('ExternalSessionsSettingsView passive shell', () => {
             'common.error',
             'externalSessions.settingsRestoreUpdateFailed',
         ));
-        expect(screen.findRow('settings-external-sessions-restore-item')?.props.loading).toBe(false);
+        await waitForHomeGovernance(() => expect(screen.findRow('settings-external-sessions-restore-item')?.props.loading).toBe(false));
         expect(screen.findRow('settings-external-sessions-restore-item')?.props.disabled).toBe(false);
         const recoveredToggle = screen.findRow('settings-external-sessions-restore-item')
             ?.props.rightElement as React.ReactElement<{ disabled?: boolean }> | undefined;

@@ -1,14 +1,15 @@
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
-import { defineSettingsPage } from '@/components/settings/catalog/settingDeclarations';
+import { builtInSettingUiDeclaration, defineSettingsPage, type SettingRef } from '@/components/settings/catalog/settingDeclarations';
+import { readBuiltInSettingDeclarationV1 } from '@happier-dev/protocol/actions/settings/settingsDeclarations';
 import { sessionListDisclosureBinding } from './sessionListDisclosureBinding';
 
-import { responseOptionsStorage } from '@happier-dev/protocol/actions/settings/accountSettingBindings';
+import { responseOptionsStorage, sessionReminderPresetStorage } from '@happier-dev/protocol/actions/settings/accountSettingBindings';
 
 /**
  * The Sessions page's searchable settings. Rows render their labels from these declarations. A row
  * whose subtitle describes its current value declares no description; its choices are keywords.
  */
-export const SESSION_SETTINGS = defineSettingsPage({
+const SESSION_PAGE = defineSettingsPage({
     pageId: 'session',
     sections: {
         launchDefaults: {
@@ -30,10 +31,10 @@ export const SESSION_SETTINGS = defineSettingsPage({
             titleKey: 'settingsSession.rootGroups.listOrganization.title',
             settings: {
                 listDensity: { anchor: 'session.list.density' },
+                recordingHiddenTags: { anchor: 'session.list.recordingHiddenTags' },
                 layout: { anchor: 'session.list.layout' },
                 attentionPromotion: { anchor: 'session.list.attentionPlacement' },
                 hideInactive: { anchor: 'session.list.hideInactive' },
-                collapsedGroups: { anchor: 'session.list.collapsedGroups', storage: sessionListDisclosureBinding },
                 rightPaneDefaultOpen: {},
             },
         },
@@ -47,7 +48,6 @@ export const SESSION_SETTINGS = defineSettingsPage({
                 headerIdentityDisplay: {},
                 activeColor: { anchor: 'session.list.activeColor' },
                 workspaceFavicons: { anchor: 'session.list.workspaceFavicons' },
-                workspaceMachineSubtitles: {},
             },
         },
         activitySignals: {
@@ -55,6 +55,7 @@ export const SESSION_SETTINGS = defineSettingsPage({
             settings: {
                 backgroundWorkAttention: { anchor: 'session.list.backgroundWorkAttention' },
                 reminderAutoClearOnOpen: {},
+                reminderPresets: { storage: sessionReminderPresetStorage },
                 attentionStandingDefault: { anchor: 'session.list.attentionStandingDefault' },
             },
         },
@@ -97,6 +98,14 @@ export const SESSION_SETTINGS = defineSettingsPage({
         },
     },
 });
+
+// Disclosure remains an agent Action; section refs contain only rows a Settings page can reveal.
+export const SESSION_SETTINGS = { ...SESSION_PAGE, settings: { ...SESSION_PAGE.settings, collapsedGroups: {
+    ...builtInSettingUiDeclaration('session.list.collapsedGroups'),
+    anchor: 'session.list.collapsedGroups',
+    sectionId: readBuiltInSettingDeclarationV1('session.list.collapsedGroups')!.sectionId,
+    storage: sessionListDisclosureBinding,
+} satisfies SettingRef } };
 
 /**
  * Sections (Settings → Sessions → Sections): the organizer over the section Actions. Its anchor is the

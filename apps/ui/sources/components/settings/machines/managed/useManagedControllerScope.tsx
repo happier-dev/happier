@@ -39,6 +39,8 @@ export type ManagedControllerScope = Readonly<{
   machine: Machine | undefined;
   /** Whether this Home has installed controller identities to show, including unavailable choices. */
   hasCandidates: boolean;
+  /** Something in the chooser is online: nothing chosen yet is then a choice to make, not an outage. */
+  hasOnlineCandidate: boolean;
   /**
    * Whether this Home's machine list has been read: an empty `hasCandidates` before that is not
    * "no machine can manage", and `unavailable` is a list that could not be read (retry re-reads it).
@@ -301,6 +303,7 @@ export function useManagedControllerScope(
     controller: input.delegatedAcquire ? input.preferred : controller,
     machine: machines?.find((machine) => machine.id === controller?.machineId),
     hasCandidates: controllerMachines.length > 0,
+    hasOnlineCandidate: scopedRows.some(row => row.candidate.availability === 'online'),
     machineList: listSettled ? 'settled' : listStatus === 'error' || listStatus === 'signedOut' ? 'unavailable' : 'loading',
     chip: input.delegatedAcquire ? null : chip,
     selection: input.delegatedAcquire ? undefined : selection,

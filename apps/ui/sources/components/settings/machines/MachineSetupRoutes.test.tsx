@@ -15,7 +15,7 @@ vi.mock('expo-router', () => expoRouterMock.module);
 const viewport = vi.hoisted(() => ({ width: 800, height: 600, scale: 2, fontScale: 1 }));
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({ Dimensions: { get: () => viewport }, useWindowDimensions: () => viewport });
+    return createReactNativeWebMock({ Dimensions: { get: () => viewport } });
 });
 
 const isDesktopHostMock = vi.fn();

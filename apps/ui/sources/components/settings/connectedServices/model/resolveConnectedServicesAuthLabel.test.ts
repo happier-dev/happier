@@ -181,6 +181,34 @@ describe('resolveConnectedServicesAuthLabel', () => {
         expect(model.warningCodes).toEqual([]);
     });
 
+    it('names the session applied member while retaining its pool label and Account default', () => {
+        const serviceId = 'happier.agent.codex/openai-codex';
+        const input = {
+            supportedServiceIds: [serviceId],
+            profileOptionsByServiceId: { [serviceId]: [
+                { profileId: 'work', status: 'connected', label: 'Work' },
+                { profileId: 'backup', status: 'connected', label: 'Backup' },
+            ] },
+            accountGroupOptionsByServiceId: { [serviceId]: [{
+                groupId: 'team', label: 'Team pool', activeProfileId: 'work',
+                enabledMemberCount: 2, autoSwitch: true, status: 'ready' as const,
+            }] },
+            resolveServiceTitle: () => 'Codex', nativeLabel: 'Native',
+            formatConnectedCountLabel: (count: number) => `${count} connected`,
+        };
+        const binding = { source: 'connected' as const, selection: 'group' as const, groupId: 'team' };
+        const applied = resolveConnectedServicesAuthLabel({ ...input,
+            bindingsByServiceId: { [serviceId]: { ...binding, appliedProfileId: 'backup' } },
+        });
+        expect(applied.label).toBe('Codex · Team pool · Backup');
+        expect(applied.serviceStatesById[serviceId]?.profileId).toBe('backup');
+        const unobserved = resolveConnectedServicesAuthLabel({ ...input,
+            bindingsByServiceId: { [serviceId]: binding },
+        });
+        expect(unobserved.label).toBe('Codex · Team pool');
+        expect(unobserved.serviceStatesById[serviceId]?.profileId).toBe('work');
+    });
+
     it('reports a missing group as an effective native fallback', () => {
         const model = resolveConnectedServicesAuthLabel({
             supportedServiceIds: ['openai-codex'],

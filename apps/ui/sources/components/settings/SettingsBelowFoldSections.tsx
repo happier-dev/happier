@@ -11,7 +11,7 @@ import { SettingsFilesAndSourceControlSection } from '@/components/settings/Sett
 import { SettingsCatalogOverviewGroup } from '@/components/settings/SettingsCatalogOverviewGroup';
 import { SettingsSystemSection } from '@/components/settings/SettingsSystemSection';
 import { SettingsSessionsBehaviorSection } from '@/components/settings/SettingsSessionsBehaviorSection';
-import { useResolvedSettingsPageCatalog } from '@/components/settings/catalog/runtime/useResolvedSettingsPageCatalog';
+import { useResolvedSettingsPageNavigation } from '@/components/settings/catalog/runtime/useResolvedSettingsPageIdentity';
 import type { ResolvedSettingsPageNode } from '@/components/settings/catalog/types';
 import type { SettingsBelowFoldSectionsProps } from '@/components/settings/settingsBelowFoldSectionTypes';
 import { useMachinePresenceCounts } from '@/sync/domains/state/storage';
@@ -96,7 +96,7 @@ function SettingsCatalogRootGroup(props: SettingsBelowFoldSectionsProps & Readon
  * shows it is the index; on a phone this list is the Settings home (owner 11-06, as in 0.2).
  */
 export const SettingsCatalogGroups = React.memo(function SettingsCatalogGroups(props: SettingsBelowFoldSectionsProps) {
-    const catalog = useResolvedSettingsPageCatalog();
+    const catalog = useResolvedSettingsPageNavigation();
     const groups = React.useMemo(() => rootGroups(catalog.tree), [catalog.tree]);
     return (
         <>

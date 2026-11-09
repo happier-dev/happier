@@ -1,4 +1,4 @@
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PluginAccountAdministrationActionOutputSchemas as outputs,
     type PluginAccountAdministrationActionId } from '@happier-dev/protocol/actions/pluginAccountAdministrationActionFamily';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';

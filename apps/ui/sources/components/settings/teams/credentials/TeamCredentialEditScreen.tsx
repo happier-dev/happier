@@ -13,6 +13,7 @@ import {
     useTeamCredentialUsageLimits,
 } from '@/hooks/teams/useTeamCredentialResources';
 import { useProviderSettingsTarget, type ProviderSettingsMachineRowV1 } from '@/providers/hooks/targetMachine';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useTeamCredentialProviderSourceOffers } from '@/hooks/teams/useTeamCredentialProviderSourceOffers';
 import { t } from '@/text';
 
@@ -77,7 +78,7 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
     const resource = view.resource;
     const providerTarget = useProviderSettingsTarget();
     const providerMachines = providerTarget.selectedTargetServerMatchesActiveAccount
-        && providerTarget.serverId === context.scope.serverId
+        && areServerProfileIdentifiersEquivalent(providerTarget.serverId, context.scope.serverId)
         ? providerTarget.machineRows
         : NO_PROVIDER_MACHINES;
     const providerSources = useTeamCredentialProviderSourceOffers({

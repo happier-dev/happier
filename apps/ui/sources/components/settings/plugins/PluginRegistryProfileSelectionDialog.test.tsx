@@ -85,11 +85,6 @@ async function renderDialog() {
                     canExecute: true,
                     resolveExecutionTarget: () => executionTarget,
                 }}
-                sourceRegistry={{
-                    scopeKey: 'srv_plugin_registry:machine-a',
-                    executionTarget,
-                    resolveCurrentExecutionTarget: () => executionTarget,
-                }}
                 onResolve={onResolve}
                 onClose={onClose}
                 setChrome={(next: unknown) => { chrome = next as typeof chrome; }}

@@ -48,6 +48,7 @@ import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDra
 import { teamDetailPath, teamsDirectoryPath } from './teamsRoutes';
 import { TeamLogoPicker } from './TeamLogoPicker';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
+import { isApprovalRequestV2InFlightStatus } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 const OWNER_AVATAR_SIZE = 32;
 
@@ -714,7 +715,7 @@ export const TeamCreateScreen = React.memo(function TeamCreateScreen(props: Read
                     title={t('approvals.title')}
                     description={approvalError
                         ? t('approvals.loadError')
-                        : approvalLoading || approvalStatus === 'open' || approvalStatus === 'approved' || approvalStatus === 'executing'
+                        : approvalLoading || isApprovalRequestV2InFlightStatus(approvalStatus)
                             ? t('approvals.status.open')
                             : undefined}
                     accessibilityLiveRegion={approvalError ? 'assertive' : 'polite'}

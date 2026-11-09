@@ -1,4 +1,4 @@
-import type { AccountSecurityGetResponseV1 } from '@happier-dev/protocol';
+import type { AccountSecurityGetResponseV1 } from '@happier-dev/protocol/auth/accountSecurity';
 
 /**
  * The one client-side holder of the Account Security projection (encryption mode, sign-in email,

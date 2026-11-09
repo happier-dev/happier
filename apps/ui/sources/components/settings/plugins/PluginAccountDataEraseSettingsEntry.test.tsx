@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PluginManifestV2Schema } from '@happier-dev/protocol';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import {
     PluginAvailabilityActionHttpPathsV1,
     PluginAvailabilityIntentsListActionOutputV1Schema,
@@ -109,9 +109,8 @@ vi.mock('./PluginMarketplaceSections', () => ({
     PluginDiagnosticsSnapshotSection: 'PluginDiagnosticsSnapshotSection',
 }));
 vi.mock('./model/usePluginSettingsScreenState', () => ({ usePluginSettingsScreenState: () => state.value }));
-vi.mock('./NpmRegistryProfilesSection', () => ({ NpmRegistryProfilesSection: 'NpmRegistryProfilesSection' }));
+vi.mock('@/components/settings/connectedServices/npm/NpmRegistryProfilesSection', () => ({ NpmRegistryProfilesSection: 'NpmRegistryProfilesSection' }));
 vi.mock('./NativeAppPluginPanelsSettingsEntry', () => ({ NativeAppPluginPanelsSettingsEntry: 'NativeAppPluginPanelsSettingsEntry' }));
-vi.mock('./PluginAppPagesSettingsEntry', () => ({ PluginAppPagesSettingsEntry: 'PluginAppPagesSettingsEntry' }));
 
 vi.mock('./detail/PluginDetailContributionsSection', () => ({ PluginDetailContributionsSection: 'PluginDetailContributionsSection' }));
 vi.mock('./detail/PluginDetailDiagnosticsSection', () => ({ PluginDetailDiagnosticsSection: 'PluginDetailDiagnosticsSection' }));
@@ -152,6 +151,7 @@ function createState() {
         pluginProjectionById: {},
         registryDiagnostics: [],
         isPluginActionInFlight: () => false,
+        pluginActionApproval: { approvalId: null, approvalPending: false, serverId: null, approvalSummary: null },
         canRefreshInstalledPlugins: false,
         // The selected daemon has answered; a cold deep link that has not yet
         // settled stays on its loading pane instead (accountHosting suite).

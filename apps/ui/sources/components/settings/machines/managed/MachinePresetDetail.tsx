@@ -301,6 +301,10 @@ export function managedPresetLimitRow(
   };
 }
 
+/** The menu treats an empty id as "nothing selected"; a choice whose value is `''` (Yours) is still a choice. */
+const EMPTY_CHOICE_MENU_ID = '__managed-field-empty-choice';
+const managedFieldChoiceId = (id: string) => id === '' ? EMPTY_CHOICE_MENU_ID : id;
+
 /** One choice row: a select when there is something to choose, the plain fact otherwise. */
 export function ManagedFieldRow(
   props: Readonly<{ row: ManagedFieldRowModel; testID: string }>,
@@ -325,7 +329,7 @@ export function ManagedFieldRow(
       onOpenChange={setOpen}
       variant="selectable"
       search={false}
-      selectedId={row.value ?? null}
+      selectedId={row.value == null ? null : managedFieldChoiceId(row.value)}
       showCategoryTitles={false}
       matchTriggerWidth
       connectToTrigger
@@ -343,13 +347,13 @@ export function ManagedFieldRow(
         },
       }}
       items={row.choices.map((choice) => ({
-        id: choice.id,
+        id: managedFieldChoiceId(choice.id),
         title: choice.title,
         subtitle: choice.subtitle,
       }))}
       onSelect={(id) => {
         setOpen(false);
-        row.onChange?.(id);
+        row.onChange?.(id === EMPTY_CHOICE_MENU_ID ? '' : id);
       }}
     />
   );

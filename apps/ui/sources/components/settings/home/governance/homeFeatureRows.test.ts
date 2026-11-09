@@ -8,10 +8,27 @@ import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import { buildSettingHref, type SettingRef } from '@/components/settings/catalog/settingDeclarations';
 
 import { homeAdministrationFeaturesPath } from './homeAdministrationRoutes';
-import { HOME_COMMON_FEATURE_IDS, homeFeatureRowState } from './homeFeatureRows';
+import { HOME_COMMON_FEATURE_IDS, homeFeatureRowState, selectHomeFeatureRows } from './homeFeatureRows';
 import { HOME_FEATURE_SETTINGS, homeFeatureKeyHref } from './homeFeatureSettings';
 
 describe('homeFeatureRowState', () => {
+    it('lists one Workflows control when the Home also projects its released alias', () => {
+        const settings = homeSettingsProjectionFixture({ entries: [
+            homeSettingEntryFixture('HAPPIER_FEATURE_WORKFLOWS__ENABLED', {
+                value: true,
+                declaration: { type: 'boolean', section: 'features', family: 'workflows', featureId: 'workflows', default: true },
+            }),
+            homeSettingEntryFixture('HAPPIER_FEATURE_AUTOMATIONS__ENABLED', {
+                value: true,
+                declaration: { type: 'boolean', section: 'features', family: 'automations', featureId: 'automations', default: true },
+            }),
+        ], featureDecisions: [featureDecisionFixture('workflows'), featureDecisionFixture('automations')] });
+        const rows = selectHomeFeatureRows(settings);
+        expect([...rows.common, ...rows.advanced.flatMap(family => family.switches)].map(row => row.featureId)).toEqual(['workflows']);
+        expect(HOME_FEATURE_SETTINGS.settings).toHaveProperty('workflows');
+        expect(HOME_FEATURE_SETTINGS.settings).not.toHaveProperty('automations');
+    });
+
     it('says the deployment decides, with no control, when a feature without a Home switch is off on the server', () => {
         // Live: Happier voice has no Home key and is off because the deployment does not provide the
         // voice service. Neither the owner nor the Happier build is what turns it on.

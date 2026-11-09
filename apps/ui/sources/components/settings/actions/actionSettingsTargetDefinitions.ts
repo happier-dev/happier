@@ -1,7 +1,7 @@
 import { ActionIdSchema, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec, type ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import type { ActionSettingsActionId, ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { actionPolicyAudienceContextV1, parseQualifiedPluginResourcePolicyId, type ActionPolicyAudienceV1, type ActionSettingsActionId } from '@happier-dev/protocol/actions/actionSettings';
 import type { ActionSurfaces } from '@happier-dev/protocol/actions/metadata';
 import type { ActionUiPlacement } from '@happier-dev/protocol/actions/actionUiPlacements';
 import type { PluginActionPresentUserGatePolicy } from '@happier-dev/protocol/plugins/actions/invocation';
@@ -17,9 +17,10 @@ export type ActionSettingsTargetId =
     | 'cli'
     | 'api'
     | 'plugin'
+    | 'foreign_session_html'
     | 'contextual_ui';
 
-export type ActionSettingsSurface = NonNullable<ActionsSettingsV1['actions'][ActionSettingsActionId]>['disabledSurfaces'][number];
+export type ActionSettingsSurface = ActionPolicyAudienceV1;
 
 export type ActionSettingsTargetSource = Readonly<{
     surfaces: Partial<ActionSurfaces>;
@@ -27,6 +28,8 @@ export type ActionSettingsTargetSource = Readonly<{
     slash?: unknown;
     requiredAuthority?: ActionSpec['requiredAuthority'];
     contributedAction?: Pick<PluginActionPresentUserGatePolicy, 'dangerLevel' | 'confirmation' | 'confirmationWhen'>;
+    /** A real Resource permission target, not an executable Action declaration. */
+    resource?: true;
 }>;
 
 type ActionSettingsTargetBase = Readonly<{
@@ -36,6 +39,7 @@ type ActionSettingsTargetBase = Readonly<{
     icon: string;
     category: ActionSettingsTargetCategory;
     contributedAction?: ActionSettingsTargetSource['contributedAction'];
+    resource?: true;
 }>;
 
 type ActionSettingsPlacementTargetDefinition = ActionSettingsTargetBase & Readonly<{
@@ -183,6 +187,12 @@ const PLACEMENT_TARGETS: readonly ActionSettingsPlacementTargetDefinition[] = [
 
 const SURFACE_TARGETS: readonly ActionSettingsSurfaceTargetDefinition[] = [
     {
+        id: 'foreign_session_html', kind: 'surface', surface: 'foreign_session_html',
+        titleKey: 'settingsActions.targets.foreign_session_html.title',
+        subtitleKey: 'settingsActions.targets.foreign_session_html.subtitle',
+        icon: 'code', category: 'integrations',
+    },
+    {
         id: 'voice',
         kind: 'surface',
         surface: 'voice',
@@ -252,7 +262,7 @@ function isPlacementSupported(spec: ActionSettingsTargetSource, placement: Actio
 }
 
 function isSurfaceSupported(spec: ActionSettingsTargetSource, surface: ActionSettingsSurface): boolean {
-    return spec.surfaces[surface] === true;
+    return spec.surfaces[actionPolicyAudienceContextV1(surface).surface] === true;
 }
 
 function shouldExposeContextualUi(spec: ActionSettingsTargetSource): boolean {
@@ -278,6 +288,8 @@ function buildSyntheticSlashCommandTarget(spec: ActionSettingsTargetSource): Act
 }
 
 export function listActionSettingsTargetDefinitions(spec: ActionSettingsTargetSource): readonly ActionSettingsTargetDefinition[] {
+    if (spec.resource) return SURFACE_TARGETS.filter(target => target.id === 'foreign_session_html')
+        .map(target => ({ ...target, resource: true as const, subtitleKey: 'settingsActions.targets.foreign_session_html_resources.subtitle' as const }));
     const placementTargets = PLACEMENT_TARGETS.filter((target) => isPlacementSupported(spec, target.placement));
     const surfaceTargets = SURFACE_TARGETS.filter((target) => target.id !== 'contextual_ui' && isSurfaceSupported(spec, target.surface));
     const syntheticTargets: ActionSettingsTargetDefinition[] = [];
@@ -327,6 +339,9 @@ export function resolveActionSettingsTargetDefinition(params: Readonly<{
     // Contributed rows always carry their daemon-derived target definition. The direct API and
     // trusted-plugin surfaces are nevertheless stable broad surfaces, so settings writes for a
     // qualified id can still be restored before that daemon contribution is available again.
+    if (parseQualifiedPluginResourcePolicyId(params.actionId) && params.targetId === 'foreign_session_html') {
+        return listActionSettingsTargetDefinitions({ surfaces: {}, placements: [], resource: true })[0]!;
+    }
     if (parseQualifiedPluginActionId(params.actionId)) {
         const target = SURFACE_TARGETS.find((candidate) => candidate.id === params.targetId);
         if (target) return target;
@@ -337,12 +352,12 @@ export function resolveActionSettingsTargetDefinition(params: Readonly<{
 
 export function getActionSettingsTargetContext(target: ActionSettingsTargetDefinition):
     | Readonly<{ placement: ActionUiPlacement }>
-    | Readonly<{ surface: keyof ActionSurfaces }>
+    | ReturnType<typeof actionPolicyAudienceContextV1>
 {
     if (target.kind === 'placement') {
         return { placement: target.placement };
     }
-    return { surface: target.surface };
+    return actionPolicyAudienceContextV1(target.surface);
 }
 
 export function isVoiceTargetId(targetId: ActionSettingsTargetId): boolean {

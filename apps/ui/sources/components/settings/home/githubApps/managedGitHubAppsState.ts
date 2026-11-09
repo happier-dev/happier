@@ -2,7 +2,7 @@ import type {
     ManagedGitHubAppInstallationV1,
     ManagedGitHubAppRegistrationV1,
     ManagedGitHubAppsListOutputV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/identity/githubApps';
 
 import type { ManagedGitHubAppsActionResult } from './managedGitHubAppsClient';
 

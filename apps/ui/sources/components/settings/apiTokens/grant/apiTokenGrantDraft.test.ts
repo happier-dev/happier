@@ -15,6 +15,18 @@ import {
 
 afterEach(() => vi.unstubAllGlobals());
 
+describe('Environment-only grants', () => {
+    it('keeps their Environment operand in validation and edit identity', () => {
+        const grant = { ...API_TOKEN_FULL_GRANT_V1,
+            actions: { families: [], ids: ['deployments.deploy', 'action.operations.get'] },
+            targets: { sessions: [], machines: [], environments: ['staging'] } };
+        expect(resolveApiTokenGrantDraftIssues(grant)).toEqual([]);
+        expect(isApiTokenGrantDraftSendable(grant)).toBe(true);
+        expect(areApiTokenGrantsEqual(grant, { ...grant,
+            targets: { ...grant.targets, environments: ['production'] } })).toBe(false);
+    });
+});
+
 describe('grant website input', () => {
     it('refuses a percent-encoded hostname even when the browser URL constructor accepts it', () => {
         const NativeURL = URL;

@@ -19,6 +19,52 @@ beforeEach(async () => { await harness.reset(); });
 afterEach(() => { standardCleanup(); storage.getState().clearSettingsScope(); vi.restoreAllMocks(); });
 
 describe('managed creation preferences on the addressed Account', () => {
+    it('does zero reads or invalidations for another Home settings change, including during its own read', async () => {
+        const target = await harness.addHome({ name: 'Compute', serverUrl: 'https://settings-scope.test', serverIdentityId: 'srv_settings_scope', accountId: 'settings-scope-owner' });
+        const other = await harness.addHome({ name: 'Other', serverUrl: 'https://settings-other.test', serverIdentityId: 'srv_settings_other', accountId: 'settings-other-owner' });
+        let releaseRead!: () => void;
+        const held = new Promise<void>(resolve => { releaseRead = resolve; });
+        const pendingRequest: { signal?: AbortSignal | null } = {};
+        harness.answer(target, '/v2/account/settings', { select: (_input, request) => {
+            pendingRequest.signal = request.signal;
+            return { respondAfter: held, body: { content: { t: 'plain', v: settingsDefaults }, version: 1 } };
+        } });
+        const counter = createRenderCommitCounter();
+        const hook = await renderHook(() => {
+            const { binding, resolution } = useServerCredentialAccountScopeBinding(target);
+            const preferences = useManagedMachineAccountSettings(binding, resolution);
+            useRenderCommitCounter(counter);
+            return preferences;
+        });
+        try {
+            await waitForHomeGovernance(() => expect(pendingRequest.signal).toBeDefined());
+            const initialSignal = pendingRequest.signal;
+            const reads = () => harness.requestsFor('/v2/account/settings').filter(request => request.serverId === target).length;
+            const before = reads();
+            counter.reset();
+            for (let index = 0; index < 4; index++) {
+                await act(async () => publishHomeAccountChange(other, ['self'], { changeKinds: ['account'] }));
+                await flushHookEffects({ cycles: 30 });
+            }
+            expect({ reads: reads() - before, aborted: initialSignal?.aborted, ...counter.read() })
+                .toEqual({ reads: 0, aborted: false, renders: 0, commits: 0 });
+            releaseRead();
+            await waitForHomeGovernance(() => expect(hook.getCurrent().settings).not.toBeNull());
+            const previous = hook.getCurrent();
+            counter.reset();
+            await act(async () => publishHomeAccountChange(other, ['self'], { changeKinds: ['account'] }));
+            await flushHookEffects({ cycles: 30 });
+            expect(reads()).toBe(before);
+            expect(hook.getCurrent()).toBe(previous);
+            expect(counter.read()).toEqual({ renders: 0, commits: 0 });
+            const nextEnabled = !settingsDefaults.managedMachineCreationEnabled;
+            harness.answer(target, '/v2/account/settings', { body: { content: { t: 'plain', v: { ...settingsDefaults, managedMachineCreationEnabled: nextEnabled } }, version: 2 } });
+            await act(async () => publishHomeAccountChange(target, ['self'], { changeKinds: ['account'] }));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().settings?.managedMachineCreationEnabled).toBe(nextEnabled));
+            expect(reads()).toBe(before + 1);
+        } finally { releaseRead(); await hook.unmount(); }
+    });
+
     it('does no managed work for unrelated preferences and still receives either managed key', async () => {
         const target = await harness.addHome({ name: 'Compute', serverUrl: 'https://compute.example', serverIdentityId: 'srv_compute', accountId: 'settings-cost-owner' });
         await harness.addHome({ name: 'Other', serverUrl: 'https://other.example', serverIdentityId: 'srv_other', accountId: 'other' });

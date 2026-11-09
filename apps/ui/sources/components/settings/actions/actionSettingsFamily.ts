@@ -1,6 +1,6 @@
 import { ACTION_ID_FAMILIES_V1, type ActionId, type ActionIdFamilyV1 } from '@happier-dev/protocol/actions/actionIds';
 import { parseQualifiedPluginActionId, type QualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import type { ActionSettingsActionId } from '@happier-dev/protocol/actions/actionSettings';
+import { parseQualifiedPluginResourcePolicyId, type QualifiedPluginResourcePolicyId, type ActionSettingsActionId } from '@happier-dev/protocol/actions/actionSettings';
 
 import type { TranslationKey } from '@/text';
 
@@ -121,8 +121,8 @@ const ACTION_ID_FAMILY_INDEX = buildActionIdFamilyIndex();
 
 function isQualifiedContributedActionId(
     actionId: ActionSettingsActionId,
-): actionId is QualifiedPluginActionId {
-    return parseQualifiedPluginActionId(actionId) !== null;
+): actionId is QualifiedPluginActionId | QualifiedPluginResourcePolicyId {
+    return parseQualifiedPluginActionId(actionId) !== null || parseQualifiedPluginResourcePolicyId(actionId) !== null;
 }
 
 /**

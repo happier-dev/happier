@@ -135,6 +135,12 @@ export function homeGovernanceFailureNotice(
     context?: Readonly<{ effect: 'read' | 'write' }>,
 ): Readonly<{ title: string; body: string }> {
     const effect = context?.effect ?? 'write';
+    if (failure.code === 'username-changed') {
+        return Object.freeze({
+            title: t('homeGovernance.person.publicProfileReclaimChangedTitle'),
+            body: t('homeGovernance.person.publicProfileReclaimChangedBody'),
+        });
+    }
     if (effect === 'write' && failure.code === null && failure.kind === 'outcome_unknown') {
         return Object.freeze({
             title: t('homeGovernance.errorOutcomeUnknownTitle'),

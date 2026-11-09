@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { HomeGovernanceProjectionV1 } from '@happier-dev/protocol';
+import type { HomeGovernanceProjectionV1 } from '@happier-dev/protocol/home/governance/projection';
 
 import type { HomeGovernanceSnapshot } from '@/sync/store/home/governance/homeGovernanceSnapshots';
 

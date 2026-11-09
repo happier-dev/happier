@@ -2,9 +2,11 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SavedSecretSchema } from '@/sync/domains/settings/savedSecretTypes';
 import { resolveSavedSecretReference } from '@/sync/store/settings/savedSecretCatalogSnapshot';
-import type { McpServerCatalogEntryV1, McpServersSettingsV1 } from '@happier-dev/protocol';
+import type { McpServerCatalogEntryV1, McpServersSettingsV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
+import { presentCapabilityStatus } from '@/components/capabilities/status/capabilityStatusPresentation';
+import { setPreviewedMcpServer } from './mcpServerPreview';
 
 import { buildMcpServerCollection } from '../collection/mcpServerCollectionModel';
 import type { McpSignInView } from '../signIn/mcpSignInGrantView';
@@ -27,7 +29,7 @@ vi.mock('expo-router', async () => {
   return createExpoRouterMock({ router: { push: routerPush, replace: vi.fn(), back: vi.fn() } }).module;
 });
 
-afterEach(() => { standardCleanup(); routerPush.mockReset(); });
+afterEach(() => { standardCleanup(); setPreviewedMcpServer(null); routerPush.mockReset(); });
 
 type Kind = 'oauth' | 'key' | 'local' | 'remote';
 
@@ -132,7 +134,7 @@ function homeData(servers: readonly McpServerCatalogEntryV1[], identity: string 
   return {
     model,
     suggestions: [],
-    shelf: { items: [], loading: false, sourceId: null },
+    shelf: { items: [], loading: false, sourceId: null, error: null, status: null, sourceFailures: [], refresh: async () => {} },
     loading: false,
     unavailable: false,
     reload: async () => undefined,
@@ -141,6 +143,26 @@ function homeData(servers: readonly McpServerCatalogEntryV1[], identity: string 
 }
 
 describe('MCP homepage legend (lab hm-A2)', () => {
+  it.each(['cantrun', 'error', 'more_access', 'expired'] as const)('previews %s through the canonical status presentation', async kind => {
+    const server = entry('docs', kind === 'cantrun' || kind === 'error' ? 'local' : 'oauth');
+    const model = buildMcpHome({
+      rows: buildMcpServerCollection(settings([server]), ''),
+      signInOf: () => kind === 'more_access' ? { state: 'needs_more_access' }
+        : kind === 'expired' ? { state: 'expired', reason: 'expired' } : null,
+      savedSecretCatalog: { resolveReference: ref => resolveSavedSecretReference(null, [], ref) },
+      firstVisitDismissed: true,
+      machineFactsOf: () => ({ machines: [{ machineId: 'build', name: 'Builder', online: true }],
+        tests: kind === 'cantrun' || kind === 'error' ? { build: { ok: false, errorCode: 'spawn_failed', checkedAt: 1,
+          ...(kind === 'cantrun' ? { runtimeMissing: 'npx' } : {}) } } : {} }),
+    });
+    const status = model.servers[0]!.status!;
+    expect(status.kind).toBe(kind);
+    const screen = await renderScreen(<McpServersHomeView home={{ ...homeData([], null), model }} />);
+    await act(async () => setPreviewedMcpServer(server.id));
+    const sentence = screen.findByTestId('mcp.home.sentence')!;
+    const words = sentence.findAll(node => typeof node.type === 'string').flatMap(node => node.children.filter(child => typeof child === 'string')).join(' ');
+    expect(words).toContain(presentCapabilityStatus(status).pill!.label);
+  });
   it('says how each server reaches you right after its name, with no bare "Remote"', async () => {
     const screen = await renderScreen(
       <McpServersHomeView home={homeData([entry('fetch', 'local', 1), entry('github', 'oauth', 41), entry('brave', 'key'), entry('plain', 'remote')], 'leeroy-brun')} />,

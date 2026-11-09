@@ -77,15 +77,6 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                         icon: ({ theme }) => <Icon name="house" size={16} color={theme.colors.text.secondary} />,
                     },
                     {
-                        id: 'secrets',
-                        titleKey: 'settings.secrets',
-                        subtitleKey: 'settings.secretsSubtitle',
-                        route: SETTINGS_ROUTES.secrets,
-                        keywordsKey: 'settingsSearchKeywords.secrets',
-                        gate: { requiresProfiles: true },
-                        icon: ({ theme }) => <Icon name="key" size={16} color={theme.colors.text.secondary} />,
-                    },
-                    {
                         id: 'usage',
                         titleKey: 'settings.usage',
                         subtitleKey: 'settings.usageSubtitle',
@@ -93,6 +84,12 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                         keywordsKey: 'settingsSearchKeywords.usage',
                         gate: { featureId: 'usage.reporting' },
                         icon: ({ theme }) => <Icon name="chart-line" size={16} color={theme.colors.text.secondary} />,
+                    },
+                    {
+                        id: 'deployments',
+                        titleKey: 'projects.deployments.title',
+                        route: SETTINGS_ROUTES.deployments,
+                        icon: ({ theme }) => <Icon name="hard-drives" size={16} color={theme.colors.text.secondary} />,
                     },
                     {
                         id: 'machines',
@@ -275,6 +272,15 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                                 subtitleKey: 'connectedServicesSettings.usageDescription',
                                 route: SETTINGS_ROUTES.connectedServicesAgentSignIn,
                                 icon: ({ theme }) => <Icon name="sparkle" size={16} color={theme.colors.text.secondary} />,
+                            },
+                            {
+                                // Saved Secrets, folded into Credentials (owner 10-30): its Secrets group and page.
+                                id: 'secrets',
+                                titleKey: 'settings.secrets',
+                                subtitleKey: 'settings.secretsSubtitle',
+                                route: SETTINGS_ROUTES.secrets,
+                                keywordsKey: 'settingsSearchKeywords.secrets',
+                                icon: ({ theme }) => <Icon name="key" size={16} color={theme.colors.text.secondary} />,
                             },
                         ],
                     },

@@ -8,6 +8,7 @@ export const NOTIFICATIONS_PUSH_SETTINGS = defineSettingsPage({
             titleKey: 'settingsNotifications.pushTroubleshooting.status.title',
             settings: {
                 refresh: {},
+                remoteTest: {},
             },
         },
     },

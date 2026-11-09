@@ -10,7 +10,7 @@ import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machine
 import { doesMachineAdministrationTargetMatchActiveAccount, resolveFreshMachineAdministrationExecutionTarget } from '@/sync/domains/machines/administration/useTargetSelection';
 import { storage } from '@/sync/domains/state/storageStore';
 import { t } from '@/text';
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 
 export type AccountUsageResetAction = Readonly<{
     pending: boolean;

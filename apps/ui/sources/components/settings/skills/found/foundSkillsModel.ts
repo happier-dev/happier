@@ -1,4 +1,5 @@
-import type { FoundItem, FoundMachineScan } from '@/sync/domains/skills/useFoundSkills';
+import type { FoundItem } from '@/sync/domains/skills/useFoundSkills';
+import { foundSkillsByName } from '@/sync/domains/skills/foundSkillInventory';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 
 export const SKILLS_FOUND_ROUTE = SETTINGS_ROUTES.skillsFound;
@@ -35,17 +36,6 @@ export function foundAddAllItems(items: readonly FoundItem[]): readonly FoundIte
   return items.filter((item) => foundRowKind(item) === 'addable');
 }
 
-/** A long machine list folds to this many rows plus "N more" (lab sf notes); a presentation fold, not a cap. */
-export const FOUND_FOLD_ROWS = 8;
-
-export function foldFoundRows<T>(
-  rows: readonly T[],
-  expanded: boolean,
-): Readonly<{ shown: readonly T[]; hidden: number }> {
-  if (expanded || rows.length <= FOUND_FOLD_ROWS + 1) return { shown: rows, hidden: 0 };
-  return { shown: rows.slice(0, FOUND_FOLD_ROWS), hidden: rows.length - FOUND_FOLD_ROWS };
-}
-
 /** The agents that read a skill, as names in order, de-duplicated. */
 export function foundAgentIds(item: FoundItem): readonly string[] {
   return [...new Set(item.agents)];
@@ -74,44 +64,6 @@ export function groupFoundRowsByName(items: readonly FoundItem[]): readonly Foun
   return [...groups.values()].map((group) => ({ item: group.item, agents: [...group.agents], folders: [...group.folders] }));
 }
 
-/**
- * One machine's section state (P6 §4.5): what the section says before its rows.
- * - `rows`: there is a result to show (last known included).
- * - `looking` / `failed`: nothing is known yet and the machine is being read, or could not be.
- */
-export type FoundMachineBody =
-  | Readonly<{ kind: 'looking' }>
-  | Readonly<{ kind: 'older_machine' }>
-  | Readonly<{ kind: 'failed' }>
-  | Readonly<{ kind: 'empty' }>
-  | Readonly<{ kind: 'rows'; items: readonly FoundItem[] }>;
-
-export function resolveFoundMachineBody(scan: FoundMachineScan): FoundMachineBody {
-  if (scan.failure === 'older_machine') return { kind: 'older_machine' };
-  if (scan.result === null) {
-    return scan.failure === 'failed' ? { kind: 'failed' } : { kind: 'looking' };
-  }
-  if (scan.result.items.length === 0) return { kind: 'empty' };
-  return { kind: 'rows', items: scan.result.items };
-}
-
-/**
- * An offline machine nothing is known about has no section of its own: they are named once, as a count,
- * after the machines there is something to say about (one cause, one line).
- */
-export function partitionFoundMachines<T extends Readonly<{ offline: boolean }>>(
-  machines: readonly T[],
-  scanFor: (machine: T) => FoundMachineScan,
-): Readonly<{ sections: readonly T[]; unseenOffline: number }> {
-  const sections: T[] = [];
-  let unseenOffline = 0;
-  for (const machine of machines) {
-    if (machine.offline && scanFor(machine).result === null) unseenOffline += 1;
-    else sections.push(machine);
-  }
-  return { sections, unseenOffline };
-}
-
 export type FoundHomeRow = Readonly<{ machineId: string; item: FoundItem }>;
 
 /**
@@ -127,14 +79,10 @@ export function pickFoundHomeRows(
 ): readonly FoundHomeRow[] {
   const ordered = [...machines].sort((a, b) => Number(a.offline) - Number(b.offline));
   const rows: FoundHomeRow[] = [];
-  const names = new Set<string>();
-  for (const machine of ordered) {
-    for (const item of results[machine.machineId]?.items ?? []) {
-      if (rows.length >= room) return rows;
-      if (foundRowKind(item) !== 'addable' || names.has(item.name)) continue;
-      names.add(item.name);
-      rows.push({ machineId: machine.machineId, item });
-    }
+  if (room <= 0) return rows;
+  for (const row of foundSkillsByName(ordered.map(machine => machine.machineId), results, item => foundRowKind(item) === 'addable')) {
+    rows.push(row);
+    if (rows.length >= room) break;
   }
   return rows;
 }

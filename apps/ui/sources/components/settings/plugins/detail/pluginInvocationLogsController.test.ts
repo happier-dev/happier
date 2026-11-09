@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import type {
     DaemonPluginInvocationLogReadResponseV1,
     PluginInvocationLogRecordV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/plugin-invocation-logs';
 
 import { createDeferred, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import type { PluginInvocationLogMachineReadTarget } from '@/sync/ops/pluginInvocationLogs';

@@ -21,7 +21,6 @@ export function useMcpSignInViewOf(
   const diagnostics = useMcpSignInGrantDiagnostics(
     grants,
     scope,
-    machines.find((machine) => machine.online)?.machineId ?? machines[0]?.machineId ?? null,
   );
   return React.useMemo(() => {
     const anyMachineOnline = aggregateMcpMachineOnline(machines);

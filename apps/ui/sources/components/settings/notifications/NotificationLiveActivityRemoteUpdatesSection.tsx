@@ -1,9 +1,10 @@
 import * as React from 'react';
 
 import type {
-    AttentionDeliveryPolicyV1,
+    AttentionDeliveryPolicyV1} from '@happier-dev/protocol/account/settings/attentionDeliveryPolicy';
+import type {
     LiveActivityRemoteUpdateCapabilityDiagnostics,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/activity/live/remoteUpdateCapabilities';
 
 import type { AttentionDeviceOverridesV1 } from '@/sync/domains/settings/attentionDeviceOverridesV1';
 import { Item } from '@/components/ui/lists/Item';

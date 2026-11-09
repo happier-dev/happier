@@ -1,12 +1,44 @@
 import { describe, expect, it } from 'vitest';
 
-import { ActionsSettingsV1Schema, DEFAULT_ACTIONS_SETTINGS_V1, PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
+import { DEFAULT_ACTIONS_SETTINGS_V1} from '@happier-dev/protocol/account/settings/accountSettings';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { PLUGIN_MANIFEST as githubManifest } from '../../../../../../packages/plugins/scm-github/src/manifest';
+import { buildActionSettingsContributedActions, buildActionSettingsEntries } from './buildActionSettingsEntries';
 
 describe('buildActionSettingsEntries', () => {
+    it('exposes the foreign Session HTML policy beside the existing per-Action surface choices', () => {
+        const entries = buildActionSettingsEntries({ query: '', settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            availability: { executionRunsEnabled: true, memorySearchEnabled: true, voiceEnabled: true,
+                sessionHandoffEnabled: true, voiceShareDeviceInventory: true },
+        });
+        for (const actionId of ['session.message.send', 'session.stop']) {
+            expect(entries.find(entry => entry.actionId === actionId)?.targets.find(target =>
+                String(target.id) === 'foreign_session_html')).toMatchObject({ selected: false, state: 'off' });
+        }
+    });
+    it('lists Resource permissions in the same selected plugin policy view without executable Action targets', async () => {
+        const { adaptDaemonContributionRegistryProjectionToMergedProjectionInputs } = await import('@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters');
+        const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+            installedPackagesById: { 'acme.preview': { id: 'acme.preview', displayName: 'Preview', enabled: true,
+                source: { kind: 'localPath', locator: 'acme.preview' } } },
+            resourcesById: { 'acme.preview/status': { id: 'status', pluginId: 'acme.preview', resourceKind: 'config',
+                path: 'status.json', scope: 'global', digest: `sha256:${'a'.repeat(64)}`, contentType: 'application/json' } },
+        });
+        const contributedActions = buildActionSettingsContributedActions(
+            adaptDaemonContributionRegistryProjectionToMergedProjectionInputs(projection).pluginProjectionById,
+        );
+        const entries = buildActionSettingsEntries({ query: '', settings: DEFAULT_ACTIONS_SETTINGS_V1, contributedActions,
+            availability: { executionRunsEnabled: true, memorySearchEnabled: true, voiceEnabled: true,
+                sessionHandoffEnabled: true, voiceShareDeviceInventory: true },
+        });
+        const resource = entries.find(entry => entry.actionId === 'acme.preview/resources/status');
+        expect(resource?.targets.map(target => target.id)).toEqual(['foreign_session_html']);
+        expect(resource?.targets[0]).toMatchObject({ state: 'off', selected: false });
+    });
     it('lists the Files and Editor program Actions with their declared audience approval defaults', async () => {
         const { buildActionSettingsEntries } = await import('./buildActionSettingsEntries');
         const { resolveActionSettingsEntryStatusSummary } = await import('./resolveActionSettingsEntryStatusSummary');
@@ -18,7 +50,8 @@ describe('buildActionSettingsEntries', () => {
                 sessionHandoffEnabled: true, voiceShareDeviceInventory: true,
             },
         });
-        // Approved P1–P8 Action tables: custody (`approval.result`) is not confirmation.
+        // Custody (`approval.result`) is not confirmation. The host-attributed
+        // present user's reversible defaults are direct; automation retains its floor.
         // A bare Discard is the incumbent whole-file/HEAD operation; P5's reversible
         // comparison input has its own contextual confirmation contract.
         const defaults = [
@@ -26,8 +59,8 @@ describe('buildActionSettingsEntries', () => {
             ['file.view.get', false, false],
             ['file.view.set', false, false],
             ['workspace.files.link.get', false, false],
-            ['file.editor.save', true, true],
-            ['file.editor.resolve', true, true],
+            ['file.editor.save', false, true],
+            ['file.editor.resolve', false, true],
             ['daemon.filesystem.writeFile', false, true],
             ['daemon.filesystem.rename', false, true],
             ['daemon.filesystem.readFile', false, false],
@@ -43,6 +76,14 @@ describe('buildActionSettingsEntries', () => {
             ['code.symbols.list', false, false],
             ['code.diagnostics.list', false, false],
             ['code.restart', false, false],
+            ['code.completion.list', false, false],
+            ['code.signature.get', false, false],
+            ['code.typeDefinition.get', false, false],
+            ['code.implementation.get', false, false],
+            ['code.symbols.workspace', false, false],
+            ['code.callHierarchy.get', false, false],
+            ['code.format.apply', false, true],
+            ['code.imports.organize', false, true],
             ['workspace.files.replace.preview', false, false],
             ['workspace.files.replace', false, true],
             ['scm.blame.get', false, false],
@@ -61,6 +102,7 @@ describe('buildActionSettingsEntries', () => {
             for (const surface of ['ui', 'agent', 'mcp'] as const) {
                 expect.soft(isApprovalRequiredByActionsSettings(actionId, settings, {
                     surface, authority: surface === 'ui' ? 'present_user' : 'account_automation',
+                    ...(surface === 'ui' ? { actionCaller: { kind: 'host' as const } } : {}),
                 }), `${id}/${surface}`).toBe(surface === 'ui' ? uiApproval : automationApproval);
             }
             expect.soft(resolveActionSettingsEntryStatusSummary({ settings, actionId, targets: audienceTargets }).audiences, id).toEqual([
@@ -106,19 +148,20 @@ describe('buildActionSettingsEntries', () => {
             const entry = entries.find((candidate) => candidate.actionId === actionId);
             if (!entry) throw new Error('GitHub Action was not projected');
             expect(resolveActionSettingsEntryStatusSummary({ settings, actionId, targets: entry.targets })).toEqual({
-                allowedCount: 1, askFirstCount: 5, offCount: 0, unavailableCount: 0,
+                allowedCount: 1, askFirstCount: 5, offCount: 1, unavailableCount: 0,
                 danger: dangerLevel === 'destructive' ? 'destructive' : 'external',
                 audiences: [
                     { audience: 'human', allowedCount: 0, askFirstCount: 1, offCount: 0 },
                     { audience: 'agent', allowedCount: 0, askFirstCount: 1, offCount: 0 },
-                    { audience: 'integration', allowedCount: 1, askFirstCount: 3, offCount: 0 },
+                    { audience: 'integration', allowedCount: 1, askFirstCount: 3, offCount: 1 },
                 ],
             });
             for (const target of entry.targets) {
                 const input = { actionId, targetId: target.id, target: target.definition };
                 const required = target.id !== 'plugin';
+                const foreign = target.id === 'foreign_session_html';
                 expect(resolveActionSettingsTargetControlState({ ...input, settings })).toMatchObject({
-                    kind: 'approval', value: 'default', approvalRequiredByPolicy: required,
+                    kind: 'approval', value: foreign ? 'off' : 'default', approvalRequiredByPolicy: required,
                 });
                 const waived = applyActionSettingsTargetControlState({ ...input, settings, value: 'allowed' });
                 expect(resolveActionSettingsTargetControlState({ ...input, settings: waived })).toMatchObject({
@@ -127,7 +170,7 @@ describe('buildActionSettingsEntries', () => {
                 });
                 const reset = applyActionSettingsTargetControlState({ ...input, settings: waived, value: 'default' });
                 expect(resolveActionSettingsTargetControlState({ ...input, settings: reset })).toMatchObject({
-                    value: 'default', approvalRequiredByPolicy: required,
+                    value: foreign ? 'off' : 'default', approvalRequiredByPolicy: required,
                 });
             }
         }

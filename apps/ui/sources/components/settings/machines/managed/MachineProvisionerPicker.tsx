@@ -103,6 +103,10 @@ function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 's
         id: string; binding: ServerCredentialAccountScopeBinding; controller: ManagedControllerV1 | undefined;
         outcome: NonNullable<ManagedProvisionerCard['repairFailure']>;
     }> | null>(null);
+    // The repair that just opened an install guide: its card asks to check again, since nothing tells us it's done.
+    const [repairOpened, setRepairOpened] = React.useState<Readonly<{
+        id: string; binding: ServerCredentialAccountScopeBinding; controller: ManagedControllerV1 | undefined;
+    }> | null>(null);
     const compact = useViewportClass() === 'compact';
     const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller, accountScope: catalog.binding?.scope, purpose: 'repair', onApprovalPending });
     const { localized, markFor } = presentation;
@@ -192,10 +196,7 @@ function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 's
                 : missingExecutable ? 'managedMachines.add.status.notInstalled' : 'managedMachines.add.status.needsSetup')
                 : unreadable ? describeManagedProvisionerFailure(outcome.code) : t('managedMachines.add.status.checking');
         const title = titleOf(provisioner);
-        const kind = provisioner.descriptor.kindTitle ? localized(provisioner.contribution.pluginId, provisioner.descriptor.kindTitle) : undefined;
-        // A kind reads inside a title ("Cua sandbox"); shown on its own, as a badge or row subtitle, it starts a label.
         return [{ id, title,
-            kind: kind ? kind.charAt(0).toLocaleUpperCase() + kind.slice(1) : undefined,
             description: provisioner.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : '',
             location: location === 'local' ? 'local' : 'cloud', enrollmentRole: provisioner.descriptor.enrollmentRole,
             acquire: provisioner.acquireExecutionTarget, mark: (size: number) => markFor(provisioner, size),
@@ -209,6 +210,10 @@ function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 's
             action: needsApp ? { kind: 'handoff', label: t('managedMachines.add.action.getTheApp'),
                 onPress: () => showManagedGetTheAppModal(title) }
             : unreadable || catalog.error ? { kind: 'retry', label: t('common.retry'), onPress: catalog.refresh }
+            : repairAction && repairOpened?.id === id && repairOpened.binding === catalog.binding
+                && repairOpened.controller?.machineId === controller?.machineId
+                && repairOpened.controller?.installationId === controller?.installationId
+                ? { kind: 'retry', label: t('machinePresets.setup.tab.checkAgain'), onPress: () => { setRepairOpened(null); catalog.refresh(); } }
             : repairAction ? { kind: 'repair', label: t(noAccount ? 'managedMachines.add.action.connect'
                 : missingExecutable ? 'managedMachines.add.action.getApp' : 'managedMachines.add.action.setUp'), onPress: () => {
                 const binding = catalog.binding;
@@ -218,7 +223,8 @@ function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 's
                 setRepairFailure(null);
                 void presentation.repair(repairAction, binding, abort.signal).then(outcome => {
                     if (abort.signal.aborted || !binding.isCurrent()) return;
-                    if (outcome.ok) catalog.refresh(); else setRepairFailure({ id, binding, controller, outcome });
+                    if (outcome.ok) { setRepairOpened({ id, binding, controller }); catalog.refresh(); }
+                    else setRepairFailure({ id, binding, controller, outcome });
                 }).catch(() => { if (!abort.signal.aborted && binding.isCurrent()) setRepairFailure({ id, binding, controller,
                     outcome: createPluginSurfaceActionFailure('unavailable', 'unavailable') }); });
             } } : { kind: 'choose', label: t(connectPurpose ? 'managedMachines.add.action.connect' : 'managedMachines.add.action.choose'),
@@ -240,7 +246,7 @@ function MachineProvisionerCatalog(props: Omit<MachineProvisionerPickerProps, 's
     // The controller's own state, said once under the chip that changes it.
     // A catalog that answered speaks for itself; presence only explains an empty or failed one.
     const scopeState = !controller ? (scope.hasCandidates ? <SurfaceStateCard testID="managed-picker.no-online-controller" kind="unavailable" size="line"
-            title={t('managedMachines.add.noOnlineController')} /> : null)
+            title={t(scope.hasOnlineCandidate ? 'managedMachines.add.chooseController' : 'managedMachines.add.noOnlineController')} /> : null)
         : (failure || cards.length === 0) && controllerPresence === 'offline' ? <SurfaceStateCard testID="managed-picker.offline" kind="unavailable" size="line"
             title={t('managedMachines.add.controllerOffline', { controller: controllerName })} action={{ label: t('common.retry'), onPress: catalog.refresh }} />
         : failure || cards.length === 0 && controllerPresence === 'unknown' ? <SurfaceStateCard testID="managed-picker.unavailable" kind={controllerPresence === 'unknown' ? 'unavailable' : 'error'} size="line" diagnosticCode={failure ?? undefined}

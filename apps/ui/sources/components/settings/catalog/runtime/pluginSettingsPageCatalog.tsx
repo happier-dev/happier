@@ -7,7 +7,8 @@ import {
 
 import { InstalledPluginMarkById } from '@/components/plugins/shared/InstalledPluginMarkById';
 import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
-import { resolvePluginUiText } from '@/sync/domains/plugins/ui/i18n';
+import { Icon } from '@/components/ui/icons/Icon';
+import { resolvePluginUiText, type PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type {
     PluginUiProjectionModel,
     PluginUiSettingsGroupProjection,
@@ -79,18 +80,19 @@ function readLocalizedText(params: Readonly<{
     pluginId: string;
     value: unknown;
     locale: string;
+    localize?: PluginLocalizedTextResolver;
 }>): string | null {
     const literal = readString(params.value);
     if (literal) return literal;
     const localized = asRecord(params.value);
     const fallback = readString(localized?.fallback);
-    const text = resolvePluginUiText({
+    const text = (params.localize?.(params.pluginId, params.value) ?? resolvePluginUiText({
         projection: params.projection,
         pluginId: params.pluginId,
         key: readString(localized?.key),
         fallback,
         locale: params.locale,
-    }).trim();
+    })).trim();
     return text.length > 0 ? text : null;
 }
 
@@ -127,6 +129,7 @@ function readPluginSettingsPageCandidate(params: Readonly<{
     entry: PluginUiSettingsPageProjection;
     projection: PluginUiProjectionModel;
     locale: string;
+    localize?: PluginLocalizedTextResolver;
 }>): PluginSettingsPageCandidate | null {
     const identity = readPageIdentity(params.entry);
     if (!identity || !hasExactSettingsBinding(params.entry, identity.pageId)) return null;
@@ -137,6 +140,7 @@ function readPluginSettingsPageCandidate(params: Readonly<{
         pluginId: identity.pluginId,
         value: page?.title,
         locale: params.locale,
+        localize: params.localize,
     });
     if (!page || !group || !title) return null;
 
@@ -161,6 +165,7 @@ function readPluginSettingsPageCandidate(params: Readonly<{
         pluginId: identity.pluginId,
         value: page.subtitle,
         locale: params.locale,
+        localize: params.localize,
     });
     return Object.freeze({
         entry: params.entry,
@@ -178,6 +183,7 @@ function readPluginSettingsGroupCandidate(params: Readonly<{
     entry: PluginUiSettingsGroupProjection;
     projection: PluginUiProjectionModel;
     locale: string;
+    localize?: PluginLocalizedTextResolver;
 }>): PluginSettingsGroupCandidate | null {
     const group = asRecord(params.entry.group);
     const identity = asRecord(group?.id);
@@ -188,6 +194,7 @@ function readPluginSettingsGroupCandidate(params: Readonly<{
         pluginId: params.entry.pluginId,
         value: group?.title,
         locale: params.locale,
+        localize: params.localize,
     });
     if (!group || !pluginId || !localId || pluginId !== params.entry.pluginId || !title) return null;
     return Object.freeze({
@@ -279,13 +286,16 @@ export function resolveAdmittedPluginSettingsPage(params: Readonly<{
     pluginId: string;
     pageId: string;
     locale: string;
+    localize?: PluginLocalizedTextResolver;
 }>): ResolvedPluginSettingsPageDestination | null {
     if (!params.projection) return null;
     const matches = Object.values(params.projection.settingsPagesById)
+        .filter((entry) => entry.pluginId === params.pluginId && entry.descriptorId === params.pageId)
         .map((entry) => readPluginSettingsPageCandidate({
             entry,
             projection: params.projection!,
             locale: params.locale,
+            localize: params.localize,
         }))
         .filter((candidate): candidate is PluginSettingsPageCandidate => (
             candidate !== null
@@ -294,7 +304,7 @@ export function resolveAdmittedPluginSettingsPage(params: Readonly<{
         ));
     if (matches.length !== 1) return null;
     const match = matches[0]!;
-    return Object.freeze({ page: match.entry, title: resolveSolePluginGroupTitle(params.projection, match, params.locale) ?? match.title });
+    return Object.freeze({ page: match.entry, title: resolveSolePluginGroupTitle(params.projection, match, params.locale, params.localize) ?? match.title });
 }
 
 /**
@@ -306,11 +316,13 @@ function resolveSolePluginGroupTitle(
     projection: PluginUiProjectionModel,
     candidate: PluginSettingsPageCandidate,
     locale: string,
+    localize?: PluginLocalizedTextResolver,
 ): string | null {
     const group = candidate.group;
     if (group.kind !== 'plugin') return null;
     const groups = Object.values(projection.settingsGroupsById)
-        .map((entry) => readPluginSettingsGroupCandidate({ entry, projection, locale }))
+        .filter((entry) => entry.pluginId === group.pluginId)
+        .map((entry) => readPluginSettingsGroupCandidate({ entry, projection, locale, localize }))
         .filter((entry): entry is PluginSettingsGroupCandidate => entry !== null
             && entry.pluginId === group.pluginId && entry.localId === group.localId);
     if (groups.length !== 1) return null;
@@ -321,10 +333,10 @@ function resolveSolePluginGroupTitle(
     return pagesInGroup.length === 1 ? groups[0]!.title : null;
 }
 
-/** A plugin row leads with the plugin's own mark; its declared icon stands in until the mark arrives. */
-function makePluginIcon(pluginId: string, iconToken: string | undefined) {
+/** A plugin row shares the package's admitted mark and canonical fallback. */
+function makePluginIcon(pluginId: string) {
     return (): React.ReactNode => (
-        <InstalledPluginMarkById pluginId={pluginId} size={16} fallbackIcon={resolvePluginUiIconName(iconToken)} />
+        <InstalledPluginMarkById pluginId={pluginId} size={16} />
     );
 }
 
@@ -336,8 +348,24 @@ function makePluginPageNode(candidate: PluginSettingsPageCandidate): SettingsPag
         ...(candidate.subtitle ? { subtitle: candidate.subtitle } : {}),
         route: pluginSettingsPageRoute(pluginId, candidate.pageId),
         keywords: candidate.keywords,
-        icon: makePluginIcon(pluginId, candidate.iconToken),
+        icon: makePluginIcon(pluginId),
         pluginSettingsPage: Object.freeze({ pluginId, pageId: candidate.pageId }),
+    });
+}
+
+/**
+ * A page placed in a host group stands among the host's own rows (Settings → Channels, owner Q2), so it
+ * leads with its declared glyph like its neighbours; the plugin's mark stays for rows under Plugins.
+ */
+function makeHostGroupPluginPageNode(candidate: PluginSettingsPageCandidate): SettingsPageNode {
+    const node = makePluginPageNode(candidate);
+    const iconToken = candidate.iconToken;
+    if (iconToken === undefined) return node;
+    const name = resolvePluginUiIconName(iconToken);
+    return Object.freeze({
+        ...node,
+        icon: ({ theme }: Parameters<NonNullable<SettingsPageNode['icon']>>[0]) =>
+            <Icon name={name} size={16} color={theme.colors.text.secondary} />,
     });
 }
 
@@ -350,11 +378,12 @@ export function mergeAdmittedPluginSettingsPages(params: Readonly<{
     baseCatalog: readonly SettingsPageNode[];
     projection: PluginUiProjectionModel | null | undefined;
     locale: string;
+    localize?: PluginLocalizedTextResolver;
 }>): readonly SettingsPageNode[] {
     if (!params.projection) return params.baseCatalog;
 
     const pageCandidates = Object.values(params.projection.settingsPagesById)
-        .map((entry) => readPluginSettingsPageCandidate({ entry, projection: params.projection!, locale: params.locale }))
+        .map((entry) => readPluginSettingsPageCandidate({ entry, projection: params.projection!, locale: params.locale, localize: params.localize }))
         .filter((entry): entry is PluginSettingsPageCandidate => entry !== null);
     const duplicatePageIdentities = new Set<string>();
     const pageIdentityCounts = new Map<string, number>();
@@ -369,7 +398,7 @@ export function mergeAdmittedPluginSettingsPages(params: Readonly<{
     ));
 
     const groupCandidates = Object.values(params.projection.settingsGroupsById)
-        .map((entry) => readPluginSettingsGroupCandidate({ entry, projection: params.projection!, locale: params.locale }))
+        .map((entry) => readPluginSettingsGroupCandidate({ entry, projection: params.projection!, locale: params.locale, localize: params.localize }))
         .filter((entry): entry is PluginSettingsGroupCandidate => entry !== null);
     const duplicateGroupIdentities = new Set<string>();
     const groupByIdentity = new Map<string, PluginSettingsGroupCandidate>();
@@ -406,7 +435,7 @@ export function mergeAdmittedPluginSettingsPages(params: Readonly<{
                 { defaultRank: left.defaultRank, id: left.entry.id },
                 { defaultRank: right.defaultRank, id: right.entry.id },
             ))
-            .map(makePluginPageNode);
+            .map(makeHostGroupPluginPageNode);
         hostPageNodesByGroupId.set(groupId, Object.freeze(nodes));
     }
 
@@ -429,13 +458,13 @@ export function mergeAdmittedPluginSettingsPages(params: Readonly<{
                     title: group.title,
                     subtitle: only.subtitle ?? only.title,
                     keywords: Object.freeze([...node.keywords ?? [], only.title]),
-                    icon: makePluginIcon(group.pluginId, group.iconToken ?? only.iconToken),
+                    icon: makePluginIcon(group.pluginId),
                 });
             }
             return Object.freeze({
                 id: `pluginSettingsGroup:${group.pluginId}:${group.localId}`,
                 title: group.title,
-                icon: makePluginIcon(group.pluginId, group.iconToken),
+                icon: makePluginIcon(group.pluginId),
                 children: Object.freeze([...pages]
                     .sort((left, right) => compareDefaultRankThenId(
                         { defaultRank: left.defaultRank, id: left.entry.id },

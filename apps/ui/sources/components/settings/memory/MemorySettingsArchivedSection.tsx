@@ -1,6 +1,7 @@
 import * as React from 'react';
 
-import type { MemorySettingsV1, MemoryStatusV1 } from '@happier-dev/protocol';
+import type { MemorySettingsV1} from '@happier-dev/protocol/memory/memorySettings';
+import type { MemoryStatusV1 } from '@happier-dev/protocol/memory/memoryStatus';
 
 import { Switch } from '@/components/ui/forms/Switch';
 import {

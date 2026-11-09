@@ -3,7 +3,7 @@ import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NavigationContext } from '@react-navigation/native';
 
-import type { PluginDiagnosticRecordV1 } from '@happier-dev/protocol';
+import type { PluginDiagnosticRecordV1 } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import type { InstalledPluginCapabilityEntryV1 } from '@happier-dev/protocol/capabilities';
@@ -542,12 +542,6 @@ function findDiscoverSourceFilter(screen: Awaited<ReturnType<typeof renderSettin
         && Array.isArray(node.props.items))[0] ?? null;
 }
 
-/** The source choices the Browse filter offers, "all" first. */
-function findDiscoverSourceFilterIds(screen: Awaited<ReturnType<typeof renderSettingsView>>): readonly string[] {
-    return (findDiscoverSourceFilter(screen)?.props.items ?? []).map((item: { id: string }) => item.id);
-}
-
-
 /** A rare operation in a plugin page's header `⋯` menu (update, roll back). */
 function findDetailMenuAction(
     screen: Awaited<ReturnType<typeof renderSettingsView>>,
@@ -617,15 +611,6 @@ function isRenderedWithin(node: ReactTestInstance | null, ancestor: ReactTestIns
         current = current.parent;
     }
     return false;
-}
-
-async function selectPluginManagementView(
-    screen: Awaited<ReturnType<typeof renderSettingsView>>,
-    view: 'installed' | 'discover' | 'development' | 'diagnostics',
-): Promise<void> {
-    await act(async () => {
-        screen.pressByTestId(`settings.plugins.management.view:${view}`);
-    });
 }
 
 installSettingsViewCommonModuleMocks({
@@ -769,14 +754,16 @@ vi.mock('@/hooks/server/useMachineCapabilitiesCache', () => ({
     prefetchMachineCapabilities: (...args: unknown[]) => prefetchMachineCapabilitiesMock(...args),
 }));
 
-vi.mock('@/sync/store/hooks', async () => ({
+vi.mock('@/sync/store/hooks', async () => {
+    const { createStorageModuleStub, createUseLocalSettingMock, createUseLocalSettingMutableMock } = await import('@/dev/testkit/mocks/storage');
+    const useLocalSetting = createUseLocalSettingMock({ values: {
+        pluginsCollectionViewV1: { installed: 'list', discover: 'list' },
+    } });
+    return {
     // Early runtime imports retain the hooks facade before the Settings helper
     // configures its storage boundary; give both paths the same canonical defaults.
-    ...(await import('@/dev/testkit/mocks/storage')).createStorageModuleStub({}),
+    ...createStorageModuleStub({ useLocalSetting, useLocalSettingMutable: createUseLocalSettingMutableMock(useLocalSetting) }),
     useEndpointStatus: () => endpointConnectivityState.status,
-    useLocalSetting: (await import('@/dev/testkit/mocks/storage')).createUseLocalSettingMock({ values: {
-        pluginsCollectionViewV1: { installed: 'list', discover: 'list' },
-    } }),
     useMachineCliDetectionTarget: (...args: unknown[]) => useMachineCliDetectionTargetMock(...args),
     useMachineRecordValues: () => machineAdministrationFixture.activeMachines,
     useMachineRecordListsByServerId: () => machineAdministrationFixture.machineListByServerId,
@@ -795,7 +782,8 @@ vi.mock('@/sync/store/hooks', async () => ({
         machineAdministrationFixture.selections,
         machineAdministrationFixture.setSelections,
     ],
-}));
+    };
+});
 
 vi.mock('@/hooks/machine/useMachineCapabilityInvokeWithAlerts', () => ({
     useMachineCapabilityInvokeWithAlerts: () => ({
@@ -816,7 +804,7 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', async () => {
     // is present by the time a reader sees it. Fixtures are normalized through
     // that same owner here, so a test can never assert against a projection
     // shape the daemon boundary could not have produced.
-    const { PluginProjectionV2Schema } = await import('@happier-dev/protocol');
+    const { PluginProjectionV2Schema} = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
     const normalizeDescribeResult = (result: unknown): unknown => {
         if (
             result === null
@@ -1143,8 +1131,6 @@ beforeEach(async () => {
             installedPackagesById: {},
             agentsById: {},
             actionsById: {},
-
-
             resourcesById: {},
             diagnostics: [],
         },
@@ -1248,7 +1234,8 @@ describe('PluginSettingsHomeScreen', () => {
         expect(screen.findByTestId('settings.plugins.marketplace.installed:skeleton-row')).toBeFalsy();
         expect(screen.findRow('settings.plugins.marketplace.installed.empty')).toBeTruthy();
         await act(async () => { screen.pressRow('settings.plugins.marketplace.installed.empty.browse'); });
-        expect(screen.findByTestId('settings.plugins.management.view:discover')?.props.accessibilityState).toMatchObject({ selected: true });
+        expect(modalShowMock.mock.calls.at(-1)?.[0]?.chrome?.testID).toBe('plugins.add');
+        expect(screen.findByTestId('settings.plugins.management.view:discover')).toBeNull();
     });
 
     it.each(['unselected', 'offline', 'missing'] as const)('only describes a disconnected machine when a target is selected: %s', async (kind) => {
@@ -1287,11 +1274,10 @@ describe('PluginSettingsHomeScreen', () => {
     it('keeps Account data recovery for removed plugins on Diagnostics, off the everyday Plugins page', async () => {
         useMachineCapabilitiesCacheMock.mockReturnValue({ state: createMachineCapabilitiesState([]), refresh: vi.fn() });
         const home = await renderInAppPanes(React.createElement(PluginSettingsHomeScreen));
-        for (const view of ['installed', 'discover'] as const) {
-            await selectPluginManagementView(home, view);
-            expect(home.findRow('settings.plugins.accountDataErase')).toBeFalsy();
-            expect(home.findRow('settings.plugins.diagnostics')?.props.onPress).toBeTypeOf('function');
-        }
+        expect(home.findRow('settings.plugins.accountDataErase')).toBeFalsy();
+        expect(home.findRow('settings.plugins.diagnostics')?.props.onPress).toBeTypeOf('function');
+        await act(async () => { home.pressRow('settings.plugins.diagnostics'); });
+        expect(routerPushSpy).toHaveBeenCalledWith('/settings/plugins/diagnostics');
         const diagnostics = await renderInAppPanes(React.createElement(PluginDiagnosticsScreen));
         expect(diagnostics.findRow('settings.plugins.accountDataErase')?.props.onPress).toBeTypeOf('function');
     });
@@ -1387,7 +1373,7 @@ describe('PluginSettingsHomeScreen', () => {
         expect(screen.findRow('settings.plugins.webhooks')).toBeNull();
     });
 
-    it('defaults to Installed and keeps every plugin-management view reachable through accessible selectors', async () => {
+    it('keeps installed management and its tools in Settings while discovery opens the Store', async () => {
         const installedPlugin = createInstalledPlugin({
             pluginId: 'com.acme.installed-plugin',
             title: 'Installed Plugin',
@@ -1421,8 +1407,6 @@ describe('PluginSettingsHomeScreen', () => {
                 },
                 agentsById: {},
                 actionsById: {},
-
-
                 resourcesById: {},
                 diagnostics: [createPluginDiagnosticRecord({
                     id: 'com.acme.installed-plugin:normalization:capability-missing:0',
@@ -1441,45 +1425,23 @@ describe('PluginSettingsHomeScreen', () => {
             await flushAsync();
         });
 
-        const installedSelector = screen.findByTestId('settings.plugins.management.view:installed');
-        const discoverSelector = screen.findByTestId('settings.plugins.management.view:discover');
         const developmentEntry = screen.findRow('settings.plugins.development');
         const diagnosticsEntry = screen.findRow('settings.plugins.diagnostics');
 
-        expect(installedSelector?.props.accessibilityRole).toBe('tab');
-        expect(installedSelector?.props.accessibilityState).toMatchObject({ selected: true });
-        expect(discoverSelector?.props.accessibilityState).toMatchObject({ selected: false });
+        expect(screen.findByTestId('settings.plugins.management.view:installed')).toBeNull();
+        expect(screen.findByTestId('settings.plugins.management.view:discover')).toBeNull();
+        expect(screen.findByTestId('settings.plugins.add')).toBeTruthy();
         expect(developmentEntry).toBeTruthy();
         expect(diagnosticsEntry).toBeTruthy();
-        const taskOrder = screen.tree.root.findAll((node) => [
-            'settings.plugins.management.view:installed',
-            'settings.plugins.sources',
-            'settings.plugins.development',
-        ].includes(node.props.testID)).map((node) => node.props.testID);
-        expect(taskOrder.indexOf('settings.plugins.management.view:installed')).toBeLessThan(taskOrder.indexOf('settings.plugins.sources'));
-        expect(taskOrder.indexOf('settings.plugins.management.view:installed')).toBeLessThan(taskOrder.indexOf('settings.plugins.development'));
+        expect(screen.findRow('settings.plugins.sources')).toBeTruthy();
+
+        await act(async () => { screen.pressByTestId('settings.plugins.browseInStore'); });
+        expect(routerPushSpy).toHaveBeenCalledWith('/plugins?view=browse');
+        expect(screen.findRow('settings.plugins.marketplace.search')).toBeFalsy();
+        expect(findDiscoverSourceFilter(screen)).toBeNull();
         expect(screen.findRow('settings.plugins.marketplace.installed.com.acme.installed-plugin')).toBeTruthy();
         expect(screen.findRow('settings.plugins.management.development.empty')).toBeFalsy();
         expect(screen.findRow('settings.plugins.registryDiagnostic.plugin_runtime_capability_missing.0')).toBeFalsy();
-
-        await act(async () => {
-            screen.pressByTestId('settings.plugins.management.view:discover');
-        });
-        expect(screen.findByTestId('settings.plugins.management.view:discover')?.props.accessibilityState).toMatchObject({ selected: true });
-        expect(screen.findRow('settings.plugins.marketplace.installed.com.acme.installed-plugin')).toBeFalsy();
-        // Discover owns search, an explicit refresh row, and source chips. The
-        // retired catalog-URL/registries home controls no longer exist.
-        const searchInput = screen.findRow('settings.plugins.marketplace.search');
-        expect(searchInput).toBeTruthy();
-        expect(searchInput?.props.accessibilityLabel).toBe('settingsPlugins.discoverSearchPlaceholder');
-        expect(searchInput?.props.value).toBe('');
-        expect(findDiscoverSourceFilterIds(screen)).toContain('all');
-        await act(async () => {
-            screen.pressByTestId('settings.plugins.management.view:discover');
-        });
-        expect(screen.findRow('settings.plugins.marketplace.search')?.props.value).toBe('');
-
-
         expect(screen.findByTestId('settings.plugins.management.view:activity')).toBeFalsy();
     }, 120_000);
 
@@ -2178,7 +2140,7 @@ describe('PluginSettingsHomeScreen', () => {
 
         machineContributionRegistryProjectionDescribeMock.mockResolvedValue({
             supported: true,
-            projection: { v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {},   resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [] },
+            projection: { v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {}, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [] },
         });
         await act(async () => {
             screen.pressRow('settings.plugins.marketplace.readOnlySnapshot-retry');
@@ -2186,7 +2148,7 @@ describe('PluginSettingsHomeScreen', () => {
             await flushAsync();
         });
 
-        expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledTimes(2);
+        await vi.waitFor(() => expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledTimes(2));
         expect(screen.findRow('settings.plugins.marketplace.readOnlySnapshot')).toBeFalsy();
     });
 
@@ -2233,7 +2195,7 @@ describe('PluginSettingsHomeScreen', () => {
             }
             return {
                 supported: true,
-                projection: { v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {},   resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [] },
+                projection: { v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {}, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [] },
             };
         });
 
@@ -2273,7 +2235,7 @@ describe('PluginSettingsHomeScreen', () => {
 
         expect(screen.findRow('settings.plugins.marketplace.installed.installed-plugin')).toBeTruthy();
         expect(screen.findRow('settings.plugins.marketplace.readOnlySnapshot')).toBeTruthy();
-        expect(screen.findByTestId('settings.plugins.management.view:installed')?.props.accessibilityState).toMatchObject({ selected: true });
+        expect(screen.findByTestId('settings.plugins.management.view:installed')).toBeNull();
 
         // The retained row stays visible, but its one inline control (the
         // Enabled switch) is inert while the machine is away.
@@ -2319,7 +2281,7 @@ describe('PluginSettingsHomeScreen', () => {
         // Reconnecting is a fresh read, not a warning. The controls remain
         // unavailable until the exact daemon's fresh truth has arrived.
         expect(screen.findRow('settings.plugins.marketplace.readOnlySnapshot')).toBeFalsy();
-        expect(screen.findByTestId('settings.plugins.management.view:installed')?.props.accessibilityState).toMatchObject({ selected: true });
+        expect(screen.findByTestId('settings.plugins.management.view:installed')).toBeNull();
         const reconnectCapabilityCacheKeySalt = useMachineCapabilitiesCacheMock.mock.calls.at(-1)?.[0]?.cacheKeySalt;
         expect(reconnectCapabilityCacheKeySalt).not.toBe(initialCapabilityCacheKeySalt);
         expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledTimes(2);
@@ -2341,7 +2303,7 @@ describe('PluginSettingsHomeScreen', () => {
         });
 
         expect(screen.findRow('settings.plugins.marketplace.readOnlySnapshot')).toBeFalsy();
-        expect(screen.findByTestId('settings.plugins.management.view:installed')?.props.accessibilityState).toMatchObject({ selected: true });
+        expect(screen.findByTestId('settings.plugins.management.view:installed')).toBeNull();
         expect(findInstalledRowToggle(screen, 'installed-plugin')).toMatchObject({ action: 'disable', disabled: false });
         expect(invokeWithAlertsMock).not.toHaveBeenCalled();
         expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledTimes(2);
@@ -2397,8 +2359,6 @@ describe('PluginSettingsHomeScreen', () => {
                 },
                 agentsById: {},
                 actionsById: {},
-
-
                 resourcesById: {},
                 diagnostics: [],
             },
@@ -2487,8 +2447,6 @@ describe('PluginSettingsHomeScreen', () => {
                         available: true,
                     },
                 },
-
-
                 resourcesById: {
                     'com.acme.installed-plugin.prompt': {
                         id: 'com.acme.installed-plugin.prompt',
@@ -2552,17 +2510,17 @@ describe('PluginSettingsHomeScreen', () => {
             await flushAsync();
         });
 
-        expect(lifecycleHomes.requestsFor('/v1/actions/plugins.disable')).toEqual([
+        await waitForHomeGovernance(() => expect(lifecycleHomes.requestsFor('/v1/actions/plugins.disable')).toEqual([
             expect.objectContaining({ serverUrl: 'https://server-a.example.test', input: expect.objectContaining({
                 target: { kind: 'machine', machineId: 'machine-1' },
                 input: { machineId: 'machine-1', pluginId: 'com.acme.installed-plugin' },
             }) }),
-        ]);
-        expect(refresh).toHaveBeenCalledWith({ bypassCache: true });
+        ]));
+        await waitForHomeGovernance(() => expect(refresh).toHaveBeenCalledWith({ bypassCache: true }));
         expect(publishMachineContributionRegistryProjectionInvalidationMock).toHaveBeenCalledWith({
             machineId: 'machine-1',
-            serverId: 'server-a',
-        });
+            serverId: 'srv_identity-a',
+        }, 'refresh');
         expect(machineContributionRegistryProjectionDescribeMock).toHaveBeenCalledTimes(2);
     });
 
@@ -2670,12 +2628,12 @@ describe('PluginSettingsHomeScreen', () => {
             pressDetailLifecycleAction(screen, installedPlugin.pluginId, method);
             await flushAsync();
         });
-        expect(lifecycleHomes.requestsFor(`/v1/actions/${actionId}`)).toEqual([
+        await waitForHomeGovernance(() => expect(lifecycleHomes.requestsFor(`/v1/actions/${actionId}`)).toEqual([
             expect.objectContaining({ serverUrl: 'https://server-a.example.test', input: expect.objectContaining({
                 target: { kind: 'machine', machineId: 'machine-1' },
                 input: { machineId: 'machine-1', pluginId: installedPlugin.pluginId },
             }) }),
-        ]);
+        ]));
         // Waiving the Account's default approval reaches the effect directly;
         // the caller cannot insert an independent confirmation decision.
         expect(modalConfirmMock).not.toHaveBeenCalled();
@@ -2802,13 +2760,15 @@ describe('PluginSettingsHomeScreen', () => {
                 JSON.stringify({ alerts: modalAlertMock.mock.calls, paths: lifecycleHomes.requests.map(request => request.path) }))
                 .not.toBeNull();
             await act(async () => { await flushAsync(); await flushAsync(); });
-            // Registration starts the exact-Home Artifact reader. Navigation is
-            // synchronous with that registration, so observing this GET proves
-            // the mounted owner has already had its opportunity to open review.
+            // Registration starts the exact-Home reader for the shared in-place review.
             expect(lifecycleHomes.requestsFor(`/v1/artifacts/${approvalId}`),
                 JSON.stringify({ alerts: modalAlertMock.mock.calls, paths: lifecycleHomes.requests.map(request => request.path) }))
                 .toContainEqual(expect.objectContaining({ serverUrl: 'https://server-b.example.test' }));
-            expect(routerPushSpy).toHaveBeenCalledWith(`/inbox/approvals/${approvalId}?serverId=srv_identity-b`);
+            expect(modalShowMock).toHaveBeenCalledWith(expect.objectContaining({
+                props: expect.objectContaining({ artifactId: approvalId, serverId: home.serverId }),
+                chrome: expect.objectContaining({ testID: 'approvals.in-place.modal' }),
+            }));
+            expect(routerPushSpy).not.toHaveBeenCalled();
             expect(getActiveServerIdMock()).toBe('server-a');
             expect(control()?.props.disabled).toBe(true);
             const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
@@ -2875,13 +2835,13 @@ describe('PluginSettingsHomeScreen', () => {
             await flushAsync();
         });
         expect(getActiveServerIdMock()).toBe('server-a');
-        expect(lifecycleHomes.requestsFor('/v1/actions/plugins.update_policy.set')).toEqual([
+        await waitForHomeGovernance(() => expect(lifecycleHomes.requestsFor('/v1/actions/plugins.update_policy.set')).toEqual([
             expect.objectContaining({ serverUrl: 'https://server-b.example.test', input: expect.objectContaining({
                 target: { kind: 'machine', machineId: 'machine-2' },
                 input: { machineId: 'machine-2', pluginId: 'acme.policy', policy: 'pinned' },
             }) }),
-        ]);
-        expect(refresh).toHaveBeenCalledWith({ bypassCache: true });
+        ]));
+        await waitForHomeGovernance(() => expect(refresh).toHaveBeenCalledWith({ bypassCache: true }));
         expect(invokeWithAlertsMock).not.toHaveBeenCalled();
     });
 
@@ -2904,9 +2864,9 @@ describe('PluginSettingsHomeScreen', () => {
             screen.pressByTestId('settings.plugins.detail.acme.policy.updatePolicy:pinned');
             await flushAsync();
         });
-        expect(lifecycleHomes.requestsFor('/v1/actions/plugins.update_policy.set')).toHaveLength(1);
+        await waitForHomeGovernance(() => expect(lifecycleHomes.requestsFor('/v1/actions/plugins.update_policy.set')).toHaveLength(1));
         expect(refresh).not.toHaveBeenCalled();
-        expect(modalAlertMock).toHaveBeenCalledWith('common.error', expect.any(String));
+        await waitForHomeGovernance(() => expect(modalAlertMock).toHaveBeenCalledWith('common.error', expect.any(String)));
         expect(screen.getTextContent()).not.toContain('common.done');
     });
 
@@ -2919,7 +2879,7 @@ describe('PluginSettingsHomeScreen', () => {
             source: { ...entry.source, trustPolicy: 'untrusted' },
         }]],
     ] as const)(
-        'reconciles an outcome-unknown %s from authoritative installed truth without replaying the mutation',
+        'keeps an outcome-unknown %s uncertain after refreshing installed truth without replaying the mutation',
         async (method, createInstalledAfter) => {
             const installedPlugin = createInstalledPlugin({
                 pluginId: 'installed-plugin',
@@ -2929,14 +2889,14 @@ describe('PluginSettingsHomeScreen', () => {
             });
             const initialState = createMachineCapabilitiesState([installedPlugin]);
             let authoritativeState: MachineCapabilitiesState = initialState;
-            useMachineCapabilitiesCacheMock.mockReturnValue({
-                state: initialState,
-                refresh: vi.fn(),
-            });
-            getMachineCapabilitiesCacheStateMock.mockImplementation(() => authoritativeState);
-            prefetchMachineCapabilitiesMock.mockImplementationOnce(async () => {
+            const refresh = vi.fn(() => {
                 authoritativeState = createMachineCapabilitiesState(createInstalledAfter(installedPlugin));
             });
+            useMachineCapabilitiesCacheMock.mockReturnValue({
+                state: initialState,
+                refresh,
+            });
+            getMachineCapabilitiesCacheStateMock.mockImplementation(() => authoritativeState);
             lifecycleActionBoundary.mockResolvedValueOnce({ ok: false, errorCode: 'outcomeUnknown',
                 error: 'The daemon may have committed the requested mutation' });
 
@@ -2950,49 +2910,53 @@ describe('PluginSettingsHomeScreen', () => {
                 await flushAsync();
             });
 
+            // STORE-INTENT-CHALLENGE CA-18: refresh presentation, never infer
+            // the mutation's receipt from a matching installed inventory.
+            await waitForHomeGovernance(() => expect(refresh).toHaveBeenCalledExactlyOnceWith({ bypassCache: true }));
+            useMachineCapabilitiesCacheMock.mockReturnValue({ state: authoritativeState, refresh });
+            await screen.update(inAppPanes(React.createElement(PluginDetailScreen, { pluginId: installedPlugin.pluginId })));
             expect(lifecycleActionBoundary).toHaveBeenCalledTimes(1);
-            expect(prefetchMachineCapabilitiesMock).toHaveBeenCalledWith(expect.objectContaining({
-                machineId: 'machine-1',
-                serverId: 'server-a',
-                request: expect.objectContaining({
-                    bypassCache: true,
-                    requests: [{ id: MARKETPLACE_CAPABILITY_ID }],
-                }),
-            }));
+            expect(prefetchMachineCapabilitiesMock).not.toHaveBeenCalled();
             expect(publishMachineContributionRegistryProjectionInvalidationMock).toHaveBeenCalledWith({
                 machineId: 'machine-1',
-                serverId: 'server-a',
-            });
+                serverId: 'srv_identity-a',
+            }, 'refresh');
+            expect(modalAlertMock).toHaveBeenCalledWith('settingsPlugins.pluginChangeOutcomeUnknownTitle', expect.any(String));
             expect(modalAlertMock).not.toHaveBeenCalledWith('common.success', expect.anything());
-            expect(screen.findByTestId('settings.plugins.installed.operationSettlement')?.props.accessibilityLiveRegion).toBe('polite');
+            expect(screen.findByTestId('settings.plugins.installed.operationSettlement')).toBeFalsy();
         },
     );
 
-    it.each(['transport loss', 'empty 502 acknowledgement'] as const)(
-        'reconciles commit-intended %s from authoritative truth without retrying uninstall', async failure => {
+    it.each(['transport loss', 'empty 502 acknowledgement', 'canonical Action uncertainty'] as const)(
+        'retains commit-intended %s uncertainty while refreshing truth without retrying uninstall', async failure => {
         const installedPlugin = createInstalledPlugin({
             pluginId: 'installed-plugin',
             title: 'Installed Plugin',
             version: '1.0.0',
         });
         const initialState = createMachineCapabilitiesState([installedPlugin]);
-        let authoritativeState: MachineCapabilitiesState = initialState;
+        const refresh = vi.fn();
         useMachineCapabilitiesCacheMock.mockReturnValue({
             state: initialState,
-            refresh: vi.fn(),
+            refresh,
         });
-        getMachineCapabilitiesCacheStateMock.mockImplementation(() => authoritativeState);
-        prefetchMachineCapabilitiesMock.mockImplementationOnce(async () => {
-            authoritativeState = createMachineCapabilitiesState([]);
-        });
+        getMachineCapabilitiesCacheStateMock.mockReturnValue(initialState);
         if (failure === 'transport loss') {
             lifecycleActionBoundary.mockRejectedValueOnce(new TypeError('Failed to fetch'));
         } else {
             const home = lifecycleHomes.findByServerUrl('https://server-a.example.test');
             if (!home) throw new Error('Expected the lifecycle Home fixture');
-            // The real Action route loses the daemon acknowledgement after
-            // dispatch and answers with no response body, not an error envelope.
-            lifecycleHomes.answer(home.serverId, '/v1/actions/plugins.uninstall', { status: 502 });
+            if (failure === 'canonical Action uncertainty') {
+                lifecycleHomes.answer(home.serverId, '/v1/actions/plugins.uninstall', { select: body => {
+                    const request = ExternalActionRequestEnvelopeV1Schema.parse(body);
+                    return { body: { v: 1, actionId: 'plugins.uninstall', requestId: request.requestId,
+                        execution: { ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' } } };
+                } });
+            } else {
+                // The real Action route loses the daemon acknowledgement after
+                // dispatch and answers with no response body, not an error envelope.
+                lifecycleHomes.answer(home.serverId, '/v1/actions/plugins.uninstall', { status: 502 });
+            }
         }
 
         const screen = await renderInAppPanes(React.createElement(PluginDetailScreen, {
@@ -3006,13 +2970,14 @@ describe('PluginSettingsHomeScreen', () => {
         });
 
         expect(lifecycleHomes.requestsFor('/v1/actions/plugins.uninstall')).toHaveLength(1);
-        expect(prefetchMachineCapabilitiesMock).toHaveBeenCalledTimes(1);
+        expect(refresh).toHaveBeenCalledExactlyOnceWith({ bypassCache: true });
         expect(publishMachineContributionRegistryProjectionInvalidationMock).toHaveBeenCalledWith({
-            machineId: 'machine-1', serverId: 'server-a',
-        });
+            machineId: 'machine-1', serverId: 'srv_identity-a',
+        }, 'refresh');
         expect(modalAlertMock).not.toHaveBeenCalledWith('common.error', expect.anything());
         expect(modalAlertMock).not.toHaveBeenCalledWith('common.success', expect.anything());
-        expect(screen.findByTestId('settings.plugins.installed.operationSettlement')?.props.accessibilityLiveRegion).toBe('polite');
+        expect(modalAlertMock).toHaveBeenCalledWith('settingsPlugins.pluginChangeOutcomeUnknownTitle', expect.any(String));
+        expect(screen.findByTestId('settings.plugins.installed.operationSettlement')).toBeFalsy();
     });
 
     it('does not interpret a missing authoritative snapshot as a committed uninstall', async () => {
@@ -3023,14 +2988,12 @@ describe('PluginSettingsHomeScreen', () => {
         });
         const initialState = createMachineCapabilitiesState([installedPlugin]);
         let authoritativeState: MachineCapabilitiesState = initialState;
+        const refresh = vi.fn(() => { authoritativeState = { status: 'not-supported' }; });
         useMachineCapabilitiesCacheMock.mockReturnValue({
             state: initialState,
-            refresh: vi.fn(),
+            refresh,
         });
         getMachineCapabilitiesCacheStateMock.mockImplementation(() => authoritativeState);
-        prefetchMachineCapabilitiesMock.mockImplementationOnce(async () => {
-            authoritativeState = { status: 'not-supported' };
-        });
         lifecycleActionBoundary.mockResolvedValueOnce({ ok: false, errorCode: 'outcomeUnknown',
             error: 'The daemon may have committed the requested mutation' });
 
@@ -3044,7 +3007,11 @@ describe('PluginSettingsHomeScreen', () => {
             await flushAsync();
         });
 
-        expect(prefetchMachineCapabilitiesMock).toHaveBeenCalledTimes(1);
+        await waitForHomeGovernance(() => expect(refresh).toHaveBeenCalledExactlyOnceWith({ bypassCache: true }));
+        useMachineCapabilitiesCacheMock.mockReturnValue({ state: authoritativeState, refresh });
+        await screen.update(inAppPanes(React.createElement(PluginDetailScreen, { pluginId: installedPlugin.pluginId })));
+        expect(prefetchMachineCapabilitiesMock).not.toHaveBeenCalled();
+        expect(lifecycleActionBoundary).toHaveBeenCalledTimes(1);
         expect(modalAlertMock).not.toHaveBeenCalledWith('common.success', 'common.done');
         // Reconciliation could not read authoritative truth, so the uninstall
         // may already have landed. Reporting a definite failure here invites a
@@ -3059,18 +3026,18 @@ describe('PluginSettingsHomeScreen', () => {
         );
         expect(publishMachineContributionRegistryProjectionInvalidationMock).toHaveBeenCalledWith({
             machineId: 'machine-1',
-            serverId: 'server-a',
-        });
+            serverId: 'srv_identity-a',
+        }, 'refresh');
     });
 
-    it('does not apply an ambiguous mutation reconciliation after the machine authority changes', async () => {
-        const refreshStarted = createDeferred();
+    it('does not publish an ambiguous mutation to the replacement machine authority', async () => {
+        const mutation = createDeferred<Awaited<ReturnType<typeof lifecycleActionBoundary>>>();
         const installedPlugin = createInstalledPlugin({
             pluginId: 'installed-plugin',
             title: 'Installed Plugin',
             version: '1.0.0',
         });
-        let machineOneState: MachineCapabilitiesState = createMachineCapabilitiesState([installedPlugin]);
+        const machineOneState: MachineCapabilitiesState = createMachineCapabilitiesState([installedPlugin]);
         const machineTwoState = createMachineCapabilitiesState([installedPlugin]);
         useMachineCapabilitiesCacheMock.mockImplementation(({ machineId }: Readonly<{ machineId: string | null }>) => ({
             state: machineId === 'machine-1' ? machineOneState : machineTwoState,
@@ -3079,12 +3046,7 @@ describe('PluginSettingsHomeScreen', () => {
         getMachineCapabilitiesCacheStateMock.mockImplementation((machineId: string) => (
             machineId === 'machine-1' ? machineOneState : machineTwoState
         ));
-        prefetchMachineCapabilitiesMock.mockImplementationOnce(async () => {
-            await refreshStarted.promise;
-            machineOneState = createMachineCapabilitiesState([]);
-        });
-        lifecycleActionBoundary.mockResolvedValueOnce({ ok: false, errorCode: 'outcomeUnknown',
-            error: 'The daemon may have committed the requested mutation' });
+        lifecycleActionBoundary.mockReturnValueOnce(mutation.promise);
 
         const RerenderablePluginDetailScreen = PluginDetailScreen as unknown as React.ComponentType<{
             pluginId: string;
@@ -3099,7 +3061,7 @@ describe('PluginSettingsHomeScreen', () => {
             screen.pressRow(`settings.plugins.detail.${installedPlugin.pluginId}.action.uninstall`);
             await flushAsync();
         });
-        expect(prefetchMachineCapabilitiesMock).toHaveBeenCalledTimes(1);
+        await waitForHomeGovernance(() => expect(lifecycleActionBoundary).toHaveBeenCalledTimes(1));
 
         setMachineAdministrationTargetFixture({
             serverIdentityId: 'srv_identity-b',
@@ -3115,8 +3077,10 @@ describe('PluginSettingsHomeScreen', () => {
             await flushAsync();
         });
 
-        refreshStarted.resolve();
         await act(async () => {
+            mutation.resolve({ ok: false, errorCode: 'outcomeUnknown',
+                error: 'The daemon may have committed the requested mutation' });
+            await mutation.promise;
             await flushAsync();
             await flushAsync();
         });
@@ -3159,8 +3123,6 @@ describe('PluginSettingsHomeScreen', () => {
                 },
                 agentsById: {},
                 actionsById: {},
-
-
                 resourcesById: {},
                 settingsById: {
                     'acme.hooks.settings': {
@@ -3350,6 +3312,9 @@ describe('PluginSettingsHomeScreen', () => {
             screen.pressRow('settings.plugins.detail.acme.hooks.settings.acme.hooks.settings.endpoint.save');
             await flushAsync();
         });
+        await waitForHomeGovernance(() => expect(screen.findRow(
+            'settings.plugins.detail.acme.hooks.settings.acme.hooks.settings.endpoint.save',
+        )?.props.loading).toBe(false));
         await act(async () => {
             screen.pressRow('settings.plugins.detail.acme.hooks.settings.acme.hooks.settings.enabled');
             await flushAsync();
@@ -3358,13 +3323,15 @@ describe('PluginSettingsHomeScreen', () => {
             tokenInput?.props.onChangeText('new-secret-token');
             await flushAsync();
         });
-        expect(machineRpcWithServerScopeMock.mock.calls
+        await waitForHomeGovernance(() => expect(machineRpcWithServerScopeMock.mock.calls
             .map(([input]) => input as { method?: string })
-            .filter((input) => input.method === 'daemon.plugins.settings.set')).toHaveLength(2);
+            .filter((input) => input.method === 'daemon.plugins.settings.set')).toHaveLength(2));
         await act(async () => {
             screen.pressRow('settings.plugins.detail.acme.hooks.settings.acme.hooks.settings.apiToken.save');
             await flushAsync();
         });
+        await waitForHomeGovernance(() => expect(machineRpcWithServerScopeMock.mock.calls
+            .filter(([input]) => input.method === 'daemon.plugins.secrets.set')).toHaveLength(1));
 
         const setCalls = machineRpcWithServerScopeMock.mock.calls
             .map(([input]) => input as { method?: string; payload?: Record<string, unknown> })
@@ -3438,8 +3405,6 @@ describe('PluginSettingsHomeScreen', () => {
                 },
                 agentsById: {},
                 actionsById: {},
-
-
                 resourcesById: {},
                 diagnostics: [],
             },
@@ -3486,8 +3451,6 @@ describe('PluginSettingsHomeScreen', () => {
                 },
                 agentsById: {},
                 actionsById: {},
-
-
                 resourcesById: {},
                 diagnostics: [],
             },
@@ -3497,7 +3460,7 @@ describe('PluginSettingsHomeScreen', () => {
         const credential = await renderHook(() => useServerCredentialAccountScopeBinding('server-a'));
         const accountLifetime = credential.getCurrent().binding;
         if (!accountLifetime) throw new Error('Expected the credential-backed projection scope');
-        await loadDaemonMergedProjectionCacheEntry({
+        await loadDaemonMergedProjectionCacheEntry({ sections: 'complete',
             machineId: 'machine-1',
             serverId: 'server-a',
             accountLifetime,
@@ -3555,8 +3518,6 @@ describe('PluginSettingsHomeScreen', () => {
                         },
                         agentsById: {},
                         actionsById: {},
-
-
                         resourcesById: {},
                         diagnostics: [],
                     },
@@ -3728,7 +3689,7 @@ describe('PluginSettingsHomeScreen', () => {
             actionBeforeBusyRender?.toggle();
         });
         await act(async () => { await flushAsync(); });
-        expect(lifecycleHomes.requestsFor('/v1/actions/plugins.disable')).toHaveLength(1);
+        await waitForHomeGovernance(() => expect(lifecycleHomes.requestsFor('/v1/actions/plugins.disable')).toHaveLength(1));
         expect(findDisableAction()?.disabled).toBe(true);
 
         action.resolve();
@@ -3769,8 +3730,6 @@ describe('PluginSettingsHomeScreen', () => {
                 }>>>;
                 agentsById: Record<string, never>;
                 actionsById: Record<string, never>;
-
-
                 resourcesById: Record<string, never>;
                 diagnostics: readonly [];
             }>;
@@ -3825,8 +3784,6 @@ describe('PluginSettingsHomeScreen', () => {
                 },
                 agentsById: {},
                 actionsById: {},
-
-
                 resourcesById: {},
                 diagnostics: [],
             },
@@ -3873,8 +3830,6 @@ describe('PluginSettingsHomeScreen', () => {
                 },
                 agentsById: {},
                 actionsById: {},
-
-
                 resourcesById: {},
                 diagnostics: [
                     createPluginDiagnosticRecord({
@@ -4047,8 +4002,6 @@ describe('PluginSettingsHomeScreen', () => {
                 },
                 agentsById: {},
                 actionsById: {},
-
-
                 resourcesById: {},
                 diagnostics: [],
             },

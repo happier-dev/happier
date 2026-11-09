@@ -1,4 +1,4 @@
-import type { HomeGovernanceProjectionV1 } from '@happier-dev/protocol';
+import type { HomeGovernanceProjectionV1 } from '@happier-dev/protocol/home/governance/projection';
 
 import { isAuthoritativeScopedSnapshotRefusal } from '@/sync/domains/scope/scopedSnapshotFacts';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';

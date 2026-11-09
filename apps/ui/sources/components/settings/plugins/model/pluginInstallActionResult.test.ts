@@ -12,7 +12,7 @@ describe('plugin install Action result adaptation', () => {
         expect(projectPluginMutationResult(emitted, 'update', 'acme.plugin').kind).toBe('committed');
     });
 
-    it('preserves an ambiguous daemon result for the existing exact-target reconciler', () => {
+    it('preserves the daemon uncertainty instead of claiming success or inviting a replay', () => {
         const change = { kind: 'outcomeUnknown', pluginId: 'acme.plugin', expectedCandidate: 'candidate-2' };
         const outputSchema = getActionSpec('plugins.install').outputSchema;
         if (!outputSchema) throw new Error('Expected the plugin install Action output schema');

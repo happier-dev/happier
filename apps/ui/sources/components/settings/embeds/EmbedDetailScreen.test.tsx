@@ -4,7 +4,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
-import { parseAccountApiTokenCredentialV1 } from '@happier-dev/protocol';
+import { parseAccountApiTokenCredentialV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import type { SessionSectionFolderV1 } from '@happier-dev/protocol/actions/sessionSections';
 
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -131,6 +132,63 @@ function daysFromNow(expiresAt: unknown): number {
 }
 
 describe('Settings → Embeds detail (create, real token controller)', () => {
+    it.each([false, true])('offers a producer-created Account section and retains placement across creation changes (creation=%s)', async (creation) => {
+        const harness = await createApiTokenSettingsControllerHarness({ mode: 'plain' });
+        const { executeSessionSectionActionV1 } = await import('@happier-dev/protocol/actions/sessionSections');
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const folders: SessionSectionFolderV1[] = [];
+        // Only persistence is substituted: the real section producer supplies the stored display.
+        await executeSessionSectionActionV1('session.sections.create', { name: 'Leads' }, {
+            assertCurrent: () => {}, allocateFolderId: () => 'leads',
+            readSnapshot: async () => ({ folders, folderAssignments: [] }),
+            upsertFolder: async request => {
+                const folder: SessionSectionFolderV1 = { ...request, folderId: request.folderId!,
+                    displayState: { status: 'available', value: request.display?.t === 'plain' ? request.display.v : null },
+                    archivedAt: null, createdAt: 1, updatedAt: 1 };
+                folders.push(folder);
+                return folder;
+            },
+            deleteFolder: async () => { throw new Error('unexpected_delete'); },
+            setAssignment: async () => { throw new Error('unexpected_assignment'); },
+        });
+        expect(folders[0]?.display).toEqual({ t: 'plain', v: { name: 'Leads', icon: null } });
+        const snapshot = { schemaVersion: 1 as const, version: 1, pins: [], tags: [], labels: [],
+            folderAssignments: [], tagAssignments: [], orderEntries: [] };
+        storage.getState().applySessionOrganizationSnapshot('other-home', { ...snapshot,
+            folders: [{ ...folders[0]!, folderId: 'foreign', folderKey: 'foreign' }],
+        });
+        storage.getState().applySessionOrganizationSnapshot(harness.scope.serverId, {
+            ...snapshot, folders: [...folders,
+                { ...folders[0]!, folderId: 'locked', folderKey: 'locked',
+                    displayState: { status: 'locked', reason: 'account_key_unavailable' } },
+                { ...folders[0]!, folderId: 'archived', folderKey: 'archived', archivedAt: 2 },
+            ],
+        });
+        const { EmbedOrganizationSection, EmbedSessionsSection } = await import('./sections/EmbedPlacementSections');
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const { MachineSelector } = await import('@/components/sessions/new/components/MachineSelector');
+        const { setEmbedSessions, buildEmbedGrant } = await import('./embedDraft');
+        const screen = await renderCreate(harness);
+        if (creation) await act(async () => {
+            const sessions = screen.findByType(EmbedSessionsSection).props;
+            sessions.onChange(setEmbedSessions(sessions.draft, { machineId: 'first-machine', agentTargetKey: 'agent:happier.agent.codex/codex' }));
+        });
+        const picker = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'settings-embed-folder')!;
+        expect(picker().props.items).toContainEqual({ id: 'leads', title: 'Leads' });
+        expect(picker().props.items).toContainEqual({ id: 'locked', title: t('sessionsList.lockedSection') });
+        const choiceIds = picker().props.items.map((item: { id: string }) => item.id);
+        expect(choiceIds).not.toContain('foreign');
+        expect(choiceIds).not.toContain('archived');
+        await act(async () => { picker().props.onSelect('leads'); });
+        expect(picker().props.selectedId).toBe('leads');
+        if (creation) {
+            await act(async () => { screen.findByType(MachineSelector).props.onSelect(createMachineFixture({ id: 'second-machine' })); });
+            expect(screen.findByType(EmbedOrganizationSection).props.draft.config.organization.folderId).toBe('leads');
+            expect(buildEmbedGrant(screen.findByType(EmbedSessionsSection).props.draft).create?.placement.folderId).toBe('leads');
+            await act(async () => { screen.findByTestId('settings-embed-sessions-switch')!.props.onValueChange(false); });
+            expect(picker().props.selectedId).toBe('leads');
+        }
+    }, 180_000);
     it('leaves token revocation confirmation to the Action executor', async () => {
         const harness = await createApiTokenSettingsControllerHarness({ mode: 'plain' });
         const { Modal } = await import('@/modal');

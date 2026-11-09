@@ -11,7 +11,7 @@ const copyMock = vi.hoisted(() => vi.fn(async () => true));
 
 vi.mock('expo-router', () => ({ useRouter: () => ({ push: pushMock }) }));
 vi.mock('@/text', () => ({ t: (key: string) => key }));
-vi.mock('@/utils/ui/clipboard', () => ({ setClipboardStringSafe: copyMock }));
+vi.mock('expo-clipboard', () => ({ setStringAsync: copyMock }));
 vi.mock('@/utils/ui/shareText', () => ({
     isTextSharingAvailable: () => false,
     shareTextSafe: vi.fn(async () => 'shared'),

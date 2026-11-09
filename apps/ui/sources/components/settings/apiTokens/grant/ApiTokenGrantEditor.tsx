@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { ApiTokenGrantV1 } from '@happier-dev/protocol';
+import type { ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { isApiTokenDeploymentGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 
 import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import { actionIdFamilyTitleKey, ACTION_SETTINGS_FAMILY_TITLE_KEYS } from '@/components/settings/actions/actionSettingsFamily';
@@ -14,11 +15,12 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
+import { SegmentedChoiceItem, type SegmentedChoiceOption } from '@/components/ui/lists/SegmentedChoiceItem';
 import { StepTransitionFrame } from '@/components/ui/motion';
 import { SelectionListBackChip } from '@/components/ui/selectionList/SelectionListBackChip';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { useAllMachines, useAllSessions, useAutomations } from '@/sync/store/hooks';
+import { useAllSessions, useAutomations, useActiveMachineFacts } from '@/sync/store/hooks';
 import { formatAutomationTriggerLabel } from '@/components/automations/list/automationListFormatting';
 import { useAutomationDefinitionPagination } from '@/components/automations/list/useAutomationDefinitionPagination';
 import { t } from '@/text';
@@ -28,12 +30,14 @@ import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 
 import {
     addApiTokenGrantOrigin,
     apiTokenGrantModelKey,
     apiTokenGrantOffersAutomations,
     readApiTokenGrantOriginInput,
+    reconcileApiTokenGrantDeployApproval,
     removeApiTokenGrantOrigin,
     resolveApiTokenGrantDraftIssues,
     setApiTokenGrantAllActions,
@@ -41,6 +45,7 @@ import {
     setApiTokenGrantAnyAutomation,
     setApiTokenGrantAnyModel,
     setApiTokenGrantApprove,
+    setApiTokenGrantDeployApproval,
     toggleApiTokenGrantActionId,
     toggleApiTokenGrantAutomation,
     toggleApiTokenGrantFamily,
@@ -50,6 +55,7 @@ import {
 import { buildApiTokenGrantModelOptions } from './apiTokenGrantCatalog';
 import {
     useApiTokenGrantActionGroups,
+    useApiTokenGrantEnvironmentName,
     useApiTokenGrantModelAgents,
     useApiTokenGrantModelMachine,
     useApiTokenGrantNativeModels,
@@ -135,6 +141,16 @@ export const ApiTokenGrantEditor = React.memo(function ApiTokenGrantEditor(props
     const styles = stylesheet;
     const close = React.useCallback(() => onPickerChange(null), [onPickerChange]);
     const testID = props.testID ?? 'api-token-grant-editor';
+    // Every edit passes the one coherence step: an edit that widens a token past the exact
+    // single-Environment deployment grant turns Automatic deploys off, and the Deploys row says so.
+    const [automaticCleared, setAutomaticCleared] = React.useState(false);
+    const { onChange: commit } = props;
+    const onChange = React.useCallback((next: ApiTokenGrantV1) => {
+        const reconciled = reconcileApiTokenGrantDeployApproval(next);
+        if (reconciled.cleared) setAutomaticCleared(true);
+        else if (next.deployApproval === 'automatic') setAutomaticCleared(false);
+        commit(reconciled.grant);
+    }, [commit]);
 
     return (
         <StepTransitionFrame transitionKey={picker ?? 'summary'} direction={picker ? 'forward' : 'backward'} testID={testID}>
@@ -142,11 +158,12 @@ export const ApiTokenGrantEditor = React.memo(function ApiTokenGrantEditor(props
                 <View style={styles.stack}>
                     <ApiTokenGrantAccessSection
                         value={props.value}
-                        onChange={props.onChange}
+                        onChange={onChange}
                         disabled={props.disabled}
                         onOpenPicker={onPickerChange}
+                        automaticCleared={automaticCleared}
                     />
-                    <ApiTokenGrantWebsitesSection value={props.value} onChange={props.onChange} disabled={props.disabled} />
+                    <ApiTokenGrantWebsitesSection value={props.value} onChange={onChange} disabled={props.disabled} />
                     <ApiTokenGrantReview value={props.value} label={props.label} expiresAt={props.expiresAt} />
                 </View>
             ) : (
@@ -154,10 +171,10 @@ export const ApiTokenGrantEditor = React.memo(function ApiTokenGrantEditor(props
                     <View style={styles.pickerHead}>
                         <SelectionListBackChip label={t('settingsApiTokens.grant.back')} onPress={close} testID={`${testID}-back`} />
                     </View>
-                    {picker === 'actions' ? <ApiTokenGrantActionsPicker value={props.value} onChange={props.onChange} disabled={props.disabled} /> : null}
-                    {picker === 'automations' ? <ApiTokenGrantAutomationsPicker value={props.value} onChange={props.onChange} disabled={props.disabled} /> : null}
-                    {picker === 'targets' ? <ApiTokenGrantTargetsPicker value={props.value} onChange={props.onChange} disabled={props.disabled} /> : null}
-                    {picker === 'models' ? <ApiTokenGrantModelsPicker value={props.value} onChange={props.onChange} disabled={props.disabled} /> : null}
+                    {picker === 'actions' ? <ApiTokenGrantActionsPicker value={props.value} onChange={onChange} disabled={props.disabled} /> : null}
+                    {picker === 'automations' ? <ApiTokenGrantAutomationsPicker value={props.value} onChange={onChange} disabled={props.disabled} /> : null}
+                    {picker === 'targets' ? <ApiTokenGrantTargetsPicker value={props.value} onChange={onChange} disabled={props.disabled} /> : null}
+                    {picker === 'models' ? <ApiTokenGrantModelsPicker value={props.value} onChange={onChange} disabled={props.disabled} /> : null}
                 </View>
             )}
         </StepTransitionFrame>
@@ -170,11 +187,15 @@ type GrantPartProps = Readonly<{
     disabled?: boolean;
 }>;
 
-/** Actions, reach and models as value summaries, then the Approve switch. */
+/** Actions, reach and models as value summaries, then the Approve switch and, for a deployment token, its Deploys choice. */
 const ApiTokenGrantAccessSection = React.memo(function ApiTokenGrantAccessSection(props: GrantPartProps & Readonly<{
     onOpenPicker: (picker: ApiTokenGrantPicker) => void;
+    /** Automatic deploys were just turned off by an edit that widened this token. */
+    automaticCleared: boolean;
 }>) {
     const names = useApiTokenGrantNames();
+    const environmentIds = props.value.targets?.environments ?? [];
+    const environment = useApiTokenGrantEnvironmentName(environmentIds.length === 1 ? environmentIds[0]! : null);
     const issues = resolveApiTokenGrantDraftIssues(props.value);
     const { actions, targets, models } = props.value;
     const actionsSummary = actions === null
@@ -192,6 +213,9 @@ const ApiTokenGrantAccessSection = React.memo(function ApiTokenGrantAccessSectio
             : [
                 targets.sessions.length > 0 ? t('settingsApiTokens.summary.sessions', { count: targets.sessions.length }) : null,
                 targets.machines.length > 0 ? t('settingsApiTokens.summary.computers', { count: targets.machines.length }) : null,
+                environmentIds.length > 0
+                    ? environment.name ?? t('settingsApiTokens.summary.environments', { count: environmentIds.length })
+                    : null,
             ].filter(Boolean).join(' · ');
     const offersAutomations = apiTokenGrantOffersAutomations(props.value);
     const automationIds = props.value.automationIds ?? null;
@@ -226,7 +250,8 @@ const ApiTokenGrantAccessSection = React.memo(function ApiTokenGrantAccessSectio
             ) : null}
             <Item
                 testID="api-token-grant-targets"
-                title={t('settingsApiTokens.grant.targets.title')}
+                // "Sessions and machines" would misname an Environment; the token detail page's word covers both.
+                title={environmentIds.length > 0 ? t('settingsApiTokens.detail.where') : t('settingsApiTokens.grant.targets.title')}
                 subtitle={targetsSummary}
                 onPress={() => props.onOpenPicker('targets')}
                 disabled={props.disabled}
@@ -239,9 +264,48 @@ const ApiTokenGrantAccessSection = React.memo(function ApiTokenGrantAccessSectio
                 disabled={props.disabled}
             />
             <ApiTokenGrantApproveRow value={props.value} onChange={props.onChange} disabled={props.disabled} />
+            {props.automaticCleared || isApiTokenDeploymentGrantV1(props.value) ? (
+                <ApiTokenGrantDeployApprovalRow value={props.value} onChange={props.onChange} disabled={props.disabled} />
+            ) : null}
         </ItemGroup>
     );
 });
+
+/**
+ * The saved deployment choice of a token that can only deploy to one Environment: Automatic, or Ask
+ * each time (the protocol's absent `deployApproval`). Shown while the grant is that exact grant, and
+ * after an edit widened it, where Automatic stays visible but unavailable and says why it went off.
+ */
+function ApiTokenGrantDeployApprovalRow(props: GrantPartProps) {
+    const narrow = isApiTokenDeploymentGrantV1(props.value);
+    const options: ReadonlyArray<SegmentedChoiceOption<'automatic' | 'ask'>> = [
+        {
+            id: 'automatic',
+            label: t('settingsApiTokens.grant.deployApproval.automatic'),
+            description: t('settingsApiTokens.grant.deployApproval.automaticDescription'),
+            unavailableReason: narrow ? undefined : t('settingsApiTokens.grant.deployApproval.cleared'),
+        },
+        {
+            id: 'ask',
+            label: t('settingsApiTokens.grant.deployApproval.ask'),
+            // After Automatic went off, the row says only why (one message per state).
+            description: narrow ? t('settingsApiTokens.grant.deployApproval.askDescription') : undefined,
+        },
+    ];
+    return (
+        <SegmentedChoiceItem<'automatic' | 'ask'>
+            testID="api-token-grant-deploy-approval"
+            testIDPrefix="api-token-grant-deploy-approval"
+            title={t('settingsApiTokens.grant.deployApproval.title')}
+            options={options}
+            value={props.value.deployApproval === 'automatic' ? 'automatic' : 'ask'}
+            onChange={(next) => props.onChange(setApiTokenGrantDeployApproval(props.value, next))}
+            disabled={props.disabled}
+            subtitleLines={0}
+            accessibilityLiveRegion="polite"
+        />
+    );
+}
 
 function summarizeNames(names: readonly string[]): string {
     if (names.length <= 2) return names.join(', ');
@@ -621,26 +685,41 @@ export const ApiTokenGrantAutomationsPicker = React.memo(function ApiTokenGrantA
 export const ApiTokenGrantTargetsPicker = React.memo(function ApiTokenGrantTargetsPicker(props: GrantPartProps) {
     const { theme } = useUnistyles();
     const styles = stylesheet;
-    const machines = useAllMachines();
+    const machines = useActiveMachineFacts();
     const scope = useActiveServerAccountScope();
     const presenceNowMs = useMachinePresenceNowMs(machines);
     useMachineReachabilityRevision();
     const sessions = useAllSessions();
     const [query, setQuery] = React.useState('');
     const targets = props.value.targets;
+    const isSessionVisible = useSessionRecordingVisibility(targets !== null);
     const normalized = query.trim().toLowerCase();
     // The shared machine identity: same-named computers are told apart by host or id, and each row
     // carries the same presence line as every other machine list, so a retired one reads as offline.
     const machineNames = React.useMemo(() => resolveMachineDisplayNames(machines), [machines]);
-    const sessionRows = React.useMemo(() => sessions.map((session) => ({
-        id: session.id,
-        title: getSessionName(session),
-        machineName: session.metadata?.machineId ? machineNames.get(session.metadata.machineId) ?? null : null,
-    })), [machineNames, sessions]);
+    const sessionRows = React.useMemo(() => {
+        const selected = new Set(targets?.sessions);
+        return sessions.flatMap((session) => {
+            const visible = isSessionVisible({ sessionId: session.id, serverId: scope?.serverId });
+            if (!visible && !selected.has(session.id)) return [];
+            return [{
+                id: session.id,
+                title: visible ? getSessionName(session) : t('settings.session'),
+                machineName: visible && session.metadata?.machineId ? machineNames.get(session.metadata.machineId) ?? null : null,
+            }];
+        });
+    }, [isSessionVisible, machineNames, scope?.serverId, sessions, targets?.sessions]);
     const visibleSessions = normalized.length === 0
         ? sessionRows
         : sessionRows.filter((row) => `${row.title} ${row.machineName ?? ''}`.toLowerCase().includes(normalized));
-    const chosen = targets ? targets.sessions.length + targets.machines.length : 0;
+    // Environments are granted where a deployment is set up, not chosen from a list here; the ones this
+    // grant named when the picker opened stay listed so they can be kept, removed or put back.
+    const [openedEnvironments] = React.useState(() => targets?.environments ?? []);
+    const environmentIds = React.useMemo(
+        () => [...new Set([...openedEnvironments, ...(targets?.environments ?? [])])],
+        [openedEnvironments, targets?.environments],
+    );
+    const chosen = targets ? targets.sessions.length + targets.machines.length + (targets.environments?.length ?? 0) : 0;
 
     return (
         <>
@@ -655,6 +734,19 @@ export const ApiTokenGrantTargetsPicker = React.memo(function ApiTokenGrantTarge
             />
             {targets ? (
                 <>
+                    {environmentIds.length > 0 ? (
+                        <ItemGroup title={t('settingsApiTokens.grant.targets.environments')} description={t('settingsApiTokens.grant.targets.environmentsDescription')}>
+                            {environmentIds.map((environmentId) => (
+                                <ApiTokenGrantEnvironmentRow
+                                    key={environmentId}
+                                    environmentId={environmentId}
+                                    checked={targets.environments?.includes(environmentId) ?? false}
+                                    disabled={props.disabled}
+                                    onToggle={() => props.onChange(toggleApiTokenGrantTarget(props.value, { kind: 'environment', environmentId }))}
+                                />
+                            ))}
+                        </ItemGroup>
+                    ) : null}
                     <ItemGroup title={t('settingsApiTokens.grant.targets.computers')} description={t('settingsApiTokens.grant.targets.computersDescription')}>
                         {machines.length === 0 ? (
                             <Item title={t('settingsApiTokens.grant.targets.noComputers')} mode="info" showChevron={false} />
@@ -704,6 +796,30 @@ export const ApiTokenGrantTargetsPicker = React.memo(function ApiTokenGrantTarge
         </>
     );
 });
+
+/** One Environment the grant names, by its name once read (the same mark the Environments list uses). */
+function ApiTokenGrantEnvironmentRow(props: Readonly<{
+    environmentId: string;
+    checked: boolean;
+    disabled?: boolean;
+    onToggle: () => void;
+}>) {
+    const { theme } = useUnistyles();
+    const environment = useApiTokenGrantEnvironmentName(props.environmentId);
+    return (
+        <CheckRow
+            testID={`api-token-grant-environment:${props.environmentId}`}
+            title={environment.name
+                ?? (environment.settled
+                    ? t('settingsApiTokens.grant.targets.unknownEnvironment')
+                    : t('settingsApiTokens.summary.environments', { count: 1 }))}
+            icon={<Icon name="hard-drives" size={20} color={theme.colors.text.secondary} />}
+            checked={props.checked}
+            disabled={props.disabled}
+            onToggle={props.onToggle}
+        />
+    );
+}
 
 export const ApiTokenGrantModelsPicker = React.memo(function ApiTokenGrantModelsPicker(props: GrantPartProps) {
     const models = props.value.models;

@@ -14,7 +14,6 @@ import { McpMachineDifferenceEditorModal } from './McpMachineDifferenceEditorMod
 import { Icon } from '@/components/ui/icons/Icon';
 import {
   ExpandableItem,
-  ExpandableItemCaret,
 } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -136,7 +135,7 @@ export const McpServerMachineDifferences = React.memo(
 
     if (overrides.length === 0) {
       return (
-        <ItemGroup header="none" testID="mcp.server.differences">
+        <ItemGroup testID="mcp.server.differences">
           <Item
             testID="mcp.server.differences.none"
             title={t('capabilities.mcp.config.different')}
@@ -171,18 +170,16 @@ export const McpServerMachineDifferences = React.memo(
     };
 
     return (
-      <ItemGroup header="none" testID="mcp.server.differences">
+      <ItemGroup testID="mcp.server.differences">
         <ExpandableItem
           testID="mcp.server.differences.toggle"
           expanded={expanded}
           onExpandedChange={setExpanded}
-          header={({ headerProps, expanded: open }) => (
+          header={({ headerProps }) => (
             <Item
               {...(headerProps as Readonly<Record<string, unknown>>)}
               title={t('capabilities.mcp.config.different')}
-              leftElement={<ExpandableItemCaret expanded={open} />}
               detail={summary}
-              showChevron={false}
             />
           )}
         >
@@ -210,6 +207,7 @@ export const McpServerMachineDifferences = React.memo(
                   />
                 }
                 showChevron={false}
+                rightElementOutsidePressable
                 rightElement={
                   <RoundButton
                     testID={`mcp.server.differences.row.${index}.remove`}

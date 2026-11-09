@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import type { ManagedIdentityProviderV1 } from '@happier-dev/protocol';
+import type { ManagedIdentityProviderV1 } from '@happier-dev/protocol/identity/providers';
 
 import {
     ManagedOidcProviderEditorContent,

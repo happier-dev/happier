@@ -84,6 +84,16 @@ describe('ConnectedAccountConfigurationForm', () => {
         expect(submitted).toHaveBeenCalledWith({ values: { enabled: true, tier: 2, scopes: [2] }, secretValues: {} });
     });
 
+    it('uses a Saved Secret selector for service references without rendering raw secret input', async () => {
+        const { ConnectedAccountConfigurationForm } = await import('./ConnectedAccountConfigurationForm');
+        const screen = await renderScreen(<ConnectedAccountConfigurationForm title="Configuration"
+            fields={fields} values={{}} configuredSecretFieldIds={[]} secretRefs={{}}
+            saving={false} onSubmit={vi.fn()} />);
+        expect(screen.tree.findAll(node => node.type === ('TextInput' as never)
+            && node.props.testID === 'connected-account-configuration:clientSecret')).toHaveLength(0);
+        expect(screen.findByTestId('connected-account-configuration:clientSecret:choose')).toBeTruthy();
+    });
+
     afterEach(async () => {
         const { clearActiveUnsavedChangesGuard } = await import('@/utils/navigation/runGuardedNavigation');
         clearActiveUnsavedChangesGuard();

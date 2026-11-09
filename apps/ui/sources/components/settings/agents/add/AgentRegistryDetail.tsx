@@ -2,16 +2,18 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { selectAcpRegistryDistributionV1 } from '@happier-dev/protocol/acp/catalog/registry/mapAcpRegistryAgentV1';
-import type { RegistryItemV1 } from '@happier-dev/protocol/registries';
+import { registryPluginListingSummaryV1, type RegistryItemV1 } from '@happier-dev/protocol/registries';
 
 import type { ResolvedAgentCatalogEntry } from '@/agents/backendCatalog/agentCatalogProjection';
 import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import { areAgentRegistryChecksumsPublished } from '@/agents/registry/agentRegistryChecksums';
+import { CapabilityAddDetailAction } from '@/components/capabilities/add/CapabilityAddModal';
 import { CapabilityDetailHeader } from '@/components/capabilities/detail/CapabilityDetailHeader';
 import { CapabilityStatusChip } from '@/components/capabilities/status/CapabilityStatusChip';
-import { AcpAgentGlyph } from '@/components/settings/acpCatalog/CustomAcpAgentMark';
+import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
+import { CapabilityListingSections } from '@/components/capabilities/add/CapabilityListingSections';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -34,6 +36,7 @@ import {
   machineGlyph,
 } from './AgentAddingProgress';
 import {
+  groupAgentMachineFits,
   publisherName,
   resolveAgentMachineFits,
   type AgentAddMachine,
@@ -49,7 +52,8 @@ export type AgentInstallChoice = 'now' | 'firstUse';
 
 /** What the footer needs from the open details: the read registry entry and the Install choice. */
 export type AgentAddDraft = Readonly<{
-  payload: Extract<RegistryItemV1['payload'], { kind: 'agent' | 'plugin' }> | null;
+  item: RegistryItemV1 | null;
+  sourceRevision: string;
   choice: AgentInstallChoice;
 }>;
 
@@ -100,32 +104,44 @@ export function AgentRegistryDetail(
   props: Readonly<{
     row: AgentAddRow;
     sourceTitle: string;
+    sourceRevision: string;
     machines: readonly AgentAddMachine[];
     serverId: string | null;
     added: AgentAddState | null;
+    onRetryInstall: (machineId: string) => Promise<void>;
     existingDefinitionId: string | null;
     /** The machine a plugin listing installs on (the page's administration target, P9 F6). */
     targetSelection: MachineAdministrationTargetSelectionV1;
     onDraft: (draft: AgentAddDraft) => void;
+    initialChoice?: AgentInstallChoice;
+    onAddedPresented?: (definitionId: string | null) => void;
     testID: string;
   }>,
 ): React.ReactElement {
   const { theme } = useUnistyles();
+  const sourceRevision = props.sourceRevision;
   const read = useRegistryItem({
     kind: 'agent',
     sourceId: props.row.summary.sourceId,
     itemId: props.row.summary.itemId,
     version: props.row.summary.version,
   });
-  const payload = read.item?.payload.kind === 'agent' || read.item?.payload.kind === 'plugin'
-    ? read.item.payload : null;
+  const item = !read.stale && !read.error && (read.item?.payload.kind === 'agent' || read.item?.payload.kind === 'plugin')
+    ? read.item : null;
+  const payload = item?.payload;
   const agent =
     payload?.kind === 'agent' ? payload.agent : null;
-  const [choice, setChoice] = React.useState<AgentInstallChoice>('now');
+  const [choice, setChoice] = React.useState<AgentInstallChoice>(props.initialChoice ?? 'now');
   const { onDraft } = props;
   React.useEffect(() => {
-    onDraft({ payload, choice });
-  }, [payload, choice, onDraft]);
+    onDraft({ item, sourceRevision, choice });
+  }, [item, sourceRevision, choice, onDraft]);
+  const addedDefinitionId = props.added?.definitionId ?? null;
+  const { onAddedPresented } = props;
+  React.useEffect(() => {
+    onAddedPresented?.(addedDefinitionId);
+    return () => onAddedPresented?.(null);
+  }, [addedDefinitionId, onAddedPresented]);
 
   const name = agent?.name ?? props.row.summary.title;
   const fits = React.useMemo(
@@ -146,10 +162,11 @@ export function AgentRegistryDetail(
   const quiet = { color: theme.colors.text.secondary };
 
   const header = (
+    <>
     <CapabilityDetailHeader
       testID={`${props.testID}.detail.header`}
       mark={
-        <AcpAgentGlyph iconUrl={props.row.summary.iconUrl ?? null} size={28} />
+        <HappierBrandMark brand={props.row.summary.brandMark ?? { displayName: props.row.summary.title }} pixelSize={28} externallyLabelled />
       }
       title={name}
       {...(props.row.summary.description
@@ -164,11 +181,13 @@ export function AgentRegistryDetail(
         ].filter((fact): fact is string => Boolean(fact)),
       }}
     />
+    <CapabilityAddDetailAction />
+    </>
   );
 
   if (props.added) {
     return (
-      <View style={styles.detail}>
+      <View>
         {header}
         <AgentAddingProgress
           name={name}
@@ -178,16 +197,18 @@ export function AgentRegistryDetail(
             .filter(({ fit }) => fit.kind === 'can_run')
             .map(({ machine }) => machine)}
           installOn={props.added.installOn}
+          failures={props.added.failures}
+          onRetryInstall={props.onRetryInstall}
           testID={`${props.testID}.adding`}
         />
       </View>
     );
   }
 
-  if (read.item && payload?.kind === 'plugin') {
+  if (item && payload?.kind === 'plugin') {
     return (
       <AgentPluginDetail
-        item={read.item}
+        item={item}
         sourceTitle={props.sourceTitle}
         targetSelection={props.targetSelection}
         testID={props.testID}
@@ -197,7 +218,7 @@ export function AgentRegistryDetail(
 
   if (!agent) {
     return (
-      <View style={styles.detail}>
+      <View>
         {header}
         {read.error ? (
           <SurfaceStateCard
@@ -267,7 +288,7 @@ export function AgentRegistryDetail(
   })();
 
   return (
-    <View style={styles.detail}>
+    <View>
       {header}
       <ItemGroup
         title={t('capabilities.agentAdd.detail.machinesTitle')}
@@ -279,12 +300,17 @@ export function AgentRegistryDetail(
             showChevron={false}
           />
         ) : (
-          shownFits.map(({ machine, fit }) => (
+          groupAgentMachineFits(shownFits, ({ machine, fit }) => fitLine(name, machine, fit)).map(({ key, machines }) => {
+            const { machine, fit } = machines[0]!;
+            // One reason that stops several machines is said once, with how many it stops (STORE-UI-R2 N3).
+            const many = machines.length > 1;
+            const systems = new Set(machines.map((entry) => formatMachineOs(entry.machine.platform)));
+            return (
             <Item
-              key={machine.machineId}
-              testID={`${props.testID}.detail.machine.${machine.machineId}`}
-              title={machine.name}
-              titleQualifier={formatMachineOs(machine.platform)}
+              key={key}
+              testID={many ? `${props.testID}.detail.machines.${key}` : `${props.testID}.detail.machine.${machine.machineId}`}
+              title={many ? t('allMachines.machinesCount', { count: machines.length }) : machine.name}
+              titleQualifier={systems.size === 1 ? formatMachineOs(machine.platform) : undefined}
               titleStyle={
                 fit.kind !== 'can_run' || machine.offline ? quiet : undefined
               }
@@ -312,7 +338,8 @@ export function AgentRegistryDetail(
               accessoryLayout="adaptive"
               showChevron={false}
             />
-          ))
+            );
+          })
         )}
         {foldedOffline > 0 ? (
           <Item
@@ -333,7 +360,7 @@ export function AgentRegistryDetail(
                 ? t('capabilities.agentAdd.detail.installFirstUseBody')
                 : nowNames.length > 0
                   ? t('capabilities.agentAdd.detail.installNowBody', {
-                      machines: formatAgentNameList(nowNames),
+                      machines: nowNames.length > 3 ? t('allMachines.machinesCount', { count: nowNames.length }) : formatAgentNameList(nowNames),
                     })
                   : t('capabilities.agentAdd.detail.installNoneNow')
             }
@@ -394,25 +421,6 @@ export function AgentRegistryDetail(
           }
           showChevron={false}
         />
-        {agent.repository || agent.license ? (
-          <Item
-            title={t('capabilities.agentAdd.detail.sourceAndLicence')}
-            subtitle={[
-              agent.repository?.replace(/^https?:\/\//, ''),
-              agent.license,
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-            icon={
-              <Icon
-                name="github-logo"
-                size={ICON_SIZE.sm}
-                color={theme.colors.text.secondary}
-              />
-            }
-            showChevron={false}
-          />
-        ) : null}
       </ItemGroup>
 
       {file ? (
@@ -436,6 +444,15 @@ export function AgentRegistryDetail(
           showChevron={false}
         />
       </ItemGroup>
+      <CapabilityListingSections
+        testID={`${props.testID}.detail.listing`}
+        facts={{
+          version: agent?.version ?? props.row.summary.version ?? null,
+          sourceTitle: props.sourceTitle,
+          license: agent?.license ?? props.row.summary.license ?? null,
+          links: agent?.repository ? { repository: agent.repository } : props.row.summary.links ?? null,
+        }}
+      />
     </View>
   );
 }
@@ -454,13 +471,15 @@ export function AgentPluginDetail(
   }>,
 ): React.ReactElement {
   const entry = React.useMemo(
-    () => projectRegistryMarketplacePage({ items: [props.item], pages: [], sources: [] }).entries[0] ?? null,
+    () => props.item.payload.kind === 'plugin' ? projectRegistryMarketplacePage({ items: [{ ...props.item.summary,
+      pluginListing: registryPluginListingSummaryV1(props.item.payload.listing) }], pages: [],
+      sources: [props.item.payload.source] }).entries[0] ?? null : null,
     [props.item],
   );
   const payload = props.item.payload.kind === 'plugin' ? props.item.payload : null;
   const title = entry?.title ?? props.item.summary.title;
   return (
-    <View style={styles.detail}>
+    <View>
       <CapabilityDetailHeader
         testID={`${props.testID}.detail.header`}
         mark={<PluginMark title={title} pluginId={payload?.listing.pluginId ?? null} size="page" />}
@@ -476,6 +495,7 @@ export function AgentPluginDetail(
         }}
         {...(payload ? { mono: `${payload.listing.distribution.packageName}@${payload.listing.distribution.version}` } : {})}
       />
+      <CapabilityAddDetailAction />
       {entry ? (
         <>
           <PluginListingAddsSection
@@ -527,13 +547,13 @@ export function AgentBuiltInDetail(
 ): React.ReactElement {
   const { theme } = useUnistyles();
   return (
-    <View style={styles.detail}>
+    <View>
       <CapabilityDetailHeader
         testID={`${props.testID}.detail.header`}
         mark={
-          <AcpAgentGlyph
-            iconUrl={props.row.summary.iconUrl ?? null}
-            size={28}
+          <HappierBrandMark
+            brand={props.row.summary.brandMark ?? { displayName: props.row.summary.title }} externallyLabelled
+            pixelSize={28}
           />
         }
         title={props.row.summary.title}
@@ -549,6 +569,7 @@ export function AgentBuiltInDetail(
           ].filter((fact): fact is string => Boolean(fact)),
         }}
       />
+      <CapabilityAddDetailAction />
       <ItemGroup>
         <Item
           title={t('capabilities.agentAdd.builtIn.callout', {
@@ -598,7 +619,6 @@ export function AgentBuiltInDetail(
 }
 
 const styles = StyleSheet.create((theme) => ({
-  detail: { gap: theme.space.s24 },
   alternative: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space.s8 },
   alternativeText: { flex: 1, minWidth: 0, gap: theme.space.s2 },
   mono: { fontVariant: ['tabular-nums'] },

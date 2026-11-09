@@ -11,7 +11,7 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 export type PublicProfileVisitorTheme = 'auto' | 'light' | 'dark';
 export type PublicProfileAppearanceDraft =
   /** A theme alone can change on an applied planet or None look; its atmosphere stays the reviewed copy. */
-  | Readonly<{ kind: 'applied'; theme?: PublicProfileVisitorTheme }>
+  | Readonly<{ kind: 'applied'; value: PublicProfileAppearanceV1; theme?: PublicProfileVisitorTheme }>
   | Readonly<{ kind: 'candidate'; atmosphere: AtmospherePresentation; theme: 'auto' | 'light' | 'dark' }>;
 /** The page's one public period: every number, the calendar, badges and card cover the same days. */
 export const PUBLIC_PROFILE_PERIODS = ['30days', '90days', 'year'] as const;
@@ -24,7 +24,8 @@ export type PublicProfileDraft = Readonly<{ policy: PublicProfilePolicyV1; layou
   metadata: PublicProfileMetadataSelectionV1; period: PublicProfilePeriod }>;
 export type PublicProfileDraftChanges = Readonly<{ policy: boolean; layout: boolean; appearance: boolean; metadata: boolean; period: boolean }>;
 /** Whether an item is shared, and how many placed blocks need it to be drawn. */
-export type PublicFieldPlacement = Readonly<{ shown: boolean; blocks: number }>;
+/** Where a shared item appears: in how many placed blocks, and whether the page heading shows it. */
+export type PublicFieldPlacement = Readonly<{ shown: boolean; blocks: number; heading: boolean }>;
 
 export const DEFAULT_PUBLIC_PROFILE_QUERY = { period: { relative: '90days' } } as const;
 
@@ -34,7 +35,8 @@ const DEFAULT_CANDIDATE_ATMOSPHERE: AtmospherePresentation = {
   picture: DEFAULT_HOME_ATMOSPHERE.picture, looks: {},
 };
 
-function recordPeriod(record: PublicProfileOwnerRecordV1 | null): PublicProfilePeriod {
+/** The period the record's applied edition covers (the default before the first Publish). */
+export function publicProfileRecordPeriod(record: PublicProfileOwnerRecordV1 | null): PublicProfilePeriod {
   const relative = record?.query?.period && 'relative' in record.query.period ? record.query.period.relative : undefined;
   return PUBLIC_PROFILE_PERIODS.find(period => period === relative) ?? DEFAULT_PUBLIC_PROFILE_QUERY.period.relative;
 }
@@ -52,10 +54,10 @@ export function publicProfileDraftQuery(draft: Pick<PublicProfileDraft, 'period'
 export function createPublicProfileDraft(record: PublicProfileOwnerRecordV1 | null, defaults: Readonly<{ layout: PublicProfileLayoutV1 }>): PublicProfileDraft {
   return {
     metadata: recordMetadata(record),
-    period: recordPeriod(record),
+    period: publicProfileRecordPeriod(record),
     policy: record?.policy ?? DEFAULT_PUBLIC_PROFILE_POLICY_V1,
     layout: record?.layout ?? defaults.layout,
-    appearance: record?.appearance ? { kind: 'applied' }
+    appearance: record?.appearance ? { kind: 'applied', value: record.appearance }
       : { kind: 'candidate', atmosphere: DEFAULT_CANDIDATE_ATMOSPHERE, theme: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1.theme },
   };
 }
@@ -65,21 +67,21 @@ export function createPublicProfileDraft(record: PublicProfileOwnerRecordV1 | nu
  * settings. An applied picture is a reviewed public copy without local pixels, so choosing a look
  * again starts from the default planet.
  */
-export function draftLookPresentation(draft: PublicProfileDraft, applied: PublicProfileAppearanceV1 | null): AtmospherePresentation {
+export function draftLookPresentation(draft: PublicProfileDraft): AtmospherePresentation {
   if (draft.appearance.kind === 'candidate') return draft.appearance.atmosphere;
-  const atmosphere = applied?.atmosphere;
+  const atmosphere = draft.appearance.value.atmosphere;
   if (atmosphere?.source === 'planet') return { ...DEFAULT_CANDIDATE_ATMOSPHERE, planet: atmosphere.planet };
   if (atmosphere?.source === 'none') return { ...DEFAULT_CANDIDATE_ATMOSPHERE, source: 'none' };
   return DEFAULT_CANDIDATE_ATMOSPHERE;
 }
 
 /** The theme visitors' pages use; an applied picture keeps its reviewed theme until its look is chosen again. */
-export function draftVisitorTheme(draft: PublicProfileDraft, applied: PublicProfileAppearanceV1 | null): PublicProfileVisitorTheme {
-  return draft.appearance.kind === 'candidate' ? draft.appearance.theme : draft.appearance.theme ?? applied?.theme ?? 'auto';
+export function draftVisitorTheme(draft: PublicProfileDraft): PublicProfileVisitorTheme {
+  return draft.appearance.kind === 'candidate' ? draft.appearance.theme : draft.appearance.theme ?? draft.appearance.value.theme;
 }
 
 export function setPublicProfileDraftTheme(draft: PublicProfileDraft, theme: PublicProfileVisitorTheme): PublicProfileDraft {
-  return { ...draft, appearance: draft.appearance.kind === 'candidate' ? { ...draft.appearance, theme } : { kind: 'applied', theme } };
+  return { ...draft, appearance: { ...draft.appearance, theme } };
 }
 
 export function setPublicProfileDraftField(draft: PublicProfileDraft, field: PublicProfileField, shown: boolean): PublicProfileDraft {
@@ -96,9 +98,10 @@ export function resolvePublicProfileDraftChanges(record: PublicProfileOwnerRecor
   return {
     policy: !record?.policy || !samePolicy(record.policy, draft.policy),
     layout: !record?.layout || JSON.stringify(record.layout) !== JSON.stringify(draft.layout),
-    appearance: draft.appearance.kind === 'candidate' || draft.appearance.theme !== undefined && draft.appearance.theme !== record?.appearance?.theme,
+    appearance: draft.appearance.kind === 'candidate' || !sameStrictJsonValue(
+      { ...draft.appearance.value, theme: draftVisitorTheme(draft) }, record?.appearance ?? null),
     metadata: !sameStrictJsonValue(recordMetadata(record), draft.metadata),
-    period: !record || recordPeriod(record) !== draft.period,
+    period: !record || publicProfileRecordPeriod(record) !== draft.period,
   };
 }
 
@@ -107,8 +110,15 @@ export function resolvePublicFieldPlacements(input: Readonly<{ context: PublicPr
   draft: PublicProfileDraft }>): Readonly<Record<PublicProfileField, PublicFieldPlacement>> {
   const dependencies = resolvePublicProfileFieldDependencies(input.draft.layout);
   const policy = input.draft.policy;
+  const { identity } = input.context;
+  const { metadata } = input.draft;
+  // The page heading shows identity and the about line whenever they exist, whatever the layout.
+  const heading: Partial<Record<PublicProfileField, boolean>> = { name: identity.name !== undefined, since: identity.sinceMs !== undefined,
+    // A photo or its explained planet fallback (U3) sits beside the name.
+    avatar: identity.avatarUrl !== undefined || identity.avatar !== undefined, bio: Boolean(metadata.bio), links: Boolean(metadata.links?.length) };
   return Object.fromEntries(PUBLIC_PROFILE_FIELDS_V1.map(field => {
-    return [field, { shown: policy.fields[field], blocks: [...dependencies.values()].filter(used => used.has(field)).length }];
+    return [field, { shown: policy.fields[field], blocks: [...dependencies.values()].filter(used => used.has(field)).length,
+      heading: heading[field] ?? false }];
   })) as Record<PublicProfileField, PublicFieldPlacement>;
 }
 

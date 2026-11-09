@@ -6,6 +6,10 @@ import {
 } from '@happier-dev/protocol/account/publicProfilePublication';
 
 import type { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { homeAccountChangeAffectsPublicProfile } from '@/sync/runtime/orchestration/changesPlanner';
 
 export type PublicProfileOwnerReadState =
   | Readonly<{ kind: 'loading' }>
@@ -23,11 +27,12 @@ type AccountExecution = Pick<
 
 /**
  * The owner's applied edition through `account.public_profile.get`: read once when the Account's
- * mounted Action owner becomes ready, and again only on request. A refresh keeps the last read on
- * screen; a failed refresh keeps it too, because the page it describes did not change.
+ * mounted Action owner becomes ready, on publication/Account pushes, and on request. A refresh
+ * keeps the last read on screen; a failed refresh leaves recovery available.
  */
 export function usePublicProfileOwnerRead(
   execution: AccountExecution,
+  scope: AccountSettingsScope | null = null,
 ): Readonly<{
   state: PublicProfileOwnerReadState;
   reload: () => Promise<void>;
@@ -40,7 +45,10 @@ export function usePublicProfileOwnerRead(
   // without restarting, so a re-render never issues another request.
   const executeValue = React.useRef(execution.executeValue);
   executeValue.current = execution.executeValue;
+  // The Home bus owns reconnect delivery; only an unsuccessful read needs its recovery wake.
+  const readFailed = React.useRef(false);
   const reload = React.useCallback(async () => {
+    readFailed.current = false;
     setState((current) =>
       current.kind === 'ready'
         ? { ...current, refreshing: true }
@@ -52,6 +60,7 @@ export function usePublicProfileOwnerRead(
       );
       setState({ kind: 'ready', read, refreshing: false });
     } catch {
+      readFailed.current = true;
       setState((current) =>
         current.kind === 'ready'
           ? { ...current, refreshing: false }
@@ -61,12 +70,20 @@ export function usePublicProfileOwnerRead(
   }, []);
   const { ready } = execution;
   const acknowledge = React.useCallback((record: PublicProfileOwnerRecordV1 | null) => {
+    readFailed.current = false;
     setState(current => current.kind !== 'ready' ? current : { ...current,
       read: record ? { kind: 'ready', record, context: current.read.context } : { kind: 'absent', context: current.read.context },
     });
   }, []);
   React.useEffect(() => {
     if (ready) void reload();
-  }, [ready, reload]);
+  }, [ready, reload, scope?.serverId, scope?.accountId]);
+  React.useEffect(() => {
+    if (!ready || !scope) return;
+    return subscribeHomeAccountChange(event => {
+      if (areServerProfileIdentifiersEquivalent(event.serverId, scope.serverId)
+        && homeAccountChangeAffectsPublicProfile(event)) void reload();
+    }, { serverIds: [scope.serverId], reconnect: { readNotCurrent: () => readFailed.current } });
+  }, [ready, reload, scope?.serverId, scope?.accountId]);
   return { state, reload, acknowledge };
 }

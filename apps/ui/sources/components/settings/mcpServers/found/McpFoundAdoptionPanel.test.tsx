@@ -1,80 +1,154 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { DetectedMcpServerV1Schema } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
-import { McpImportCommitV1Schema } from '@happier-dev/protocol/mcp/servers/import/mcpServerImportV1';
-import { McpServerCatalogV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
-import type { ValueRefV1 } from '@happier-dev/protocol/valueRefs/valueRefV1';
-
-import { installValueRefsCommonModuleMocks } from '@/components/ui/forms/valueRefs/valueRefsTestHelpers';
+import { McpServerCatalogV1Schema, McpServerCatalogRowMutationV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 
-import type { useMcpFoundAdoption as UseMcpFoundAdoption } from './useMcpFoundAdoption';
-
-installValueRefsCommonModuleMocks();
-afterEach(standardCleanup);
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+const { getStorage } = await import('@/sync/domains/state/storageStore');
+const { useMountedActionExecution } = await import('@/components/approvals/useMountedActionExecution');
+const { useMcpFoundAdoption } = await import('./useMcpFoundAdoption');
+const { McpFoundAdoptionPanel } = await import('./McpFoundAdoptionPanel');
+const { FieldTextInput } = await import('@/components/ui/forms/FieldTextInput');
+const { ValueFieldSelect } = await import('@/components/ui/forms/ValueFieldSelect');
+const { resetMcpServerCatalogEngineForTests } = await import('@/sync/engine/settings/mcpServerCatalogEngine');
+const { resetMcpServerCatalogSnapshotsForTests } = await import('@/sync/store/settings/mcpServerCatalogSnapshot');
 
 const found = DetectedMcpServerV1Schema.parse({
-  provider: 'claude', name: 'github', transport: 'stdio', stdio: { command: 'npx', args: ['-y', 'github-mcp'] },
-  envKeys: ['GITHUB_TOKEN'], enabled: true, source: { kind: 'user', path: '/home/dev/.claude.json' },
+  provider: 'claude', name: 'github', transport: 'http', remote: { url: 'https://found.example.test/mcp', headers: ['Authorization'] },
+  envKeys: ['REGION'], enabled: true, source: { kind: 'user', path: '/home/dev/.claude.json' },
 });
+let catalog = McpServerCatalogV1Schema.parse({ v: 1, servers: [], bindings: [] });
+let revision = 1;
+let writes = 0;
+let refuseWrite = false;
+let disposeActionLoader: (() => void) | undefined;
 
-/** The real hook (its preview model comes from the real import producer) under the panel that renders it. */
+beforeEach(async () => {
+  await homes.reset();
+  resetMcpServerCatalogEngineForTests();
+  resetMcpServerCatalogSnapshotsForTests();
+  const { resetScopedHomeActionExecutorsForTests } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
+  resetScopedHomeActionExecutorsForTests();
+  disposeActionLoader = await installRealActionExecutorModuleLoader();
+  catalog = McpServerCatalogV1Schema.parse({ v: 1, servers: [], bindings: [] });
+  revision = 1; writes = 0; refuseWrite = false;
+  const actionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1, actions: {}, approvalWaivedSurfaces: { 'mcp.found.adopt': ['ui'] } });
+  const serverId = await homes.addHome({ name: 'Found MCP', serverUrl: 'https://mcp-found-adoption.test',
+    serverIdentityId: 'srv_mcp_found_adoption', accountId: 'owner', currentAccount: true });
+  const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+  const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' };
+  getStorage().setState(state => ({ settingsScope: scope, profileScope: scope, isDataReady: true,
+    settings: { ...state.settings, actionsSettingsV1 } }));
+  homes.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: { actionsSettingsV1 } }, version: 0 } });
+  homes.answer(serverId, 'GET /v1/account/entity-rows/mcp', { select: () => ({ body: {
+    status: 'present', revision, content: { t: 'plain', v: catalog },
+  } }) });
+  // Only HTTP persistence is replaced: mounted admission, import materialization and CAS are real.
+  homes.answer(serverId, 'POST /v1/account/entity-rows/mcp', { select: input => {
+    const mutation = McpServerCatalogRowMutationV1Schema.parse(input);
+    if (refuseWrite || mutation.expectedRevision !== revision) return { body: { status: 'conflict', revision } };
+    if (!mutation.content || mutation.content.t !== 'plain') throw new Error('Plain fixture received no plain content');
+    catalog = McpServerCatalogV1Schema.parse(mutation.content.v);
+    writes += 1;
+    return { body: { status: 'updated', revision: ++revision, cursor: revision } };
+  } });
+});
+afterEach(async () => { await standardCleanup(); disposeActionLoader?.(); disposeActionLoader = undefined; });
+
 async function mount() {
-  const execute = vi.fn(async (_id: string, _input: unknown) => ({
-    ok: true as const,
-    result: McpImportCommitV1Schema.parse({ ok: true, revision: 2, serverIds: ['saved-1'], duplicates: [], movedSecrets: [] }),
-  }));
-  const { useMcpFoundAdoption } = await import('./useMcpFoundAdoption');
-  const { McpFoundAdoptionPanel } = await import('./McpFoundAdoptionPanel');
-  let latest: ReturnType<typeof UseMcpFoundAdoption> | null = null;
-  const execution = { execute: execute as never, ready: true, isCurrent: () => true };
-  const catalog = McpServerCatalogV1Schema.parse({ v: 1, servers: [], bindings: [] });
-  function Harness() {
-    const adoption = useMcpFoundAdoption({ machineId: 'machine-1', scopeKey: 'home', catalog, catalogRevision: 1, execution });
+  let latest: ReturnType<typeof useMcpFoundAdoption> | null = null;
+  let ready = false;
+  function Harness({ online }: Readonly<{ online: boolean }>) {
+    const scope = getStorage().getState().settingsScope!;
+    const execution = useMountedActionExecution(scope);
+    ready = execution.ready;
+    const adoption = useMcpFoundAdoption({ machineId: 'machine-1', machineOnline: online, scopeKey: JSON.stringify(scope),
+      catalog, catalogRevision: revision, execution });
     latest = adoption;
-    return <McpFoundAdoptionPanel testID="adopt" adoption={adoption} secrets={[]} scope={null} />;
+    return <McpFoundAdoptionPanel testID="adopt" adoption={adoption} secrets={[]} scope={scope} />;
   }
-  const screen = await renderScreen(<Harness />);
-  return { screen, execute, adoption: () => latest! };
+  const screen = await renderScreen(<Harness online />);
+  await waitForHomeGovernance(() => expect(ready).toBe(true));
+  return { screen, adoption: () => latest!, online: (online: boolean) => screen.update(<Harness online={online} />) };
+}
+
+async function fillValues(current: Awaited<ReturnType<typeof mount>>) {
+  const field = (id: string) => current.screen.findAllByType(FieldTextInput).find(node => node.props.testID === id)!;
+  await act(async () => { field('adopt.server.github.env.row.0.value').props.onChangeText('eu'); });
+  await act(async () => { field('adopt.server.github.env.row.0.value').props.onBlur(); });
+  const headerType = current.screen.findAllByType(ValueFieldSelect).find(node => node.props.testID === 'adopt.server.github.header.row.0.type')!;
+  await act(async () => { headerType.props.onSelect('literal'); });
+  await act(async () => { field('adopt.server.github.header.row.0.value').props.onChangeText('${GITHUB_TOKEN}'); });
+  await act(async () => { field('adopt.server.github.header.row.0.value').props.onBlur(); });
 }
 
 describe('McpFoundAdoptionPanel', () => {
-  it('asks for the key a finding names and adds nothing until it has an explicit choice', async () => {
-    const { screen, execute, adoption } = await mount();
-    await act(async () => { await adoption().begin(found); });
-
-    expect(screen.findByTestId('adopt.server.github.env.row.0.name')).not.toBeNull();
-    expect(adoption().canSubmit).toBe(false);
-    // Add stays pressable: pressing it with a value still open adds nothing and is what flags that value.
-    expect(screen.findByTestId('adopt.add')?.props.disabled).toBe(false);
-    await act(async () => { screen.pressByTestId('adopt.add'); });
-    expect(execute).not.toHaveBeenCalled();
-    expect(adoption().state.status).toBe('choosing');
-
-    const choice: ValueRefV1 = { t: 'literal', v: '${GITHUB_TOKEN}' };
-    await act(async () => { adoption().setValue(adoption().model!.servers[0]!.env[0]!.inputId, choice); });
-    await act(async () => { screen.pressByTestId('adopt.add'); });
-    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(1));
-    expect(execute.mock.calls[0]![0]).toBe('mcp.found.adopt');
-    expect(JSON.stringify(execute.mock.calls[0]![1])).toContain('${GITHUB_TOKEN}');
-    await vi.waitFor(() => expect(adoption().state).toEqual({ status: 'adopted', serverId: 'saved-1' }));
+  it('asks every named value, then admits the exact discovered target without changing its source configuration', async () => {
+    const current = await mount();
+    const source = JSON.stringify(found);
+    await act(async () => { await current.adoption().begin(found); });
+    expect(current.adoption().openValues).toBe(2);
+    await current.screen.pressByTestIdAsync('adopt.add');
+    expect(writes).toBe(0);
+    expect(current.adoption().state.status).toBe('choosing');
+    await fillValues(current);
+    await current.screen.pressByTestIdAsync('adopt.add');
+    await waitForHomeGovernance(() => expect(current.adoption().state.status).toBe('adopted'));
+    expect(writes).toBe(1);
+    expect(catalog.servers[0]).toMatchObject({ origin: { kind: 'machine', machineId: 'machine-1', agentId: 'claude' },
+      env: { REGION: { t: 'literal', v: 'eu' } }, remote: { headers: { Authorization: { t: 'literal', v: '${GITHUB_TOKEN}' } } } });
+    expect(JSON.stringify(found)).toBe(source);
+    // A repeated request recovers the acknowledged entry instead of repeating its catalog effect.
+    await act(async () => { await current.adoption().begin(found); });
+    expect(current.adoption().state).toEqual({ status: 'adopted', serverId: catalog.servers[0]!.id });
+    expect(writes).toBe(1);
   });
 
-  it('keeps the choices and offers Retry when the add is refused, and Cancel withdraws the continuation', async () => {
-    const { screen, execute, adoption } = await mount();
-    execute.mockResolvedValueOnce({ ok: false, errorCode: 'revision_conflict' } as never);
-    await act(async () => { await adoption().begin(found); });
-    const inputId = adoption().model!.servers[0]!.env[0]!.inputId;
-    await act(async () => { adoption().setValue(inputId, { t: 'literal', v: '${GITHUB_TOKEN}' }); });
-    await act(async () => { screen.pressByTestId('adopt.add'); });
-    await vi.waitFor(() => expect(adoption().state.status).toBe('failed'));
-    expect(adoption().answers.rows[inputId]).toEqual({ t: 'literal', v: '${GITHUB_TOKEN}' });
-    expect(screen.findByTestId('adopt.add')?.props.disabled).toBe(false);
+  it('keeps choices after an admitted conflict, retries only the missing catalog effect, and Cancel withdraws them', async () => {
+    const current = await mount();
+    await act(async () => { await current.adoption().begin(found); });
+    await fillValues(current);
+    refuseWrite = true;
+    await current.screen.pressByTestIdAsync('adopt.add');
+    await waitForHomeGovernance(() => expect(current.adoption().state).toMatchObject({ status: 'failed', errorCode: 'mcp_catalog_conflict' }));
+    expect(current.adoption().answers.rows['github:env:REGION']).toEqual({ t: 'literal', v: 'eu' });
+    expect(writes).toBe(0);
+    refuseWrite = false;
+    await current.screen.pressByTestIdAsync('adopt.add');
+    await waitForHomeGovernance(() => expect(current.adoption().state.status).toBe('adopted'));
+    expect(writes).toBe(1);
+    await act(async () => { current.adoption().cancel(); });
+    expect(current.adoption().model).toBeNull();
+    expect(current.screen.findByTestId('adopt.add')).toBeNull();
+  });
 
-    await act(async () => { screen.pressByTestId('adopt.cancel'); });
-    expect(adoption().state.status).toBe('idle');
-    expect(adoption().model).toBeNull();
-    expect(screen.findByTestId('adopt.add')).toBeNull();
+  it('refuses offline adoption, preserves an open values draft, and resumes it when the Machine returns', async () => {
+    const current = await mount();
+    await current.online(false);
+    await act(async () => { await current.adoption().begin(found); });
+    expect(current.adoption().state.status).toBe('idle');
+    await current.online(true);
+    await act(async () => { await current.adoption().begin(found); });
+    await fillValues(current);
+    await current.online(false);
+    expect(current.screen.findByTestId('adopt.add')?.props.disabled).toBe(true);
+    await act(async () => { await current.adoption().submit(); });
+    expect(writes).toBe(0);
+    expect(current.adoption().answers.rows['github:env:REGION']).toEqual({ t: 'literal', v: 'eu' });
+    await current.online(true);
+    await current.screen.pressByTestIdAsync('adopt.add');
+    await waitForHomeGovernance(() => expect(current.adoption().state.status).toBe('adopted'));
+    expect(writes).toBe(1);
   });
 });

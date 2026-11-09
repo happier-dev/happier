@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installBrowserClipboardBoundary, renderScreen, standardCleanup } from '@/dev/testkit';
 import { formatRecoveryKeyForDisplay } from '@/auth/recovery/secretKeyBackup';
 
 import { AccountRecoveryKeyItem } from './AccountRecoveryKeyItem';
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 
 // A 32-byte recovery secret, as a legacy credential holds it (base64url).
 const LOCAL_SECRET = 'AQIDBAUGBwgJCgsMDQ4PEBESExQVFhcYGRobHB0eHyA';
@@ -35,6 +36,7 @@ vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/ico
 beforeEach(() => {
     boundary.credentials = { token: 'account-a', secret: LOCAL_SECRET };
     boundary.clipboard = [];
+    installBrowserClipboardBoundary(async text => { boundary.clipboard.push(text); });
     modal.alert.mockReset();
     modal.show.mockReset().mockReturnValue('modal-id');
 });

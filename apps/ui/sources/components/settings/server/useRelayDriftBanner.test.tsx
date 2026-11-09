@@ -127,7 +127,7 @@ async function renderScreen(element: React.ReactElement) {
         const server = Object.fromEntries(Object.entries(snapshot.server).map(([key, value]) => [
             key, value || (key === 'activeServerId' ? 'srv_identity_a' : state.activeServerSnapshot.serverUrl),
         ]));
-        const { DoctorSnapshotSchema } = await import('@happier-dev/protocol');
+        const { DoctorSnapshotSchema} = await import('@happier-dev/protocol/diagnostics/doctorSnapshot');
         writeCachedMachineDoctorSnapshot({
             ...cacheScope, cachedAt: state.cachedDoctorSnapshot.cachedAt,
             snapshot: DoctorSnapshotSchema.parse({ ...snapshot, server }),
@@ -201,7 +201,7 @@ describe('useRelayDriftBanner', () => {
                 settings: { activeServerId: 'server-a', servers: [], knownAccountIds: [] },
             },
         };
-        const start = vi.fn(async (spec: import('@happier-dev/protocol').SystemTaskSpec) => spec.kind === 'daemon.service.status.v1' ? 'status_task' : 'task_1');
+        const start = vi.fn(async (spec: import('@happier-dev/protocol/system/tasks/spec').SystemTaskSpec) => spec.kind === 'daemon.service.status.v1' ? 'status_task' : 'task_1');
         const manual = createManualSystemTaskRunner('dev');
         manual.bridge.start.mockImplementation(start);
         state.runner = manual.runner;
@@ -400,12 +400,13 @@ describe('useRelayDriftBanner', () => {
             daemonServerUrl: 'https://relay.example.test',
             daemonAccountId: 'acct_other',
         };
-        const start = vi.fn(async (spec: import('@happier-dev/protocol').SystemTaskSpec) => spec.kind === 'daemon.service.status.v1' ? 'status_task' : 'task_1');
+        const start = vi.fn(async (spec: import('@happier-dev/protocol/system/tasks/spec').SystemTaskSpec) => spec.kind === 'daemon.service.status.v1' ? 'status_task' : 'task_1');
         const manual = createManualSystemTaskRunner('dev');
         manual.bridge.start.mockImplementation(start);
         state.runner = manual.runner;
         const confirm = vi.mocked(Modal.confirm);
         confirm.mockClear();
+        confirm.mockResolvedValue(true);
         confirm.mockResolvedValueOnce(false);
         const { useRelayDriftBanner } = await import('./useRelayDriftBanner');
         let banner: RelayDriftBanner | null = null;
@@ -414,6 +415,14 @@ describe('useRelayDriftBanner', () => {
             return null;
         }
         await renderScreen(React.createElement(Probe));
+        // Plan 71 §4 keeps Account-move consent separate from configurable Action approval.
+        const { normalizeActionsSettingsV1 } = await import('@happier-dev/protocol/actions/actionSettings');
+        const scope = storage.getState().settingsScope!;
+        const settings = { ...storage.getState().settings, actionsSettingsV1: normalizeActionsSettingsV1({
+            v: 1, approvalWaivedSurfaces: { 'machines.add.local.start': ['ui'] },
+        }) };
+        storage.getState().applySettingsForScope(scope, settings, 2);
+        homes.answer(scope.serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version: 2 } });
 
         await renderer.act(async () => {
             await (banner as RelayDriftBanner | null)?.onPress();
@@ -426,6 +435,7 @@ describe('useRelayDriftBanner', () => {
         await renderer.act(async () => {
             await (banner as RelayDriftBanner | null)?.onPress();
         });
+        expect(confirm).toHaveBeenCalledTimes(2);
         expect(start).toHaveBeenCalledWith(buildRelayDriftRepairSystemTaskSpec({
             activeRelayUrl: 'https://relay.example.test',
             activeWebappUrl: 'https://relay.example.test',
@@ -503,7 +513,7 @@ describe('useRelayDriftBanner', () => {
     it('dispatches the relay repair system task when the action is pressed', async () => {
         const { useRelayDriftBanner } = await import('./useRelayDriftBanner');
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
         const startMock = vi.fn(async (spec: unknown) => {
             const parsed = SystemTaskSpecSchema.parse(spec);
             return parsed.kind === 'daemon.service.status.v1' ? 'status_task' : 'task_1';
@@ -763,7 +773,7 @@ describe('useRelayDriftBanner', () => {
     it('infers the active webapp url when repairing Happier Cloud relay drift', async () => {
         const { useRelayDriftBanner } = await import('./useRelayDriftBanner');
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
 
         const startMock = vi.fn(async (spec: unknown) => {
             const parsed = SystemTaskSpecSchema.parse(spec);
@@ -829,7 +839,7 @@ describe('useRelayDriftBanner', () => {
     it('keeps a cached Doctor local address out of the canonical repair transport', async () => {
         const { useRelayDriftBanner } = await import('./useRelayDriftBanner');
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
 
         const startMock = vi.fn(async (spec: unknown) => {
             const parsed = SystemTaskSpecSchema.parse(spec);
@@ -895,7 +905,7 @@ describe('useRelayDriftBanner', () => {
     it('prefers the active snapshot local relay url when available', async () => {
         const { useRelayDriftBanner } = await import('./useRelayDriftBanner');
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
 
         const startMock = vi.fn(async (spec: unknown) => {
             const parsed = SystemTaskSpecSchema.parse(spec);
@@ -1084,7 +1094,7 @@ describe('useRelayDriftBanner', () => {
     it('restarts the existing local background service instead of launching full repair when the relay matches but the daemon is not running', async () => {
         const { useRelayDriftBanner } = await import('./useRelayDriftBanner');
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
 
         const startMock = vi.fn(async (spec: unknown) => {
             const parsed = SystemTaskSpecSchema.parse(spec);
@@ -1161,7 +1171,7 @@ describe('useRelayDriftBanner', () => {
     it('uses doctor service health when daemon status does not include readiness', async () => {
         const { useRelayDriftBanner } = await import('./useRelayDriftBanner');
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
 
         const startMock = vi.fn(async (spec: unknown) => {
             const parsed = SystemTaskSpecSchema.parse(spec);

@@ -2,7 +2,6 @@ import { Linking } from 'react-native';
 
 import { Modal, type AlertButton } from '@/modal';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 
 type OpenBugReportFallbackDependencies = {
     canOpenUrl: (url: string) => Promise<boolean>;
@@ -17,11 +16,11 @@ type OpenBugReportIssueUrlSilentDependencies = {
 
 export async function openBugReportFallbackIssueUrl(
     issueUrl: string,
-    deps: Partial<OpenBugReportFallbackDependencies> = {},
+    deps: Pick<OpenBugReportFallbackDependencies, 'copyUrl'> & Partial<OpenBugReportFallbackDependencies>,
 ): Promise<boolean> {
     const openUrl = deps.openUrl ?? Linking.openURL;
     const showAlert = deps.showAlert ?? ((title: string, message: string, buttons?: AlertButton[]) => Modal.alertAsync(title, message, buttons));
-    const copyUrl = deps.copyUrl ?? setClipboardStringSafe;
+    const copyUrl = deps.copyUrl;
 
     const normalizedUrl = String(issueUrl ?? '').trim();
     if (!/^https?:\/\//i.test(normalizedUrl)) {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import type { SystemTaskResult } from '@happier-dev/protocol';
+import type { SystemTaskResult } from '@happier-dev/protocol/system/tasks/spec';
 import { markRpcRequestDisposition } from '@happier-dev/sync-client';
 import { standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';

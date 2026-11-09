@@ -1,4 +1,5 @@
-import { Linking } from 'react-native';
+import { useReportIssueAction } from './useReportIssueAction';
+import { useOpenExternalUrl } from '@/hooks/ui/useOpenExternalUrl';
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useFocusEffect } from '@/components/appShell/workspace/destinationRoute';
@@ -12,10 +13,9 @@ import { useMultiClick } from '@/hooks/ui/useMultiClick';
 import { t } from '@/text';
 import { canRequestReview } from '@/utils/system/requestReview';
 import { resolveSupportUsAction } from '@/components/settings/supportUsBehavior';
-import { recordBugReportUserAction } from '@/utils/system/bugReportActionTrail';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
-import type { FeatureId } from '@happier-dev/protocol';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { deferOnWeb } from '@/utils/platform/deferOnWeb';
@@ -122,26 +122,9 @@ export const SettingsView = React.memo(function SettingsView() {
         };
     }, []);
 
-    const handleGitHub = async () => {
-        const url = 'https://github.com/happier-dev/happier';
-        const supported = await Linking.canOpenURL(url);
-        if (supported) {
-            await Linking.openURL(url);
-        }
-    };
+    const [, handleGitHub] = useOpenExternalUrl('https://github.com/happier-dev/happier');
 
-    const handleReportIssue = async () => {
-        recordBugReportUserAction('settings.report_issue_open');
-        const overrideUrl = String(process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL ?? '').trim();
-        if (overrideUrl.length > 0) {
-            const supported = await Linking.canOpenURL(overrideUrl);
-            if (supported) {
-                await Linking.openURL(overrideUrl);
-                return;
-            }
-        }
-        pushRoute(SETTINGS_ROUTES.reportIssue);
-    };
+    const [, handleReportIssue] = useReportIssueAction(() => pushRoute(SETTINGS_ROUTES.reportIssue));
 
     const handleSubscribe = async () => {
         trackPaywallButtonClicked();
@@ -216,10 +199,8 @@ export const SettingsView = React.memo(function SettingsView() {
         </>
     );
 
-    return (
-        <ItemList style={{ paddingTop: 0 }}>
-            {/* The rail carries search where it is shown; otherwise the page does (phones). */}
-            {railVisible ? overview : <SettingsPageSearch>{overview}</SettingsPageSearch>}
-        </ItemList>
-    );
+    // The rail carries search where it is shown; otherwise the page does (phones) and owns its scroller.
+    return railVisible
+        ? <ItemList style={{ paddingTop: 0 }}>{overview}</ItemList>
+        : <SettingsPageSearch>{overview}</SettingsPageSearch>;
 });

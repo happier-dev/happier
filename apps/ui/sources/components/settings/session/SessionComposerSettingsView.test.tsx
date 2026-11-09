@@ -11,6 +11,9 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
 const account = createProviderSettingsAccountHarness();
 await (await import('@/dev/testkit/harness/syncSingletonLoader')).loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
+const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
+const { loadLocalSettings } = await import('@/sync/domains/state/settingsPersistence');
+const { createPersistentUiState } = await import('@/sync/domains/state/persistentUiState');
 
 function findChoice(screen: Awaited<ReturnType<typeof renderSettingsView>>, testIDPrefix: string) {
     return screen.findAll((node) => node.props?.testIDPrefix === testIDPrefix)[0] ?? null;
@@ -18,10 +21,26 @@ function findChoice(screen: Awaited<ReturnType<typeof renderSettingsView>>, test
 
 // Load the real owner after boundaries during collection, outside behavior deadlines.
 await import('./SessionComposerSettingsView');
-
+const { Platform } = await import('react-native');
+const { act } = await import('react-test-renderer');
 describe('SessionComposerSettingsView', () => {
     beforeEach(async () => { await account.restore({ settings: { newSessionDraftEntryMode: 'resumePrevious', sessionInactiveResumePolicy: 'online_only', sessionMessageSendMode: 'agent_queue', sessionBusySteerSendPolicy: 'steer_immediately' } }); });
     afterEach(async () => { standardCleanup(); await account.reset(); });
+    it('resets restored hidden banners without publishing a Settings write', async () => {
+        const device = getPersistenceStorage();
+        device.set('local-settings', JSON.stringify({ sessionComposerCollapsedBannerKinds: { usageLimitRecovery: true } }));
+        storage.setState({ localSettings: loadLocalSettings() });
+        const { SessionComposerSettingsView } = await import('./SessionComposerSettingsView');
+        const screen = await renderSettingsView(React.createElement(SessionComposerSettingsView));
+        expect(screen.findAllHostsByTestId('settings-composer-resetHiddenBanners')).toHaveLength(1);
+        const write = vi.spyOn(device, 'set');
+        try {
+            await screen.pressByTestIdAsync('settings-composer-resetHiddenBanners');
+            expect(screen.findAllHostsByTestId('settings-composer-resetHiddenBanners')).toHaveLength(0);
+            expect(write.mock.calls.filter(([key]) => key === 'local-settings' || key === 'settings' || key.startsWith('account-settings:'))).toHaveLength(0);
+            expect(createPersistentUiState('composer-banner-collapse-v1', value => value).read('collapsed')).toEqual({});
+        } finally { write.mockRestore(); }
+    });
     it('shows explicit resume and fresh ordinary-entry choices and persists the selection', async () => {
         const { SessionComposerSettingsView } = await import('./SessionComposerSettingsView');
         const screen = await renderSettingsView(React.createElement(SessionComposerSettingsView));
@@ -61,4 +80,41 @@ describe('SessionComposerSettingsView', () => {
         expect(findChoice(screen, 'settings-composer-pending-drain')?.props.disabled).toBe(true);
         expect(findChoice(screen, 'settings-composer-pending-timing')?.props.disabled).toBe(true);
     });
+});
+
+
+it.each(['ios', 'android'] as const)('offers and saves Docked presentation on %s', async (platform) => {
+    const previousOS = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
+    try {
+        await account.restore({ settings: { newSessionPresentationModeV1: 'auto' } });
+        const { SessionComposerSettingsView } = await import('./SessionComposerSettingsView');
+        const screen = await renderSettingsView(<SessionComposerSettingsView />);
+        expect(findChoice(screen, 'settings-new-session-presentation')?.props.options.map((option: { id: string }) => option.id)).toContain('docked');
+        await screen.pressByTestIdAsync('settings-new-session-presentation:docked');
+        await act(async () => {
+            await vi.waitFor(() => expect(storage.getState().settings.newSessionPresentationModeV1).toBe('docked'));
+        });
+        expect(findChoice(screen, 'settings-new-session-presentation')?.props.value).toBe('docked');
+    } finally {
+        standardCleanup(); await account.reset();
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: previousOS });
+    }
+});
+
+it.each(['ios', 'android'] as const)('persists the native New backdrop strength through its rendered control on %s', async platform => {
+    const previous = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { configurable: true, value: platform });
+    try {
+        await account.restore({ settings: { newSessionBackdropStrengthV1: 'soft' } });
+        const { GlassAppearanceControls } = await import('../appearance/GlassAppearanceControls');
+        const screen = await renderSettingsView(<GlassAppearanceControls presentation="tiles" />);
+        await screen.pressByTestIdAsync('appearance-new-session-backdrop:rich');
+        await act(async () => {
+            await vi.waitFor(() => expect(storage.getState().settings.newSessionBackdropStrengthV1).toBe('rich'));
+        });
+    } finally {
+        standardCleanup(); await account.reset();
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: previous });
+    }
 });

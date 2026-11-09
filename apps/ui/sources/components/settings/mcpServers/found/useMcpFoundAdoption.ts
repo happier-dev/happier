@@ -25,6 +25,7 @@ type Continuation = Readonly<{
 
 export function useMcpFoundAdoption(options: Readonly<{
     machineId: string | null;
+    machineOnline: boolean | null;
     catalog: McpServerCatalogV1 | null;
     catalogRevision: number | 'absent' | null;
     execution: Pick<ReturnType<typeof useMountedActionExecution>, 'execute' | 'ready' | 'isCurrent'>;
@@ -45,7 +46,7 @@ export function useMcpFoundAdoption(options: Readonly<{
     const submitContinuation = React.useCallback(async (draft: Continuation) => {
         const { options, key } = latest.current;
         const { execution } = options;
-        if (active.current !== draft || key !== draft.key || !execution.ready || !execution.isCurrent()
+        if (active.current !== draft || key !== draft.key || options.machineOnline !== true || !execution.ready || !execution.isCurrent()
             || options.catalogRevision === null || !options.catalog) return;
         if (countOpenMcpPasteValues(draft.model, draft.answers) || draft.model.errors.length) return;
         const pending = { ...draft, state: { status: 'submitting' } as const };
@@ -71,7 +72,7 @@ export function useMcpFoundAdoption(options: Readonly<{
     }, [publish]);
     const begin = React.useCallback(async (item: DetectedMcpServerV1) => {
         const { options, key } = latest.current;
-        if (!options.execution.ready || !options.execution.isCurrent() || !options.machineId
+        if (options.machineOnline !== true || !options.execution.ready || !options.execution.isCurrent() || !options.machineId
             || !options.catalog || options.catalogRevision === null || active.current?.state.status === 'submitting') return;
         const model = buildMcpPastePreviewModel(prepareMcpServerImportV1({
             parsed: prepareDetectedMcpServerImportV1([item], options.machineId), catalog: options.catalog,
@@ -98,9 +99,12 @@ export function useMcpFoundAdoption(options: Readonly<{
     const draft = stored?.key === key && options.execution.ready && options.execution.isCurrent() ? stored : null;
     const answers = draft?.answers ?? EMPTY_MCP_PASTE_ANSWERS;
     const openValues = draft ? countOpenMcpPasteValues(draft.model, answers) : 0;
+    const canBegin = Boolean(options.machineOnline === true && options.machineId && options.execution.ready
+        && options.execution.isCurrent() && options.catalog && options.catalogRevision !== null
+        && draft?.state.status !== 'submitting');
     return { state: draft?.state ?? { status: 'idle' } as McpFoundAdoptionState,
-        begin, setValue, setField, submit, cancel, openValues, item: draft?.item ?? null, model: draft?.model ?? null, answers,
-        canSubmit: Boolean(draft && openValues === 0 && !draft.model.errors.length && options.catalogRevision !== null
+        begin, setValue, setField, submit, cancel, openValues, item: draft?.item ?? null, model: draft?.model ?? null, answers, canBegin,
+        canSubmit: Boolean(canBegin && draft && openValues === 0 && !draft.model.errors.length
             && draft.state.status !== 'submitting' && draft.state.status !== 'adopted'),
     };
 }

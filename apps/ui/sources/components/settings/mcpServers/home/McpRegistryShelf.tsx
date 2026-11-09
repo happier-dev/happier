@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { Image } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 
-import { RegistryShelf, RegistryShelfAddControl, registryShelfProjection, type RegistryShelfCard } from '@/components/capabilities/add/RegistryShelf';
+import { RegistryShelf, RegistryShelfAddControl, registryShelfProjection, resolveRegistryShelfUnavailable, type RegistryShelfCard } from '@/components/capabilities/add/RegistryShelf';
 import { useRegistrySources } from '@/registries/useRegistrySources';
+import type { useRegistrySuggestions } from '@/registries/useRegistrySuggestions';
 import { t } from '@/text';
 
 import type { McpHomeServer } from './mcpHomeModel';
@@ -13,14 +13,20 @@ import type { McpHomeServer } from './mcpHomeModel';
  * built-in MCP registry) as the shared three-card shelf. A server already added reads Open.
  */
 export const McpRegistryShelf = React.memo(function McpRegistryShelf(props: Readonly<{
-    shelf: Readonly<{ items: readonly RegistryShelfCard[]; sourceId: string | null; loading: boolean }>;
+    shelf: Pick<ReturnType<typeof useRegistrySuggestions>, 'items' | 'sourceId' | 'loading' | 'error' | 'status' | 'sourceFailures' | 'refresh'>;
     servers: readonly McpHomeServer[];
     onAdd: (card: RegistryShelfCard) => void;
     onOpen: (serverId: string) => void;
+    /** The section's way into the whole registry (lab n:home "Browse all"): the Add modal's catalog on this source. */
+    onBrowseAll?: () => void;
 }>) {
     const sources = useRegistrySources('mcpServer');
     const sourceTitle = sources.sources.find((source) => source.id === props.shelf.sourceId)?.title ?? null;
-    const { servers, onAdd, onOpen } = props;
+    const { servers, onAdd, onOpen, shelf } = props;
+    const unavailable = React.useMemo(
+        () => resolveRegistryShelfUnavailable(shelf, (sourceId) => sources.sources.find((source) => source.id === sourceId)?.title),
+        [shelf, sources.sources],
+    );
     const addedId = React.useCallback((card: RegistryShelfCard) => servers.find((server) => {
         const origin = server.server.origin;
         return origin?.kind === 'registry' && origin.provenance.sourceId === card.sourceId && origin.provenance.itemId === card.itemId;
@@ -30,11 +36,11 @@ export const McpRegistryShelf = React.memo(function McpRegistryShelf(props: Read
         if (added) onOpen(added);
         else onAdd(card);
     }, [addedId, onAdd, onOpen]);
-    // The publisher, unless it only repeats the name ("Notion" by Notion).
-    const where = React.useCallback((card: RegistryShelfCard) => (card.publisher && card.publisher.name !== card.title ? card.publisher.name : null), []);
-    const glyph = React.useCallback((card: RegistryShelfCard) => (card.iconUrl
-        ? <Image source={{ uri: card.iconUrl }} style={styles.mark} accessibilityIgnoresInvertColors />
-        : null), []);
+    // A card says its name and what it does; the registry's namespace id would only repeat the name (lab hm-A2).
+    const where = React.useCallback(() => null, []);
+    const glyph = React.useCallback((card: RegistryShelfCard) => <HappierBrandMark
+        brand={card.brandMark ?? { displayName: card.title }} pixelSize={26} externallyLabelled />, []);
+    // An added server reads Added; the card itself opens it.
     const action = React.useCallback((card: RegistryShelfCard) => (
         <RegistryShelfAddControl testID={`mcp.home.shelf.${card.itemId}`} state={addedId(card) ? 'added' : 'available'} title={card.title}
             addLabel={t('capabilities.mcpHome.shelfAdd')} addedLabel={t('capabilities.add.added')} failedLabel={t('capabilities.mcpHome.shelfAdd')}
@@ -48,15 +54,14 @@ export const McpRegistryShelf = React.memo(function McpRegistryShelf(props: Read
             {...(sourceTitle ? { description: t('capabilities.mcpHome.shelfFrom', { source: sourceTitle }) } : {})}
             items={props.shelf.items}
             loading={props.shelf.loading}
+            {...(unavailable ? { unavailable } : {})}
             where={where}
             glyph={glyph}
             action={action}
             onOpen={open}
             columnTitle={t('settings.mcpServers')}
+            {...(props.onBrowseAll ? { browseAll: { label: t('capabilities.skillsUpdates.shelf.browseAll'), onPress: props.onBrowseAll } } : {})}
         />
     );
 });
 
-const styles = StyleSheet.create(() => ({
-    mark: { width: 26, height: 26 },
-}));

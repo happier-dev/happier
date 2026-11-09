@@ -326,7 +326,7 @@ describe('TeamGroupDetailScreen', () => {
             }),
         });
         const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
-        const { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } = await import('@happier-dev/protocol');
+        const { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1} = await import('@happier-dev/protocol/changes');
         await act(async () => {
             publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]);
         });
@@ -599,7 +599,7 @@ describe('TeamGroupDetailScreen', () => {
             body: teamGroupFixture({ name: 'After', capabilities: MANAGED_GROUP_CAPABILITIES }),
         });
         const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
-        const { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } = await import('@happier-dev/protocol');
+        const { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1} = await import('@happier-dev/protocol/changes');
         await act(async () => {
             publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]);
         });
@@ -633,7 +633,7 @@ describe('TeamGroupDetailScreen', () => {
             body: teamGroupFixture({ name: 'After', capabilities: MANAGED_GROUP_CAPABILITIES }),
         });
         const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
-        const { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } = await import('@happier-dev/protocol');
+        const { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1} = await import('@happier-dev/protocol/changes');
         await act(async () => {
             publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]);
         });
@@ -666,7 +666,7 @@ describe('TeamGroupDetailScreen', () => {
 
         harness.answer(serverId, GROUP_GET_PATH, { status: 503, body: { error: 'unavailable' } });
         const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
-        const { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } = await import('@happier-dev/protocol');
+        const { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1} = await import('@happier-dev/protocol/changes');
         await act(async () => {
             publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]);
         });

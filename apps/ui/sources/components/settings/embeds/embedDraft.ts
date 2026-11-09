@@ -1,10 +1,13 @@
 import type {
     AccountApiTokenSummaryV1,
-    AccountApiTokensUpdateActionInputV1,
-    ApiTokenGrantV1,
-    ConnectedServiceBindingsV2,
+    AccountApiTokensUpdateActionInputV1} from '@happier-dev/protocol/auth/accountApiTokens';
+import type {
+    ApiTokenGrantV1} from '@happier-dev/protocol/auth/apiTokenGrant';
+import type {
+    ConnectedServiceBindingsV2} from '@happier-dev/protocol/connect/connected-service-bindings';
+import type {
     ProviderBoundModelRef,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/providers/selection/v1';
 import {
     buildEmbedParentGrantV1,
     deriveEmbedAccessFromGrantV1,

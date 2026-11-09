@@ -2,7 +2,7 @@ import * as React from 'react';
 import type {
     TeamAcceptedAuthenticationV1,
     TeamAuthenticationPolicyV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/entry';
 import {
     TeamErrorV1Schema,
     type TeamAdmissionModeApplicabilityV1,

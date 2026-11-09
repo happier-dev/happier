@@ -1,5 +1,4 @@
 import * as React from 'react';
-import type { SessionFolderWorkspaceRefV1 } from '@happier-dev/protocol';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -25,10 +24,10 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Item } from '@/components/ui/lists/Item';
 import { Typography } from '@/constants/Typography';
-import { buildSessionFolderWorkspaceTargets, selectAvailableSessionFolders } from '@/sync/domains/session/folders';
 import { buildSessionOrganizationListViewState } from '@/sync/domains/session/organization/viewState';
+import { resolveSessionSectionChoiceLabels } from '@/sync/domains/session/organization/sections';
 import { buildSessionOrganizationTagLabelById } from '@/sync/domains/session/organization/tagLabels';
-import { useAllMachines, useSessionOrganizationProjection, useSetting } from '@/sync/store/hooks';
+import { useSessionOrganizationProjection, useSetting, useActiveMachineFacts } from '@/sync/store/hooks';
 import { resolveMachinePickerPresence } from '@/sync/domains/machines/identity/resolveMachinePickerPresence';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
@@ -91,36 +90,27 @@ function EmbedConnectedAccountControl(props: Readonly<{
     );
 }
 
-/**
- * The folders an embed can use. With session creation on, only folders of that computer's Chats
- * (the organization owner's `managedSessions` scope, 03 U5), because every created session lands
- * there; with creation off the folder is only a listing filter, so any folder of the Home.
- */
+/** Account sections belong to the selected Home, independently of the creation computer. */
 function resolveEmbedFolderTargets(
     projection: ReturnType<typeof useSessionOrganizationProjection>,
     serverId: string | null,
-    machineId: string | null,
 ): readonly SessionFolderSelectionTarget[] {
-    const viewState = buildSessionOrganizationListViewState({ serverId: serverId ?? '', projection });
-    const available = selectAvailableSessionFolders(viewState.sessionFoldersV1);
-    if (serverId && machineId) {
-        const workspace: SessionFolderWorkspaceRefV1 = { t: 'managedSessions', serverId, machineId };
-        return buildSessionFolderWorkspaceTargets({ folders: available, workspace });
-    }
-    return available.folders.map((folder) => ({ folderId: folder.id, title: folder.name, depth: 0 }));
+    if (!serverId) return [];
+    const { sections } = buildSessionOrganizationListViewState({ serverId, projection });
+    const labels = resolveSessionSectionChoiceLabels(sections, { unavailableLabel: t('common.unavailable') });
+    return sections.map(section => ({ folderId: section.address.sectionId, title: labels.get(section.address.sectionId)!, depth: 0 }));
 }
 
-function useEmbedFolderTargets(props: OrganizationContext & Readonly<{ machineId: string | null }>): readonly SessionFolderSelectionTarget[] {
+function useEmbedFolderTargets(props: OrganizationContext): readonly SessionFolderSelectionTarget[] {
     const projection = useSessionOrganizationProjection(props.serverId);
     return React.useMemo(
-        () => resolveEmbedFolderTargets(projection, props.serverId, props.machineId),
-        [projection, props.machineId, props.serverId],
+        () => resolveEmbedFolderTargets(projection, props.serverId),
+        [projection, props.serverId],
     );
 }
 
 /**
- * A creation change (on, off, another computer) re-decides which folders are eligible; a folder the
- * new scope does not offer is dropped rather than carried into `grant.create.placement`.
+ * Keep creation placement bound to a current section of this Home, including when the computer changes.
  */
 function withEligibleEmbedFolder(
     draft: EmbedDraftSectionProps['draft'],
@@ -129,7 +119,7 @@ function withEligibleEmbedFolder(
 ): EmbedDraftSectionProps['draft'] {
     const folderId = draft.config.organization.folderId;
     if (folderId === null) return draft;
-    const targets = resolveEmbedFolderTargets(projection, serverId, draft.access.create?.machineId ?? null);
+    const targets = resolveEmbedFolderTargets(projection, serverId);
     if (targets.some((target) => target.folderId === folderId)) return draft;
     // The creation placement is derived from the organization when the grant is built.
     return { ...draft, config: { ...draft.config, organization: { ...draft.config.organization, folderId: null } } };
@@ -142,7 +132,7 @@ export const EmbedOrganizationSection = React.memo(function EmbedOrganizationSec
     const [folderOpen, setFolderOpen] = React.useState(false);
     const [tagsOpen, setTagsOpen] = React.useState(false);
     const organization = draft.config.organization;
-    const folderTargets = useEmbedFolderTargets({ serverId: props.serverId, machineId: draft.access.create?.machineId ?? null });
+    const folderTargets = useEmbedFolderTargets({ serverId: props.serverId });
     const projection = useSessionOrganizationProjection(props.serverId);
     const tags = React.useMemo(() => Object.entries(buildSessionOrganizationTagLabelById(projection?.tagsById ?? {}))
         .map(([id, label]) => ({ id, label })), [projection]);
@@ -237,7 +227,7 @@ function useEmbedAgentOptions(input: Readonly<{ serverId: string | null; machine
 export const EmbedSessionsSection = React.memo(function EmbedSessionsSection(props: EmbedDraftSectionProps & OrganizationContext) {
     const { theme } = useUnistyles();
     const { draft, onChange } = props;
-    const machines = useAllMachines();
+    const machines = useActiveMachineFacts();
     const create = draft.access.create;
     // Creation binds a computer this Home can reach now, by the same presence the machine picker shows.
     const reachabilityRevision = useMachineReachabilityRevision();

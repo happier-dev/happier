@@ -10,6 +10,7 @@ import {
 } from '@/components/settings/appearance/appearanceSettings';
 import { THEMES_SETTINGS } from '@/components/settings/appearance/themeProfiles/themesSettings';
 import { SESSION_SECTIONS_SETTINGS, SESSION_SETTINGS } from '@/components/settings/session/sessionSettings';
+import { COLLECTION_SPACE_SETTINGS } from '@/components/settings/session/collectionSpaceSettings';
 import { SESSION_RUNTIME_SETTINGS } from '@/components/settings/session/sessionRuntimeSettings';
 import { SESSION_PROVIDER_LIMITS_SETTINGS } from '@/components/settings/session/sessionProviderLimitsSettings';
 import { NEW_SESSION_WIZARD_SETTINGS } from '@/components/settings/session/newSessionWizardSettings';
@@ -30,7 +31,7 @@ import { SUB_AGENT_SETTINGS } from '@/components/settings/subAgent/subAgentSetti
 import { PROFILES_SETTINGS } from '@/components/settings/profiles/profilesSettings';
 import { PROVIDERS_SETTINGS, PROVIDER_DETAIL_SETTINGS, PROVIDER_GATEWAY_SETTINGS } from '@/components/settings/providers/providersSettings';
 import { AGENT_SETTINGS } from '@/components/settings/agents/agentsSettings';
-import { MCP_FOUND_DESTINATION_SETTINGS, MCP_FOUND_SETTINGS } from '@/components/settings/mcpServers/mcpSettings';
+import { MCP_FOUND_DESTINATION_SETTINGS } from '@/components/settings/mcpServers/mcpSettings';
 import { SKILLS_SETTINGS } from '@/components/settings/skills/skillsSettings';
 import { PLUGINS_SETTINGS } from '@/components/settings/plugins/pluginsSettings';
 import { PROMPTS_CONTEXT_SETTINGS } from '@/components/settings/prompts/context/promptsContextSettings';
@@ -50,6 +51,7 @@ import { NOTIFICATIONS_SETTINGS } from '@/components/settings/notifications/noti
 import { NOTIFICATIONS_PUSH_SETTINGS } from '@/components/settings/notifications/notificationsPushSettings';
 import { DIAGNOSIS_SETTINGS } from '@/components/settings/diagnosis/diagnosisSettings';
 import { ATTACHMENTS_SETTINGS } from '@/components/settings/attachments/attachmentsSettings';
+import { DEPLOYMENTS_SETTINGS } from '@/components/settings/deployments/deploymentsSettings';
 import { OVERVIEW_SETTINGS } from '@/components/settings/overview/overviewSettings';
 import { USAGE_SETTINGS } from '@/components/settings/usage/usageSettings';
 import { WORKFLOW_RUN_SETTINGS } from '@/components/automations/settings/workflowRunSettings';
@@ -92,6 +94,7 @@ import type { Settings } from '@/sync/domains/settings/settings';
  * the catalog only offers a page's settings while the page itself is visible (feature gates apply).
  */
 export const SETTINGS_PAGE_DECLARATIONS: readonly SettingsPageDeclaration[] = [
+    DEPLOYMENTS_SETTINGS,
     OVERVIEW_SETTINGS,
     USAGE_SETTINGS,
     WORKFLOW_RUN_SETTINGS,
@@ -131,6 +134,7 @@ export const SETTINGS_PAGE_DECLARATIONS: readonly SettingsPageDeclaration[] = [
     THEMES_SETTINGS,
     SESSION_SETTINGS,
     SESSION_SECTIONS_SETTINGS,
+    ...COLLECTION_SPACE_SETTINGS,
     COORDINATION_SETTINGS,
     SESSION_RUNTIME_SETTINGS,
     SESSION_PROVIDER_LIMITS_SETTINGS,
@@ -155,7 +159,6 @@ export const SETTINGS_PAGE_DECLARATIONS: readonly SettingsPageDeclaration[] = [
     PROVIDER_GATEWAY_SETTINGS,
     AGENT_SETTINGS,
     MCP_FOUND_DESTINATION_SETTINGS,
-    MCP_FOUND_SETTINGS,
     ...SKILLS_SETTINGS,
     PLUGINS_SETTINGS,
     MEMORY_SETTINGS,

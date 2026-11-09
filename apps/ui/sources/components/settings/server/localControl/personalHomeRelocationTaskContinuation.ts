@@ -1,4 +1,4 @@
-import type { AccountDirectoryCapabilities } from '@happier-dev/protocol';
+import type { AccountDirectoryCapabilities } from '@happier-dev/protocol/features/payload/capabilities/accountDirectoryCapabilities';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
 import { accountDirectoryCredentialStorage } from '@/auth/accountDirectory/accountDirectoryCredentialStorage';
 import { probeServerFeaturesAtUrl } from '@/sync/api/capabilities/serverFeaturesClient';

@@ -25,7 +25,6 @@ function card(
   return {
     id,
     title: id,
-    kind: 'VM',
     description: `${id} machines`,
     mark: () => null,
     location: 'cloud',

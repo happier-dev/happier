@@ -33,10 +33,11 @@ installHomeGovernanceBoundaries(homes);
 
 await import('@/sync/domains/state/storage');
 const { useBugReportComposerSubmit } = await import('./useBugReportComposerSubmit');
+const { useBugReportComposerModel } = await import('./useBugReportComposerModel');
 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
 const feature = { enabled: true, providerUrl: 'https://reports.example.test', defaultIncludeDiagnostics: true,
   maxArtifactBytes: 128_000, acceptedArtifactKinds: ['user-note'], uploadTimeoutMs: 10_000, contextWindowMs: 30_000 };
-const draft: BugReportDraftInput = { title: 'Crash in private-project-q7z4', summary: 'Confidential steps n3k8.', reproductionStepsText: '1. Open app',
+const draft: BugReportDraftInput = { currentBehavior: 'Edited exception after review', title: 'Crash in private-project-q7z4', summary: 'Confidential steps n3k8.', reproductionStepsText: '1. Open app',
   whatChangedRecently: '', environment: { appVersion: '0.3', platform: 'web', deploymentType: 'self-hosted' },
   includeDiagnostics: false, acceptedPrivacyNotice: false };
 const snapshot = {
@@ -45,24 +46,56 @@ const snapshot = {
 } as const;
 let serverId: string;
 let locks: ReturnType<typeof installWebLockManagerMock>;
+let serviceUnavailable = false;
 const reportRequests: { path: string; body: unknown }[] = [];
 const fetchReport = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
   const url = new URL(input instanceof Request ? input.url : String(input));
   if (url.origin !== feature.providerUrl) return homes.request(input, init);
-  reportRequests.push({ path: url.pathname, body: JSON.parse(String(init?.body)) });
+  reportRequests.push({ path: url.pathname, body: url.pathname.startsWith('/uploads/') ? String(init?.body ?? '') : init?.body ? JSON.parse(String(init.body)) : null });
+  if (url.pathname.startsWith('/uploads/')) return new Response('', { status: 200 });
+  if (url.pathname === '/v1/issues/similar') return new Response(JSON.stringify({ issues: [] }), { status: 200 });
+  if (serviceUnavailable) return new Response(JSON.stringify({ error: 'unavailable' }), { status: 503 });
   return new Response(JSON.stringify(url.pathname === '/v1/reports/session'
-    ? { reportId: 'report-1', uploadTargets: [] }
+    ? { reportId: 'report-1', uploadTargets: (JSON.parse(String(init?.body)).artifacts ?? []).map((_artifact: unknown, index: number) => ({ artifactId: `artifact-${index}`, objectKey: `object-${index}`, uploadUrl: `${feature.providerUrl}/uploads/${index}` })) }
     : { reportId: 'report-1', issueNumber: 123, issueUrl: 'https://github.com/happier-dev/happier/issues/123' }),
   { status: 200, headers: { 'content-type': 'application/json' } });
 });
 
-function Composer({ value = draft }: { value?: BugReportDraftInput }) {
+function Composer({ value = draft, providerEnabled = true, collectDiagnosticsArtifacts, sessionTarget }: {
+  value?: BugReportDraftInput; providerEnabled?: boolean;
+  sessionTarget?: { sessionId: string; serverId: string; accountId: string | null };
+  collectDiagnosticsArtifacts?: () => Promise<{ artifacts: Array<{ filename: string; sourceKind: string; contentType: string; content: string }>; environment: BugReportDraftInput['environment'] }>;
+}) {
   const { handleSubmit, submitting } = useBugReportComposerSubmit({
-    feature, route: '/settings/report-issue', includeDiagnostics: value.includeDiagnostics, diagnosticsKinds: ['user-note'],
+    feature: { ...feature, enabled: providerEnabled }, route: '/settings/report-issue', includeDiagnostics: value.includeDiagnostics, diagnosticsKinds: ['user-note'],
     issueOwner: 'happier-dev', issueRepo: 'happier', existingIssueNumber: null,
     openFallbackIssue: async () => { throw new Error('Unexpected fallback'); }, buildDraftInput: () => value,
+    collectDiagnosticsArtifacts, sessionTarget,
   });
   return React.createElement('Text', { testID: 'submit', onPress: handleSubmit, submitting });
+}
+
+function ModelComposer() {
+  const model = useBugReportComposerModel({
+    feature, machines: [], profile: null, serverUrlDefault: 'https://reports-home.example.test', route: '/settings/report-issue',
+  });
+  return React.createElement('Text', { testID: 'model', model });
+}
+
+async function approveSubmit(screen: Awaited<ReturnType<typeof renderScreen>>) {
+  const created = new Promise<void>(resolve => homes.artifacts(serverId).afterNextCreate(async () => { resolve(); }));
+  let pending: Promise<void> = Promise.resolve();
+  await act(async () => { pending = screen.findByTestId('submit')!.props.onPress(); });
+  expect(await Promise.race([created.then(() => 'approval'), pending.then(() => 'settled')])).toBe('approval');
+  const artifact = homes.artifacts(serverId).list()[0]!;
+  await waitForHomeGovernance(() => expect(getSharedBlockingApprovalCoordinator().getLiveWaiterCount(artifact.id)).toBe(1));
+  const request = ApprovalRequestSchema.parse(JSON.parse(homes.artifacts(serverId).readPlainBody(artifact.id)!));
+  await act(async () => {
+    await getSharedBlockingApprovalCoordinator().resolveBlockingDecision({
+      artifactId: artifact.id, request, decision: 'approve', decisionAuthority: 'present_user',
+    });
+    await pending;
+  });
 }
 
 describe('bug report Submit form through Action admission', () => {
@@ -73,6 +106,7 @@ describe('bug report Submit form through Action admission', () => {
     await loadSyncSingletonForTests();
     alerts.mockClear(); confirms.mockClear(); back.mockClear(); fetchReport.mockClear();
     reportRequests.length = 0;
+    serviceUnavailable = false;
     vi.stubGlobal('fetch', fetchReport);
     // The report checkbox does not alter the independently opted-out crash
     // reporting boundary. Its separate consent owner is exercised unchanged.
@@ -141,6 +175,8 @@ describe('bug report Submit form through Action admission', () => {
           reproductionSteps: ['Open app'], consent: { includeDiagnostics: false, acceptedPrivacyNotice: true } }), artifacts: [] }) },
         { path: '/v1/reports/submit', body: expect.objectContaining({ reportId: 'report-1', issue: { owner: 'happier-dev', repo: 'happier' } }) },
       ]);
+      expect(reportRequests[0]).toMatchObject({ body: { form: { currentBehavior: draft.currentBehavior } } });
+      expect(JSON.stringify(reportRequests)).not.toContain(snapshot.errorDetails);
       await expect(peekPreRestartBugReportSnapshot()).resolves.toBeNull();
       expect(back).toHaveBeenCalledOnce();
     } else {
@@ -176,6 +212,48 @@ describe('bug report Submit form through Action admission', () => {
     } finally { getSharedBlockingApprovalCoordinator().dispose(); await pending; await screen.unmount(); }
   });
 
+  it('submits the reviewed diagnostic bytes through approval without collecting again or persisting private content', async () => {
+    const artifact = { filename: 'reviewed-note.txt', sourceKind: 'user-note', contentType: 'text/plain', content: 'Reviewed private bytes q72' };
+    const collectDiagnosticsArtifacts = vi.fn(async () => ({ artifacts: [artifact], environment: draft.environment }));
+    const screen = await renderScreen(<Composer value={{ ...draft, includeDiagnostics: true }} collectDiagnosticsArtifacts={collectDiagnosticsArtifacts} />);
+    try {
+      expect(collectDiagnosticsArtifacts).not.toHaveBeenCalled();
+      await approveSubmit(screen);
+      expect(reportRequests).toContainEqual({ path: '/uploads/0', body: artifact.content });
+      expect(reportRequests.filter(request => request.path.startsWith('/uploads/'))).toHaveLength(1);
+      expect(collectDiagnosticsArtifacts).toHaveBeenCalledOnce();
+      const approval = homes.artifacts(serverId).list()[0]!;
+      expect(homes.artifacts(serverId).readPlainBody(approval.id)).not.toContain(artifact.content);
+      expect(back).toHaveBeenCalledOnce();
+    } finally { await screen.unmount(); }
+  });
+
+  it('submits available reviewed evidence through the current report Account when the related Session account is unknown', async () => {
+    const artifact = { filename: 'safe-context.txt', sourceKind: 'user-note', contentType: 'text/plain', content: 'Available context with target diagnostics unavailable' };
+    const screen = await renderScreen(<Composer value={{ ...draft, includeDiagnostics: true }}
+      sessionTarget={{ sessionId: 'unavailable-session', serverId: 'unavailable-home', accountId: null }}
+      collectDiagnosticsArtifacts={async () => ({ artifacts: [artifact], environment: draft.environment })} />);
+    try {
+      await approveSubmit(screen);
+      expect(reportRequests).toContainEqual({ path: '/uploads/0', body: artifact.content });
+      expect(back).toHaveBeenCalledOnce();
+      expect(fetchReport.mock.calls.some(([input]) => String(input).includes('unavailable-home'))).toBe(false);
+    } finally { await screen.unmount(); }
+  });
+
+  it('keeps scope failure private without offering a public fallback or submitting another Account', async () => {
+    const collectDiagnosticsArtifacts = async () => { throw new Error('bug_report_diagnostics_scope_changed'); };
+    const screen = await renderScreen(<Composer value={{ ...draft, includeDiagnostics: true }} collectDiagnosticsArtifacts={collectDiagnosticsArtifacts} />);
+    try {
+      await act(async () => screen.findByTestId('submit')!.props.onPress());
+      expect(reportRequests).toEqual([]);
+      expect(homes.artifacts(serverId).list()).toEqual([]);
+      expect(confirms).not.toHaveBeenCalled();
+      expect(alerts).toHaveBeenCalledWith('bugReports.composer.alerts.submitFailedTitle', 'bugReports.composer.scopeChanged');
+      expect(screen.findByTestId('submit')!.props.submitting).toBe(false);
+    } finally { await screen.unmount(); }
+  });
+
   it('honors a diagnostic submission waiver at the real submission owner', async () => {
     const { storage } = await import('@/sync/domains/state/storage');
     const { loadAccountSettings } = await import('@/sync/domains/state/accountSettingsPersistence');
@@ -201,4 +279,73 @@ describe('bug report Submit form through Action admission', () => {
       form: { consent: { includeDiagnostics: true, acceptedPrivacyNotice: true } },
     } });
   });
+
+  it('retains the original crash and exits submitting when the approved service request fails', async () => {
+    await persistPreRestartBugReportSnapshot(snapshot);
+    serviceUnavailable = true;
+    const screen = await renderScreen(React.createElement(Composer));
+    try {
+      await approveSubmit(screen);
+      expect(reportRequests).toHaveLength(1);
+      expect(reportRequests[0]).toMatchObject({ path: '/v1/reports/session', body: { form: { currentBehavior: draft.currentBehavior } } });
+      expect(JSON.stringify(reportRequests)).not.toContain(snapshot.errorDetails);
+      await expect(peekPreRestartBugReportSnapshot()).resolves.toEqual(snapshot);
+      expect(back).not.toHaveBeenCalled();
+      expect(confirms).toHaveBeenCalledOnce();
+      expect(screen.findByTestId('submit')!.props.submitting).toBe(false);
+    } finally { await screen.unmount(); }
+  });
+
+  it('retains the original crash when the approved provider-disabled fallback only opens a manual issue', async () => {
+    const { Linking } = await import('react-native');
+    const open = vi.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
+    const features = createRootLayoutFeaturesResponse({
+      features: { bugReports: { enabled: false } },
+      capabilities: { bugReports: feature, serverIdentity: { serverIdentityId: 'srv_reports_home' } },
+    });
+    homes.answer(serverId, '/v1/features', { body: features });
+    homes.answer(serverId, '/v1/features/authenticated', { body: features });
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+    await persistPreRestartBugReportSnapshot(snapshot);
+    const screen = await renderScreen(React.createElement(Composer, { providerEnabled: false }));
+    try {
+      await approveSubmit(screen);
+      expect(reportRequests).toEqual([]);
+      expect(open).toHaveBeenCalledOnce();
+      expect(String(open.mock.calls[0]?.[0])).toContain('/issues/new');
+      expect(decodeURIComponent(String(open.mock.calls[0]?.[0]))).not.toContain(snapshot.errorDetails);
+      await expect(peekPreRestartBugReportSnapshot()).resolves.toEqual(snapshot);
+      expect(back).not.toHaveBeenCalled();
+      expect(screen.findByTestId('submit')!.props.submitting).toBe(false);
+    } finally { open.mockRestore(); await screen.unmount(); }
+  });
+
+  it('keeps captured and discarded crash text off automatic similar-issue requests while ordinary search still works', async () => {
+    await persistPreRestartBugReportSnapshot(snapshot);
+    const screen = await renderScreen(React.createElement(ModelComposer));
+    const model = () => screen.findByTestId('model')!.props.model as ReturnType<typeof useBugReportComposerModel>;
+    try {
+      expect(model().crashReportStatus).toBe('saved');
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 650)); });
+      expect(reportRequests).toEqual([]);
+      await act(async () => model().setCurrentBehavior('Exception reviewed for a private project'));
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 650)); });
+      expect(reportRequests).toEqual([]);
+      await act(async () => model().discardSavedCrash());
+      expect(model().crashReportStatus).toBe('discarded');
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 650)); });
+      expect(reportRequests).toEqual([]);
+    } finally { await screen.unmount(); }
+
+    const ordinary = await renderScreen(React.createElement(ModelComposer));
+    try {
+      const getModel = () => ordinary.findByTestId('model')!.props.model as ReturnType<typeof useBugReportComposerModel>;
+      expect(getModel().crashReportStatus).toBe('none');
+      await act(async () => getModel().setTitle('Ordinary independently written report'));
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 650)); });
+      expect(reportRequests.map(request => request.path)).toEqual(['/v1/issues/similar']);
+    } finally { await ordinary.unmount(); }
+  });
+
 });

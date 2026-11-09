@@ -5,7 +5,6 @@ import type {
     TeamInvitationRowV1,
     TeamInvitationEmailDeliveryAvailabilityV1,
 } from '@happier-dev/protocol/teams';
-import { Platform } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
@@ -17,8 +16,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { VirtualizedList } from '@/components/ui/lists/virtualized';
-import { usePageListBottomPadding } from '@/components/ui/lists/pageListBottomPadding';
+import { VirtualizedItemList } from '@/components/ui/lists/VirtualizedItemList';
 import { useTeamInvitations } from '@/hooks/teams/useTeamInvitations';
 import { Modal } from '@/modal';
 import { randomUUID } from '@/platform/randomUUID';
@@ -94,6 +92,7 @@ const InvitationRow = React.memo(function InvitationRow(props: Readonly<{
         detail={presentation.finishedAt === null ? undefined : date(presentation.finishedAt)}
         subtitleLeading={waiting && presentation.emailUndelivered ? <StatusDot size={6} color={theme.colors.state.warning.foreground} /> : undefined}
         accessoryLayout={sendAgain ? 'adaptive' : undefined}
+        rightElementOutsidePressable={sendAgain}
         rightElement={sendAgain ? <RoundButton
             testID={`team-invitations-send-again:${row.id}`}
             size="small"
@@ -113,9 +112,7 @@ const InvitationsList = React.memo(function InvitationsList(props: Readonly<{
     context: TeamSectionContext;
     header?: React.ReactNode;
 }>) {
-    const { theme } = useUnistyles();
     const readFailureAction = useTeamReadFailureAction();
-    const bottomPadding = usePageListBottomPadding();
     const { context } = props;
     const [busy, setBusy] = React.useState(false);
     const [notice, setNotice] = React.useState<string | null>(null);
@@ -384,7 +381,7 @@ const InvitationsList = React.memo(function InvitationsList(props: Readonly<{
     const firstSegmentKey = invitationSegments[0]?.key ?? null;
 
     return (
-        <VirtualizedList
+        <VirtualizedItemList
             testID="team-invitations-virtualized-list"
             data={canManage ? invitationSegments : []}
             keyExtractor={(segment) => segment.key}
@@ -512,12 +509,6 @@ const InvitationsList = React.memo(function InvitationsList(props: Readonly<{
                     ) : null}
                 </>
             ) : null}
-            style={{
-                flex: 1,
-                backgroundColor: theme.colors.surface.base,
-                ...(Platform.OS === 'web' ? { minHeight: 0 } : {}),
-            }}
-            contentContainerStyle={{ paddingBottom: bottomPadding }}
             initialNumToRender={6}
             maxToRenderPerBatch={4}
             windowSize={7}

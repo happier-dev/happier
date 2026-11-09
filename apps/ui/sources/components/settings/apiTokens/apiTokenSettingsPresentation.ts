@@ -114,7 +114,7 @@ export type ApiTokenAccessSummaryPart =
     | Readonly<{ kind: 'allActions' }>
     | Readonly<{ kind: 'actions'; names: readonly string[]; more: number }>
     | Readonly<{ kind: 'automations'; name: string | null; count: number }>
-    | Readonly<{ kind: 'targets'; sessions: number; machines: number }>
+    | Readonly<{ kind: 'targets'; sessions: number; machines: number; environments: number }>
     | Readonly<{ kind: 'approve' }>
     | Readonly<{ kind: 'models'; name: string | null; count: number }>
     | Readonly<{ kind: 'websites'; host: string | null; count: number }>
@@ -159,7 +159,14 @@ export function buildApiTokenAccessSummaryParts(params: Readonly<{
             count: grant.automationIds.length,
         });
     }
-    if (grant.targets !== null) parts.push({ kind: 'targets', sessions: grant.targets.sessions.length, machines: grant.targets.machines.length });
+    if (grant.targets !== null) {
+        parts.push({
+            kind: 'targets',
+            sessions: grant.targets.sessions.length,
+            machines: grant.targets.machines.length,
+            environments: grant.targets.environments?.length ?? 0,
+        });
+    }
     if (grant.approve) parts.push({ kind: 'approve' });
     if (grant.models !== null) {
         parts.push({
@@ -202,6 +209,7 @@ export function formatApiTokenAccessSummaryPart(part: ApiTokenAccessSummaryPart)
         case 'targets': return [
             part.sessions > 0 ? t('settingsApiTokens.summary.sessions', { count: part.sessions }) : null,
             part.machines > 0 ? t('settingsApiTokens.summary.computers', { count: part.machines }) : null,
+            part.environments > 0 ? t('settingsApiTokens.summary.environments', { count: part.environments }) : null,
         ].filter((value): value is string => value !== null).join(' · ');
         case 'approve': return t('settingsApiTokens.summary.approve');
         case 'models': return part.name ?? t('settingsApiTokens.summary.models', { count: part.count });

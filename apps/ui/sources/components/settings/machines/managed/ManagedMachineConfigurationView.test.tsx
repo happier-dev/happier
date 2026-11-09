@@ -29,6 +29,7 @@ import { findAllHostTestInstances } from '@/dev/testkit/render/renderScreen';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { PluginProjectedActionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -52,6 +53,10 @@ const route = vi.hoisted(() => ({
   params: {} as Record<string, string>,
 }));
 const nativeBoundary = vi.hoisted(() => ({ rpc: vi.fn() }));
+vi.mock('@legendapp/list/react-native', async () => {
+  const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+  return createLegendListModuleMock({ renderItems: true });
+});
 // Execution-host discovery is a platform boundary; its result may still be pending.
 const runtimeHost = vi.hoisted(() => ({ current: null as 'browser' | 'native' | Promise<'browser' | 'native'> | null }));
 vi.mock('@/utils/system/runtimeFetch', async importActual => {
@@ -70,6 +75,17 @@ vi.mock(
 );
 installApprovalCommonModuleMocks({
   text: async () => vi.importActual<typeof import('@/text')>('@/text'),
+  reactNative: async () => {
+    const [{ createCapturingFlatListMock }, { createReactNativeWebMock, createMeasuredViewMock }] = await Promise.all([
+      import('@/dev/testkit/mocks/virtualizedList'),
+      import('@/dev/testkit/mocks/reactNative'),
+    ]);
+    // Size choices use the native list boundary; its cells must mount to exercise selection.
+    return createReactNativeWebMock({
+      ...createCapturingFlatListMock({ renderItems: true }).module,
+      View: createMeasuredViewMock({ width: 960, height: 600 }, testID => testID.endsWith(':stage')),
+    });
+  },
   router: async () =>
     (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
       router: route,
@@ -208,9 +224,8 @@ describe('mounted managed configurator', () => {
   it.each([false, true])('requires saved recipe inputs before creation or composer use (composer: %s)', async composer => {
     const serverId = await harness.addHome({ name: 'Compute', serverUrl: `https://recipe-inputs-${composer}.example.test`,
       serverIdentityId: 'srv_recipe_inputs', accountId: 'owner', currentAccount: true });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: defaultController.machineId,
-      installationId: defaultController.installationId })] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: defaultController.machineId,
+      installationId: defaultController.installationId })]);
     const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
     const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
     const { MachineRecipeV1Schema } = await import('@happier-dev/protocol/machines/setup/machineRecipeV1');
@@ -250,12 +265,9 @@ describe('mounted managed configurator', () => {
   it('keeps a settled options failure through Retry and publishes only a changed answer', async () => {
     const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://options-retry.example.test',
       serverIdentityId: 'srv_options_retry', accountId: 'owner', currentAccount: true });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({ profileScope: { serverId, accountId: 'owner' } });
-    storage.getState().applyMachines([createMachineFixture({
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({
       id: defaultController.machineId, installationId: defaultController.installationId,
-    })], true, { sourceServerId: serverId, sourceAccountId: 'owner' });
-    storage.getState().markMachineListSettled(serverId);
+    })]);
     for (const [actionId, result] of [
       ['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
       ['machines.provisioners.check', { available: true }],
@@ -311,10 +323,8 @@ describe('mounted managed configurator', () => {
     const publicationScope = { sourceServerId: serverId, sourceAccountId: 'owner' };
     const scopeServerId = resolveServerProfileScopeIdForIdentifier(serverId);
     const previousMachines = storage.getState().machineListByServerId[scopeServerId] ?? [];
-    storage.setState({ profileScope: { serverId, accountId: 'owner' } });
-    storage.getState().applyMachines([controllerMachine, otherMachine], true, publicationScope);
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [controllerMachine, otherMachine]);
     expect(storage.getState().machineRecordsByServerId[scopeServerId]?.host?.installationId).toBe(defaultController.installationId);
-    storage.getState().markMachineListSettled(serverId);
     try {
     for (const [actionId, result] of [
       ['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
@@ -388,9 +398,8 @@ describe('mounted managed configurator', () => {
       }
       const serverId = await harness.addHome({ name: 'Compute billing', serverUrl: `https://${vendor}-billing.example.test`,
         serverIdentityId: `srv_billing_${vendor}`, accountId: 'owner', currentAccount: true });
-      const { storage } = await import('@/sync/domains/state/storage');
-      storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: defaultController.machineId,
-        installationId: defaultController.installationId })] } });
+      await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: defaultController.machineId,
+        installationId: defaultController.installationId })]);
       for (const [actionId, result] of [
         ['machines.provisioners.list', { controller: defaultController, provisioners: [native] }],
         ['machines.provisioners.check', { available: true }], ['machines.provisioners.options', options],
@@ -431,9 +440,8 @@ describe('mounted managed configurator', () => {
     runtimeHost.current = host.promise;
     const serverId = await harness.addHome({ name: 'Browser compute', serverUrl: 'https://browser-controller.example.test',
       serverIdentityId: 'srv_browser_controller', accountId: 'owner', currentAccount: true });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: defaultController.machineId,
-      installationId: defaultController.installationId })] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: defaultController.machineId,
+      installationId: defaultController.installationId })]);
     const selected = { ...provisioner, acquireExecutionTarget: 'account' as const,
       descriptor: { ...provisioner.descriptor, browserReachable: false } };
     for (const [actionId, result] of [
@@ -535,8 +543,7 @@ describe('mounted managed configurator', () => {
         const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
         return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true, result } } };
       } });
-      const { storage } = await import('@/sync/domains/state/storage');
-      storage.setState({ machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+      await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
       const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
       const onUse = vi.fn();
       const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId}
@@ -597,11 +604,8 @@ describe('mounted managed configurator', () => {
       return { body: { v: 1, actionId, requestId: request.requestId, execution: { ok: true,
         result: actionId === 'machines.provisioners.list' && input?.controller ? { ...result, controller: input.controller } : result } } };
     } });
-    // A computer that could manage is online: before the acquire role decided, the page chose it by default.
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: defaultController.machineId,
-      installationId: defaultController.installationId, activeAt: Date.now(), kind: 'persistent' })] },
-      machineListStatusByServerId: { [serverId]: 'idle' } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: defaultController.machineId,
+      installationId: defaultController.installationId, activeAt: Date.now(), kind: 'persistent' })]);
     const contributionKey = buildQualifiedPluginContributionKey(selected.contribution);
     const { useManagedProvisioners } = await import('./useManagedProvisioners');
     // The Machine catalog's presentation survives its subscriber. A cold editor can
@@ -697,8 +701,7 @@ describe('mounted managed configurator', () => {
     });
     const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://lima-partial.example',
       serverIdentityId: 'srv_lima_partial', accountId: 'owner', currentAccount: true });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'host', installationId: 'installation' })] } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'host', installationId: 'installation' })]);
     for (const [actionId, result] of [
       ['machines.provisioners.list', { controller: defaultController, provisioners: [{ contribution, occurrenceId: 'lima-partial', acquireExecutionTarget: 'daemon' as const, descriptor, credentialPurposes: [] }] }],
       ['machines.provisioners.check', { available: true }],
@@ -762,7 +765,9 @@ describe('mounted managed configurator', () => {
       const refusalCopy = typeof refusal?.status === 'string' ? refusal.status : refusal?.status.fallback;
       await waitForHomeGovernance(() => expect(createReason()).toBe(refusalCopy));
       // A refused field is never hidden in the closed disclosure: it opens on the refusal.
-      expect(fieldOf('vmType')?.description).toBe(refusalCopy);
+      expect(fieldOf('vmType')?.description, JSON.stringify({ refusal,
+        visibleFields: screen.tree.findAllByType(ActionInputFields).flatMap(node =>
+          node.props.fields.map((field: Readonly<{ path: string }>) => field.path)) })).toBe(refusalCopy);
       await act(async () => screen.changeTextByTestId('managed-config.field:image', 'https://example.test/ubuntu.img'));
       await waitForHomeGovernance(() => expect(createReason()).toBe(refusalCopy));
       expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
@@ -787,9 +792,7 @@ describe('mounted managed configurator', () => {
   it('shares the picker availability while showing native launch defaults and preserving edits', async () => {
     const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://native-defaults.example',
       serverIdentityId: 'srv_native_defaults', accountId: 'owner', currentAccount: true });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'host', installationId: 'installation', activeAt: Date.now() })] },
-      machineListStatusByServerId: { [serverId]: 'idle' } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'host', installationId: 'installation', activeAt: Date.now() })]);
     const projectionRead = nativeBoundary.rpc.getMockImplementation()!;
     nativeBoundary.rpc.mockImplementation(async request => {
       if (request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) return { ok: true,
@@ -903,11 +906,8 @@ describe('mounted managed configurator', () => {
   it('saves a name edit on an existing Account creation preset exactly once at its revision', async () => {
     const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://account-preset-rename.example.test',
       serverIdentityId: 'srv_add_server', accountId: 'owner', currentAccount: true });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({ profileScope: { serverId, accountId: 'owner' } });
-    storage.getState().applyMachines([createMachineFixture({ id: defaultController.machineId,
-      installationId: defaultController.installationId })], true, { sourceServerId: serverId, sourceAccountId: 'owner' });
-    storage.getState().markMachineListSettled(serverId);
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: defaultController.machineId,
+      installationId: defaultController.installationId })]);
     for (const [actionId, result] of [
       ['machines.provisioners.list', { controller: defaultController, provisioners: [provisioner] }],
       ['machines.provisioners.check', { available: true }],
@@ -1107,14 +1107,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
-          createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
+      createMachineFixture({ id: 'host', installationId: 'installation' }),
+    ]);
     route.params = {
       serverId,
       provisioner: buildQualifiedPluginContributionKey(
@@ -1187,7 +1182,11 @@ describe('mounted managed configurator', () => {
       await import('@/app/(app)/settings/machines/add/[provisioner]');
     const screen = await renderScreen(<WorkspaceRouteBody />);
     await waitForHomeGovernance(() =>
-      expect(screen.findByTestId('managed-config.sizes:small')).not.toBeNull(),
+      expect({
+        size: screen.findByTestId('managed-config.sizes:small') !== null,
+        failures: screen.tree.findAll(node => typeof node.props?.diagnosticCode === 'string').map(node => node.props.diagnosticCode),
+        text: screen.findByTestId('managed-config.sizes:small') ? '' : screen.getTextContent(),
+      }).toEqual({ size: true, failures: [], text: '' }),
     );
     if (choose)
       await act(async () =>
@@ -1444,9 +1443,15 @@ describe('mounted managed configurator', () => {
     const shown = show.mock.calls[0]![0] as unknown as Readonly<{ component: React.ComponentType<Record<string, unknown>>; props: Record<string, unknown> }>;
     const setChrome = vi.fn();
     const review = await renderScreen(<shown.component {...shown.props} setChrome={setChrome} onClose={() => {}} />);
+    expect(review.getTextContent()).toContain('Hardened server');
+    expect(review.getTextContent()).toContain('editor');
+    expect(onUse).not.toHaveBeenCalled();
     const chrome = setChrome.mock.calls.at(-1)![0] as { footer: React.ReactElement<{ primary: { onPress(): void } }> };
     await act(async () => chrome.footer.props.primary.onPress());
     expect(onUse).toHaveBeenCalledTimes(1);
+    expect(onUse).toHaveBeenCalledWith(expect.objectContaining({
+      selection: expect.objectContaining({ kind: 'preset', homeId: 'srv_add_server', id: 'hardened', revision: 3 }),
+    }));
     expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
     await review.unmount();
     await screen.unmount();
@@ -1463,14 +1468,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     const optionsSchema = {
       type: 'object',
       properties: {
@@ -1719,8 +1719,7 @@ describe('mounted managed configurator', () => {
     restoreViewport = () => viewport.mockRestore();
     const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://advanced.example', serverIdentityId: 'srv_advanced',
       accountId: 'owner', currentAccount: true });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'host', installationId: 'installation' })] } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'host', installationId: 'installation' })]);
     // Like Lima: a store and a driver the controller fills itself, and the size fields its one size row assigns.
     const optionsSchema = { type: 'object', properties: { store: { type: 'string' }, vmType: { type: 'string', enum: ['qemu', 'vz'] },
       cpus: { type: 'integer', minimum: 1 } }, additionalProperties: false };
@@ -1775,8 +1774,7 @@ describe('mounted managed configurator', () => {
     restoreViewport = () => viewport.mockRestore();
     const serverId = await harness.addHome({ name: 'Compute', serverUrl: `https://${name}.example`, serverIdentityId: `srv_${name}`,
       accountId: 'owner', currentAccount: true });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'host', installationId: 'installation' })] } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'host', installationId: 'installation' })]);
     const optionsSchema = { type: 'object', properties: { image: { type: 'string', minLength: 1 }, runtime: { type: 'string', enum: ['docker', 'podman'] },
       folder: { type: 'string' } }, required: ['image'], additionalProperties: false };
     const native = { ...provisioner, descriptor: { ...provisioner.descriptor, billing: { location: 'local', stoppedBilling: 'not-billed' },
@@ -1847,8 +1845,7 @@ describe('mounted managed configurator', () => {
     restoreViewport = () => viewport.mockRestore();
     const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://form-hints.example', serverIdentityId: 'srv_form_hints',
       accountId: 'owner', currentAccount: true });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'host', installationId: 'installation' })] } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'host', installationId: 'installation' })]);
     const optionsSchema = { type: 'object', properties: { cpus: { type: 'integer', minimum: 1 } }, additionalProperties: false };
     const native = { ...provisioner, descriptor: { ...provisioner.descriptor, billing: { location: 'local', stoppedBilling: 'not-billed' },
       launchSchema: { ...optionsSchema, required: ['cpus'] } } };
@@ -1967,17 +1964,12 @@ describe('mounted managed configurator', () => {
         accountId: 'owner',
         currentAccount: true,
       });
-      const { storage } = await import('@/sync/domains/state/storage');
-      storage.setState({
-        machineListByServerId: {
-          [serverId]: [
+      await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
             createMachineFixture({
               id: 'host',
               installationId: 'installation',
             }),
-          ],
-        },
-      });
+          ]);
       const price = {
         amount: '0.005',
         currency: 'EUR',
@@ -2268,14 +2260,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     for (const [actionId, result] of [
       [
         'machines.provisioners.list',
@@ -2518,17 +2505,12 @@ describe('mounted managed configurator', () => {
         accountId: 'owner',
         currentAccount: true,
       });
-      const { storage } = await import('@/sync/domains/state/storage');
-      storage.setState({
-        machineListByServerId: {
-          [serverId]: [
+      await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
             createMachineFixture({
               id: 'host',
               installationId: 'installation',
             }),
-          ],
-        },
-      });
+          ]);
       for (const [actionId, result] of [
         [
           'machines.provisioners.list',
@@ -2649,17 +2631,12 @@ describe('mounted managed configurator', () => {
         accountId: 'owner',
         currentAccount: true,
       });
-      const { storage } = await import('@/sync/domains/state/storage');
-      storage.setState({
-        machineListByServerId: {
-          [serverId]: [
+      await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
             createMachineFixture({
               id: 'host',
               installationId: 'installation',
             }),
-          ],
-        },
-      });
+          ]);
       const nativeCause = {
         httpStatusClass: '4xx',
         code: 'forbidden',
@@ -2795,7 +2772,7 @@ describe('mounted managed configurator', () => {
     const serverId = await harness.addHome({ name: 'Compute', serverUrl: `https://${provider.toLowerCase()}-ready.example`,
       serverIdentityId: `srv_${provider.toLowerCase()}_ready`, accountId: 'owner', currentAccount: true });
     const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'host', installationId: 'installation' })] } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: 'host', installationId: 'installation' })]);
     const service = 'connectedAccountDescriptors' in manifest.contributes
       ? manifest.contributes.connectedAccountDescriptors?.[0] : undefined;
     const account = service ? { service: { pluginId: manifest.id, localId: service.id }, accountId: 'connected-account' } : undefined;
@@ -3120,14 +3097,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     const local = {
       ...provisioner,
       descriptor: {
@@ -3193,10 +3165,8 @@ describe('mounted managed configurator', () => {
     'keeps the saved-preset Create review pending until its reads settle (%s, J58 READY68)', async outcome => {
       const serverId = await harness.addHome({ name: 'Compute', serverUrl: `https://pending-review-${outcome}.example`,
         serverIdentityId: 'srv_pending_review', accountId: 'owner', currentAccount: true });
-      const { storage } = await import('@/sync/domains/state/storage');
-      storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: defaultController.machineId,
-        installationId: defaultController.installationId })] },
-        machineListStatusByServerId: { [serverId]: 'idle' } });
+      await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [createMachineFixture({ id: defaultController.machineId,
+        installationId: defaultController.installationId })]);
       const presetRead = createDeferred<void>();
       const catalogRead = createDeferred<void>();
       const saved = { id: 'pending-review', homeId: 'srv_pending_review', revision: 1, name: 'Saved machine',
@@ -3254,7 +3224,7 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
+    const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
     const { ManagedMachineConfigurationView } =
       await import('./ManagedMachineConfigurationView');
     const screen = await renderScreen(
@@ -3271,14 +3241,13 @@ describe('mounted managed configurator', () => {
       screen.tree
         .findAll((node) => node.props.testID === 'managed-config.catalog')
         .map((node) => node.props.kind);
-    expect(catalogState()).toContain('loading');
+    expect(catalogState(), JSON.stringify(screen.tree
+      .findAllByType(SurfaceStateCard)
+      .map(node => ({ kind: node.props.kind, title: node.props.title, diagnosticCode: node.props.diagnosticCode })))).toContain('loading');
     expect(catalogState()).not.toContain('empty');
     // Once the Home's list has really synced without the named controller, the empty verdict is true.
     await act(async () => {
-      storage.setState({
-        machineListByServerId: { [serverId]: [] },
-        machineListStatusByServerId: { [serverId]: 'idle' },
-      });
+      await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
     });
     await flushHookEffects();
     expect(catalogState()).toContain('empty');
@@ -3293,14 +3262,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     harness.answer(serverId, '/v1/actions/machines.provisioners.list', {
       status: 503,
       body: { code: 'service_unavailable' },
@@ -3337,14 +3301,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     const read = nativeBoundary.rpc.getMockImplementation();
     nativeBoundary.rpc.mockImplementation(
       async (request: { method: string }) =>
@@ -3422,14 +3381,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     const read = nativeBoundary.rpc.getMockImplementation();
     let schemaReads = 0;
     const schemaReadSignals: AbortSignal[] = [];
@@ -3571,14 +3525,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     const read = nativeBoundary.rpc.getMockImplementation();
     nativeBoundary.rpc.mockImplementation(
       async (request: { method: string }) =>
@@ -3648,14 +3597,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     const read = nativeBoundary.rpc.getMockImplementation();
     nativeBoundary.rpc.mockImplementation(
       async (request: { method: string }) => {
@@ -3726,14 +3670,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     const action = PluginProjectedActionV2Schema.parse({
       id: 'options',
       pluginId: provisioner.contribution.pluginId,
@@ -3847,14 +3786,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     for (const [actionId, result] of [
       [
         'machines.provisioners.list',
@@ -3921,14 +3855,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     const resumable = {
       ...provisioner,
       descriptor: {
@@ -4018,14 +3947,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     const local = {
       ...provisioner,
       descriptor: {
@@ -4093,14 +4017,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     const local = {
       ...provisioner,
       descriptor: {
@@ -4244,14 +4163,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     const nativeFacts = {
       size: { id: 'small', title: 'Small' },
       image: { id: 'linux', title: 'Linux' },
@@ -4365,9 +4279,8 @@ describe('mounted managed configurator', () => {
     expect(screen.getTextContent()).toContain(
       t('managedMachines.options.unavailableWithChoices'),
     );
-    expect(screen.getTextContent()).not.toContain(
-      t('managedMachines.options.unavailable'),
-    );
+    expect(findAllHostTestInstances(screen.tree, node => node.type === 'Text'
+      && node.props.children === t('managedMachines.options.unavailable'))).toEqual([]);
     await act(async () => screen.pressByTestId('managed-config.images:other'));
     expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(
       true,
@@ -4393,14 +4306,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     const facts = {
       size: { id: 'small', title: 'Small' },
       image: { id: 'linux', title: 'Linux' },
@@ -4517,18 +4425,13 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
     const controller = { machineId: 'host', installationId: 'installation' };
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({
             id: controller.machineId,
             installationId: controller.installationId,
           }),
-        ],
-      },
-    });
+        ]);
     const descriptor = modalManifest.contributes.machineProvisioners?.[0];
     if (!descriptor)
       throw new Error('The actual Modal manifest must declare its provisioner');
@@ -4827,18 +4730,13 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
     const controller = { machineId: 'host', installationId: 'installation' };
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({
             id: controller.machineId,
             installationId: controller.installationId,
           }),
-        ],
-      },
-    });
+        ]);
     const descriptor = MachineProvisionerContributionV1Schema.parse(
       CUA_PLUGIN.manifest.contributes.machineProvisioners?.find(
         (entry) => entry.id === 'local-sandbox',
@@ -5116,14 +5014,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     const action = PluginProjectedActionV2Schema.parse({
       id: 'options',
       pluginId: provisioner.contribution.pluginId,
@@ -5232,7 +5125,7 @@ describe('mounted managed configurator', () => {
       />,
     );
     await waitForHomeGovernance(() =>
-      expect(screen.findByTestId('managed-config.sizes:native'), screen.getTextContent()).not.toBeNull(),
+      expect(screen.findByTestId('managed-config.sizes:native')).not.toBeNull(),
     );
     await act(async () => screen.pressByTestId('managed-config.sizes:native'));
     const summary = screen.findByTestId('managed-config.summary')?.props
@@ -5262,17 +5155,12 @@ describe('mounted managed configurator', () => {
         accountId: 'owner',
         currentAccount: true,
       });
-      const { storage } = await import('@/sync/domains/state/storage');
-      storage.setState({
-        machineListByServerId: {
-          [serverId]: [
+      await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
             createMachineFixture({
               id: 'host',
               installationId: 'installation',
             }),
-          ],
-        },
-      });
+          ]);
       const optionsSchema = {
         type: 'object',
         properties: {
@@ -5550,14 +5438,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     const finite = {
       ...provisioner,
       descriptor: {
@@ -5691,9 +5574,7 @@ describe('mounted managed configurator', () => {
       metadata: { ...current.metadata, host: 'Replacement controller' },
     });
     await act(async () =>
-      storage.setState({
-        machineListByServerId: { [serverId]: [replacement] },
-      }),
+      publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [replacement]),
     );
     const { t } = await import('@/text');
     const receipts = screen.tree.findAll((node) =>
@@ -5718,14 +5599,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     const nativeFacts = {
       size: {
         id: 'small',
@@ -5883,14 +5759,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     const local = {
       ...provisioner,
       descriptor: {
@@ -5975,14 +5846,9 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({ id: 'host', installationId: 'installation' }),
-        ],
-      },
-    });
+        ]);
     for (const [actionId, result] of [
       [
         'machines.provisioners.list',
@@ -6120,23 +5986,17 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
     const metadata = createMachineFixture().metadata;
     if (!metadata)
       throw new Error('The canonical controller fixture has no metadata');
-    storage.setState({
-      machineListByServerId: {
-        [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
           createMachineFixture({
             id: 'host',
             installationId: 'installation',
             activeAt: Date.now(),
             metadata: { ...metadata, host: 'Build host', platform: 'linux' },
           }),
-        ],
-      },
-      machineListStatusByServerId: { [serverId]: 'idle' },
-    });
+        ]);
     for (const [actionId, result] of [
       [
         'machines.provisioners.list',

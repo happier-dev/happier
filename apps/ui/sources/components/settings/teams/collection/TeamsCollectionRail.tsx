@@ -58,6 +58,7 @@ const TeamDraftRow = React.memo(function TeamDraftRow() {
     const { theme } = useUnistyles();
     return (
         <CollectionDraftRow
+            rowRole="item"
             testID="teams-collection-draft"
             titles={teamCreateDraftName}
             placeholder={t('teams.create.title')}

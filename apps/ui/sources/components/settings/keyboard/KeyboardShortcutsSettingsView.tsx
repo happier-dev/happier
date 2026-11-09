@@ -1,16 +1,16 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Platform } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { KeyHint } from '@/components/ui/keyboard/KeyHint';
-import { splitKeybindingLabel } from '@/keyboard/shortcutLabels';
+import { KeyCombinationHint } from '@/components/ui/keyboard/KeyHint';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { usePageRowMetrics } from '@/components/ui/lists/useResolvedItemDensity';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { resolveKeyboardPlatform } from '@/keyboard/runtime';
 import type { KeyboardCommandId } from '@/keyboard/types';
@@ -22,7 +22,8 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 
 import { SETTING_ANCHOR_QUERY_PARAM } from '@/components/settings/catalog/settingDeclarations';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
-import { SettingAnchor, SettingRow } from '@/components/settings/shell/SettingRow';
+import { SettingAnchor, SettingRow, useRequestedSettingAnchor } from '@/components/settings/shell/SettingRow';
+import { NearViewportWindow } from '@/components/widgets/NearViewportWindow';
 
 import {
     buildKeyboardShortcutSetDelta,
@@ -32,14 +33,6 @@ import {
 } from './keyboardShortcutsSettingsModel';
 import { KEYBOARD_COMMAND_GROUP_TITLE_KEYS, KEYBOARD_SETTINGS, resolveKeyboardCommandSetting } from './keyboardSettings';
 import { showKeyboardShortcutCapturePrompt } from './showKeyboardShortcutCapturePrompt';
-
-const Keycaps = React.memo(function Keycaps(props: Readonly<{ label: string; testID?: string }>) {
-    return (
-        <View style={styles.keycaps} testID={props.testID} accessibilityLabel={props.label}>
-            {splitKeybindingLabel(props.label).map((key, index) => <KeyHint key={`${key}-${index}`} label={key} />)}
-        </View>
-    );
-});
 
 export const KeyboardShortcutsSettingsView = React.memo(function KeyboardShortcutsSettingsView() {
     const { theme } = useUnistyles();
@@ -60,6 +53,17 @@ export const KeyboardShortcutsSettingsView = React.memo(function KeyboardShortcu
         surface,
     }), [settings, platform, surface]);
     const [expandedCommandId, setExpandedCommandId] = React.useState<KeyboardCommandId | null>(null);
+    const requestedAnchor = useRequestedSettingAnchor();
+    // Each command group's place before it is measured: its rows at the compact list row's minimum height.
+    const rowMinHeight = usePageRowMetrics('list').minHeightPx;
+    const groupLowerBounds = React.useMemo(() => {
+        let top = 0;
+        return model.commandGroups.map((group) => {
+            const bound = { top, height: group.rows.length * rowMinHeight };
+            top += bound.height;
+            return bound;
+        });
+    }, [model.commandGroups, rowMinHeight]);
 
     const commandTitleById = React.useMemo(() => new Map(
         model.commandRows.map((row) => [row.commandId, t(row.titleKey)] as const),
@@ -174,21 +178,31 @@ export const KeyboardShortcutsSettingsView = React.memo(function KeyboardShortcu
                 </ItemGroup>
             ) : null}
 
-            {model.commandGroups.map((group) => (
-                <ItemGroup key={group.id} title={t(KEYBOARD_COMMAND_GROUP_TITLE_KEYS[group.id])} density="compact">
-                    {group.rows.map((row) => (
-                        <KeyboardShortcutCommandRow
-                            key={row.commandId}
-                            row={row}
-                            expanded={expandedCommandId === row.commandId}
-                            reducedMotion={reducedMotion}
-                            onExpandedChange={(next) => setExpandedCommandId(next ? row.commandId : null)}
-                            onEnabledChange={setCommandEnabled}
-                            onReset={resetCommand}
-                            onChangeShortcut={setCommandShortcut}
-                        />
-                    ))}
-                </ItemGroup>
+            {model.commandGroups.map((group, index) => (
+                <NearViewportWindow
+                    key={group.id}
+                    id={group.id}
+                    testID={`settings-keyboard-group-window-${group.id}`}
+                    estimatedTop={groupLowerBounds[index]!.top}
+                    estimatedHeight={groupLowerBounds[index]!.height}
+                    pinned={group.rows.some((row) => row.commandId === expandedCommandId
+                        || (requestedAnchor !== null && resolveKeyboardCommandSetting(row.commandId)?.anchor === requestedAnchor))}
+                >
+                    <ItemGroup title={t(KEYBOARD_COMMAND_GROUP_TITLE_KEYS[group.id])} density="compact">
+                        {group.rows.map((row) => (
+                            <KeyboardShortcutCommandRow
+                                key={row.commandId}
+                                row={row}
+                                expanded={expandedCommandId === row.commandId}
+                                reducedMotion={reducedMotion}
+                                onExpandedChange={(next) => setExpandedCommandId(next ? row.commandId : null)}
+                                onEnabledChange={setCommandEnabled}
+                                onReset={resetCommand}
+                                onChangeShortcut={setCommandShortcut}
+                            />
+                        ))}
+                    </ItemGroup>
+                </NearViewportWindow>
             ))}
         </ItemList>
     );
@@ -213,7 +227,7 @@ const KeyboardShortcutCommandRow = React.memo(function KeyboardShortcutCommandRo
     const setting = resolveKeyboardCommandSetting(row.commandId);
     // Closed, the row says what the command does now: its keys, Off, or that it has none.
     const keys = !row.disabled && row.defaultLabel
-        ? <Keycaps label={row.defaultLabel} testID={`settings-keyboard-shortcut-keys-${row.commandId}`} />
+        ? <KeyCombinationHint label={row.defaultLabel} testID={`settings-keyboard-shortcut-keys-${row.commandId}`} />
         : undefined;
     const summaryText = row.disabled
         ? t('settingsKeyboard.commandOff')
@@ -279,11 +293,3 @@ const KeyboardShortcutCommandRow = React.memo(function KeyboardShortcutCommandRo
 
     return setting ? <SettingAnchor setting={setting} showDivider={props.showDivider}>{disclosure}</SettingAnchor> : disclosure;
 });
-
-const styles = StyleSheet.create(() => ({
-    keycaps: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-    },
-}));

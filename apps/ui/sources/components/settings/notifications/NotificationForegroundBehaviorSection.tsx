@@ -5,12 +5,12 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { NOTIFICATIONS_SETTINGS } from '@/components/settings/notifications/notificationsSettings';
 import { areLocalNotificationsOff } from '@/components/settings/notifications/localNotificationPreferences';
-import type { DeclaredSettingsWrite } from '@/components/settings/shell/useDeclaredSettingsWrite';
+import type { DeclaredSettingsWrite } from '@/components/settings/shell/useSettingActionFeedback';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { t } from '@/text';
 
 type NotificationForegroundBehaviorSectionProps = Readonly<{
-    localSettings: LocalSettings;
+    localSettings: Pick<LocalSettings, 'attentionDeviceOverridesV1'>;
     setSetting: DeclaredSettingsWrite;
 }>;
 

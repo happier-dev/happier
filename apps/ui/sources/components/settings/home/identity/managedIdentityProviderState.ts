@@ -1,4 +1,4 @@
-import type { ManagedIdentityProviderV1 } from '@happier-dev/protocol';
+import type { ManagedIdentityProviderV1 } from '@happier-dev/protocol/identity/providers';
 
 import type { ManagedIdentityProviderSettledResult } from './managedIdentityProviderClient';
 

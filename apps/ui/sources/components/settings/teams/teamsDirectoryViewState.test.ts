@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import type { TeamSummaryV1 } from '@happier-dev/protocol/teams';
 
 import type { TeamsDirectorySnapshot } from '@/sync/store/teams/teamsSnapshots';

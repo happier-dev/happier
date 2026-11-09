@@ -9,7 +9,7 @@ import { skillPlanOnMachine } from './skillsCollectionModel';
 /** Machines, their names and which Agents can take skills there: shared by the saved page, the draft and the Add modal. */
 export function useSkillPlaces(serverId?: string | null) {
   const scope = useAccountSettingsScope();
-  const { machines } = useReachMachines();
+  const { machines, placeMachines: machineNames, agentIds } = useReachMachines();
   const placeMachines = React.useMemo(
     () =>
       machines.map((machine) => ({
@@ -19,13 +19,9 @@ export function useSkillPlaces(serverId?: string | null) {
       })),
     [machines],
   );
-  const agentIds = React.useMemo(
-    () => [...new Set(machines.flatMap((machine) => machine.agentIds))],
-    [machines],
-  );
   const { names, projects, workspaceRefs } = useWhereItsOnNames({
     agentIds,
-    machines: placeMachines,
+    machines: machineNames,
     serverId: serverId ?? scope?.serverId ?? null,
   });
   // IR-80: an Agent takes skills when some machine's plan for it is not `none`.

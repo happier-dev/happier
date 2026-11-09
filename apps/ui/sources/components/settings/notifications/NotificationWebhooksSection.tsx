@@ -25,6 +25,7 @@ import { WebhookNotificationChannelRecordV1Schema,
 import { NotificationConfigurationActionInputSchemas,
     type NotificationConfigurationActionId } from '@happier-dev/protocol/actions/notificationConfigurationActionFamily';
 import type { z } from 'zod/mini';
+import { WebhookTestSend, type ExecuteWebhookTest } from './WebhookTestSend';
 
 type MutationId = Exclude<Extract<NotificationConfigurationActionId, `notifications.webhooks.${string}` | 'notifications.expoPush.update'>, 'notifications.webhooks.list' | 'notifications.webhooks.test'>;
 export type NotificationConfigurationMutation = {
@@ -35,6 +36,7 @@ export type ExecuteNotificationConfigurationMutation = (mutation: NotificationCo
 type NotificationWebhooksSectionProps = Readonly<{
     webhookChannels: ReadonlyArray<WebhookNotificationChannelRecordV1>;
     executeMutation: ExecuteNotificationConfigurationMutation;
+    executeTest: ExecuteWebhookTest;
     canMutate: boolean;
 }>;
 
@@ -47,6 +49,7 @@ export function NotificationWebhooksSection(props: NotificationWebhooksSectionPr
 function AccountNotificationWebhooksSection({
     webhookChannels,
     executeMutation,
+    executeTest,
     canMutate,
 }: NotificationWebhooksSectionProps): React.ReactElement {
     const { theme } = useUnistyles();
@@ -278,6 +281,8 @@ function AccountNotificationWebhooksSection({
                                     </View>
                                 )}
                             />}
+                            <WebhookTestSend key={`${channel.id}:${channel.url}:${channel.signingSecretRef ?? ''}`}
+                                channelId={channel.id} disabled={!canMutate} executeTest={executeTest} />
                             {renderTopicSwitch(channel, 'readyTitle', 'readySubtitle',
                                 channel.topics.ready !== false,
                                 !channelEnabled,

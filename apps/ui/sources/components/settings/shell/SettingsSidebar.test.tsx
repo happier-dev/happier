@@ -16,6 +16,8 @@ import {
     setActiveUnsavedChangesGuard,
 } from '@/utils/navigation/runGuardedNavigation';
 
+import { readHitArea } from '@/dev/testkit/harness/hitFrameReach';
+
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const pathnameState = vi.hoisted(() => ({ value: '/settings' }));
@@ -57,6 +59,12 @@ vi.mock('@/text', async () => {
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
     return createUnistylesMock();
+});
+
+// Only the native recycler is substituted (jsdom has no viewport); result rows, windowing data and presentation stay real.
+vi.mock('@legendapp/list/react-native', async (importOriginal) => {
+    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
+    return createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>() }).module;
 });
 
 vi.mock('@expo/vector-icons', () => ({
@@ -102,6 +110,32 @@ describe('SettingsSidebar', () => {
         routerPushSpy.mockReset();
         routerNavigateSpy.mockReset();
         clearActiveUnsavedChangesGuard();
+    });
+
+    it('does not render for a params-only route change, since search hrefs are resolved at query time', async () => {
+        const { SettingsSidebar } = await import('./SettingsSidebar');
+        const { WorkspaceNavigationProvider } = await import('@/components/appShell/workspace/WorkspaceNavigationContext');
+        const { resolveCompactAppDestinations } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
+        const { createWorkspaceState, reduceWorkspaceState } = await import('@/components/appShell/workspace/workspaceState');
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: true, workflows: true, friends: false } });
+        const navigation = { push: () => {}, replace: () => {}, back: () => {} };
+        const usage = (layoutId: string) => ({ kind: 'settings' as const, params: { pageId: 'usage', layoutId } });
+        const initial = createWorkspaceState({ id: 'usage', target: usage('costs'), pinned: false, preview: false });
+        const valueFor = (state: typeof initial) => ({
+            active: true, state, catalog, canGoBack: false, canGoForward: false,
+            openHref: () => true, activateTab: () => {}, closeTab: () => {}, closeTabs: () => {},
+            dispatch: () => {}, navigationForTab: () => navigation, registerBackStep: () => () => {}, back: () => {}, forward: () => {},
+        });
+        let sidebarCommits = 0;
+        // One element identity: only a context the sidebar reads can make this subtree commit again.
+        const sidebar = <React.Profiler id="sidebar" onRender={() => { sidebarCommits += 1; }}><SettingsSidebar /></React.Profiler>;
+        const tree = (state: typeof initial) => <WorkspaceNavigationProvider value={valueFor(state)}>{sidebar}</WorkspaceNavigationProvider>;
+        const screen = await renderScreen(tree(initial));
+        const before = sidebarCommits;
+        expect(before).toBeGreaterThan(0);
+        const plans = reduceWorkspaceState(initial, { type: 'setTarget', tabId: 'usage', target: usage('plans') });
+        await act(async () => { screen.update(tree(plans)); });
+        expect(sidebarCommits).toBe(before);
     });
 
     it('opens a sidebar destination within settings', async () => {
@@ -375,21 +409,6 @@ describe('SettingsSidebar', () => {
         expect(routerNavigateSpy).not.toHaveBeenCalled();
         expect(screen.findByTestId('settings-sidebar.item.accountSecurity')).toBeTruthy();
     });
-    it("keeps a collection's own add and setup pages out of the rail while search still finds them", async () => {
-        const { SettingsSidebar } = await import('./SettingsSidebar');
-        const screen = await renderScreen(React.createElement(SettingsSidebar));
-
-        // Machines adds from its own "+" menu: the rail row has no disclosure and lists no action rows.
-        expect(screen.findByTestId('settings-sidebar.item.machines')).toBeTruthy();
-        expect(screen.findByTestId('settings-sidebar.toggle.machines')).toBeFalsy();
-        expect(screen.findByTestId('settings-sidebar.item.machinesAdd')).toBeFalsy();
-
-        await act(async () => {
-            screen.changeTextByTestId('settings-sidebar.searchInput', 'ssh');
-        });
-        expect(screen.findByTestId('settings-sidebar.searchResult.machinesAdd')).toBeTruthy();
-    });
-
     it('keeps a subtree open only while the open page is inside it, or the person opened it for this page', async () => {
         const { SettingsSidebar } = await import('./SettingsSidebar');
         const { WorkspaceNavigationProvider } = await import('@/components/appShell/workspace/WorkspaceNavigationContext');
@@ -420,6 +439,35 @@ describe('SettingsSidebar', () => {
         await act(async () => { screen.update(tree(go('appearance'))); });
         expect(screen.findByTestId('settings-sidebar.item.accountSecurity')).toBeNull();
     });
+    it('reaches the pointer floor with the caret\'s hit area while it stays drawn at its own size', async () => {
+        const { SettingsSidebar } = await import('./SettingsSidebar');
+        const screen = await renderScreen(React.createElement(SettingsSidebar));
+        const accountRow: any = screen.findByTestId('settings-sidebar.item.account');
+        await act(async () => {
+            accountRow.props.onHoverIn?.();
+        });
+
+        const toggle: any = screen.findByTestId('settings-sidebar.toggle.account');
+        await act(async () => toggle.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 14, height: 14 } } }));
+        const area = readHitArea(screen.findByTestId('settings-sidebar.toggle.account') as any, { width: 14, height: 14 });
+        expect(area.width).toBe(24);
+        expect(area.height).toBe(24);
+    });
+    it("keeps a collection's own add and setup pages out of the rail while search still finds them", async () => {
+        const { SettingsSidebar } = await import('./SettingsSidebar');
+        const screen = await renderScreen(React.createElement(SettingsSidebar));
+
+        // Machines adds from its own "+" menu: the rail row has no disclosure and lists no action rows.
+        expect(screen.findByTestId('settings-sidebar.item.machines')).toBeTruthy();
+        expect(screen.findByTestId('settings-sidebar.toggle.machines')).toBeFalsy();
+        expect(screen.findByTestId('settings-sidebar.item.machinesAdd')).toBeFalsy();
+
+        await act(async () => {
+            screen.changeTextByTestId('settings-sidebar.searchInput', 'ssh');
+        });
+        expect(screen.findByTestId('settings-sidebar.searchResult.machinesAdd')).toBeTruthy();
+    });
+
     it('keeps the page selected while one of its search-only pages is open', async () => {
         pathnameState.value = '/settings/machines/add';
 

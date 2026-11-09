@@ -2,14 +2,30 @@ import 'fake-indexeddb/auto';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, onTestFailed, vi } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFailed,
+  vi,
+} from 'vitest';
 
 import type { SavedSecret } from '@/sync/domains/settings/savedSecretTypes';
+import type { CustomModalDismissGuard } from '@/modal/types';
+import type { McpServerDraft } from './add/useMcpServerDraft';
 import type { UnsavedChangesDecision } from '@/utils/ui/promptUnsavedChangesAlert';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { setRuntimeFetch, resetRuntimeFetch } from '@/utils/system/runtimeFetch';
+import {
+  createMachineFixture,
+  createPlainMachineRowFixture,
+} from '@/dev/testkit/fixtures/machineFixtures';
+import {
+  setRuntimeFetch,
+  resetRuntimeFetch,
+} from '@/utils/system/runtimeFetch';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { McpServerCatalogRowMutationV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { McpServersSettingsV1Schema } from '@happier-dev/protocol/mcp/servers/settingsV1';
@@ -17,25 +33,48 @@ import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profil
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { pressTestInstance } from '@/dev/testkit/render/renderScreen';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { SharedSavedSecretCreateInputV1Schema, SharedSavedSecretPromoteInputV1Schema, SHARED_SAVED_SECRET_ACTION_PATHS_V1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
+import {
+  installDisconnectedServerSocketBoundary,
+  restoreServerAccountForTest,
+} from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import {
+  SharedSavedSecretCreateInputV1Schema,
+  SharedSavedSecretPromoteInputV1Schema,
+  SHARED_SAVED_SECRET_ACTION_PATHS_V1,
+} from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
-import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentsListActionOutputV1Schema,
-    PluginAvailabilityMaterializationsReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
-import { StoredApprovalRequestSchema } from '@happier-dev/protocol';
-import { createArtifactStoreBoundary, type ArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
+import {
+  PluginAvailabilityActionHttpPathsV1,
+  PluginAvailabilityIntentsListActionOutputV1Schema,
+  PluginAvailabilityMaterializationsReadActionOutputV1Schema,
+} from '@happier-dev/protocol/plugins/availability';
+import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import {
+  createArtifactStoreBoundary,
+  type ArtifactStoreBoundary,
+} from '@/dev/testkit/harness/artifactStoreBoundary';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { mcpServerRoute } from './collection/mcpServerCollectionModel';
 import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { SESSION_ORGANIZATION_SNAPSHOT_VERSION } from '@happier-dev/protocol/sessions/organization/constants';
-import { CollectionDraftTitleScope, useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
+import {
+  CollectionDraftTitleScope,
+  useCollectionDraftTitle,
+} from '@/components/ui/lists/collection/CollectionDraftTitle';
+import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
+import type { McpAddSelection } from './add/openMcpAddModal';
+import { HAPPIER_PICKS_SOURCE_ID } from '@happier-dev/protocol/registries';
+import {
+  DEFAULT_CURATED_MARKETPLACE_SOURCE_URL,
+  MarketplaceIndexSourceSnapshotV1Schema,
+} from '@happier-dev/protocol/marketplace';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -50,8 +89,8 @@ const retainedApprovalNavigationSpy = vi.fn();
 const navigationDispatchSpy = vi.fn();
 const navigationSetOptionsSpy = vi.fn();
 const navigationPreventRemove = vi.hoisted(() => ({
-    enabled: false,
-    callback: null as null | ((event: { data: { action: unknown } }) => void),
+  enabled: false,
+  callback: null as null | ((event: { data: { action: unknown } }) => void),
 }));
 const uuidBoundary = vi.hoisted(() => ({ sequence: 0 }));
 let unsavedChangesDecision: UnsavedChangesDecision = 'discard';
@@ -61,7 +100,9 @@ type McpServersSettingsRaw = unknown;
 
 let liveMcpSettings: McpServersSettingsRaw;
 let liveSecrets: SavedSecret[] = [];
-let liveMachines = [{ id: 'machine-1', metadata: { displayName: 'Machine 1' } }];
+let liveMachines = [
+  { id: 'machine-1', metadata: { displayName: 'Machine 1' } },
+];
 const liveSettingListeners = new Set<() => void>();
 let catalogRevision = 3;
 let rowMutationOutcome: 'updated' | 'conflict' = 'updated';
@@ -70,153 +111,180 @@ let releaseRowMutation: (() => void) | null = null;
 let postWriteReadGate: Promise<void> | null = null;
 let releasePostWriteRead: (() => void) | null = null;
 let accountScope: { serverId: string; accountId: string } | null = null;
-let rowMutationRequests: ReturnType<typeof McpServerCatalogRowMutationV1Schema.parse>[] = [];
-let compoundMutationRequests: ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse>[] = [];
+let rowMutationRequests: ReturnType<
+  typeof McpServerCatalogRowMutationV1Schema.parse
+>[] = [];
+let compoundMutationRequests: ReturnType<
+  typeof SharedSavedSecretPromoteInputV1Schema.parse
+>[] = [];
 let loseCompoundAcknowledgement = false;
-let standaloneResourceMutationRequests: ReturnType<typeof SharedSavedSecretCreateInputV1Schema.parse>[] = [];
-let activeConnection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+let standaloneResourceMutationRequests: ReturnType<
+  typeof SharedSavedSecretCreateInputV1Schema.parse
+>[] = [];
+let activeConnection: Awaited<
+  ReturnType<typeof restoreServerAccountForTest>
+> | null = null;
 let approvalArtifacts: ArtifactStoreBoundary | null = null;
 let disposeActionExecutorModuleLoader: (() => void) | undefined;
+const registryRequests: string[] = [];
 
-vi.mock('socket.io-client', async importOriginal =>
-    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+vi.mock('socket.io-client', async (importOriginal) =>
+  (
+    await import('@/dev/testkit/harness/serverAccountConnectionHarness')
+  ).createSocketIoClientBoundary(importOriginal),
+);
 
 function notifyLiveSettingListeners() {
-    for (const listener of liveSettingListeners) {
-        listener();
-    }
+  for (const listener of liveSettingListeners) {
+    listener();
+  }
 }
 
 function resetLiveSettings() {
-    uuidBoundary.sequence = 0;
-    liveMcpSettings = {
-        v: 1,
-        strictMode: false,
-        servers: [{
-            id: 'server-1',
-            name: 'hard-drives',
-            transport: 'stdio',
-            stdio: { command: 'node', args: ['server.js'] },
-            env: {},
-            createdAt: 1,
-            updatedAt: 1,
-        }],
-        bindings: [{
-            id: 'binding-1',
-            serverId: 'server-1',
-            enabled: true,
-            target: { t: 'machine', machineId: 'machine-1' },
-            createdAt: 1,
-            updatedAt: 1,
-        }],
-    };
-    liveSecrets = [];
-    liveMachines = [{ id: 'machine-1', metadata: { displayName: 'Machine 1' } }];
-    liveSettingListeners.clear();
-    setMcpSettingsSpy.mockReset();
-    settingsHttpWriteSpy.mockReset();
-    catalogRevision = 3;
-    rowMutationOutcome = 'updated';
-    rowMutationGate = null;
-    releaseRowMutation = null;
-    postWriteReadGate = null;
-    releasePostWriteRead = null;
-    accountScope = null;
-    rowMutationRequests = [];
-    compoundMutationRequests = [];
-    loseCompoundAcknowledgement = false;
-    standaloneResourceMutationRequests = [];
-    approvalArtifacts = null;
-    modalAlertSpy.mockReset();
-    modalConfirmSpy.mockReset();
-    navigationDispatchSpy.mockReset();
-    navigationSetOptionsSpy.mockReset();
-    navigationPreventRemove.enabled = false;
-    navigationPreventRemove.callback = null;
-    unsavedChangesDecision = 'discard';
+  registryRequests.length = 0;
+  uuidBoundary.sequence = 0;
+  liveMcpSettings = {
+    v: 1,
+    strictMode: false,
+    servers: [
+      {
+        id: 'server-1',
+        name: 'hard-drives',
+        transport: 'stdio',
+        stdio: { command: 'node', args: ['server.js'] },
+        env: {},
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ],
+    bindings: [
+      {
+        id: 'binding-1',
+        serverId: 'server-1',
+        enabled: true,
+        target: { t: 'machine', machineId: 'machine-1' },
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ],
+  };
+  liveSecrets = [];
+  liveMachines = [{ id: 'machine-1', metadata: { displayName: 'Machine 1' } }];
+  liveSettingListeners.clear();
+  setMcpSettingsSpy.mockReset();
+  settingsHttpWriteSpy.mockReset();
+  catalogRevision = 3;
+  rowMutationOutcome = 'updated';
+  rowMutationGate = null;
+  releaseRowMutation = null;
+  postWriteReadGate = null;
+  releasePostWriteRead = null;
+  accountScope = null;
+  rowMutationRequests = [];
+  compoundMutationRequests = [];
+  loseCompoundAcknowledgement = false;
+  standaloneResourceMutationRequests = [];
+  approvalArtifacts = null;
+  modalAlertSpy.mockReset();
+  modalConfirmSpy.mockReset();
+  navigationDispatchSpy.mockReset();
+  navigationSetOptionsSpy.mockReset();
+  navigationPreventRemove.enabled = false;
+  navigationPreventRemove.callback = null;
+  unsavedChangesDecision = 'discard';
 }
 
 function updateLiveSecrets(next: SavedSecret[]) {
-    liveSecrets = next;
-    void import('@/sync/domains/state/storageStore').then(({ storage }) => {
-        storage.setState({ settings: settingsParse({ ...storage.getState().settings, secrets: next }) });
+  liveSecrets = next;
+  void import('@/sync/domains/state/storageStore').then(({ storage }) => {
+    storage.setState({
+      settings: settingsParse({
+        ...storage.getState().settings,
+        secrets: next,
+      }),
     });
-    notifyLiveSettingListeners();
+  });
+  notifyLiveSettingListeners();
 }
 
 // Configure presentation boundaries before loading domain graphs that also
 // reach navigation/modal. Retire the harness's store stub before importing Sync.
 const {
-    installMcpServersCommonModuleMocks,
-    mcpServersModuleState,
-    resetMcpServersCommonModuleMockState,
+  installMcpServersCommonModuleMocks,
+  mcpServersModuleState,
+  resetMcpServersCommonModuleMockState,
 } = await import('./mcpServersTestHelpers');
 
 const mcpServersCommonModuleMockOptions = {
-    realComponents: true,
-    // The default text mock serializes parameters (`key(name=value)`), so copy can be checked for what it names.
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock();
-    },
-    modal: async () => {
-        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock({
-            confirmResult: true,
-            renderCustomModals: true,
-            spies: {
-                alert: (title, message, buttons) => {
-                    modalAlertSpy(title, message);
-                    if (title !== 'common.discardChanges') return;
-                    const buttonText = unsavedChangesDecision === 'save'
-                        ? 'common.save'
-                        : unsavedChangesDecision === 'discard'
-                            ? 'common.discard'
-                            : 'common.keepEditing';
-                    buttons?.find(button => button.text === buttonText)?.onPress?.();
-                },
-                confirm: (...args) => modalConfirmSpy(...args) as any,
-            },
-        }).module;
-    },
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Dimensions: {
-                get: () => ({ width: 1440, height: 900 }),
-            },
-        });
-    },
-    router: async () => {
-        const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-        const routerMock = createExpoRouterMock({
-            params: () => mcpServersModuleState.routerSearchParams,
-            router: {
-                back: routerBackSpy,
-                push: routerPushSpy,
-                replace: routerReplaceSpy,
-            },
-            navigation: {
-                canGoBack: () => navigationCanGoBack,
-                dispatch: navigationDispatchSpy,
-                setOptions: navigationSetOptionsSpy,
-            },
-        });
+  realComponents: true,
+  // The default text mock serializes parameters (`key(name=value)`), so copy can be checked for what it names.
+  text: async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock();
+  },
+  modal: async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({
+      confirmResult: true,
+      renderCustomModals: true,
+      spies: {
+        alert: (title, message, buttons) => {
+          modalAlertSpy(title, message);
+          if (title !== 'common.discardChanges') return;
+          const buttonText =
+            unsavedChangesDecision === 'save'
+              ? 'common.save'
+              : unsavedChangesDecision === 'discard'
+                ? 'common.discard'
+                : 'common.keepEditing';
+          buttons?.find((button) => button.text === buttonText)?.onPress?.();
+        },
+        confirm: (...args) => modalConfirmSpy(...args) as any,
+      },
+    }).module;
+  },
+  reactNative: async () => {
+    const { createReactNativeWebMock } =
+      await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({
+      Dimensions: {
+        get: () => ({ width: 1440, height: 900 }),
+      },
+    });
+  },
+  router: async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    const routerMock = createExpoRouterMock({
+      params: () => mcpServersModuleState.routerSearchParams,
+      router: {
+        back: routerBackSpy,
+        push: routerPushSpy,
+        replace: routerReplaceSpy,
+      },
+      navigation: {
+        canGoBack: () => navigationCanGoBack,
+        dispatch: navigationDispatchSpy,
+        setOptions: navigationSetOptionsSpy,
+      },
+    });
 
-        return routerMock.module;
-    },
-    routerSearchParams: { serverId: 'server-1' },
+    return routerMock.module;
+  },
+  routerSearchParams: { serverId: 'server-1' },
 };
 
 vi.mock('@react-navigation/native', async () => {
-    const { createReactNavigationNativeMock } = await import('@/dev/testkit/mocks/reactNavigation');
-    return createReactNavigationNativeMock({ usePreventRemove: (
-        enabled: boolean,
-        callback: (event: { data: { action: unknown } }) => void,
+  const { createReactNavigationNativeMock } =
+    await import('@/dev/testkit/mocks/reactNavigation');
+  return createReactNavigationNativeMock({
+    usePreventRemove: (
+      enabled: boolean,
+      callback: (event: { data: { action: unknown } }) => void,
     ) => {
-        navigationPreventRemove.enabled = enabled;
-        navigationPreventRemove.callback = callback;
-    } });
+      navigationPreventRemove.enabled = enabled;
+      navigationPreventRemove.callback = callback;
+    },
+  });
 });
 
 installMcpServersCommonModuleMocks(mcpServersCommonModuleMockOptions);
@@ -228,963 +296,3421 @@ vi.doUnmock('@/sync/domains/state/storage');
 // PageHeader binds the button during collection. Its real action lifecycle must
 // be present before that owner loads, not first unmocked in beforeEach.
 vi.doUnmock('@/components/ui/buttons/RoundButton');
-const { findTestInstanceByTypeContainingText, renderScreen } = await import('@/dev/testkit/render/renderScreen');
+const { findTestInstanceByTypeContainingText, renderScreen } =
+  await import('@/dev/testkit/render/renderScreen');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
-const { upsertServerProfileOnly } = await import('@/sync/domains/server/serverRuntime');
-const { resolveServerProfileScopeId, setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
-const { useMachineAdministrationTargetSelection, resolveFreshMachineAdministrationExecutionTarget } = await import('@/sync/domains/machines/administration/useTargetSelection');
+const { upsertServerProfileOnly } =
+  await import('@/sync/domains/server/serverRuntime');
+const { resolveServerProfileScopeId, setServerProfileIdentityForUrl } =
+  await import('@/sync/domains/server/serverProfiles');
+const {
+  useMachineAdministrationTargetSelection,
+  resolveFreshMachineAdministrationExecutionTarget,
+} = await import('@/sync/domains/machines/administration/useTargetSelection');
 const { settingsParse } = await import('@/sync/domains/settings/settings');
-const { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } = await import('@/sync/domains/machines/administration/selectionPreferences');
+const { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } =
+  await import('@/sync/domains/machines/administration/selectionPreferences');
 // This host reaches both navigation and the store; load it only after the
 // configured presentation boundaries and real domain store are established.
-const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
-const { resetMcpServerCatalogEngineForTests, refreshMcpServerCatalog } = await import('@/sync/engine/settings/mcpServerCatalogEngine');
-const { resetMcpServerCatalogSnapshotsForTests } = await import('@/sync/store/settings/mcpServerCatalogSnapshot');
-const { resetSavedSecretCatalogEngineForTests } = await import('@/sync/engine/settings/savedSecretCatalogEngine');
-const { resetSavedSecretCatalogSnapshotsForTests } = await import('@/sync/store/settings/savedSecretCatalogSnapshot');
+const { DestinationInstanceHost } =
+  await import('@/components/appShell/workspace/DestinationInstanceHost');
+const { resetMcpServerCatalogEngineForTests, refreshMcpServerCatalog } =
+  await import('@/sync/engine/settings/mcpServerCatalogEngine');
+const { resetMcpServerCatalogSnapshotsForTests } =
+  await import('@/sync/store/settings/mcpServerCatalogSnapshot');
+const { resetSavedSecretCatalogEngineForTests } =
+  await import('@/sync/engine/settings/savedSecretCatalogEngine');
+const { resetSavedSecretCatalogSnapshotsForTests } =
+  await import('@/sync/store/settings/savedSecretCatalogSnapshot');
 
 vi.mock('@/platform/randomUUID', () => ({
-    randomUUID: () => ++uuidBoundary.sequence === 1 ? 'uuid' : `uuid-${uuidBoundary.sequence}`,
+  randomUUID: () =>
+    ++uuidBoundary.sequence === 1 ? 'uuid' : `uuid-${uuidBoundary.sequence}`,
 }));
 
 function CollectionDraftTitleObservation() {
-    const title = useCollectionDraftTitle().useTitle();
-    return React.createElement('CollectionDraftTitleObservation', { testID: 'mcp.server.editor.published-title', title });
+  const title = useCollectionDraftTitle().useTitle();
+  return React.createElement('CollectionDraftTitleObservation', {
+    testID: 'mcp.server.editor.published-title',
+    title,
+  });
 }
 
-async function renderEditorScreen(options: Readonly<{ activeAccount?: boolean; ask?: boolean;
-    mcpUpdatePolicy?: 'disabled' | 'ask'; mcpDeletePolicy?: 'ask' | 'allowed'; hosted?: boolean; machineDifferenceModal?: boolean;
-    observeDraftTitle?: boolean }> = {}) {
-    const configuredHome = await upsertServerProfileOnly({ serverUrl: options.mcpUpdatePolicy
-        ? `https://mcp-editor-update-${options.mcpUpdatePolicy}.test` : options.ask ? 'https://mcp-editor-ask-row.test' : options.activeAccount
-        ? 'https://mcp-editor-active-row.test' : 'https://mcp-editor-row.test', name: 'MCP editor' });
-    const serverIdentityId = `srv_${new URL(configuredHome.serverUrl).hostname.replace(/\./g, '-')}`;
-    const home = await setServerProfileIdentityForUrl(configuredHome.serverUrl, serverIdentityId);
-    if (!home) throw new Error('Expected the editor Home portable identity');
-    const accountId = 'mcp-editor-account';
-    await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, {
-        token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
-    });
-    accountScope = { serverId: resolveServerProfileScopeId(home), accountId };
-    const { storage } = await import('@/sync/domains/state/storageStore');
-    let settingsReads = 0;
-    const unhandledRequests: string[] = [];
-    onTestFailed(async () => {
-        const credentials = await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id });
-        console.error('MCP editor boundary refusal', {
-            scope: accountScope, profileScope: storage.getState().profileScope,
-            settingsScope: storage.getState().settingsScope, credentialsPresent: Boolean(credentials),
-            isDataReady: storage.getState().isDataReady, machineCount: Object.keys(storage.getState().machines).length,
-            settingsReads, artifacts: approvalArtifacts?.list().length,
-            rowWrites: rowMutationRequests.length, compoundWrites: compoundMutationRequests.length,
-            alerts: modalAlertSpy.mock.calls.map(([title, reason]) => ({ title, reason })),
-            pushes: routerPushSpy.mock.calls, replacements: routerReplaceSpy.mock.calls,
-            unhandledRequests,
-        });
-    });
-    const machines = liveMachines.map(machine => createMachineFixture({ id: machine.id,
-        activeAt: Date.now(), metadata: { ...createMachineFixture().metadata!, ...machine.metadata } }));
-    let settingsVersion = 7;
-    let rawSettings: Record<string, unknown> = { userNote: 'unrelated', actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
-        actions: {
-            ...(options.ask ? { 'mcp.servers.import': { approvalRequiredSurfaces: ['ui'] } } : {}),
-            ...(options.mcpUpdatePolicy === 'disabled' ? { 'mcp.servers.update': { disabledSurfaces: ['ui'] } } : {}),
-            ...(options.mcpUpdatePolicy === 'ask' ? { 'mcp.servers.update': { approvalRequiredSurfaces: ['ui'] } } : {}),
-            ...(options.mcpDeletePolicy === 'ask' ? { 'mcp.servers.delete': { approvalRequiredSurfaces: ['ui'] } } : {}),
-        }, approvalWaivedSurfaces: {
-            ...(!options.ask ? { 'secrets.shared.promote': ['ui'], 'secrets.shared.create': ['ui'] } : {}),
-            ...(!options.ask ? { 'mcp.servers.import': ['ui'] } : {}),
-            'mcp.servers.create': ['ui'],
-            ...(options.mcpDeletePolicy === 'allowed' ? { 'mcp.servers.delete': ['ui'] } : {}),
-            ...(!options.mcpUpdatePolicy ? { 'mcp.servers.update': ['ui'] } : {}),
-        } }) };
-    approvalArtifacts = createArtifactStoreBoundary({ ownerAccountId: () => accountId, encryptionMode: 'plain' });
-    const machineRows = Object.fromEntries(machines.map(machine => [machine.id, machine]));
-    // Every case restores the actual Home and publishes its first Settings
-    // baseline from HTTP; no parsed Settings/Account projection authorizes it.
-    storage.setState({ machines: machineRows });
-    const request: Parameters<typeof setRuntimeFetch>[0] = async (url, init) => {
-        const path = new URL(String(url)).pathname;
-        const artifactResponse = approvalArtifacts!.handle(path + new URL(String(url)).search, init);
-        if (artifactResponse) return await artifactResponse;
-        if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
-        if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse({
-            capabilities: { serverIdentity: { serverIdentityId } },
-        }));
-        if (path === '/v1/machines') return Response.json(machines.map(machine => createPlainMachineRowFixture({ id: machine.id, accountId })));
-        if (path === '/v2/sessions' || path === '/v2/sessions/active') return Response.json(V2SessionListResponseSchema.parse({ sessions: [], nextCursor: null, hasNext: false }));
-        if (path === '/v2/session-organization') return Response.json(SessionOrganizationSnapshotResponseSchema.parse({
-            snapshot: { schemaVersion: SESSION_ORGANIZATION_SNAPSHOT_VERSION, version: 0,
-                pins: [], folders: [], folderAssignments: [], tags: [], tagAssignments: [], orderEntries: [], labels: [] },
-        }));
-        if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: accountId }));
-        if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']) {
-            return Response.json(PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse({ availabilityCursor: 0, snapshots: [] }));
-        }
-        if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
-            return Response.json(PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 0,
-                pluginIds: [], intentReads: [], failedPluginIds: [] }));
-        }
-        if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion }));
-        if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
-        if (path === '/v2/account/settings') {
-            if (init?.method === 'POST') {
-                const input = AccountSettingsV2UpdateRequestSchema.parse(JSON.parse(String(init.body)));
-                settingsHttpWriteSpy(input);
-                if (input.expectedVersion !== settingsVersion) return Response.json({ success: false, error: 'version-mismatch',
-                    currentVersion: settingsVersion, currentContent: { t: 'plain', v: rawSettings } });
-                if (input.content?.t !== 'plain') throw new Error('Expected plain Settings fixture content');
-                rawSettings = input.content.v;
-                settingsVersion += 1;
-                return Response.json({ success: true, version: settingsVersion });
-            }
-            settingsReads += 1;
-            return Response.json({ version: settingsVersion, content: { t: 'plain', v: rawSettings } });
-        }
-        if (path === PROFILE_TRANSFER_ROUTE_V1) return Response.json({ status: 'absent' });
-        if (path === '/v2/account/settings/history') return Response.json({ snapshots: [] });
-        if (path === '/v1/account/saved-secrets/resources/materials') return Response.json(
-            SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: standaloneResourceMutationRequests.map(input => ({
-                resourceId: input.resourceId, encryptionMode: input.encryptionMode,
-                recipientEnvelope: null, storedContent: input.storedContent,
-                entry: { ref: formatSharedSavedSecretRefV1(input.resourceId), source: 'shared_resource',
-                    relationship: 'owner', ownerAccountId: accountId, name: input.displayName, kind: input.kind,
-                    revision: 1, materialStatus: 'ready',
-                    capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
-            })) }));
-        if (path === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.create'] && init?.method === 'POST') {
-            const input = SharedSavedSecretCreateInputV1Schema.parse(JSON.parse(String(init.body)));
-            standaloneResourceMutationRequests.push(input);
-            return Response.json({ resourceId: input.resourceId, revision: 1 });
-        }
-        if (path === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.promote'] && init?.method === 'POST') {
-            const input = SharedSavedSecretPromoteInputV1Schema.parse(JSON.parse(String(init.body)));
-            compoundMutationRequests.push(input);
-            await rowMutationGate;
-            const mutation = McpServerCatalogRowMutationV1Schema.parse(input.catalogMutations?.mcp);
-            if (mutation.expectedRevision !== catalogRevision) return Response.json({ error: 'catalog_conflict' }, { status: 409 });
-            if (mutation.content?.t !== 'plain') throw new Error('Expected plain compound MCP fixture');
-            liveMcpSettings = { ...mutation.content.v, strictMode: false };
-            catalogRevision += 1;
-            if (loseCompoundAcknowledgement) throw new TypeError('Connection lost after the atomic commit');
-            return Response.json({ resourceId: input.resourceId, settingsVersion });
-        }
-        if (path === '/v1/account/entity-rows/mcp') {
-            if (init?.method === 'POST') {
-                const input = McpServerCatalogRowMutationV1Schema.parse(JSON.parse(String(init.body)));
-                rowMutationRequests.push(input);
-                if (input.content?.t !== 'plain') throw new Error('Expected plain MCP fixture content');
-                setMcpSettingsSpy({ ...input.content.v, strictMode: false });
-                await rowMutationGate;
-                if (rowMutationOutcome === 'conflict' || input.expectedRevision !== catalogRevision) {
-                    return Response.json({ status: 'conflict', revision: catalogRevision });
-                }
-                liveMcpSettings = { ...input.content.v, strictMode: false };
-                catalogRevision += 1;
-                if (loseCompoundAcknowledgement) throw new TypeError('Connection lost after the catalog commit');
-                return Response.json({ status: 'updated', revision: catalogRevision, cursor: catalogRevision });
-            }
-            if (rowMutationRequests.length > 0) await postWriteReadGate;
-            if (!liveMcpSettings || typeof liveMcpSettings !== 'object' || Array.isArray(liveMcpSettings)) {
-                return Response.json({ status: 'present', revision: catalogRevision, content: { t: 'plain', v: liveMcpSettings } });
-            }
-            const { strictMode: _strictMode, ...catalog } = liveMcpSettings as Record<string, unknown>;
-            return Response.json({ status: 'present', revision: catalogRevision, content: { t: 'plain', v: catalog } });
-        }
-        unhandledRequests.push(`${init?.method ?? 'GET'} ${path}`);
-        return Response.json({ error: 'not_found' }, { status: 404 });
-    };
-    setRuntimeFetch(request);
+async function renderEditorScreen(
+  options: Readonly<{
+    activeAccount?: boolean;
+    ask?: boolean;
+    mcpImportDisabled?: boolean;
+    mcpUpdatePolicy?: 'disabled' | 'ask';
+    mcpDeletePolicy?: 'ask' | 'allowed';
+    hosted?: boolean;
+    machineDifferenceModal?: boolean;
+    observeDraftTitle?: boolean;
+    addModal?: boolean;
+    addMode?: 'catalog' | 'paste' | 'custom';
+    installLink?: string;
+    initialSelection?: McpAddSelection;
+    storeListing?: boolean;
+    beforeRegistryRead?: () => Promise<void>;
+    dismissGuard?: { current: CustomModalDismissGuard | null };
+    registry?: Readonly<{
+      sourceId: string;
+      url: string;
+      servers: readonly Readonly<{
+        server: Readonly<{
+          name: string;
+          title: string;
+          description: string;
+          version: string;
+          packages?: readonly Readonly<{
+            registryType: string;
+            identifier: string;
+            version: string;
+            transport: Readonly<{ type: 'stdio' }>;
+          }>[];
+          remotes?: readonly Readonly<{
+            type: 'streamable-http';
+            url: string;
+            headers: readonly Readonly<{
+              name: string;
+              description: string;
+              isRequired: boolean;
+            }>[];
+          }>[];
+        }>;
+      }>[];
+    }>;
+  }> = {},
+) {
+  const configuredHome = await upsertServerProfileOnly({
+    serverUrl: options.mcpUpdatePolicy
+      ? `https://mcp-editor-update-${options.mcpUpdatePolicy}.test`
+      : options.ask
+        ? 'https://mcp-editor-ask-row.test'
+        : options.activeAccount
+          ? 'https://mcp-editor-active-row.test'
+          : 'https://mcp-editor-row.test',
+    name: 'MCP editor',
+  });
+  const serverIdentityId = `srv_${new URL(configuredHome.serverUrl).hostname.replace(/\./g, '-')}`;
+  const home = await setServerProfileIdentityForUrl(
+    configuredHome.serverUrl,
+    serverIdentityId,
+  );
+  if (!home) throw new Error('Expected the editor Home portable identity');
+  const accountId = 'mcp-editor-account';
+  await TokenStorage.setCredentialsForServerUrl(
+    home.serverUrl,
+    { serverId: home.id },
     {
-        installDisconnectedServerSocketBoundary();
-        await loadSyncSingletonForTests();
-        activeConnection = await restoreServerAccountForTest({ serverUrl: home.serverUrl, accountId, credentials: {
-            token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
-        }, request });
-        // A cold transport has no connect event to demand the ordinary list.
-        // Use Sync's public reader so active-Home readiness comes from HTTP.
-        const { sync } = await import('@/sync/sync');
-        await sync.refreshSessions({ awaitSessionListHydration: true });
-        await vi.waitFor(() => expect(storage.getState().isDataReady).toBe(true));
-        {
-            const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
-            const captured = await captureLazyActionAccountContext(home.id);
-            try {
-                const actualRaw = await captured.readRawSettings();
-                expect(actualRaw.actionsSettingsV1).toEqual(rawSettings.actionsSettingsV1);
-                expect(settingsParse(actualRaw).actionsSettingsV1).toEqual(rawSettings.actionsSettingsV1);
-                // This live projection is what the real front door prefers
-                // for the same Account; wait for genuine Sync publication.
-                await vi.waitFor(() => expect(storage.getState().settings.actionsSettingsV1).toEqual(rawSettings.actionsSettingsV1));
-                expect((await captured.readSettings()).actionsSettingsV1).toEqual(rawSettings.actionsSettingsV1);
+      token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
+    },
+  );
+  accountScope = { serverId: resolveServerProfileScopeId(home), accountId };
+  const { storage } = await import('@/sync/domains/state/storageStore');
+  let settingsReads = 0;
+  const unhandledRequests: string[] = [];
+  onTestFailed(async () => {
+    const credentials = await TokenStorage.getCredentialsForServerUrl(
+      home.serverUrl,
+      { serverId: home.id },
+    );
+    console.error('MCP editor boundary refusal', {
+      scope: accountScope,
+      profileScope: storage.getState().profileScope,
+      settingsScope: storage.getState().settingsScope,
+      credentialsPresent: Boolean(credentials),
+      isDataReady: storage.getState().isDataReady,
+      machineCount: Object.keys(storage.getState().machines).length,
+      settingsReads,
+      artifacts: approvalArtifacts?.list().length,
+      registryRequests,
+      rowWrites: rowMutationRequests.length,
+      compoundWrites: compoundMutationRequests.length,
+      alerts: modalAlertSpy.mock.calls.map(([title, reason]) => ({
+        title,
+        reason,
+      })),
+      pushes: routerPushSpy.mock.calls,
+      replacements: routerReplaceSpy.mock.calls,
+      unhandledRequests,
+    });
+  });
+  const machines = liveMachines.map((machine) =>
+    createMachineFixture({
+      id: machine.id,
+      activeAt: Date.now(),
+      metadata: { ...createMachineFixture().metadata!, ...machine.metadata },
+    }),
+  );
+  let settingsVersion = 7;
+  let rawSettings: Record<string, unknown> = {
+    userNote: 'unrelated',
+    actionsSettingsV1: ActionsSettingsV1Schema.parse({
+      v: 1,
+      actions: {
+        ...(options.mcpImportDisabled
+          ? { 'mcp.servers.import': { disabledSurfaces: ['ui'] } }
+          : {}),
+        ...(options.ask
+          ? { 'mcp.servers.import': { approvalRequiredSurfaces: ['ui'] } }
+          : {}),
+        ...(options.mcpUpdatePolicy === 'disabled'
+          ? { 'mcp.servers.update': { disabledSurfaces: ['ui'] } }
+          : {}),
+        ...(options.mcpUpdatePolicy === 'ask'
+          ? { 'mcp.servers.update': { approvalRequiredSurfaces: ['ui'] } }
+          : {}),
+        ...(options.mcpDeletePolicy === 'ask'
+          ? { 'mcp.servers.delete': { approvalRequiredSurfaces: ['ui'] } }
+          : {}),
+      },
+      approvalWaivedSurfaces: {
+        ...(!options.ask
+          ? {
+              'secrets.shared.promote': ['ui'],
+              'secrets.shared.create': ['ui'],
             }
-            finally { captured.dispose(); }
-        }
+          : {}),
+        ...(!options.ask ? { 'mcp.servers.import': ['ui'] } : {}),
+        'mcp.servers.create': ['ui'],
+        ...(options.mcpDeletePolicy === 'allowed'
+          ? { 'mcp.servers.delete': ['ui'] }
+          : {}),
+        ...(!options.mcpUpdatePolicy ? { 'mcp.servers.update': ['ui'] } : {}),
+      },
+    }),
+  };
+  approvalArtifacts = createArtifactStoreBoundary({
+    ownerAccountId: () => accountId,
+    encryptionMode: 'plain',
+  });
+  const machineRows = Object.fromEntries(
+    machines.map((machine) => [machine.id, machine]),
+  );
+  const registryCatalog = options.registry
+    ? createPromptLibraryCatalogBoundary({
+        records: [
+          {
+            key: 'registry-sources',
+            value: {
+              v: 2,
+              sources: [
+                {
+                  id: options.registry.sourceId,
+                  title: 'MCP catalog',
+                  url: options.registry.url,
+                  format: 'mcp-registry',
+                  kinds: ['mcpServer'],
+                  enabled: true,
+                  addedAt: 1,
+                },
+              ],
+              disabledSourceIds: [],
+            },
+          },
+        ],
+      })
+    : null;
+  // Every case restores the actual Home and publishes its first Settings
+  // baseline from HTTP; no parsed Settings/Account projection authorizes it.
+  storage.setState({ machines: machineRows });
+  const request: Parameters<typeof setRuntimeFetch>[0] = async (url, init) => {
+    const path = new URL(String(url)).pathname;
+    if (String(url) === DEFAULT_CURATED_MARKETPLACE_SOURCE_URL)
+      return Response.json(
+        MarketplaceIndexSourceSnapshotV1Schema.parse({
+          source: {
+            id: HAPPIER_PICKS_SOURCE_ID,
+            title: 'Happier picks',
+            kind: 'curated',
+            sourceUrl: DEFAULT_CURATED_MARKETPLACE_SOURCE_URL,
+          },
+          freshness: { state: 'fresh', fetchedAtMs: 1 },
+          entries: [],
+          diagnostics: [],
+          picks: [],
+        }),
+      );
+    if (
+      options.registry &&
+      new URL(String(url)).origin === options.registry.url
+    ) {
+      registryRequests.push(path);
+      if (path === '/v0.1/servers')
+        return Response.json({
+          servers: options.registry.servers.slice(0, 100),
+          metadata: { count: options.registry.servers.length },
+        });
+      const selected = options.registry.servers.find((item) =>
+        path.startsWith(
+          `/v0.1/servers/${encodeURIComponent(item.server.name)}/versions/`,
+        ),
+      );
+      if (!selected) return Response.json({}, { status: 404 });
+      await options.beforeRegistryRead?.();
+      // A mutable latest endpoint intentionally differs from the reviewed list pin.
+      return Response.json(
+        path.endsWith('/latest') || path.endsWith('/2.0.0')
+          ? { server: { ...selected.server, version: '2.0.0' } }
+          : selected,
+      );
     }
-    storage.getState().applyMachines(machines, true, { sourceServerId: home.id });
-    // Choose through the real Administration controller after publishing the
-    // same Home's genuine Machine census, not a fabricated target resolver.
-    const targetSelection = await renderHook(() => useMachineAdministrationTargetSelection(MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.mcpServers));
-    try {
-        if (machines.length > 0) {
-            const target = { serverIdentityId, machineId: machines[0]!.id };
-            await vi.waitFor(() => expect(resolveFreshMachineAdministrationExecutionTarget(target)).not.toBeNull());
-            await act(async () => { targetSelection.getCurrent().selectTarget(target); });
-            await vi.waitFor(() => expect(targetSelection.getCurrent().selectedTarget).toEqual(target));
-        } else {
-            await act(async () => { targetSelection.getCurrent().clearTarget(); });
-            expect(targetSelection.getCurrent().selectedTarget).toBeNull();
+    if (
+      registryCatalog &&
+      path.startsWith('/v1/account/entity-rows/prompt-library')
+    ) {
+      const response = await registryCatalog.handle(path, init);
+      if (response) return response;
+    }
+    const artifactResponse = approvalArtifacts!.handle(
+      path + new URL(String(url)).search,
+      init,
+    );
+    if (artifactResponse) return await artifactResponse;
+    if (path === '/health' || path === '/v1/auth/ping')
+      return Response.json({});
+    if (path === '/v1/features' || path === '/v1/features/authenticated')
+      return Response.json(
+        createRootLayoutFeaturesResponse({
+          capabilities: { serverIdentity: { serverIdentityId } },
+        }),
+      );
+    if (path === '/v1/machines')
+      return Response.json(
+        machines.map((machine) =>
+          createPlainMachineRowFixture({ id: machine.id, accountId }),
+        ),
+      );
+    if (path === '/v2/sessions' || path === '/v2/sessions/active')
+      return Response.json(
+        V2SessionListResponseSchema.parse({
+          sessions: [],
+          nextCursor: null,
+          hasNext: false,
+        }),
+      );
+    if (path === '/v2/session-organization')
+      return Response.json(
+        SessionOrganizationSnapshotResponseSchema.parse({
+          snapshot: {
+            schemaVersion: SESSION_ORGANIZATION_SNAPSHOT_VERSION,
+            version: 0,
+            pins: [],
+            folders: [],
+            folderAssignments: [],
+            tags: [],
+            tagAssignments: [],
+            orderEntries: [],
+            labels: [],
+          },
+        }),
+      );
+    if (path === '/v1/account/profile')
+      return Response.json(AccountProfileSchema.parse({ id: accountId }));
+    if (
+      path ===
+      PluginAvailabilityActionHttpPathsV1[
+        'account.plugins.availability.materializations.read'
+      ]
+    ) {
+      return Response.json(
+        PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse({
+          availabilityCursor: 0,
+          snapshots: [],
+        }),
+      );
+    }
+    if (
+      path ===
+      PluginAvailabilityActionHttpPathsV1[
+        'account.plugins.availability.intents.list'
+      ]
+    ) {
+      return Response.json(
+        PluginAvailabilityIntentsListActionOutputV1Schema.parse({
+          availabilityCursor: 0,
+          pluginIds: [],
+          intentReads: [],
+          failedPluginIds: [],
+        }),
+      );
+    }
+    if (path === '/v1/account/encryption/currentness')
+      return Response.json(
+        createPlainAccountEncryptionCurrentnessFixture({ settingsVersion }),
+      );
+    if (path === '/v1/account/encryption')
+      return Response.json({ mode: 'plain', updatedAt: 0 });
+    if (path === '/v2/account/settings') {
+      if (init?.method === 'POST') {
+        const input = AccountSettingsV2UpdateRequestSchema.parse(
+          JSON.parse(String(init.body)),
+        );
+        settingsHttpWriteSpy(input);
+        if (input.expectedVersion !== settingsVersion)
+          return Response.json({
+            success: false,
+            error: 'version-mismatch',
+            currentVersion: settingsVersion,
+            currentContent: { t: 'plain', v: rawSettings },
+          });
+        if (input.content?.t !== 'plain')
+          throw new Error('Expected plain Settings fixture content');
+        rawSettings = input.content.v;
+        settingsVersion += 1;
+        return Response.json({ success: true, version: settingsVersion });
+      }
+      settingsReads += 1;
+      return Response.json({
+        version: settingsVersion,
+        content: { t: 'plain', v: rawSettings },
+      });
+    }
+    if (path === PROFILE_TRANSFER_ROUTE_V1)
+      return Response.json({ status: 'absent' });
+    if (path === '/v2/account/settings/history')
+      return Response.json({ snapshots: [] });
+    if (path === '/v1/account/saved-secrets/resources/materials')
+      return Response.json(
+        SavedSecretResourceMaterialsResponseV1Schema.parse({
+          resources: standaloneResourceMutationRequests.map((input) => ({
+            resourceId: input.resourceId,
+            encryptionMode: input.encryptionMode,
+            recipientEnvelope: null,
+            storedContent: input.storedContent,
+            entry: {
+              ref: formatSharedSavedSecretRefV1(input.resourceId),
+              source: 'shared_resource',
+              relationship: 'owner',
+              ownerAccountId: accountId,
+              name: input.displayName,
+              kind: input.kind,
+              revision: 1,
+              materialStatus: 'ready',
+              capabilities: {
+                use: true,
+                rename: true,
+                rotate: true,
+                manageAccess: true,
+                delete: true,
+              },
+            },
+          })),
+        }),
+      );
+    if (
+      path === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.create'] &&
+      init?.method === 'POST'
+    ) {
+      const input = SharedSavedSecretCreateInputV1Schema.parse(
+        JSON.parse(String(init.body)),
+      );
+      standaloneResourceMutationRequests.push(input);
+      return Response.json({ resourceId: input.resourceId, revision: 1 });
+    }
+    if (
+      path === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.promote'] &&
+      init?.method === 'POST'
+    ) {
+      const input = SharedSavedSecretPromoteInputV1Schema.parse(
+        JSON.parse(String(init.body)),
+      );
+      compoundMutationRequests.push(input);
+      await rowMutationGate;
+      const mutation = McpServerCatalogRowMutationV1Schema.parse(
+        input.catalogMutations?.mcp,
+      );
+      if (mutation.expectedRevision !== catalogRevision)
+        return Response.json({ error: 'catalog_conflict' }, { status: 409 });
+      if (mutation.content?.t !== 'plain')
+        throw new Error('Expected plain compound MCP fixture');
+      liveMcpSettings = { ...mutation.content.v, strictMode: false };
+      catalogRevision += 1;
+      if (loseCompoundAcknowledgement)
+        throw new TypeError('Connection lost after the atomic commit');
+      return Response.json({ resourceId: input.resourceId, settingsVersion });
+    }
+    if (path === '/v1/account/entity-rows/mcp') {
+      if (init?.method === 'POST') {
+        const input = McpServerCatalogRowMutationV1Schema.parse(
+          JSON.parse(String(init.body)),
+        );
+        rowMutationRequests.push(input);
+        if (input.content?.t !== 'plain')
+          throw new Error('Expected plain MCP fixture content');
+        setMcpSettingsSpy({ ...input.content.v, strictMode: false });
+        await rowMutationGate;
+        if (
+          rowMutationOutcome === 'conflict' ||
+          input.expectedRevision !== catalogRevision
+        ) {
+          return Response.json({
+            status: 'conflict',
+            revision: catalogRevision,
+          });
         }
-    } finally { await targetSelection.unmount(); }
-    const routeBoundary = await import('expo-router');
-    const route = await renderHook(() => routeBoundary.useLocalSearchParams());
-    try { expect(route.getCurrent()).toEqual(mcpServersModuleState.routerSearchParams); }
-    finally { await route.unmount(); }
-    const { McpServerEditorScreen } = await import('./McpServerEditorScreen');
-    const { ModalProvider } = await import('@/modal');
-    const editor = options.machineDifferenceModal
-        ? <ModalProvider><McpServerEditorScreen /></ModalProvider>
-        : React.createElement(McpServerEditorScreen);
-    const scopedEditor = options.observeDraftTitle
-        ? <CollectionDraftTitleScope>{editor}<CollectionDraftTitleObservation /></CollectionDraftTitleScope>
-        : editor;
-    const screen = await renderScreen(options.hosted ? <DestinationInstanceHost
-        tabId="mcp-editor" ref={{ kind: 'settings', params: { pageId: 'mcp', serverId: 'server-1' } }}
-        pathname="/settings/mcp/servers/server-1" focused visible navigation={{
-            push: href => { void runGuardedNavigation(() => routerPushSpy(href)); },
-            pushRetainingCurrent: retainedApprovalNavigationSpy,
-            replace: routerReplaceSpy,
-            back: routerBackSpy,
-        }}>{scopedEditor}</DestinationInstanceHost> : scopedEditor);
-    await act(async () => { await refreshMcpServerCatalog(accountScope!); });
-    return screen;
+        liveMcpSettings = { ...input.content.v, strictMode: false };
+        catalogRevision += 1;
+        if (loseCompoundAcknowledgement)
+          throw new TypeError('Connection lost after the catalog commit');
+        return Response.json({
+          status: 'updated',
+          revision: catalogRevision,
+          cursor: catalogRevision,
+        });
+      }
+      if (rowMutationRequests.length > 0) await postWriteReadGate;
+      if (
+        !liveMcpSettings ||
+        typeof liveMcpSettings !== 'object' ||
+        Array.isArray(liveMcpSettings)
+      ) {
+        return Response.json({
+          status: 'present',
+          revision: catalogRevision,
+          content: { t: 'plain', v: liveMcpSettings },
+        });
+      }
+      const { strictMode: _strictMode, ...catalog } = liveMcpSettings as Record<
+        string,
+        unknown
+      >;
+      return Response.json({
+        status: 'present',
+        revision: catalogRevision,
+        content: { t: 'plain', v: catalog },
+      });
+    }
+    unhandledRequests.push(`${init?.method ?? 'GET'} ${path}`);
+    return Response.json({ error: 'not_found' }, { status: 404 });
+  };
+  setRuntimeFetch(request);
+  {
+    installDisconnectedServerSocketBoundary();
+    await loadSyncSingletonForTests();
+    activeConnection = await restoreServerAccountForTest({
+      serverUrl: home.serverUrl,
+      accountId,
+      credentials: {
+        token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
+      },
+      additionalRequestOrigins: [
+        DEFAULT_CURATED_MARKETPLACE_SOURCE_URL,
+        ...(options.registry ? [options.registry.url] : []),
+      ],
+      request,
+    });
+    // A cold transport has no connect event to demand the ordinary list.
+    // Use Sync's public reader so active-Home readiness comes from HTTP.
+    const { sync } = await import('@/sync/sync');
+    await sync.refreshSessions({ awaitSessionListHydration: true });
+    await vi.waitFor(() => expect(storage.getState().isDataReady).toBe(true));
+    {
+      const { captureLazyActionAccountContext } =
+        await import('@/sync/ops/actions/actionAccountContext');
+      const captured = await captureLazyActionAccountContext(home.id);
+      try {
+        const actualRaw = await captured.readRawSettings();
+        expect(actualRaw.actionsSettingsV1).toEqual(
+          rawSettings.actionsSettingsV1,
+        );
+        expect(settingsParse(actualRaw).actionsSettingsV1).toEqual(
+          rawSettings.actionsSettingsV1,
+        );
+        // This live projection is what the real front door prefers
+        // for the same Account; wait for genuine Sync publication.
+        await vi.waitFor(() =>
+          expect(storage.getState().settings.actionsSettingsV1).toEqual(
+            rawSettings.actionsSettingsV1,
+          ),
+        );
+        expect((await captured.readSettings()).actionsSettingsV1).toEqual(
+          rawSettings.actionsSettingsV1,
+        );
+      } finally {
+        captured.dispose();
+      }
+    }
+  }
+  storage.getState().applyMachines(machines, true, { sourceServerId: home.id });
+  // Choose through the real Administration controller after publishing the
+  // same Home's genuine Machine census, not a fabricated target resolver.
+  const targetSelection = await renderHook(() =>
+    useMachineAdministrationTargetSelection(
+      MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.mcpServers,
+    ),
+  );
+  try {
+    if (machines.length > 0) {
+      const target = { serverIdentityId, machineId: machines[0]!.id };
+      await vi.waitFor(() =>
+        expect(
+          resolveFreshMachineAdministrationExecutionTarget(target),
+        ).not.toBeNull(),
+      );
+      await act(async () => {
+        targetSelection.getCurrent().selectTarget(target);
+      });
+      await vi.waitFor(() =>
+        expect(targetSelection.getCurrent().selectedTarget).toEqual(target),
+      );
+    } else {
+      await act(async () => {
+        targetSelection.getCurrent().clearTarget();
+      });
+      expect(targetSelection.getCurrent().selectedTarget).toBeNull();
+    }
+  } finally {
+    await targetSelection.unmount();
+  }
+  const routeBoundary = await import('expo-router');
+  const route = await renderHook(() => routeBoundary.useLocalSearchParams());
+  try {
+    expect(route.getCurrent()).toEqual(
+      mcpServersModuleState.routerSearchParams,
+    );
+  } finally {
+    await route.unmount();
+  }
+  if (options.registry) {
+    const { useRegistrySources } =
+      await import('@/registries/useRegistrySources');
+    const { waitForHomeGovernance } =
+      await import('@/dev/testkit/harness/homeGovernanceHarness');
+    const sources = await renderHook(() => useRegistrySources('mcpServer'));
+    try {
+      await waitForHomeGovernance(() =>
+        expect(sources.getCurrent()).toMatchObject({
+          status: 'ready',
+          sources: expect.arrayContaining([
+            expect.objectContaining({ id: options.registry!.sourceId }),
+          ]),
+        }),
+      );
+    } catch (error) {
+      console.error('Registry source boundary', {
+        status: sources.getCurrent().status,
+        error: sources.getCurrent().error,
+      });
+      throw error;
+    } finally {
+      await sources.unmount();
+    }
+  }
+  const { McpServerEditorScreen } = await import('./McpServerEditorScreen');
+  const { ModalProvider } = await import('@/modal');
+  const { McpAddModal } = await import('./add/openMcpAddModal');
+  const { StoreMcpListing } =
+    await import('@/components/store/StoreMcpListing');
+  const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+  const editor =
+    options.storeListing && options.initialSelection ? (
+      <StoreMcpListing
+        selection={options.initialSelection}
+        onClose={routerBackSpy}
+        onAdded={routerReplaceSpy}
+      >
+        {({ config, item }) =>
+          !config || !item ? null : (
+            <>
+              {config.renderDetail(item, { pushed: false, added: false })}
+              <RoundButton
+                testID="store.mcp.primary"
+                title={config.detailFooter(item).primary.label}
+                disabled={Boolean(
+                  config.detailFooter(item).primary.disabledReason,
+                )}
+                action={async () => {
+                  await config.detailFooter(item).primary.onPress();
+                }}
+              />
+            </>
+          )
+        }
+      </StoreMcpListing>
+    ) : options.addModal ? (
+      <McpAddModal
+        params={{
+          modeKey: options.addMode ?? 'custom',
+          installLink: options.installLink,
+          ...(options.initialSelection
+            ? { initialSelection: options.initialSelection }
+            : {}),
+          ...(options.registry ? { sourceId: options.registry.sourceId } : {}),
+          onAdded: routerReplaceSpy,
+        }}
+        onClose={routerBackSpy}
+        registerDismissGuard={
+          options.dismissGuard
+            ? (guard) => {
+                options.dismissGuard!.current = guard;
+              }
+            : undefined
+        }
+      />
+    ) : options.machineDifferenceModal ? (
+      <ModalProvider>
+        <McpServerEditorScreen />
+      </ModalProvider>
+    ) : (
+      React.createElement(McpServerEditorScreen)
+    );
+  const scopedEditor = options.observeDraftTitle ? (
+    <CollectionDraftTitleScope>
+      {editor}
+      <CollectionDraftTitleObservation />
+    </CollectionDraftTitleScope>
+  ) : (
+    editor
+  );
+  const screen = await renderScreen(
+    options.hosted ? (
+      <DestinationInstanceHost
+        tabId="mcp-editor"
+        ref={{
+          kind: 'settings',
+          params: { pageId: 'mcp', serverId: 'server-1' },
+        }}
+        pathname="/settings/mcp/servers/server-1"
+        focused
+        visible
+        navigation={{
+          push: (href) => {
+            void runGuardedNavigation(() => routerPushSpy(href));
+          },
+          pushRetainingCurrent: retainedApprovalNavigationSpy,
+          replace: routerReplaceSpy,
+          back: routerBackSpy,
+        }}
+      >
+        {scopedEditor}
+      </DestinationInstanceHost>
+    ) : (
+      scopedEditor
+    ),
+  );
+  await act(async () => {
+    await refreshMcpServerCatalog(accountScope!);
+  });
+  if (options.addModal && (options.addMode ?? 'custom') === 'custom')
+    await measureAddStage(screen);
+  return screen;
+}
+/**
+ * Custom's form is the details beside its reach list: give the real Collection a wide viewport (the test renderer
+ * measures none), so it lands on the chosen way in as the dialog does.
+ */
+async function measureAddStage(
+  screen: Awaited<ReturnType<typeof renderScreen>>,
+) {
+  const stage = screen
+    .findAllByTestId('mcp.add:collection:stage')
+    .find((node) => typeof node.props.onLayout === 'function');
+  if (!stage) throw new Error('Expected the real Collection geometry boundary');
+  await act(async () =>
+    stage.props.onLayout({
+      nativeEvent: { layout: { x: 0, y: 0, width: 1080, height: 600 } },
+    }),
+  );
+}
+async function openCustomMode(
+  screen: Awaited<ReturnType<typeof renderScreen>>,
+) {
+  await act(async () => {
+    screen.pressByTestId('mcp.add:mode:custom');
+  });
+  await measureAddStage(screen);
 }
 
 afterEach(async () => {
-    releaseRowMutation?.();
-    releasePostWriteRead?.();
-    await standardCleanup();
-    await activeConnection?.dispose();
-    activeConnection = null;
-    resetMcpServerCatalogEngineForTests();
-    resetMcpServerCatalogSnapshotsForTests();
-    resetSavedSecretCatalogEngineForTests();
-    resetSavedSecretCatalogSnapshotsForTests();
-    resetRuntimeFetch();
-    disposeActionExecutorModuleLoader?.();
-    disposeActionExecutorModuleLoader = undefined;
+  releaseRowMutation?.();
+  releasePostWriteRead?.();
+  await standardCleanup();
+  await activeConnection?.dispose();
+  activeConnection = null;
+  resetMcpServerCatalogEngineForTests();
+  resetMcpServerCatalogSnapshotsForTests();
+  resetSavedSecretCatalogEngineForTests();
+  resetSavedSecretCatalogSnapshotsForTests();
+  resetRuntimeFetch();
+  disposeActionExecutorModuleLoader?.();
+  disposeActionExecutorModuleLoader = undefined;
 });
 
 beforeEach(async () => {
-    resetMcpServersCommonModuleMockState();
-    resetLiveSettings();
-    navigationCanGoBack = false;
-    routerBackSpy.mockReset();
-    routerReplaceSpy.mockReset();
-    routerPushSpy.mockReset();
-    retainedApprovalNavigationSpy.mockReset();
-    installMcpServersCommonModuleMocks(mcpServersCommonModuleMockOptions);
-    // Sync restoration must see the real store domains, not the shared UI
-    // harness's presentation-only stub.
-    vi.doUnmock('@/sync/domains/state/storage');
-    disposeActionExecutorModuleLoader = await installRealActionExecutorModuleLoader();
-    // Exercise the real button action owner; a synthetic host drops PageHeader's async action.
-    vi.doUnmock('@/components/ui/buttons/RoundButton');
-    mcpServersModuleState.routerSearchParams = { serverId: 'server-1' };
+  resetMcpServersCommonModuleMockState();
+  resetLiveSettings();
+  navigationCanGoBack = false;
+  routerBackSpy.mockReset();
+  routerReplaceSpy.mockReset();
+  routerPushSpy.mockReset();
+  retainedApprovalNavigationSpy.mockReset();
+  installMcpServersCommonModuleMocks(mcpServersCommonModuleMockOptions);
+  // Sync restoration must see the real store domains, not the shared UI
+  // harness's presentation-only stub.
+  vi.doUnmock('@/sync/domains/state/storage');
+  disposeActionExecutorModuleLoader =
+    await installRealActionExecutorModuleLoader();
+  // Exercise the real button action owner; a synthetic host drops PageHeader's async action.
+  vi.doUnmock('@/components/ui/buttons/RoundButton');
+  mcpServersModuleState.routerSearchParams = { serverId: 'server-1' };
 });
 
 /** A Configuration field (the input itself, not its row). */
-function configField(screen: Awaited<ReturnType<typeof renderEditorScreen>>, testID: string) {
-    return screen.findAllByTestId(testID).find((node) => typeof node.props.onChangeText === 'function')!;
+function configField(
+  screen: Awaited<ReturnType<typeof renderEditorScreen>>,
+  testID: string,
+) {
+  return screen
+    .findAllByTestId(testID)
+    .find((node) => typeof node.props.onChangeText === 'function')!;
 }
-async function typeConfig(screen: Awaited<ReturnType<typeof renderEditorScreen>>, testID: string, text: string) {
-    await act(async () => { configField(screen, testID).props.onChangeText(text); });
+async function typeConfig(
+  screen: Awaited<ReturnType<typeof renderEditorScreen>>,
+  testID: string,
+  text: string,
+) {
+  await act(async () => {
+    configField(screen, testID).props.onChangeText(text);
+  });
 }
 /** Focus leaves the field: a new server keeps the value in its draft; a saved server saves it. */
-async function leaveConfig(screen: Awaited<ReturnType<typeof renderEditorScreen>>, testID: string) {
-    await act(async () => { configField(screen, testID).props.onBlur?.(); });
+async function leaveConfig(
+  screen: Awaited<ReturnType<typeof renderEditorScreen>>,
+  testID: string,
+) {
+  await act(async () => {
+    configField(screen, testID).props.onBlur?.();
+  });
+}
+
+async function waitForPasteResult(
+  screen: Awaited<ReturnType<typeof renderEditorScreen>>,
+  testID: string,
+) {
+  try {
+    await vi.waitFor(() => expect(screen.findByTestId(testID)).not.toBeNull());
+  } catch (error) {
+    const input = screen.findAll(
+      (node) => node.props.draft?.store?.getSnapshot && node.props.ctx,
+    )[0];
+    const draft = input?.props.draft.store.getSnapshot();
+    console.error('Paste preview boundary', {
+      current: input?.props.draft.current,
+      preview: draft?.preview
+        ? {
+            servers: draft.preview.servers.map(
+              (server: { name: string }) => server.name,
+            ),
+            duplicateCount: draft.preview.duplicates.length,
+            errors: draft.preview.errors,
+          }
+        : null,
+      previewCurrent: draft?.previewText === draft?.text,
+      error: draft?.error,
+      testIDs: [
+        ...new Set(
+          screen
+            .findAll(
+              (node) =>
+                typeof node.props.testID === 'string' &&
+                node.props.testID.startsWith('mcp.add'),
+            )
+            .map((node) => node.props.testID),
+        ),
+      ],
+    });
+    throw error;
+  }
+}
+
+function createMcpAddRegistryFixture() {
+  return {
+    sourceId: 'mcp-add-catalog',
+    url: 'https://mcp-add-registry.test',
+    servers: Array.from({ length: 100 }, (_, index) => ({
+      server: {
+        name: `org.example/server-${index}`,
+        title: `Server ${index}`,
+        description: 'Search project documentation.',
+        version: '1.2.0',
+        packages: [
+          {
+            registryType: 'npm',
+            identifier: `@example/server-${index}`,
+            version: '1.2.0',
+            transport: { type: 'stdio' as const },
+          },
+        ],
+      },
+    })),
+  };
 }
 
 describe('McpServerEditorScreen', () => {
-    it('saves Session folder from the real machine difference modal into the catalog', async () => {
-        liveMcpSettings = { v: 1, strictMode: false, servers: [{ id: 'server-1', name: 'hard-drives', transport: 'stdio',
-            stdio: { command: 'echo', args: [], cwd: { t: 'path', path: '/base-folder' } }, env: {}, createdAt: 1, updatedAt: 1,
-            configOverrides: [{ target: { t: 'machine', machineId: 'machine-1' }, stdio: { cwd: { t: 'path', path: '/machine-folder' } } }],
-        }], bindings: [] };
-        const screen = await renderEditorScreen({ machineDifferenceModal: true });
-        await act(async () => {
-            const disclosure = screen.findHostByTestId('mcp.server.differences.toggle')!;
-            pressTestInstance(disclosure.findAll(node => typeof node.props.onPress === 'function')[0]);
-        });
-        await act(async () => { screen.pressByTestId('mcp.server.differences.row.0'); });
-        const folder = screen.findAllByTestId('mcp.server.config.folder')
-            .filter(node => typeof node.props.onSelect === 'function' && node.props.selectedId === 'path').pop();
-        expect(folder).toBeDefined();
-        // The modal's picker clears cwd for Session folder; Save must encode that as an explicit override.
-        await act(async () => { folder!.props.onSelect('session'); });
-        await act(async () => { screen.pressByTestId('mcp.server.differences.save'); });
-        await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
-        expect(rowMutationRequests[0]?.content).toMatchObject({ t: 'plain', v: { servers: [{
-            stdio: { cwd: { t: 'path', path: '/base-folder' } },
-            configOverrides: [{ target: { t: 'machine', machineId: 'machine-1' }, stdio: { cwd: { t: 'session' } } }],
-        }], bindings: [] } });
-        expect(screen.findAllByTestId('mcp.server.differences.save')).toHaveLength(0);
+  it('withdraws a Store pending exact read on credential retirement and rejects its late disclosure', async () => {
+    const registry = createMcpAddRegistryFixture();
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
     });
-    it('saves a saved server\'s Configuration when focus leaves a value, keeping its machine differences and reach rules', async () => {
-        const configOverrides = [{ target: { t: 'machine', machineId: 'machine-1' }, stdio: { command: 'machine-command' } }];
-        const bindings = [{ id: 'binding-1', serverId: 'server-1', target: { t: 'allMachines' }, enabled: false,
-            createdAt: 1, updatedAt: 1 }];
-        liveMcpSettings = { v: 1, strictMode: false, servers: [{ id: 'server-1', name: 'hard-drives', transport: 'stdio',
-            stdio: { command: 'node', args: ['server.js'] }, env: {}, createdAt: 1, updatedAt: 1, configOverrides }], bindings };
-        const screen = await renderEditorScreen();
-        const command = () => screen.findAllByTestId('mcp.server.editor.command')
-            .find((node) => typeof node.props.onChangeText === 'function')!;
-        expect(command().props.value).toBe('node');
-        // Typing alone writes nothing; there is no Save on a saved server's page.
-        await act(async () => { command().props.onChangeText('bun'); });
-        await flushHookEffects();
-        expect(rowMutationRequests).toHaveLength(0);
-        expect(screen.findAllByTestId('mcp.server.editor.save')).toHaveLength(0);
-
-        await act(async () => { command().props.onBlur?.(); });
-        await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
-        expect(rowMutationRequests[0]?.content).toMatchObject({ t: 'plain', v: {
-            servers: [{ name: 'hard-drives', stdio: { command: 'bun', args: ['server.js'] }, configOverrides }], bindings,
-        } });
-        await vi.waitFor(() => expect(screen.findAllByTestId('mcp.server.config.saveState').length).toBeGreaterThan(0));
+    const screen = await renderEditorScreen({
+      registry,
+      storeListing: true,
+      initialSelection: {
+        sourceId: registry.sourceId,
+        itemId: registry.servers[42]!.server.name,
+        version: '1.2.0',
+      },
+      beforeRegistryRead: () => pending,
     });
-
-    it('keeps a new draft open and dirty until its destination CAS is acknowledged', async () => {
-        mcpServersModuleState.routerSearchParams = {};
-        liveMcpSettings = { v: 1, strictMode: false, servers: [], bindings: [] };
-        const screen = await renderEditorScreen();
-        await act(async () => {
-            screen.changeTextByTestId('mcp.server.editor.name', 'awaiting-ack');
-        });
-        await typeConfig(screen, 'mcp.server.editor.command', 'mcp-server');
-        await leaveConfig(screen, 'mcp.server.editor.command');
-        rowMutationGate = new Promise<void>(resolve => { releaseRowMutation = resolve; });
-        try {
-            act(() => { screen.pressByTestId('mcp.server.editor.save'); });
-            await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
-            expect(routerReplaceSpy).not.toHaveBeenCalled();
-            expect(navigationPreventRemove.enabled).toBe(true);
-            expect(settingsHttpWriteSpy).not.toHaveBeenCalled();
-            releaseRowMutation?.();
-            await vi.waitFor(() => expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/mcp/uuid'));
-        } finally { releaseRowMutation?.(); }
+    await vi.waitFor(() =>
+      expect(registryRequests.some((path) => path.includes('/versions/'))).toBe(
+        true,
+      ),
+    );
+    const originalRecords =
+      McpServersSettingsV1Schema.parse(liveMcpSettings).servers;
+    const home = activeConnection!.home;
+    const renewal = await TokenStorage.setCredentialsForServerUrlWithRollback(
+      home.serverUrl,
+      { serverId: home.id },
+      {
+        token: `e30.${Buffer.from(JSON.stringify({ sub: accountScope!.accountId })).toString('base64url')}.renewed-signature`,
+      },
+    );
+    try {
+      expect(renewal).toBeTruthy();
+      await act(async () => {
+        release();
+      });
+      await vi.waitFor(() =>
+        expect(screen.findAllByTestId('mcp.add.detail.title')).toHaveLength(0),
+      );
+      expect(screen.findAllByTestId('store.mcp.primary')).toHaveLength(0);
+      expect(rowMutationRequests).toHaveLength(0);
+      expect(McpServersSettingsV1Schema.parse(liveMcpSettings).servers).toEqual(
+        originalRecords,
+      );
+    } finally {
+      release();
+      await renewal?.rollback();
+    }
+  });
+  it.each([true, false])(
+    'adds the exact Store MCP selection through its native controller and exposes acknowledged home membership (pin=%s)',
+    async (pinned) => {
+      const registry = createMcpAddRegistryFixture();
+      const selected = registry.servers[42]!.server;
+      const screen = await renderEditorScreen({
+        registry,
+        storeListing: true,
+        initialSelection: {
+          sourceId: registry.sourceId,
+          itemId: selected.name,
+          ...(pinned ? { version: selected.version } : {}),
+        },
+      });
+      await vi.waitFor(() =>
+        expect(
+          screen
+            .findAllByTestId('mcp.add.detail.title')
+            .some((node) => node.props.children === selected.title),
+        ).toBe(true),
+      );
+      await vi.waitFor(() =>
+        expect(
+          screen
+            .findAllByTestId('store.mcp.primary')
+            .find((node) => typeof node.props.action === 'function')?.props
+            .disabled,
+        ).toBe(false),
+      );
+      await act(async () => {
+        screen.pressByTestId('store.mcp.primary');
+      });
+      await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
+      expect(
+        registryRequests.filter((path) => path === '/v0.1/servers'),
+      ).toEqual([]);
+      expect(
+        registryRequests.filter((path) => path.includes('/versions/')),
+      ).toEqual(
+        pinned
+          ? ['/v0.1/servers/org.example%2Fserver-42/versions/1.2.0']
+          : [
+              '/v0.1/servers/org.example%2Fserver-42/versions/latest',
+              '/v0.1/servers/org.example%2Fserver-42/versions/2.0.0',
+            ],
+      );
+      expect(
+        McpServersSettingsV1Schema.parse(liveMcpSettings).servers,
+      ).toContainEqual(
+        expect.objectContaining({
+          origin: expect.objectContaining({
+            kind: 'registry',
+            provenance: expect.objectContaining({
+              sourceId: registry.sourceId,
+              itemId: selected.name,
+              ref: {
+                kind: 'version',
+                version: pinned ? selected.version : '2.0.0',
+              },
+            }),
+          }),
+        }),
+      );
+      expect(routerBackSpy).not.toHaveBeenCalled();
+    },
+  );
+  it('names browser sign-in for a catalog server that also declares an optional value', async () => {
+    const registry = {
+      sourceId: 'mcp-add-catalog',
+      url: 'https://mcp-add-registry.test',
+      servers: [
+        {
+          server: {
+            name: 'org.example/cloud-docs',
+            title: 'Cloud Docs',
+            description: 'Search project documentation.',
+            version: '1.2.0',
+            remotes: [
+              {
+                type: 'streamable-http' as const,
+                url: 'https://docs.example.test/mcp',
+                headers: [
+                  { name: 'X-Team', description: 'Team id', isRequired: false },
+                ],
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const screen = await renderEditorScreen({
+      registry,
+      storeListing: true,
+      initialSelection: {
+        sourceId: registry.sourceId,
+        itemId: registry.servers[0]!.server.name,
+        version: '1.2.0',
+      },
     });
-
-    it('honors the disabled MCP update Action for an ordinary editor Save without writing the row', async () => {
-        mcpServersModuleState.routerSearchParams = { serverId: 'server-1' };
-        const screen = await renderEditorScreen({ activeAccount: true, mcpUpdatePolicy: 'disabled' });
-        await typeConfig(screen, 'mcp.server.editor.command', 'disabled-policy-draft');
-        await leaveConfig(screen, 'mcp.server.editor.command');
-        await vi.waitFor(() => expect(rowMutationRequests.length + modalAlertSpy.mock.calls.length
-            + routerReplaceSpy.mock.calls.length).toBeGreaterThan(0));
-        expect(rowMutationRequests).toHaveLength(0);
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'action_disabled');
-        expect(routerReplaceSpy).not.toHaveBeenCalled();
-        expect(configField(screen, 'mcp.server.editor.command').props.value).toBe('disabled-policy-draft');
-        expect(navigationPreventRemove.enabled).toBe(true);
+    await vi.waitFor(() =>
+      expect(screen.getTextContent()).toContain('capabilities.mcpAdd.detail.nextSignIn'),
+    );
+    const text = screen.getTextContent();
+    // The optional value is asked for, and the browser sign-in it does not replace is named beside it.
+    expect(
+      screen.findAll(
+        (node) =>
+          typeof node.props.testID === 'string' &&
+          node.props.testID.startsWith('mcp.add.header'),
+      ).length,
+    ).toBeGreaterThan(0);
+    expect(text).toContain('capabilities.mcpAdd.detail.signInTitle(name=Cloud Docs)');
+    expect(text).not.toContain('capabilities.mcpAdd.detail.nothingNeeded');
+  });
+  it('lands on one catalog result and adds its reviewed pin through the real MCP Add entry', async () => {
+    const registry = createMcpAddRegistryFixture();
+    const screen = await renderEditorScreen({
+      addModal: true,
+      addMode: 'catalog',
+      registry,
     });
+    const stage = screen
+      .findAllByTestId('mcp.add:collection:stage')
+      .find((node) => typeof node.props.onLayout === 'function');
+    if (!stage)
+      throw new Error('Expected the real Collection geometry boundary');
+    await act(async () =>
+      stage.props.onLayout({
+        nativeEvent: { layout: { x: 0, y: 0, width: 1080, height: 600 } },
+      }),
+    );
+    try {
+      await vi.waitFor(() =>
+        expect(
+          screen.findAll(
+            (node) =>
+              node.props.testID === 'mcp.add:collection' &&
+              node.props.model?.keys?.length === 100,
+          ).length,
+        ).toBeGreaterThan(0),
+      );
+    } catch (error) {
+      const config = screen.findAll((node) => node.props.config?.catalog)[0]
+        ?.props.config;
+      const { getPromptLibraryCatalogSnapshot } =
+        await import('@/sync/store/settings/promptLibraryCatalogSnapshot');
+      const snapshot = getPromptLibraryCatalogSnapshot(accountScope!);
+      const { createFrontDoorActionExecute } =
+        await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+      const diagnostic = await createFrontDoorActionExecute()(
+        'registries.items.list',
+        { kind: 'mcpServer', sourceIds: [registry.sourceId] },
+        {
+          surface: 'ui',
+          authority: 'present_user',
+          serverId: accountScope!.serverId,
+          expectedAccountId: accountScope!.accountId,
+          actionCaller: { kind: 'host' },
+        },
+      );
+      const { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } =
+        await import('@happier-dev/protocol/registries');
+      const parsed = diagnostic.ok
+        ? REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].safeParse(
+            diagnostic.result,
+          )
+        : null;
+      console.error('MCP catalog mounted read', {
+        loading: config?.catalog.loading,
+        itemCount: config?.catalog.items.length,
+        sourceFailures: config?.catalog.sourceFailures,
+        promptCatalogStatus: snapshot?.catalog.status,
+        read: !diagnostic.ok
+          ? { errorCode: diagnostic.errorCode }
+          : parsed?.success
+            ? parsed.data.pages.map((page) => ({
+                sourceId: page.sourceId,
+                status: page.status,
+                itemCount: page.items.length,
+              }))
+            : { invalidOutput: true },
+        registryRequests,
+      });
+      throw error;
+    }
+    await vi.waitFor(() =>
+      expect(
+        screen.findAllByTestId('mcp.add.detail.title').length,
+      ).toBeGreaterThan(0),
+    );
+    expect(
+      registryRequests.filter((path) => path.includes('/versions/')),
+    ).toEqual(['/v0.1/servers/org.example%2Fserver-0/versions/1.2.0']);
+    expect(rowMutationRequests).toHaveLength(0);
+    await vi.waitFor(() =>
+      expect(
+        screen
+          .findAllByTestId('mcp.add:primary')
+          .find((node) => typeof node.props.onPress === 'function')?.props
+          .disabled,
+      ).toBe(false),
+    );
+    await act(async () => {
+      screen.pressByTestId('mcp.add:primary');
+    });
+    await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
+    const mutation = rowMutationRequests[0]!;
+    expect(mutation.expectedRevision).toBe(3);
+    expect(
+      McpServersSettingsV1Schema.parse(liveMcpSettings).servers,
+    ).toContainEqual(
+      expect.objectContaining({
+        origin: expect.objectContaining({
+          kind: 'registry',
+          provenance: expect.objectContaining({
+            sourceId: registry.sourceId,
+            itemId: registry.servers[0]!.server.name,
+            ref: { kind: 'version', version: '1.2.0' },
+          }),
+        }),
+      }),
+    );
+    expect(routerBackSpy).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(
+        screen.findAllByTestId('mcp.add:open-added').length,
+      ).toBeGreaterThan(0),
+    );
+    expect(routerReplaceSpy).not.toHaveBeenCalled();
+    await act(async () => {
+      screen.pressByTestId('mcp.add:open-added');
+    });
+    const created = McpServersSettingsV1Schema.parse(
+      liveMcpSettings,
+    ).servers.find((server) => server.origin?.kind === 'registry')!;
+    expect(routerReplaceSpy).toHaveBeenCalledWith(created.id, {
+      afterRegistryAdd: true,
+    });
+    expect(rowMutationRequests).toHaveLength(1);
+  });
 
-    it('opens the original MCP approval while retaining the dirty editor and later edits without replay', async () => {
-        mcpServersModuleState.routerSearchParams = { serverId: 'server-1' };
-        const screen = await renderEditorScreen({ activeAccount: true, mcpUpdatePolicy: 'ask', hosted: true });
-        await typeConfig(screen, 'mcp.server.editor.command', 'approved-policy-draft');
-        await leaveConfig(screen, 'mcp.server.editor.command');
-        await vi.waitFor(() => expect(approvalArtifacts!.list().length + rowMutationRequests.length
-            + modalAlertSpy.mock.calls.length + routerReplaceSpy.mock.calls.length).toBeGreaterThan(0));
-        expect(approvalArtifacts!.list()).toHaveLength(1);
-        expect(rowMutationRequests).toHaveLength(0);
-        expect(routerReplaceSpy).not.toHaveBeenCalled();
-        expect(routerPushSpy).not.toHaveBeenCalled();
-        await vi.waitFor(() => expect(screen.findByTestId('mcp.server.editor.approval')).not.toBeNull());
-        const artifact = approvalArtifacts!.list()[0]!;
-        const request = StoredApprovalRequestSchema.parse(JSON.parse(approvalArtifacts!.readPlainBody(artifact.id)!));
-        if (request.v !== 2) throw new Error('Expected typed MCP update approval');
-        expect(request.actionId).toBe('mcp.servers.update');
-        expect(request.actionArgs).toMatchObject({ expectedRevision: 3, entry: { id: 'server-1', stdio: { command: 'approved-policy-draft' } } });
-        await typeConfig(screen, 'mcp.server.editor.command', 'later-local-edit');
-        unsavedChangesDecision = 'keepEditing';
-        await act(async () => {
-            const notice = screen.findAll(node => node.props.testID === 'mcp.server.editor.approval'
-                && typeof node.props.onOpenApproval === 'function')[0]!;
-            notice.props.onOpenApproval();
-        });
-        expect(retainedApprovalNavigationSpy).toHaveBeenCalledWith(
-            `/inbox/approvals/${encodeURIComponent(artifact.id)}?serverId=${encodeURIComponent(accountScope!.serverId)}`,
+  it('retains a catalog result reach draft while visiting another Add mode', async () => {
+    const registry = createMcpAddRegistryFixture();
+    const screen = await renderEditorScreen({
+      addModal: true,
+      addMode: 'catalog',
+      registry,
+    });
+    const measure = async () => {
+      const stage = screen
+        .findAllByTestId('mcp.add:collection:stage')
+        .find((node) => typeof node.props.onLayout === 'function')!;
+      await act(async () =>
+        stage.props.onLayout({
+          nativeEvent: { layout: { x: 0, y: 0, width: 1080, height: 600 } },
+        }),
+      );
+    };
+    await measure();
+    await vi.waitFor(() =>
+      expect(
+        screen.findAllByTestId('mcp.add.detail.where').length,
+      ).toBeGreaterThan(0),
+    );
+    const { WhereItsOnControl } =
+      await import('@/components/capabilities/where/WhereItsOnControl');
+    const { reachRulesToDraftsV1 } =
+      await import('@happier-dev/protocol/reach/reachRulesChangeV1');
+    const control = () =>
+      screen
+        .findAllByType(WhereItsOnControl)
+        .find((node) => node.props.testID === 'mcp.add.detail.where')!;
+    const where = {
+      kind: 'replace' as const,
+      rules: [{ target: { t: 'allMachines' as const }, enabled: false }],
+    };
+    await act(async () => {
+      await control().props.onChange(where);
+    });
+    const chosen = reachRulesToDraftsV1(control().props.rules);
+    await openCustomMode(screen);
+    await act(async () => {
+      screen.pressByTestId('mcp.add:mode:catalog');
+    });
+    await measure();
+    await vi.waitFor(() => expect(control()).toBeDefined());
+    expect(reachRulesToDraftsV1(control().props.rules)).toEqual(chosen);
+    expect(rowMutationRequests).toHaveLength(0);
+    expect(
+      registryRequests.filter((path) => path.includes('/versions/')).length,
+    ).toBeLessThanOrEqual(1);
+  });
+
+  it.each([false, true])(
+    'keeps a cold phone Catalog at the list with zero selected-body reads (seed=%s)',
+    async (seeded) => {
+      const registry = createMcpAddRegistryFixture();
+      const screen = await renderEditorScreen({
+        addModal: true,
+        addMode: 'catalog',
+        registry,
+        ...(seeded
+          ? {
+              initialSelection: {
+                sourceId: registry.sourceId,
+                itemId: registry.servers[1]!.server.name,
+                version: '1.2.0',
+              },
+            }
+          : {}),
+      });
+      const stage = screen
+        .findAllByTestId('mcp.add:collection:stage')
+        .find((node) => typeof node.props.onLayout === 'function')!;
+      await act(async () =>
+        stage.props.onLayout({
+          nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 600 } },
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(
+          screen.findAll(
+            (node) =>
+              node.props.testID === 'mcp.add:collection' &&
+              node.props.model?.keys?.length === (seeded ? 1 : 100),
+          ).length,
+        ).toBeGreaterThan(0),
+      );
+      expect(
+        registryRequests.filter((path) => path.includes('/versions/')),
+      ).toEqual([]);
+      expect(screen.findAllByTestId('mcp.add.detail.title')).toHaveLength(0);
+      expect(rowMutationRequests).toHaveLength(0);
+    },
+  );
+
+  it('opens an exact MCP Catalog seed outside the first page without selecting another listing', async () => {
+    const base = createMcpAddRegistryFixture();
+    const selected = {
+      server: {
+        ...base.servers[0]!.server,
+        name: 'org.example/not-on-first-page',
+        title: 'Pinned documentation',
+      },
+    };
+    const registry = { ...base, servers: [...base.servers, selected] };
+    const screen = await renderEditorScreen({
+      addModal: true,
+      addMode: 'catalog',
+      registry,
+      initialSelection: {
+        sourceId: base.sourceId,
+        itemId: selected.server.name,
+        version: selected.server.version,
+      },
+    });
+    const stage = screen
+      .findAllByTestId('mcp.add:collection:stage')
+      .find((node) => typeof node.props.onLayout === 'function')!;
+    await act(async () =>
+      stage.props.onLayout({
+        nativeEvent: { layout: { x: 0, y: 0, width: 1080, height: 600 } },
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(
+        screen
+          .findAllByTestId('mcp.add.detail.title')
+          .some((node) => node.props.children === selected.server.title),
+      ).toBe(true),
+    );
+    expect(
+      registryRequests.filter((path) => path.includes('/versions/')),
+    ).toEqual(['/v0.1/servers/org.example%2Fnot-on-first-page/versions/1.2.0']);
+    // A preceding same-Account read may already own the first page. The
+    // exact pointer must never cause a source-wide page scan.
+    expect(registryRequests.filter((path) => path === '/v0.1/servers')).toEqual(
+      [],
+    );
+    expect(rowMutationRequests).toHaveLength(0);
+  });
+  it('keeps the complete Paste batch behind selected details and reuses acknowledged Secrets after a catalog failure', async () => {
+    const pasted = JSON.stringify({
+      mcpServers: {
+        alpha: {
+          command: 'alpha-mcp',
+          env: { API_KEY: 'synthetic-paste-private-value' },
+        },
+        beta: {
+          url: 'https://beta.example/mcp',
+          headers: { 'X-Endpoint': '${input:endpoint}' },
+        },
+        'hard-drives': { command: 'node', args: ['server.js'] },
+      },
+      inputs: [{ id: 'endpoint', description: 'Endpoint for beta' }],
+    });
+    const screen = await renderEditorScreen({
+      addModal: true,
+      addMode: 'paste',
+      installLink: pasted,
+    });
+    const stage = screen
+      .findAllByTestId('mcp.add:collection:stage')
+      .find((node) => typeof node.props.onLayout === 'function');
+    if (!stage)
+      throw new Error('Expected the real Paste Collection geometry boundary');
+    await act(async () =>
+      stage.props.onLayout({
+        nativeEvent: { layout: { x: 0, y: 0, width: 1080, height: 600 } },
+      }),
+    );
+    await waitForPasteResult(screen, 'mcp.add.paste.server.alpha');
+    const collection = () =>
+      screen.findAll(
+        (node) =>
+          node.props.testID === 'mcp.add:collection' &&
+          node.props.model?.actions,
+      )[0]!.props.model;
+    expect(screen.findByTestId('mcp.add.paste.server.alpha')).not.toBeNull();
+    // Selecting a result previews one editor, but the primary still owns
+    // both servers and the unresolved value belonging to the other one.
+    expect(collection().keys).toEqual(['alpha', 'beta']);
+    expect(screen.findAllByTestId('mcp.add.paste.server.beta')).toHaveLength(0);
+    const addButton = () =>
+      screen
+        .findAllByTestId('mcp.add.paste.add')
+        .find(
+          (node) =>
+            typeof node.props.title === 'string' &&
+            (typeof node.props.action === 'function' ||
+              typeof node.props.onPress === 'function'),
+        )!;
+    expect(addButton().props.title).toBe(
+      'capabilities.mcpAdd.paste.addN(count=2)',
+    );
+    expect(addButton().props.disabled).toBe(true);
+    expect(rowMutationRequests).toHaveLength(0);
+    expect(standaloneResourceMutationRequests).toHaveLength(0);
+    await typeConfig(screen, 'mcp.add.paste.field.endpoint', 'beta-endpoint');
+    await act(async () => {
+      collection().actions.open('beta');
+    });
+    await vi.waitFor(() =>
+      expect(screen.findByTestId('mcp.add.paste.detail.beta')).not.toBeNull(),
+    );
+    expect(screen.findAllByTestId('mcp.add.paste.server.alpha')).toHaveLength(
+      0,
+    );
+    expect(addButton().props.disabled).toBe(false);
+    expect(rowMutationRequests).toHaveLength(0);
+    expect(standaloneResourceMutationRequests).toHaveLength(0);
+
+    rowMutationOutcome = 'conflict';
+    await act(async () => {
+      screen.pressByTestId('mcp.add.paste.add');
+    });
+    await vi.waitFor(() =>
+      expect(screen.findByTestId('mcp.add.paste.error')).not.toBeNull(),
+    );
+    expect(standaloneResourceMutationRequests).toHaveLength(1);
+    expect(configField(screen, 'mcp.add.paste.input').props.value).toBe(pasted);
+    expect(
+      configField(screen, 'mcp.add.paste.field.endpoint').props.value,
+    ).toBe('beta-endpoint');
+    expect(routerBackSpy).not.toHaveBeenCalled();
+    await openCustomMode(screen);
+    expect(screen.findAllByTestId('mcp.add.paste.input')).toHaveLength(0);
+    await act(async () => {
+      screen.pressByTestId('mcp.add:mode:paste');
+    });
+    // The mode remounts its Collection; this non-native host supplies the
+    // same real geometry event that RN sends to the new stage.
+    const returningStage = screen
+      .findAllByTestId('mcp.add:collection:stage')
+      .find((node) => typeof node.props.onLayout === 'function')!;
+    await act(async () =>
+      returningStage.props.onLayout({
+        nativeEvent: { layout: { x: 0, y: 0, width: 1080, height: 600 } },
+      }),
+    );
+    expect(configField(screen, 'mcp.add.paste.input').props.value).toBe(pasted);
+    expect(
+      configField(screen, 'mcp.add.paste.field.endpoint').props.value,
+    ).toBe('beta-endpoint');
+    rowMutationOutcome = 'updated';
+    await act(async () => {
+      screen.pressByTestId('mcp.add.paste.add');
+    });
+    await vi.waitFor(() => expect(routerReplaceSpy).toHaveBeenCalled());
+    expect(standaloneResourceMutationRequests).toHaveLength(1);
+    const persisted = McpServersSettingsV1Schema.parse(liveMcpSettings);
+    expect(persisted.servers.map((server) => server.name).sort()).toEqual([
+      'alpha',
+      'beta',
+      'hard-drives',
+    ]);
+    const secretRef = formatSharedSavedSecretRefV1(
+      standaloneResourceMutationRequests[0]!.resourceId,
+    );
+    expect(
+      persisted.servers.find((server) => server.name === 'alpha')?.env.API_KEY,
+    ).toEqual({ t: 'savedSecret', secretId: secretRef });
+    expect(
+      persisted.servers.find((server) => server.name === 'beta')?.remote
+        ?.headers['X-Endpoint'],
+    ).toEqual({ t: 'literal', v: 'beta-endpoint' });
+    expect(JSON.stringify(rowMutationRequests)).not.toContain(
+      'synthetic-paste-private-value',
+    );
+  });
+
+  it('retains a typed Paste preview refusal and retries only on explicit intent without losing the document', async () => {
+    const pasted = JSON.stringify({
+      mcpServers: { docs: { command: 'docs-mcp' } },
+    });
+    const frontDoor =
+      await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+    const create = frontDoor.createFrontDoorActionExecute;
+    let reads = 0;
+    let refusal: string | null = null;
+    const observation = vi
+      .spyOn(frontDoor, 'createFrontDoorActionExecute')
+      .mockImplementation((...args) => {
+        const execute = create(...args);
+        return Object.assign(
+          (...invocation: Parameters<typeof execute>) => {
+            if (invocation[0] === 'mcp.servers.import') reads++;
+            return execute(...invocation).then((receipt) => {
+              if (invocation[0] === 'mcp.servers.import' && !receipt.ok)
+                refusal = receipt.errorCode ?? receipt.error;
+              return receipt;
+            });
+          },
+          { prepare: execute.prepare },
         );
-        expect(modalAlertSpy).not.toHaveBeenCalled();
-        expect(configField(screen, 'mcp.server.editor.command').props.value).toBe('later-local-edit');
-        // The real Inbox decision executes the captured Action against this
-        // HTTP row and publishes its genuine durable approval receipt.
-        const decision = await decideApprovalAsInbox(accountScope!.serverId, artifact.id, 'approve');
-        expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
-        await vi.waitFor(() => expect(catalogRevision).toBe(4));
-        expect(routerReplaceSpy).not.toHaveBeenCalled();
-        expect(configField(screen, 'mcp.server.editor.command').props.value).toBe('later-local-edit');
-        expect(approvalArtifacts!.list()).toHaveLength(1);
-        expect(rowMutationRequests).toHaveLength(1);
-        expect(rowMutationRequests[0]?.expectedRevision).toBe(3);
-        expect(catalogRevision).toBe(4);
-    });
+      });
+    try {
+      const screen = await renderEditorScreen({
+        addModal: true,
+        addMode: 'paste',
+        installLink: pasted,
+        mcpImportDisabled: true,
+      });
+      const { McpPasteInput } = await import('./add/McpPasteInput');
+      const draft = () => screen.findByType(McpPasteInput).props.draft;
+      await vi.waitFor(() =>
+        expect(draft().store.getSnapshot().error).toBeTruthy(),
+      );
+      expect(draft().store.getSnapshot().error).toBe(refusal);
+      expect(configField(screen, 'mcp.add.paste.input').props.value).toBe(
+        pasted,
+      );
+      await vi.waitFor(() =>
+        expect(configField(screen, 'mcp.add.paste.input').props.error).toBe(
+          refusal,
+        ),
+      );
+      expect(draft().store.getSnapshot().preview).toBeNull();
+      expect(reads).toBe(1);
+      // The refusal offers one explicit Try again beside the kept document; it re-reads that same text once.
+      await vi.waitFor(() =>
+        expect(screen.findByTestId('mcp.add.paste.retry')).not.toBeNull(),
+      );
+      expect(reads).toBe(1);
+      await act(async () => {
+        screen.pressByTestId('mcp.add.paste.retry');
+      });
+      await vi.waitFor(() => expect(reads).toBe(2));
+      await vi.waitFor(() =>
+        expect(draft().store.getSnapshot().error).toBeTruthy(),
+      );
+      expect(configField(screen, 'mcp.add.paste.input').props.value).toBe(
+        pasted,
+      );
+      expect(rowMutationRequests).toHaveLength(0);
+    } finally {
+      observation.mockRestore();
+    }
+  });
 
-    it('saves a typed value against the latest revision when another writer moved the server first', async () => {
-        const screen = await renderEditorScreen();
-        await typeConfig(screen, 'mcp.server.editor.command', 'local-draft');
-        liveMcpSettings = { v: 1, strictMode: false, servers: [{ id: 'server-1', name: 'remote-edit', transport: 'stdio',
-            stdio: { command: 'node', args: ['server.js'] }, env: {}, createdAt: 1, updatedAt: 2 }], bindings: [] };
-        catalogRevision = 4;
-        await act(async () => { await refreshMcpServerCatalog(accountScope!); });
-        // The typed value survives the other writer's change, which the page now shows.
-        expect(configField(screen, 'mcp.server.editor.command').props.value).toBe('local-draft');
-        await leaveConfig(screen, 'mcp.server.editor.command');
-        await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
-        expect(rowMutationRequests[0]?.expectedRevision).toBe(4);
-        expect(rowMutationRequests[0]?.content).toMatchObject({ t: 'plain', v: {
-            servers: [{ name: 'remote-edit', stdio: { command: 'local-draft', args: ['server.js'] } }],
-        } });
-        expect(modalAlertSpy).not.toHaveBeenCalled();
+  it('names browser sign-in for a pasted OAuth server instead of saying nothing is needed', async () => {
+    const pasted = JSON.stringify({
+      mcpServers: {
+        'cloud-docs': {
+          type: 'http',
+          url: 'https://docs.example.test/mcp',
+          auth: { kind: 'oauth' },
+        },
+      },
     });
-
-    it('rebases an open dirty configuration over an observed Test snapshot without losing either change', async () => {
-        const screen = await renderEditorScreen();
-        await typeConfig(screen, 'mcp.server.editor.args.item.0', 'local-argument');
-        await typeConfig(screen, 'mcp.server.editor.command', 'local-command');
-        const current = McpServersSettingsV1Schema.parse(liveMcpSettings);
-        const toolsSnapshot = { checkedAt: 10, machineId: 'machine-1', tools: [{ name: 'read', tokens: 12 }] };
-        liveMcpSettings = { ...current, servers: current.servers.map(server => ({ ...server, toolsSnapshot, updatedAt: 10 })) };
-        catalogRevision = 4;
-        await act(async () => { await refreshMcpServerCatalog(accountScope!); });
-        expect(configField(screen, 'mcp.server.editor.command').props.value).toBe('local-command');
-        await leaveConfig(screen, 'mcp.server.editor.command');
-        await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
-        expect(rowMutationRequests[0]?.expectedRevision).toBe(4);
-        expect(rowMutationRequests[0]?.content).toMatchObject({ t: 'plain', v: { servers: [{
-            stdio: { command: 'local-command', args: ['local-argument'] }, toolsSnapshot,
-        }] } });
-        expect(modalAlertSpy).not.toHaveBeenCalled();
+    const screen = await renderEditorScreen({
+      addModal: true,
+      addMode: 'paste',
+      installLink: pasted,
     });
+    const stage = screen
+      .findAllByTestId('mcp.add:collection:stage')
+      .find((node) => typeof node.props.onLayout === 'function');
+    if (!stage) throw new Error('Expected the real Paste Collection geometry boundary');
+    await act(async () =>
+      stage.props.onLayout({
+        nativeEvent: { layout: { x: 0, y: 0, width: 1080, height: 600 } },
+      }),
+    );
+    await waitForPasteResult(screen, 'mcp.add.paste.detail.cloud-docs');
+    const text = screen.getTextContent();
+    expect(text).toContain(
+      'capabilities.mcpAdd.detail.signInTitle(name=cloud-docs)',
+    );
+    expect(text).toContain('capabilities.mcpAdd.detail.signInBody');
+    expect(text).not.toContain('capabilities.mcpAdd.detail.nothingNeeded');
+    expect(text).toContain('2. capabilities.mcpAdd.detail.nextSignIn');
+    expect(text).not.toContain('2. capabilities.mcpAdd.detail.nextSessions');
+  });
 
-    it('saves the rebased entry when a catalog publication and blur share an effect flush', async () => {
-        const screen = await renderEditorScreen();
-        const { McpServerDetailPage } = await import('./detail/McpServerDetailPage');
-        const { applyMcpServerCatalogSnapshot } = await import('@/sync/store/settings/mcpServerCatalogSnapshot');
-        const { McpServerCatalogV1Schema } = await import('@happier-dev/protocol/mcp/servers/serverRowsV1');
-        const current = McpServersSettingsV1Schema.parse(liveMcpSettings);
-        const toolsSnapshot = { checkedAt: 10, machineId: 'machine-1', tools: [{ name: 'read', tokens: 12 }] };
-        const { strictMode: _strictMode, ...catalog } = current;
-        const next = McpServerCatalogV1Schema.parse({ ...catalog,
-            servers: catalog.servers.map(server => ({ ...server, toolsSnapshot, updatedAt: 10 })) });
-        liveMcpSettings = { ...next, strictMode: false };
-        catalogRevision = 4;
-        // Publish through the real subscription owner in the same React turn as the committed field intent.
-        await act(async () => {
-            applyMcpServerCatalogSnapshot(accountScope!, { status: 'ready', authority: 'active', revision: 4,
-                catalog: next, diagnostics: [] }, true);
-            const detail = screen.findByType(McpServerDetailPage);
-            detail.props.onChangeServer((server: (typeof next.servers)[number]) => ({ ...server,
-                stdio: { ...server.stdio!, command: 'same-turn-command' } }));
-            detail.props.onCommitConfiguration();
+  it('keeps the value asks of a pasted OAuth server next to its sign-in note', async () => {
+    const pasted = JSON.stringify({
+      mcpServers: {
+        'cloud-docs': {
+          type: 'http',
+          url: 'https://docs.example.test/mcp',
+          auth: { kind: 'oauth' },
+          headers: { 'X-Team': '${TEAM_ID}' },
+        },
+      },
+    });
+    const screen = await renderEditorScreen({
+      addModal: true,
+      addMode: 'paste',
+      installLink: pasted,
+    });
+    const stage = screen
+      .findAllByTestId('mcp.add:collection:stage')
+      .find((node) => typeof node.props.onLayout === 'function');
+    if (!stage) throw new Error('Expected the real Paste Collection geometry boundary');
+    await act(async () =>
+      stage.props.onLayout({
+        nativeEvent: { layout: { x: 0, y: 0, width: 1080, height: 600 } },
+      }),
+    );
+    await waitForPasteResult(screen, 'mcp.add.paste.detail.cloud-docs');
+    const text = screen.getTextContent();
+    expect(
+      screen.findAllByTestId('mcp.add.paste.server.cloud-docs').length,
+    ).toBeGreaterThan(0);
+    expect(text).toContain(
+      'capabilities.mcpAdd.detail.signInTitle(name=cloud-docs)',
+    );
+    expect(text).toContain('2. capabilities.mcpAdd.detail.nextSignIn');
+  });
+
+  it('offers Done for a duplicate-only Paste preview without claiming one server can be added', async () => {
+    const screen = await renderEditorScreen({
+      addModal: true,
+      addMode: 'paste',
+      installLink: JSON.stringify({
+        mcpServers: { 'hard-drives': { command: 'node', args: ['server.js'] } },
+      }),
+    });
+    await waitForPasteResult(screen, 'mcp.add.paste.done');
+    expect(screen.findAllByTestId('mcp.add.paste.add')).toHaveLength(0);
+    expect(rowMutationRequests).toHaveLength(0);
+    expect(standaloneResourceMutationRequests).toHaveLength(0);
+    await act(async () => {
+      screen.pressByTestId('mcp.add.paste.done');
+    });
+    expect(routerBackSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['before-refusal', 'after-refusal'] as const)(
+    'does not apply a retained Secret from an earlier paste to changed source content (%s)',
+    async (timing) => {
+      const document = (value: string) =>
+        JSON.stringify({
+          mcpServers: {
+            alpha: { command: 'alpha-mcp', env: { API_KEY: value } },
+          },
         });
-        await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
-        expect(rowMutationRequests[0]?.expectedRevision).toBe(4);
-        expect(rowMutationRequests[0]?.content).toMatchObject({ t: 'plain', v: { servers: [{
-            stdio: { command: 'same-turn-command' }, toolsSnapshot,
-        }] } });
-    });
+      const screen = await renderEditorScreen({
+        addModal: true,
+        addMode: 'paste',
+        installLink: document('synthetic-first'),
+      });
+      const { McpPasteInput } = await import('./add/McpPasteInput');
+      const draft = () => screen.findByType(McpPasteInput).props.draft;
+      await vi.waitFor(() =>
+        expect(draft().store.getSnapshot().previewText).toBe(
+          document('synthetic-first'),
+        ),
+      );
+      rowMutationOutcome = 'conflict';
+      let release: (() => void) | undefined;
+      if (timing === 'before-refusal')
+        rowMutationGate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      await act(async () => {
+        screen.pressByTestId('mcp.add.paste.add');
+      });
+      await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
+      expect(standaloneResourceMutationRequests).toHaveLength(1);
+      const firstResourceId = standaloneResourceMutationRequests[0]!.resourceId;
+      const next = document('synthetic-second');
+      if (timing === 'after-refusal')
+        await vi.waitFor(() =>
+          expect(draft().store.getSnapshot().busy).toBe(false),
+        );
+      await typeConfig(screen, 'mcp.add.paste.input', next);
+      await act(async () => {
+        release?.();
+      });
+      await vi.waitFor(() =>
+        expect(draft().store.getSnapshot().busy).toBe(false),
+      );
+      await vi.waitFor(() =>
+        expect(draft().store.getSnapshot().previewText).toBe(next),
+      );
+      rowMutationOutcome = 'updated';
+      await vi.waitFor(() => {
+        const buttons = screen
+          .findAllByTestId('mcp.add.paste.add')
+          .filter((node) => typeof node.props.onPress === 'function');
+        expect(buttons.length).toBeGreaterThan(0);
+        expect(
+          buttons.every((node) => !node.props.disabled && !node.props.loading),
+        ).toBe(true);
+      });
+      await act(async () => {
+        screen.pressByTestId('mcp.add.paste.add');
+      });
+      await vi.waitFor(() => expect(catalogRevision).toBe(4));
+      expect(standaloneResourceMutationRequests).toHaveLength(2);
+      const created = McpServersSettingsV1Schema.parse(
+        liveMcpSettings,
+      ).servers.find((server) => server.name === 'alpha')!;
+      expect(created.env.API_KEY).not.toEqual({
+        t: 'savedSecret',
+        secretId: formatSharedSavedSecretRefV1(firstResourceId),
+      });
+    },
+  );
 
-    it('preserves a real concurrent edit for Review and saves only after the current version is reviewed', async () => {
-        const screen = await renderEditorScreen();
-        const { McpServerDetailPage } = await import('./detail/McpServerDetailPage');
-        await typeConfig(screen, 'mcp.server.editor.command', 'local-command');
-        const current = McpServersSettingsV1Schema.parse(liveMcpSettings);
-        liveMcpSettings = { ...current, servers: current.servers.map(server => ({ ...server,
-            stdio: { ...server.stdio!, command: 'remote-command', args: ['remote-argument'] }, updatedAt: 10 })) };
-        catalogRevision = 4;
-        await act(async () => { await refreshMcpServerCatalog(accountScope!); });
-        await leaveConfig(screen, 'mcp.server.editor.command');
-        await flushHookEffects();
+  it('retains a newer Paste document when the earlier import acknowledgement arrives', async () => {
+    const first = JSON.stringify({
+      mcpServers: { alpha: { command: 'alpha-mcp' } },
+    });
+    const next = JSON.stringify({
+      mcpServers: { beta: { command: 'beta-mcp' } },
+    });
+    const screen = await renderEditorScreen({
+      addModal: true,
+      addMode: 'paste',
+      installLink: first,
+    });
+    const { McpPasteInput } = await import('./add/McpPasteInput');
+    const draft = () => screen.findByType(McpPasteInput).props.draft;
+    await vi.waitFor(() =>
+      expect(draft().store.getSnapshot().previewText).toBe(first),
+    );
+    let release: (() => void) | undefined;
+    rowMutationGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await act(async () => {
+      screen.pressByTestId('mcp.add.paste.add');
+    });
+    await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
+    await typeConfig(screen, 'mcp.add.paste.input', next);
+    await act(async () => {
+      release?.();
+    });
+    await vi.waitFor(() =>
+      expect(draft().store.getSnapshot().busy).toBe(false),
+    );
+    expect(routerBackSpy).not.toHaveBeenCalled();
+    expect(routerReplaceSpy).not.toHaveBeenCalled();
+    expect(draft().store.getSnapshot()).toMatchObject({
+      text: next,
+      added: false,
+    });
+    await vi.waitFor(() =>
+      expect(draft().store.getSnapshot().previewText).toBe(next),
+    );
+    await vi.waitFor(() => {
+      const buttons = screen
+        .findAllByTestId('mcp.add.paste.add')
+        .filter((node) => typeof node.props.onPress === 'function');
+      expect(buttons.length).toBeGreaterThan(0);
+      expect(
+        buttons.every((node) => !node.props.disabled && !node.props.loading),
+      ).toBe(true);
+    });
+    await act(async () => {
+      screen.pressByTestId('mcp.add.paste.add');
+    });
+    try {
+      await vi.waitFor(() => expect(routerReplaceSpy).toHaveBeenCalledOnce());
+    } catch (error) {
+      const state = draft().store.getSnapshot();
+      console.error('MCP later-document continuation', {
+        rowWrites: rowMutationRequests.length,
+        revision: catalogRevision,
+        busy: state.busy,
+        added: state.added,
+        error: state.error,
+      });
+      throw error;
+    }
+    expect(rowMutationRequests).toHaveLength(2);
+    expect(
+      McpServersSettingsV1Schema.parse(liveMcpSettings)
+        .servers.map((server) => server.name)
+        .sort(),
+    ).toEqual(['alpha', 'beta', 'hard-drives']);
+  });
+
+  it.each(['modal', 'route'] as const)(
+    'withdraws the whole MCP Add task after its captured credential binding retires (%s)',
+    async (surface) => {
+      mcpServersModuleState.routerSearchParams = {};
+      const screen = await renderEditorScreen({
+        addModal: surface === 'modal',
+      });
+      await typeConfig(
+        screen,
+        'mcp.server.editor.command',
+        'private-original-account-draft',
+      );
+      const { useServerCredentialAccountScopeBinding } =
+        await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+      const owner = await renderHook(() =>
+        useServerCredentialAccountScopeBinding(accountScope!.serverId),
+      );
+      await vi.waitFor(() =>
+        expect(owner.getCurrent().binding?.isCurrent()).toBe(true),
+      );
+      const original = owner.getCurrent().binding!;
+      const home = activeConnection!.home;
+      const renewal: {
+        write: Awaited<
+          ReturnType<typeof TokenStorage.setCredentialsForServerUrlWithRollback>
+        >;
+      } = { write: null };
+      try {
+        await act(async () => {
+          renewal.write =
+            await TokenStorage.setCredentialsForServerUrlWithRollback(
+              home.serverUrl,
+              { serverId: home.id },
+              {
+                token: `e30.${Buffer.from(JSON.stringify({ sub: accountScope!.accountId })).toString('base64url')}.renewed-signature`,
+              },
+            );
+        });
+        expect(renewal.write).toBeTruthy();
+        await vi.waitFor(() => expect(original.isCurrent()).toBe(false));
+        await vi.waitFor(() =>
+          expect(
+            screen.findAllByTestId('mcp.server.editor.command'),
+          ).toHaveLength(0),
+        );
+        expect(
+          screen.findAllByTestId(
+            surface === 'modal' ? 'mcp.add:primary' : 'mcp.server.editor.save',
+          ),
+        ).toHaveLength(0);
         expect(rowMutationRequests).toHaveLength(0);
-        expect(modalAlertSpy).not.toHaveBeenCalled();
-        const conflict = screen.findByType(McpServerDetailPage).props.configurationConflict;
-        expect(conflict).toMatchObject({ phase: 'detected', currentServer: { stdio: { command: 'remote-command' } } });
-        expect(configField(screen, 'mcp.server.editor.command').props.value).toBe('local-command');
-        const beforeReview = McpServersSettingsV1Schema.parse(liveMcpSettings);
-        liveMcpSettings = { ...beforeReview, servers: beforeReview.servers.map(server => ({ ...server,
-            env: { REGION: { t: 'literal', v: 'eu' } }, updatedAt: 11 })) };
-        catalogRevision = 5;
-        await act(async () => { await conflict.onReview(); });
-        expect(screen.findByType(McpServerDetailPage).props.configurationConflict.phase).toBe('reviewing');
-        await leaveConfig(screen, 'mcp.server.editor.command');
-        await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
-        expect(rowMutationRequests[0]?.expectedRevision).toBe(5);
-        expect(rowMutationRequests[0]?.content).toMatchObject({ t: 'plain', v: { servers: [{
+        await act(async () => {
+          await renewal.write!.rollback();
+        });
+        renewal.write = null;
+        await flushHookEffects();
+        expect(
+          screen.findAllByTestId('mcp.server.editor.command'),
+        ).toHaveLength(0);
+      } finally {
+        await renewal.write?.rollback();
+        await owner.unmount();
+      }
+    },
+  );
+
+  it('retains Custom input across modes and applies the same dirty decision to route departure', async () => {
+    const dismissGuard = { current: null as CustomModalDismissGuard | null };
+    const screen = await renderEditorScreen({ addModal: true, dismissGuard });
+    await act(async () => {
+      await screen
+        .find(
+          (node) =>
+            node.props.kind === 'mcp_server' &&
+            typeof node.props.onChange === 'function',
+        )
+        .props.onChange({
+          kind: 'replace',
+          rules: [
+            { target: { t: 'machine', machineId: 'machine-1' }, enabled: true },
+          ],
+        });
+    });
+    await typeConfig(
+      screen,
+      'mcp.server.editor.command',
+      'retained-custom-command',
+    );
+    await act(async () => {
+      screen.pressByTestId('mcp.add:mode:paste');
+    });
+    expect(screen.findAllByTestId('mcp.server.editor.command')).toHaveLength(0);
+    await typeConfig(screen, 'mcp.add.paste.input', 'unfinished-paste-draft');
+    await openCustomMode(screen);
+    expect(configField(screen, 'mcp.server.editor.command').props.value).toBe(
+      'retained-custom-command',
+    );
+    unsavedChangesDecision = 'keepEditing';
+    const leave = vi.fn();
+    modalAlertSpy.mockClear();
+    await act(async () => {
+      expect(await runGuardedNavigation(leave)).toBe(false);
+    });
+    expect(leave).not.toHaveBeenCalled();
+    expect(modalAlertSpy).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      expect(await dismissGuard.current?.('shared')).toBe(false);
+    });
+    expect(modalAlertSpy).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      expect(await dismissGuard.current?.('action')).toBe(false);
+    });
+    expect(modalAlertSpy).toHaveBeenCalledTimes(3);
+    expect(rowMutationRequests).toHaveLength(0);
+    unsavedChangesDecision = 'discard';
+    await act(async () => {
+      expect(await runGuardedNavigation(leave)).toBe(true);
+    });
+    expect(leave).toHaveBeenCalledOnce();
+    expect(configField(screen, 'mcp.server.editor.command').props.value).toBe(
+      '',
+    );
+    expect(
+      screen.find(
+        (node) =>
+          node.props.kind === 'mcp_server' &&
+          typeof node.props.onChange === 'function',
+      ).props.rules,
+    ).toEqual([
+      expect.objectContaining({ target: { t: 'allMachines' }, enabled: true }),
+    ]);
+    await act(async () => {
+      screen.pressByTestId('mcp.add:mode:paste');
+    });
+    expect(configField(screen, 'mcp.add.paste.input').props.value).toBe('');
+    expect(rowMutationRequests).toHaveLength(0);
+  });
+
+  it('refreshes only an unchosen default name when the asynchronous catalog gains a collision', async () => {
+    mcpServersModuleState.routerSearchParams = {};
+    liveMcpSettings = { v: 1, strictMode: false, servers: [], bindings: [] };
+    const screen = await renderEditorScreen();
+    await typeConfig(screen, 'mcp.server.editor.command', 'kept-command');
+    const { McpCustomInput } = await import('./add/McpCustomInput');
+    const { reachRulesToDraftsV1 } =
+      await import('@happier-dev/protocol/reach/reachRulesChangeV1');
+    const draft: McpServerDraft = screen.findByType(McpCustomInput).props.draft;
+    let publications = 0;
+    const stop = draft.store.subscribe(() => {
+      publications += 1;
+    });
+    try {
+      await act(async () => {
+        draft.changeServer((value) => ({
+          ...value,
+          updatedAt: value.updatedAt + 1,
+        }));
+      });
+      expect(publications).toBe(0);
+      await act(async () => {
+        await draft.reach.onChange({
+          kind: 'replace',
+          rules: reachRulesToDraftsV1(draft.reach.rules),
+        });
+      });
+      expect(publications).toBe(0);
+      await typeConfig(screen, 'mcp.server.editor.command', 'retained-command');
+      expect(publications).toBe(1);
+    } finally {
+      stop();
+    }
+    const server = McpServersSettingsV1Schema.parse({
+      v: 1,
+      servers: [
+        {
+          id: 'another-server',
+          name: 'server',
+          transport: 'stdio',
+          stdio: { command: 'other', args: [] },
+          env: {},
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      bindings: [],
+    }).servers[0]!;
+    liveMcpSettings = {
+      v: 1,
+      strictMode: false,
+      servers: [server],
+      bindings: [],
+    };
+    catalogRevision += 1;
+    await act(async () => {
+      await refreshMcpServerCatalog(accountScope!);
+    });
+    const name = configField(screen, 'mcp.server.editor.name').props.value;
+    expect(name).not.toBe('server');
+    expect(configField(screen, 'mcp.server.editor.command').props.value).toBe(
+      'retained-command',
+    );
+    await typeConfig(screen, 'mcp.server.editor.name', 'chosen-name');
+    liveMcpSettings = {
+      v: 1,
+      strictMode: false,
+      servers: [
+        server,
+        { ...server, id: 'another-chosen', name: 'chosen-name' },
+      ],
+      bindings: [],
+    };
+    catalogRevision += 1;
+    await act(async () => {
+      await refreshMcpServerCatalog(accountScope!);
+    });
+    expect(configField(screen, 'mcp.server.editor.name').props.value).toBe(
+      'chosen-name',
+    );
+    expect(rowMutationRequests).toHaveLength(0);
+  });
+
+  it('settles both dirty input drafts through one Save decision before allowing the requested departure', async () => {
+    const dismissGuard = { current: null as CustomModalDismissGuard | null };
+    const screen = await renderEditorScreen({
+      addModal: true,
+      addMode: 'paste',
+      dismissGuard,
+      installLink: JSON.stringify({
+        mcpServers: { 'pasted-server': { command: 'pasted-command' } },
+      }),
+    });
+    await vi.waitFor(() =>
+      expect(
+        screen
+          .findAllByTestId('mcp.add.paste.add')
+          .find((node) => typeof node.props.onPress === 'function')?.props
+          .disabled,
+      ).toBe(false),
+    );
+    await openCustomMode(screen);
+    await typeConfig(screen, 'mcp.server.editor.name', 'custom-server');
+    await typeConfig(screen, 'mcp.server.editor.command', 'custom-command');
+    unsavedChangesDecision = 'save';
+    modalAlertSpy.mockClear();
+    await act(async () => {
+      expect(await dismissGuard.current?.('shared')).toBe(true);
+    });
+    expect(modalAlertSpy).toHaveBeenCalledTimes(1);
+    expect(
+      McpServersSettingsV1Schema.parse(liveMcpSettings)
+        .servers.map((server) => server.name)
+        .sort(),
+    ).toEqual(['custom-server', 'hard-drives', 'pasted-server']);
+    expect(rowMutationRequests).toHaveLength(2);
+    expect(routerBackSpy).not.toHaveBeenCalled();
+    expect(routerReplaceSpy).not.toHaveBeenCalled();
+  });
+
+  it('keeps an acknowledged Paste addition open when another dirty input chooses Keep editing', async () => {
+    const screen = await renderEditorScreen({
+      addModal: true,
+      addMode: 'paste',
+      installLink: JSON.stringify({
+        mcpServers: { 'pasted-server': { command: 'pasted-command' } },
+      }),
+    });
+    await vi.waitFor(() =>
+      expect(
+        screen
+          .findAllByTestId('mcp.add.paste.add')
+          .find((node) => typeof node.props.onPress === 'function')?.props
+          .disabled,
+      ).toBe(false),
+    );
+    await openCustomMode(screen);
+    await typeConfig(
+      screen,
+      'mcp.server.editor.command',
+      'keep-this-custom-draft',
+    );
+    await act(async () => {
+      screen.pressByTestId('mcp.add:mode:paste');
+    });
+    unsavedChangesDecision = 'keepEditing';
+    modalAlertSpy.mockClear();
+    await act(async () => {
+      screen.pressByTestId('mcp.add.paste.add');
+    });
+    await vi.waitFor(() =>
+      expect(
+        McpServersSettingsV1Schema.parse(liveMcpSettings).servers.map(
+          (server) => server.name,
+        ),
+      ).toContain('pasted-server'),
+    );
+    await flushHookEffects();
+    expect(routerBackSpy).not.toHaveBeenCalled();
+    expect(routerReplaceSpy).not.toHaveBeenCalled();
+    expect(modalAlertSpy).toHaveBeenCalledTimes(1);
+    await openCustomMode(screen);
+    expect(configField(screen, 'mcp.server.editor.command').props.value).toBe(
+      'keep-this-custom-draft',
+    );
+    await act(async () => {
+      screen.pressByTestId('mcp.add:mode:paste');
+    });
+    await act(async () => {
+      screen.pressByTestId('mcp.add.paste.done');
+    });
+    expect(routerBackSpy).not.toHaveBeenCalled();
+    expect(modalAlertSpy).toHaveBeenCalledTimes(2);
+    unsavedChangesDecision = 'discard';
+    await act(async () => {
+      screen.pressByTestId('mcp.add.paste.done');
+    });
+    expect(routerBackSpy).toHaveBeenCalledTimes(1);
+    expect(modalAlertSpy).toHaveBeenCalledTimes(3);
+    expect(rowMutationRequests).toHaveLength(1);
+  });
+
+  it('keeps Custom configuration and reach read-only while the real create acknowledgement is pending', async () => {
+    const screen = await renderEditorScreen({ addModal: true });
+    await typeConfig(screen, 'mcp.server.editor.command', 'submitted-command');
+    const { McpCustomInput } = await import('./add/McpCustomInput');
+    const draft: McpServerDraft = screen.findByType(McpCustomInput).props.draft;
+    const original = draft.store.getState().server;
+    const reach = draft.reach.rules;
+    rowMutationGate = new Promise((resolve) => {
+      releaseRowMutation = resolve;
+    });
+    try {
+      act(() => {
+        screen.pressByTestId('mcp.add:primary');
+      });
+      await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
+      // The form says it holds still: no field takes keystrokes, no value row is added, Where names why.
+      await vi.waitFor(() =>
+        expect(
+          configField(screen, 'mcp.server.editor.name').props.editable,
+        ).toBe(false),
+      );
+      expect(
+        configField(screen, 'mcp.server.editor.command').props.editable,
+      ).toBe(false);
+      expect(screen.findAllByTestId('mcp.server.env.add')).toHaveLength(0);
+      expect(
+        screen.find(
+          (node) =>
+            node.props.testID === 'mcp.server.where' &&
+            node.props.kind === 'mcp_server',
+        ).props.readOnlyReason,
+      ).toBeTruthy();
+      await act(async () => {
+        draft.changeServer((server) => ({
+          ...server,
+          name: 'newer-unsaved-edit',
+        }));
+        expect(
+          await draft.reach.onChange({ kind: 'replace', rules: [] }),
+        ).toMatchObject({ ok: false });
+      });
+      expect(draft.store.getState().server).toBe(original);
+      expect(screen.findByType(McpCustomInput).props.draft.reach.rules).toEqual(
+        reach,
+      );
+      releaseRowMutation?.();
+      await vi.waitFor(() =>
+        expect(screen.findByTestId('mcp.server.editor.added')).not.toBeNull(),
+      );
+      expect(rowMutationRequests).toHaveLength(1);
+      expect(draft.store.getState()).toMatchObject({
+        dirty: false,
+        busy: false,
+      });
+    } finally {
+      releaseRowMutation?.();
+    }
+  });
+
+  it('creates from Custom inside Add once against the current catalog revision, retaining its acknowledged result', async () => {
+    const screen = await renderEditorScreen({
+      addModal: true,
+      registry: createMcpAddRegistryFixture(),
+    });
+    expect(screen.findByTestId('mcp.server.editor.name')).not.toBeNull();
+    expect(registryRequests).toEqual([]);
+    expect(rowMutationRequests).toHaveLength(0);
+    await typeConfig(screen, 'mcp.server.editor.command', 'custom-mcp-final');
+    const { McpCustomInput } = await import('./add/McpCustomInput');
+    const draft: McpServerDraft = screen.findByType(McpCustomInput).props.draft;
+    await act(async () => {
+      screen.changeTextByTestId('mcp.server.editor.name', 'custom-server');
+    });
+    catalogRevision = 4;
+    await act(async () => {
+      await refreshMcpServerCatalog(accountScope!);
+    });
+    rowMutationGate = new Promise((resolve) => {
+      releaseRowMutation = resolve;
+    });
+    act(() => {
+      screen.pressByTestId('mcp.add:primary');
+    });
+    await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
+    const concurrentCreate = draft.create();
+    expect(rowMutationRequests[0]?.expectedRevision).toBe(4);
+    releaseRowMutation?.();
+    await concurrentCreate;
+    await vi.waitFor(() => expect(catalogRevision).toBe(5));
+    await flushHookEffects();
+    expect(rowMutationRequests).toHaveLength(1);
+    expect(McpServersSettingsV1Schema.parse(liveMcpSettings).servers).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'custom-server',
+          stdio: { command: 'custom-mcp-final', args: [] },
+        }),
+      ]),
+    );
+    expect(screen.findByTestId('mcp.server.editor.added')).not.toBeNull();
+    expect(routerReplaceSpy).not.toHaveBeenCalled();
+  });
+  it('saves Session folder from the real machine difference modal into the catalog', async () => {
+    liveMcpSettings = {
+      v: 1,
+      strictMode: false,
+      servers: [
+        {
+          id: 'server-1',
+          name: 'hard-drives',
+          transport: 'stdio',
+          stdio: {
+            command: 'echo',
+            args: [],
+            cwd: { t: 'path', path: '/base-folder' },
+          },
+          env: {},
+          createdAt: 1,
+          updatedAt: 1,
+          configOverrides: [
+            {
+              target: { t: 'machine', machineId: 'machine-1' },
+              stdio: { cwd: { t: 'path', path: '/machine-folder' } },
+            },
+          ],
+        },
+      ],
+      bindings: [],
+    };
+    const screen = await renderEditorScreen({ machineDifferenceModal: true });
+    await act(async () => {
+      const disclosure = screen.findHostByTestId(
+        'mcp.server.differences.toggle',
+      )!;
+      pressTestInstance(
+        disclosure.findAll(
+          (node) => typeof node.props.onPress === 'function',
+        )[0],
+      );
+    });
+    await act(async () => {
+      screen.pressByTestId('mcp.server.differences.row.0');
+    });
+    const folder = screen
+      .findAllByTestId('mcp.server.config.folder')
+      .filter(
+        (node) =>
+          typeof node.props.onSelect === 'function' &&
+          node.props.selectedId === 'path',
+      )
+      .pop();
+    expect(folder).toBeDefined();
+    // The modal's picker clears cwd for Session folder; Save must encode that as an explicit override.
+    await act(async () => {
+      folder!.props.onSelect('session');
+    });
+    await act(async () => {
+      screen.pressByTestId('mcp.server.differences.save');
+    });
+    await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
+    expect(rowMutationRequests[0]?.content).toMatchObject({
+      t: 'plain',
+      v: {
+        servers: [
+          {
+            stdio: { cwd: { t: 'path', path: '/base-folder' } },
+            configOverrides: [
+              {
+                target: { t: 'machine', machineId: 'machine-1' },
+                stdio: { cwd: { t: 'session' } },
+              },
+            ],
+          },
+        ],
+        bindings: [],
+      },
+    });
+    expect(screen.findAllByTestId('mcp.server.differences.save')).toHaveLength(
+      0,
+    );
+  });
+  it("saves a saved server's Configuration when focus leaves a value, keeping its machine differences and reach rules", async () => {
+    const configOverrides = [
+      {
+        target: { t: 'machine', machineId: 'machine-1' },
+        stdio: { command: 'machine-command' },
+      },
+    ];
+    const bindings = [
+      {
+        id: 'binding-1',
+        serverId: 'server-1',
+        target: { t: 'allMachines' },
+        enabled: false,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    liveMcpSettings = {
+      v: 1,
+      strictMode: false,
+      servers: [
+        {
+          id: 'server-1',
+          name: 'hard-drives',
+          transport: 'stdio',
+          stdio: { command: 'node', args: ['server.js'] },
+          env: {},
+          createdAt: 1,
+          updatedAt: 1,
+          configOverrides,
+        },
+      ],
+      bindings,
+    };
+    const screen = await renderEditorScreen();
+    const command = () =>
+      screen
+        .findAllByTestId('mcp.server.editor.command')
+        .find((node) => typeof node.props.onChangeText === 'function')!;
+    expect(command().props.value).toBe('node');
+    // Typing alone writes nothing; there is no Save on a saved server's page.
+    await act(async () => {
+      command().props.onChangeText('bun');
+    });
+    await flushHookEffects();
+    expect(rowMutationRequests).toHaveLength(0);
+    expect(screen.findAllByTestId('mcp.server.editor.save')).toHaveLength(0);
+
+    await act(async () => {
+      command().props.onBlur?.();
+    });
+    await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
+    expect(rowMutationRequests[0]?.content).toMatchObject({
+      t: 'plain',
+      v: {
+        servers: [
+          {
+            name: 'hard-drives',
+            stdio: { command: 'bun', args: ['server.js'] },
+            configOverrides,
+          },
+        ],
+        bindings,
+      },
+    });
+    await vi.waitFor(() =>
+      expect(
+        screen.findAllByTestId('mcp.server.config.saveState').length,
+      ).toBeGreaterThan(0),
+    );
+  });
+
+  it('keeps a new draft open and dirty until its destination CAS is acknowledged', async () => {
+    mcpServersModuleState.routerSearchParams = {};
+    liveMcpSettings = { v: 1, strictMode: false, servers: [], bindings: [] };
+    const screen = await renderEditorScreen();
+    await act(async () => {
+      screen.changeTextByTestId('mcp.server.editor.name', 'awaiting-ack');
+    });
+    await typeConfig(screen, 'mcp.server.editor.command', 'mcp-server');
+    await leaveConfig(screen, 'mcp.server.editor.command');
+    rowMutationGate = new Promise<void>((resolve) => {
+      releaseRowMutation = resolve;
+    });
+    try {
+      act(() => {
+        screen.pressByTestId('mcp.server.editor.save');
+      });
+      await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
+      expect(routerReplaceSpy).not.toHaveBeenCalled();
+      expect(navigationPreventRemove.enabled).toBe(true);
+      expect(settingsHttpWriteSpy).not.toHaveBeenCalled();
+      releaseRowMutation?.();
+      await vi.waitFor(() =>
+        expect(
+          McpServersSettingsV1Schema.parse(liveMcpSettings).servers,
+        ).toHaveLength(1),
+      );
+      const created =
+        McpServersSettingsV1Schema.parse(liveMcpSettings).servers[0]!;
+      await vi.waitFor(() =>
+        expect(routerReplaceSpy).toHaveBeenCalledWith(
+          mcpServerRoute(created.id),
+        ),
+      );
+    } finally {
+      releaseRowMutation?.();
+    }
+  });
+
+  it('honors the disabled MCP update Action for an ordinary editor Save without writing the row', async () => {
+    mcpServersModuleState.routerSearchParams = { serverId: 'server-1' };
+    const screen = await renderEditorScreen({
+      activeAccount: true,
+      mcpUpdatePolicy: 'disabled',
+    });
+    await typeConfig(
+      screen,
+      'mcp.server.editor.command',
+      'disabled-policy-draft',
+    );
+    await leaveConfig(screen, 'mcp.server.editor.command');
+    await vi.waitFor(() =>
+      expect(
+        rowMutationRequests.length +
+          modalAlertSpy.mock.calls.length +
+          routerReplaceSpy.mock.calls.length,
+      ).toBeGreaterThan(0),
+    );
+    expect(rowMutationRequests).toHaveLength(0);
+    expect(modalAlertSpy).toHaveBeenCalledWith(
+      'common.error',
+      'action_disabled',
+    );
+    expect(routerReplaceSpy).not.toHaveBeenCalled();
+    expect(configField(screen, 'mcp.server.editor.command').props.value).toBe(
+      'disabled-policy-draft',
+    );
+    expect(navigationPreventRemove.enabled).toBe(true);
+  });
+
+  it('opens the original MCP approval while retaining the dirty editor and later edits without replay', async () => {
+    mcpServersModuleState.routerSearchParams = { serverId: 'server-1' };
+    const screen = await renderEditorScreen({
+      activeAccount: true,
+      mcpUpdatePolicy: 'ask',
+      hosted: true,
+    });
+    await typeConfig(
+      screen,
+      'mcp.server.editor.command',
+      'approved-policy-draft',
+    );
+    await leaveConfig(screen, 'mcp.server.editor.command');
+    await vi.waitFor(() =>
+      expect(
+        approvalArtifacts!.list().length +
+          rowMutationRequests.length +
+          modalAlertSpy.mock.calls.length +
+          routerReplaceSpy.mock.calls.length,
+      ).toBeGreaterThan(0),
+    );
+    expect(approvalArtifacts!.list()).toHaveLength(1);
+    expect(rowMutationRequests).toHaveLength(0);
+    expect(routerReplaceSpy).not.toHaveBeenCalled();
+    expect(routerPushSpy).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(screen.findByTestId('mcp.server.editor.approval')).not.toBeNull(),
+    );
+    const artifact = approvalArtifacts!.list()[0]!;
+    const request = StoredApprovalRequestSchema.parse(
+      JSON.parse(approvalArtifacts!.readPlainBody(artifact.id)!),
+    );
+    if (request.v !== 2) throw new Error('Expected typed MCP update approval');
+    expect(request.actionId).toBe('mcp.servers.update');
+    expect(request.actionArgs).toMatchObject({
+      expectedRevision: 3,
+      entry: { id: 'server-1', stdio: { command: 'approved-policy-draft' } },
+    });
+    await typeConfig(screen, 'mcp.server.editor.command', 'later-local-edit');
+    unsavedChangesDecision = 'keepEditing';
+    await act(async () => {
+      const notice = screen.findAll(
+        (node) =>
+          node.props.testID === 'mcp.server.editor.approval' &&
+          typeof node.props.onOpenApproval === 'function',
+      )[0]!;
+      notice.props.onOpenApproval();
+    });
+    expect(retainedApprovalNavigationSpy).toHaveBeenCalledWith(
+      `/inbox/approvals/${encodeURIComponent(artifact.id)}?serverId=${encodeURIComponent(accountScope!.serverId)}`,
+    );
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+    expect(configField(screen, 'mcp.server.editor.command').props.value).toBe(
+      'later-local-edit',
+    );
+    // The real Inbox decision executes the captured Action against this
+    // HTTP row and publishes its genuine durable approval receipt.
+    const decision = await decideApprovalAsInbox(
+      accountScope!.serverId,
+      artifact.id,
+      'approve',
+    );
+    expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(catalogRevision).toBe(4));
+    expect(routerReplaceSpy).not.toHaveBeenCalled();
+    expect(configField(screen, 'mcp.server.editor.command').props.value).toBe(
+      'later-local-edit',
+    );
+    expect(approvalArtifacts!.list()).toHaveLength(1);
+    expect(rowMutationRequests).toHaveLength(1);
+    expect(rowMutationRequests[0]?.expectedRevision).toBe(3);
+    expect(catalogRevision).toBe(4);
+  });
+
+  it('saves a typed value against the latest revision when another writer moved the server first', async () => {
+    const screen = await renderEditorScreen();
+    await typeConfig(screen, 'mcp.server.editor.command', 'local-draft');
+    liveMcpSettings = {
+      v: 1,
+      strictMode: false,
+      servers: [
+        {
+          id: 'server-1',
+          name: 'remote-edit',
+          transport: 'stdio',
+          stdio: { command: 'node', args: ['server.js'] },
+          env: {},
+          createdAt: 1,
+          updatedAt: 2,
+        },
+      ],
+      bindings: [],
+    };
+    catalogRevision = 4;
+    await act(async () => {
+      await refreshMcpServerCatalog(accountScope!);
+    });
+    // The typed value survives the other writer's change, which the page now shows.
+    expect(configField(screen, 'mcp.server.editor.command').props.value).toBe(
+      'local-draft',
+    );
+    await leaveConfig(screen, 'mcp.server.editor.command');
+    await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
+    expect(rowMutationRequests[0]?.expectedRevision).toBe(4);
+    expect(rowMutationRequests[0]?.content).toMatchObject({
+      t: 'plain',
+      v: {
+        servers: [
+          {
+            name: 'remote-edit',
+            stdio: { command: 'local-draft', args: ['server.js'] },
+          },
+        ],
+      },
+    });
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it('rebases an open dirty configuration over an observed Test snapshot without losing either change', async () => {
+    const screen = await renderEditorScreen();
+    await typeConfig(screen, 'mcp.server.editor.args.item.0', 'local-argument');
+    await typeConfig(screen, 'mcp.server.editor.command', 'local-command');
+    const current = McpServersSettingsV1Schema.parse(liveMcpSettings);
+    const toolsSnapshot = {
+      checkedAt: 10,
+      machineId: 'machine-1',
+      tools: [{ name: 'read', tokens: 12 }],
+    };
+    liveMcpSettings = {
+      ...current,
+      servers: current.servers.map((server) => ({
+        ...server,
+        toolsSnapshot,
+        updatedAt: 10,
+      })),
+    };
+    catalogRevision = 4;
+    await act(async () => {
+      await refreshMcpServerCatalog(accountScope!);
+    });
+    expect(configField(screen, 'mcp.server.editor.command').props.value).toBe(
+      'local-command',
+    );
+    await leaveConfig(screen, 'mcp.server.editor.command');
+    await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
+    expect(rowMutationRequests[0]?.expectedRevision).toBe(4);
+    expect(rowMutationRequests[0]?.content).toMatchObject({
+      t: 'plain',
+      v: {
+        servers: [
+          {
+            stdio: { command: 'local-command', args: ['local-argument'] },
+            toolsSnapshot,
+          },
+        ],
+      },
+    });
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it('saves the rebased entry when a catalog publication and blur share an effect flush', async () => {
+    const screen = await renderEditorScreen();
+    const { McpServerDetailPage } =
+      await import('./detail/McpServerDetailPage');
+    const { applyMcpServerCatalogSnapshot } =
+      await import('@/sync/store/settings/mcpServerCatalogSnapshot');
+    const { McpServerCatalogV1Schema } =
+      await import('@happier-dev/protocol/mcp/servers/serverRowsV1');
+    const current = McpServersSettingsV1Schema.parse(liveMcpSettings);
+    const toolsSnapshot = {
+      checkedAt: 10,
+      machineId: 'machine-1',
+      tools: [{ name: 'read', tokens: 12 }],
+    };
+    const { strictMode: _strictMode, ...catalog } = current;
+    const next = McpServerCatalogV1Schema.parse({
+      ...catalog,
+      servers: catalog.servers.map((server) => ({
+        ...server,
+        toolsSnapshot,
+        updatedAt: 10,
+      })),
+    });
+    liveMcpSettings = { ...next, strictMode: false };
+    catalogRevision = 4;
+    // Publish through the real subscription owner in the same React turn as the committed field intent.
+    await act(async () => {
+      applyMcpServerCatalogSnapshot(
+        accountScope!,
+        {
+          status: 'ready',
+          authority: 'active',
+          revision: 4,
+          catalog: next,
+          diagnostics: [],
+        },
+        true,
+      );
+      const detail = screen.findByType(McpServerDetailPage);
+      detail.props.onChangeServer((server: (typeof next.servers)[number]) => ({
+        ...server,
+        stdio: { ...server.stdio!, command: 'same-turn-command' },
+      }));
+      detail.props.onCommitConfiguration();
+    });
+    await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
+    expect(rowMutationRequests[0]?.expectedRevision).toBe(4);
+    expect(rowMutationRequests[0]?.content).toMatchObject({
+      t: 'plain',
+      v: {
+        servers: [
+          {
+            stdio: { command: 'same-turn-command' },
+            toolsSnapshot,
+          },
+        ],
+      },
+    });
+  });
+
+  it('preserves a real concurrent edit for Review and saves only after the current version is reviewed', async () => {
+    const screen = await renderEditorScreen();
+    const { McpServerDetailPage } =
+      await import('./detail/McpServerDetailPage');
+    await typeConfig(screen, 'mcp.server.editor.command', 'local-command');
+    const current = McpServersSettingsV1Schema.parse(liveMcpSettings);
+    liveMcpSettings = {
+      ...current,
+      servers: current.servers.map((server) => ({
+        ...server,
+        stdio: {
+          ...server.stdio!,
+          command: 'remote-command',
+          args: ['remote-argument'],
+        },
+        updatedAt: 10,
+      })),
+    };
+    catalogRevision = 4;
+    await act(async () => {
+      await refreshMcpServerCatalog(accountScope!);
+    });
+    await leaveConfig(screen, 'mcp.server.editor.command');
+    await flushHookEffects();
+    expect(rowMutationRequests).toHaveLength(0);
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+    const conflict =
+      screen.findByType(McpServerDetailPage).props.configurationConflict;
+    expect(conflict).toMatchObject({
+      phase: 'detected',
+      currentServer: { stdio: { command: 'remote-command' } },
+    });
+    expect(configField(screen, 'mcp.server.editor.command').props.value).toBe(
+      'local-command',
+    );
+    const beforeReview = McpServersSettingsV1Schema.parse(liveMcpSettings);
+    liveMcpSettings = {
+      ...beforeReview,
+      servers: beforeReview.servers.map((server) => ({
+        ...server,
+        env: { REGION: { t: 'literal', v: 'eu' } },
+        updatedAt: 11,
+      })),
+    };
+    catalogRevision = 5;
+    await act(async () => {
+      await conflict.onReview();
+    });
+    expect(
+      screen.findByType(McpServerDetailPage).props.configurationConflict.phase,
+    ).toBe('reviewing');
+    // Review compares both versions; its explicit Keep mine choice accepts the reviewed version.
+    expect(rowMutationRequests).toHaveLength(0);
+    await screen.pressByTestIdAsync('mcp.server.conflict.keepMine');
+    await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
+    expect(rowMutationRequests[0]?.expectedRevision).toBe(5);
+    expect(rowMutationRequests[0]?.content).toMatchObject({
+      t: 'plain',
+      v: {
+        servers: [
+          {
             stdio: { command: 'local-command', args: ['remote-argument'] },
             env: { REGION: { t: 'literal', v: 'eu' } },
-        }] } });
+          },
+        ],
+      },
+    });
+  });
+
+  async function openConcurrentReview() {
+    const screen = await renderEditorScreen();
+    await typeConfig(screen, 'mcp.server.editor.command', 'local-command');
+    const current = McpServersSettingsV1Schema.parse(liveMcpSettings);
+    liveMcpSettings = {
+      ...current,
+      servers: current.servers.map((server) => ({
+        ...server,
+        stdio: { ...server.stdio!, command: 'remote-command' },
+        updatedAt: 10,
+      })),
+    };
+    catalogRevision = 4;
+    await act(async () => {
+      await refreshMcpServerCatalog(accountScope!);
+    });
+    await leaveConfig(screen, 'mcp.server.editor.command');
+    await flushHookEffects();
+    return screen;
+  }
+
+  it('shows Changed elsewhere · Review on the page, lays both versions side by side, and Keep mine saves the open one', async () => {
+    const screen = await openConcurrentReview();
+    expect(screen.findByTestId('mcp.server.conflict.line')).not.toBeNull();
+    expect(screen.findByTestId('mcp.server.conflict.review')).toBeNull();
+    await act(async () => {
+      screen.pressByTestId('mcp.server.conflict.line-action');
+    });
+    await vi.waitFor(
+      () =>
+        expect(
+          screen.findByTestId('mcp.server.conflict.field.command'),
+        ).not.toBeNull(),
+      { timeout: 5000 },
+    );
+    const review = screen.getTextContent();
+    expect(review).toContain('remote-command');
+    expect(review).toContain('local-command');
+    expect(rowMutationRequests).toHaveLength(0);
+    await act(async () => {
+      screen.pressByTestId('mcp.server.conflict.keepMine');
+    });
+    await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
+    expect(rowMutationRequests[0]?.expectedRevision).toBe(4);
+    expect(rowMutationRequests[0]?.content).toMatchObject({
+      t: 'plain',
+      v: { servers: [{ stdio: { command: 'local-command' } }] },
+    });
+    await vi.waitFor(() =>
+      expect(screen.findByTestId('mcp.server.conflict')).toBeNull(),
+    );
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it('Use current drops the open edit without writing anything', async () => {
+    const screen = await openConcurrentReview();
+    await act(async () => {
+      screen.pressByTestId('mcp.server.conflict.line-action');
+    });
+    await vi.waitFor(
+      () =>
+        expect(
+          screen.findByTestId('mcp.server.conflict.useCurrent'),
+        ).not.toBeNull(),
+      { timeout: 5000 },
+    );
+    await act(async () => {
+      screen.pressByTestId('mcp.server.conflict.useCurrent');
+    });
+    await vi.waitFor(() =>
+      expect(screen.findByTestId('mcp.server.conflict')).toBeNull(),
+    );
+    expect(configField(screen, 'mcp.server.editor.command').props.value).toBe(
+      'remote-command',
+    );
+    expect(rowMutationRequests).toHaveLength(0);
+    expect(navigationPreventRemove.enabled).toBe(false);
+  });
+
+  it('says the server was removed elsewhere, and discarding the edit closes the page without recreating it', async () => {
+    const screen = await renderEditorScreen();
+    await typeConfig(screen, 'mcp.server.editor.command', 'retained-command');
+    liveMcpSettings = { v: 1, strictMode: false, servers: [], bindings: [] };
+    catalogRevision = 4;
+    await act(async () => {
+      await refreshMcpServerCatalog(accountScope!);
+    });
+    await act(async () => {
+      screen.pressByTestId('mcp.server.conflict.line-action');
+    });
+    await vi.waitFor(
+      () =>
+        expect(
+          screen.findByTestId('mcp.server.conflict.removed'),
+        ).not.toBeNull(),
+      { timeout: 5000 },
+    );
+    expect(screen.findByTestId('mcp.server.conflict.keepMine')).toBeNull();
+    await act(async () => {
+      screen.pressByTestId('mcp.server.conflict.discard');
+    });
+    expect(routerReplaceSpy).toHaveBeenCalledOnce();
+    expect(rowMutationRequests).toHaveLength(0);
+    expect(McpServersSettingsV1Schema.parse(liveMcpSettings).servers).toEqual(
+      [],
+    );
+  });
+
+  it('turns an unobserved CAS refusal into the same Review continuation rather than a raw alert', async () => {
+    const screen = await renderEditorScreen();
+    const { McpServerDetailPage } =
+      await import('./detail/McpServerDetailPage');
+    await typeConfig(screen, 'mcp.server.editor.command', 'local-command');
+    rowMutationOutcome = 'conflict';
+    await leaveConfig(screen, 'mcp.server.editor.command');
+    await vi.waitFor(() =>
+      expect(
+        screen.findByType(McpServerDetailPage).props.configurationConflict,
+      ).toBeTruthy(),
+    );
+    expect(
+      screen.findByType(McpServerDetailPage).props.configurationConflict.phase,
+    ).toBe('detected');
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+    expect(configField(screen, 'mcp.server.editor.command').props.value).toBe(
+      'local-command',
+    );
+  });
+
+  it('removes a machine difference after an observed Test snapshot while preserving the snapshot and reach', async () => {
+    const initial = McpServersSettingsV1Schema.parse(liveMcpSettings);
+    liveMcpSettings = {
+      ...initial,
+      servers: initial.servers.map((server) => ({
+        ...server,
+        configOverrides: [
+          {
+            target: { t: 'machine', machineId: 'machine-1' },
+            stdio: { cwd: { t: 'session' } },
+          },
+        ],
+      })),
+    };
+    const screen = await renderEditorScreen();
+    const current = McpServersSettingsV1Schema.parse(liveMcpSettings);
+    const toolsSnapshot = {
+      checkedAt: 10,
+      machineId: 'machine-1',
+      tools: [{ name: 'read', tokens: 12 }],
+    };
+    liveMcpSettings = {
+      ...current,
+      servers: current.servers.map((server) => ({
+        ...server,
+        toolsSnapshot,
+        updatedAt: 10,
+      })),
+    };
+    catalogRevision = 4;
+    await act(async () => {
+      await refreshMcpServerCatalog(accountScope!);
+    });
+    await act(async () => {
+      const disclosure = screen.findHostByTestId(
+        'mcp.server.differences.toggle',
+      )!;
+      pressTestInstance(
+        disclosure.findAll(
+          (node) => typeof node.props.onPress === 'function',
+        )[0],
+      );
+    });
+    await act(async () => {
+      screen.pressByTestId('mcp.server.differences.row.0.remove');
+    });
+    await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
+    expect(rowMutationRequests[0]?.expectedRevision).toBe(4);
+    expect(rowMutationRequests[0]?.content).toMatchObject({
+      t: 'plain',
+      v: {
+        servers: [{ configOverrides: [], toolsSnapshot }],
+        bindings: initial.bindings,
+      },
+    });
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it('keeps a server after a delete CAS conflict and offers the same Review continuation', async () => {
+    const screen = await renderEditorScreen();
+    const { McpServerDetailPage } =
+      await import('./detail/McpServerDetailPage');
+    rowMutationOutcome = 'conflict';
+    await act(async () => {
+      screen.pressByTestId('mcp.server.editor.remove');
+    });
+    await vi.waitFor(() =>
+      expect(
+        screen.findByType(McpServerDetailPage).props.configurationConflict,
+      ).toBeTruthy(),
+    );
+    expect(
+      McpServersSettingsV1Schema.parse(liveMcpSettings).servers.map(
+        (server) => server.id,
+      ),
+    ).toEqual(['server-1']);
+    expect(routerReplaceSpy).not.toHaveBeenCalled();
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it('keeps typing made during its own pending save without treating the acknowledgement as a concurrent edit', async () => {
+    const screen = await renderEditorScreen();
+    const { McpServerDetailPage } =
+      await import('./detail/McpServerDetailPage');
+    rowMutationGate = new Promise((resolve) => {
+      releaseRowMutation = resolve;
+    });
+    await typeConfig(screen, 'mcp.server.editor.command', 'first-command');
+    await leaveConfig(screen, 'mcp.server.editor.command');
+    await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
+    await typeConfig(screen, 'mcp.server.editor.command', 'later-command');
+    await act(async () => {
+      releaseRowMutation?.();
+    });
+    await vi.waitFor(() => expect(catalogRevision).toBe(4));
+    await act(async () => {
+      await refreshMcpServerCatalog(accountScope!);
+    });
+    expect(configField(screen, 'mcp.server.editor.command').props.value).toBe(
+      'later-command',
+    );
+    expect(
+      screen.findByType(McpServerDetailPage).props.configurationConflict,
+    ).toBeNull();
+    await leaveConfig(screen, 'mcp.server.editor.command');
+    await vi.waitFor(() => expect(catalogRevision).toBe(5));
+    expect(
+      McpServersSettingsV1Schema.parse(liveMcpSettings).servers[0]?.stdio
+        ?.command,
+    ).toBe('later-command');
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it('leaves a saved editor pristine when a typed field returns to its acknowledged value', async () => {
+    const screen = await renderEditorScreen();
+    await typeConfig(screen, 'mcp.server.editor.command', 'temporary-command');
+    await typeConfig(screen, 'mcp.server.editor.command', 'node');
+    await leaveConfig(screen, 'mcp.server.editor.command');
+    expect(rowMutationRequests).toHaveLength(0);
+    expect(navigationPreventRemove.enabled).toBe(false);
+  });
+
+  it('retains an edited server after another writer deletes it and never recreates it on Review', async () => {
+    const screen = await renderEditorScreen();
+    const { McpServerDetailPage } =
+      await import('./detail/McpServerDetailPage');
+    await typeConfig(screen, 'mcp.server.editor.command', 'retained-command');
+    liveMcpSettings = { v: 1, strictMode: false, servers: [], bindings: [] };
+    catalogRevision = 4;
+    await act(async () => {
+      await refreshMcpServerCatalog(accountScope!);
+    });
+    expect(configField(screen, 'mcp.server.editor.command')).toBeDefined();
+    expect(configField(screen, 'mcp.server.editor.command').props.value).toBe(
+      'retained-command',
+    );
+    const conflict =
+      screen.findByType(McpServerDetailPage).props.configurationConflict;
+    expect(conflict).toMatchObject({ phase: 'detected', currentServer: null });
+    await act(async () => {
+      await conflict.onReview();
+    });
+    await leaveConfig(screen, 'mcp.server.editor.command');
+    expect(rowMutationRequests).toHaveLength(0);
+    expect(McpServersSettingsV1Schema.parse(liveMcpSettings).servers).toEqual(
+      [],
+    );
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+  });
+
+  it('prompts to discard an unsaved new server when navigating away via the navigation back action', async () => {
+    // A saved server saves on blur; only a server being added holds unsaved edits.
+    mcpServersModuleState.routerSearchParams = {};
+    liveMcpSettings = { v: 1, strictMode: false, servers: [], bindings: [] };
+    const screen = await renderEditorScreen();
+    await typeConfig(screen, 'mcp.server.editor.command', 'node');
+    await leaveConfig(screen, 'mcp.server.editor.command');
+
+    await act(async () => {
+      screen.changeTextByTestId('mcp.server.editor.name', 'server_edited');
     });
 
-    async function openConcurrentReview() {
-        const screen = await renderEditorScreen();
-        await typeConfig(screen, 'mcp.server.editor.command', 'local-command');
-        const current = McpServersSettingsV1Schema.parse(liveMcpSettings);
-        liveMcpSettings = { ...current, servers: current.servers.map(server => ({ ...server,
-            stdio: { ...server.stdio!, command: 'remote-command' }, updatedAt: 10 })) };
-        catalogRevision = 4;
-        await act(async () => { await refreshMcpServerCatalog(accountScope!); });
-        await leaveConfig(screen, 'mcp.server.editor.command');
-        await flushHookEffects();
-        return screen;
+    expect(navigationPreventRemove.enabled).toBe(true);
+    expect(navigationPreventRemove.callback).not.toBeNull();
+    expect(screen.findByTestId('mcp.server.editor.save')?.props.disabled).toBe(
+      false,
+    );
+
+    const action = { type: 'GO_BACK' };
+
+    await act(async () => {
+      navigationPreventRemove.callback?.({ data: { action } });
+      await flushHookEffects({ cycles: 1, turns: 3 });
+    });
+
+    expect(modalAlertSpy).toHaveBeenCalledWith(
+      'common.discardChanges',
+      'common.unsavedChangesWarning',
+    );
+    expect(navigationDispatchSpy).toHaveBeenCalledWith(action);
+  });
+
+  it('saves a new server before completing navigation when the user chooses save in the unsaved-changes prompt', async () => {
+    unsavedChangesDecision = 'save';
+    mcpServersModuleState.routerSearchParams = {};
+    liveMcpSettings = { v: 1, strictMode: false, servers: [], bindings: [] };
+
+    const screen = await renderEditorScreen();
+    await typeConfig(screen, 'mcp.server.editor.command', 'node');
+    await leaveConfig(screen, 'mcp.server.editor.command');
+
+    await act(async () => {
+      screen.changeTextByTestId('mcp.server.editor.name', 'server_edited');
+    });
+
+    const action = { type: 'GO_BACK' };
+
+    await act(async () => {
+      navigationPreventRemove.callback?.({ data: { action } });
+      await flushHookEffects({ cycles: 1, turns: 3 });
+    });
+
+    expect(modalAlertSpy).toHaveBeenCalledWith(
+      'common.discardChanges',
+      'common.unsavedChangesWarning',
+    );
+    await vi.waitFor(() =>
+      expect(navigationDispatchSpy).toHaveBeenCalledWith(action),
+    );
+    expect(rowMutationRequests).toHaveLength(1);
+    expect(rowMutationRequests[0]?.content).toMatchObject({
+      t: 'plain',
+      v: {
+        servers: [{ name: 'server_edited', stdio: { command: 'node' } }],
+      },
+    });
+  });
+
+  it('uses the Action Ask policy without a caller dialog or an unapproved catalog delete', async () => {
+    const screen = await renderEditorScreen({ mcpDeletePolicy: 'ask' });
+    await act(async () => {
+      screen.pressByTestId('mcp.server.editor.remove');
+    });
+    await vi.waitFor(() => expect(approvalArtifacts!.list()).toHaveLength(1));
+    expect(rowMutationRequests).toHaveLength(0);
+    expect(modalConfirmSpy).not.toHaveBeenCalled();
+    expect(routerReplaceSpy).not.toHaveBeenCalled();
+  });
+
+  it('honors Allowed and falls back to the MCP settings screen after delete without a dialog', async () => {
+    const screen = await renderEditorScreen({ mcpDeletePolicy: 'allowed' });
+
+    // Remove is the page's way out, at its foot.
+    await act(async () => {
+      screen.pressByTestId('mcp.server.editor.remove');
+      await flushHookEffects({ cycles: 1, turns: 1 });
+    });
+
+    await vi.waitFor(() =>
+      expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/mcp'),
+    );
+    expect(rowMutationRequests).toHaveLength(1);
+    expect(rowMutationRequests[0]?.content).toEqual({
+      t: 'plain',
+      v: {
+        v: 1,
+        servers: [],
+        bindings: [],
+      },
+    });
+    expect(approvalArtifacts!.list()).toHaveLength(0);
+    expect(modalConfirmSpy).not.toHaveBeenCalled();
+    expect(routerBackSpy).not.toHaveBeenCalled();
+  });
+
+  it('duplicates the saved server from the header menu without a confirmation and opens the new row', async () => {
+    const screen = await renderEditorScreen();
+    // Another device saves after this screen renders. Duplicate must read
+    // the current source and revision at the Account Action owner.
+    const current = McpServersSettingsV1Schema.parse(liveMcpSettings);
+    liveMcpSettings = {
+      ...current,
+      servers: current.servers.map((server) => ({
+        ...server,
+        stdio: { command: 'current-command', args: ['current-argument'] },
+      })),
+    };
+    catalogRevision += 1;
+    const { PageHeaderMenu } =
+      await import('@/components/ui/layout/PageHeaderEntityParts');
+    const menu = () => screen.findByType(PageHeaderMenu);
+    expect(
+      menu().props.actions.map((action: { id: string }) => action.id),
+    ).toContain('duplicate');
+    await act(async () => {
+      await menu()
+        .props.actions.find(
+          (action: { id: string }) => action.id === 'duplicate',
+        )
+        .onSelect();
+      await flushHookEffects({ cycles: 1, turns: 1 });
+    });
+
+    await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
+    const written = (
+      rowMutationRequests[0]!.content as {
+        v: { servers: { id: string; name: string }[]; bindings: unknown[] };
+      }
+    ).v;
+    expect(written.servers.map((server) => server.name)).toEqual([
+      'hard-drives',
+      'hard-drives_copy',
+    ]);
+    expect(written.servers[1]).toMatchObject({
+      stdio: { command: 'current-command', args: ['current-argument'] },
+    });
+    const copyId = written.servers[1]!.id;
+    expect(copyId).not.toBe('server-1');
+    // The copy gets the default reach, never the source's rules.
+    expect(written.bindings).not.toContainEqual(
+      expect.objectContaining({
+        serverId: copyId,
+        target: { t: 'machine', machineId: 'machine-1' },
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(routerPushSpy).toHaveBeenCalledWith(mcpServerRoute(copyId)),
+    );
+    expect(modalConfirmSpy).not.toHaveBeenCalled();
+  });
+
+  it('confirms deleting the saved server by the name the collection shows, not an unsaved edit', async () => {
+    // This case observes the translation's name argument. The shared cold
+    // module graph can already have installed the key-only text boundary.
+    const text = await import('@/text');
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    const textBoundary = createTextModuleMock();
+    const translateImplementation: typeof text.t = (key, ...params) => {
+      const argument = params[0];
+      const boundaryParams =
+        typeof argument === 'object' && argument !== null
+          ? Object.fromEntries(Object.entries(argument))
+          : undefined;
+      return String(textBoundary.t(key, boundaryParams));
+    };
+    const translate = vi
+      .spyOn(text, 't')
+      .mockImplementation(translateImplementation);
+    try {
+      liveMcpSettings = {
+        v: 1,
+        strictMode: false,
+        servers: [
+          {
+            id: 'server-1',
+            name: 'github',
+            title: 'GitHub tools',
+            transport: 'stdio',
+            stdio: { command: 'node', args: [] },
+            env: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ],
+        bindings: [],
+      };
+      modalConfirmSpy.mockResolvedValueOnce(false);
+      const screen = await renderEditorScreen();
+      await typeConfig(
+        screen,
+        'mcp.server.editor.command',
+        'github_renamed_unsaved',
+      );
+      await act(async () => {
+        screen.pressByTestId('mcp.server.editor.remove');
+        await flushHookEffects({ cycles: 1, turns: 1 });
+      });
+
+      await vi.waitFor(() => expect(modalConfirmSpy).toHaveBeenCalledTimes(1));
+      const presentation = modalConfirmSpy.mock.calls[0]?.slice(0, 2).join(' ');
+      expect(presentation).toContain('GitHub tools');
+      expect(presentation).not.toContain('github_renamed_unsaved');
+      expect(rowMutationRequests).toHaveLength(0);
+      expect(modalAlertSpy).not.toHaveBeenCalled();
+    } finally {
+      translate.mockRestore();
     }
+  });
 
-    it('shows Changed elsewhere · Review on the page, lays both versions side by side, and Keep mine saves the open one', async () => {
-        const screen = await openConcurrentReview();
-        expect(screen.findByTestId('mcp.server.conflict.line')).not.toBeNull();
-        expect(screen.findByTestId('mcp.server.conflict.review')).toBeNull();
-        await act(async () => { screen.pressByTestId('mcp.server.conflict.line-action'); });
-        await vi.waitFor(() => expect(screen.findByTestId('mcp.server.conflict.field.command')).not.toBeNull(), { timeout: 5000 });
-        const review = screen.getTextContent();
-        expect(review).toContain('remote-command');
-        expect(review).toContain('local-command');
-        expect(rowMutationRequests).toHaveLength(0);
-        await act(async () => { screen.pressByTestId('mcp.server.conflict.keepMine'); });
-        await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
-        expect(rowMutationRequests[0]?.expectedRevision).toBe(4);
-        expect(rowMutationRequests[0]?.content).toMatchObject({ t: 'plain', v: { servers: [{ stdio: { command: 'local-command' } }] } });
-        await vi.waitFor(() => expect(screen.findByTestId('mcp.server.conflict')).toBeNull());
-        expect(modalAlertSpy).not.toHaveBeenCalled();
+  it("renders the custom draft as the detail body in create mode: one name, Where it's on and Configuration, nothing to test before it exists", async () => {
+    mcpServersModuleState.routerSearchParams = {};
+    liveMcpSettings = { v: 1, strictMode: false, servers: [], bindings: [] };
+
+    const screen = await renderEditorScreen();
+
+    expect(screen.findByTestId('mcp.server.editor.name')).not.toBeNull();
+    expect(screen.findByTestId('mcp.server.config')).not.toBeNull();
+    expect(
+      screen.findAllByProps({ kind: 'mcp_server', presentation: 'section' })
+        .length,
+    ).toBeGreaterThan(0);
+    expect(screen.findByTestId('mcp.server.editor.title')).toBeNull();
+    expect(screen.findByTestId('mcp.server.test.run')).toBeNull();
+    expect(
+      screen.findByTestId('settings.mcpServers.administration.target'),
+    ).toBeNull();
+    expect(
+      screen.findAllByProps({
+        testIDPrefix: 'settings.mcpServers.administration.target',
+      }),
+    ).toHaveLength(0);
+    expect(
+      screen.find(
+        (node) =>
+          node.props?.testID === 'mcp.server.editor.header' &&
+          typeof node.props?.primaryAction === 'object',
+      ).props.primaryAction.testID,
+    ).toBe('mcp.server.editor.save');
+  });
+
+  it('titles a new server with the placeholder until the user names it', async () => {
+    mcpServersModuleState.routerSearchParams = {};
+    liveMcpSettings = { v: 1, strictMode: false, servers: [], bindings: [] };
+    const screen = await renderEditorScreen({ observeDraftTitle: true });
+    expect(
+      screen.find(
+        (node) =>
+          node.props?.testID === 'mcp.server.editor.header' &&
+          typeof node.props?.title === 'string',
+      ).props.title,
+    ).toBe('mcpSettings.newServer');
+    expect(
+      screen.findByTestId('mcp.server.editor.published-title')?.props.title,
+    ).toBe('');
+
+    await act(async () => {
+      screen.changeTextByTestId('mcp.server.editor.name', 'playwright');
+    });
+    expect(
+      screen.find(
+        (node) =>
+          node.props?.testID === 'mcp.server.editor.header' &&
+          typeof node.props?.title === 'string',
+      ).props.title,
+    ).toBe('playwright');
+    expect(
+      screen.findByTestId('mcp.server.editor.published-title')?.props.title,
+    ).toBe('playwright');
+  });
+
+  it('writes admitted known fields canonically without persisting unsupported catalog extras', async () => {
+    liveMcpSettings = {
+      v: 1,
+      strictMode: false,
+      servers: [
+        {
+          id: 'server-1',
+          name: 'hard-drives',
+          transport: 'stdio',
+          stdio: { command: 'node', args: ['server.js'] },
+          env: {},
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+      bindings: [],
+      futureV2: { retained: true },
+    };
+
+    const screen = await renderEditorScreen();
+    await typeConfig(screen, 'mcp.server.editor.command', 'bun');
+    await leaveConfig(screen, 'mcp.server.editor.command');
+
+    await vi.waitFor(() => expect(setMcpSettingsSpy).toHaveBeenCalled());
+    expect(setMcpSettingsSpy.mock.calls.at(-1)?.[0]).toMatchObject({
+      servers: [{ name: 'hard-drives', stdio: { command: 'bun' } }],
+    });
+    expect(setMcpSettingsSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty(
+      'futureV2',
+    );
+    expect(settingsHttpWriteSpy).not.toHaveBeenCalled();
+  });
+
+  it('preserves a new server draft when unrelated secrets settings change', async () => {
+    mcpServersModuleState.routerSearchParams = {};
+    liveMcpSettings = {
+      v: 1,
+      strictMode: false,
+      servers: [],
+      bindings: [],
+    };
+
+    const screen = await renderEditorScreen();
+
+    await act(async () => {
+      screen.changeTextByTestId(
+        'mcp.server.editor.name',
+        'qa_remote_http_20260306',
+      );
     });
 
-    it('Use current drops the open edit without writing anything', async () => {
-        const screen = await openConcurrentReview();
-        await act(async () => { screen.pressByTestId('mcp.server.conflict.line-action'); });
-        await vi.waitFor(() => expect(screen.findByTestId('mcp.server.conflict.useCurrent')).not.toBeNull(), { timeout: 5000 });
-        await act(async () => { screen.pressByTestId('mcp.server.conflict.useCurrent'); });
-        await vi.waitFor(() => expect(screen.findByTestId('mcp.server.conflict')).toBeNull());
-        expect(configField(screen, 'mcp.server.editor.command').props.value).toBe('remote-command');
-        expect(rowMutationRequests).toHaveLength(0);
-        expect(navigationPreventRemove.enabled).toBe(false);
+    await act(async () => {
+      screen.pressByTestId('mcp.server.transport:http');
     });
 
-    it('says the server was removed elsewhere, and discarding the edit closes the page without recreating it', async () => {
-        const screen = await renderEditorScreen();
-        await typeConfig(screen, 'mcp.server.editor.command', 'retained-command');
-        liveMcpSettings = { v: 1, strictMode: false, servers: [], bindings: [] };
-        catalogRevision = 4;
-        await act(async () => { await refreshMcpServerCatalog(accountScope!); });
-        await act(async () => { screen.pressByTestId('mcp.server.conflict.line-action'); });
-        await vi.waitFor(() => expect(screen.findByTestId('mcp.server.conflict.removed')).not.toBeNull(), { timeout: 5000 });
-        expect(screen.findByTestId('mcp.server.conflict.keepMine')).toBeNull();
-        await act(async () => { screen.pressByTestId('mcp.server.conflict.discard'); });
-        expect(routerReplaceSpy).toHaveBeenCalledOnce();
-        expect(rowMutationRequests).toHaveLength(0);
-        expect(McpServersSettingsV1Schema.parse(liveMcpSettings).servers).toEqual([]);
+    await typeConfig(
+      screen,
+      'mcp.server.editor.url',
+      'http://127.0.0.1:63254/mcp',
+    );
+    await leaveConfig(screen, 'mcp.server.editor.url');
+
+    await act(async () => {
+      updateLiveSecrets([
+        {
+          id: 'secret-live',
+          name: 'qa_remote_http_auth_livefix_20260306',
+          kind: 'apiKey',
+          encryptedValue: {
+            _isSecretValue: true,
+            value: 'qa-remote-auth-1772754949',
+          },
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ]);
     });
 
-    it('turns an unobserved CAS refusal into the same Review continuation rather than a raw alert', async () => {
-        const screen = await renderEditorScreen();
-        const { McpServerDetailPage } = await import('./detail/McpServerDetailPage');
-        await typeConfig(screen, 'mcp.server.editor.command', 'local-command');
-        rowMutationOutcome = 'conflict';
-        await leaveConfig(screen, 'mcp.server.editor.command');
-        await vi.waitFor(() => expect(screen.findByType(McpServerDetailPage).props.configurationConflict).toBeTruthy());
-        expect(screen.findByType(McpServerDetailPage).props.configurationConflict.phase).toBe('detected');
-        expect(modalAlertSpy).not.toHaveBeenCalled();
-        expect(configField(screen, 'mcp.server.editor.command').props.value).toBe('local-command');
-    });
+    expect(screen.findByTestId('mcp.server.editor.name')?.props.value).toBe(
+      'qa_remote_http_20260306',
+    );
+    expect(configField(screen, 'mcp.server.editor.url').props.value).toBe(
+      'http://127.0.0.1:63254/mcp',
+    );
+    expect(
+      screen.find(
+        (node) =>
+          node.props.testIDPrefix === 'mcp.server.transport' &&
+          typeof node.props.onSelectTab === 'function',
+      ).props.activeTabId,
+    ).toBe('http');
+  });
 
-    it('removes a machine difference after an observed Test snapshot while preserving the snapshot and reach', async () => {
-        const initial = McpServersSettingsV1Schema.parse(liveMcpSettings);
-        liveMcpSettings = { ...initial, servers: initial.servers.map(server => ({ ...server,
-            configOverrides: [{ target: { t: 'machine', machineId: 'machine-1' }, stdio: { cwd: { t: 'session' } } }],
-        })) };
-        const screen = await renderEditorScreen();
-        const current = McpServersSettingsV1Schema.parse(liveMcpSettings);
-        const toolsSnapshot = { checkedAt: 10, machineId: 'machine-1', tools: [{ name: 'read', tokens: 12 }] };
-        liveMcpSettings = { ...current, servers: current.servers.map(server => ({ ...server, toolsSnapshot, updatedAt: 10 })) };
-        catalogRevision = 4;
-        await act(async () => { await refreshMcpServerCatalog(accountScope!); });
-        await act(async () => {
-            const disclosure = screen.findHostByTestId('mcp.server.differences.toggle')!;
-            pressTestInstance(disclosure.findAll(node => typeof node.props.onPress === 'function')[0]);
+  it('keeps the chosen place local until the server is saved, then creates the server on it', async () => {
+    mcpServersModuleState.routerSearchParams = {};
+    liveMcpSettings = {
+      v: 1,
+      strictMode: false,
+      servers: [],
+      bindings: [],
+    };
+
+    const screen = await renderEditorScreen();
+
+    await act(async () => {
+      await screen
+        .find(
+          (node) =>
+            node.props.kind === 'mcp_server' &&
+            typeof node.props.onChange === 'function',
+        )
+        .props.onChange({
+          kind: 'replace',
+          rules: [
+            { target: { t: 'machine', machineId: 'machine-1' }, enabled: true },
+          ],
         });
-        await act(async () => { screen.pressByTestId('mcp.server.differences.row.0.remove'); });
-        await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
-        expect(rowMutationRequests[0]?.expectedRevision).toBe(4);
-        expect(rowMutationRequests[0]?.content).toMatchObject({ t: 'plain', v: {
-            servers: [{ configOverrides: [], toolsSnapshot }], bindings: initial.bindings,
-        } });
-        expect(modalAlertSpy).not.toHaveBeenCalled();
     });
-
-    it('keeps a server after a delete CAS conflict and offers the same Review continuation', async () => {
-        const screen = await renderEditorScreen();
-        const { McpServerDetailPage } = await import('./detail/McpServerDetailPage');
-        rowMutationOutcome = 'conflict';
-        await act(async () => { screen.pressByTestId('mcp.server.editor.remove'); });
-        await vi.waitFor(() => expect(screen.findByType(McpServerDetailPage).props.configurationConflict).toBeTruthy());
-        expect(McpServersSettingsV1Schema.parse(liveMcpSettings).servers.map(server => server.id)).toEqual(['server-1']);
-        expect(routerReplaceSpy).not.toHaveBeenCalled();
-        expect(modalAlertSpy).not.toHaveBeenCalled();
+    expect(rowMutationRequests).toHaveLength(0);
+    await typeConfig(screen, 'mcp.server.editor.command', 'machine-server');
+    await leaveConfig(screen, 'mcp.server.editor.command');
+    await act(async () => {
+      screen.pressByTestId('mcp.server.editor.save');
     });
-
-    it('keeps typing made during its own pending save without treating the acknowledgement as a concurrent edit', async () => {
-        const screen = await renderEditorScreen();
-        const { McpServerDetailPage } = await import('./detail/McpServerDetailPage');
-        rowMutationGate = new Promise(resolve => { releaseRowMutation = resolve; });
-        await typeConfig(screen, 'mcp.server.editor.command', 'first-command');
-        await leaveConfig(screen, 'mcp.server.editor.command');
-        await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
-        await typeConfig(screen, 'mcp.server.editor.command', 'later-command');
-        await act(async () => { releaseRowMutation?.(); });
-        await vi.waitFor(() => expect(catalogRevision).toBe(4));
-        await act(async () => { await refreshMcpServerCatalog(accountScope!); });
-        expect(configField(screen, 'mcp.server.editor.command').props.value).toBe('later-command');
-        expect(screen.findByType(McpServerDetailPage).props.configurationConflict).toBeNull();
-        await leaveConfig(screen, 'mcp.server.editor.command');
-        await vi.waitFor(() => expect(catalogRevision).toBe(5));
-        expect(McpServersSettingsV1Schema.parse(liveMcpSettings).servers[0]?.stdio?.command).toBe('later-command');
-        expect(modalAlertSpy).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
+    const createdId =
+      McpServersSettingsV1Schema.parse(liveMcpSettings).servers[0]!.id;
+    expect(rowMutationRequests[0]?.content).toMatchObject({
+      t: 'plain',
+      v: {
+        servers: [{ id: createdId, stdio: { command: 'machine-server' } }],
+        bindings: [
+          {
+            serverId: createdId,
+            enabled: true,
+            target: { t: 'machine', machineId: 'machine-1' },
+          },
+        ],
+      },
     });
+  });
 
-    it('leaves a saved editor pristine when a typed field returns to its acknowledged value', async () => {
-        const screen = await renderEditorScreen();
-        await typeConfig(screen, 'mcp.server.editor.command', 'temporary-command');
-        await typeConfig(screen, 'mcp.server.editor.command', 'node');
-        await leaveConfig(screen, 'mcp.server.editor.command');
-        expect(rowMutationRequests).toHaveLength(0);
-        expect(navigationPreventRemove.enabled).toBe(false);
+  it('creates a custom server with a variable selected from the real Connect sheet', async () => {
+    mcpServersModuleState.routerSearchParams = {};
+    liveMcpSettings = { v: 1, strictMode: false, servers: [], bindings: [] };
+    const screen = await renderEditorScreen({ machineDifferenceModal: true });
+    const { createDefaultActionExecutor } =
+      await import('@/sync/ops/actions/defaultActionExecutor');
+    const { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } =
+      await import('@happier-dev/protocol/account/settings/personalSavedSecretActionsV1');
+    const created = await createDefaultActionExecutor().execute(
+      'secrets.create',
+      {
+        name: 'Notebook access',
+        value: 'synthetic-private-value',
+      },
+      {
+        surface: 'ui',
+        authority: 'present_user',
+        serverId: accountScope!.serverId,
+        expectedAccountId: accountScope!.accountId,
+      },
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw new Error(created.errorCode);
+    const { secretRef } = PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1[
+      'secrets.create'
+    ].parse(created.result);
+    const { refreshSavedSecretCatalog } =
+      await import('@/sync/engine/settings/savedSecretCatalogEngine');
+    await act(async () => {
+      await refreshSavedSecretCatalog(accountScope!);
     });
-
-    it('retains an edited server after another writer deletes it and never recreates it on Review', async () => {
-        const screen = await renderEditorScreen();
-        const { McpServerDetailPage } = await import('./detail/McpServerDetailPage');
-        await typeConfig(screen, 'mcp.server.editor.command', 'retained-command');
-        liveMcpSettings = { v: 1, strictMode: false, servers: [], bindings: [] };
-        catalogRevision = 4;
-        await act(async () => { await refreshMcpServerCatalog(accountScope!); });
-        expect(configField(screen, 'mcp.server.editor.command')).toBeDefined();
-        expect(configField(screen, 'mcp.server.editor.command').props.value).toBe('retained-command');
-        const conflict = screen.findByType(McpServerDetailPage).props.configurationConflict;
-        expect(conflict).toMatchObject({ phase: 'detected', currentServer: null });
-        await act(async () => { await conflict.onReview(); });
-        await leaveConfig(screen, 'mcp.server.editor.command');
-        expect(rowMutationRequests).toHaveLength(0);
-        expect(McpServersSettingsV1Schema.parse(liveMcpSettings).servers).toEqual([]);
-        expect(modalAlertSpy).not.toHaveBeenCalled();
+    await typeConfig(screen, 'mcp.server.editor.command', 'echo');
+    await leaveConfig(screen, 'mcp.server.editor.command');
+    await screen.pressByTestIdAsync('mcp.server.env.add');
+    await act(async () => {
+      screen.changeTextByTestId('mcp.server.env.row.new.name', 'API_KEY');
     });
-
-    it('prompts to discard an unsaved new server when navigating away via the navigation back action', async () => {
-        // A saved server saves on blur; only a server being added holds unsaved edits.
-        mcpServersModuleState.routerSearchParams = {};
-        liveMcpSettings = { v: 1, strictMode: false, servers: [], bindings: [] };
-        const screen = await renderEditorScreen();
-        await typeConfig(screen, 'mcp.server.editor.command', 'node');
-        await leaveConfig(screen, 'mcp.server.editor.command');
-
-        await act(async () => {
-            screen.changeTextByTestId('mcp.server.editor.name', 'server_edited');
-        });
-
-        expect(navigationPreventRemove.enabled).toBe(true);
-        expect(navigationPreventRemove.callback).not.toBeNull();
-        expect(screen.findByTestId('mcp.server.editor.save')?.props.disabled).toBe(false);
-
-        const action = { type: 'GO_BACK' };
-
-        await act(async () => {
-            navigationPreventRemove.callback?.({ data: { action } });
-            await flushHookEffects({ cycles: 1, turns: 3 });
-        });
-
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.discardChanges', 'common.unsavedChangesWarning');
-        expect(navigationDispatchSpy).toHaveBeenCalledWith(action);
+    const { ValueFieldSelect } =
+      await import('@/components/ui/forms/ValueFieldSelect');
+    await act(async () => {
+      screen
+        .findAllByType(ValueFieldSelect)
+        .find((node) => node.props.testID === 'mcp.server.env.row.new.type')!
+        .props.onSelect('savedSecret');
     });
-
-    it('saves a new server before completing navigation when the user chooses save in the unsaved-changes prompt', async () => {
-        unsavedChangesDecision = 'save';
-        mcpServersModuleState.routerSearchParams = {};
-        liveMcpSettings = { v: 1, strictMode: false, servers: [], bindings: [] };
-
-        const screen = await renderEditorScreen();
-        await typeConfig(screen, 'mcp.server.editor.command', 'node');
-        await leaveConfig(screen, 'mcp.server.editor.command');
-
-        await act(async () => {
-            screen.changeTextByTestId('mcp.server.editor.name', 'server_edited');
-        });
-
-        const action = { type: 'GO_BACK' };
-
-        await act(async () => {
-            navigationPreventRemove.callback?.({ data: { action } });
-            await flushHookEffects({ cycles: 1, turns: 3 });
-        });
-
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.discardChanges', 'common.unsavedChangesWarning');
-        await vi.waitFor(() => expect(navigationDispatchSpy).toHaveBeenCalledWith(action));
-        expect(rowMutationRequests).toHaveLength(1);
-        expect(rowMutationRequests[0]?.content).toMatchObject({ t: 'plain', v: {
-            servers: [{ name: 'server_edited', stdio: { command: 'node' } }],
-        } });
+    await vi.waitFor(() =>
+      expect(screen.findByTestId('connect-key-sheet:mode:saved')).not.toBeNull(),
+    );
+    await screen.pressByTestIdAsync('connect-key-sheet:mode:saved');
+    await screen.pressByTestIdAsync(`connect-key-sheet:saved:${secretRef}`);
+    await screen.pressByTestIdAsync('connect-key-sheet:use');
+    await screen.pressByTestIdAsync('mcp.server.editor.save');
+    await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
+    const persisted = McpServersSettingsV1Schema.parse(liveMcpSettings);
+    expect(persisted.servers[0]?.env.API_KEY).toEqual({
+      t: 'savedSecret',
+      secretId: secretRef,
     });
-
-    it('uses the Action Ask policy without a caller dialog or an unapproved catalog delete', async () => {
-        const screen = await renderEditorScreen({ mcpDeletePolicy: 'ask' });
-        await act(async () => { screen.pressByTestId('mcp.server.editor.remove'); });
-        await vi.waitFor(() => expect(approvalArtifacts!.list()).toHaveLength(1));
-        expect(rowMutationRequests).toHaveLength(0);
-        expect(modalConfirmSpy).not.toHaveBeenCalled();
-        expect(routerReplaceSpy).not.toHaveBeenCalled();
-    });
-
-    it('honors Allowed and falls back to the MCP settings screen after delete without a dialog', async () => {
-        const screen = await renderEditorScreen({ mcpDeletePolicy: 'allowed' });
-
-        // Remove is the page's way out, at its foot.
-        await act(async () => {
-            screen.pressByTestId('mcp.server.editor.remove');
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
-
-        await vi.waitFor(() => expect(routerReplaceSpy).toHaveBeenCalledWith('/settings/mcp'));
-        expect(rowMutationRequests).toHaveLength(1);
-        expect(rowMutationRequests[0]?.content).toEqual({ t: 'plain', v: {
-            v: 1, servers: [], bindings: [],
-        } });
-        expect(approvalArtifacts!.list()).toHaveLength(0);
-        expect(modalConfirmSpy).not.toHaveBeenCalled();
-        expect(routerBackSpy).not.toHaveBeenCalled();
-    });
-
-    it('duplicates the saved server from the header menu without a confirmation and opens the new row', async () => {
-        const screen = await renderEditorScreen();
-        // Another device saves after this screen renders. Duplicate must read
-        // the current source and revision at the Account Action owner.
-        const current = McpServersSettingsV1Schema.parse(liveMcpSettings);
-        liveMcpSettings = { ...current, servers: current.servers.map(server => ({ ...server,
-            stdio: { command: 'current-command', args: ['current-argument'] } })) };
-        catalogRevision += 1;
-        const { PageHeaderMenu } = await import('@/components/ui/layout/PageHeaderEntityParts');
-        const menu = () => screen.findByType(PageHeaderMenu);
-        expect(menu().props.actions.map((action: { id: string }) => action.id)).toContain('duplicate');
-        await act(async () => {
-            await menu().props.actions.find((action: { id: string }) => action.id === 'duplicate').onSelect();
-            await flushHookEffects({ cycles: 1, turns: 1 });
-        });
-
-        await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
-        const written = (rowMutationRequests[0]!.content as { v: { servers: { id: string; name: string }[]; bindings: unknown[] } }).v;
-        expect(written.servers.map((server) => server.name)).toEqual(['hard-drives', 'hard-drives_copy']);
-        expect(written.servers[1]).toMatchObject({ stdio: { command: 'current-command', args: ['current-argument'] } });
-        const copyId = written.servers[1]!.id;
-        expect(copyId).not.toBe('server-1');
-        // The copy gets the default reach, never the source's rules.
-        expect(written.bindings).not.toContainEqual(expect.objectContaining({ serverId: copyId, target: { t: 'machine', machineId: 'machine-1' } }));
-        await vi.waitFor(() => expect(routerPushSpy).toHaveBeenCalledWith(mcpServerRoute(copyId)));
-        expect(modalConfirmSpy).not.toHaveBeenCalled();
-    });
-
-    it('confirms deleting the saved server by the name the collection shows, not an unsaved edit', async () => {
-        // This case observes the translation's name argument. The shared cold
-        // module graph can already have installed the key-only text boundary.
-        const text = await import('@/text');
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        const textBoundary = createTextModuleMock();
-        const translateImplementation: typeof text.t = (key, ...params) => {
-            const argument = params[0];
-            const boundaryParams = typeof argument === 'object' && argument !== null
-                ? Object.fromEntries(Object.entries(argument))
-                : undefined;
-            return String(textBoundary.t(key, boundaryParams));
-        };
-        const translate = vi.spyOn(text, 't').mockImplementation(translateImplementation);
-        try {
-            liveMcpSettings = {
-                v: 1,
-                strictMode: false,
-                servers: [{
-                    id: 'server-1', name: 'github', title: 'GitHub tools', transport: 'stdio',
-                    stdio: { command: 'node', args: [] }, env: {}, createdAt: 1, updatedAt: 1,
-                }],
-                bindings: [],
-            };
-            modalConfirmSpy.mockResolvedValueOnce(false);
-            const screen = await renderEditorScreen();
-            await typeConfig(screen, 'mcp.server.editor.command', 'github_renamed_unsaved');
-            await act(async () => {
-                screen.pressByTestId('mcp.server.editor.remove');
-                await flushHookEffects({ cycles: 1, turns: 1 });
-            });
-
-            await vi.waitFor(() => expect(modalConfirmSpy).toHaveBeenCalledTimes(1));
-            const presentation = modalConfirmSpy.mock.calls[0]?.slice(0, 2).join(' ');
-            expect(presentation).toContain('GitHub tools');
-            expect(presentation).not.toContain('github_renamed_unsaved');
-            expect(rowMutationRequests).toHaveLength(0);
-            expect(modalAlertSpy).not.toHaveBeenCalled();
-        } finally { translate.mockRestore(); }
-    });
-
-    it('renders the custom draft as the detail body in create mode: one name, Where it\'s on and Configuration, nothing to test before it exists', async () => {
-        mcpServersModuleState.routerSearchParams = {};
-        liveMcpSettings = { v: 1, strictMode: false, servers: [], bindings: [] };
-
-        const screen = await renderEditorScreen();
-
-        expect(screen.findByTestId('mcp.server.editor.name')).not.toBeNull();
-        expect(screen.findByTestId('mcp.server.config')).not.toBeNull();
-        expect(screen.findAllByProps({ kind: 'mcp_server', presentation: 'section' }).length).toBeGreaterThan(0);
-        expect(screen.findByTestId('mcp.server.editor.title')).toBeNull();
-        expect(screen.findByTestId('mcp.server.test.run')).toBeNull();
-        expect(screen.findByTestId('settings.mcpServers.administration.target')).toBeNull();
-        expect(screen.findAllByProps({ testIDPrefix: 'settings.mcpServers.administration.target' })).toHaveLength(0);
-        expect(screen.find((node) => node.props?.testID === 'mcp.server.editor.header' && typeof node.props?.primaryAction === 'object')
-            .props.primaryAction.testID).toBe('mcp.server.editor.save');
-    });
-
-    it('titles a new server with the placeholder until the user names it', async () => {
-        mcpServersModuleState.routerSearchParams = {};
-        liveMcpSettings = { v: 1, strictMode: false, servers: [], bindings: [] };
-        const screen = await renderEditorScreen({ observeDraftTitle: true });
-        expect(screen.find((node) => node.props?.testID === 'mcp.server.editor.header' && typeof node.props?.title === 'string').props.title)
-            .toBe('mcpSettings.newServer');
-        expect(screen.findByTestId('mcp.server.editor.published-title')?.props.title).toBe('');
-
-        await act(async () => {
-            screen.changeTextByTestId('mcp.server.editor.name', 'playwright');
-        });
-        expect(screen.find((node) => node.props?.testID === 'mcp.server.editor.header' && typeof node.props?.title === 'string').props.title)
-            .toBe('playwright');
-        expect(screen.findByTestId('mcp.server.editor.published-title')?.props.title).toBe('playwright');
-    });
-
-    it('writes admitted known fields canonically without persisting unsupported catalog extras', async () => {
-        liveMcpSettings = {
-            v: 1,
-            strictMode: false,
-            servers: [{
-                id: 'server-1',
-                name: 'hard-drives',
-                transport: 'stdio',
-                stdio: { command: 'node', args: ['server.js'] },
-                env: {},
-                createdAt: 1,
-                updatedAt: 1,
-            }],
-            bindings: [],
-            futureV2: { retained: true },
-        };
-
-        const screen = await renderEditorScreen();
-        await typeConfig(screen, 'mcp.server.editor.command', 'bun');
-        await leaveConfig(screen, 'mcp.server.editor.command');
-
-        await vi.waitFor(() => expect(setMcpSettingsSpy).toHaveBeenCalled());
-        expect(setMcpSettingsSpy.mock.calls.at(-1)?.[0]).toMatchObject({ servers: [{ name: 'hard-drives', stdio: { command: 'bun' } }] });
-        expect(setMcpSettingsSpy.mock.calls.at(-1)?.[0]).not.toHaveProperty('futureV2');
-        expect(settingsHttpWriteSpy).not.toHaveBeenCalled();
-    });
-
-    it('preserves a new server draft when unrelated secrets settings change', async () => {
-        mcpServersModuleState.routerSearchParams = {};
-        liveMcpSettings = {
-            v: 1,
-            strictMode: false,
-            servers: [],
-            bindings: [],
-        };
-
-        const screen = await renderEditorScreen();
-
-        await act(async () => {
-            screen.changeTextByTestId('mcp.server.editor.name', 'qa_remote_http_20260306');
-        });
-
-        await act(async () => {
-            screen.pressByTestId('mcp.server.transport:http');
-        });
-
-        await typeConfig(screen, 'mcp.server.editor.url', 'http://127.0.0.1:63254/mcp');
-        await leaveConfig(screen, 'mcp.server.editor.url');
-
-        await act(async () => {
-            updateLiveSecrets([{
-                id: 'secret-live',
-                name: 'qa_remote_http_auth_livefix_20260306',
-                kind: 'apiKey',
-                encryptedValue: { _isSecretValue: true, value: 'qa-remote-auth-1772754949' },
-                createdAt: 1,
-                updatedAt: 1,
-            }]);
-        });
-
-        expect(screen.findByTestId('mcp.server.editor.name')?.props.value).toBe('qa_remote_http_20260306');
-        expect(configField(screen, 'mcp.server.editor.url').props.value).toBe('http://127.0.0.1:63254/mcp');
-        expect(screen.find((node) => node.props.testIDPrefix === 'mcp.server.transport'
-            && typeof node.props.onSelectTab === 'function').props.activeTabId).toBe('http');
-    });
-
-    it('keeps the chosen place local until the server is saved, then creates the server on it', async () => {
-        mcpServersModuleState.routerSearchParams = {};
-        liveMcpSettings = {
-            v: 1,
-            strictMode: false,
-            servers: [],
-            bindings: [],
-        };
-
-        const screen = await renderEditorScreen();
-
-        await act(async () => {
-            await screen.find((node) => node.props.kind === 'mcp_server' && typeof node.props.onChange === 'function')
-                .props.onChange({ kind: 'replace', rules: [{ target: { t: 'machine', machineId: 'machine-1' }, enabled: true }] });
-        });
-        expect(rowMutationRequests).toHaveLength(0);
-        await typeConfig(screen, 'mcp.server.editor.command', 'machine-server');
-        await leaveConfig(screen, 'mcp.server.editor.command');
-        await act(async () => { screen.pressByTestId('mcp.server.editor.save'); });
-        await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
-        expect(rowMutationRequests[0]?.content).toMatchObject({ t: 'plain', v: {
-            servers: [{ id: 'uuid', stdio: { command: 'machine-server' } }],
-            bindings: [{ serverId: 'uuid', enabled: true, target: { t: 'machine', machineId: 'machine-1' } }],
-        } });
-    });
-
-    it('creates a custom server with a variable selected from the real Saved Secret picker', async () => {
-        mcpServersModuleState.routerSearchParams = {};
-        liveMcpSettings = { v: 1, strictMode: false, servers: [], bindings: [] };
-        const screen = await renderEditorScreen({ machineDifferenceModal: true });
-        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-        const { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } = await import('@happier-dev/protocol/account/settings/personalSavedSecretActionsV1');
-        const created = await createDefaultActionExecutor().execute('secrets.create', {
-            name: 'Notebook access', value: 'synthetic-private-value',
-        }, { surface: 'ui', authority: 'present_user', serverId: accountScope!.serverId, expectedAccountId: accountScope!.accountId });
-        expect(created.ok).toBe(true);
-        if (!created.ok) throw new Error(created.errorCode);
-        const { secretRef } = PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1['secrets.create'].parse(created.result);
-        const { refreshSavedSecretCatalog } = await import('@/sync/engine/settings/savedSecretCatalogEngine');
-        await act(async () => { await refreshSavedSecretCatalog(accountScope!); });
-        await typeConfig(screen, 'mcp.server.editor.command', 'echo');
-        await leaveConfig(screen, 'mcp.server.editor.command');
-        await screen.pressByTestIdAsync('mcp.server.env.add');
-        await act(async () => { screen.changeTextByTestId('mcp.server.env.row.new.name', 'API_KEY'); });
-        const { ValueFieldSelect } = await import('@/components/ui/forms/ValueFieldSelect');
-        await act(async () => {
-            screen.findAllByType(ValueFieldSelect).find(node => node.props.testID === 'mcp.server.env.row.new.type')!.props.onSelect('savedSecret');
-        });
-        await vi.waitFor(() => expect(screen.findByTestId(`saved-secret:${secretRef}`)).not.toBeNull());
-        await screen.pressByTestIdAsync(`saved-secret:${secretRef}`);
-        await screen.pressByTestIdAsync('mcp.server.editor.save');
-        await vi.waitFor(() => expect(rowMutationRequests).toHaveLength(1));
-        const persisted = McpServersSettingsV1Schema.parse(liveMcpSettings);
-        expect(persisted.servers[0]?.env.API_KEY).toEqual({ t: 'savedSecret', secretId: secretRef });
-        expect(JSON.stringify(rowMutationRequests).includes('synthetic-private-value')).toBe(false);
-        expect(rowMutationRequests[0]?.savedSecretRevisions).toHaveLength(1);
-        expect(routerReplaceSpy).toHaveBeenCalledWith(mcpServerRoute(persisted.servers[0]!.id));
-        expect(modalAlertSpy).not.toHaveBeenCalled();
-    });
+    expect(
+      JSON.stringify(rowMutationRequests).includes('synthetic-private-value'),
+    ).toBe(false);
+    expect(rowMutationRequests[0]?.savedSecretRevisions).toHaveLength(1);
+    expect(routerReplaceSpy).toHaveBeenCalledWith(
+      mcpServerRoute(persisted.servers[0]!.id),
+    );
+    expect(modalAlertSpy).not.toHaveBeenCalled();
+  });
 });

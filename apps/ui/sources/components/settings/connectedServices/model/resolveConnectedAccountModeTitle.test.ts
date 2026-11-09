@@ -14,4 +14,13 @@ describe('resolveConnectedAccountModeTitle', () => {
         expect(resolveConnectedAccountModeTitle({ kind: 'oauthDeviceCode', title: '' })).toBe('connectedServicesSettings.modeDeviceCode');
         expect(resolveConnectedAccountModeTitle({ kind: 'oauthAuthorizationCode', title: '' })).toBe('connectedServicesSettings.modeBrowser');
     });
+
+    it('names a setup method by its declared title, so two browser modes never read the same', async () => {
+        const { resolveConnectedAccountSetupMethodTitle } = await import('./resolveConnectedAccountModeTitle');
+
+        expect(resolveConnectedAccountSetupMethodTitle({ kind: 'oauthAuthorizationCode', title: 'Sign in with Cloudflare' })).toBe('Sign in with Cloudflare');
+        expect(resolveConnectedAccountSetupMethodTitle({ kind: 'oauthAuthorizationCode', title: '' })).toBe('connectedServicesSettings.methodBrowser');
+        expect(resolveConnectedAccountSetupMethodTitle({ kind: 'oauthDeviceCode', title: '' })).toBe('connectedServicesSettings.methodCode');
+        expect(resolveConnectedAccountSetupMethodTitle({ kind: 'manual', title: 'API token' })).toBe('API token');
+    });
 });

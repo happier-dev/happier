@@ -1,6 +1,6 @@
-import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ActionExecuteResult } from '@happier-dev/protocol';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 // Randomness is a genuine system boundary; the request-owned selector below is
 // the exact value the controller must send, bind and reconcile against.

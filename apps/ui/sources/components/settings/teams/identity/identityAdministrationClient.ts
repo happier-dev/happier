@@ -268,7 +268,7 @@ export function createIdentityAdministrationClient(
                 expectedInput: parsedInput.data,
                 ...(signal ? { signal } : {}),
                 onSucceeded: async (value) => await approval?.onSucceeded?.(value),
-                ...(approval?.onFailed ? { onFailed: approval.onFailed } : {}),
+                onFailed: (code, failure) => approval?.onFailed?.(code, failure),
             });
             options?.onApprovalPending?.(continuation);
             return {

@@ -11,6 +11,8 @@ import { clearBugReportUserActionTrail, recordBugReportUserAction } from '@/util
 import { clearBugReportLogBuffer } from '@/utils/system/bugReportLogBuffer';
 import { clearPreRestartBugReportSnapshot } from '@/utils/system/preRestartBugReportSnapshot';
 
+import type { collectBugReportDiagnosticsArtifacts, BugReportSessionTarget } from '../bugReportDiagnostics';
+import { bugReportErrorMessage, isBugReportDiagnosticsSuperseded } from '../bugReportErrorMessage';
 import type { BugReportsFeature } from '../bugReportFeatureDefaults';
 import { openBugReportIssueUrlSilently } from '../openBugReportFallback';
 import { validateBugReportDraft } from '../bugReportSubmissionFlow';
@@ -26,6 +28,9 @@ export function useBugReportComposerSubmit(input: Readonly<{
   existingIssueNumber: number | null;
   openFallbackIssue: (environment: BugReportComposerSubmissionInput['environment']) => Promise<void>;
   pastedCliDoctorSnapshotJson?: string;
+  sessionTarget?: BugReportSessionTarget | null;
+  reportServerId?: string;
+  collectDiagnosticsArtifacts?: () => Promise<Pick<Awaited<ReturnType<typeof collectBugReportDiagnosticsArtifacts>>, 'artifacts' | 'environment'>>;
   buildDraftInput: (input: Readonly<{
     includeDiagnostics: boolean;
     diagnosticsKinds: string[];
@@ -48,6 +53,7 @@ export function useBugReportComposerSubmit(input: Readonly<{
     existingIssueNumber,
     openFallbackIssue,
     pastedCliDoctorSnapshotJson,
+    sessionTarget, reportServerId, collectDiagnosticsArtifacts,
     buildDraftInput,
   } = input;
 
@@ -76,17 +82,22 @@ export function useBugReportComposerSubmit(input: Readonly<{
     });
 
     try {
+      const preparedDiagnostics = includeDiagnostics && feature.enabled && feature.providerUrl && collectDiagnosticsArtifacts
+        ? await collectDiagnosticsArtifacts() : undefined;
       const executed = await execute('bugreport.submit', {
         draft: draftInput,
         destination: { providerUrl: feature.enabled ? feature.providerUrl : null, issueOwner, issueRepo,
           ...(existingIssueNumber === null ? {} : { existingIssueNumber }) },
         ...(pastedCliDoctorSnapshotJson ? { pastedCliDoctorSnapshotJson } : {}),
-      }, { surface: 'ui' });
+        ...(preparedDiagnostics ? { preparedDiagnostics: { artifacts: preparedDiagnostics.artifacts, environment: preparedDiagnostics.environment } } : {}),
+      }, { surface: 'ui', serverId: reportServerId,
+        ...(sessionTarget?.accountId ? { expectedAccountId: sessionTarget.accountId } : {}),
+      });
       if (!executed.ok) {
         // A refusal is not a service failure and must not offer a fallback
         // that could send the same report after its approval was declined.
         if (executed.errorCode !== 'bug_report_submission_failed') {
-          await Modal.alert(t('bugReports.composer.alerts.submitFailedTitle'), executed.error);
+          await Modal.alert(t('bugReports.composer.alerts.submitFailedTitle'), bugReportErrorMessage(new Error(executed.errorCode === 'action_account_scope_changed' ? executed.errorCode : executed.error), executed.error));
           return;
         }
         throw new Error(executed.error);
@@ -118,8 +129,12 @@ export function useBugReportComposerSubmit(input: Readonly<{
       void clearPreRestartBugReportSnapshot();
       router.back();
     } catch (error) {
-      const baseMessage =
-        error instanceof Error ? error.message : t('bugReports.composer.alerts.submitFailedFallbackMessage');
+      if (isBugReportDiagnosticsSuperseded(error)) return;
+      if (error instanceof Error && (error.message === 'bug_report_diagnostics_scope_changed' || error.message === 'action_account_scope_changed')) {
+        await Modal.alert(t('bugReports.composer.alerts.submitFailedTitle'), bugReportErrorMessage(error, t('bugReports.composer.scopeChanged')));
+        return;
+      }
+      const baseMessage = bugReportErrorMessage(error, t('bugReports.composer.alerts.submitFailedFallbackMessage'));
       const fallback = await Modal.confirm(
         t('bugReports.composer.alerts.submitFailedTitle'),
         t('bugReports.composer.alerts.submitFailedBody', { message: baseMessage }),
@@ -155,6 +170,7 @@ export function useBugReportComposerSubmit(input: Readonly<{
     router,
     submitting,
     pastedCliDoctorSnapshotJson,
+    sessionTarget, reportServerId, collectDiagnosticsArtifacts,
     execute,
   ]);
 

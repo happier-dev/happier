@@ -139,7 +139,7 @@ export const McpFoundAdoptionPanel = React.memo(function McpFoundAdoptionPanel(
                 : t('capabilities.mcpAdd.paste.addN', { count: 1 })
             }
             loading={submitting}
-            disabled={submitting || model.errors.length > 0}
+            disabled={!adoption.canBegin || model.errors.length > 0}
             {...(hint ? { accessibilityHint: hint } : {})}
             onPress={() => {
               if (adoption.openValues > 0) setAttempted(true);

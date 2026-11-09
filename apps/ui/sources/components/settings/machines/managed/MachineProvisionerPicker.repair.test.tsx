@@ -60,7 +60,7 @@ function ProjectionReadiness(props: Readonly<{ serverId: string }>) {
 }
 
 describe('mounted provisioner repair', () => {
-    it.each(['picker', 'crabbox', 'configuration', 'configuration.optionsPrerequisite', 'approval.picker', 'configuration.approval', 'missingWithoutRepair', 'repairUnavailable', 'configuration.repairUnavailable', 'projectionOffline', 'projectionTransportUnavailable'] as const)('runs the declared prerequisite repair from %s on the selected controller after confirmation and rechecks', async scenario => {
+    it.each(['picker', 'guide', 'crabbox', 'configuration', 'configuration.optionsPrerequisite', 'approval.picker', 'configuration.approval', 'missingWithoutRepair', 'repairUnavailable', 'configuration.repairUnavailable', 'projectionOffline', 'projectionTransportUnavailable'] as const)('runs the declared prerequisite repair from %s on the selected controller after confirmation and rechecks', async scenario => {
         const surface = scenario.startsWith('configuration') ? 'configuration' : 'picker';
         const optionsPrerequisite = scenario === 'configuration.optionsPrerequisite';
         const needsApproval = scenario.includes('approval');
@@ -183,7 +183,7 @@ describe('mounted provisioner repair', () => {
         } });
         harness.answer(serverId, '/v1/actions/machines.provisioners.check', { select: value => {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
-            return { body: { v: 1, actionId: 'machines.provisioners.check', requestId: request.requestId, execution: { ok: true, result: repaired || optionsPrerequisite ? { available: true } : isCrabbox ? crabboxCheck : {
+            return { body: { v: 1, actionId: 'machines.provisioners.check', requestId: request.requestId, execution: { ok: true, result: (repaired && scenario !== 'guide') || optionsPrerequisite ? { available: true } : isCrabbox ? crabboxCheck : {
                 available: false, prerequisites: [{ requirement: { kind: 'systemTool', id: 'native-vm' }, status: 'unavailable',
                   ...(scenario === 'missingWithoutRepair' ? {} : { repairAction: { action, input: { tool: 'native-vm' } } }) }],
             } } } };
@@ -199,7 +199,7 @@ describe('mounted provisioner repair', () => {
         const { ManagedMachineConfigurationView } = await import('./ManagedMachineConfigurationView');
         const { ModalProvider } = await import('@/modal');
         const screen = await renderScreen(<ModalProvider><ListPresentationProvider value="page"><ProjectionReadiness serverId={serverId} />{surface === 'picker' ? <MachineProvisionerPicker serverId={serverId}
-            scope={{ controller: { machineId: 'controller', installationId: 'installation' }, machine, hasCandidates: true, machineList: 'settled', chip: null }} />
+            scope={{ controller: { machineId: 'controller', installationId: 'installation' }, machine, hasCandidates: true, hasOnlineCandidate: true, machineList: 'settled', chip: null }} />
             : <ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)}
                 {...(optionsPrerequisite ? { initialEnrollmentIdentity: { kind: 'existingUser', role: 'adopted' } as const } : {})}
                 initialController={{ machineId: 'controller', installationId: 'installation' }} />}</ListPresentationProvider></ModalProvider>);
@@ -293,6 +293,19 @@ describe('mounted provisioner repair', () => {
             expect(repaired).toBe(false);
             expect(harness.requestsFor('/v1/actions/machines.provisioners.check')).toHaveLength(checksBeforeRepair);
             await act(async () => { await settleRepairApproval!(); });
+        }
+        if (scenario === 'guide') {
+            // The guide opened but the tool is still missing: the card asks to look again instead of offering the guide once more.
+            const { t } = await import('@/text');
+            const key = buildQualifiedPluginContributionKey(contribution);
+            const cardOf = () => screen.tree.findAll(node => Array.isArray(node.props.cards)).flatMap(node => node.props.cards).find(entry => entry.id === key);
+            await waitForHomeGovernance(() => expect(cardOf()?.action).toMatchObject({ kind: 'retry', label: t('machinePresets.setup.tab.checkAgain') }));
+            const checks = harness.requestsFor('/v1/actions/machines.provisioners.check').length;
+            await act(async () => screen.pressByTestId(repairControl));
+            await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/actions/machines.provisioners.check').length).toBeGreaterThan(checks));
+            await waitForHomeGovernance(() => expect(cardOf()?.action.kind).toBe('repair'));
+            await screen.unmount();
+            return;
         }
         await waitForHomeGovernance(() => expect(repaired || screen.findByTestId('managed-picker.unavailable') !== null
             || screen.findByTestId('managed-config.error') !== null).toBe(true));

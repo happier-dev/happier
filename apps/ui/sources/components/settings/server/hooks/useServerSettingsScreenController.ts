@@ -192,7 +192,7 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         try {
             return getActiveServerId();
         } catch {
-            return getResetToDefaultServerId();
+            return getResetToDefaultServerId() ?? '';
         }
     }, [revision, serverProfilesGeneration]);
 
@@ -200,7 +200,7 @@ export function useServerSettingsScreenController(): ServerSettingsController {
         try {
             return getDeviceDefaultServerId();
         } catch {
-            return getResetToDefaultServerId();
+            return getResetToDefaultServerId() ?? '';
         }
     }, [revision, subscribedActiveServer]);
 

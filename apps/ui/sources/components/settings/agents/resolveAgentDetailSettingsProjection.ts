@@ -1,7 +1,8 @@
 import type {
-    PluginContributionIdentityV1,
+    PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import type {
     PluginProjectionV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import type { ExternalSessionsQualifiedAgent } from '@/components/settings/externalSessions/externalSessionsIntegrationModel';

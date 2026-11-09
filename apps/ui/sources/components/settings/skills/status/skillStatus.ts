@@ -20,6 +20,8 @@ export function skillStatus(
   const statuses = (item ? deriveSkillAccountStatusesV1(item, usage) : []).map((kind): CapabilityStatus => ({
     kind,
   }));
+  // Its source dropped it (the same fact "Needs a look" lists it by): the row says so in words.
+  if (item?.upstream?.state === 'removed_from_source') statuses.push({ kind: 'removed' });
   const skillId = session?.skillId ?? item?.skillId;
   const planItem = session?.plan?.items.find(fact => fact.skillId === skillId);
   if (session && planItem?.state === 'masked_by_native') statuses.push({ kind: 'masked', machineName: session.machineName });

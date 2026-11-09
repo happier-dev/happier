@@ -15,7 +15,9 @@ import type { ResolvedAgentCatalogEntry } from '@/agents/backendCatalog/agentCat
 
 import {
   buildAgentAddRows,
+  groupAgentMachineFits,
   type AgentAddMachine,
+  type AgentMachineFit,
 } from './agentAddRows';
 
 const ACP = 'builtin:acp-registry';
@@ -286,5 +288,32 @@ describe('buildAgentAddRows', () => {
       kind: 'problem',
       problem: { code: 'unsupported_entry', reason: 'distribution' },
     });
+  });
+});
+
+describe('groupAgentMachineFits', () => {
+  it('folds a fleet that can all run it the same way, and keeps a handful named', () => {
+    const fits = (count: number): AgentMachineFit[] => Array.from({ length: count }, (_, index) => ({
+      machine: { machineId: `m${index}`, name: `m${index}`, platform: 'linux', arch: 'x64', offline: false },
+      fit: { kind: 'can_run', via: 'npm' },
+    }));
+    expect(groupAgentMachineFits(fits(3), () => 'x64 build').map(line => line.machines.length)).toEqual([1, 1, 1]);
+    expect(groupAgentMachineFits(fits(22), () => 'x64 build').map(line => line.machines.length)).toEqual([22]);
+  });
+
+  it('says one reason a build can\'t run once for every machine it stops, and keeps each runnable or distinct machine', () => {
+    const machine = (machineId: string, platform: string, offline = false): AgentAddMachine =>
+      ({ machineId, name: machineId, platform, arch: 'x64', offline });
+    const unpack = { kind: 'cant_run', reason: 'archive_type_unsupported' } satisfies AgentMachineFit['fit'];
+    const fits: AgentMachineFit[] = [
+      { machine: machine('a', 'linux'), fit: unpack },
+      { machine: machine('mac', 'darwin'), fit: { kind: 'can_run', via: 'npm' } },
+      { machine: machine('b', 'linux'), fit: unpack },
+      { machine: machine('c', 'linux'), fit: unpack },
+      { machine: machine('win', 'win32'), fit: { kind: 'cant_run', reason: 'no_build_for_platform' } },
+    ];
+    const lines = groupAgentMachineFits(fits, ({ fit }) => fit.kind === 'cant_run' ? fit.reason : 'ok');
+    expect(lines.map(line => line.machines.map(entry => entry.machine.machineId))).toEqual([['a', 'b', 'c'], ['mac'], ['win']]);
+    expect(groupAgentMachineFits(fits.slice(0, 2), () => 'same').map(line => line.machines.length)).toEqual([1, 1]);
   });
 });

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import type { PromptStackEntryV1 } from '@happier-dev/protocol';
+import type { PromptStackEntryV1 } from '@happier-dev/protocol/prompts/library/promptStacksV1';
 
 import { Switch } from '@/components/ui/forms/Switch';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -13,6 +13,8 @@ import { t } from '@/text';
 
 import { promptStackPlacementLabel } from './promptStackEntryPresentation';
 import { promptStackBudgetChoices } from './promptStackBudgetChoices';
+import type { ShareSheetAnchor } from '@/components/sharing/presentShareSheet';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 
 /**
  * One document in a Context list (Account, Voice, Profile, Project, a Session's Work › Context): its
@@ -31,13 +33,15 @@ export const PromptStackEntryRow = React.memo(function PromptStackEntryRow(props
     note?: string;
     /** Lead glyph for a row that cannot be opened (a lock). */
     unavailable?: boolean;
+    /** The canonical header owner is still resolving this row. */
+    loading?: boolean;
     disabled?: boolean;
     onOpen?: () => void;
     onMove?: (delta: -1 | 1) => void;
     canMoveUp?: boolean;
     canMoveDown?: boolean;
     onRemove?: () => void;
-    onShare?: () => void;
+    onShare?: (anchor?: ShareSheetAnchor) => void;
     onEnabledChange?: (enabled: boolean) => void;
     onBudgetChange?: (maxChars: number | null) => void;
     /** A Session's Doc can be its plan (one per Session): the mark and how to set or clear it. */
@@ -57,7 +61,8 @@ export const PromptStackEntryRow = React.memo(function PromptStackEntryRow(props
     const actions = React.useMemo((): ItemAction[] => {
         const list: ItemAction[] = [];
         if (onOpen) list.push({ id: 'edit', title: t('common.edit'), icon: 'pencil', onPress: onOpen });
-        if (onShare) list.push({ id: 'share', title: t('contextPages.share'), icon: 'share-network', onPress: onShare });
+        if (onShare) list.push({ id: 'share', title: t('contextPages.share'), icon: 'share-network',
+            onPress: (event, selection) => onShare(selection?.anchor ?? resolvePressTriggerAnchor(event)) });
         if (onMove) {
             list.push({ id: 'moveUp', title: t('common.moveUp'), icon: 'caret-up', disabled: !props.canMoveUp || props.disabled, onPress: () => onMove(-1) });
             list.push({ id: 'moveDown', title: t('common.moveDown'), icon: 'caret-down', disabled: !props.canMoveDown || props.disabled, onPress: () => onMove(1) });
@@ -95,6 +100,7 @@ export const PromptStackEntryRow = React.memo(function PromptStackEntryRow(props
             title={props.title}
             titleStyle={off || props.unavailable ? styles.quiet : undefined}
             subtitle={subtitle}
+            loading={props.loading}
             onPress={onOpen}
             mode={onOpen ? 'interactive' : 'info'}
             showChevron={false}

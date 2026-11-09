@@ -1,5 +1,6 @@
 import { featureToggleStorage, experimentalFeaturesStorage } from '@happier-dev/protocol/actions/settings/accountSettingBindings';
-import type { FeatureId } from '@happier-dev/protocol';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
+import { getCanonicalFeatureId } from '@happier-dev/protocol/features/catalog';
 
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { buildSettingHref, defineSettingsPage, settingsHosts, type SettingDeclaration, type SettingRef } from '@/components/settings/catalog/settingDeclarations';
@@ -57,7 +58,7 @@ export const FEATURES_SETTINGS = defineSettingsPage({
 /** A registry toggle's declared setting (its search anchor), when this build declares it. */
 export function resolveFeatureToggleSetting(featureId: FeatureId): SettingRef | undefined {
     const settings: Readonly<Record<string, SettingRef>> = FEATURES_SETTINGS.settings;
-    return settings[featureId];
+    return settings[getCanonicalFeatureId(featureId)];
 }
 
 /**
@@ -66,6 +67,7 @@ export function resolveFeatureToggleSetting(featureId: FeatureId): SettingRef | 
  * off the link lands on that switch first. `undefined` when this build does not show the toggle.
  */
 export function resolveFeatureToggleHref(featureId: FeatureId, experimentsEnabled: boolean): string | undefined {
+    featureId = getCanonicalFeatureId(featureId);
     const toggle = resolveFeatureToggleSetting(featureId);
     if (!toggle) return undefined;
     const target = getUiFeatureDefinition(featureId).settingsToggle?.isExperimental === true && !experimentsEnabled

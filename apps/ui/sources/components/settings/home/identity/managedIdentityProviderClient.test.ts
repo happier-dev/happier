@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import {
-    buildApprovalRequestArtifactHeaderV1,
-    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
-    DEFAULT_ACTIONS_SETTINGS_V1,
-    type ApprovalRequestV2,
+    buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import {
+    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import {
+    DEFAULT_ACTIONS_SETTINGS_V1} from '@happier-dev/protocol/account/settings/accountSettings';
+import {
+    type ApprovalRequestV2} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import {
     type ManagedIdentityProviderOwnerV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/identity/providers';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { useManagedIdentityProviders } from './useManagedIdentityProviders';
 import type { ActionApprovalContinuation, ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';

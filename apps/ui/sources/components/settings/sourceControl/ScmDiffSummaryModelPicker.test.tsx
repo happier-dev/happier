@@ -2,7 +2,7 @@ import * as React from 'react';
 import '@/dev/testkit/harness/syncSingletonLoader';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { buildScmDiffSummaryModelProfiles } from '@/settings/scmDiffSummary/models';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
@@ -57,6 +57,8 @@ afterAll(disposeActionLoader);
 const { renderSettingsView } = await import('@/dev/testkit/harness/settingsViewHarness');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { ScmDiffSummaryModelPicker } = await import('./ScmDiffSummaryModelPicker');
+const modelChoiceProjection = await import('@/components/settings/pickers/projectAgentModelChoices');
+const backendTargetProjection = await import('@happier-dev/protocol/backends/targets/backendTargetRefV2');
 const { getStorage } = await import('@/sync/domains/state/storage');
 const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
 const { resetDynamicModelProbeCacheForTests } = await import('@/sync/domains/models/dynamicModelProbeCache');
@@ -239,6 +241,9 @@ describe('Summary model discovery', () => {
         const menu = () => screen.findAll(node => node.type === DropdownMenu)[0];
         await act(async () => { menu().props.onOpenChange(true); });
         return { screen, menu, target, change, selection, availability,
+            rerender: (defaultBackendTarget: BackendTargetRefV2 = target) => screen.update(<ScmDiffSummaryModelPicker value="" onChange={change}
+                onSelection={selection} onAvailabilityChange={availability}
+                machineId={machine.id} serverId={homeId} defaultBackendTarget={defaultBackendTarget} />),
             switchMachine: (machineId: string) => screen.update(picker(machineId)) };
     }
     const catalogOf = (target: { kind: 'backend'; backendId: string; configuredBackendId: string }, failure?: unknown) => ({ items: [],
@@ -267,6 +272,33 @@ describe('Summary model discovery', () => {
         automaticProfiles: [], discoveryTargetKeys: [buildBackendTargetKeyV2(reviewBot)], ...extra } });
     type MenuItem = Readonly<{ id: string; title: string; subtitle?: string; disabled?: boolean; category?: string }>;
     const discoveryId = `backend-discovery:${buildBackendTargetKeyV2(reviewBot)}`;
+    it('does no target reparsing or choice rebuild on unchanged renders and projects one changed target once', async () => {
+        const otherTarget: BackendTargetRefV2 = { kind: 'backend', backendId: 'codex' };
+        const profiles = [...catalogWithModel().scmDiffSummaryCatalog.profiles,
+            ...buildScmDiffSummaryModelProfiles({ backendTarget: otherTarget, models: [{ ...modelRow, id: 'other-model', name: 'Other model' }] })];
+        const { screen, menu, rerender } = await mountPickerOver('summary-projection-counts', () => catalogWithModel({ profiles, automaticProfiles: profiles }));
+        await vi.waitFor(() => expect(menu().props.items.some((item: MenuItem) => item.title === 'Real model')).toBe(true));
+        const originalDefaultId = menu().props.selectedId;
+        // Instrument the real producer; no internal behavior is replaced by these cost counters.
+        const projection = vi.spyOn(modelChoiceProjection, 'projectAgentModelChoices');
+        const readTarget = vi.spyOn(backendTargetProjection, 'readBackendTargetRefV2');
+        const buildKey = vi.spyOn(backendTargetProjection, 'buildBackendTargetKeyV2');
+        try {
+            for (let render = 0; render < 12; render += 1) await rerender();
+            expect({ projections: projection.mock.calls.length, targetReads: readTarget.mock.calls.length,
+                targetKeys: buildKey.mock.calls.length }).toEqual({ projections: 0, targetReads: 0, targetKeys: 0 });
+            // A new target object with the same identity is still the same projection input.
+            await rerender({ ...reviewBot });
+            expect(projection).toHaveBeenCalledTimes(0);
+            await rerender(otherTarget);
+            expect(projection).toHaveBeenCalledTimes(1);
+            expect(menu().props.selectedId).not.toBe(originalDefaultId);
+            expect(menu().props.items.find((item: MenuItem) => item.id === menu().props.selectedId)?.title).toBe('Other model');
+        } finally {
+            projection.mockRestore(); readTarget.mockRestore(); buildKey.mockRestore();
+            await screen.unmount();
+        }
+    });
     it('keeps the last readable choices when a refresh fails, says so, and recovers on retry', async () => {
         let refusing = false;
         const { screen, menu, change, selection, availability } = await mountPickerOver('summary-refresh-failure', () => {
@@ -366,11 +398,13 @@ describe('Summary model discovery', () => {
     ])('tells the person connected accounts could not be read, once, with a retry ($name)', async ({ name, extra }) => {
         const { screen, menu } = await mountPickerOver(name, () => catalogWithModel(extra));
         const items = () => menu().props.items as ReadonlyArray<MenuItem>;
-        await vi.waitFor(() => expect(items().filter(item => item.id === 'catalog-refresh')).toEqual([
-            expect.objectContaining({ title: 'Some models may be missing', subtitle: 'Couldn’t read your connected accounts. Try again.' })]));
+        await vi.waitFor(() => {
+            expect(items().filter(item => item.id === 'catalog-refresh')).toEqual([
+                expect.objectContaining({ title: 'Some models may be missing', subtitle: 'Couldn’t read your connected accounts. Try again.' })]);
+            expect(items().map(item => item.title)).toContain('Real model');
+        });
         // The reason lives in the catalog notice, not repeated on the Agent's row.
         expect(items().find(item => item.id === discoveryId)?.subtitle).toBeUndefined();
-        expect(items().map(item => item.title)).toContain('Real model');
         await screen.unmount();
     });
     it.each([

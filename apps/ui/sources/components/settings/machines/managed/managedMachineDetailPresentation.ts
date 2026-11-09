@@ -18,15 +18,12 @@ export function projectManagedMachineDetailRead(input: Readonly<{
     managedId: string;
     detailMachine?: ManagedMachineV1;
     detailStatus: ReadStatus;
-    inventoryMachines: readonly ManagedMachineV1[];
-    inventoryStatus: ReadStatus;
+    admittedMachine?: ManagedMachineV1;
 }>): ManagedMachineDetailReadPresentation {
-    const inventoryMachine = input.inventoryMachines.find(machine => machine.id === input.managedId);
-    const inventoryConfirmsAbsence = input.inventoryStatus === 'ready' && !inventoryMachine;
-    const detailReadFailed = input.detailStatus === 'error' || input.detailStatus === 'unsupported';
+    const admittedMachine = input.admittedMachine?.id === input.managedId ? input.admittedMachine : undefined;
     return {
-        headerMachine: input.detailMachine ?? inventoryMachine,
-        missing: input.detailStatus === 'missing' || detailReadFailed && inventoryConfirmsAbsence,
+        headerMachine: input.detailStatus === 'denied' || input.detailStatus === 'missing' ? undefined : input.detailMachine ?? admittedMachine,
+        missing: input.detailStatus === 'missing',
     };
 }
 

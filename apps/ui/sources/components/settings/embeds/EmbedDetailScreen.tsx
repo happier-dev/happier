@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol';
+import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { deriveEmbedAccessFromGrantV1 } from '@happier-dev/protocol/embed';
 import { HAPPIER_PAGE_METRICS, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import { useGlobalSearchParams, useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -36,7 +36,6 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveWebappUrlFromServerUrl } from '@/sync/domains/server/url/resolveWebappUrlFromServerUrl';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { useInPlaceFocusReturn } from '@/utils/navigation/useNavigationFocusReturn';
@@ -68,6 +67,7 @@ import {
 import { EmbedAppearanceSection } from './sections/EmbedAppearanceSection';
 import { EmbedOrganizationSection, EmbedSessionsSection } from './sections/EmbedPlacementSections';
 import { EmbedSnippetsSection } from './sections/EmbedSnippetsSection';
+import { EmbedRevealEnvironmentCopy } from './EmbedRevealEnvironmentCopy';
 import { useEmbedOrganizationNames } from './useEmbedOrganizationNames';
 import { useEmbedSummaryNames } from './useEmbedSummaryNames';
 
@@ -83,7 +83,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         flex: 1,
         minHeight: 0,
         flexDirection: 'row',
-        backgroundColor: theme.colors.surface.base,
     },
     settings: {
         flex: 1,
@@ -225,6 +224,7 @@ const EmbedDetail = React.memo(function EmbedDetail(props: Readonly<{ token: Acc
     const styles = stylesheet;
     const router = useRouter();
     const controller = useApiTokenSettingsScopeController();
+    const activeScope = useActiveServerAccountScope();
     const state = useApiTokenSettingsControllerState(controller);
     const organization = useEmbedOrganizationNames();
     const summaryNames = useEmbedSummaryNames();
@@ -294,24 +294,15 @@ const EmbedDetail = React.memo(function EmbedDetail(props: Readonly<{ token: Acc
                 copy: t('settingsEmbeds.reveal.copy'),
             },
             revealAccessory: (
-                <RoundButton
-                    testID="settings-embed-reveal-env"
-                    size="normal"
-                    display="secondary"
-                    title={t('settingsEmbeds.reveal.copyEnv')}
-                    onPress={() => void setClipboardStringSafe(`HAPPIER_EMBED_KEY=${reveal.token}`).then((copied) => {
-                        if (copied) controller.acknowledgeReveal();
-                    })}
-                />
+                <EmbedRevealEnvironmentCopy token={reveal.token} scope={activeScope} onCopied={() => controller.acknowledgeReveal()} />
             ),
         });
         // The embed exists now, so the page behind its one-time reveal is its detail (lab R1), never
         // the filled create form that would invite a second create. The reveal lives in the shared
         // controller and the modal host, so it stays open across this replace.
         navigate(router, embedDetailPath(reveal.apiToken.tokenId), 'EmbedCreate.created');
-    }, [controller, createDraft, draftIssue, encryptionReady, labelReady, router]);
+    }, [activeScope, controller, createDraft, draftIssue, encryptionReady, labelReady, router]);
 
-    const activeScope = useActiveServerAccountScope();
     const restoreEncryption = React.useCallback(() => {
         const serverUrl = String(getActiveServerSnapshot().serverUrl ?? '').trim();
         if (!activeScope || !serverUrl || draftIssue) return;

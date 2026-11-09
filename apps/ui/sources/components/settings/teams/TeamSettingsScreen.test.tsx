@@ -175,7 +175,7 @@ describe('TeamSettingsScreen', () => {
         await waitForTestId(screen, 'team-settings-session-creation');
         harness.answer(serverId, '/v1/teams/get', { status: 503 });
         const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
-        const { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } = await import('@happier-dev/protocol');
+        const { TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1} = await import('@happier-dev/protocol/changes');
         await act(async () => publishHomeAccountChange(serverId, [TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1]));
         await waitForTestId(screen, 'team-stale');
         expect(screen.getTextContent()).toContain('teams.errors.loadFailed');

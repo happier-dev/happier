@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { installBrowserClipboardBoundary } from '@/dev/testkit';
 import { findTestInstanceByTypeContainingText } from '@/dev/testkit/render/renderScreen';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
@@ -12,9 +13,10 @@ const providerStateMock = vi.hoisted(() => ({ refreshing: false, stale: false })
 const providerSecretHealthMock = vi.hoisted(() => ({ value: 'configured' as 'configured' | 'missing' | 'unreadable' }));
 const providerKindMock = vi.hoisted(() => ({ value: 'oidc' as 'oidc' | 'github_app_identity' }));
 const requestApprovalMock = vi.hoisted(() => vi.fn());
-const setClipboardMock = vi.hoisted(() => vi.fn(async () => true));
+const setClipboardMock = vi.hoisted(() => vi.fn(async (_text: string) => true));
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 
-vi.mock('@/utils/ui/clipboard', () => ({ setClipboardStringSafe: setClipboardMock }));
+vi.mock('expo-clipboard', () => ({ setStringAsync: setClipboardMock }));
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({ router: { replace: replaceMock } }).module;
@@ -116,6 +118,7 @@ beforeEach(() => {
     providerStateMock.stale = false;
     providerSecretHealthMock.value = 'configured';
     providerKindMock.value = 'oidc';
+    installBrowserClipboardBoundary(async text => { await setClipboardMock(text); });
 });
 
 describe('ManagedIdentityProviderDetailScreen diagnostics', () => {

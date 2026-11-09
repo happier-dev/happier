@@ -39,3 +39,4 @@ export function useConnectSheetHeading(
     });
   }, [anchor, bodyScroll, heading.actions, heading.leadingKey, heading.subtitle, heading.title, setChrome]);
 }
+

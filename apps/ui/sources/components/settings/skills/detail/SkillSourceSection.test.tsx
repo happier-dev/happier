@@ -2,7 +2,7 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SkillReadResultV1 } from '@happier-dev/protocol/prompts/library/skills/skillReadV1';
 import { SkillReadResultV1Schema } from '@happier-dev/protocol/prompts/library/skills/skillReadV1';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
@@ -25,6 +25,9 @@ vi.mock('react-native-unistyles', async () => {
   const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
   return createUnistylesMock();
 });
+vi.mock('@shopify/react-native-skia', async () => (await import('@/dev/testkit/mocks/reactNativeSkia')).createReactNativeSkiaMock());
+// Select the real browser paint adapter; native Skia handles do not exist in this Node host.
+vi.mock('@/components/sessions/bots/face/BotFaceRasterView', async () => import('@/components/sessions/bots/face/BotFaceRasterView.web'));
 
 afterEach(() => {
   standardCleanup();
@@ -62,6 +65,30 @@ const common = {
 };
 
 describe('SkillSourceSection', () => {
+  it('keeps legacy written origin neutral and only opens a creator with an accessible identity', async () => {
+    const { presentSkillMaker } = await import('../skillMaker');
+    const { createSessionListRenderableSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+    const creator = { kind: 'agent' as const, accountId: 'me', sessionId: 'maker' };
+    const scope = { accountId: 'me', serverId: 'home' };
+    const maker = presentSkillMaker({ creator }, scope, createSessionListRenderableSessionFixture({ id: 'maker',
+      metadata: { path: '/project', name: 'Researcher', bot: { kind: 'bot' } } }));
+    const open = vi.fn();
+    const screen = await renderScreen(<SkillSourceSection {...common} read={read({ kind: 'written' })}
+      updatePolicy="manual" maker={maker} onOpenCreator={open} />);
+    try {
+      expect(screen.findAll(node => node.props.testID === 'src:source' && node.props.title !== undefined)[0]?.props.title)
+        .toBe(t('capabilities.skills.maker.createdHere'));
+      expect(screen.getTextContent()).not.toContain(t('capabilities.skillDetail.source.writtenByYou'));
+      expect(screen.findByTestId('src:maker')).not.toBeNull();
+      await screen.pressByTestId('src:openCreator');
+      expect(open).toHaveBeenCalledOnce();
+      await screen.update(<SkillSourceSection {...common} read={read({ kind: 'written' })} updatePolicy="manual"
+        maker={presentSkillMaker({ creator }, scope)} onOpenCreator={open} />);
+      expect(screen.findByTestId('src:openCreator')).toBeNull();
+      expect(screen.findByTestId('src:maker')).not.toBeNull();
+    } finally { await screen.unmount(); }
+  });
+
   it('keeps digest-pinned index skills on the existing update and outside-reference path', async () => {
     const provenance = {
       kind: 'wellKnown' as const,
@@ -121,7 +148,7 @@ describe('SkillSourceSection', () => {
     expect(screen.getTextContent().match(/follows its version|updates with Happier/g) ?? []).toHaveLength(1);
   });
 
-  it('a written skill says "Written by you" and offers no update controls', async () => {
+  it('a written origin offers no update controls without claiming its maker', async () => {
     const screen = await renderScreen(
       <SkillSourceSection
         {...common}
@@ -129,7 +156,7 @@ describe('SkillSourceSection', () => {
         updatePolicy="manual"
       />,
     );
-    expect(screen.getTextContent()).toContain('Written by you');
+    expect(screen.getTextContent()).toContain(t('capabilities.skills.maker.createdHere'));
     expect(screen.findAllByTestId('src:checkNow')).toHaveLength(0);
     expect(screen.findAllByTestId('src:auto')).toHaveLength(0);
     expect(screen.findAllByTestId('src:pin')).toHaveLength(0);

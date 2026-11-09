@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderScreen, renderHook } from '@/dev/testkit';
 import type { SystemTaskRunState, SystemTaskRunner } from '@/components/systemTasks/types';
-import type { SystemTaskEvent, SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol';
+import type { SystemTaskEvent, SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
 
 vi.mock('react-native', async () => {

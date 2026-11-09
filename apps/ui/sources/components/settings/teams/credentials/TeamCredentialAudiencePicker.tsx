@@ -2,8 +2,10 @@ import * as React from 'react';
 
 import type { SessionAccessCandidateRowModel, SessionAccessDirectoryKind, SessionAccessGrantOperationModel } from '@/components/sessions/access/sessionAccessEditorTypes';
 import { useSessionAccessDirectory } from '@/components/sessions/access/useSessionAccessDirectory';
+import { presentShareSheet } from '@/components/sharing/presentShareSheet';
 import { Item } from '@/components/ui/lists/Item';
-import { SELECTION_LIST_MODAL_MAX_HEIGHT, SELECTION_LIST_MODAL_CARD_SCROLL, SelectionList, resolveSelectionListModalHeightBehavior, type SelectionListOption, type SelectionListSectionDescriptor, type SelectionListStep } from '@/components/ui/selectionList';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
+import { SELECTION_LIST_MODAL_MAX_HEIGHT, SelectionList, resolveSelectionListModalHeightBehavior, type SelectionListOption, type SelectionListSectionDescriptor, type SelectionListStep } from '@/components/ui/selectionList';
 import { Modal } from '@/modal';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { TeamAddress } from '@/sync/domains/teams/teamAddress';
@@ -142,15 +144,19 @@ export const TeamCredentialAudiencePicker = React.memo(function TeamCredentialAu
         Modal.hide(modalIdRef.current);
         modalIdRef.current = null;
     }, []);
-    const open = React.useCallback(() => {
+    // Choosing who gets access is the share sheet's job: it hangs from the row that opened it on wide
+    // layouts and is a bottom sheet on a phone, like every other "who can use this" chooser.
+    const open = React.useCallback((event?: unknown) => {
         if (props.disabled) return;
         close();
         const label = props.label ?? t('teams.credentials.audience.add');
-        modalIdRef.current = Modal.show({
+        const anchor = resolvePressTriggerAnchor(event);
+        modalIdRef.current = presentShareSheet({
             component: PickerContent,
             props: { ...props, allowedKinds: props.allowedKinds ?? ['member', 'group'] },
-            chrome: { kind: 'card', title: label, testID: 'team-credential-audience-picker:modal', ...SELECTION_LIST_MODAL_CARD_SCROLL },
-            closeOnBackdrop: true,
+            title: label,
+            testID: 'team-credential-audience-picker:modal',
+            ...(anchor ? { anchor } : {}),
         });
     }, [close, locale, props]);
     React.useEffect(() => close, [close]);

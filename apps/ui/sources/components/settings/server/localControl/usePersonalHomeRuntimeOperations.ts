@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { SystemTaskSpec } from '@happier-dev/protocol';
+import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 
 import type {
     PersonalHomeRelocationDestination,

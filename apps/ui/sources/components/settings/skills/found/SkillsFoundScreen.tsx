@@ -6,13 +6,11 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { CapabilityRow } from '@/components/capabilities/row/CapabilityRow';
 import { formatAgentNameListFolded } from '@/components/capabilities/identity/agentNameList';
 import { useWhereItsOnNames } from '@/components/capabilities/where/useWhereItsOnNames';
-import { CapabilityStatusChip } from '@/components/capabilities/status/CapabilityStatusChip';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
 import { resolveProseDiffPresentation } from '@/components/ui/code/diff/diffPresentationStyle';
 import { Icon } from '@/components/ui/icons/Icon';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
@@ -30,22 +28,21 @@ import { useMachine } from '@/sync/store/hooks';
 import { useReachMachines, type ReachMachine } from '@/sync/domains/capabilities/reach/useReachProjection';
 import { t } from '@/text';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
-import { formatLastSeen } from '@/utils/sessions/sessionUtils';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { skillHref } from '../skillsCollectionModel';
+import { describeSkillInstallIncomplete, mergeSkillCreationAcknowledgments, type SkillCreationAcknowledgment } from '../add/skillInstall';
 import {
-  foldFoundRows,
   foundAddAllItems,
   groupFoundRowsByName,
   type FoundRowGroup,
   foundRowKind,
   orderFoundRows,
-  partitionFoundMachines,
-  resolveFoundMachineBody,
   type FoundRowKind,
 } from './foundSkillsModel';
+import { foldFoundRows, foldQuietFoundMachines, partitionFoundMachines, resolveFoundMachineBody } from '@/components/capabilities/found/foundMachineModel';
+import { FoundMachineGroup, FoundQuietMachines, type FoundMachineGroupCopy, type FoundQuietLine } from '@/components/capabilities/found/FoundMachineGroup';
 
 const NO_ITEMS: readonly FoundItem[] = Object.freeze([]);
 
@@ -57,7 +54,7 @@ const NO_ITEMS: readonly FoundItem[] = Object.freeze([]);
  * known rows, dated, with Add off and the reason.
  */
 export const SkillsFoundScreen = React.memo(function SkillsFoundScreen() {
-  const { machines } = useReachMachines();
+  const { machines, placeMachines, agentIds: installedAgentIds } = useReachMachines();
   const library = useSkillsLibrary();
   const ordered = React.useMemo(
     () => [...machines].sort((a, b) => Number(a.offline) - Number(b.offline)),
@@ -68,19 +65,15 @@ export const SkillsFoundScreen = React.memo(function SkillsFoundScreen() {
     [ordered],
   );
   const found = useFoundSkills(machineIds);
-  const placeMachines = React.useMemo(
-    () => ordered.map((machine) => ({ machineId: machine.machineId, name: machineLabel(machine) })),
-    [ordered],
-  );
   // Names for every agent that reads a found skill, installed on its machine or not.
   const agentIds = React.useMemo(
     () => [
       ...new Set([
-        ...ordered.flatMap((machine) => machine.agentIds),
+        ...installedAgentIds,
         ...found.scans.flatMap((entry) => entry.result?.items.flatMap((item) => item.agents) ?? []),
       ]),
     ],
-    [found.scans, ordered],
+    [found.scans, installedAgentIds],
   );
   const { names } = useWhereItsOnNames({ agentIds, machines: placeMachines });
   const { scan } = found;
@@ -104,8 +97,8 @@ export const SkillsFoundScreen = React.memo(function SkillsFoundScreen() {
   }, [found.ready, reachableIds, scan]);
 
   const checkAgain = React.useCallback(() => {
-    for (const machineId of reachableIds) fireAndForget(scan(machineId), { tag: 'SkillsFound.checkAgain' });
-  }, [reachableIds, scan]);
+    for (const machineId of machineIds) fireAndForget(scan(machineId), { tag: 'SkillsFound.checkAgain' });
+  }, [machineIds, scan]);
 
   const anyScanning = found.scans.some((entry) => entry.scanning);
   const libraryPending = library.status === 'loading' && library.items.length === 0;
@@ -123,7 +116,7 @@ export const SkillsFoundScreen = React.memo(function SkillsFoundScreen() {
     <SkillsFoundPage
       machines={ordered}
       scanOf={scanOf}
-      canCheckAgain={reachableIds.length > 0}
+      canCheckAgain={machineIds.length > 0}
       checking={anyScanning}
       onCheckAgain={checkAgain}
       libraryIdByName={libraryIdByName}
@@ -131,13 +124,14 @@ export const SkillsFoundScreen = React.memo(function SkillsFoundScreen() {
       agentNames={names.agentNames}
       onScan={scan}
       adopt={found.adopt}
+      retryRules={found.retryRules}
       readBoth={found.readBoth}
     />
   );
 });
 
 function emptyScan(machineId: string): FoundMachineScan {
-  return { machineId, result: null, scanning: false, failure: null };
+  return { machineId, result: null, scanning: false, failure: null, cause: null };
 }
 
 /**
@@ -156,14 +150,33 @@ export const SkillsFoundPage = React.memo(function SkillsFoundPage(
     agentNames: (agentIds: readonly string[]) => readonly string[];
     onScan: (machineId: string) => Promise<void>;
     adopt: ReturnType<typeof useFoundSkills>['adopt'];
+    retryRules: ReturnType<typeof useFoundSkills>['retryRules'];
     readBoth: ReturnType<typeof useFoundSkills>['readBoth'];
   }>,
 ) {
   const { scanOf } = props;
-  const { sections, unseenOffline } = React.useMemo(
-    () => partitionFoundMachines(props.machines, scanOf),
-    [props.machines, scanOf],
-  );
+  const { sections, unseenOffline, quietEmpty, quietLooking } = React.useMemo(() => {
+    const known = partitionFoundMachines(props.machines, (machine) => scanOf(machine).result !== null);
+    const quiet = foldQuietFoundMachines(known.sections, (machine) => {
+      const scan = scanOf(machine);
+      // A folder that could not be read is the machine's own news: it keeps its section.
+      if (scan.result?.roots.some((root) => root.status === 'failed')) return null;
+      const body = resolveFoundMachineBody({ failure: scan.failure, items: scan.result?.items ?? null });
+      return body.kind === 'empty' ? 'empty' : body.kind === 'looking' ? 'looking' : null;
+    });
+    return { sections: quiet.sections, unseenOffline: known.unseenOffline, quietEmpty: quiet.empty, quietLooking: quiet.looking };
+  }, [props.machines, scanOf]);
+  const quietLines = React.useMemo<readonly FoundQuietLine[]>(() => [
+    ...(quietLooking > 0
+      ? [{ id: 'looking', kind: 'loading' as const, title: t('capabilities.skillsFound.quietLooking', { count: quietLooking }) }]
+      : []),
+    ...(quietEmpty > 0
+      ? [{ id: 'empty', kind: 'empty' as const, title: t('capabilities.skillsFound.quietEmpty', { count: quietEmpty, others: sections.length > 0 }) }]
+      : []),
+    ...(unseenOffline > 0
+      ? [{ id: 'unseenOffline', kind: 'unavailable' as const, title: t('capabilities.skillsFound.offlineUnseen', { count: unseenOffline }) }]
+      : []),
+  ], [quietEmpty, quietLooking, sections.length, unseenOffline]);
   return (
     <ItemList keyboardShouldPersistTaps="handled">
       <PageHeader
@@ -177,8 +190,8 @@ export const SkillsFoundPage = React.memo(function SkillsFoundPage(
               testID="skills.found.checkAgain"
               title={t('capabilities.skillsFound.checkAgain')}
               icon="arrow-clockwise"
+              // Busy keeps the label and takes no presses; disabled would dim the whole control to a stray mark.
               loading={props.checking}
-              disabled={props.checking}
               onPress={props.onCheckAgain}
             />
           ) : undefined
@@ -203,19 +216,11 @@ export const SkillsFoundPage = React.memo(function SkillsFoundPage(
           agentNames={props.agentNames}
           onScan={props.onScan}
           adopt={props.adopt}
+          retryRules={props.retryRules}
           readBoth={props.readBoth}
         />
       ))}
-      {unseenOffline > 0 ? (
-        <ItemGroup header="none">
-          <SurfaceStateCard
-            testID="skills.found.unseenOffline"
-            size="line"
-            kind="unavailable"
-            title={t('capabilities.skillsFound.offlineUnseen', { count: unseenOffline })}
-          />
-        </ItemGroup>
-      ) : null}
+      <FoundQuietMachines testID="skills.found.quiet" lines={quietLines} />
     </ItemList>
   );
 });
@@ -234,6 +239,7 @@ const FoundMachineSection = React.memo(function FoundMachineSection(
     agentNames: (agentIds: readonly string[]) => readonly string[];
     onScan: (machineId: string) => Promise<void>;
     adopt: ReturnType<typeof useFoundSkills>['adopt'];
+    retryRules: ReturnType<typeof useFoundSkills>['retryRules'];
     readBoth: ReturnType<typeof useFoundSkills>['readBoth'];
   }>,
 ) {
@@ -244,8 +250,10 @@ const FoundMachineSection = React.memo(function FoundMachineSection(
   const homeDir = useMachine(machine.machineId)?.metadata?.homeDir ?? undefined;
   const [expanded, setExpanded] = React.useState(false);
   const [adding, setAdding] = React.useState<ReadonlySet<string>>(() => new Set());
+  const [partial, setPartial] = React.useState<SkillCreationAcknowledgment | null>(null);
+  const [repairing, setRepairing] = React.useState(false);
   const [comparing, setComparing] = React.useState<string | null>(null);
-  const body = resolveFoundMachineBody(scan);
+  const body = resolveFoundMachineBody({ failure: scan.failure, items: scan.result?.items ?? null });
   const items = body.kind === 'rows' ? body.items : NO_ITEMS;
   // One row per skill name: the copies in other agents' folders fold into it.
   const groups = React.useMemo(() => groupFoundRowsByName(orderFoundRows(items)), [items]);
@@ -276,12 +284,7 @@ const FoundMachineSection = React.memo(function FoundMachineSection(
           );
           return;
         }
-        if (outcome.incomplete) {
-          Modal.alert(
-            t('common.error'),
-            t('capabilities.skillsFound.addedPartial', { name: batch.length === 1 ? batch[0]!.name : name }),
-          );
-        }
+        if (outcome.incomplete.length > 0) setPartial(previous => mergeSkillCreationAcknowledgments(previous, outcome));
         await props.onScan(machine.machineId);
       } finally {
         setAdding((prev) => {
@@ -292,27 +295,6 @@ const FoundMachineSection = React.memo(function FoundMachineSection(
       }
     },
     [machine.machineId, name, props],
-  );
-
-  const titleAccessory = (
-    <View style={styles.titleAccessory}>
-      {body.kind === 'rows' ? (
-        <Text variant="meta" style={styles.count}>
-          {String(groups.length)}
-        </Text>
-      ) : null}
-      {machine.offline ? (
-        <CapabilityStatusChip
-          testID={`skills.found.offline.${machine.machineId}`}
-          status={{
-            kind: 'offline',
-            ...(scan.result
-              ? { detail: t('capabilities.skillsFound.lastKnown', { time: formatLastSeen(machine.lastSeenAt ?? 0) }) }
-              : {}),
-          }}
-        />
-      ) : null}
-    </View>
   );
 
   const renderRow = (group: FoundRowGroup) => {
@@ -370,66 +352,55 @@ const FoundMachineSection = React.memo(function FoundMachineSection(
     );
   };
 
+  const copy: FoundMachineGroupCopy = {
+    looking: t('capabilities.skillsFound.looking'),
+    nothingHere: t('capabilities.skillsFound.nothingHere'),
+    scanFailed: t('capabilities.skillsFound.scanFailed', { machine: name }),
+    tryAgain: t('capabilities.skillsFound.tryAgain'),
+    olderMachine: t('capabilities.skillsFound.olderMachine', { machine: name }),
+    lastKnown: (time) => t('capabilities.skillsFound.lastKnown', { time }),
+    offlineBring: t('capabilities.skillsFound.offlineBring', { machine: name }),
+  };
+
   return (
-    <ItemGroup
-      testID={`skills.found.machine.${machine.machineId}`}
-      title={name}
-      titleLeading={<Icon name="desktop" size={18} color={theme.colors.text.secondary} />}
-      titleAccessory={titleAccessory}
-      {...(addAll.length > 1 && canAdd
-        ? {
-            action: (
-              <SectionActionButton
-                testID={`skills.found.addAll.${machine.machineId}`}
-                title={t('capabilities.skillsFound.addAll', { count: addAll.length })}
-                icon="plus"
-                loading={addAll.every((item) => adding.has(item.path))}
-                disabled={addAll.some((item) => adding.has(item.path))}
-                onPress={() => void adopt(addAll)}
-              />
-            ),
-          }
-        : {})}
-      {...(machine.offline && scan.result
-        ? { description: t('capabilities.skillsFound.offlineBring', { machine: name }) }
-        : {})}
+    <FoundMachineGroup
+      machine={machine}
+      body={body}
+      failed={scan.failure === 'failed'}
+      cause={scan.cause}
+      hasLastKnown={scan.result !== null}
+      count={groups.length}
+      copy={copy}
+      onTryAgain={() => void props.onScan(machine.machineId)}
+      testIDPrefix="skills.found"
+      action={addAll.length > 1 && canAdd ? (
+        <SectionActionButton
+          testID={`skills.found.addAll.${machine.machineId}`}
+          title={t('capabilities.skillsFound.addAll', { count: addAll.length })}
+          icon="plus"
+          loading={addAll.every((item) => adding.has(item.path))}
+          disabled={addAll.some((item) => adding.has(item.path))}
+          onPress={() => void adopt(addAll)}
+        />
+      ) : undefined}
     >
-      {body.kind === 'looking' ? (
-        <SurfaceStateCard
-          testID={`skills.found.looking.${machine.machineId}`}
-          size="line"
-          kind="loading"
-          title={t('capabilities.skillsFound.looking')}
-        />
-      ) : null}
-      {body.kind === 'older_machine' ? (
-        <SurfaceStateCard
-          testID={`skills.found.older.${machine.machineId}`}
-          size="line"
-          kind="empty"
-          title={t('capabilities.skillsFound.olderMachine', { machine: name })}
-        />
-      ) : null}
-      {machine.online === true && (body.kind === 'failed' || (scan.failure === 'failed' && body.kind !== 'older_machine')) ? (
-        <SurfaceStateCard
-          testID={`skills.found.failed.${machine.machineId}`}
-          size="line"
-          kind="error"
-          title={t('capabilities.skillsFound.scanFailed', { machine: name })}
-          action={{
-            label: t('capabilities.skillsFound.tryAgain'),
-            onPress: () => void props.onScan(machine.machineId),
-          }}
-        />
-      ) : null}
-      {body.kind === 'empty' ? (
-        <SurfaceStateCard
-          testID={`skills.found.empty.${machine.machineId}`}
-          size="line"
-          kind="empty"
-          title={t('capabilities.skillsFound.nothingHere')}
-        />
-      ) : null}
+      {partial ? <SurfaceStateCard testID={`skills.found.partial.${machine.machineId}`} kind="error" size="line"
+        title={describeSkillInstallIncomplete(partial)}
+        action={{ label: t('capabilities.skillAdd.partial.tryAgain'), busy: repairing, onPress: async () => {
+          if (repairing) return;
+          setRepairing(true);
+          try {
+            const receipt = await props.retryRules(partial);
+            setPartial(current => {
+              if (!current) return null;
+              // Other Adds can finish while this repair awaits its own acknowledgment.
+              const repairedIds = new Set(receipt.skillIds);
+              const remaining = { ...current, incomplete: current.incomplete.filter(step => !repairedIds.has(step.skillId)) };
+              const next = mergeSkillCreationAcknowledgments(remaining, receipt);
+              return next.incomplete.length > 0 ? next : null;
+            });
+          } finally { setRepairing(false); }
+        } }} /> : null}
       {scan.result?.roots
         .filter((root) => root.status === 'failed')
         .map((root) => (
@@ -468,7 +439,7 @@ const FoundMachineSection = React.memo(function FoundMachineSection(
           />
         </SectionContentRow>
       ) : null}
-    </ItemGroup>
+    </FoundMachineGroup>
   );
 });
 
@@ -622,8 +593,6 @@ function FoundCompare(
 }
 
 const styles = StyleSheet.create((theme) => ({
-  titleAccessory: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, flexShrink: 1 },
-  count: { color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
   held: { color: theme.colors.text.secondary },
   compareLabel: { color: theme.colors.text.primary },
   quiet: { color: theme.colors.text.tertiary },

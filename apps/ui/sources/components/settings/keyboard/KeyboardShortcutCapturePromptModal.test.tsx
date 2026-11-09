@@ -22,6 +22,34 @@ vi.mock('@/modal/components/card/ModalCardFrame', () => ({
 }));
 
 describe('KeyboardShortcutCapturePromptModal', () => {
+    it('cancels Escape without binding it', async () => {
+        const { KeyboardShortcutCapturePromptModal } = await import('./KeyboardShortcutCapturePromptModal');
+        const onResolve = vi.fn();
+        const onClose = vi.fn();
+        const screen = await renderScreen(<KeyboardShortcutCapturePromptModal title="Set shortcut" platform="macos"
+            onResolve={onResolve} onClose={onClose} />);
+        act(() => screen.findByTestId('keyboard-shortcut-capture-input')?.props.onKeyDown({
+            key: 'Escape', code: 'Escape', preventDefault: vi.fn(), stopPropagation: vi.fn(),
+        }));
+        expect(onResolve).toHaveBeenCalledWith(null);
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('cancels when the desktop window loses focus', async () => {
+        const { KeyboardShortcutCapturePromptModal } = await import('./KeyboardShortcutCapturePromptModal');
+        const browserWindow = new EventTarget();
+        vi.stubGlobal('window', browserWindow);
+        try {
+            const onResolve = vi.fn();
+            const onClose = vi.fn();
+            await renderScreen(<KeyboardShortcutCapturePromptModal title="Set shortcut" platform="macos"
+                onResolve={onResolve} onClose={onClose} />);
+            act(() => { browserWindow.dispatchEvent(new Event('blur')); });
+            expect(onResolve).toHaveBeenCalledWith(null);
+            expect(onClose).toHaveBeenCalledTimes(1);
+        } finally { vi.unstubAllGlobals(); }
+    });
+
     it('captures pressed shortcuts into the input field without submitting the prompt', async () => {
         const { KeyboardShortcutCapturePromptModal } = await import('./KeyboardShortcutCapturePromptModal');
         const onClose = vi.fn();

@@ -11,15 +11,13 @@ import { createCustomAcpAgentSettingsRoute } from '@/agents/catalog/agentSetting
 import { useMachineAgentsByMachine } from '@/agents/machineAgents/useMachineAgents';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { AcpAgentGlyph } from '@/components/settings/acpCatalog/CustomAcpAgentMark';
+import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import { useAcpCatalogActionExecution } from '@/components/settings/acpCatalog/useAcpCatalogActionExecution';
-import { AgentSessionDefaultsSection } from '@/components/settings/agents/AgentSettingsScreen';
 import { useAgentsAdministrationTargetSelection } from '@/components/settings/agents/collection/useAgentAdministrationCatalog';
 import { confirmAgentInstallChange } from '@/components/settings/agents/install/agentInstallChangeConfirm';
 import { useAgentPreferenceWriter } from '@/components/settings/agents/useAgentPreferenceWriter';
 import {
   ExpandableItem,
-  ExpandableItemCaret,
 } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -178,9 +176,7 @@ export function RegistryAgentDetailScreen(
               : {}),
           },
           {
-            presentUserConfirmation: {
-              actionId: 'agents.acp.backends.installFromRegistry',
-            },
+            confirmed: true,
           },
         );
         if (!result.ok)
@@ -247,7 +243,7 @@ export function RegistryAgentDetailScreen(
         machineId={null}
         serverId={serverId}
         identityCurrent
-        mark={<AcpAgentGlyph iconUrl={origin?.iconUrl ?? null} size={24} />}
+        mark={<HappierBrandMark brand={snapshot?.brandMarks?.[definition.id] ?? { displayName: definition.title || definition.name }} pixelSize={24} externallyLabelled />}
         enabled={
           projection.backendTargetKey
             ? {
@@ -276,12 +272,22 @@ export function RegistryAgentDetailScreen(
           targetSelection={targetSelection}
         />
       ) : null}
-      <AgentSessionDefaultsSection
-        projection={projection}
-        compatibilityTargetKeys={[]}
-        accountSettingsAvailable
-        onOpenModels={null}
-      />
+      {/* A registry agent's defaults are its definition's own mode and model (applied natively on new Sessions), edited where the definition is. */}
+      <ItemGroup
+        testID={`${TEST_ID}.sessionDefaults`}
+        title={t('settingsAgents.detailPage.sessionDefaultsTitle')}
+        description={t('settingsAgents.detailPage.sessionDefaultsSavedDescription', { agent: projection.title })}
+      >
+        {(['defaultMode', 'defaultModel'] as const).map((field) => (
+          <Item
+            key={field}
+            testID={`${TEST_ID}.sessionDefaults.${field}`}
+            title={t(field === 'defaultMode' ? 'settingsAgents.customAcp.defaultModeTitle' : 'settingsAgents.customAcp.defaultModelTitle')}
+            detail={definition[field] ?? t('settingsAgents.customAcp.agentDefaultPlaceholder')}
+            onPress={() => router.push(`${createCustomAcpAgentSettingsRoute(definition.id)}?edit=1` as never)}
+          />
+        ))}
+      </ItemGroup>
       <AgentSourceAndUpdatesSection
         testID={`${TEST_ID}.source`}
         definition={definition}
@@ -304,7 +310,6 @@ export function RegistryAgentDetailScreen(
             <Item
               {...state.headerProps}
               title={t('settingsAgents.detailPage.detailsTitle')}
-              leftElement={<ExpandableItemCaret expanded={state.expanded} />}
               detail={
                 state.expanded
                   ? undefined
@@ -317,7 +322,6 @@ export function RegistryAgentDetailScreen(
                           }),
                     ].join(' · ')
               }
-              showChevron={false}
             />
           )}
         >

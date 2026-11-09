@@ -1,7 +1,8 @@
 import * as React from 'react';
 
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
-import { PluginDetailGenericSettingsSection } from '@/components/settings/plugins/detail/PluginDetailGenericSettingsSection';
+import { AgentSettingsInlineSurfaces } from './AgentSettingsInlineSurfaces';
+import { PluginDetailGenericSettingsSection, type PluginSettingsAccountContentProjection } from '@/components/settings/plugins/detail/PluginDetailGenericSettingsSection';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { isAdministrationScopedPluginSettingsTargetCurrent } from '@/sync/domains/machines/administration/scopedPluginSettingsTarget';
 import type {
@@ -22,6 +23,7 @@ export function areAgentAccountSettingsAvailable(selection: Pick<
 
 /** Both Agent presentations share this Account/daemon settings admission owner. */
 export const AgentContributedSettingsSection = React.memo(function AgentContributedSettingsSection(props: Readonly<{
+    agentId: string;
     pluginSettingsProjection: PluginProjectionEntry | null;
     targetSelection: MachineAdministrationTargetSelectionV1;
     executionTarget: FreshMachineAdministrationExecutionTargetV1 | null;
@@ -44,6 +46,10 @@ export const AgentContributedSettingsSection = React.memo(function AgentContribu
         kind: 'disclosures' as const,
         title: t('settingsPlugins.genericSettingsTitle'),
     }), []);
+    const renderAccountContent = React.useCallback((account: PluginSettingsAccountContentProjection) => (
+        pluginSettingsProjection ? <AgentSettingsInlineSurfaces pluginId={pluginSettingsProjection.pluginId}
+            agentId={props.agentId} account={account} /> : null
+    ), [pluginSettingsProjection, props.agentId]);
     if (!pluginSettingsProjection) return null;
     return (
         <PluginDetailGenericSettingsSection
@@ -60,6 +66,7 @@ export const AgentContributedSettingsSection = React.memo(function AgentContribu
             // On an Agent's page the plugin's options are expert detail under the Agent's own
             // sections: one section of summarised disclosures, not a page of flat rows.
             presentation={presentation}
+            renderAccountContent={renderAccountContent}
         />
     );
 });

@@ -876,6 +876,11 @@ await import('./collection/remoteHostsCollectionController');
             },
         });
         expect(nativeTunnelState.setHostKeyPromptResolver).toHaveBeenCalledWith(expect.any(Function));
+        // The native tunnel's host key is the same trust sheet as every SSH task: Trust answers through its own control.
+        modalSpies.show.mockImplementation((config: { chrome?: { testID?: string }; props?: { onResolve?: (trusted: boolean) => void } }) => {
+            if (config.chrome?.testID === 'ssh-host-key-modal') queueMicrotask(() => config.props?.onResolve?.(true));
+            return 'modal-id';
+        });
         await expect(nativeTunnelState.hostKeyPromptResolver?.({
             host: '10.0.0.1',
             fingerprintSha256: 'SHA256:abc',
@@ -883,6 +888,7 @@ await import('./collection/remoteHostsCollectionController');
             decision: 'accept-once',
             fingerprintSha256: 'SHA256:abc',
         });
+        modalSpies.show.mockClear();
         modalSpies.confirm.mockClear();
         await expect(nativeTunnelState.hostKeyPromptResolver?.({
             host: '10.0.0.1',
@@ -893,18 +899,11 @@ await import('./collection/remoteHostsCollectionController');
             decision: 'accept-once',
             fingerprintSha256: 'SHA256:new',
         });
-        expect(modalSpies.confirm).toHaveBeenCalledWith(
-            'settings.remoteHostsReplaceHostKeyTitle',
-            expect.stringContaining('settings.remoteHostsHostKeyCurrentFingerprintLabel: SHA256:old'),
-            expect.objectContaining({
-                confirmText: 'settings.remoteHostsReplaceHostKeyAction',
-            }),
-        );
-        expect(modalSpies.confirm).toHaveBeenCalledWith(
-            'settings.remoteHostsReplaceHostKeyTitle',
-            expect.stringContaining('settings.remoteHostsHostKeyNewFingerprintLabel: SHA256:new'),
-            expect.any(Object),
-        );
+        expect(modalSpies.show).toHaveBeenCalledWith(expect.objectContaining({
+            chrome: expect.objectContaining({ testID: 'ssh-host-key-modal', phonePresentation: 'sheet' }),
+            props: expect.objectContaining({ request: expect.objectContaining({ host: '10.0.0.1', fingerprint: 'SHA256:new', existingFingerprint: 'SHA256:old' }) }),
+        }));
+        expect(modalSpies.confirm).not.toHaveBeenCalled();
         expect(nativeTunnelState.setAuthPromptResolver).toHaveBeenCalledWith(expect.any(Function));
         modalSpies.prompt.mockResolvedValueOnce('secret phrase');
         await expect(nativeTunnelState.authPromptResolver?.({

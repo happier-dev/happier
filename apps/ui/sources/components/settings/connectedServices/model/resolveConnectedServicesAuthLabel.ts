@@ -168,7 +168,7 @@ function resolveConnectedBindingState(
                 effectiveSource: 'connected',
                 effectiveSelection: 'group',
                 groupId: explicitGroupId,
-                profileId: activeProfileId,
+                profileId: readOptionalString(binding.appliedProfileId) || activeProfileId,
             };
         }
         return {
@@ -237,8 +237,15 @@ function resolveConnectedBindingLabel(
         const group = (params.accountGroupOptionsByServiceId?.[serviceId] ?? []).find((option) =>
             option.groupId === state.groupId
         );
-        return group ? `${params.resolveServiceTitle(serviceId)} · ${group.label}`
+        const poolLabel = group ? `${params.resolveServiceTitle(serviceId)} · ${group.label}`
             : requested ? `${params.resolveServiceTitle(serviceId)} · ${state.groupId}` : null;
+        const binding = params.bindingsByServiceId[serviceId];
+        const appliedProfileId = binding?.source === 'connected' && binding.selection === 'group'
+            ? readOptionalString(binding.appliedProfileId) : '';
+        if (!poolLabel || !appliedProfileId) return poolLabel;
+        const profile = (params.profileOptionsByServiceId[serviceId] ?? [])
+            .find((option) => option.profileId === appliedProfileId);
+        return `${poolLabel} · ${profile ? resolveProfileLabel(profile) : appliedProfileId}`;
     }
 
     if ((requested ? state.requestedSelection : state.effectiveSelection) === 'profile' && state.profileId) {

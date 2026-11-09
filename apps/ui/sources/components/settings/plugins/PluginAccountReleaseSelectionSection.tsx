@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { Item } from '@/components/ui/lists/Item';
@@ -11,6 +11,8 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
+import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
+import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 
@@ -82,11 +84,13 @@ export function PluginAccountReleaseSelectionSection(props: Readonly<{
     const [hostedStatus, setHostedStatus] = React.useState<ReturnType<PluginAccountReleaseSelectionController['readHostedArtifactStatus']>>('unavailable');
     const controllerLifetimeRef = React.useRef<ControllerLifetime | null>(null);
     const accountScope = useActiveServerAccountScope();
-    const { requestApproval } = useActionApprovalContinuation({
+    const approval = useActionApprovalContinuation({
         scopeKey: accountScope ? serverAccountScopeKeySuffix(accountScope) : '',
         serverId: accountScope?.serverId ?? '',
         onExecuted: () => {},
     });
+    const { requestApproval } = approval;
+    const approvalReview = useInPlaceApprovalReview(approval);
 
     React.useEffect(() => {
         const lifetime: ControllerLifetime = {
@@ -213,6 +217,14 @@ export function PluginAccountReleaseSelectionSection(props: Readonly<{
                 ? t('settingsPlugins.accountReleaseSelection.hostedGroupFooter')
                 : t('settingsPlugins.accountReleaseSelection.groupFooter')}
         >
+            {approvalReview.waiting ? (
+                <ActionApprovalPendingNotice
+                    testID={`${props.testID}.approvalWaiting`}
+                    message={t('approvals.waitingForYou')}
+                    summary={approval.approvalSummary}
+                    onOpenApproval={approvalReview.reopen}
+                />
+            ) : null}
             {version !== null ? (
                 <Item
                     testID={props.testID}

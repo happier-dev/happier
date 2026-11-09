@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { Pressable } from 'react-native';
+import { Path } from 'react-native-svg';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -88,6 +89,27 @@ async function expectRenderedTooltipValue(screen: Awaited<ReturnType<typeof rend
 }
 
 describe('usage chart tooltips (one ChartTooltip owner across all charts)', () => {
+    it.each([true, false])('preserves Human loop figures and Agent series when steering is observed: %s', async (observed) => {
+        const agents = [{ id: 'claude', name: 'Claude', color: '#ed702e' }, { id: 'codex', name: 'Codex', color: '#3288ed' }];
+        const value = observed ? 0 : null;
+        const screen = await renderChart(<UsageChartInteractions>
+            <UsageSteeringTide {...markBase} agents={agents}
+                model={{ night: null, rows: agents.map(agent => ({ agentId: agent.id,
+                    steersByHour: Array(24).fill(value), phoneAnswersByHour: Array(24).fill(0),
+                    steers: value, busyMs: 15_480_000, perBusyHour: value, phoneAnswers: 0 })) }}
+                labels={{ clock: String, unknownAgent: 'Unknown', perBusyHourHeader: 'Per busy hour', fromPhoneHeader: 'From phone',
+                    perBusyHourUnit: 'per hour', answers: 'Answers', rate: v => v === null ? '—' : String(v),
+                    detail: steers => `${steers ?? '—'} steers · 4 h 18 min busy`, count: v => v === null ? '—' : String(v), caption: '' }} />
+        </UsageChartInteractions>);
+        const painted = screen.findAll(node => typeof node.type === 'string')
+            .flatMap(node => node.children.filter(child => typeof child === 'string'));
+        expect(painted).toContain(observed ? '0' : '—');
+        expect(painted.filter(text => text === `${observed ? '0' : '—'} steers · 4 h 18 min busy`)).toHaveLength(2);
+        const series = screen.findAllByType(Path).filter(path => agents.some(agent => agent.color === path.props.stroke));
+        expect(series.map(path => path.props.stroke)).toEqual(observed ? agents.map(agent => agent.color) : []);
+        expect(screen.findAllByType(Popover).every(popover => popover.props.open === false)).toBe(true);
+    });
+
     it.each([1, 168])('mounts only the mark targets for %i closed chart values', async (count) => {
         // The weekday/hour matrix has 7 × 24 independently accessible marks.
         const screen = await renderChart(<UsageChartInteractions>

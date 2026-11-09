@@ -144,6 +144,30 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
         if (execution.isCurrent()) await loadTroubleshootingState({ showErrors: true });
     }, [auth.credentials, execution.execute, execution.isCurrent, loadTroubleshootingState]);
 
+    const testRemotePush = async () => {
+        const registration = tokens.find(token => token.isCurrentDevice);
+        const title = t('settingsNotifications.pushTroubleshooting.remoteTest.title');
+        if (!registration) {
+            await Modal.alert(title, t('settingsNotifications.pushTroubleshooting.remoteTest.notRegistered'));
+            return;
+        }
+        try {
+            const response = await execution.execute('notifications.push.test', { tokenId: registration.tokenId });
+            if (!response.ok) throw new Error(response.error);
+            const result = NotificationConfigurationActionOutputSchemas['notifications.push.test'].parse(response.result);
+            const messages = {
+                accepted: t('settingsNotifications.pushTroubleshooting.remoteTest.accepted'),
+                not_registered: t('settingsNotifications.pushTroubleshooting.remoteTest.notRegistered'),
+                rejected: t('settingsNotifications.pushTroubleshooting.remoteTest.rejected'),
+                invalid_credentials: t('settingsNotifications.pushTroubleshooting.remoteTest.invalidCredentials'),
+                unsupported: t('settingsNotifications.pushTroubleshooting.remoteTest.unsupported'),
+            };
+            if (execution.isCurrent()) await Modal.alert(title, messages[result.status]);
+        } catch {
+            if (execution.isCurrent()) await Modal.alert(title, t('settingsNotifications.pushTroubleshooting.remoteTest.unconfirmed'));
+        }
+    };
+
     const handleDeleteToken = React.useCallback(async (token: PushTokenRegistrationDiagnostics) => {
         if (!auth.credentials) {
             await Modal.alert(t('common.error'), t('settingsNotifications.pushTroubleshooting.authRequired'));
@@ -250,6 +274,14 @@ export const PushNotificationTroubleshootingView = React.memo(function PushNotif
                         />
                     )}
                 />
+                <SettingAnchor setting={NOTIFICATIONS_PUSH_SETTINGS.settings.remoteTest}>
+                    <Item title={t(NOTIFICATIONS_PUSH_SETTINGS.settings.remoteTest.titleKey)} showChevron={false}
+                        subtitle={t('settingsNotifications.pushTroubleshooting.remoteTest.subtitle')} subtitleLines={0}
+                        rightElement={<RoundButton testID="settings-notifications-push-troubleshooting-test-remote"
+                            title={t('common.send')} size="small" display="secondary"
+                            disabled={!auth.credentials || !isPushNotificationRuntimeSupported()}
+                            action={testRemotePush} />} />
+                </SettingAnchor>
             </ItemGroup>
 
             <ItemGroup

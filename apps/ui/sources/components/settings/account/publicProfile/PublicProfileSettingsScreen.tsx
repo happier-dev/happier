@@ -25,12 +25,14 @@ import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { useProfile } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { formatRelativeTime } from '@/utils/time/formatShortRelativeTime';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import {
   publicProfileMutationNotice,
+  settlePublicProfileMutation,
   type PublicProfileOperation,
 } from './publicProfileMutation';
 import { usePublicProfileOwnerRead } from './usePublicProfileOwnerRead';
+import { publicProfileLinkLabel } from './publicProfilePresentation';
 
 /**
  * Settings → Account → Public profile: the published page's link, status and handle, what is
@@ -50,7 +52,7 @@ export const PublicProfileSettingsScreen = React.memo(
     const profile = useProfile();
     const activeServer = useActiveServerSnapshot();
     const homeName = resolveHomeDisplayName(getServerProfileById(activeServer.serverId));
-    const { state, reload } = usePublicProfileOwnerRead(execution);
+    const { state, reload, acknowledge } = usePublicProfileOwnerRead(execution, scope);
     const [pending, setPending] = React.useState<PublicProfileOperation | null>(
       null,
     );
@@ -71,9 +73,9 @@ export const PublicProfileSettingsScreen = React.memo(
               setNotice(publicProfileMutationNotice(outcome));
             return;
           }
-          const message = publicProfileMutationNotice(outcome.result);
+          const message = settlePublicProfileMutation(outcome.result, acknowledge);
           if (message) setNotice(message);
-          await reload();
+          // Successful changes arrive through the shared publication push, once.
         } catch {
           // The answer was lost, not refused: reread the record rather than guess what changed.
           setNotice(t('publicIdentity.profile.actionUncertain'));
@@ -82,7 +84,7 @@ export const PublicProfileSettingsScreen = React.memo(
           setPending(null);
         }
       },
-      [execution, pending, reload],
+      [execution, pending, acknowledge, reload],
     );
 
     const read = state.kind === 'ready' ? state.read : null;
@@ -98,7 +100,7 @@ export const PublicProfileSettingsScreen = React.memo(
         description={
           live && pageUrl
             ? t('publicIdentity.profile.purposePublished', {
-                url: displayUrl(pageUrl),
+                url: publicProfileLinkLabel(pageUrl),
               })
             : t('publicIdentity.profile.purposeIntro')
         }
@@ -116,6 +118,22 @@ export const PublicProfileSettingsScreen = React.memo(
         }
       />
     );
+
+    // An operator restriction outlives the owner's own unpublish, so the owner sees why (and who to ask)
+    // whether the page is live or only a draft.
+    const restrictedNotice = record?.restriction ? (
+      <ItemGroup>
+        <SurfaceStateCard
+          testID="settings-public-profile-restricted"
+          kind="warning"
+          size="line"
+          title={t('publicIdentity.profile.restrictedTitle')}
+          reason={t('publicIdentity.profile.restrictedBody', {
+            reason: record.restriction.reason,
+          })}
+        />
+      </ItemGroup>
+    ) : null;
 
     if (state.kind === 'loading' || (feature === null && !record)) {
       return (
@@ -168,6 +186,7 @@ export const PublicProfileSettingsScreen = React.memo(
       return (
         <ItemList style={{ paddingTop: 0 }}>
           {header}
+          {restrictedNotice}
           <EmptyState
             testID="settings-public-profile-invitation"
             layout="page"
@@ -201,18 +220,7 @@ export const PublicProfileSettingsScreen = React.memo(
     return (
       <ItemList style={{ paddingTop: 0 }}>
         {header}
-        {restriction ? (
-          <SurfaceStateCard
-            testID="settings-public-profile-restricted"
-            kind="warning"
-            layout="inline"
-            size="line"
-            title={t('publicIdentity.profile.restrictedTitle')}
-            reason={t('publicIdentity.profile.restrictedBody', {
-              reason: restriction.reason,
-            })}
-          />
-        ) : null}
+        {restrictedNotice}
         {notice ? (
           <SurfaceStateCard
             testID="settings-public-profile-notice"
@@ -228,7 +236,7 @@ export const PublicProfileSettingsScreen = React.memo(
             <Item
               testID="settings-public-profile-link"
               title={t('publicIdentity.profile.link')}
-              subtitle={displayUrl(pageUrl)}
+              subtitle={publicProfileLinkLabel(pageUrl)}
               copy={pageUrl}
               showChevron={false}
             />
@@ -237,7 +245,9 @@ export const PublicProfileSettingsScreen = React.memo(
             testID="settings-public-profile-status"
             title={t('publicIdentity.profile.status')}
             subtitle={
-              record.state === 'paused'
+              restriction
+                ? t('publicIdentity.profile.restrictedTitle')
+                : record.state === 'paused'
                 ? t('publicIdentity.profile.statusPaused')
                 : t('publicIdentity.profile.statusPublished', {
                     synced: snapshot
@@ -439,9 +449,4 @@ function IndexingRow(
       }
     />
   );
-}
-
-/** "happier.dev/@leeroy": the scheme adds nothing a person reads or types. */
-function displayUrl(url: string): string {
-  return url.replace(/^https?:\/\//, '').replace(/\/$/, '');
 }

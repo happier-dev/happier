@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { HAPPIER_PAGE_METRICS, HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
-import type { PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol';
+import type { PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
-import { InstalledPluginBrandMark } from '@/components/plugins/shared/InstalledPluginBrandMark';
+import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import { useBundledPluginBrandPresentation, useInstalledPluginBrandPresentation, type InstalledPluginBrandPresentation } from '@/components/plugins/shared/installedPluginBrandPresentation';
 import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
@@ -71,12 +71,15 @@ function ResolvedPluginMark(props: PluginMarkProps) {
     return <PluginIdentityMark {...props} brand={brand} />;
 }
 
+/** The catalog row's bare logo inside its mark box (S10 catalogRow), so a plugin row's mark matches its neighbours'. */
+const ROW_MARK_PX = 26;
+
 function PluginIdentityMark(props: PluginMarkProps) {
-    const bundledBrand = useBundledPluginBrandPresentation(props.installedPackage ? null : props.pluginId);
+    const bundledBrand = useBundledPluginBrandPresentation(props.installedPackage ? null : props.pluginId, props.title, props.iconAgentId);
     const page = props.size === 'page';
-    const mark = <InstalledPluginBrandMark
-        brand={props.brand ?? bundledBrand ?? { displayName: props.title }} pluginId={props.pluginId} iconAgentId={props.iconAgentId}
-        pixelSize={HAPPIER_PAGE_METRICS.pageHeaderMarkGlyphPx} externallyLabelled testID={props.testID}
+    const mark = <HappierBrandMark
+        brand={props.brand ?? bundledBrand ?? { displayName: props.title }}
+        pixelSize={page ? HAPPIER_PAGE_METRICS.pageHeaderMarkGlyphPx : ROW_MARK_PX} externallyLabelled testID={props.testID}
     />;
     if (page) {
         return (

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { listActionSpecs, listActionSurfacePolicies } from '@happier-dev/protocol';
+import { listActionSpecs} from '@happier-dev/protocol/actions/actionSpecs';
+import { listActionSurfacePolicies } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
 
 import { listActionSettingsTargetDefinitions } from './actionSettingsTargetDefinitions';
 

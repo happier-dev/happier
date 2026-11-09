@@ -7,6 +7,7 @@ import { renderScreen, standardCleanup, flushHookEffects } from '@/dev/testkit';
 import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createSessionFixture, createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionWithDisplayRecordFixture } from '@/dev/testkit/fixtures/sessionDisplayFixtures';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQueryResourceStore, invalidateUsageQueryResources } from '@/sync/api/account/usageQueryResource';
@@ -19,12 +20,19 @@ import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import * as workEvidence from '@/sync/domains/usage/usageWorkEvidence';
 import * as storedSessionContent from '@/sync/runtime/readStoredSessionContent';
+import * as runtimeFetchBoundary from '@/utils/system/runtimeFetch';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { Encryption } from '@/sync/encryption/encryption';
 import { SessionEncryption } from '@/sync/encryption/sessionEncryption';
 import { encodeBase64 } from '@/encryption/base64';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { getRandomBytes } from '@/platform/cryptoRandom';
+import { createLegacyAccountEncryptionCurrentnessFixture, createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+
+// HTTP serves these fake Homes; their Socket SDK must not dial the network
+// and withdraw the Account observation while the demand measurement is active.
+vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 
 let home: Awaited<ReturnType<typeof serveAccountHomes>> | undefined;
 afterEach(async () => {
@@ -53,7 +61,7 @@ it.each([
         if (request.path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
           signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
         const sessionMatch = /^\/v2\/sessions\/(session-\d+)$/.exec(request.path);
-        if (sessionMatch) return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id: sessionMatch[1]!,
+        if (sessionMatch) return Response.json({ session: createPlainSessionWithDisplayRecordFixture({ id: sessionMatch[1]!,
           createdAt: 1, updatedAt: 900, seq: 1, active: true, activeAt: 900, metadataVersion: 1, agentStateVersion: 1 }) });
         const turnsMatch = /^\/v1\/sessions\/([^/]+)\/turns$/.exec(request.path);
         if (turnsMatch) return Response.json({ v: 1, sessionId: turnsMatch[1]!, updatedAt: 900,
@@ -65,7 +73,12 @@ it.each([
         return undefined;
       });
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-many-sessions.test', accountId: 'account-a' }],
-      route: sessionBatch.handle });
+      route: async request => await sessionBatch.handle(request)
+        ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });
+    const { sync } = await import('@/sync/sync');
+    await sync.awaitBootstrapForegroundAcquisition();
+    await sync.refreshSessions();
+    await sync.refreshMachines();
     publishAppliedActiveServerSnapshot({ serverId: home.homes.a!.id, serverUrl: home.homes.a!.serverUrl, generation: 0 });
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const credentials = (await TokenStorage.getCredentialsForServerUrl(home.homes.a!.serverUrl))!;
@@ -130,7 +143,7 @@ it('reuses 500 admitted Sessions across unchanged Resource wakes and refreshes o
         tokens: { input: ids.length, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: ids.length },
         cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } } });
       const detail = /^\/v2\/sessions\/(evidence-\d+)$/.exec(request.path);
-      if (detail) return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id: detail[1]!,
+      if (detail) return Response.json({ session: createPlainSessionWithDisplayRecordFixture({ id: detail[1]!,
         createdAt: 1, updatedAt: 900, seq: detail[1] === ids[0] ? changedSeq : 1,
         active: true, activeAt: 900, metadataVersion: 1, agentStateVersion: 1 }) });
       const turns = /^\/v1\/sessions\/(evidence-\d+)\/turns$/.exec(request.path);
@@ -147,7 +160,8 @@ it('reuses 500 admitted Sessions across unchanged Resource wakes and refreshes o
       return undefined;
     });
   home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-session-reuse.test', accountId: 'account-a' }],
-    route: sessionBatch.handle });
+    route: async request => await sessionBatch.handle(request)
+      ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });
   publishAppliedActiveServerSnapshot({ serverId: home.homes.a!.id, serverUrl: home.homes.a!.serverUrl, generation: 0 });
   const { TokenStorage } = await import('@/auth/storage/tokenStorage');
   const credentials = (await TokenStorage.getCredentialsForServerUrl(home.homes.a!.serverUrl))!;
@@ -219,6 +233,7 @@ it('reuses 500 admitted Sessions across unchanged Resource wakes and refreshes o
 
 it('publishes cold 600-Session evidence by source phase and reuses successfully read partial Coach pages', async () => {
   const ids = Array.from({ length: 600 }, (_, index) => `cold-${index}`);
+  let encryptedAccount = false;
   const messagesGate = createDeferred<void>();
   const lastMessageGate = createDeferred<void>();
   const sessionBatch = createSessionReadBatchHttpBoundary(async request => {
@@ -226,7 +241,7 @@ it('publishes cold 600-Session evidence by source phase and reuses successfully 
         tokens: { input: ids.length, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: ids.length },
         cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } } });
       const detail = /^\/v2\/sessions\/(cold-\d+)$/.exec(request.path);
-      if (detail) return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id: detail[1]!,
+      if (detail) return Response.json({ session: createPlainSessionWithDisplayRecordFixture({ id: detail[1]!,
         createdAt: 1, updatedAt: 900, seq: 1, active: true, activeAt: 900, metadataVersion: 1, agentStateVersion: 1 }) });
       const turns = /^\/v1\/sessions\/(cold-\d+)\/turns$/.exec(request.path);
       if (turns) return Response.json({ v: 1, sessionId: turns[1]!, updatedAt: 900,
@@ -244,32 +259,48 @@ it('publishes cold 600-Session evidence by source phase and reuses successfully 
       }
       return undefined;
     });
-  home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-cold-phases.test', accountId: 'account-a' }],
-    route: sessionBatch.handle });
+  home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-cold-phases.test', accountId: 'account-a',
+    encryptionCurrentness: () => encryptedAccount
+      ? createLegacyAccountEncryptionCurrentnessFixture({ secret: new Uint8Array(32).fill(9) })
+      : createPlainAccountEncryptionCurrentnessFixture(),
+  }],
+    route: async request => await sessionBatch.handle(request)
+      ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });
   publishAppliedActiveServerSnapshot({ serverId: home.homes.a!.id, serverUrl: home.homes.a!.serverUrl, generation: 0 });
   const { TokenStorage } = await import('@/auth/storage/tokenStorage');
   const credentials = (await TokenStorage.getCredentialsForServerUrl(home.homes.a!.serverUrl))!;
   const captured = captureUiUsageQueryAccountContext(credentials)!;
   const { sync } = await import('@/sync/sync');
-  await sync.resumeSync('manual');
+  // Settle bootstrap/recovery so Settings and Todo currentness reads do not
+  // enter the finite Usage batch's one-observation count below.
+  await sync.awaitBootstrapForegroundAcquisition();
+  await sync.resumeSync('server-reachable');
   storage.setState({ profileScope: captured.accountLifetime.scope, profile: AccountProfileSchema.parse({ id: 'account-a' }),
     sessions: Object.fromEntries(ids.map(id => [id, createSessionFixture({ id, seq: 1,
       serverId: captured.accountLifetime.scope.serverId, encryptionMode: 'plain' })])) });
   const project = vi.spyOn(workEvidence, 'projectUsageQueryWorkEvidence');
   const opened = vi.spyOn(storedSessionContent, 'readStoredSessionMessage');
-  const currentnessBefore = home.httpRequests.filter(request => request.path === '/v1/account/encryption/currentness').length;
+  // Count this owner's real HTTP port. Background Sync also reads the same Home
+  // through ApiSocket after bootstrap, independently of finite Usage admission.
+  let usageCurrentnessReads = 0;
+  const physicalFetch = runtimeFetchBoundary.runtimeFetch;
+  vi.spyOn(runtimeFetchBoundary, 'runtimeFetch').mockImplementation((input, init) => {
+    if (String(input).includes('/v1/account/encryption/currentness')
+      && new Error().stack?.includes('/sync/api/account/usageQueryResource.ts:')) usageCurrentnessReads++;
+    return physicalFetch(input, init);
+  });
   const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport({ queries: [normalizeUsageQuery({
     period: { startMs: 0, endMs: 1000 }, includeWorkEvidence: false,
   })] }) });
-  const release = entry.subscribe(() => {}, false);
-  const reading = entry.refresh();
+  const reading = createDeferred<void>();
+  const release = entry.subscribe(() => { if (entry.getSnapshot().pending === 'idle') reading.resolve(); }, false);
   const slice = () => entry.getSnapshot().value ? decodeUsageQueryResource(entry.getSnapshot().value!).results[0] : undefined;
   const messageReads = () => [...home!.requests, ...sessionBatch.componentRequests]
     .filter(request => /^\/v1\/sessions\/cold-\d+\/messages$/.test(request.path)).length;
   try {
     await expect.poll(messageReads, { timeout: 120_000 }).toBe(ids.length);
     await expect.poll(() => slice()?.howYouWork?.intervals?.agentTimeMs).toBe(ids.length * 300);
-    expect(home!.httpRequests.filter(request => request.path === '/v1/account/encryption/currentness').length - currentnessBefore,
+    expect(usageCurrentnessReads,
       'the admitted cold batch must share its Account-currentness observation').toBe(1);
     const summaryPasses = project.mock.calls.length;
     messagesGate.resolve();
@@ -280,22 +311,31 @@ it('publishes cold 600-Session evidence by source phase and reuses successfully 
     expect(project.mock.calls.length, 'intermediate Session completions must not reproject the entire corpus').toBe(summaryPasses);
     expect(slice()?.howYouWork?.intervals?.agentTimeMs).toBe(ids.length * 300);
     lastMessageGate.resolve();
-    await reading;
+    await reading.promise;
     expect(slice()?.howYouWork?.inputs).toMatchObject({ acceptedCount: ids.length, steeringCount: ids.length });
     expect(slice()?.sources.find(source => source.source === 'how_you_work:transcripts')?.status).toBe('partial');
     expect(JSON.stringify(slice())).not.toContain('private-cold-body');
     for (let pass = 0; pass < 3; pass++) await entry.refresh();
     expect(messageReads(), 'successful partial pages are results, not failed reads to repeat on every refresh').toBe(ids.length);
     expect(slice()?.howYouWork?.inputs).toMatchObject({ acceptedCount: ids.length, steeringCount: ids.length });
-    const beforeInvalidation = home!.httpRequests.filter(request => request.path === '/v1/account/encryption/currentness').length;
+    const beforeInvalidation = usageCurrentnessReads;
     invalidateAccountEncryptionModeCache();
     await entry.refresh();
-    expect(home!.httpRequests.filter(request => request.path === '/v1/account/encryption/currentness').length - beforeInvalidation,
+    expect(usageCurrentnessReads - beforeInvalidation,
       'Account encryption invalidation must re-admit retained Session evidence through a fresh observation').toBe(1);
     expect(messageReads()).toBe(ids.length);
+    encryptedAccount = true;
+    invalidateAccountEncryptionModeCache();
+    await entry.refresh();
+    expect(entry.getSnapshot().error?.code).toBe('plugin_resource_context_unavailable');
+    expect(entry.getSnapshot().value).toBeUndefined();
+    expect(slice()?.howYouWork?.intervals ?? null,
+      'a changed Account mode must freshly admit the Session instead of reviving retained plain evidence').toBeNull();
+    expect(slice()?.howYouWork?.inputs ?? null).toBeNull();
+    expect(messageReads(), 'refused Session admission must not open transcript pages').toBe(ids.length);
     console.info('USAGE-FREEZE-ROOT cold work', JSON.stringify({ sessions: ids.length, summaryPasses,
       projectionPasses: project.mock.calls.length, messageReads: messageReads() }));
-  } finally { messagesGate.resolve(); lastMessageGate.resolve(); await reading; release(); }
+  } finally { messagesGate.resolve(); lastMessageGate.resolve(); await reading.promise; release(); }
 }, 180_000);
 
 it('shares opened E2EE pages across mounted Overview and Coach consumers and unchanged refreshes', async () => {
@@ -328,9 +368,6 @@ it('shares opened E2EE pages across mounted Overview and Coach consumers and unc
     })))] as const;
   })));
   const sessionBatch = createSessionReadBatchHttpBoundary(request => {
-      if (request.path === '/v1/account/encryption/currentness') return Response.json({ mode: 'e2ee', version: 1,
-        signingKeyFingerprint: 'signing-1', contentKeyFingerprint: 'content-1', updatedAt: 1,
-        recipientEnvelopeReadiness: { status: 'available' } });
       if (request.path === '/v2/usage/query') return Response.json({ v: 1, totals: { eventCount: ids.length,
         tokens: { input: ids.length, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: ids.length },
         cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } } });
@@ -344,7 +381,9 @@ it('shares opened E2EE pages across mounted Overview and Coach consumers and unc
       return undefined;
     });
   home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-encrypted-reuse.test', accountId: 'account-a',
-    accountMode: 'e2ee', credentials }], route: sessionBatch.handle });
+    accountMode: 'e2ee', credentials, encryptionCurrentness: () => createLegacyAccountEncryptionCurrentnessFixture({ secret }) }],
+    route: async request => await sessionBatch.handle(request)
+      ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });
   publishAppliedActiveServerSnapshot({ serverId: home.homes.a!.id, serverUrl: home.homes.a!.serverUrl, generation: 0 });
   const captured = captureUiUsageQueryAccountContext(credentials)!;
   const { sync } = await import('@/sync/sync');

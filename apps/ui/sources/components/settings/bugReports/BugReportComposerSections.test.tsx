@@ -32,6 +32,9 @@ installBugReportComponentCommonModuleMocks({
  */
 vi.mock('@/components/ui/forms/Switch', async () => await import('@/components/ui/forms/Switch.web'));
 
+// Preload the real section graph during collection, outside an individual test's deadline.
+await import('./BugReportComposerSections');
+
 /** Query the way an assistive technology does: find the controls by ROLE, then read their names. */
 function switchNames(screen: RenderScreenResult): Array<string | undefined> {
     return screen
@@ -57,36 +60,35 @@ describe('Bug report composer toggles (web)', () => {
         expect(switchNames(screen)).toEqual(['I understand what will be shared']);
     });
 
-    it('names every diagnostics toggle by the data it opts the report into', async () => {
+    it('names the independent log controls and keeps every exclusion usable', async () => {
         const { BugReportDiagnosticsSection } = await import('./BugReportComposerSections');
-
+        const changed = vi.fn();
         const screen = await renderScreen(
             <BugReportDiagnosticsSection
                 includeDiagnostics
                 onIncludeDiagnosticsChange={() => {}}
-                acceptedKinds={['ui-mobile', 'daemon', 'stack-service', 'server']}
-                selectedKinds={['ui-mobile']}
-                onSelectedKindsChange={() => {}}
+                logSelection={{ daemon: true, session: true, provider: false }}
+                onLogSelectionChange={changed}
                 onPreviewDiagnostics={() => {}}
                 previewDisabled={false}
-                pastedCliDoctorSnapshotJson=""
-                onPastedCliDoctorSnapshotJsonChange={() => {}}
             />,
         );
-
-        // The per-source switches open in place under "Choose what's included".
-        expect(switchNames(screen)).toEqual(['Include diagnostics']);
-        await act(async () => {
-            screen.findAll((node) => node.props?.testID === 'bug-report-diagnostics-sources.header'
-                && typeof node.props?.onPress === 'function').at(0)?.props.onPress();
-        });
         expect(switchNames(screen)).toEqual([
             'Include diagnostics',
-            'App diagnostics',
-            'Daemon diagnostics',
-            'Stack service diagnostics',
-            'Server diagnostics',
+            'bugReports.composer.logOptions.technicalOnly',
+            'bugReports.composer.logOptions.daemonTitle',
+            'bugReports.composer.logOptions.sessionTitle',
+            'bugReports.composer.logOptions.providerTitle',
         ]);
+        const daemon = screen.findAll(node => node.props.testID === 'bug-report-log-daemon'
+            && typeof node.props.onValueChange === 'function')[0]!;
+        expect(daemon.props.disabled).not.toBe(true);
+        await act(async () => daemon.props.onValueChange(false));
+        expect(changed).toHaveBeenLastCalledWith({ daemon: false, session: true, provider: false });
+        const technicalOnly = screen.findAll(node => node.props.testID === 'bug-report-technical-only'
+            && typeof node.props.onValueChange === 'function')[0]!;
+        await act(async () => technicalOnly.props.onValueChange(true));
+        expect(changed).toHaveBeenLastCalledWith({ daemon: false, session: false, provider: false });
     });
 });
 
@@ -107,5 +109,26 @@ describe('Bug report similar issues', () => {
         expect(screen.findByTestId('bug-report-similar-issues-searching')).toBeTruthy();
         // The earlier results stay while the new search runs.
         expect(screen.findByTestId('bug-report-similar-issue-12')).toBeTruthy();
+    });
+});
+
+
+describe('Saved crash details', () => {
+    it('shows the editable exception before the optional details disclosure opens', async () => {
+        const { BugReportMoreDetailSection } = await import('./BugReportComposerSections');
+        const screen = await renderScreen(<BugReportMoreDetailSection
+            showCurrentBehavior
+            currentBehavior="Recognisable saved exception"
+            onCurrentBehaviorChange={() => {}}
+            reporterGithubUsername="" onReporterGithubUsernameChange={() => {}}
+            expectedBehavior="" onExpectedBehaviorChange={() => {}}
+            reproductionStepsText="" onReproductionStepsTextChange={() => {}}
+            whatChangedRecently="" onWhatChangedRecentlyChange={() => {}}
+            disabled={false}
+        />);
+        expect(screen.findAll((node) => typeof node.type === 'string'
+            && node.props.value === 'Recognisable saved exception')).toHaveLength(1);
+        expect(screen.findAll((node) => typeof node.type === 'string'
+            && node.props.accessibilityLabel === 'bugReports.composer.issueDetails.expectedBehaviorLabel')).toHaveLength(0);
     });
 });

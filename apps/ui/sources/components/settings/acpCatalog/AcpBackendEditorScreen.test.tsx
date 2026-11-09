@@ -3,13 +3,13 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol';
+import type { AcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { AgentsAcpBackendsUpsertOutputV1Schema } from '@happier-dev/protocol/acp/catalog/catalogMutationsV1';
-import { standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, standardCleanup } from '@/dev/testkit';
 import { renderSettingsView, type SettingsViewHarness } from '@/dev/testkit/harness/settingsViewHarness';
-import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -24,6 +24,11 @@ import { createDeferred } from '@/dev/testkit';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilities';
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
@@ -52,6 +57,9 @@ let rowRead: ReturnType<typeof createDeferred<void>>;
 let revision = 1;
 let artifacts: ReturnType<typeof createArtifactStoreBoundary>;
 let interleaveBeforeTerminalArtifact: (() => Promise<void>) | null = null;
+let commandChecks: string[] = [];
+let unknownCommandAvailable = false;
+let commandMachineInventory: ReturnType<typeof createMachineFixture>[] = [];
 
 await vi.hoisted(async () => {
     const { installAcpCatalogSettingsCommonModuleMocks } = await import('./acpCatalogSettingsTestHelpers');
@@ -96,20 +104,29 @@ async function type(screen: SettingsViewHarness, testID: string, text: string) {
 }
 
 async function press(screen: SettingsViewHarness, testID: string) {
+    if (testID === `${EDITOR}.save`) {
+        await waitForHomeGovernance(async () => { await flushHookEffects(); expectSaveEnabled(screen); });
+    }
     await act(async () => {
         await screen.pressByTestIdAsync(testID);
     });
 }
 
 function expectSaveEnabled(screen: SettingsViewHarness) {
-    expect(screen.findAll((candidate) => candidate.props?.testID === `${EDITOR}.save`
-        && typeof candidate.props?.onPress === 'function' && candidate.props.disabled !== true)).not.toHaveLength(0);
+    const control = screen.findHostByTestId(`${EDITOR}.save`);
+    expect(control).not.toBeNull();
+    expect(control?.props.disabled).toBe(false);
+    expect(control?.props.accessibilityState?.disabled).toBe(false);
 }
 
 function expectSavePending(screen: SettingsViewHarness, pending: boolean) {
-    const control = screen.findByTestId(`${EDITOR}.save`);
+    const control = screen.findHostByTestId(`${EDITOR}.save`);
     expect(control?.props.accessibilityState?.busy).toBe(pending);
     if (pending) expect(control?.props.disabled).toBe(true);
+}
+
+async function waitForSaveSettled(screen: SettingsViewHarness) {
+    await waitForHomeGovernance(async () => { await flushHookEffects(); expectSavePending(screen, false); });
 }
 
 function errorText(screen: SettingsViewHarness, testID: string): string | null {
@@ -161,8 +178,31 @@ beforeEach(async () => {
     rowRead = createDeferred<void>();
     revision = 1;
     interleaveBeforeTerminalArtifact = null;
+    commandChecks = [];
+    unknownCommandAvailable = false;
+    commandMachineInventory = [];
     artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
-    const connection = await restoreServerAccountForTest({ serverUrl: 'https://acp-editor.test', request: async (url, init) => {
+    const connection = await restoreServerAccountForTest({ serverUrl: 'https://acp-editor.test', serverIdentityId: 'srv_acp_editor', configureSocket: socket => {
+        if (typeof socket.auth === 'object' && socket.auth?.clientPurpose === 'scoped-rpc') configureConnectedServerSocketBoundary(socket);
+        socket.emitWithAck = vi.fn(async (event: string, payload: unknown) => {
+            if (event !== SOCKET_RPC_EVENTS.CALL) return { v: 1, ok: true, admittedSessionIds: [] };
+            // External Socket boundary: the real capability adapter below supplies this request shape.
+            const request = payload as { method: string; params: { requests: { params: { definitions: { definitionId: string; title: string; launch: unknown }[] } }[] } };
+            expect(request.method.endsWith(`:${RPC_METHODS.CAPABILITIES_DETECT}`)).toBe(true);
+            const machineId = request.method.slice(0, request.method.indexOf(':'));
+            commandChecks.push(machineId);
+            if (machineId === 'unknown' && !unknownCommandAvailable) return { ok: false, error: 'RPC method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
+            const definition = request.params.requests[0]!.params.definitions[0]!;
+            return { ok: true, result: { protocolVersion: 1, results: { 'tool.acpAgentInventory': {
+                ok: true, checkedAt: 1, data: { items: [MachineAgentInventoryItemSchema.parse({ agentId: 'custom-acp', definitionId: definition.definitionId,
+                    title: definition.title, installed: machineId !== 'missing', managed: false,
+                    fit: { kind: 'can_run', via: 'command' }, version: null, latestVersion: null,
+                    update: { supported: false, command: null }, signIn: { status: 'unknown', loginSupport: 'unsupported' },
+                    platform: { supported: true }, install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [],
+                })] },
+            } } } };
+        });
+    }, request: async (url, init) => {
         const path = new URL(String(url)).pathname;
         if (path === '/health') return Response.json({});
         if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
@@ -173,6 +213,18 @@ beforeEach(async () => {
             expect(init?.method).not.toBe('POST');
             return Response.json({ version: 1, content: { t: 'plain', v: shared.accountSettings } });
         }
+        if (commandMachineInventory.length > 0) {
+            const read = (id: string) => {
+                const machine = commandMachineInventory.find(candidate => candidate.id === id);
+                return machine ? createPlainMachineRowFixture({ id, accountId: 'account-a', machine }) : null;
+            };
+            if (path === '/v1/machines') return Response.json(commandMachineInventory.map(machine => read(machine.id)));
+            if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body, read);
+            const exact = /^\/v1\/machines\/([^/]+)$/.exec(path);
+            if (exact) return Response.json({ machine: read(decodeURIComponent(exact[1]!)) });
+        }
+        const machineRead = createPlainMachineReadHttpResponseFixture(path, init, 'account-a');
+        if (machineRead) return machineRead;
         const artifactResponse = artifacts.handle(path, init);
         if (artifactResponse) return artifactResponse;
         if (path === ACP_CATALOG_ROWS_ROUTE_V1) {
@@ -199,7 +251,9 @@ beforeEach(async () => {
         return createEmptyAccountBootstrapHttpResponse(`${path}${new URL(String(url)).search}`, init) ?? new Response(null, { status: 404 });
     } });
     disposeConnection = connection.dispose;
-    scope = { serverId: connection.home.id, accountId: 'account-a' };
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Editor fixture has no restored Account lifetime');
+    scope = lifetime.scope;
     getStorage().setState({ settingsScope: scope, machines: {}, settings: {
         ...getStorage().getState().settings, actionsSettingsV1: directActionPolicy,
     } });
@@ -218,6 +272,47 @@ afterEach(async () => {
 });
 
 describe('AcpBackendEditorScreen', () => {
+    it('checks the unsaved command on each machine through the Action, preserves unknown/offline, and retries without writing', async () => {
+        const now = Date.now();
+        const machines = ['found', 'missing', 'unknown', 'offline'].map(id => createMachineFixture({
+            id, active: id !== 'offline', activeAt: id === 'offline' ? 1 : now,
+            metadata: { ...createMachineFixture().metadata!, host: id, displayName: id, platform: 'linux', arch: 'x64' },
+        }));
+        commandMachineInventory = machines;
+        // Focused-Home presentation reads the admitted active roster, not its saved-Home fallback.
+        getStorage().setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])) });
+        await publishMachineInventoryForTest(scope, machines);
+        const screen = await renderEditor(null);
+        await type(screen, `${EDITOR}.title`, 'Checked agent');
+        await type(screen, `${EDITOR}.command`, 'checked-agent');
+        expect(commandChecks).toEqual([]);
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(screen.findByTestId(`${EDITOR}.machines:action`)).not.toBeNull();
+        });
+        expectSaveEnabled(screen);
+        await press(screen, `${EDITOR}.machines:action`);
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(screen.findRow(`${EDITOR}.machines:machine:found`)?.props.subtitle).toBe('settingsAgents.customAcp.commandFound');
+        });
+        expect(screen.findRow(`${EDITOR}.machines:machine:missing`)?.props.subtitle).toBe('settingsAgents.customAcp.commandMissing');
+        expect(screen.findRow(`${EDITOR}.machines:machine:unknown`)?.props.subtitle).toBe('common.unknown');
+        expect(screen.findRow(`${EDITOR}.machines:machine:offline`)?.props.subtitle).toBe('capabilities.status.offline');
+        expect(commandChecks.sort()).toEqual(['found', 'missing', 'unknown']);
+        expect(shared.writes).toEqual([]);
+        expect(artifacts.list().length).toBe(0);
+        unknownCommandAvailable = true;
+        await press(screen, `${EDITOR}.machines:action`);
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(screen.findRow(`${EDITOR}.machines:machine:unknown`)?.props.subtitle).toBe('settingsAgents.customAcp.commandFound');
+        });
+        expect(shared.writes).toEqual([]);
+        expectSaveEnabled(screen);
+        await type(screen, `${EDITOR}.command`, 'another-agent');
+        expect(screen.findRow(`${EDITOR}.machines:machine:found`)?.props.subtitle).toBe('common.unknown');
+    });
     it('executes configured backend authoring through the canonical public UI front door', async () => {
         const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
         const execute = createFrontDoorActionExecute();
@@ -273,6 +368,7 @@ describe('AcpBackendEditorScreen', () => {
         expect(toggle?.props.value).toBe(initialSupport);
         await act(async () => { toggle?.props.onValueChange(!initialSupport); });
         await press(screen, `${EDITOR}.save`);
+        await waitForSaveSettled(screen);
         expect(shared.writes).toHaveLength(1);
         expect(shared.settingsState.value.backends[0]?.capabilities).toEqual({
             ...existingKiro.capabilities,
@@ -392,6 +488,7 @@ describe('AcpBackendEditorScreen', () => {
         expect(input(screen, `${EDITOR}.title`).props.value).toBe('My uncommitted title');
         expectSaveEnabled(screen);
         await press(screen, `${EDITOR}.save`);
+        await waitForSaveSettled(screen);
         expect(shared.writes).toHaveLength(0);
         expect(shared.settingsState.value.backends[0]?.title).toBe('Other writer title');
         expect(input(screen, `${EDITOR}.title`).props.value).toBe('My uncommitted title');
@@ -456,6 +553,7 @@ describe('AcpBackendEditorScreen', () => {
         const screen = await renderEditor('kiro');
         await type(screen, `${EDITOR}.title`, 'Renamed agent');
         await press(screen, `${EDITOR}.save`);
+        await waitForSaveSettled(screen);
         expect(shared.settingsState.value.backends).toEqual([expect.objectContaining({
             id: 'kiro', title: 'Renamed agent', launch: { kind: 'command', command: 'kiro-cli', args: launchArgs },
             auth: expect.objectContaining({ loginCommand: { command: 'kiro-cli', args: loginArgs } }),
@@ -467,6 +565,7 @@ describe('AcpBackendEditorScreen', () => {
         const screen = await renderEditor('kiro');
         await type(screen, `${EDITOR}.title`, 'Renamed registry agent');
         await press(screen, `${EDITOR}.save`);
+        await waitForSaveSettled(screen);
         expect(shared.settingsState.value.backends).toEqual([expect.objectContaining({
             id: 'kiro', title: 'Renamed registry agent', launch,
         })]);
@@ -557,6 +656,7 @@ describe('AcpBackendEditorScreen', () => {
         await press(screen, `${EDITOR}.args.add`);
         await type(screen, `${EDITOR}.args.item.1`, '--stdio');
         await press(screen, `${EDITOR}.save`);
+        await waitForSaveSettled(screen);
 
         expect(shared.writes).toHaveLength(1);
         expect(shared.writes[0]?.backends).toEqual([expect.objectContaining({
@@ -604,6 +704,7 @@ describe('AcpBackendEditorScreen', () => {
         await press(screen, `${EDITOR}.args.remove.0`);
         await type(screen, `${EDITOR}.title`, 'Kiro CLI');
         await press(screen, `${EDITOR}.save`);
+        await waitForSaveSettled(screen);
 
         expect(shared.writes).toHaveLength(1);
         expect(shared.writes[0]?.backends).toEqual([expect.objectContaining({ id: 'kiro', title: 'Kiro CLI', launch: { kind: 'command', command: 'kiro-cli', args: [] } })]);
@@ -652,7 +753,11 @@ describe('AcpBackendEditorScreen', () => {
     it('keeps the agent and stays silent when the shared delete confirmation is declined', async () => {
         shared.settingsState.value = { v: 2, backends: [existingKiro] };
         shared.accountSettings = {};
+        getStorage().setState({ settings: { ...getStorage().getState().settings,
+            actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1 }) } });
         const screen = await renderEditor('kiro');
+        await type(screen, `${EDITOR}.title`, 'Unsaved Kiro');
+        await waitForHomeGovernance(async () => { await flushHookEffects(); expectSaveEnabled(screen); });
         const { Modal } = await import('@/modal');
         vi.mocked(Modal.confirm).mockClear().mockResolvedValue(false);
         shared.modalAlertSpy.mockClear();
@@ -663,6 +768,7 @@ describe('AcpBackendEditorScreen', () => {
         expect(shared.writes).toEqual([]);
         expect(shared.modalAlertSpy).not.toHaveBeenCalled();
         expect(shared.routerReplaceSpy).not.toHaveBeenCalled();
+        expect(input(screen, `${EDITOR}.title`).props.value).toBe('Unsaved Kiro');
     });
 
     it('keeps the authored draft on row refusal and navigates only after the durable receipt', async () => {
@@ -671,6 +777,7 @@ describe('AcpBackendEditorScreen', () => {
         await type(screen, `${EDITOR}.command`, 'review');
         shared.refuse = true;
         await press(screen, `${EDITOR}.save`);
+        await waitForSaveSettled(screen);
         expect(input(screen, `${EDITOR}.title`).props.value).toBe('Retained draft');
         expect(shared.routerReplaceSpy).not.toHaveBeenCalled();
         expect(shared.writes).toHaveLength(0);

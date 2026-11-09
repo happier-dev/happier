@@ -35,7 +35,7 @@ export function useConnectedAccountServiceDescription(input: Readonly<{
         });
         if (!isCurrent() || signal.aborted) return;
         setCurrent({ result, machineId });
-        return result.accountAuthenticationModes.status === 'available' && result.description.status === 'described'
+        return result.accountAuthenticationModes.status === 'available' && result.description?.status === 'described'
             ? result.description : undefined;
     }, [assertCurrent, enabled, expectedAccountId, expectedActiveServer, isCurrent, modeId, selectedMachineId, serverId, service, getSignal]);
     React.useEffect(() => {

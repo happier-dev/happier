@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { PopoverAnchor } from '@/components/ui/popover';
 
 import { t } from '@/text';
 
@@ -24,7 +25,7 @@ export type PoolMembersSelectFieldProps = Readonly<{
     onOpenChange?: (open: boolean) => void;
     renderTrigger?: React.ComponentProps<typeof MultiSelectField>['renderTrigger'];
     searchPlaceholder?: string;
-    onConnectAccount?: () => void;
+    onConnectAccount?: (anchor?: PopoverAnchor) => void;
     serviceLabel?: string;
 }>;
 

@@ -2,14 +2,14 @@ import * as React from 'react';
 import { Pressable } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PluginManifestV2Schema } from '@happier-dev/protocol';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import { PluginAccountAvailabilityIntentReadResponseV1Schema, PluginAvailabilityActionHttpPathsV1,
     PluginAvailabilityIntentsListActionOutputV1Schema, PluginAvailabilityMaterializationsReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { PluginAccountSettingsMutationRequestV1Schema, PluginAccountSettingsMutationResponseV1Schema,
     PluginAccountSettingsReadResponseV1Schema, PluginAccountSettingsValuesV1Schema } from '@happier-dev/protocol/plugins/settings/accountSettingsV1';
 import { PluginSettingsContributionV2Schema, type PluginSettingFieldV2 } from '@happier-dev/protocol/plugins/contributions/settings';
-import { PluginProjectionV2Schema, projectPluginSettingsContributionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { DaemonPluginSettingsSetResponseSchema, type DaemonPluginSettingsSnapshot, PluginProjectionV2Schema, projectPluginSettingsContributionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { AccountSettingsV2UpdateRequestSchema, type AccountSettingsV2UpdateRequest } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
@@ -22,7 +22,7 @@ import type {
     PluginProjectionEditableSettingField,
     PluginProjectionEntry,
 } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
-import { createDeferred, createMachineFixture, flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createMachineFixture, flattenTestStyle, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import type {
     MachinePluginSecretDeleteResult,
     MachinePluginSecretSetResult,
@@ -114,10 +114,11 @@ const accountSettingsWrites: AccountSettingsV2UpdateRequest[] = [];
 let accountSettingsHttp: ReturnType<typeof createAccountSettingsHttpBoundary>;
 let accountSettingsPost: ((input: AccountSettingsV2UpdateRequest, next: () => Promise<HomeDomainAnswer>) => Promise<HomeDomainAnswer>) | null = null;
 let persistedAccountSettings: Readonly<Record<string, unknown>> = {};
-let daemonProjection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, agentsById: {}, actionsById: {},
-     resourcesById: {}, settingsById: {}, installedPackagesById: {}, diagnostics: [] });
+let daemonProjection = PluginProjectionV2Schema.parse({ v: 2, generation: 1, agentsById: {}, actionsById: {}, 
+    resourcesById: {}, settingsById: {}, installedPackagesById: {}, diagnostics: [] });
+const daemonSettingsSnapshots = new Map<string, DaemonPluginSettingsSnapshot>();
 
-async function publishSettingsDeclaration(projection: PluginProjectionEntry | null) {
+async function publishSettingsDeclaration(projection: PluginProjectionEntry | null, daemonOnly = false) {
     if (!projection) return;
     const definitions = projection.editableSettingsGroups.map(group => PluginSettingsContributionV2Schema.parse({
             id: group.id, title: group.title, scope: group.scope.kind,
@@ -150,6 +151,13 @@ async function publishSettingsDeclaration(projection: PluginProjectionEntry | nu
             version: projection.version, enabled: projection.enabled, source: { kind: 'localPath', locator: '/fixture/plugin' },
             occurrenceId: projection.occurrenceId } },
     });
+    // Both fixture daemons serve this body. Publishing its replacement must
+    // advance their real registry revisions, including between test cases.
+    const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjection');
+    for (const machineId of ['machine-1', 'machine-2']) {
+        publishMachineContributionRegistryProjectionInvalidation({ machineId, serverId: account.serverId }, 'authority');
+    }
+    if (daemonOnly) return;
     const response = PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor: 1,
         hostingCapability: { enabled: true, maxArtifactBytes: 1024, maxAccountBytes: 2048 },
         intent: { pluginId: projection.pluginId, desiredVersion: projection.version, enabled: true,
@@ -286,6 +294,14 @@ function installGenericSettingsSocketBoundary() {
             if (!response || typeof response !== 'object' || !('supported' in response) || !response.supported) {
                 return { ok: true, result: null };
             }
+            if (method === RPC_METHODS.DAEMON_PLUGIN_SETTINGS_SET && 'result' in response) {
+                const result = DaemonPluginSettingsSetResponseSchema.parse(response.result);
+                if (result.status === 'applied') {
+                    // The Action receipt carries acceptance; its owning record
+                    // then reads the daemon's persisted presentation separately.
+                    daemonSettingsSnapshots.set(`${packet.method.slice(0, separator)}:${result.snapshot.pluginId}`, result.snapshot);
+                }
+            }
             return { ok: true, result: 'snapshot' in response ? response.snapshot : 'result' in response ? response.result : null };
         });
     });
@@ -353,13 +369,35 @@ const SECRET_SAVE_ID = `settings.plugins.detail.${PLUGIN_ID}.settings.${GROUP_ID
 const SECRET_DELETE_ID = `settings.plugins.detail.${PLUGIN_ID}.settings.${GROUP_ID}.apiToken.delete`;
 const SECRET_STATUS_ID = `settings.plugins.detail.${PLUGIN_ID}.settings.${GROUP_ID}.apiToken.status`;
 const SWITCH_ID = `settings.plugins.detail.${PLUGIN_ID}.settings.${GROUP_ID}.enabled`;
-const RECOVERY_SECRET_INPUT_ID = `settings.plugins.detail.${PLUGIN_ID}.settings.account-recovery.apiToken.input`;
+const RECOVERY_SECRET_BIND_ID = `settings.plugins.detail.${PLUGIN_ID}.settings.account-recovery.apiToken.bind`;
 const RECOVERY_DAEMON_SECRET_INPUT_ID = `settings.plugins.detail.${PLUGIN_ID}.settings.daemon-recovery.daemonToken.input`;
 const ACCOUNT_SECRET_INPUT_ID = `settings.plugins.detail.${PLUGIN_ID}.settings.${GROUP_ID}.accountToken.input`;
-const ACCOUNT_SECRET_SAVE_ID = `settings.plugins.detail.${PLUGIN_ID}.settings.${GROUP_ID}.accountToken.save`;
+const ACCOUNT_SECRET_BIND_ID = `settings.plugins.detail.${PLUGIN_ID}.settings.${GROUP_ID}.accountToken.bind`;
 const ACCOUNT_SECRET_DELETE_ID = `settings.plugins.detail.${PLUGIN_ID}.settings.${GROUP_ID}.accountToken.delete`;
 const ACCOUNT_SECRET_UNBIND_ID = `settings.plugins.detail.${PLUGIN_ID}.settings.${GROUP_ID}.accountToken.unbind`;
 const ACCOUNT_SECRET_STATUS_ID = `settings.plugins.detail.${PLUGIN_ID}.settings.${GROUP_ID}.accountToken.status`;
+
+async function openAccountKeySheet(screen: Awaited<ReturnType<typeof renderScreen>>, event?: unknown) {
+    await vi.waitFor(() => expect(screen.findByTestId(ACCOUNT_SECRET_BIND_ID)?.props.disabled).toBe(false));
+    const trigger = screen.findByTestId(ACCOUNT_SECRET_BIND_ID);
+    if (!trigger) throw new Error('Missing plugin Account key trigger');
+    await act(async () => { trigger.props.onPress(event); });
+    const modal = modalShowMock.mock.calls.at(-1)?.[0] as { props?: {
+        request: { service: { kind: string }; anchor?: unknown; bindingTarget?: unknown };
+        onResult: (result: { kind: 'connected' | 'selected'; secretRef: string } | { kind: 'dismissed' }) => void;
+    } } | undefined;
+    if (!modal?.props) throw new Error('Missing plugin Connect sheet');
+    return modal.props;
+}
+
+async function chooseAccountKey(screen: Awaited<ReturnType<typeof renderScreen>>) {
+    const writesBefore = accountSettingsWrites.length;
+    const sheet = await openAccountKeySheet(screen);
+    await act(async () => { sheet.onResult({ kind: 'selected', secretRef: 'saved-apiToken' }); });
+    await flushAsync();
+    await vi.waitFor(() => expect(accountSettingsWrites).toHaveLength(writesBefore + 1));
+}
+
 const OPENCODE_SECRET_INPUT_ID = `settings.plugins.detail.${OPENCODE_PLUGIN_ID}.settings.${OPENCODE_GROUP_ID}.${OPENCODE_SERVER_PASSWORD_SETTING_ID}.input`;
 const OPENCODE_SECRET_SAVE_ID = `settings.plugins.detail.${OPENCODE_PLUGIN_ID}.settings.${OPENCODE_GROUP_ID}.${OPENCODE_SERVER_PASSWORD_SETTING_ID}.save`;
 const OPENCODE_SECRET_STATUS_ID = `settings.plugins.detail.${OPENCODE_PLUGIN_ID}.settings.${OPENCODE_GROUP_ID}.${OPENCODE_SERVER_PASSWORD_SETTING_ID}.status`;
@@ -752,10 +790,11 @@ async function renderSection(
         perActiveServerIdentityId?: string | null;
         /** The platform fact the app's presentation provider supplies (touch floors). */
         uiPlatform?: 'ios' | 'android' | 'web';
+        daemonOnly?: boolean;
         presentation?: Readonly<{ kind: 'disclosures'; title: string }>;
     }> = {},
 ) {
-    await publishSettingsDeclaration(projection);
+    await publishSettingsDeclaration(projection, options.daemonOnly);
     const { PluginDetailGenericSettingsSection } = await import('./PluginDetailGenericSettingsSection');
     const pluginId = projection?.pluginId ?? PLUGIN_ID;
     const element = (
@@ -829,14 +868,16 @@ describe('PluginDetailGenericSettingsSection', () => {
         scopedDaemonSecretWriteMock.mockReset();
         routerPushSpy.mockReset();
         emitPluginSettingChangedEventMock.mockClear();
-        machinePluginSettingsGetMock.mockResolvedValue(settingsResult({
-            endpoint: 'https://api.example.test',
-            apiToken: 'must-not-render',
-            enabled: true,
+        daemonSettingsSnapshots.clear();
+        machinePluginSettingsGetMock.mockImplementation(async (machineId: string, input: Readonly<{ pluginId: string }>) => ({
+            supported: true,
+            snapshot: daemonSettingsSnapshots.get(`${machineId}:${input.pluginId}`) ?? settingsResult({
+                endpoint: 'https://api.example.test', apiToken: 'must-not-render', enabled: true,
+            }, ['apiToken'], '0', input.pluginId).snapshot,
         }));
         accountSettingsWrites.length = 0;
         accountSettingsPost = null;
-        modalShowMock.mockReset();
+        modalShowMock.mockReset().mockReturnValue('connect-sheet-id');
         modalConfirmMock.mockReset();
         modalConfirmMock.mockResolvedValue(true);
         await restoreTestAccount();
@@ -1140,69 +1181,29 @@ describe('PluginDetailGenericSettingsSection', () => {
             await Promise.resolve();
         });
 
-        expect(scopedSettingsWriteMock).toHaveBeenCalledWith(expect.objectContaining({
+        await vi.waitFor(() => expect(scopedSettingsWriteMock, screen.getTextContent()).toHaveBeenCalledWith(expect.objectContaining({
             content: { t: 'plain', v: { v: 1, values: {
                 [EXTERNAL_NOTIFICATION_ENDPOINT_FIELD_ID]: 'https://review.example.test/hooks/updated',
             } } },
             expectedRevision: 4,
-        }));
+        })));
     });
 
-    it('renders an Account-custodied field through SavedSecret without exposing its value', async () => {
-        const { screen } = await renderSection(createProjection(1, [ACCOUNT_SECRET_FIELD], 'account'));
-
-        expect(resolveAccountSettingsPluginSecretBinding(persistedAccountSettings, { pluginId: PLUGIN_ID, localId: 'accountToken' })).not.toBeNull();
-        expect(screen.findByTestId(ACCOUNT_SECRET_INPUT_ID)).not.toBeNull();
-        expect(screen.findByTestId(ACCOUNT_SECRET_INPUT_ID)?.props.value).toBe('');
-        expect(screen.findByTestId(ACCOUNT_SECRET_INPUT_ID)?.props.accessibilityLabel).toBe('Account token');
-        expect(screen.findByTestId(ACCOUNT_SECRET_INPUT_ID)?.props.accessibilityHint)
-            .toBe('memorySearchSettings.embeddings.secretSet');
-
-        await act(async () => {
-            screen.changeTextByTestId(ACCOUNT_SECRET_INPUT_ID, 'account-secret-value');
-        });
-        expect(screen.findByTestId(ACCOUNT_SECRET_SAVE_ID)?.props.disabled).toBe(false);
-        await act(async () => {
-            screen.pressByTestId(ACCOUNT_SECRET_SAVE_ID);
-            await Promise.resolve();
-        });
-        await flushAsync();
-
-        expect(accountSettingsWrites).toHaveLength(1);
-        expect(accountSettingsWrites[0]?.expectedVersion).toBe(1);
-        expect(resolveAccountSettingsPluginSecret(persistedAccountSettings, { pluginId: PLUGIN_ID, localId: 'accountToken' })?.secret.encryptedValue)
-            .toMatchObject({ _isSecretValue: true, value: 'account-secret-value' });
-        expect(JSON.stringify(screen.tree.toJSON())).not.toContain('account-secret-value');
-        expect(machinePluginSettingsGetMock).not.toHaveBeenCalled();
-        expect(machinePluginSettingsSetMock).not.toHaveBeenCalled();
-    });
-
-    it('routes a daemon-scoped Account-custodied secret through SavedSecret', async () => {
-        const { screen } = await renderSection(createProjection(1, [ACCOUNT_SECRET_FIELD], 'daemon'));
-
-        expect(resolveAccountSettingsPluginSecretBinding(persistedAccountSettings, { pluginId: PLUGIN_ID, localId: 'accountToken' })).not.toBeNull();
-        expect(machinePluginSettingsGetMock).not.toHaveBeenCalled();
-
-        // The SavedSecret projection settles independently of the daemon
-        // Settings section, so wait for its owner-bound revision before save.
-        await flushAsync();
+    it.each(['account', 'daemon'] as const)('links an Account-custodied key from the sheet in %s scope without exposing its value', async scope => {
+        const { screen } = await renderSection(createProjection(1, [ACCOUNT_SECRET_FIELD], scope));
+        expect(screen.findByTestId(ACCOUNT_SECRET_INPUT_ID)).toBeNull();
         expect(screen.findByTestId(ACCOUNT_SECRET_STATUS_ID)).not.toBeNull();
-        expect(screen.findByTestId(ACCOUNT_SECRET_SAVE_ID)?.props.disabled).toBe(true);
-
-        await act(async () => {
-            screen.changeTextByTestId(ACCOUNT_SECRET_INPUT_ID, 'portable-account-secret');
-        });
-        expect(screen.findByTestId(ACCOUNT_SECRET_SAVE_ID)?.props.disabled).toBe(false);
-
-        await act(async () => {
-            screen.pressByTestId(ACCOUNT_SECRET_SAVE_ID);
-            await Promise.resolve();
-        });
+        const sheet = await openAccountKeySheet(screen);
+        await act(async () => { sheet.onResult({ kind: 'connected', secretRef: 'saved-apiToken' }); });
         await flushAsync();
-
-        expect(accountSettingsWrites).toHaveLength(1);
-        expect(resolveAccountSettingsPluginSecret(persistedAccountSettings, { pluginId: PLUGIN_ID, localId: 'accountToken' })?.secret.encryptedValue)
-            .toMatchObject({ _isSecretValue: true, value: 'portable-account-secret' });
+        await vi.waitFor(() => expect(accountSettingsWrites).toHaveLength(1));
+        expect(accountSettingsWrites[0]?.expectedVersion).toBe(1);
+        expect(resolveAccountSettingsPluginSecretBinding(persistedAccountSettings, { pluginId: PLUGIN_ID, localId: 'accountToken' })?.savedSecretId)
+            .toBe('saved-apiToken');
+        expect(persistedAccountSettings.secrets).toHaveLength(2);
+        expect(JSON.stringify(screen.tree.toJSON())).not.toContain('must-not-render');
+        expect(modalConfirmMock).not.toHaveBeenCalled();
+        expect(machinePluginSettingsGetMock).not.toHaveBeenCalled();
         expect(machinePluginSettingsSetMock).not.toHaveBeenCalled();
     });
 
@@ -1410,7 +1411,6 @@ describe('PluginDetailGenericSettingsSection', () => {
     });
 
     it('clears an Account-A managed daemon-secret presentation when the Account lifetime retires', async () => {
-        let secretReadCount = 0;
         scopedSettingsReadMock.mockImplementation((input: Readonly<{
             scope?: Readonly<{ kind?: string }>;
             target?: Readonly<{ kind?: string; serverIdentityId?: string }>;
@@ -1425,11 +1425,11 @@ describe('PluginDetailGenericSettingsSection', () => {
             ));
         });
         scopedDaemonSecretReadMock.mockImplementation((input: ScopedPluginDaemonSecretReadInput) => {
-            secretReadCount += 1;
+            const accountId = activeAccountLifetimeState.current?.scope.accountId;
             return Promise.resolve(scopedDaemonSecretReady(
                 input,
-                secretReadCount === 1 ? 'configured' : 'missing',
-                `origin-${secretReadCount}`,
+                accountId === 'account-a' ? 'configured' : 'missing',
+                `origin-${accountId}`,
             ));
         });
         const { screen } = await renderSection(createOpenCodeProjection());
@@ -1481,45 +1481,26 @@ describe('PluginDetailGenericSettingsSection', () => {
             daemonServerIdentityId: null,
         });
 
-        expect(screen.findByTestId(RECOVERY_SECRET_INPUT_ID)).not.toBeNull();
+        // SavedSecret custody uses the same Connect sheet online and offline;
+        // the field never receives a raw Account secret (10-31 linking ruling).
+        expect(screen.findByTestId(RECOVERY_SECRET_BIND_ID)).not.toBeNull();
         expect(screen.findByTestId(RECOVERY_DAEMON_SECRET_INPUT_ID)).toBeNull();
-        expect(screen.findByTestId(RECOVERY_SECRET_INPUT_ID)?.props.accessibilityHint)
-            .toBe('memorySearchSettings.embeddings.secretSet');
+        await vi.waitFor(() => expect(screen.findByTestId(RECOVERY_SECRET_BIND_ID)?.props.disabled).toBe(false));
+        expect(screen.getTextContent()).toContain('memorySearchSettings.embeddings.secretSet');
         expect(JSON.stringify(screen.tree.toJSON())).not.toContain('must-not-render');
         expect(machinePluginSettingsGetMock).not.toHaveBeenCalled();
         expect(machinePluginSettingsSetMock).not.toHaveBeenCalled();
     });
 
-    it('requires an explicit edit to replace a configured Account secret with empty data and deletes only through its explicit action', async () => {
+    it('deletes a configured Account key only through its explicit Delete action', async () => {
         const { screen } = await renderSection(createProjection(1, [ACCOUNT_SECRET_FIELD], 'account'));
-
-        expect(screen.findByTestId(ACCOUNT_SECRET_STATUS_ID)).not.toBeNull();
-        expect(screen.findByTestId(ACCOUNT_SECRET_SAVE_ID)?.props.disabled).toBe(true);
-
-        await act(async () => {
-            screen.changeTextByTestId(ACCOUNT_SECRET_INPUT_ID, '');
-        });
-        expect(screen.findByTestId(ACCOUNT_SECRET_SAVE_ID)?.props.disabled).toBe(false);
-
-        await act(async () => {
-            screen.pressByTestId(ACCOUNT_SECRET_SAVE_ID);
-            await Promise.resolve();
-        });
-        await flushAsync();
-
-        expect(accountSettingsWrites).toHaveLength(1);
-        expect(resolveAccountSettingsPluginSecret(persistedAccountSettings, { pluginId: PLUGIN_ID, localId: 'accountToken' })?.secret.encryptedValue)
-            .toMatchObject({ _isSecretValue: true, value: '' });
+        expect(screen.findByTestId(ACCOUNT_SECRET_INPUT_ID)).toBeNull();
+        expect(accountSettingsWrites).toHaveLength(0);
         expect(screen.findByTestId(ACCOUNT_SECRET_DELETE_ID)).not.toBeNull();
-
-        await act(async () => {
-            screen.pressByTestId(ACCOUNT_SECRET_DELETE_ID);
-            await Promise.resolve();
-        });
+        await act(async () => { screen.pressByTestId(ACCOUNT_SECRET_DELETE_ID); });
         await flushAsync();
-
-        expect(modalConfirmMock).not.toHaveBeenCalled();
-        expect(accountSettingsWrites).toHaveLength(2);
+        expect(modalConfirmMock).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.objectContaining({ destructive: true }));
+        await vi.waitFor(() => expect(accountSettingsWrites).toHaveLength(1));
         expect(resolveAccountSettingsPluginSecretBinding(persistedAccountSettings, { pluginId: PLUGIN_ID, localId: 'accountToken' })).toBeNull();
     });
 
@@ -1530,47 +1511,26 @@ describe('PluginDetailGenericSettingsSection', () => {
         }).settings);
         const { screen } = await renderSection(createProjection(1, [ACCOUNT_SECRET_FIELD], 'account'));
 
-        const bindExistingSecret = screen.findByProps({
-            accessibilityLabel: 'settings.mcpServersImportMappingSavedSecret: Account token',
-        });
-        expect(bindExistingSecret).toBeTruthy();
+        const dismissed = await openAccountKeySheet(screen);
+        await act(async () => { dismissed.onResult({ kind: 'dismissed' }); });
+        expect(accountSettingsWrites).toHaveLength(0);
+        expect(resolveAccountSettingsPluginSecretBinding(persistedAccountSettings, { pluginId: PLUGIN_ID, localId: 'accountToken' })?.savedSecretId)
+            .toBe('saved-accountToken');
+        const trigger = { measureInWindow: (_callback: unknown) => undefined };
+        const sheet = await openAccountKeySheet(screen, { currentTarget: trigger });
+        expect(sheet.request).toMatchObject({ service: { kind: 'key' },
+            bindingTarget: { kind: 'plugin', pluginId: PLUGIN_ID, localId: 'accountToken' },
+            anchor: { kind: 'view', ref: { current: trigger } } });
         await act(async () => {
-            bindExistingSecret.props.onPress();
-        });
-
-        const { SavedSecretPickerModal } = await import('@/components/ui/forms/valueRefs/SavedSecretPickerModal');
-        const shown = modalShowMock.mock.calls[0]?.[0] as Readonly<{
-            component: unknown;
-            chrome: Readonly<{
-                title: string;
-            }>;
-            props: Readonly<{
-                selectedId: string | null;
-                includeNoneRow?: boolean;
-                allowAdd?: boolean;
-                allowEdit?: boolean;
-                onSelectId(id: string | null): void;
-            }>;
-        }>;
-        expect(shown.component).toBe(SavedSecretPickerModal);
-        expect(shown.chrome.title).toBe('settings.mcpServersPickSecretTitle');
-        expect(shown.props).toMatchObject({
-            selectedId: null,
-            includeNoneRow: false,
-            allowAdd: false,
-            allowEdit: false,
-        });
-
-        await act(async () => {
-            shown.props.onSelectId('saved-secret-owned-by-user');
+            sheet.onResult({ kind: 'selected', secretRef: 'saved-secret-owned-by-user' });
             await Promise.resolve();
         });
         await flushAsync();
 
-        expect(accountSettingsWrites).toHaveLength(1);
+        await vi.waitFor(() => expect(accountSettingsWrites).toHaveLength(1));
         expect(resolveAccountSettingsPluginSecretBinding(persistedAccountSettings, { pluginId: PLUGIN_ID, localId: 'accountToken' })?.savedSecretId)
             .toBe('saved-secret-owned-by-user');
-        expect(screen.findByTestId(ACCOUNT_SECRET_INPUT_ID)?.props.value).toBe('');
+        expect(screen.findByTestId(ACCOUNT_SECRET_INPUT_ID)).toBeNull();
         expect(screen.getTextContent()).not.toContain('saved-secret-owned-by-user');
         expect(JSON.stringify(screen.tree.toJSON())).not.toContain('saved-secret-owned-by-user');
         const accessibilityLabels = screen.findAll((node) => true)
@@ -1578,181 +1538,91 @@ describe('PluginDetailGenericSettingsSection', () => {
             .join('\n');
         expect(accessibilityLabels).not.toContain('saved-secret-owned-by-user');
 
-        expect(screen.findByTestId(ACCOUNT_SECRET_UNBIND_ID)).not.toBeNull();
+        await vi.waitFor(() => expect(screen.findByTestId(ACCOUNT_SECRET_UNBIND_ID)?.props.disabled).toBe(false));
         await act(async () => {
             screen.pressByTestId(ACCOUNT_SECRET_UNBIND_ID);
             await Promise.resolve();
         });
         await flushAsync();
 
-        expect(accountSettingsWrites).toHaveLength(2);
+        await vi.waitFor(() => expect(accountSettingsWrites).toHaveLength(2));
         expect(resolveAccountSettingsPluginSecretBinding(persistedAccountSettings, { pluginId: PLUGIN_ID, localId: 'accountToken' })).toBeNull();
     });
 
-    it('adopts a rejected Account-secret CAS snapshot without replaying the draft', async () => {
+    it('adopts a rejected Account-key CAS snapshot without replaying the selected reference', async () => {
         const { screen } = await renderSection(createProjection(1, [ACCOUNT_SECRET_FIELD], 'account'));
         const winner = applyAccountSettingsSavedSecretMutation(seededAccountSecrets(), { kind: 'unbindPluginSecret',
             target: { pluginId: PLUGIN_ID, localId: 'accountToken' }, expectedSecretId: 'saved-accountToken', expectedSecretUpdatedAt: 1,
         }).settings;
-        accountSettingsHttp.replaceAccountSettings('account-a', { version: 2, content: { t: 'plain', v: winner } });
-
-        act(() => {
-            screen.changeTextByTestId(ACCOUNT_SECRET_INPUT_ID, 'draft-that-needs-explicit-retry');
-        });
-        await act(async () => {
-            screen.pressByTestId(ACCOUNT_SECRET_SAVE_ID);
-        });
-        await flushAsync();
+        // The competing write lands at the HTTP CAS boundary, after Action admission.
+        accountSettingsPost = async (_input, next) => {
+            accountSettingsPost = null;
+            accountSettingsHttp.replaceAccountSettings('account-a', { version: 2, content: { t: 'plain', v: winner } });
+            return next();
+        };
+        await chooseAccountKey(screen);
         expect(accountSettingsWrites).toHaveLength(1);
-
-        expect(screen.findByTestId(ACCOUNT_SECRET_INPUT_ID)?.props.value).toBe('draft-that-needs-explicit-retry');
-        expect(screen.findByTestId(ACCOUNT_SECRET_SAVE_ID)?.props.accessibilityLabel).toBe('common.retry: Account token');
-        expect(screen.findByTestId(ACCOUNT_SECRET_DELETE_ID)).toBeNull();
-
-        await act(async () => {
-            screen.pressByTestId(ACCOUNT_SECRET_SAVE_ID);
-        });
-        await flushAsync();
-        expect(accountSettingsWrites).toHaveLength(2);
+        await vi.waitFor(() => expect(screen.findByTestId(ACCOUNT_SECRET_DELETE_ID)).toBeNull());
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('settingsPlugins.genericSettingsSaveError'));
+        await chooseAccountKey(screen);
         expect(accountSettingsWrites.map(write => write.expectedVersion)).toEqual([1, 2]);
-        expect(resolveAccountSettingsPluginSecret(persistedAccountSettings, { pluginId: PLUGIN_ID, localId: 'accountToken' })?.secret.encryptedValue)
-            .toMatchObject({ value: 'draft-that-needs-explicit-retry' });
+        expect(resolveAccountSettingsPluginSecretBinding(persistedAccountSettings, { pluginId: PLUGIN_ID, localId: 'accountToken' })?.savedSecretId)
+            .toBe('saved-apiToken');
     });
 
-    it('keeps an Account SavedSecret draft ambiguous after its safe snapshot and requires an explicit retry', async () => {
+    it('keeps an Account-key binding outcome ambiguous after its safe snapshot without automatic replay', async () => {
         accountSettingsPost = async (_input, next) => {
             accountSettingsPost = null;
             await next();
             return { dispatchThenFail: true };
         };
         const { screen } = await renderSection(createProjection(1, [ACCOUNT_SECRET_FIELD], 'account'));
-
-        act(() => {
-            screen.changeTextByTestId(ACCOUNT_SECRET_INPUT_ID, 'possibly-applied-account-secret');
-        });
-        await act(async () => {
-            screen.pressByTestId(ACCOUNT_SECRET_SAVE_ID);
-        });
+        await chooseAccountKey(screen);
         await flushAsync();
-        await flushAsync();
-
         expect(accountSettingsWrites).toHaveLength(1);
-        expect(resolveAccountSettingsPluginSecret(persistedAccountSettings, { pluginId: PLUGIN_ID, localId: 'accountToken' })?.secret.encryptedValue)
-            .toMatchObject({ value: 'possibly-applied-account-secret' });
-        expect(screen.findByTestId(ACCOUNT_SECRET_INPUT_ID)?.props.value)
-            .toBe('possibly-applied-account-secret');
-        expect(screen.findByTestId(ACCOUNT_SECRET_SAVE_ID)?.props.accessibilityLabel)
-            .toBe('common.retry: Account token');
-        expect(screen.getTextContent())
-            .toContain('settingsProviders.errors.mutationOutcomeUnknownDescription');
+        expect(resolveAccountSettingsPluginSecretBinding(persistedAccountSettings, { pluginId: PLUGIN_ID, localId: 'accountToken' })?.savedSecretId)
+            .toBe('saved-apiToken');
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('settingsProviders.errors.mutationOutcomeUnknownDescription'));
         expect(screen.getTextContent()).not.toContain('settingsPlugins.genericSettingsSaveError');
     });
 
-    it('keeps an Account-secret draft across custody changes and retires it when its occurrence is replaced', async () => {
+    it('keeps a pending Account-key binding across custody changes and retires its presentation with the occurrence', async () => {
         const pendingWrite = createDeferred<void>();
         accountSettingsPost = async (_input, next) => { await pendingWrite.promise; return next(); };
         const firstProjection = createProjection(1, [ACCOUNT_SECRET_FIELD], 'account');
-        const secondProjection = {
-            ...createProjection(1, [ACCOUNT_SECRET_FIELD], 'account'),
-            immutableGenerationId: 'generation-2',
-        };
-        const thirdProjection = {
-            ...secondProjection,
-            occurrenceId: 'occurrence-2',
-        };
+        const secondProjection = { ...firstProjection, immutableGenerationId: 'generation-2' };
+        const thirdProjection = { ...secondProjection, occurrenceId: 'occurrence-2' };
         const { PluginDetailGenericSettingsSection, screen } = await renderSection(firstProjection);
-
-        act(() => {
-            screen.changeTextByTestId(ACCOUNT_SECRET_INPUT_ID, 'generation-one-account-secret');
-        });
-        await act(async () => {
-            screen.pressByTestId(ACCOUNT_SECRET_SAVE_ID);
-        });
-        await flushAsync();
+        await chooseAccountKey(screen);
         expect(accountSettingsWrites).toHaveLength(1);
-
-        await act(async () => {
-            await screen.update(
-                <PluginDetailGenericSettingsSection
-                    pluginId={PLUGIN_ID}
-                    projection={secondProjection}
-                    machineId="machine-1"
-                    serverId={account.serverId}
-                    accountServerIdentityId="srv_settings"
-                    daemonServerIdentityId="srv_settings"
-                    perActiveServerIdentityId="srv_settings"
-                    daemonOperationsAvailable
-                />,
-            );
-        });
+        const update = async (projection: typeof firstProjection) => {
+            await screen.update(<PluginDetailGenericSettingsSection pluginId={PLUGIN_ID} projection={projection}
+                machineId="machine-1" serverId={account.serverId} accountServerIdentityId="srv_settings"
+                daemonServerIdentityId="srv_settings" perActiveServerIdentityId="srv_settings" daemonOperationsAvailable />);
+            await flushAsync();
+        };
+        await update(secondProjection);
+        expect(screen.findByTestId(ACCOUNT_SECRET_BIND_ID)?.props.disabled).toBe(true);
+        await update(thirdProjection);
+        await act(async () => { pendingWrite.resolve(); await pendingWrite.promise; });
         await flushAsync();
-
-        expect(screen.findByTestId(ACCOUNT_SECRET_INPUT_ID)?.props.value)
-            .toBe('generation-one-account-secret');
-
-        await act(async () => {
-            await screen.update(
-                <PluginDetailGenericSettingsSection
-                    pluginId={PLUGIN_ID}
-                    projection={thirdProjection}
-                    machineId="machine-1"
-                    serverId={account.serverId}
-                    accountServerIdentityId="srv_settings"
-                    daemonServerIdentityId="srv_settings"
-                    perActiveServerIdentityId="srv_settings"
-                    daemonOperationsAvailable
-                />,
-            );
-        });
-        await flushAsync();
-
-        expect(screen.findByTestId(ACCOUNT_SECRET_INPUT_ID)?.props.value).toBe('');
-
-        await act(async () => {
-            pendingWrite.resolve();
-            await pendingWrite.promise;
-        });
-
-        expect(screen.findByTestId(ACCOUNT_SECRET_INPUT_ID)?.props.value).toBe('');
-        expect(screen.findByTestId(ACCOUNT_SECRET_SAVE_ID)?.props.accessibilityLabel)
-            .toBe('common.save: Account token');
+        expect(screen.findByTestId(ACCOUNT_SECRET_INPUT_ID)).toBeNull();
+        expect(screen.getTextContent()).not.toContain('settingsPlugins.genericSettingsSaveError');
     });
 
-    it('clears an Account SavedSecret presentation and ignores its late settlement when the same lifetime retires', async () => {
+    it('clears an Account-key presentation and ignores its late settlement when the lifetime retires', async () => {
         const pendingWrite = createDeferred<void>();
         accountSettingsPost = async (_input, next) => { await pendingWrite.promise; return next(); };
         const { screen } = await renderSection(createProjection(1, [ACCOUNT_SECRET_FIELD], 'account'));
-
         expect(screen.findByTestId(ACCOUNT_SECRET_STATUS_ID)).not.toBeNull();
-        act(() => {
-            screen.changeTextByTestId(ACCOUNT_SECRET_INPUT_ID, 'account-a-raw-secret');
-        });
-        await act(async () => {
-            screen.pressByTestId(ACCOUNT_SECRET_SAVE_ID);
-        });
-        await flushAsync();
+        await chooseAccountKey(screen);
         expect(accountSettingsWrites).toHaveLength(1);
-
-        await act(async () => {
-            await restoreTestAccount('account-b', {});
-            await Promise.resolve();
-        });
-
-        expect(screen.findByTestId(ACCOUNT_SECRET_INPUT_ID)?.props.value).toBe('');
+        await act(async () => { await restoreTestAccount('account-b', {}); });
         expect(screen.findByTestId(ACCOUNT_SECRET_STATUS_ID)).toBeNull();
-        expect(screen.findByTestId(ACCOUNT_SECRET_SAVE_ID)?.props.accessibilityLabel)
-            .toBe('common.save: Account token');
-        expect(screen.getTextContent()).not.toContain('settingsPlugins.genericSettingsSaveError');
-
-        await act(async () => {
-            pendingWrite.resolve();
-            await pendingWrite.promise;
-        });
-
-        expect(screen.findByTestId(ACCOUNT_SECRET_INPUT_ID)?.props.value).toBe('');
+        await act(async () => { pendingWrite.resolve(); await pendingWrite.promise; });
+        await flushAsync();
+        expect(screen.findByTestId(ACCOUNT_SECRET_INPUT_ID)).toBeNull();
         expect(screen.findByTestId(ACCOUNT_SECRET_STATUS_ID)).toBeNull();
-        expect(screen.findByTestId(ACCOUNT_SECRET_SAVE_ID)?.props.accessibilityLabel)
-            .toBe('common.save: Account token');
         expect(screen.getTextContent()).not.toContain('settingsPlugins.genericSettingsSaveError');
     });
 
@@ -1970,17 +1840,38 @@ describe('PluginDetailGenericSettingsSection', () => {
         });
         await flushAsync();
 
-        expect(modalConfirmMock).not.toHaveBeenCalled();
+        // The 2026-10-30 in-place-confirmation ruling leaves one confirmation
+        // at the real Action presenter, with no consumer-owned second prompt.
+        await vi.waitFor(() => expect(modalConfirmMock).toHaveBeenCalledTimes(1));
+        expect(modalConfirmMock).toHaveBeenCalledWith(
+            'actionPresentation.title', 'actionPresentation.summary',
+            expect.objectContaining({ destructive: true }),
+        );
+        expect(machinePluginSecretDeleteMock).not.toHaveBeenCalled();
     });
 
-    it('keeps generic text controls at the native touch floor on phones (44 pt iOS, 48 dp Android)', async () => {
-        for (const [uiPlatform, floor] of [['ios', 44], ['android', 48]] as const) {
-            const { screen } = await renderSection(createProjection(1), { uiPlatform });
-            expect(flattenTestStyle(screen.findByTestId(ENDPOINT_INPUT_ID)?.props.style)).toMatchObject({ minHeight: floor });
-            expect(flattenTestStyle(screen.findByTestId(SECRET_INPUT_ID)?.props.style)).toMatchObject({ minHeight: floor });
-            standardCleanup();
-        }
-    });
+    it.each([['ios', 44], ['android', 48]] as const)(
+        'reaches the %s touch floor through the text controls hit areas without enlarging their drawn boxes',
+        async (uiPlatform, floor) => {
+            platformEnvironment.platform = uiPlatform;
+            const { screen } = await renderSection(createProjection(1), { uiPlatform, daemonOnly: true });
+            for (const testID of [ENDPOINT_INPUT_ID, SECRET_INPUT_ID]) {
+                const input = screen.findByTestId(testID)!;
+                const drawnHeight = flattenTestStyle(input.props.style).minHeight;
+                // A narrow layout also exercises horizontal reach. The native layout
+                // boundary reports the drawn box; the shared control owns its hit area.
+                const drawnWidth = 30;
+                await act(async () => invokeTestInstanceHandler(input, 'onLayout', {
+                    nativeEvent: { layout: { x: 0, y: 0, width: drawnWidth, height: drawnHeight } },
+                }));
+                const target = screen.findByTestId(testID)!;
+                const insets = target.props.hitSlop;
+                expect(drawnWidth + (insets?.left ?? 0) + (insets?.right ?? 0)).toBeGreaterThanOrEqual(floor);
+                expect(Number(drawnHeight) + (insets?.top ?? 0) + (insets?.bottom ?? 0)).toBeGreaterThanOrEqual(floor);
+                expect(flattenTestStyle(target.props.style).minHeight).toBe(drawnHeight);
+            }
+        },
+    );
 
     it('does not restart an exact scoped snapshot read when its parent rerenders', async () => {
         const projection = createProjection(1);
@@ -2278,19 +2169,15 @@ describe('PluginDetailGenericSettingsSection', () => {
     });
 
     it('renders an adapter-owned unknown SET outcome after one safe readback without replaying the mutation', async () => {
-        machinePluginSettingsGetMock
-            .mockResolvedValueOnce(settingsResult({
-                endpoint: 'https://before.example.test',
-                enabled: true,
-            }, [], '0'))
-            .mockResolvedValueOnce(settingsResult({
-                endpoint: 'https://possibly-applied.example.test',
-                enabled: true,
-            }, [], '1'));
-        machinePluginSettingsSetMock.mockResolvedValueOnce({
-            supported: false,
-            reason: 'outcomeUnknown',
-        } satisfies MachinePluginSettingsSetResult);
+        let issued = false;
+        machinePluginSettingsGetMock.mockImplementation(async () => settingsResult({
+            endpoint: issued ? 'https://possibly-applied.example.test' : 'https://before.example.test',
+            enabled: true,
+        }, [], issued ? '1' : '0'));
+        machinePluginSettingsSetMock.mockImplementationOnce(async () => {
+            issued = true;
+            return { supported: false, reason: 'outcomeUnknown' } satisfies MachinePluginSettingsSetResult;
+        });
         const { screen } = await renderSection();
 
         expect(screen.findByTestId(ENDPOINT_INPUT_ID)?.props.editable).toBe(true);
@@ -2306,22 +2193,25 @@ describe('PluginDetailGenericSettingsSection', () => {
         });
         await flushAsync();
 
-        expect(machinePluginSettingsSetMock).toHaveBeenCalledOnce();
-        expect(machinePluginSettingsGetMock).toHaveBeenCalledTimes(2);
-        expect(screen.getTextContent())
-            .toContain('settingsProviders.errors.mutationOutcomeUnknownDescription');
+        await vi.waitFor(() => expect(machinePluginSettingsSetMock).toHaveBeenCalledOnce());
+        await vi.waitFor(() => expect(screen.getTextContent())
+            .toContain('settingsProviders.errors.mutationOutcomeUnknownDescription'));
+        // ad739e0cbe: initial presentation + Action admission's revision read
+        // + the adapter's one safe readback, with no mutation replay.
+        expect(machinePluginSettingsGetMock).toHaveBeenCalledTimes(3);
         expect(screen.findByTestId(ENDPOINT_INPUT_ID)?.props.value)
             .toBe('https://possibly-applied.example.test');
     });
 
     it('keeps a daemon SavedSecret draft ambiguous after its safe readback without replaying it', async () => {
-        machinePluginSecretStatusMock
-            .mockResolvedValueOnce(secretStatusResult('missing', 'secret-0'))
-            .mockResolvedValueOnce(secretStatusResult('configured', 'secret-1'));
-        machinePluginSecretSetMock.mockResolvedValueOnce({
-            supported: false,
-            reason: 'outcomeUnknown',
-        } satisfies MachinePluginSecretSetResult);
+        let issued = false;
+        machinePluginSecretStatusMock.mockImplementation(async () => secretStatusResult(
+            issued ? 'configured' : 'missing', issued ? 'secret-1' : 'secret-0',
+        ));
+        machinePluginSecretSetMock.mockImplementationOnce(async () => {
+            issued = true;
+            return { supported: false, reason: 'outcomeUnknown' } satisfies MachinePluginSecretSetResult;
+        });
         const { screen } = await renderSection();
 
         act(() => {
@@ -2334,7 +2224,8 @@ describe('PluginDetailGenericSettingsSection', () => {
         await flushAsync();
 
         expect(machinePluginSecretSetMock).toHaveBeenCalledOnce();
-        expect(machinePluginSecretStatusMock).toHaveBeenCalledTimes(2);
+        // Initial presentation, the admitted Action's revision read, and one safe readback.
+        expect(machinePluginSecretStatusMock).toHaveBeenCalledTimes(3);
         expect(screen.findByTestId(SECRET_INPUT_ID)?.props.value)
             .toBe('possibly-applied-daemon-secret');
         expect(screen.findByTestId(SECRET_SAVE_ID)?.props.accessibilityLabel)
@@ -2344,7 +2235,7 @@ describe('PluginDetailGenericSettingsSection', () => {
         expect(screen.getTextContent()).not.toContain('settingsPlugins.genericSettingsSaveError');
     });
 
-    it('preserves a failed secret draft for retry and clears only the exact successful draft', async () => {
+    it('preserves a secret draft after a lost acknowledgement and clears only the exact successful draft', async () => {
         const retrySave = createDeferred<MachinePluginSecretSetResult>();
         machinePluginSecretSetMock
             .mockResolvedValueOnce({ supported: false, reason: 'error' })
@@ -2371,7 +2262,7 @@ describe('PluginDetailGenericSettingsSection', () => {
         expect(screen.findByTestId(SECRET_INPUT_ID)?.props.value).toBe('retry-secret');
         expect(screen.findByTestId(SECRET_SAVE_ID)?.props.accessibilityLabel)
             .toBe('common.retry: API token');
-        expect(screen.getTextContent()).toContain('settingsPlugins.genericSettingsSaveError');
+        expect(screen.getTextContent()).toContain('settingsProviders.errors.mutationOutcomeUnknownDescription');
         expect(screen.getTextContent()).not.toContain('retry-secret');
 
         await act(async () => {
@@ -2435,6 +2326,10 @@ describe('PluginDetailGenericSettingsSection', () => {
                 enabled: true,
             }))
             .mockResolvedValueOnce(settingsResult({
+                endpoint: 'https://projection-one.test',
+                enabled: true,
+            }))
+            .mockResolvedValueOnce(settingsResult({
                 endpoint: 'https://projection-two.test',
                 enabled: false,
             }));
@@ -2466,7 +2361,8 @@ describe('PluginDetailGenericSettingsSection', () => {
         });
         await flushAsync();
 
-        expect(machinePluginSettingsGetMock).toHaveBeenCalledTimes(2);
+        // Initial presentation, admitted Action revision, replacement projection.
+        expect(machinePluginSettingsGetMock).toHaveBeenCalledTimes(3);
         expect(screen.findByTestId(ENDPOINT_INPUT_ID)?.props.value).toBe('https://old-scope-draft.test');
         expect(screen.findByTestId(ENDPOINT_SAVE_ID)?.props.disabled).toBe(true);
 
@@ -2496,6 +2392,7 @@ describe('PluginDetailGenericSettingsSection', () => {
             endpoint: 'https://replacement-updated.example.test',
             enabled: true,
         }, ['apiToken'], '2', replacementPluginId));
+        await publishSettingsDeclaration(replacementProjection, true);
 
         await act(async () => {
             await screen.update(
@@ -2515,16 +2412,25 @@ describe('PluginDetailGenericSettingsSection', () => {
 
         const replacementInputId = `settings.plugins.detail.${replacementPluginId}.settings.${GROUP_ID}.endpoint.input`;
         const replacementSaveId = `settings.plugins.detail.${replacementPluginId}.settings.${GROUP_ID}.endpoint.save`;
-        act(() => {
+        await vi.waitFor(() => expect(screen.findByTestId(replacementInputId)?.props.value).toBe('https://replacement.example.test'));
+        await vi.waitFor(() => expect(screen.findByTestId(replacementInputId)?.props.editable, screen.getTextContent()).toBe(true));
+        await act(async () => {
             screen.changeTextByTestId(replacementInputId, 'https://replacement-updated.example.test');
         });
+        await vi.waitFor(() => expect(screen.findByTestId(replacementSaveId)?.props.disabled, screen.getTextContent()).toBe(false));
         await screen.pressByTestIdAsync(replacementSaveId);
         await flushAsync();
 
-        expect(emitPluginSettingChangedEventMock).toHaveBeenCalledWith(expect.objectContaining({
+        await vi.waitFor(() => expect(machinePluginSettingsSetMock).toHaveBeenCalledWith('machine-1', expect.objectContaining({
+            pluginId: replacementPluginId,
+            mutation: { kind: 'set', value: 'https://replacement-updated.example.test' },
+        })));
+        await vi.waitFor(() => expect(emitPluginSettingChangedEventMock).toHaveBeenCalledWith(expect.objectContaining({
             pluginId: replacementPluginId,
             scope: 'daemon',
-        }));
+            previousValue: 'https://replacement.example.test',
+            nextValue: 'https://replacement-updated.example.test',
+        })));
     });
 
     it('retries an initial settings read failure through the existing scoped record', async () => {
@@ -2767,7 +2673,8 @@ describe('PluginDetailGenericSettingsSection', () => {
         });
         await flushAsync();
 
-        expect(machinePluginSettingsGetMock).toHaveBeenCalledTimes(3);
+        // Initial presentation, admitted Action revision, removal, reintroduction.
+        expect(machinePluginSettingsGetMock).toHaveBeenCalledTimes(4);
         expect(findSwitch(screen)?.props.value).toBe(true);
         expect(findSwitch(screen)?.props.disabled).toBe(false);
 
@@ -2786,15 +2693,10 @@ describe('PluginDetailGenericSettingsSection', () => {
     it('invalidates a pending save when the machine storage scope changes', async () => {
         const oldMachineSave = createDeferred<MachinePluginSettingsSetResult>();
         machinePluginSettingsSetMock.mockReturnValueOnce(oldMachineSave.promise);
-        machinePluginSettingsGetMock
-            .mockResolvedValueOnce(settingsResult({
-                endpoint: 'https://machine-one.test',
-                enabled: true,
-            }))
-            .mockResolvedValueOnce(settingsResult({
-                endpoint: 'https://machine-two.test',
-                enabled: false,
-            }));
+        machinePluginSettingsGetMock.mockImplementation(async (machineId: string) => settingsResult({
+            endpoint: machineId === 'machine-1' ? 'https://machine-one.test' : 'https://machine-two.test',
+            enabled: machineId === 'machine-1',
+        }));
         const projection = createProjection(1);
         const { PluginDetailGenericSettingsSection, screen } = await renderSection(projection);
 
@@ -2836,7 +2738,7 @@ describe('PluginDetailGenericSettingsSection', () => {
         expect(findSwitch(screen)?.props.value).toBe(false);
     });
 
-    it('serializes rapid switch interaction and restores the persisted value after failure', async () => {
+    it('serializes rapid switch interaction and restores the persisted value after a lost acknowledgement', async () => {
         const firstSave = createDeferred<MachinePluginSettingsSetResult>();
         machinePluginSettingsSetMock
             .mockReturnValueOnce(firstSave.promise)
@@ -2856,7 +2758,7 @@ describe('PluginDetailGenericSettingsSection', () => {
             screen.pressByTestId(SWITCH_ID);
         });
 
-        expect(machinePluginSettingsSetMock).toHaveBeenCalledTimes(1);
+        await vi.waitFor(() => expect(machinePluginSettingsSetMock).toHaveBeenCalledTimes(1));
         expect(machinePluginSettingsSetMock.mock.calls[0]?.[1]).toMatchObject({
             fieldId: 'enabled',
             mutation: { kind: 'set', value: false },
@@ -2871,7 +2773,7 @@ describe('PluginDetailGenericSettingsSection', () => {
 
         expect(findSwitch(screen)?.props.value).toBe(true);
         expect(findSwitch(screen)?.props.disabled).toBe(false);
-        expect(screen.getTextContent()).toContain('settingsPlugins.genericSettingsSaveError');
+        expect(screen.getTextContent()).toContain('settingsProviders.errors.mutationOutcomeUnknownDescription');
 
         await act(async () => {
             screen.pressByTestId(SWITCH_ID);
@@ -2934,11 +2836,11 @@ describe('PluginDetailGenericSettingsSection', () => {
             await Promise.resolve();
         });
 
-        expect(scopedSettingsWriteMock).toHaveBeenCalledWith(expect.objectContaining({
+        await vi.waitFor(() => expect(scopedSettingsWriteMock).toHaveBeenCalledWith(expect.objectContaining({
             expectedRevision: 1, content: { t: 'plain', v: { v: 1, values: {
                 serverUrl: 'https://fallback.example', serverUrlByServerId: { 'srv_settings': 'https://updated.example' },
             } } },
-        }));
+        })));
         expect(machinePluginSettingsSetMock).not.toHaveBeenCalled();
     });
 
@@ -3029,7 +2931,7 @@ describe('PluginDetailGenericSettingsSection', () => {
             await Promise.resolve();
         });
 
-        expect(scopedSettingsWriteMock).toHaveBeenCalledWith(expect.objectContaining({
+        await vi.waitFor(() => expect(scopedSettingsWriteMock).toHaveBeenCalledWith(expect.objectContaining({
             content: { t: 'plain', v: { v: 1, values: {
                 serverUrl: 'https://fallback.example.test',
                 serverUrlByServerId: {
@@ -3037,7 +2939,7 @@ describe('PluginDetailGenericSettingsSection', () => {
                     'srv_settings_admin': 'https://updated-administration.example.test',
                 },
             } } },
-        }));
+        })));
     });
 
     it('keeps an offline Administration server override separate from the Account default', async () => {
@@ -3122,14 +3024,14 @@ describe('PluginDetailGenericSettingsSection', () => {
             await Promise.resolve();
         });
 
-        expect(scopedSettingsWriteMock).toHaveBeenCalledWith(expect.objectContaining({
+        await vi.waitFor(() => expect(scopedSettingsWriteMock).toHaveBeenCalledWith(expect.objectContaining({
             content: { t: 'plain', v: { v: 1, values: {
                 serverUrl: 'https://account-default.example.test',
                 serverUrlByServerId: {
                     'srv_offline_selected': 'https://updated-offline-selected.example.test',
                 },
             } } },
-        }));
+        })));
         expect(scopedSettingsWriteMock).toHaveBeenCalledOnce();
     });
 

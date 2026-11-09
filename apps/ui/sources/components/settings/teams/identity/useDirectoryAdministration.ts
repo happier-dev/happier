@@ -150,7 +150,7 @@ export function useDirectoryAdministration(
             if (event.entityIds !== undefined
                 && !event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)) return;
             refresh();
-        });
+        }, { reconnect: 'refresh' });
     }, [enabled, refresh, scope.serverId]);
     return React.useMemo(() => ({ state, refresh, loadMore }), [loadMore, refresh, state]);
 }
@@ -239,7 +239,7 @@ export function useDirectorySourceAdministration(
         if (event.entityIds !== undefined
             && !event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)) return;
         refresh();
-    }), [refresh, scope.serverId]);
+    }, { reconnect: 'refresh' }), [refresh, scope.serverId]);
     const runAction = React.useCallback(async (
         actionId: Extract<TeamDirectoryActionIdV1,
             | 'teams.directory.sources.sync'

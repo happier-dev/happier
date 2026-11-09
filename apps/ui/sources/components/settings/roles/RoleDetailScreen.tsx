@@ -6,11 +6,12 @@ import { ActionApprovalRequestCreatedResultSchema, isActionApprovalDeclinedError
   type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type {
   ResolvedRoleV1,
+  RoleInstructionsOverrideV1} from '@happier-dev/protocol/prompts/roles/rolesV1';
+import type {
   RoleArtifactV1,
   RoleEngineV1,
-  RoleInstructionsOverrideV1,
   RoleRunsAsV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
 
 import {
   invalidateRoleCatalog,
@@ -21,11 +22,12 @@ import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEng
 import { useRoleSessionCount } from '@/components/roles/catalog/useRoleSessionCount';
 import { useRoleMark } from '@/components/roles/catalog/useRoleMark';
 import { describeRoleRunsAs, describeRoleSource } from '@/components/roles/catalog/rolePresentation';
-import { resolvedRoleToArtifact } from '@/sync/domains/roles/roleCatalog';
+import { resolvedRoleToArtifact, roleDisplayName } from '@/sync/domains/roles/roleCatalog';
 import { HAPPIER_PAGE_METRICS, HappierFieldTextBox, HappierPressable, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { showDocumentShareSheet } from '@/components/sharing/documents/showDocumentShareSheet';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -39,7 +41,7 @@ import {
   PageHeaderMenu,
   type PageHeaderMenuAction,
 } from '@/components/ui/layout/PageHeaderEntityParts';
-import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -243,10 +245,11 @@ const RoleDetail = React.memo(function RoleDetail(
   // header's visible action (lab `settings-R`); the rare operations stay in ⋯.
   const share = React.useMemo(
     () => (entry.source === 'user' || entry.source === 'shared') && entry.roleId
-      ? () => {
+      ? (event?: unknown) => {
           const scope = getActiveServerAccountScope();
           if (!scope) return;
           showDocumentShareSheet({
+            anchor: resolvePressTriggerAnchor(event),
             kind: 'role.v1',
             artifactId: entry.roleId,
             name: role.name,
@@ -324,7 +327,7 @@ const RoleDetail = React.memo(function RoleDetail(
   return (
     <ItemList testID={`settings.roles.detail.${entry.roleId}`}>
       <PageHeader
-        title={role.name}
+        title={roleDisplayName(role)}
         titleEditor={ownRole ? {
           value: nameDraft,
           placeholder: t('roles.settings.newRoleName'),
@@ -546,14 +549,12 @@ function RolePreviewDisclosure(props: Readonly<{ entry: RoleCatalogEntry }>) {
       testID="settings.roles.detail.preview.disclosure"
       expanded={expanded}
       onExpandedChange={setExpanded}
-      header={({ headerProps, expanded: open }) => (
+      header={({ headerProps }) => (
         <Item
           {...(headerProps as Readonly<Record<string, unknown>>)}
           testID="settings.roles.detail.preview"
           title={t('roles.settings.previewTitle')}
           subtitle={t('roles.settings.previewDescription')}
-          showChevron={false}
-          rightElement={<ExpandableItemCaret expanded={open} />}
         />
       )}
     >

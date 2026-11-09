@@ -196,6 +196,8 @@ export function useSkillDetail(skillId: string | null) {
 
   /** Adopt a read the page asked for (Take theirs, Keep mine's base). */
   const adopt = React.useCallback((read: SkillReadResultV1) => {
+    // Keep mine can save immediately, before React commits the adopted revision.
+    readRef.current = read;
     setState({ skillId: read.skillId, read, status: 'ready', errorCode: null });
   }, []);
 
@@ -215,13 +217,13 @@ export function useSkillDetail(skillId: string | null) {
     return true;
   }, [execute, skillId]);
 
-  const duplicate = React.useCallback(async (): Promise<string | null> => {
+  const duplicate = React.useCallback(async () => {
     if (!skillId) return null;
     const result = await execute('skills.duplicate', { skillId });
     if (readSkillActionRefusal(result)) return null;
     return SKILL_ACTION_OUTPUT_SCHEMAS_V1['skills.duplicate'].parse(
       result.ok ? result.result : null,
-    ).skillId;
+    );
   }, [execute, skillId]);
 
   /** "Export as .zip": the Agent Skills archive the one `skills.export` Action builds, handed to the person. */

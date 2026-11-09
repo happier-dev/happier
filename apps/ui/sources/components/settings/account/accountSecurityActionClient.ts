@@ -1,6 +1,5 @@
-import { AccountEmailChangeRequestResponseV1Schema, AccountPasswordMutationResponseV1Schema, AccountSecurityGetResponseV1Schema, AccountTerminalPresentUserPolicySetResponseV1Schema, type AccountTerminalPresentUserPolicySetResponseV1, type AccountEmailChangeRequestResponseV1, type AccountPasswordMutationResponseV1, type AccountPasswordChangeRequestV1, type AccountPasswordEnrollRequestV1, type AccountPasswordRemoveRequestV1, type AccountSecurityGetResponseV1 } from '@happier-dev/protocol/auth/accountSecurity';
+import { AccountEmailChangeRequestResponseV1Schema, AccountPasswordMutationResponseV1Schema, AccountSecurityGetResponseV1Schema, type AccountEmailChangeRequestResponseV1, type AccountPasswordMutationResponseV1, type AccountPasswordChangeRequestV1, type AccountPasswordEnrollRequestV1, type AccountPasswordRemoveRequestV1, type AccountSecurityGetResponseV1 } from '@happier-dev/protocol/auth/accountSecurity';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { TerminalPresentUserPolicy } from '@happier-dev/protocol/actions/invocationAuthority';
 
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import type { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
@@ -15,8 +14,7 @@ export type AccountSecurityActionId =
     | 'account.password.enroll'
     | 'account.password.change'
     | 'account.password.remove'
-    | 'account.email.change.request'
-    | 'account.security.terminalPresentUser.set';
+    | 'account.email.change.request';
 
 export type AccountSecurityActionClient = Readonly<{
     read(signal?: AbortSignal): Promise<AccountSecurityGetResponseV1>;
@@ -35,8 +33,6 @@ export type AccountSecurityActionClient = Readonly<{
     }>, signal?: AbortSignal): Promise<AccountPasswordMutationResponseV1>;
     removeE2eePassword(input: Extract<AccountPasswordRemoveRequestV1, Readonly<{ kind: 'e2ee' }>>, signal?: AbortSignal): Promise<AccountPasswordMutationResponseV1>;
     requestEmailChange(input: Readonly<{ email: string }>, signal?: AbortSignal): Promise<AccountEmailChangeRequestResponseV1>;
-    /** Whether the CLI and daemon may approve requests and change account settings (plan 01 R-CLI). */
-    setTerminalPresentUserPolicy(policy: TerminalPresentUserPolicy, signal?: AbortSignal): Promise<AccountTerminalPresentUserPolicySetResponseV1>;
 }>;
 
 function actionFailure(result: Extract<ActionExecuteResult, Readonly<{ ok: false }>>): HappyError {
@@ -163,8 +159,5 @@ export function createAccountSecurityActionClient(dependencies: Readonly<{
             v: 1,
             ...input,
         }, AccountEmailChangeRequestResponseV1Schema, signal),
-        setTerminalPresentUserPolicy: async (policy, signal) => await run(
-            'account.security.terminalPresentUser.set', { policy }, AccountTerminalPresentUserPolicySetResponseV1Schema, signal,
-        ),
     });
 }

@@ -12,11 +12,13 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { areAccountSettingsScopesEqual, type AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { Item } from '@/components/ui/lists/Item';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { StyleSheet } from 'react-native-unistyles';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
+import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
@@ -201,32 +203,33 @@ export const SettingsHistorySection = React.memo(function SettingsHistorySection
             <SectionContentRow>
                 <Text style={styles.explanation}>{t('settingsAccount.history.footer')}</Text>
             </SectionContentRow>
+            {/* The header's summary already says loading, empty or unavailable: the body only holds the versions' place. */}
             {visibleSnapshots.status === 'loading' ? (
-                <Item title={t('settingsAccount.history.loading')} showChevron={false} />
-            ) : null}
-            {visibleSnapshots.status === 'empty' ? (
-                <Item title={t('settingsAccount.history.empty')} showChevron={false} />
-            ) : null}
-            {visibleSnapshots.status === 'unavailable' ? (
-                <Item title={t('settingsAccount.history.unavailable')} showChevron={false} />
+                <ItemLoadStateRows testID="settings-account-history-loading" state={{ kind: 'loading' }} rows={2}
+                    accessibilityLabel={t('settingsAccount.history.loading')} />
             ) : null}
             {visibleSnapshots.status === 'ready' ? visibleSnapshots.versions.map((version) => {
                 const recordedAt = visibleSnapshots.recordedAtByVersion.get(version);
                 return (
                     <Item
                         key={version}
-                        testID={`settings-account-history-restore-${version}`}
-                        title={t('settingsAccount.history.entryTitle', { version: String(version) })}
-                        subtitle={recordedAt
-                            ? t('settingsAccount.history.entrySubtitle', { recordedAt: formatRecordedAt(recordedAt) })
-                            : undefined}
-                        loading={restoringVersion === version}
-                        disabled={restoringVersion !== null}
-                        accessibilityLabel={t('settingsAccount.history.entryTitle', { version: String(version) })}
-                        accessibilityHint={t('settingsAccount.history.restoreConfirmBody')}
-                        accessibilityRole="button"
-                        onPress={() => handleRestore(version)}
+                        title={recordedAt ? formatRecordedAt(recordedAt) : t('settingsAccount.history.entryVersion', { version: String(version) })}
+                        subtitle={recordedAt ? t('settingsAccount.history.entryVersion', { version: String(version) }) : undefined}
                         showChevron={false}
+                        rightElementOutsidePressable
+                        rightElement={(
+                            <RoundButton
+                                testID={`settings-account-history-restore-${version}`}
+                                size="small"
+                                display="secondary"
+                                title={t('settingsAccount.history.restoreConfirmAction')}
+                                loading={restoringVersion === version}
+                                disabled={restoringVersion !== null}
+                                accessibilityLabel={t('settingsAccount.history.entryTitle', { version: String(version) })}
+                                accessibilityHint={t('settingsAccount.history.restoreConfirmBody')}
+                                onPress={() => handleRestore(version)}
+                            />
+                        )}
                     />
                 );
             }) : null}

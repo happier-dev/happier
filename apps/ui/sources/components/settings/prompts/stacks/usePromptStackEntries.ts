@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { PromptStackEntryV1 } from '@happier-dev/protocol';
+import type { PromptStackEntryV1 } from '@happier-dev/protocol/prompts/library/promptStacksV1';
 import type { PromptStackIntentV1 } from '@happier-dev/protocol/prompts/library/promptStacksV1';
 import { PromptLibraryStackUpdateResultV1Schema } from '@happier-dev/protocol/prompts/library/promptStacksV1';
 import { PromptLibraryRowOperationError } from '@/sync/api/account/apiPromptLibraryCatalog';

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import type { SessionPermissionMode } from '@happier-dev/protocol';
+import type { SessionPermissionMode } from '@happier-dev/protocol/sessions/metadata/permission-modes';
 
 import { Switch } from '@/components/ui/forms/Switch';
 import { Item } from '@/components/ui/lists/Item';

@@ -1,11 +1,13 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { DEFAULT_ACTIONS_SETTINGS_V1, setActionApprovalOverride, type ActionId } from '@happier-dev/protocol';
+import { DEFAULT_ACTIONS_SETTINGS_V1} from '@happier-dev/protocol/account/settings/accountSettings';
+import { setActionApprovalOverride} from '@happier-dev/protocol/actions/actionSettings';
+import { type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installNavigationCommonModuleMocks } from '@/components/ui/navigation/navigationTestHelpers';
 import { applyActionSettingsTargetControlState, resolveActionSettingsTargetControlState } from './resolveActionSettingsControlState';
 import { ActionSettingsTargetModeControl } from './ActionSettingsTargetModeControl';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { listActionSettingsTargetDefinitions } from './actionSettingsTargetDefinitions';
 
 installNavigationCommonModuleMocks();
 afterEach(standardCleanup);
@@ -30,24 +32,17 @@ function ControlHarness(props: Readonly<{
 }
 
 describe('ActionSettingsTargetModeControl', () => {
-    it('offers only Off and Ask first for a mandatory Agent action and preserves both transitions', async () => {
-        const spec = getActionSpec('workflow.trigger.add');
-        const descriptor = Object.getOwnPropertyDescriptor(spec, 'approvalPolicy')!;
-        // Workflow triggers are configurable in production. This case exercises
-        // a host-declared mandatory policy, not the retired trigger-id override.
-        Object.defineProperty(spec, 'approvalPolicy', { ...descriptor, value: { ...spec.approvalPolicy, nonWaivable: true } });
-        try {
-            const screen = await renderScreen(<ControlHarness Control={ActionSettingsTargetModeControl} actionId="workflow.trigger.add" targetId="agent" />);
-            expect(screen.findByTestId('confirmation:mode:allowed')).toBeNull();
-            expect(screen.findByTestId('confirmation:mode:default')).toBeNull();
-            expect(screen.findByTestId('confirmation:mode:ask_first')?.props.accessibilityState.checked).toBe(true);
-            await screen.pressByTestIdAsync('confirmation:mode:off');
-            expect(screen.findByTestId('confirmation:mode:off')?.props.accessibilityState.checked).toBe(true);
-            await screen.pressByTestIdAsync('confirmation:mode:ask_first');
-            expect(screen.findByTestId('confirmation:mode:ask_first')?.props.accessibilityState.checked).toBe(true);
-        } finally { Object.defineProperty(spec, 'approvalPolicy', descriptor); }
+    it('does not offer a Resource approval prompt that the read/watch boundary cannot create', async () => {
+        const actionId = 'acme.preview/resources/status';
+        const target = listActionSettingsTargetDefinitions({ surfaces: {}, placements: [], resource: true })[0]!;
+        const state = resolveActionSettingsTargetControlState({ settings: DEFAULT_ACTIONS_SETTINGS_V1,
+            actionId, targetId: 'foreign_session_html', target });
+        const screen = await renderScreen(<ActionSettingsTargetModeControl testIDPrefix="resource" accessibilityLabel="Resource access"
+            controlState={state} onChange={() => { throw new Error('Resource Ask must not be selectable'); }} />);
+        expect(screen.findByTestId('resource:mode:ask_first')?.props.accessibilityState.disabled).toBe(true);
+        expect(screen.findByTestId('resource:mode:off')?.props.accessibilityState.checked).toBe(true);
+        expect(screen.findByTestId('resource:mode:allowed')?.props.accessibilityState.disabled).toBe(false);
     });
-
     it('offers Off, Ask first and Allowed, and returns an override to the inherited default', async () => {
         const screen = await renderScreen(<ControlHarness Control={ActionSettingsTargetModeControl} actionId="mcp.servers.signIn.start" targetId="cli" />);
         for (const choice of ['off', 'ask_first', 'allowed']) {
@@ -65,7 +60,7 @@ describe('ActionSettingsTargetModeControl', () => {
     });
 
     it('chooses what the inherited default resolves to and says once that it is the default', async () => {
-        const { DEFAULT_ACTIONS_SETTINGS_V1: settings } = await import('@happier-dev/protocol');
+        const { DEFAULT_ACTIONS_SETTINGS_V1: settings} = await import('@happier-dev/protocol/account/settings/accountSettings');
         const controlState = resolveActionSettingsTargetControlState({ settings, actionId: 'machines.storage.trash.move', targetId: 'agent' });
         const screen = await renderScreen(<ActionSettingsTargetModeControl
             testIDPrefix="confirmation"

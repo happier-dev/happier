@@ -1,12 +1,11 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
 
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { getDefaultSystemTaskRunner, useSystemTaskSnapshot } from '@/components/systemTasks';
 import type { SystemTaskRunState } from '@/components/systemTasks/types';
 import { isSystemTaskBridgeUnavailableError, readSystemTaskStartErrorMessage } from '@/components/systemTasks/systemTaskStartError';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { SYSTEM_TASK_PROTOCOL_VERSION } from '@happier-dev/protocol/system/tasks/spec';
 import { createTailscaleEnsureReadyTaskSpec } from '@happier-dev/protocol/system/tasks/tailscaleEnsureReadyTaskContract';
 
@@ -73,7 +72,7 @@ export function useEndpointReachabilityRemediationController(
         }
 
         if (action.kind === 'external-url') {
-            const opened = await openExternalUrl(action.url, { platformOS: Platform.OS });
+            const opened = await openExternalUrl(action.url);
             if (!opened) {
                 await Modal.alert(t('common.error'), t('server.reachabilityRemediation.failedToOpenInstallLink'));
             }

@@ -1,4 +1,4 @@
-import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -119,7 +119,7 @@ describe('API-token Settings presentation', () => {
         const parts = buildApiTokenAccessSummaryParts({ token, nowMs: NOW, names });
         expect(parts.map((part) => part.kind)).toEqual(['actions', 'targets', 'approve', 'models', 'websites', 'content', 'expiry']);
         expect(parts[0]).toEqual({ kind: 'actions', names: ['Messaging', 'Session transcripts'], more: 1 });
-        expect(parts[1]).toEqual({ kind: 'targets', sessions: 1, machines: 0 });
+        expect(parts[1]).toEqual({ kind: 'targets', sessions: 1, machines: 0, environments: 0 });
         expect(parts[3]).toEqual({ kind: 'models', name: 'Claude Sonnet 4.5', count: 1 });
         expect(parts[4]).toEqual({ kind: 'websites', host: null, count: 2 });
 

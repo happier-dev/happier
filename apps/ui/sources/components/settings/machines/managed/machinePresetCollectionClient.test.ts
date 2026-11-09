@@ -8,7 +8,7 @@ import type { ActionApprovalRegistration } from '@/components/approvals/actionAp
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import type { ManagedMachinePresetV1, PresetMutationResultV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
-import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { publishHomeAccountChange, publishHomeAccountChangeWake } from '@/sync/runtime/orchestration/homeAccountChange';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import type { MachinePresetEditDraft } from './machinePresetEditDraft';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -156,6 +156,28 @@ describe('preset collection and history through Actions', () => {
             presented = true;
             await hook.rerender();
             await waitForHomeGovernance(() => expect(harness.requestsFor(path)).toHaveLength(before + 1));
+        } finally { await hook.unmount(); }
+    });
+
+    it('keeps preset collection reads independent of Account settings version pushes', async () => {
+        const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
+            serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [preset] } });
+        const hook = await renderHook(() => useMachinePresets([serverId]));
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().presetsByServerId[serverId]).toEqual([preset]));
+            const before = harness.requestsFor('/v1/machines/presets/list').length;
+            for (let version = 1; version <= 3; version++) {
+                await act(async () => publishHomeAccountChangeWake(serverId,
+                    { t: 'account-settings-changed', settingsVersion: version }, 'socket'));
+                await flushHookEffects({ cycles: 30 });
+            }
+            expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before);
+            const updated = { ...preset, revision: preset.revision + 1 };
+            harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [updated] } });
+            await act(async () => publishHomeAccountChange(serverId, [preset.id], { source: 'socket', changeKinds: ['account'] }));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().presetsByServerId[serverId]).toEqual([updated]));
+            expect(harness.requestsFor('/v1/machines/presets/list')).toHaveLength(before + 1);
         } finally { await hook.unmount(); }
     });
 

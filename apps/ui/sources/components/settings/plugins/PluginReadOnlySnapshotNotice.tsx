@@ -6,6 +6,7 @@ import { t } from '@/text';
 import type { PluginReadOnlySnapshotReason } from './model/pluginMarketplaceModel';
 
 function resolveNoticeSubtitle(reason: Exclude<PluginReadOnlySnapshotReason, 'refreshing'>): string {
+    if (reason === 'noTarget') return t('settingsPlugins.surfaces.chooseMachineInstalled');
     if (reason === 'installationUnavailable') {
         return t('settingsPlugins.installationReadUnavailable');
     }
@@ -19,6 +20,7 @@ function resolveNoticeSubtitle(reason: Exclude<PluginReadOnlySnapshotReason, 're
 }
 
 function resolveNoticeTitle(reason: Exclude<PluginReadOnlySnapshotReason, 'refreshing'>): string {
+    if (reason === 'noTarget') return t('settingsPlugins.targetSelection.chooseMachine');
     if (reason === 'projectionUnavailable') return t('settingsPlugins.surfaces.projectionFailedTitle');
     if (reason === 'installationUnavailable') return t('settingsPlugins.surfaces.readFailedTitle');
     if (reason === 'accountRecovery') return t('settingsPlugins.detailMissingTitle');

@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { PluginUpdateReviewModeV1 } from '@happier-dev/protocol';
+import type { PluginUpdateReviewModeV1 } from '@happier-dev/protocol/marketplace/pluginUpdatePolicyV1';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';

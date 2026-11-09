@@ -7,6 +7,8 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHo
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createAccountSettingsHttpBoundary } from '@/dev/testkit/harness/actionHomesHttpHarness';
 
 installSettingsViewCommonModuleMocks({ storage: 'real', text: async () => vi.importActual<typeof import('@/text')>('@/text') });
 // Metro's deferred loader is the boundary; settings admission and semantic writes remain real.
@@ -17,13 +19,19 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async (importOrigin
 });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
+await loadSyncSingletonForTests();
+let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 beforeEach(async () => {
     await harness.reset();
     const { resetScopedHomeActionExecutorsForTests } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
     resetScopedHomeActionExecutorsForTests();
-    await loadSyncSingletonForTests();
 });
-afterEach(standardCleanup);
+afterEach(async () => {
+    await standardCleanup();
+    await connection?.dispose();
+    connection = undefined;
+});
 
 describe('MCP strict mode declared settings admission', () => {
     it.each([
@@ -39,9 +47,27 @@ describe('MCP strict mode declared settings admission', () => {
             actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, ...(disabled
                 ? { actions: { 'settings.set': { disabledSurfaces: ['ui'] } } }
                 : { approvalWaivedSurfaces: { 'settings.set': ['ui'] } }) }) };
-        storage.setState({ settings, settingsVersion: 1, settingsScope: scope, profileScope: scope });
-        harness.answer(home, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version: 1 } });
-        harness.answer(home, 'POST /v2/account/settings', { body: { success: true, version: 2 } });
+        const settingsBoundary = createAccountSettingsHttpBoundary({ serverUrl: 'https://mcp-strict.example',
+            initialAccounts: [{ accountId: 'owner', snapshot: { content: { t: 'plain', v: settings }, version: 1 } }] });
+        const settingsAnswer = { select: async (_input: unknown, request: Readonly<{ url: string; init: RequestInit | undefined }>) => {
+            const response = settingsBoundary.handle(request.url, request.init);
+            if (!response) throw new Error('Settings fixture received an unsupported request');
+            return { status: response.status, body: await response.json() };
+        } };
+        harness.answer(home, '/v2/account/settings', settingsAnswer);
+        harness.answer(home, 'POST /v2/account/settings', settingsAnswer);
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = await TokenStorage.getCredentialsForServerUrl('https://mcp-strict.example');
+        if (!credentials) throw new Error('Policy fixture has no Account credentials');
+        connection = await restoreServerAccountForTest({ serverUrl: 'https://mcp-strict.example',
+            serverIdentityId: 'srv_mcp_strict', accountId: 'owner', credentials, request: harness.request });
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        await waitForHomeGovernance(() => expect(captureActiveServerAccountScopeLifetime()?.scope).toEqual(scope));
+        const { sync } = await import('@/sync/sync');
+        await sync.refreshProfile();
+        await sync.refreshAccountSettingsFromServer(1, scope);
+        const writesBeforeAction = harness.requestsFor('/v2/account/settings')
+            .filter(request => Reflect.get(request.input ?? {}, 'content') !== undefined).length;
         const { Modal } = await import('@/modal');
         const alert = vi.spyOn(Modal, 'alert');
         const { router } = await import('expo-router');
@@ -70,10 +96,11 @@ describe('MCP strict mode declared settings admission', () => {
                 expect(openSettings?.onPress).toEqual(expect.any(Function));
                 await act(async () => { openSettings!.onPress!(); });
                 expect(push).toHaveBeenCalledWith('/settings/actions/settings.set');
-                expect(harness.requestsFor('/v2/account/settings').filter(request => Reflect.get(request.input ?? {}, 'content') !== undefined)).toEqual([]);
+                expect(harness.requestsFor('/v2/account/settings').filter(request => Reflect.get(request.input ?? {}, 'content') !== undefined).length)
+                    .toBe(writesBeforeAction);
             } else {
-                await waitForHomeGovernance(() => expect(harness.requestsFor('/v2/account/settings').some(request =>
-                    Reflect.get(request.input ?? {}, 'content') !== undefined)).toBe(true));
+                await waitForHomeGovernance(() => expect(harness.requestsFor('/v2/account/settings').filter(request =>
+                    Reflect.get(request.input ?? {}, 'content') !== undefined).length).toBeGreaterThan(writesBeforeAction));
                 expect(alert).not.toHaveBeenCalled();
             }
         } finally { alert.mockRestore(); push.mockRestore(); }

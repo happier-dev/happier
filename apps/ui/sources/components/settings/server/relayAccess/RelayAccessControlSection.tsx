@@ -29,7 +29,7 @@ import type { AccessEndpointRemediationAction } from '@/sync/domains/accessEndpo
 import { setActiveShareableServerUrl, setServerProfileShareableUrl } from '@/sync/domains/server/serverRuntime';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import {
     relayAccessConfigStepCatalog,

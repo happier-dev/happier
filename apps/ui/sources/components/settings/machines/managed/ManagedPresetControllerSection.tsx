@@ -22,7 +22,7 @@ export function ManagedPresetControllerSection(props: Readonly<{
     return <ItemGroup title={t('managedMachines.config.managedFrom')}
         description={pooled ? t('machinePresets.controllerPoolHelp') : undefined}>
         {props.allowPool ? <SegmentedChoiceItem title={t('machinePresets.controllerTarget')} testIDPrefix="managed-config.controller-target"
-            options={[{ id: 'exact', label: t('machinePresets.controllerExact') }, { id: 'pool', label: t('machinePresets.controllerPool') }]}
+            options={[{ id: 'exact', label: t('machinePresets.controllerExact') }, { id: 'pool', label: t('machinePresets.controllerAnyInPool') }]}
             value={pooled ? 'pool' : 'exact'} disabled={props.disabled}
             onChange={kind => props.onChange(kind === 'pool' ? '' : undefined)} /> : null}
         {pooled ? <ManagedPresetPoolChoice {...props} value={props.controllerPoolId ?? ''} />

@@ -94,6 +94,8 @@ function shelfKeyFor(kind: PluginContributionKind): PluginKindShelfKey | null {
     case 'pluginBrowser':
       return kind;
     case 'machineProvisioners':
+    case 'machineRecipes':
+    case 'machineSetupPresets':
       return 'machines';
     case 'voiceProviders':
     case 'voiceModelPacks':
@@ -104,7 +106,9 @@ function shelfKeyFor(kind: PluginContributionKind): PluginKindShelfKey | null {
       return 'composer';
     case 'managedDependencies':
     case 'accountCollections':
+    case 'notificationCategories':
     case 'registrySources':
+    case 'backupDestinations':
     case 'atmospherePictures':
     case 'dragSources':
     case 'workItems':
@@ -117,7 +121,7 @@ function shelfKeyFor(kind: PluginContributionKind): PluginKindShelfKey | null {
 }
 
 /** A family a listing adds, keyed by the shelf it belongs to (skills have no shelf but are something a person adds). */
-type ListingAddsKey = PluginKindShelfKey | 'skills';
+type ListingAddsKey = PluginKindShelfKey | 'skills' | 'machineRecipes' | 'machineSetupPresets';
 
 /**
  * What a listing adds, in people words: the shelf a manifest family belongs to ("agents" → agent, "mcp" → mcp).
@@ -132,6 +136,9 @@ function listingFamilyKey(family: string): ListingAddsKey | null {
       return 'skills';
     case 'machineProvisioners':
       return 'machines';
+    case 'machineRecipes':
+    case 'machineSetupPresets':
+      return family;
     case 'providers':
     case 'scmHostingProviders':
     case 'scmBackends':
@@ -168,7 +175,9 @@ export function pluginListingAdds(families: readonly string[]): readonly PluginL
   const keys = [...new Set(families.map(listingFamilyKey).filter((key): key is ListingAddsKey => key !== null))];
   return keys.map((key) => ({
     key,
-    title: key === 'skills' ? t('capabilities.skills.title') : pluginKindShelfTitle(key),
+    title: key === 'skills' ? t('capabilities.skills.title')
+      : key === 'machineRecipes' || key === 'machineSetupPresets'
+        ? t(`settingsPlugins.surfaces.kinds.${key}`) : pluginKindShelfTitle(key),
     description: t(`settingsPlugins.catalog.addsLine.${key}`),
   }));
 }

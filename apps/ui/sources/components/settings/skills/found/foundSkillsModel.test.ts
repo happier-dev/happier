@@ -2,16 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { SkillFoundListResultV1Schema } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';
 
 import {
-  FOUND_FOLD_ROWS,
-  foldFoundRows,
   foundAddAllItems,
   foundRowKind,
   groupFoundRowsByName,
   pickFoundHomeRows,
   orderFoundRows,
-  partitionFoundMachines,
-  resolveFoundMachineBody,
 } from './foundSkillsModel';
+import { FOUND_FOLD_ROWS, foldFoundRows } from '@/components/capabilities/found/foundMachineModel';
 
 const result = SkillFoundListResultV1Schema.parse({
   scannedAt: 1,
@@ -71,28 +68,6 @@ describe('Found rows', () => {
     expect(foldFoundRows(rows, true)).toEqual({ shown: rows, hidden: 0 });
     const justOver = Array.from({ length: FOUND_FOLD_ROWS + 1 }, (_, index) => index);
     expect(foldFoundRows(justOver, false)).toEqual({ shown: justOver, hidden: 0 });
-  });
-});
-
-describe('Found machine sections', () => {
-  const scan = (over: Partial<Parameters<typeof resolveFoundMachineBody>[0]>) => ({ machineId: 'm', result: null, scanning: false, failure: null, ...over });
-
-  it('says what it is doing before anything is known, and keeps the last known rows through a failed read', () => {
-    expect(resolveFoundMachineBody(scan({}))).toEqual({ kind: 'looking' });
-    expect(resolveFoundMachineBody(scan({ failure: 'failed' }))).toEqual({ kind: 'failed' });
-    expect(resolveFoundMachineBody(scan({ failure: 'older_machine', result }))).toEqual({ kind: 'older_machine' });
-    expect(resolveFoundMachineBody(scan({ failure: 'failed', result }))).toMatchObject({ kind: 'rows' });
-    expect(resolveFoundMachineBody(scan({ result: { ...result, items: [] } }))).toEqual({ kind: 'empty' });
-  });
-
-  it('names offline machines nothing is known about once, as a count, and keeps every other machine', () => {
-    const machines = [
-      { id: 'on', offline: false }, { id: 'off-known', offline: true }, { id: 'off-unknown-1', offline: true }, { id: 'off-unknown-2', offline: true },
-    ];
-    const { sections, unseenOffline } = partitionFoundMachines(machines, (machine) =>
-      scan({ machineId: machine.id, result: machine.id === 'off-known' || machine.id === 'on' ? result : null }));
-    expect(sections.map((machine) => machine.id)).toEqual(['on', 'off-known']);
-    expect(unseenOffline).toBe(2);
   });
 });
 

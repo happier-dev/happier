@@ -18,8 +18,9 @@ vi.mock('react-native-unistyles', async () => {
 
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 
-vi.mock('@/components/settings/catalog/runtime/useResolvedSettingsPageCatalog', () => ({
-    useResolvedSettingsPageCatalog: () => ({
+vi.mock('@/components/settings/catalog/runtime/useResolvedSettingsPageIdentity', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/components/settings/catalog/runtime/useResolvedSettingsPageIdentity')>(),
+    useResolvedSettingsPageNavigation: () => ({
         tree: [{
             id: 'settings',
             titleKey: 'settings.title',

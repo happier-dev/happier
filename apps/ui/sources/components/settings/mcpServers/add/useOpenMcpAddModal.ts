@@ -7,10 +7,9 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import {
   MCP_COLLECTION_ROUTE,
-  MCP_NEW_SERVER_ROUTE,
   mcpServerRoute,
 } from '../collection/mcpServerCollectionModel';
-import { openMcpAddModal, type McpAddModeKey } from './openMcpAddModal';
+import { openMcpAddModal, type McpAddModeKey, type OpenMcpAddModalParams } from './openMcpAddModal';
 
 const MODES: readonly McpAddModeKey[] = ['catalog', 'paste', 'custom'];
 
@@ -24,10 +23,10 @@ export function mcpInstallLinkFromParam(install: string): string {
 
 /**
  * Every MCP entry to Add (the rail "+", the empty page, `?add=` and `?install=` links) opens the same modal; adding
- * opens the new server, Custom opens the draft.
+ * opens the new server. Custom edits its draft inside the same modal.
  */
 export function useOpenMcpAddModal(): (
-  params?: Readonly<{ modeKey?: McpAddModeKey; sourceId?: string; query?: string; installLink?: string }>,
+  params?: Omit<OpenMcpAddModalParams, 'onAdded'>,
 ) => void {
   const router = useRouter();
   const go = React.useCallback(
@@ -39,14 +38,9 @@ export function useOpenMcpAddModal(): (
   );
   return React.useCallback(
     (params) => {
-      if (params?.modeKey === 'custom') {
-        go(MCP_NEW_SERVER_ROUTE);
-        return;
-      }
       openMcpAddModal({
         ...(params ?? {}),
         onAdded: (serverId, options) => go(`${mcpServerRoute(serverId)}${options?.afterRegistryAdd ? '?afterRegistryAdd=1' : ''}`),
-        onCustom: () => go(MCP_NEW_SERVER_ROUTE),
       });
     },
     [go],

@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createPackageAssetArchiveV1, PluginAccountAvailabilityIntentReadResponseV1Schema, PluginMachineMaterializationV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { PluginWebhookAccountStatusResultV1Schema } from '@happier-dev/protocol/plugins/webhooks/statusV1';
-import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { createDeferred, createMachineFixture, createRootLayoutFeaturesResponse, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import type { PluginWebhookAdministrationHttpClient } from '@/sync/api/plugins/webhooks/endpointActions';
@@ -91,7 +91,7 @@ it('publishes the acknowledged retarget with real origin admission while queue s
         await vi.waitFor(() => {
             const control = screen.findHostByTestId(id);
             expect(control).not.toBeNull();
-            expect(Boolean(control!.props.disabled)).toBe(false);
+            expect(Boolean(control!.props.disabled), screen.getTextContent()).toBe(false);
         });
         await act(async () => screen.pressByTestId(id));
         await vi.waitFor(() => expect(client.executeAction).toHaveBeenCalledWith('plugin.webhook.endpoint.retarget', expect.objectContaining({

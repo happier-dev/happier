@@ -108,6 +108,16 @@ it('shows a failed refresh beside retained account usage instead of silently cle
     expect(screen.findByTestId('account:as-of')).toBeTruthy();
 });
 
+it('gives a failed usage refresh its Retry on the row (QA-CONFIG D3)', async () => {
+    const refresh = vi.fn();
+    const screen = await renderScreen(<ConnectedAccountIndexStatusLines testID="account" now={2_000} facts={{
+        usage: { kind: 'meters', meters: [], error: 'Refresh failed' }, planLabel: null, subscription: null, recoveryCredits: null,
+        fetchedAt: 1_000, staleSince: null, refreshing: false, refresh,
+    }} />);
+    await screen.pressByTestIdAsync('account:refresh-error-action');
+    expect(refresh).toHaveBeenCalledTimes(1);
+});
+
 it('offers an enabled index Refresh after the first quota read has no snapshot', async () => {
     const previousState = storage.getState();
     const previousServer = getActiveServerSnapshot();

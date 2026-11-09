@@ -4,7 +4,7 @@ import { Text } from 'react-native';
 import type { ReactTestRenderer } from 'react-test-renderer';
 
 import { renderWithAppProviders } from '@/dev/testkit/render/renderWithAppProviders';
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 import { t, tLoose } from '@/text';
 

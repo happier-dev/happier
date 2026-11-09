@@ -5,6 +5,7 @@ import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { installSettingsViewCommonModuleMocks } from './settingsViewTestHelpers';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -42,7 +43,6 @@ installSettingsViewCommonModuleMocks({
             Dimensions: {
                 get: () => settingsViewWebDimensions,
             },
-            useWindowDimensions: () => settingsViewWebDimensions,
             Linking: { canOpenURL: shared.linkingCanOpenURLSpy, openURL: shared.linkingOpenURLSpy },
         });
     },
@@ -273,35 +273,47 @@ describe('SettingsView', () => {
         expect(shared.linkingOpenURLSpy).not.toHaveBeenCalled();
     });
 
-    it('opens EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL when set and supported instead of routing to the composer', async () => {
+    it('admits an HTTP report override before opening and leaves refusal without a composer fallback', async () => {
         const previousUrl = process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL;
         process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL = 'https://example.test/report-issue';
         shared.linkingCanOpenURLSpy.mockResolvedValue(true);
+        const opened = vi.fn();
+        vi.stubGlobal('open', opened);
 
         try {
+            storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+                actions: { 'links.openExternal': { enabled: false } } }) } }));
             const screen = await renderSettledSettingsView();
-
-            expect(screen.findRowByTitle('settings.reportIssue')).toBeTruthy();
-
             await act(async () => {
-                await screen.pressRowByTitle('settings.reportIssue');
+                screen.pressRowByTitle('settings.reportIssue');
             });
+            expect(shared.linkingOpenURLSpy).not.toHaveBeenCalled();
+            expect(opened).not.toHaveBeenCalled();
+            expect(shared.routerPushSpy).not.toHaveBeenCalledWith('/settings/report-issue');
 
-            expect(shared.linkingCanOpenURLSpy).toHaveBeenCalledWith('https://example.test/report-issue');
-            expect(shared.linkingOpenURLSpy).toHaveBeenCalledWith('https://example.test/report-issue');
+            storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1 }) } }));
+            await act(async () => {
+                screen.pressRowByTitle('settings.reportIssue');
+            });
+            await vi.waitFor(() => expect(opened).toHaveBeenCalledExactlyOnceWith('https://example.test/report-issue', '_blank', 'noopener,noreferrer'));
+            expect(shared.linkingCanOpenURLSpy).not.toHaveBeenCalled();
+            expect(shared.linkingOpenURLSpy).not.toHaveBeenCalled();
             expect(shared.routerPushSpy).not.toHaveBeenCalledWith('/settings/report-issue');
         } finally {
+            vi.unstubAllGlobals();
             if (previousUrl === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL;
             else process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL = previousUrl;
         }
     });
 
-    it('falls back to routing when EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL is set but cannot be opened', async () => {
+    it.each([true, false])('keeps a non-HTTP report override on the platform path with its original fallback (supported: %s)', async supported => {
         const previousUrl = process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL;
-        process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL = 'https://example.test/report-issue';
-        shared.linkingCanOpenURLSpy.mockResolvedValue(false);
+        process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL = 'mailto:support@example.test';
+        shared.linkingCanOpenURLSpy.mockResolvedValue(supported);
 
         try {
+            storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+                actions: { 'links.openExternal': { enabled: false } } }) } }));
             const screen = await renderSettledSettingsView();
 
             expect(screen.findRowByTitle('settings.reportIssue')).toBeTruthy();
@@ -310,9 +322,14 @@ describe('SettingsView', () => {
                 await screen.pressRowByTitle('settings.reportIssue');
             });
 
-            expect(shared.linkingCanOpenURLSpy).toHaveBeenCalledWith('https://example.test/report-issue');
-            expect(shared.linkingOpenURLSpy).not.toHaveBeenCalled();
-            expect(shared.routerPushSpy).toHaveBeenCalledWith('/settings/report-issue');
+            expect(shared.linkingCanOpenURLSpy).toHaveBeenCalledWith('mailto:support@example.test');
+            if (supported) {
+                expect(shared.linkingOpenURLSpy).toHaveBeenCalledWith('mailto:support@example.test');
+                expect(shared.routerPushSpy).not.toHaveBeenCalledWith('/settings/report-issue');
+            } else {
+                expect(shared.linkingOpenURLSpy).not.toHaveBeenCalled();
+                expect(shared.routerPushSpy).toHaveBeenCalledWith('/settings/report-issue');
+            }
         } finally {
             if (previousUrl === undefined) delete process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL;
             else process.env.EXPO_PUBLIC_HAPPIER_REPORT_ISSUE_URL = previousUrl;

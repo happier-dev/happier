@@ -20,7 +20,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
-import { useAllMachines } from '@/sync/store/hooks';
+import { useActiveMachineFacts } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 
@@ -40,7 +40,7 @@ export function LlmTaskRunnerConfigV1BackendModelPicker(props: Readonly<{
 }>): React.ReactElement {
   const { theme } = useUnistyles();
   const showLabels = props.showLabels !== false;
-  const machines = useAllMachines();
+  const machines = useActiveMachineFacts();
   const scope = useActiveServerAccountScope();
   const reachabilityRevision = useMachineReachabilityRevision();
   const recentMachinePaths = useAuthoringMemoryField('recentMachinePaths');

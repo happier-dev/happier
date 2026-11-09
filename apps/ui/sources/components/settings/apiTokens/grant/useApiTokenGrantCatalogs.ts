@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { getAgentStaticModels, type AgentId } from '@happier-dev/agents';
-import type { ActionIdFamilyV1, ProviderBoundModelRef } from '@happier-dev/protocol';
+import type { ActionIdFamilyV1} from '@happier-dev/protocol/actions/actionIds';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/selection/v1';
 
 import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
@@ -8,7 +9,10 @@ import { actionIdFamilyTitleKey } from '@/components/settings/actions/actionSett
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useProviderSettingsTarget } from '@/providers/hooks/targetMachine';
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
-import { useAutomations, useSetting } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useAutomations, useSetting } from '@/sync/domains/state/storage';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useDeploymentAccountController } from '@/components/projects/deployments/useDeploymentProject';
+import { useDeploymentEnvironmentRecord } from '@/components/projects/deployments/useDeploymentReads';
 import { useAcpCatalog } from '@/sync/store/useAcpCatalog';
 import { t } from '@/text';
 import { useMachineAgentModels } from '@/components/sessions/actions/useMachineAgentModels';
@@ -183,4 +187,21 @@ export function useApiTokenGrantNames(): ApiTokenGrantNames {
             automationName: (automationId) => automationNames.get(automationId) || null,
         };
     }, [actionGroups, automations, modelGroups]);
+}
+
+/**
+ * The name of an Environment a grant targets, read through the Account's shared deployment owner
+ * while the editor shows it. `name` is null until read and when it is gone or hidden; `settled`
+ * tells the two apart.
+ */
+export function useApiTokenGrantEnvironmentName(environmentId: string | null): Readonly<{ name: string | null; settled: boolean }> {
+    const scope = useActiveServerAccountScope();
+    const { binding } = useServerCredentialAccountScopeBinding(environmentId ? scope?.serverId : null);
+    const active = environmentId !== null;
+    const demand = React.useMemo(() => ({ mounted: active, visible: active, focused: active }), [active]);
+    const controller = useDeploymentAccountController(binding, active, demand);
+    const read = useDeploymentEnvironmentRecord(controller, environmentId, demand);
+    const name = read.snapshot.value?.content.name ?? null;
+    const settled = read.snapshot.status === 'ready' || read.snapshot.status === 'unavailable';
+    return React.useMemo(() => ({ name, settled }), [name, settled]);
 }

@@ -23,6 +23,7 @@ const { getStorage } = await import('@/sync/domains/state/storage');
 const { ProfileSettingsLayout } = await import('./ProfileSettingsLayout');
 const { ProfileDefaultEnvironmentScreen } = await import('./ProfileDefaultEnvironmentScreen');
 const { ProfileCollectionRail } = await import('./ProfileCollectionList');
+const { ProfileSettingsIndex } = await import('./ProfileSettingsIndex');
 const { CollectionList } = await import('@/components/ui/lists/collection/CollectionList');
 const { Item } = await import('@/components/ui/lists/Item');
 const { NavigationTitleChromeProvider } = await import('@/components/ui/layout/PageHeader');
@@ -54,6 +55,26 @@ describe('Profiles phone title ownership', () => {
             typeof row.props.testID === 'string' && row.props.testID.startsWith('settings.profiles.row.'));
         expect(rows.some((row) => row.props.testID === 'settings.profiles.row.defaultEnvironment')).toBe(true);
         expect(screen.findByType(CollectionList).props.count).toBe(rows.length);
+    });
+
+    it('says the saved profiles failed to load instead of counting only the built-in choices', async () => {
+        resetProfileCatalogSnapshotsForTests();
+        applyProfileCatalogSnapshot(getStorage().getState().settingsScope!, { status: 'unavailable', reason: 'unreachable' }, true);
+        const screen = await renderScreen(<ProfileCollectionRail />);
+        // Unknown is not zero: the count stays open and the rail names the failed read with its recovery.
+        expect(screen.findByType(CollectionList).props.count).toBeUndefined();
+        expect(screen.findByTestId('settings.profiles.rail.readFailed')).not.toBeNull();
+        expect(screen.findByTestId('settings.profiles.rail.readFailed.retry')).not.toBeNull();
+        expect(screen.findAllByProps({ testID: 'settings.profiles.row.defaultEnvironment' }).length).toBeGreaterThan(0);
+    });
+
+    it('shows the failed read as the phone list page instead of an empty Your profiles section', async () => {
+        resetProfileCatalogSnapshotsForTests();
+        applyProfileCatalogSnapshot(getStorage().getState().settingsScope!, { status: 'unavailable', reason: 'unreachable' }, true);
+        getStorage().getState().applySettingsLocal({ useProfiles: true });
+        const screen = await renderScreen(<ProfileSettingsIndex />);
+        expect(screen.findByTestId('settings.profiles.collection.readFailed')).not.toBeNull();
+        expect(screen.findByTestId('profiles-list-add-profile')).toBeNull();
     });
 
     it('titles the active child through the collection chrome even when profiles are disabled', async () => {

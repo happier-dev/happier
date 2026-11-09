@@ -1,9 +1,10 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { act, renderScreen, standardCleanup } from '@/dev/testkit';
+import { act, createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createSeededSkillsHome } from '@/dev/testkit/harness/skillsSurfaceHarness';
 import { StyleSheet } from 'react-native';
 import { SessionCockpitBottomChromeHeightContext } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
+import { capabilityDismissalState } from '@/sync/domains/state/persistentUiState';
 
 const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }));
 vi.mock(
@@ -47,7 +48,7 @@ async function chooseHome(origin: string) {
     skills: [{ id: 'pdf' }, { id: 'meeting-notes' }, { id: 'release-notes' }],
     records: [usage],
   });
-  home.storage.getState().applyLocalSettings({ skillsFirstRunDecidedAt: null });
+  capabilityDismissalState.remove('skillsFirstRunDecidedAt');
   return home;
 }
 
@@ -60,6 +61,17 @@ function rowOrder(screen: Awaited<ReturnType<typeof renderScreen>>): string[] {
 
 it('ranks used skills first and pre-ticks them, then Turn on writes Everywhere for exactly the ticked ones and lands home', async () => {
   const home = await chooseHome('https://skills-choose-turn-on.test');
+  const receipt = createDeferred<void>();
+  const requested = createDeferred<void>();
+  const handle = home.catalog.handle.bind(home.catalog);
+  // Hold only the Home's rule-mutation acknowledgement; the real Action and rule writer stay mounted.
+  const boundary = vi.spyOn(home.catalog, 'handle').mockImplementation(async (path, init) => {
+    if (path.endsWith('/skill-rules') && init?.method === 'POST') {
+      requested.resolve();
+      await receipt.promise;
+    }
+    return handle(path, init);
+  });
   try {
     const screen = await renderScreen(<SkillsChooseScreen />);
     await vi.waitFor(
@@ -72,6 +84,11 @@ it('ranks used skills first and pre-ticks them, then Turn on writes Everywhere f
     await act(async () => screen.pressByTestId('skills.choose.pdf'));
     await act(async () => screen.pressByTestId('skills.choose.meeting-notes'));
     await act(async () => screen.pressByTestId('skills.choose.turnOn'));
+    await requested.promise;
+    expect(capabilityDismissalState.read('skillsFirstRunDecidedAt')).toBeUndefined();
+    expect(navigation.push).not.toHaveBeenCalled();
+    expect(screen.findByTestId('skills.choose.turnOn')?.props.disabled).toBe(true);
+    await act(async () => { receipt.resolve(); });
     await vi.waitFor(() =>
       expect(navigation.push).toHaveBeenCalledWith('/settings/skills'),
     );
@@ -91,9 +108,53 @@ it('ranks used skills first and pre-ticks them, then Turn on writes Everywhere f
     ).toEqual(['meeting-notes', 'release-notes']);
     expect(rules.rules.some((rule) => rule.skillId === 'pdf')).toBe(false);
     expect(
-      home.storage.getState().localSettings.skillsFirstRunDecidedAt,
-    ).not.toBeNull();
+      capabilityDismissalState.read('skillsFirstRunDecidedAt'),
+    ).toEqual(expect.any(Number));
   } finally {
+    receipt.resolve();
+    boundary.mockRestore();
+    await standardCleanup();
+    await home.dispose();
+  }
+});
+
+it('keeps an empty selection and a refused rule write eligible, then retries the same selected skills', async () => {
+  const home = await chooseHome('https://skills-choose-retry.test');
+  const handle = home.catalog.handle.bind(home.catalog);
+  let refuse = true;
+  // A failed HTTP mutation must not become a device-local first-run decision.
+  const boundary = vi.spyOn(home.catalog, 'handle').mockImplementation(async (path, init) => {
+    if (refuse && path.endsWith('/skill-rules') && init?.method === 'POST')
+      return Response.json({ error: 'unavailable' }, { status: 503 });
+    return handle(path, init);
+  });
+  try {
+    const screen = await renderScreen(<SkillsChooseScreen />);
+    await vi.waitFor(() => expect(screen.findByTestId('skills.choose.turnOn')).not.toBeNull(), { timeout: 10_000 });
+    await act(async () => screen.pressByTestId('skills.choose.selectAll'));
+    expect(screen.getTextContent()).toContain('3 selected');
+    await act(async () => screen.pressByTestId('skills.choose.selectAll'));
+    expect(screen.getTextContent()).toContain('0 selected');
+    expect(screen.findByTestId('skills.choose.turnOn')?.props.disabled).toBe(true);
+    expect(home.catalog.requests.filter(request => request.key === 'skill-rules')).toEqual([]);
+    expect(capabilityDismissalState.read('skillsFirstRunDecidedAt')).toBeUndefined();
+    expect(screen.findByTestId('skills.choose.nothingWaits')).toBeNull();
+    await act(async () => screen.pressByTestId('skills.choose.meeting-notes'));
+    await act(async () => screen.pressByTestId('skills.choose.turnOn'));
+    await vi.waitFor(() => expect(screen.findByTestId('skills.choose.error')).not.toBeNull());
+    expect(capabilityDismissalState.read('skillsFirstRunDecidedAt')).toBeUndefined();
+    expect(screen.findByTestId('skills.choose.nothingWaits')).toBeNull();
+    expect(screen.getTextContent()).toContain('1 selected');
+    expect(navigation.push).not.toHaveBeenCalled();
+    refuse = false;
+    await act(async () => screen.pressByTestId('skills.choose.turnOn'));
+    await vi.waitFor(() => expect(navigation.push).toHaveBeenCalledWith('/settings/skills'));
+    const rules = home.catalog.read('skill-rules');
+    if (rules.key !== 'skill-rules') throw new Error('Expected skill rules');
+    expect(rules.value.rules.filter(rule => SEEDED.includes(rule.skillId)).map(rule => rule.skillId)).toEqual(['meeting-notes']);
+    expect(capabilityDismissalState.read('skillsFirstRunDecidedAt')).toEqual(expect.any(Number));
+  } finally {
+    boundary.mockRestore();
     await standardCleanup();
     await home.dispose();
   }

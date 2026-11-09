@@ -1,5 +1,5 @@
-import { PublicProfileMutationResultV1Schema } from '@happier-dev/protocol/account/publicProfilePublication';
-import { PublicProfilePreparationUnavailableReasonV1Schema, PublicProfileUpdateResultV1Schema } from '@happier-dev/protocol/account/publicProfileIntents';
+import { PublicProfileMutationResultV1Schema, type PublicProfileOwnerRecordV1 } from '@happier-dev/protocol/account/publicProfilePublication';
+import { PublicProfilePreparationUnavailableReasonV1Schema } from '@happier-dev/protocol/account/publicProfileIntents';
 
 import { t } from '@/text';
 
@@ -12,9 +12,15 @@ export type PublicProfileOperation =
 
 /**
  * One line for an acknowledged answer that did not do what was asked: the typed reason, never a code.
- * A completed change says nothing; the reread page shows it.
+ * A completed change says nothing; the acknowledged edition shows it.
  */
 export function publicProfileMutationNotice(result: unknown): string | null {
+  return settlePublicProfileMutation(result);
+}
+
+/** Settle a confirmed write through the existing read owner, without another invalidation. */
+export function settlePublicProfileMutation(result: unknown,
+  onAcknowledged?: (record: PublicProfileOwnerRecordV1 | null) => void): string | null {
   // Settled host outcomes may also carry credential-use annotations; read the
   // failure cause without reparsing them as a strict public wire envelope.
   if (result !== null && typeof result === 'object' && 'ok' in result && result.ok === false) {
@@ -24,18 +30,9 @@ export function publicProfileMutationNotice(result: unknown): string | null {
       ? PublicProfilePreparationUnavailableReasonV1Schema.safeParse(details.reason) : null;
     return reason?.success ? t(`publicIdentity.profile.reasons.${reason.data}`) : t('publicIdentity.profile.actionFailed');
   }
-  const update = PublicProfileUpdateResultV1Schema.safeParse(result);
-  if (update.success) {
-    if (update.data.kind === 'unavailable')
-      return t(`publicIdentity.profile.reasons.${update.data.reason}`);
-    if (update.data.refresh !== 'failed' && update.data.refresh !== 'unavailable') return null;
-    const reason = PublicProfilePreparationUnavailableReasonV1Schema.safeParse(update.data.refreshReason);
-    const saved = t('publicIdentity.profile.savedRefreshPending');
-    return reason.success ? `${saved} ${t(`publicIdentity.profile.reasons.${reason.data}`)}` : saved;
-  }
   const mutation = PublicProfileMutationResultV1Schema.safeParse(result);
   if (!mutation.success) return t('publicIdentity.profile.actionFailed');
-  return mutation.data.kind === 'unavailable'
-    ? t(`publicIdentity.profile.reasons.${mutation.data.reason}`)
-    : null;
+  if (mutation.data.kind === 'unavailable') return t(`publicIdentity.profile.reasons.${mutation.data.reason}`);
+  onAcknowledged?.(mutation.data.record);
+  return null;
 }

@@ -1,13 +1,19 @@
 import * as React from 'react';
 import { Item } from '@/components/ui/lists/Item';
 import renderer from 'react-test-renderer';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, findTestInstanceByTypeWithProps } from '@/dev/testkit';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { createManualSystemTaskRunner } from '@/dev/testkit/harness/manualSystemTaskRunner';
+import { storage } from '@/sync/domains/state/storageStore';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 
 (
     globalThis as typeof globalThis & {
@@ -55,46 +61,49 @@ vi.mock('@expo/vector-icons', () => ({
     Octicons: 'Octicons',
 }));
 
-const approvalMocks = vi.hoisted(() => ({
-    readCredentials: vi.fn(async (..._args: unknown[]) => ({ token: 'relay-a-bearer' }) as { token: string } | null),
-    endpointFetch: vi.fn(async (..._args: unknown[]) => new Response('{}', { status: 200 })),
-    createServerFetchAtEndpoint: vi.fn((..._args: unknown[]) => approvalMocks.endpointFetch),
-}));
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+vi.mock('socket.io-client', async original =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
+installDisconnectedServerSocketBoundary();
 
-vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/auth/storage/tokenStorage')>();
-    return {
-        ...actual,
-        TokenStorage: {
-            ...actual.TokenStorage,
-            getCredentialsForServerUrl: (...args: unknown[]) => approvalMocks.readCredentials(...args),
-        },
-    };
-});
-
-vi.mock('@/sync/http/client', async (importOriginal) => {
-    const actual = await importOriginal<typeof import('@/sync/http/client')>();
-    return {
-        ...actual,
-        createServerFetchAtEndpoint: (...args: unknown[]) => approvalMocks.createServerFetchAtEndpoint(...args),
-    };
-});
+// Plan 71 §4: mounted setup controls use the real signed-in Action path. Waive only
+// configurable Action approval here; the native Account-move decision stays real.
+async function selectHome(serverUrl: string, name: string) {
+    const serverId = await homes.addHome({ serverUrl, name, accountId: 'acct_app' });
+    storage.setState({ settingsScope: { serverId, accountId: 'acct_app' }, profileScope: { serverId, accountId: 'acct_app' },
+        profile: { ...storage.getState().profile, id: 'acct_app' } });
+    const settings = { ...storage.getState().settings, actionsSettingsV1: normalizeActionsSettingsV1({
+        v: 1, approvalWaivedSurfaces: { 'machines.add.local.start': ['ui'],
+            'machines.local.service.start': ['ui'], 'machines.local.service.update': ['ui'] },
+    }) };
+    storage.getState().applySettingsForScope({ serverId, accountId: 'acct_app' }, settings, 2);
+    homes.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version: 2 } });
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
+    return serverId;
+}
 
 describe('LocalDaemonControlSection', () => {
     // The component's cold module graph is large; loading it once here (after the module mocks above
     // are installed) keeps that one-time cost out of the first test's own timeout, where it timed out
     // under load (93 s observed on a shared host). Every test's `await import` then reuses it.
     beforeAll(async () => {
+        const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+        await loadSyncSingletonForTests();
         await import('./LocalDaemonControlSection');
     }, 300_000);
 
     beforeEach(async () => {
-        await upsertAndActivateServer({ serverUrl: 'https://relay.example.test', name: 'Home A' });
+        await homes.reset();
+        await selectHome('https://relay.example.test', 'Home A');
+        vi.stubGlobal('isTauri', true);
     });
+
+    afterEach(() => { standardCleanup(); publishAppliedActiveServerRuntimeAvailability(false); vi.unstubAllGlobals(); });
 
     it('loads daemon status on mount and starts the local daemon service from the control row', async () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
 
         let nextTaskId = 1;
         const listeners = new Map<string, {
@@ -163,7 +172,7 @@ describe('LocalDaemonControlSection', () => {
     // this user. The section names both accounts, offers the one switch, and asks before moving it.
     it('names a daemon of another account and asks before switching it', async () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
         const { storage } = await import('@/sync/domains/state/storageStore');
         const { profileDefaults } = await import('@/sync/domains/profiles/profile');
         const { Modal } = await import('@/modal');
@@ -227,7 +236,7 @@ describe('LocalDaemonControlSection', () => {
     // CLI's own check reports a newer managed build; a CLI the app did not install shows its origin.
     it('offers one CLI update for a managed CLI and names the origin of one it did not install', async () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
         let nextTaskId = 1;
         const listeners = new Map<string, { onEvent: (payload: unknown) => void; onResult: (payload: unknown) => void }>();
         const starts: Array<{ kind: string }> = [];
@@ -310,7 +319,7 @@ describe('LocalDaemonControlSection', () => {
 
     it('shares one CLI update run and one status across every surface that offers it (S-10)', async () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
         let nextTaskId = 1;
         const listeners = new Map<string, { onEvent: (payload: unknown) => void; onResult: (payload: unknown) => void }>();
         const starts: Array<{ kind: string }> = [];
@@ -379,7 +388,7 @@ describe('LocalDaemonControlSection', () => {
 
     it('shows an install background service CTA when the service is not installed (desktop only)', async () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
 
         let nextTaskId = 1;
         const listeners = new Map<string, {
@@ -486,7 +495,7 @@ describe('LocalDaemonControlSection', () => {
 
     it('says who manages the command line, shows the old copy, and reasks the one-CLI question (R12)', async () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
         let nextTaskId = 1;
         const listeners = new Map<string, { onEvent: (payload: unknown) => void; onResult: (payload: unknown) => void }>();
         const starts: Array<{ kind: string; params?: unknown }> = [];
@@ -555,7 +564,7 @@ describe('LocalDaemonControlSection', () => {
 
     it('names the kept command line and offers no change when no other CLI exists (R12)', async () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
         const listeners = new Map<string, { onEvent: (payload: unknown) => void; onResult: (payload: unknown) => void }>();
         const runner = createSystemTaskRunner({
             bridge: {
@@ -595,7 +604,7 @@ describe('LocalDaemonControlSection', () => {
 
     it('gives the exact command that updates the command line the person kept (A11-08)', async () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
         const listeners = new Map<string, { onEvent: (payload: unknown) => void; onResult: (payload: unknown) => void }>();
         const runner = createSystemTaskRunner({
             bridge: {
@@ -638,38 +647,25 @@ describe('LocalDaemonControlSection', () => {
     });
 
     it('starts the canonical background-service repair task against the active relay, for the app\'s own account (A11-06)', async () => {
-        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
         const { storage } = await import('@/sync/domains/state/storageStore');
         const { profileDefaults } = await import('@/sync/domains/profiles/profile');
         storage.setState({ profile: { ...profileDefaults, id: 'acct_app', username: 'leeroy' } });
 
-        let nextTaskId = 1;
-        const starts: unknown[] = [];
-
-        const runner = createSystemTaskRunner({
-            bridge: {
-                async start(spec) {
-                    const parsed = SystemTaskSpecSchema.parse(spec);
-                    starts.push(parsed);
-                    return `task_${nextTaskId++}:${parsed.kind}`;
-                },
-                async subscribe() {
-                    return () => {};
-                },
-                async cancel() {},
-                async respond() {},
-            },
-        });
+        const manual = createManualSystemTaskRunner();
 
         const { LocalDaemonControlSection } = await import('./LocalDaemonControlSection');
-        const screen = await renderScreen(React.createElement(LocalDaemonControlSection, { runner }));
+        const screen = await renderScreen(React.createElement(LocalDaemonControlSection, { runner: manual.runner }));
 
         expect(findTestInstanceByTypeWithProps(screen, RoundButton, { testID: 'settings.localDaemonControl.repair' })?.props.title).toBe('machine.repairBackgroundServiceAction');
 
+        await renderer.act(async () => manual.emitResult('personal-home-task-1', {
+            protocolVersion: 1, taskId: 'personal-home-task-1', ok: true,
+            data: { serviceInstalled: false, daemonRunning: false, needsAuth: false, machineId: null },
+        }));
+
         await screen.pressByTestIdAsync('settings.localDaemonControl.repair');
 
-        expect(starts).toContainEqual(expect.objectContaining({
+        expect(manual.bridge.start).toHaveBeenCalledWith(expect.objectContaining({
             kind: 'setup.repairThisComputer.v1',
             params: expect.objectContaining({
                 activeRelayUrl: 'https://relay.example.test',
@@ -683,11 +679,9 @@ describe('LocalDaemonControlSection', () => {
     });
 
     it('answers the repair task\'s token-only pairing prompt through the explicit-target approval owner', async () => {
-        approvalMocks.readCredentials.mockClear();
-        approvalMocks.endpointFetch.mockClear();
-        approvalMocks.endpointFetch
-            .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'pending', supportsV2: true }), { status: 200 }))
-            .mockResolvedValueOnce(new Response(JSON.stringify({ success: true }), { status: 200 }));
+        const serverId = getActiveServerSnapshot().serverId;
+        homes.answer(serverId, '/v1/auth/request/status', { body: { status: 'pending', supportsV2: true } });
+        homes.answer(serverId, '/v1/auth/response', { body: { success: true } });
 
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
         let nextTaskId = 1;
@@ -714,6 +708,12 @@ describe('LocalDaemonControlSection', () => {
 
         const { LocalDaemonControlSection } = await import('./LocalDaemonControlSection');
         const screen = await renderScreen(React.createElement(LocalDaemonControlSection, { runner }));
+        await renderer.act(async () => {
+            listeners.get('task_1:daemon.service.status.v1')?.onResult({
+                protocolVersion: 1, taskId: 'task_1:daemon.service.status.v1', ok: true,
+                data: { serviceInstalled: false, daemonRunning: false, needsAuth: false, machineId: null },
+            });
+        });
         await screen.pressByTestIdAsync('settings.localDaemonControl.repair');
 
         const repairTaskId = [...listeners.keys()].find((taskId) => taskId.endsWith('setup.repairThisComputer.v1'));
@@ -740,11 +740,9 @@ describe('LocalDaemonControlSection', () => {
             await Promise.resolve();
         });
 
-        expect(approvalMocks.readCredentials).toHaveBeenCalledWith(
-            'https://relay.example.test',
-            { serverId: getActiveServerSnapshot().serverId },
-        );
-        expect(respondMock).toHaveBeenCalledWith(repairTaskId, { approved: true });
+        await vi.waitFor(() => expect(respondMock).toHaveBeenCalledWith(repairTaskId, { approved: true }));
+        expect(homes.requestsFor('/v1/auth/response')).toMatchObject([{ serverId,
+            input: { publicKey: 'pub-key-b64', responseKind: 'tokenOnly' } }]);
     });
 
     it('surfaces a recoverable status error without disabling daemon repair', async () => {
@@ -776,39 +774,22 @@ describe('LocalDaemonControlSection', () => {
     });
 
     it('uses the latest active relay url when starting a repair after a server switch', async () => {
-        const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
-
-        let nextTaskId = 1;
-        const starts: unknown[] = [];
-
-        const runner = createSystemTaskRunner({
-            bridge: {
-                async start(spec) {
-                    const parsed = SystemTaskSpecSchema.parse(spec);
-                    starts.push(parsed);
-                    return `task_${nextTaskId++}:${parsed.kind}`;
-                },
-                async subscribe() {
-                    return () => {};
-                },
-                async cancel() {},
-                async respond() {},
-            },
-        });
+        const manual = createManualSystemTaskRunner();
 
         const { LocalDaemonControlSection } = await import('./LocalDaemonControlSection');
-        const screen = await renderScreen(React.createElement(LocalDaemonControlSection, { runner }));
-
-        await renderer.act(async () => {});
+        const screen = await renderScreen(React.createElement(LocalDaemonControlSection, { runner: manual.runner }));
+        await renderer.act(async () => manual.emitResult('personal-home-task-1', {
+            protocolVersion: 1, taskId: 'personal-home-task-1', ok: true,
+            data: { serviceInstalled: false, daemonRunning: false, needsAuth: false, machineId: null },
+        }));
 
         await renderer.act(async () => {
-            await upsertAndActivateServer({ serverUrl: 'https://relay-updated.example.test', name: 'Home B' });
+            await selectHome('https://relay-updated.example.test', 'Home B');
         });
 
         await screen.pressByTestIdAsync('settings.localDaemonControl.repair');
 
-        expect(starts).toContainEqual(expect.objectContaining({
+        expect(manual.bridge.start).toHaveBeenCalledWith(expect.objectContaining({
             kind: 'setup.repairThisComputer.v1',
             params: expect.objectContaining({
                 activeRelayUrl: 'https://relay-updated.example.test',
@@ -819,7 +800,7 @@ describe('LocalDaemonControlSection', () => {
     // read (the executor's rows), with no second read of this computer's services.
     it('lists every Home this computer serves with its state from the one status read', async () => {
         const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
-        const { SystemTaskSpecSchema } = await import('@happier-dev/protocol');
+        const { SystemTaskSpecSchema} = await import('@happier-dev/protocol/system/tasks/spec');
         let nextTaskId = 1;
         const listeners = new Map<string, { onEvent: (payload: unknown) => void; onResult: (payload: unknown) => void }>();
         const starts: Array<{ kind: string; params: Record<string, unknown> }> = [];

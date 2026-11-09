@@ -7,17 +7,3 @@ export const MCP_FOUND_DESTINATION_SETTINGS = defineSettingsPage({
     subpage: { id: 'found', route: SETTINGS_ROUTES.mcpFound, titleKey: 'capabilities.mcp.foundOnMachines', anchors: 'page' },
     sections: { destinations: { settings: { found: {} } } },
 });
-
-/** The directory control rendered by the existing Found screen. */
-export const MCP_FOUND_SETTINGS = defineSettingsPage({
-    pageId: 'mcp',
-    subpage: { id: 'found', route: SETTINGS_ROUTES.mcpFound, titleKey: 'capabilities.mcp.foundOnMachines' },
-    sections: {
-        mcpServersDetected: {
-            titleKey: 'mcpSettings.onMachineSearchSection',
-            settings: {
-                mcpServersDetectedDirectory: {},
-            },
-        },
-    },
-});

@@ -36,7 +36,7 @@ vi.mock('./model/usePluginSettingsScreenState', () => ({
         pendingPluginChanges: [],
         daemonOperationsAvailable: true,
         isPluginActionInFlight: () => false,
-        decidePendingPluginChange: () => {},
+        pluginActionApproval: { approvalId: null, approvalPending: false, serverId: null, approvalSummary: null },
         administrationTargetSelection: { state: { kind: mocks.targetKind }, candidates: [], selectedTarget: null, canExecute: false, resolveExecutionTarget: () => null },
         installedPlugins: mocks.installedPlugins,
         installedPluginById: new Map(),
@@ -82,7 +82,7 @@ vi.mock('./detail/PluginDetailScreen', async () => ({
     PluginDetailView: (await import('@/dev/testkit/mocks/components')).createPassThroughComponent('PluginDetailView'),
 }));
 vi.mock('./listing/PluginListingScreen', async () => ({
-    PluginListingView: (await import('@/dev/testkit/mocks/components')).createPassThroughComponent('PluginListingView'),
+    PluginListingPane: (await import('@/dev/testkit/mocks/components')).createPassThroughComponent('PluginListingPane'),
 }));
 vi.mock('@/components/settings/machines/MachineAdministrationTargetSelector', async () => ({
     MachineAdministrationTargetSelector: (await import('@/dev/testkit/mocks/components')).createPassThroughComponent('MachineAdministrationTargetSelector'),
@@ -95,9 +95,6 @@ vi.mock('./PluginAccountDataEraseRecoverySection', async () => ({
 }));
 vi.mock('./NativeAppPluginPanelsSettingsEntry', async () => ({
     NativeAppPluginPanelsSettingsEntry: (await import('@/dev/testkit/mocks/components')).createPassThroughComponent('NativeAppPluginPanelsSettingsEntry'),
-}));
-vi.mock('./PluginAppPagesSettingsEntry', async () => ({
-    PluginAppPagesSettingsEntry: (await import('@/dev/testkit/mocks/components')).createPassThroughComponent('PluginAppPagesSettingsEntry'),
 }));
 vi.mock('./PluginMarketplaceSections', async () => {
     const { createPassThroughComponent } = await import('@/dev/testkit/mocks/components');

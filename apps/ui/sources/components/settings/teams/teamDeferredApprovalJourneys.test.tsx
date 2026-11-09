@@ -96,7 +96,7 @@ installSettingsViewCommonModuleMocks({
 // The clipboard and share sheet are genuine platform boundaries reached by the
 // invitation link delivery; everything below them stays real.
 const setClipboardStringSafeMock = vi.hoisted(() => vi.fn(async () => true));
-vi.mock('@/utils/ui/clipboard', () => ({ setClipboardStringSafe: setClipboardStringSafeMock }));
+vi.mock('expo-clipboard', () => ({ setStringAsync: setClipboardStringSafeMock }));
 vi.mock('@/utils/ui/shareText', () => ({
     isTextSharingAvailable: () => true,
     shareTextSafe: vi.fn(async () => 'shared' as const),

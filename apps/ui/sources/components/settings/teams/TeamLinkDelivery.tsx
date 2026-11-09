@@ -14,7 +14,7 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { Modal } from '@/modal';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { isTextSharingAvailable, shareTextSafe } from '@/utils/ui/shareText';
 
 /**
@@ -95,19 +95,20 @@ export const TeamLinkDelivery = React.memo(function TeamLinkDelivery(props: Read
     open?: Readonly<{ label: string; onPress: () => void }>;
 }>) {
     const copyFeedback = useHappierCopyFeedback();
+    const writeClipboard = useClipboardWrite();
     const { url } = props;
     // Asked once per render rather than per press: a control that is offered and
     // then does nothing is worse than one that was never offered.
     const sharingAvailable = isTextSharingAvailable();
 
     const copy = React.useCallback(async () => {
-        const copied = await setClipboardStringSafe(url);
+        const copied = await writeClipboard(url);
         if (!copied) {
             await Modal.alertAsync(t('common.error'), t('items.failedToCopyToClipboard'));
             return;
         }
         copyFeedback.markCopied();
-    }, [url, copyFeedback]);
+    }, [url, copyFeedback, writeClipboard]);
 
     const share = React.useCallback(async () => {
         if (await shareTextSafe(url) === 'unavailable') {

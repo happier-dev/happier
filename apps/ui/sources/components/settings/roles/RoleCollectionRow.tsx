@@ -6,7 +6,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import type { RoleCatalogEntry } from '@/sync/domains/roles/roleCatalog';
+import { roleDisplayName, type RoleCatalogEntry } from '@/sync/domains/roles/roleCatalog';
 import { t } from '@/text';
 
 /**
@@ -31,8 +31,9 @@ export const RoleCollectionRow = React.memo(function RoleCollectionRow(
   const dimmed = !entry.role.enabled;
   return (
     <Item
+      rowRole="catalogRow"
       testID={props.testID}
-      title={entry.role.name}
+      title={roleDisplayName(entry.role)}
       titleStyle={dimmed ? collectionListStyles.dimmedTitle : undefined}
       titleAccessory={
         entry.override ? (
@@ -43,7 +44,7 @@ export const RoleCollectionRow = React.memo(function RoleCollectionRow(
       }
       subtitle={props.facts}
       icon={
-        <HappierCollectionListMark dimmed={dimmed}>
+        <HappierCollectionListMark rowRole="catalogRow" dimmed={dimmed}>
           {props.mark}
         </HappierCollectionListMark>
       }

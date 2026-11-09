@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ManagedGitHubAppInstallationV1 } from '@happier-dev/protocol';
+import type { ManagedGitHubAppInstallationV1 } from '@happier-dev/protocol/identity/githubApps';
 
 import {
     INITIAL_MANAGED_GITHUB_APPS_STATE,

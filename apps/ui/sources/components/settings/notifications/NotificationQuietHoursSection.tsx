@@ -1,12 +1,18 @@
 import * as React from 'react';
 
+import { Item } from '@/components/ui/lists/Item';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
+import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { accountSettingsScopeKeySuffix } from '@/sync/domains/settings/scope/accountSettingsScope';
+import { QuietHoursScheduleEditor } from './QuietHoursScheduleEditor';
+import type { AttentionQuietHoursInput } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicy';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { NOTIFICATIONS_SETTINGS } from '@/components/settings/notifications/notificationsSettings';
 import type { AttentionDeviceOverridesV1 } from '@/sync/domains/settings/attentionDeviceOverridesV1';
 import { t } from '@/text';
-import type { AttentionDeliveryPolicyV1 } from '@happier-dev/protocol';
+import type { AttentionDeliveryPolicyV1 } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicy';
 import {
     isNightlyQuietHoursWindowSet,
     NIGHTLY_QUIET_HOURS_WINDOW,
@@ -14,18 +20,17 @@ import {
 import { resolveNotificationQuietHoursTimezone } from './notificationPreferences';
 
 type QuietHoursOverride = AttentionDeviceOverridesV1['quietHoursOverride'];
-/** The preset control emits only its authored choice, not retained extension fields from storage. */
+/** Both presets and the custom editor use the same declared setting writers. */
 type QuietHoursOverrideChoice = Readonly<{ mode: 'account' | 'disabled' }>
-    | Readonly<{ mode: 'custom'; timezone: string; windows: readonly (typeof NIGHTLY_QUIET_HOURS_WINDOW)[] }>;
-/** `custom` is a schedule the presets do not describe; it is shown, never offered. */
+    | Readonly<{ mode: 'custom'; timezone: string; windows: AttentionQuietHoursInput['windows'] }>;
 type AccountQuietHoursChoice = 'off' | 'nightly' | 'custom';
 type DeviceQuietHoursChoice = 'account' | 'disabled' | 'nightly' | 'custom';
 
 type NotificationQuietHoursSectionProps = Readonly<{
     policy: AttentionDeliveryPolicyV1;
     deviceOverride: QuietHoursOverride;
-    setAccountQuietHours: (preset: 'off' | 'nightly') => void;
-    setDeviceQuietHoursOverride: (override: QuietHoursOverrideChoice) => void;
+    setAccountQuietHours: (value: 'off' | 'nightly' | AttentionQuietHoursInput) => Promise<boolean>;
+    setDeviceQuietHoursOverride: (override: QuietHoursOverrideChoice) => Promise<boolean>;
 }>;
 
 function readDeviceTimezone(): string {
@@ -48,12 +53,18 @@ function foreignScheduleTimezone(timezone: string | undefined): string | undefin
     return device && configured !== device ? configured : undefined;
 }
 
-export function NotificationQuietHoursSection({
+export function NotificationQuietHoursSection(props: NotificationQuietHoursSectionProps): React.ReactElement {
+    const scope = useAccountSettingsScope();
+    return <AccountQuietHoursSection key={scope ? accountSettingsScopeKeySuffix(scope) : 'unbound'} {...props} />;
+}
+
+function AccountQuietHoursSection({
     policy,
     deviceOverride,
     setAccountQuietHours,
     setDeviceQuietHoursOverride,
 }: NotificationQuietHoursSectionProps): React.ReactElement {
+    const [editing, setEditing] = React.useState<'account' | 'device' | null>(null);
     const accountEnabled = policy.quietHours.enabled === true;
     // Selected means "this row IS the configured schedule", so a foreign or richer schedule is
     // neither mislabelled nor silently replaced by pressing the preset.
@@ -102,9 +113,11 @@ export function NotificationQuietHoursSection({
                     subtitleLines={0}
                     value={accountChoice}
                     onChange={(next) => {
-                        if (next === 'off' || next === 'nightly') setAccountQuietHours(next);
+                        if (next === 'custom') setEditing('account');
+                        else { setEditing(null); void setAccountQuietHours(next); }
                     }}
                     options={[
+                        { id: 'custom', label: t('settingsNotifications.quietHours.customShort'), description: t('settingsNotifications.quietHours.customSubtitle') },
                         { id: 'off', label: t('settingsNotifications.quietHours.offShort'), description: t('settingsNotifications.quietHours.accountOffSubtitle') },
                         {
                             id: 'nightly',
@@ -114,6 +127,18 @@ export function NotificationQuietHoursSection({
                     ]}
                 />
             </SettingAnchor>
+            <ExpandableItem expanded={editing === 'account'} onExpandedChange={expanded => setEditing(expanded ? 'account' : null)}
+                header={({ headerProps }) => <Item {...headerProps} testID="settings-notifications-quiet-hours-account-edit"
+                    title={t('settingsNotifications.quietHours.editSchedule')} />}>
+            {editing === 'account' ? <QuietHoursScheduleEditor
+                testIDPrefix="settings-notifications-quiet-hours-account-editor"
+                initial={{ enabled: true, timezone: policy.quietHours.timezone, windows: policy.quietHours.windows.map(window => ({
+                    startLocalTime: window.startLocalTime, endLocalTime: window.endLocalTime,
+                    ...(window.days ? { days: [...window.days] } : {}),
+                })) }}
+                onCancel={() => setEditing(null)}
+                onSave={async value => { const saved = await setAccountQuietHours(value); if (saved) setEditing(null); return saved; }} /> : null}
+            </ExpandableItem>
             <SettingAnchor setting={NOTIFICATIONS_SETTINGS.settings.quietHoursDevice}>
                 <SegmentedChoiceItem<DeviceQuietHoursChoice>
                     key={deviceChoice === 'custom' ? 'device-custom' : 'device-preset'}
@@ -124,11 +149,14 @@ export function NotificationQuietHoursSection({
                     subtitleLines={0}
                     value={deviceChoice}
                     onChange={(next) => {
-                        if (next === 'account') setDeviceQuietHoursOverride({ mode: 'account' });
+                        if (next === 'custom') { setEditing('device'); return; }
+                        setEditing(null);
+                        if (next === 'account') void setDeviceQuietHoursOverride({ mode: 'account' });
                         else if (next === 'disabled') setDeviceQuietHoursOverride({ mode: 'disabled' });
                         else if (next === 'nightly') setDeviceCustomNightly();
                     }}
                     options={[
+                        { id: 'custom', label: t('settingsNotifications.quietHours.customShort'), description: t('settingsNotifications.quietHours.customSubtitle') },
                         { id: 'account', label: t('settingsNotifications.quietHours.syncedShort'), description: t('settingsNotifications.quietHours.deviceAccountSubtitle') },
                         { id: 'disabled', label: t('settingsNotifications.quietHours.offShort'), description: t('settingsNotifications.quietHours.deviceDisabledSubtitle') },
                         {
@@ -139,6 +167,21 @@ export function NotificationQuietHoursSection({
                     ]}
                 />
             </SettingAnchor>
+            <ExpandableItem expanded={editing === 'device'} onExpandedChange={expanded => setEditing(expanded ? 'device' : null)}
+                header={({ headerProps }) => <Item {...headerProps} testID="settings-notifications-quiet-hours-device-edit"
+                    title={t('settingsNotifications.quietHours.editSchedule')} />}>
+            {editing === 'device' ? <QuietHoursScheduleEditor
+                testIDPrefix="settings-notifications-quiet-hours-device-editor"
+                initial={{ enabled: true,
+                    timezone: deviceOverride.mode === 'custom' ? deviceOverride.timezone : policy.quietHours.timezone,
+                    windows: (deviceOverride.mode === 'custom' ? deviceOverride.windows : policy.quietHours.windows).map(window => ({
+                        startLocalTime: window.startLocalTime, endLocalTime: window.endLocalTime,
+                        ...(window.days ? { days: [...window.days] } : {}),
+                    })) }}
+                onCancel={() => setEditing(null)}
+                onSave={async ({ timezone, windows }) => { const saved = await setDeviceQuietHoursOverride({ mode: 'custom', timezone, windows });
+                    if (saved) setEditing(null); return saved; }} /> : null}
+            </ExpandableItem>
         </ItemGroup>
     );
 }

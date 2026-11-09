@@ -21,13 +21,14 @@ function resolveMcpChildRoute(pathname: string): string {
  */
 export const McpSettingsLayout = React.memo(function McpSettingsLayout() {
     const pathname = usePathname().replace(/\/+$/, '');
-    const { settings } = useMcpServersSettings();
+    const { settings, snapshot } = useMcpServersSettings();
     return (
         <SettingsCollectionLayout
             navigator="mcp"
             rootPathname={MCP_COLLECTION_ROUTE}
             resolveChildRoute={resolveMcpChildRoute}
-            rail={settings.servers.length === 0 && pathname === MCP_COLLECTION_ROUTE ? null : <McpServerRail />}
+            // The rail holds its column from first paint; only an answered, empty catalog on the root has none.
+            rail={settings.servers.length === 0 && snapshot.status !== 'loading' && pathname === MCP_COLLECTION_ROUTE ? null : <McpServerRail />}
             railWidth="detailed"
             detailMinWidthPx={MCP_DETAIL_MIN_WIDTH_PX}
             testID="settings-mcp"

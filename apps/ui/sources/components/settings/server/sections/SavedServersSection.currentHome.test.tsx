@@ -104,13 +104,10 @@ describe('SavedServersSection: the Home this device uses', () => {
         expect(handlers.onRetry).toHaveBeenCalledWith(servers[3]);
     });
 
-    it('gives an unnamed Home a human title rather than its raw address', async () => {
-        const { screen, servers } = await render();
+    it('visibly identifies an unnamed saved Home by its address', async () => {
+        const { screen } = await render();
         const row = homeRow(screen, 'devbox');
-        const { resolveHomeDisplayLabel } = await import('../homeDisplayName');
-        expect(row?.props.title).toBe(resolveHomeDisplayLabel(servers[3], 'devbox'));
-        expect(row?.props.title).not.toContain('devbox');
-        expect(row?.props.title).not.toContain('https://');
+        expect(row?.props.title).toBe('https://devbox.internal');
     });
 
     it('keeps only the ⋯ menu beside each Home on a phone', async () => {

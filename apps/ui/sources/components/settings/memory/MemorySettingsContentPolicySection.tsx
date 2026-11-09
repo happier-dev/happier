@@ -4,7 +4,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Switch } from '@/components/ui/forms/Switch';
 import { t } from '@/text';
 
-import type { MemoryContentPolicyV1, MemorySettingsV1 } from '@happier-dev/protocol';
+import type { MemoryContentPolicyV1, MemorySettingsV1 } from '@happier-dev/protocol/memory/memorySettings';
 import { SettingRow } from '@/components/settings/shell/SettingRow';
 import type { SettingRef } from '@/components/settings/catalog/settingDeclarations';
 import { MEMORY_SETTINGS } from '@/components/settings/memory/memorySettings';

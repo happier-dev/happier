@@ -5,7 +5,7 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 
-import type { MemoryStatusV1 } from '@happier-dev/protocol';
+import type { MemoryStatusV1 } from '@happier-dev/protocol/memory/memoryStatus';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 

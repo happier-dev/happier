@@ -66,8 +66,9 @@ export const MachineProvisionerSections = React.memo(
           <ProvisionerGroup
             title={key === 'local' ? props.localTitle : t(key === 'cloud-sandboxes'
               ? 'managedMachines.add.cloudSandboxesTitle' : 'managedMachines.add.cloudTitle')}
-            description={key === 'local' ? props.localDescription
-              : props.compact ? t('managedMachines.add.cloudDescriptionShort') : t('managedMachines.add.cloudDescription')}
+            // On a phone the note below says what both cloud groups share; each description says what its group creates.
+            description={key === 'local' ? props.localDescription : props.compact ? undefined
+              : t(key === 'cloud-sandboxes' ? 'managedMachines.add.cloudSandboxesDescription' : 'managedMachines.add.cloudDescription')}
             cards={cards}
             action={scope?.placement === 'header' ? scope.chip : undefined}
             compact={props.compact}
@@ -130,7 +131,7 @@ function LocalCollapsedGroup(
 function ProvisionerGroup(
   props: Readonly<{
     title: string;
-    description: string;
+    description?: string;
     cards: readonly ManagedProvisionerCard[];
     action?: React.ReactNode;
     compact: boolean;
@@ -163,10 +164,7 @@ function ProvisionerGroup(
           <Item
             testID={`${props.testID}.${card.id}`}
             title={card.title}
-            // What it creates is named for cloud rows only, as on the cards.
-            subtitle={[card.location === 'cloud' ? card.kind : null, quiet(card) ? null : card.status.label]
-              .filter(Boolean)
-              .join(' · ')}
+            subtitle={quiet(card) ? undefined : card.status.label}
             subtitleLeading={
               card.status.tone === 'none' || quiet(card) ? undefined : (
                 <StatusDot color={toneColor(theme, card.status.tone)} />
@@ -201,8 +199,6 @@ function ProvisionerGroup(
           title: card.title,
           subtitle: card.description,
           mark: card.mark(MANAGED_PROVISIONER_MARK_SIZE.tile),
-          // Four local cards across leave no room for a kind badge (lab note); cloud cards name theirs.
-          ...(card.location === 'cloud' && card.kind ? { badge: card.kind } : {}),
         }))}
         onPress={(id) => { const action = byId.get(id)?.action; if (action && !action.disabled) action.onPress(); }}
         renderOptionFooter={({ option }) => {

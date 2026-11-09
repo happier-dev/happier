@@ -15,9 +15,12 @@ let capturedShortcutModalProps: {
     onResolve: (value: string | null) => void;
 } | null = null;
 
+// A window tall enough to hold every command group: the page's group windowing has its own test
+// (widgets/NearViewportWindow.test.tsx); these cases drive rows in every group.
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock();
+    const window = { width: 1440, height: 20000, scale: 1, fontScale: 1 };
+    return createReactNativeWebMock({ Dimensions: { get: () => window } });
 });
 
 vi.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));

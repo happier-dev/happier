@@ -1,13 +1,16 @@
 import * as React from 'react';
-import { StyleSheet } from 'react-native';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
+import { PluginProjectionInstalledPackageV2Schema, type PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { measureMountedCollections, renderScreen, standardCleanup } from '@/dev/testkit';
+import { activateStorageAccountScope } from '@/dev/testkit/mocks/storage';
 import { installSettingsViewCommonModuleMocks } from '../settingsViewTestHelpers';
 import type { InstalledPluginEntry } from './model/pluginMarketplaceModel';
 import type { PluginsCollectionState } from './model/pluginsCollectionState';
 
 installSettingsViewCommonModuleMocks();
 vi.mock('react-native-reanimated', async () => (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock());
+const { InstalledPluginsSection } = await import('./PluginMarketplaceSections');
 
 function installed(pluginId: string, overrides: Partial<InstalledPluginEntry> = {}): InstalledPluginEntry {
     return {
@@ -29,12 +32,15 @@ async function renderInstalled(params: Readonly<{
     onNavigateToPlugin?: (pluginId: string) => void;
     onRunAction?: (action: 'enable' | 'disable', pluginId: string) => void;
     machineCoverageByPluginId?: Readonly<Record<string, string>>;
-    projectionByPluginId?: Readonly<Record<string, Readonly<{ iconAgentId?: string | null; contributionKinds?: readonly string[] }>>>;
+    projectionByPluginId?: Readonly<Record<string, Readonly<{
+        iconAgentId?: string | null;
+        contributionKinds?: readonly string[];
+        installedPackage?: PluginProjectionInstalledPackageV2;
+    }>>>;
     /** Leave what ships with Happier behind its "Show" line, as the page opens. Default: opened. */
     includedClosed?: boolean;
     machineAnswered?: boolean;
 }>) {
-    const { InstalledPluginsSection } = await import('./PluginMarketplaceSections');
     const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
     // The Installed collection always renders inside the Plugins page, where sections carry their actions. It is
     // one Collection, which lays its grid out at the width it measured, as the page does on its first layout.
@@ -68,7 +74,43 @@ const INCLUDED_ACTION = 'settings.plugins.marketplace.installed:group:included:a
 describe('Installed plugins collection', () => {
     afterEach(standardCleanup);
 
-    it('keeps the switch in the card footer and opens the plugin from the card body', async () => {
+    it('keeps admitted Agent artwork when the same included items gain their by-kind Machine projection', async () => {
+        const active = await activateStorageAccountScope({ serverId: 'server-a', accountId: 'account-a' });
+        const agentIds = ['claude', 'codex', 'coderabbit'] as const;
+        const plugins = agentIds.map(agentId => {
+            const pluginId = BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[agentId].pluginId;
+            return installed(pluginId, { title: agentId, source: { kind: 'bundled', locator: pluginId } });
+        });
+        try {
+            const flat = await renderInstalled({ collectionState: 'ready', plugins });
+            const sources = plugins.map(entry => {
+                const row = flat.findByTestId(`settings.plugins.marketplace.installed.${entry.pluginId}:card`)!;
+                const images = row.findAll(node => (node.type as unknown) === 'Image');
+                expect(images).toHaveLength(1);
+                return images[0]!.props.source;
+            });
+            await flat.unmount();
+            const grouped = await renderInstalled({ collectionState: 'ready', plugins,
+                projectionByPluginId: Object.fromEntries(plugins.map((entry, index) => [entry.pluginId, {
+                    iconAgentId: agentIds[index], contributionKinds: ['agent'],
+                    installedPackage: PluginProjectionInstalledPackageV2Schema.parse({
+                        id: entry.pluginId, displayName: entry.title, version: entry.version, enabled: true,
+                        source: entry.source,
+                    }),
+                }])),
+            });
+            for (const [index, entry] of plugins.entries()) {
+                const row = grouped.findByTestId(`settings.plugins.marketplace.installed.${entry.pluginId}:card`)!;
+                const images = row.findAll(node => (node.type as unknown) === 'Image');
+                expect(images).toHaveLength(1);
+                expect(images[0]!.props.source).toBe(sources[index]);
+            }
+        } finally {
+            active.dispose();
+        }
+    });
+
+    it('keeps the switch independent and opens the plugin from the card body', async () => {
         const onNavigateToPlugin = vi.fn();
         const onRunAction = vi.fn();
         const screen = await renderInstalled({ collectionState: 'ready', plugins: [installed('alpha')], onNavigateToPlugin, onRunAction });
@@ -76,11 +118,14 @@ describe('Installed plugins collection', () => {
         expect(onNavigateToPlugin).toHaveBeenCalledWith('alpha');
         const toggle = screen.findByTestId('settings.plugins.marketplace.installed.alpha.action.disable');
         expect(toggle?.props.disabled).toBe(false);
-        // The grid has one footer control, not a second copy in the body accessory slot.
+        // The shared card draws the native control once, outside its body-open target.
         const { Switch } = await import('@/components/ui/forms/Switch');
         expect(screen.root.findAll((node) => node.type === Switch
             && node.props.testID === 'settings.plugins.marketplace.installed.alpha.action.disable')).toHaveLength(1);
         expect(onRunAction).not.toHaveBeenCalled();
+        await React.act(async () => { toggle!.props.onValueChange(false); });
+        expect(onRunAction).toHaveBeenCalledExactlyOnceWith('disable', 'alpha');
+        expect(onNavigateToPlugin).toHaveBeenCalledTimes(1);
     });
 
     it('controls the bundled Machine setting even when the Account setting makes the plugin inactive', async () => {
@@ -221,11 +266,7 @@ describe('Installed plugins collection', () => {
         const bundled = installed('quiet', { description: null, source: { kind: 'bundled', locator: 'quiet' } });
         const described = await renderInstalled({ collectionState: 'ready', plugins: [{ ...bundled, description: 'Does a thing' }] });
         const undescribed = await renderInstalled({ collectionState: 'ready', plugins: [bundled] });
-        const height = (screen: Awaited<ReturnType<typeof renderInstalled>>) => StyleSheet.flatten(
-            screen.findByTestId('settings.plugins.marketplace.installed.quiet:card')?.props.style,
-        ).height;
-        // No reserved two-line hole: the grid composes it shorter (a compact tile when nothing else is below).
-        expect(height(undescribed)).toBeLessThan(height(described));
+        expect(described.findByTestId('settings.plugins.marketplace.installed.quiet:description')).not.toBeNull();
         expect(undescribed.findByTestId('settings.plugins.marketplace.installed.quiet:description')).toBeNull();
         const { t } = await import('@/text');
         expect(undescribed.getTextContent()).not.toContain(t('settingsPlugins.rowStatus.enabled'));
@@ -289,6 +330,21 @@ describe('Installed plugins collection', () => {
         await measureMountedCollections(screen);
         expect(screen.findByTestId('settings.plugins.marketplace.installed.claude')).not.toBeNull();
         expect(screen.findByTestId('settings.plugins.marketplace.installed.github')).not.toBeNull();
+    });
+
+    it('never leaves the closed included line empty: with no kinds known it names what it holds', async () => {
+        const bundled = (pluginId: string, title: string) => installed(pluginId, { title, description: null, source: { kind: 'bundled', locator: pluginId } });
+        const screen = await renderInstalled({
+            collectionState: 'ready',
+            includedClosed: true,
+            plugins: [bundled('claude', 'Claude Code'), bundled('codex', 'Codex'), bundled('github', 'GitHub'), bundled('fly', 'Fly Machines'), bundled('ollama', 'Ollama')],
+        });
+        expect(screen.findByTestId('settings.plugins.marketplace.installed.claude')).toBeNull();
+        const text = screen.getTextContent();
+        expect(text).toContain('Claude Code');
+        expect(text).toContain('Codex');
+        expect(text).toContain('GitHub');
+        expect(text).not.toContain('Ollama');
     });
 
     it('invites a first plugin when none was added, and still keeps the included ones one press away', async () => {

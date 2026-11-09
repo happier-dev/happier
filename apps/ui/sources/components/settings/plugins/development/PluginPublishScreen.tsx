@@ -145,7 +145,7 @@ function IconField({ controller, identity }: Readonly<{ controller: PluginPublis
             showChevron={false} mode="info" rightElement={<RoundButton title={copy('chooseIcon')} size="small" display="secondary"
                 loading={picking} disabled={picking || controller.pending !== null} onPress={() => { void pick(); }} />} />
         {resources.length ? <DropdownMenu testID="plugin-publish.icon" open={open} onOpenChange={setOpen} selectedId={dataBase64 ? null : icon || null}
-        itemTrigger={{ title: copy('icon'), icon: <PluginMark title={copy('title')} />, disabled: controller.pending !== null,
+        itemTrigger={{ title: copy('icon'), icon: <PluginMark title={copy('title')} />,
             subtitle: resources.length ? undefined : copy('noIconResources') }}
         items={resources.map(resource => ({ id: resource.id, title: resource.path, subtitle: resource.id }))}
         onSelect={id => controller.draft.getState().patch({ icon: id, iconDataBase64: '' })} /> : null}
@@ -189,7 +189,7 @@ function GithubSection({ controller }: Readonly<{ controller: PluginPublishContr
             {controller.hasSourceProject && targets.length ? <PublishToggle controller={controller} field="createRepository" title={copy('createRepository')} /> : null}
             {createRepository ? <>
                 <DropdownMenu testID="plugin-publish.github.owner" open={ownersOpen} onOpenChange={setOwnersOpen} selectedId={owner || null}
-                    itemTrigger={{ title: copy('repositoryOwner'), disabled: controller.pending !== null }}
+                    itemTrigger={{ title: copy('repositoryOwner') }}
                     items={targets.map(target => ({ id: githubPublicationTargetId(target), title: target.label, subtitle: target.provider.displayName }))}
                     onSelect={id => controller.draft.getState().patch({ githubOwner: id })} />
                 <PublishField controller={controller} field="repositoryName" label="settingsPlugins.publish.repositoryName" monospace />
@@ -268,7 +268,7 @@ function NpmSection({ controller }: Readonly<{ controller: PluginPublishControll
     const [profilesOpen, setProfilesOpen] = React.useState(false);
     return <ItemGroup title={copy('npm')} description={copy('npmDescription')}>
         {controller.inspection?.profiles.length ? <DropdownMenu testID="plugin-publish.profile" open={profilesOpen} onOpenChange={setProfilesOpen}
-            selectedId={controller.profile?.profileId ?? null} itemTrigger={{ title: copy('npmProfile'), disabled: controller.pending !== null }}
+            selectedId={controller.profile?.profileId ?? null} itemTrigger={{ title: copy('npmProfile') }}
             items={controller.inspection.profiles.map(profile => ({ id: profile.profileId, title: profile.displayName, subtitle: profile.origin }))}
             onSelect={profileId => controller.selectProfile(profileId)} /> : null}
         <Item title={controller.profile?.displayName ?? copy('connect')} subtitle={controller.profile?.origin

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import type { AccountPetLibraryEntryV1 } from '@happier-dev/protocol';
+import type { AccountPetLibraryEntryV1 } from '@happier-dev/protocol/pets/accountLibrary';
 
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { t } from '@/text';

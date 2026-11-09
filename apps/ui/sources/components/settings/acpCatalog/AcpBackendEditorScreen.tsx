@@ -9,6 +9,8 @@ import type { AcpBackendDefinitionV1, AcpCatalogAuthSupportV1, AcpCatalogSupport
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { createCustomAcpAgentSettingsRoute } from '@/agents/catalog/agentSettingsRoutes';
+import { CapabilityMachineTruth, type CapabilityMachineTruthRow } from '@/components/capabilities/detail/CapabilityMachineTruth';
+import { listAgentMachines } from '@/components/settings/agents/detail/agentMachinesModel';
 import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
 import { useAgentAuthoringEntry } from '@/components/settings/agents/authoring/useAgentAuthoringEntry';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
@@ -37,6 +39,9 @@ import { useAcpCatalog } from '@/sync/store/useAcpCatalog';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { getStorage } from '@/sync/domains/state/storage';
+import { useMachineAdministrationTargetPickerRows } from '@/sync/domains/machines/administration/useTargetSelection';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDraftNavigationGuard';
 
@@ -420,7 +425,8 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
                         ? t('settingsAgents.customAcp.idDerivedDescription')
                         : t('settingsAgents.customAcp.idFixedDescription')}
                     subtitleLines={0}
-                    detail={identifiersFollowName || !isNew ? (effectiveDraft.id || t('settingsAgents.customAcp.idPending')) : undefined}
+                    // Before a name exists the description already says where the ID comes from: no second copy of it.
+                    detail={(identifiersFollowName || !isNew) && effectiveDraft.id ? effectiveDraft.id : undefined}
                     // The generated ID and Edit action recompose together, just like the editable field.
                     accessoryLayout={isNew ? 'adaptive' : 'inline'}
                     showChevron={false}
@@ -542,6 +548,16 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
                     onChange={(value) => update(null, (current) => ({ ...current, defaultModel: value }))}
                 />
             </ItemGroup>
+
+            {effectiveDraft.launch.kind === 'command' && capturedScope ? (
+                <AcpCommandMachinesCheck
+                    backend={effectiveDraft}
+                    scope={capturedScope}
+                    ready={settingsLoaded}
+                    execute={executeAction}
+                    isCurrent={isEditorCurrent}
+                />
+            ) : null}
 
             <ItemGroup
                 title={t('settingsAgents.customAcp.environmentSection')}
@@ -677,6 +693,61 @@ export const AcpBackendEditorScreen = React.memo(function AcpBackendEditorScreen
         </ItemList>
     );
 });
+
+/** Draft checks use the same Action and machine rows as saved Agents; no definition is written. */
+function AcpCommandMachinesCheck(props: Readonly<{
+    backend: Draft;
+    scope: ServerAccountScope;
+    ready: boolean;
+    execute: ReturnType<typeof useAcpCatalogActionExecution>['execute'];
+    isCurrent: () => boolean;
+}>) {
+    const pickerRows = useMachineAdministrationTargetPickerRows();
+    const machines = React.useMemo(() => listAgentMachines(pickerRows.filter(row =>
+        areServerProfileIdentifiersEquivalent(row.serverId, props.scope.serverId)
+        && (row.candidate.availability === 'online' || row.candidate.availability === 'offline'))), [pickerRows, props.scope.serverId]);
+    type Check = Extract<ReturnType<typeof AgentsAcpBackendsUpsertOutputV1Schema.parse>, { dryRun: true }>;
+    const [checked, setChecked] = React.useState<Readonly<{ draft: Draft; machines: Check['machines'] }> | null>(null);
+    const [busy, setBusy] = React.useState(false);
+    const [failed, setFailed] = React.useState(false);
+    const check = async () => {
+        if (busy || !props.ready || !props.isCurrent()) return;
+        setBusy(true);
+        setFailed(false);
+        try {
+            const result = await props.execute('agents.acp.backends.upsert', { backend: props.backend, dryRun: true });
+            if (!result.ok) throw new Error(result.errorCode);
+            const receipt = AgentsAcpBackendsUpsertOutputV1Schema.parse(result.result);
+            if (!('dryRun' in receipt)) throw new Error('acp_backend_check_not_acknowledged');
+            if (props.isCurrent()) setChecked({ draft: props.backend, machines: receipt.machines });
+        } catch {
+            if (props.isCurrent()) { setChecked(null); setFailed(true); }
+        } finally {
+            // Release the view's busy state even when its Account retires mid-check.
+            setBusy(false);
+        }
+    };
+    const facts = new Map((checked?.draft === props.backend ? checked.machines : []).map(row => [row.machineId, row]));
+    const rows: CapabilityMachineTruthRow[] = machines.map(machine => {
+        const fact = facts.get(machine.machineId);
+        return {
+            machineId: machine.machineId, machineName: machine.name, namePending: machine.namePending,
+            deviceIcon: 'hard-drives', os: machine.os ?? undefined, offline: !machine.online,
+            who: !machine.online ? t('capabilities.status.offline')
+                : fact?.commandFound === true ? t('settingsAgents.customAcp.commandFound')
+                    : fact?.commandFound === false ? t('settingsAgents.customAcp.commandMissing') : t('common.unknown'),
+        };
+    });
+    return <CapabilityMachineTruth
+        testID={`${TEST_ID}.machines`}
+        presentation="list"
+        rows={rows}
+        summary=""
+        description={failed ? t('common.unavailable') : t('settingsAgents.customAcp.commandCheckDescription')}
+        sectionAction={props.ready && machines.length > 0 && props.backend.launch.kind === 'command' && props.backend.launch.command.trim().length > 0 && props.backend.title.trim().length > 0
+            ? { label: t('settingsAgents.detailPage.checkAgain'), busy, onPress: () => { void check(); } } : undefined}
+    />;
+}
 
 const CAPABILITY_ROWS = [
     { field: 'supportsModes', titleKey: 'settingsAgents.customAcp.supportsModes' },

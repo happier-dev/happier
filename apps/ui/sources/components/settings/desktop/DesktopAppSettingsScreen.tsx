@@ -11,7 +11,9 @@ import { settingRendersOnHost } from '@/components/settings/catalog/settingDecla
 
 import { useDesktopLoginStart } from './useDesktopLoginStart';
 import { DesktopOverlaySettingsSection } from './DesktopOverlaySettingsSection';
+import { DesktopWindowChromeSetting } from './DesktopWindowChromeSetting';
 import { DesktopWindowsSettingsSection } from './DesktopWindowsSettingsSection';
+import { ScreenCaptureSettingsSection } from './ScreenCaptureSettingsSection';
 import { DESKTOP_SETTINGS } from './desktopSettings';
 
 export const DesktopAppSettingsScreen = React.memo(function DesktopAppSettingsScreen() {
@@ -59,6 +61,8 @@ export const DesktopAppSettingsScreen = React.memo(function DesktopAppSettingsSc
                 </ItemGroup>
             ) : null}
 
+            {settingRendersOnHost(DESKTOP_SETTINGS.settings.captureShortcut) ? <ScreenCaptureSettingsSection /> : null}
+            <DesktopWindowChromeSetting />
             {showOverlaySettings ? <DesktopOverlaySettingsSection /> : null}
             <DesktopWindowsSettingsSection />
         </ItemList>

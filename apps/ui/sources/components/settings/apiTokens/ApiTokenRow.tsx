@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
-import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol';
+import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { Item } from '@/components/ui/lists/Item';
@@ -43,6 +43,7 @@ export const ApiTokenRow = React.memo(function ApiTokenRow(props: Readonly<{
 
     return (
         <Item
+            rowRole="catalogRow"
             testID={`settings-api-tokens-row:${props.token.tokenId}`}
             title={props.token.label}
             titleStyle={presentation.status === 'expired' ? { color: theme.colors.text.secondary } : undefined}
@@ -50,7 +51,6 @@ export const ApiTokenRow = React.memo(function ApiTokenRow(props: Readonly<{
                 <ApiTokenStatusGlyph testID={`settings-api-tokens-status:${props.token.tokenId}`} presentation={presentation} />
             ) : undefined}
             subtitle={presentation.embedBacked ? [t('settingsApiTokens.embedPill'), summary].filter(Boolean).join(' · ') : summary}
-            subtitleLines={1}
             accessibilityLabel={t('settingsApiTokens.rowAccessibilityLabel', {
                 label: props.token.label,
                 state: [statusLabel ?? t('settingsApiTokens.status.active'), summary].join(', '),

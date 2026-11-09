@@ -1,3 +1,4 @@
+import { initializeAuthRouteRuntimeForTests } from '@/dev/testkit/harness/authRouteRuntimeHarness';
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen as renderWithoutAuth } from '@/dev/testkit';
@@ -27,6 +28,7 @@ vi.mock('@/components/ui/popover', async importOriginal => {
     return createInlinePopoverModuleMock(importOriginal);
 });
 
+await initializeAuthRouteRuntimeForTests();
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { settingsDefaults } = await import('@/sync/domains/settings/settings');
 const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');

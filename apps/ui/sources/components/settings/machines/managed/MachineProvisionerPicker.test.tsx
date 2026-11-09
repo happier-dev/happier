@@ -938,7 +938,6 @@ describe('provisioner picker demand', () => {
         expect(cards).toEqual(
           expect.arrayContaining([
             expect.objectContaining({
-              kind: 'VM',
               description: 'A custom native guest.',
               status: expect.objectContaining({
                 label:
@@ -1163,12 +1162,12 @@ describe('provisioner picker demand', () => {
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
     const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} onSelectProvisioner={vi.fn()} />);
     const cards = () => [...new Map(screen.tree.findAll(node => Array.isArray(node.props.cards))
-      .flatMap(node => node.props.cards as { id: string; title: string; kind?: string; status: { label: string } }[])
+      .flatMap(node => node.props.cards as { id: string; title: string; status: { label: string } }[])
       .map(card => [card.id, card])).values()];
     try {
       await waitForHomeGovernance(() => {
-        // The composed title reads as one phrase; the standalone kind starts with a capital, as every label does.
-        expect(cards().map(card => [card.title, card.kind])).toEqual([['Cua sandbox', 'Sandbox'], ['Cua space', 'Space']]);
+        // Two provisioners of one product read as one phrase each; the group says what they share.
+        expect(cards().map(card => card.title)).toEqual(['Cua sandbox', 'Cua space']);
       });
       // The catalog's own line owns "Checking available provisioners"; a card still waiting says only that it is checking.
       expect(cards().map(card => card.status.label)).toEqual([t('managedMachines.add.status.checking'), t('managedMachines.add.status.checking')]);
@@ -1459,6 +1458,23 @@ describe('provisioner picker demand', () => {
       release();
     }
   });
+  it('does not read one controller\u2019s checks as another\u2019s while the new controller answers', async () => {
+    const { serverId, release } = await arrangeCatalog({ list: (_read, machineId) => machineId === 'other' });
+    const { useManagedProvisioners } = await import('./useManagedProvisioners');
+    const first = { machineId: 'controller', installationId: 'controller-installation' };
+    const hook = await renderHook(({ controller }) => useManagedProvisioners(serverId, undefined, controller), { initialProps: { controller: first } });
+    try {
+      await waitForHomeGovernance(() => expect(hook.getCurrent().provisioners).toHaveLength(2));
+      await act(async () => hook.getCurrent().setChecks({ alpha: { kind: 'succeeded', value: { available: true } } }));
+      expect(Object.keys(hook.getCurrent().checks)).toEqual(['alpha']);
+      await hook.rerender({ controller: { machineId: 'other', installationId: 'other-installation' } });
+      // The cards stay; their answers belonged to the previous computer.
+      expect(hook.getCurrent().provisioners).toHaveLength(2);
+      expect(hook.getCurrent().checks).toEqual({});
+    } finally {
+      release();
+    }
+  });
   it('keeps Account offers beside controller-installed cards and when the controller catalog is empty', async () => {
     const { vercel, lima, e2b } = await installBundledMachinePlugins();
     const { serverId, provisioners } = await arrangeCatalog({});
@@ -1702,6 +1718,20 @@ describe('provisioner picker demand', () => {
     const screen = await renderPicker(<MachineProvisionerPicker serverId={homeId} />);
     expect(screen.findByTestId('managed-picker.no-controller')).toBeNull();
     expect(screen.findByTestId('managed-picker.no-online-controller')).not.toBeNull();
+    await screen.unmount();
+  });
+  it('asks for a choice instead of saying nothing is online when a machine is online but none was preselected', async () => {
+    const homeId = await harness.addHome({ name: 'Build', serverUrl: 'https://unpicked-picker.example', serverIdentityId: 'srv_unpicked_picker', accountId: 'owner', currentAccount: true });
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
+    const { t } = await import('@/text');
+    // Online, but a shared machine is never the page's automatic default.
+    await act(async () => storage.setState({ machineListByServerId: { [homeId]: [
+      createControllerMachineFixture({ id: 'teammate', installationId: 'teammate-installation', activeAt: Date.now(), isShared: true }),
+    ] }, machineListStatusByServerId: { [homeId]: 'idle' } }));
+    const screen = await renderPicker(<MachineProvisionerPicker serverId={homeId} />);
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('managedMachines.add.chooseController')));
+    expect(screen.getTextContent()).not.toContain(t('managedMachines.add.noOnlineController'));
     await screen.unmount();
   });
   it('waits for the Home\u2019s machine list instead of saying no machine can create machines', async () => {

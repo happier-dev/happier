@@ -128,7 +128,7 @@ export function useHomeRuntimeRestart(
 
     React.useEffect(() => subscribeHomeAccountChange((event) => {
         if (event.serverId === serverId && event.source === 'connected') connected();
-    }), [serverId, connected]);
+    }, { reconnect: 'refresh' }), [serverId, connected]);
 
     const restart = React.useCallback(async () => {
         if (current.current && !current.current.finished) return;

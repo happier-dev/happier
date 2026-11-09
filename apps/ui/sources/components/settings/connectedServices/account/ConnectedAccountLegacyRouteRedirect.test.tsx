@@ -59,15 +59,6 @@ describe('ConnectedAccountLegacyRouteRedirect', () => {
         });
     });
 
-    it('maps a legacy add request to the detail draft for the exact qualified service', async () => {
-        routeState.add = '1';
-        await renderScreen(<ConnectedAccountLegacyRouteRedirect />);
-        expect(replace).toHaveBeenCalledWith({
-            pathname: '/(app)/settings/connected-services/connect',
-            params: { service: 'happier.scm.forge.github/github-account' },
-        });
-    });
-
     it.each(['vault', 'foreign', 'not a service'])('rejects novel or malformed scalar %s', async (serviceId) => {
         routeState.serviceId = serviceId;
         const screen = await renderScreen(<ConnectedAccountLegacyRouteRedirect />);

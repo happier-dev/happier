@@ -17,7 +17,7 @@ import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/mode
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { AgentDetailHeader, AgentMachineContextBar } from '@/components/settings/agents/detail/AgentDetailHeader';
@@ -31,11 +31,12 @@ import { AgentMachinesSection } from '@/components/settings/agents/detail/AgentM
 import { AgentIdleCompactionRows, resolveIdleCompactionDeclaration } from '@/components/settings/agents/detail/AgentIdleCompactionRows';
 import type { AgentSessionCompactionCapability } from '@happier-dev/protocol/plugins/agents';
 import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { AGENT_SCOPED_PLUGIN_SETTINGS_SECTIONS } from '@/agents/registry/agentScopedPluginSettingsDeclarations';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { BadgeGrid, type BadgeGridItem } from '@/components/ui/layout/BadgeGrid';
-import { useSetting, useSettingsSelector } from '@/sync/domains/state/storage';
+import { useSetting } from '@/sync/domains/state/storage';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useProviderSettings } from '@/providers/hooks/useProviderSettings';
@@ -70,7 +71,7 @@ import { AgentSignInPaneHost } from '@/components/machines/agents/AgentSignInPan
 import { resolveAgentChannelLabelKey } from '@/components/settings/agents/agentChannelLabel';
 import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { isPermissionMode, type PermissionMode } from '@/sync/domains/permissions/permissionTypes';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { isLegacyCompatAgentType } from '@/agents/backendCatalog/legacyCompatAgents';
@@ -391,6 +392,7 @@ export const AgentSessionDefaultsSection = React.memo(function AgentSessionDefau
     const accountServerId = accountScope?.serverId ?? null;
     const defaultModelTitle = t('agentInput.model.title');
     const defaultModelChoice = useExactModelChoice({
+        purpose: 'preference',
         agentTargetKey: providerTargetKey,
         agentId: nativeAgentId,
         machineId: null,
@@ -663,6 +665,7 @@ const AgentSettingsFallbackScreenInner = React.memo(function AgentSettingsFallba
                 accountSettingsAvailable={props.accountSettingsAvailable}
             />
             <AgentContributedSettingsSection
+                agentId={props.projection.agentId}
                 pluginSettingsProjection={props.pluginSettingsProjection}
                 targetSelection={props.targetSelection}
                 executionTarget={props.executionTarget}
@@ -713,10 +716,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
         accountServerId,
         recoveryMachineId,
     } = props;
-    const settings = useSettingsSelector((settings) => ({
-        backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-        backendCliSourcePreferenceByTargetKey: settings.backendCliSourcePreferenceByTargetKey,
-    }), ["backendEnabledByTargetKey","backendCliSourcePreferenceByTargetKey"]);
+    const backendCliSourcePreferenceByTargetKey = useSetting('backendCliSourcePreferenceByTargetKey');
     const paneScopeId = React.useMemo(
         () => `settings:provider:${agentId}`,
         [agentId],
@@ -736,7 +736,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
     const cliSourcePreference = providerTargetKey && agentCli
         ? [providerTargetKey, ...compatibilityTargetKeys]
             .map((targetKey) => readAccountSettingValueForBackendTarget(
-                settings,
+                { backendCliSourcePreferenceByTargetKey },
                 'backendCliSourcePreferenceByTargetKey',
                 targetKey as BackendTargetRefV2Input,
             ))
@@ -841,6 +841,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                 accountSettingsAvailable={accountSettingsAvailable}
                 machineId={primaryMachine?.id}
                 popoverBoundaryRef={popoverBoundaryRef}
+                projectedCompaction={currentAgentCapabilities?.capabilities.sessions?.compaction ?? null}
                 projectionInputs={props.projectionInputs}
                 onOpenModels={providerTargetKey ? () => router.push({
                     pathname: '/(app)/settings/agents/[agentId]/models',
@@ -870,6 +871,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
             />
 
             <AgentContributedSettingsSection
+                agentId={projection.agentId}
                 pluginSettingsProjection={pluginSettingsProjection}
                 targetSelection={targetSelection}
                 executionTarget={executionTarget}
@@ -904,8 +906,6 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
                                     testID="settings.agents.detail.capabilities.header"
                                     title={t('settingsAgents.capabilities')}
                                     detail={capabilitySummary}
-                                    showChevron={false}
-                                    rightElement={<ExpandableItemCaret expanded={state.expanded} />}
                                 />
                             )}
                         >
@@ -930,9 +930,7 @@ const AgentSettingsScreenInner = React.memo(function AgentSettingsScreenInner(pr
 export const AgentSettingsScreen = React.memo(function AgentSettingsScreen() {
     const { theme } = useUnistyles();
     const params = useLocalSearchParams();
-    const settings = useSettingsSelector((settings) => ({
-        backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
-    }), ["backendEnabledByTargetKey"]);
+    const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const administrationTargetSelection = useAgentsAdministrationTargetSelection(
         params.machineId !== undefined || params.serverIdentityId !== undefined ? params : undefined,
     );
@@ -973,6 +971,8 @@ export const AgentSettingsScreen = React.memo(function AgentSettingsScreen() {
         machineId: machineScope.projectionScope?.machineId ?? null,
         serverId: machineScope.projectionScope?.serverId ?? null,
         enabled: machineScope.projectionScope !== null,
+        // Agent facts plus the Agent's editable plugin settings (also read by the session defaults rows).
+        sections: AGENT_SCOPED_PLUGIN_SETTINGS_SECTIONS,
     });
     // The hook already fences target and Account scope changes while retaining
     // same-scope LKG inputs through refresh/error. These inputs are inert
@@ -980,7 +980,7 @@ export const AgentSettingsScreen = React.memo(function AgentSettingsScreen() {
     const daemonMergedProjectionInputs = daemonMergedProjection.inputs;
     const retryDaemonProjection = React.useCallback(() => {
         if (!machineScope.projectionScope) return;
-        publishMachineContributionRegistryProjectionInvalidation(machineScope.projectionScope);
+        publishMachineContributionRegistryProjectionInvalidation(machineScope.projectionScope, 'refresh');
     }, [machineScope.projectionScope]);
     const legacyCompatAgentRedirectId = React.useMemo(() => resolveLegacyCompatAgentRouteRedirect({
         agentId: hasQualifiedAgentRoute ? '' : normalizedAgentId,
@@ -994,13 +994,13 @@ export const AgentSettingsScreen = React.memo(function AgentSettingsScreen() {
 
     const agentProjectionParams = React.useMemo(() => ({
         enabledAgentIds: [],
-        backendEnabledByTargetKey: settings.backendEnabledByTargetKey,
+        backendEnabledByTargetKey,
         mergedProviderProjectionById: daemonMergedProjectionInputs?.mergedProviderProjectionById ?? null,
         mergedBackendProjectionById: daemonMergedProjectionInputs?.mergedBackendProjectionById ?? null,
     }), [
         daemonMergedProjectionInputs?.mergedBackendProjectionById,
         daemonMergedProjectionInputs?.mergedProviderProjectionById,
-        settings.backendEnabledByTargetKey,
+        backendEnabledByTargetKey,
     ]);
     const knownProviderIds = React.useMemo(() => {
         return new Set(
@@ -1143,8 +1143,8 @@ export const AgentSettingsScreen = React.memo(function AgentSettingsScreen() {
     if (!currentAgentCapabilities && !projection.cli) {
         return (
             <AgentSettingsFallbackScreenInner
-                projectionInputs={daemonMergedProjectionInputs ?? null}
                 accountServerId={activeServer.serverId || null}
+                projectionInputs={daemonMergedProjectionInputs ?? null}
                 compatibilityTargetKeys={compatibilityTargetKeys}
                 projection={projection}
                 pluginSettingsProjection={pluginSettingsProjection}
@@ -1162,8 +1162,8 @@ export const AgentSettingsScreen = React.memo(function AgentSettingsScreen() {
 
     return (
         <AgentSettingsScreenInner
-            projectionInputs={daemonMergedProjectionInputs ?? null}
             agentId={resolvedAgentProjectionId ?? normalizedAgentId}
+            projectionInputs={daemonMergedProjectionInputs ?? null}
             projection={projection}
             currentAgentCapabilities={currentAgentCapabilities}
             authPlugin={projection.authPlugin}

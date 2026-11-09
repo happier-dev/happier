@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_ACTIONS_SETTINGS_V1 } from '@happier-dev/protocol';
+import { DEFAULT_ACTIONS_SETTINGS_V1 } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import {
     applyActionSettingsTargetControlState,

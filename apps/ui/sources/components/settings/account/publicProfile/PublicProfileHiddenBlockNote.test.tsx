@@ -16,7 +16,7 @@ import {
   resolvePublicProfileBlockShareField,
 } from './PublicProfileHiddenBlockNote';
 import {
-  PublicProfileWidgetPreviewContext,
+  PublicProfileWidgetPreviewProvider,
   PublicProfileWidgetSurface,
 } from './PublicProfileWidgetSurface';
 
@@ -140,7 +140,7 @@ describe('in-place hidden blocks on the owner’s page', () => {
       },
     };
     const tree = (hidden: ReadonlySet<string>) => (
-      <PublicProfileWidgetPreviewContext.Provider
+      <PublicProfileWidgetPreviewProvider
         value={{
           kind: 'ready',
           source,
@@ -148,7 +148,7 @@ describe('in-place hidden blocks on the owner’s page', () => {
           owner: {
             hiddenBlockIds: hidden,
             onlyYou: t('publicIdentity.editor.onlyYou'),
-            renderHiddenNote: (blockId) => (
+            renderHiddenNote: (blockId: string) => (
               <PublicProfileHiddenBlockNote
                 blockId={blockId}
                 layout={layout}
@@ -167,7 +167,7 @@ describe('in-place hidden blocks on the owner’s page', () => {
           descriptor={descriptor}
           testID="block"
         />
-      </PublicProfileWidgetPreviewContext.Provider>
+      </PublicProfileWidgetPreviewProvider>
     );
     const screen = await renderScreen(tree(new Set(['days'])));
     const text = screen.getTextContent();

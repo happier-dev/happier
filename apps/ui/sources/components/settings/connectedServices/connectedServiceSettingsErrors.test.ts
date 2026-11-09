@@ -108,6 +108,18 @@ describe('connected-service settings errors', () => {
     expect(resolveConnectedServiceSettingsErrorRecovery({ status: 'rejected', code: 'credential_unavailable' })).toBe('edit');
   });
 
+  it('localizes a message-free authentication diagnostic while retaining its details and recovery', () => {
+    const unavailable = { status: 'unavailable', diagnostic: { code: 'neon_unavailable', severity: 'error' } };
+    expect(resolveConnectedServiceSettingsErrorMessage(unavailable))
+      .toBe(t('connectedServices.errors.accountAuthenticationUnavailable'));
+    expect(readConnectedServiceSettingsErrorDetailsCode(unavailable)).toBe('neon_unavailable');
+    expect(resolveConnectedServiceSettingsErrorRecovery(unavailable)).toBe('retry');
+    expect(resolveConnectedServiceSettingsErrorMessage({ status: 'unavailable' }))
+      .toBe(t('connectedServices.errors.accountServiceUnavailable'));
+    expect(resolveConnectedServiceSettingsErrorMessage({ ...unavailable, code: 'plugin_setup_unavailable' }))
+      .toBe(t('connectedServices.errors.accountServiceUnavailable'));
+  });
+
   it('explains an unavailable saved secret without parsing it as authentication or generic failure', () => {
     expect(resolveConnectedServiceSettingsErrorMessage(new Error('saved-secret-unavailable')))
       .toBe(t('connectedServices.errors.catalogSecretUnavailable'));

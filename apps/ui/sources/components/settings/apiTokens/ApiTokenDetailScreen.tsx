@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol';
+import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { Redirect, useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -15,6 +15,7 @@ import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useAllMachines, useAllSessions, useAutomations } from '@/sync/store/hooks';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
@@ -22,6 +23,8 @@ import { getMachineDisplayName, getMachineSentenceName } from '@/utils/sessions/
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 
 import { buildApiTokenRowPresentation } from './apiTokenSettingsPresentation';
 import { API_TOKENS_COLLECTION_ROOT, apiTokenEmbedDetailPath } from './collection/apiTokensCollection';
@@ -258,13 +261,16 @@ function ApiTokenSessionFacts(props: Readonly<{ token: AccountApiTokenSummaryV1 
 
 /** Mounted only for a creation grant, so other tokens' pages never subscribe to machines. */
 function ApiTokenCreateFact(props: Readonly<{ machineId: string }>) {
-    const machine = useAllMachines().find((candidate) => candidate.id === props.machineId);
+    const machineName = useAllMachines(React.useCallback((machines: readonly Machine[]) => {
+        const machine = machines.find((candidate) => candidate.id === props.machineId);
+        return machine ? getMachineSentenceName(machine) : null;
+    }, [props.machineId]));
     return (
         <Item
             testID="settings-api-token-detail-create"
             title={t('settingsApiTokens.detail.createsSessions')}
             subtitle={t('settingsApiTokens.detail.createsSessionsOn', {
-                computer: machine ? getMachineSentenceName(machine) : t('settingsApiTokens.detail.unknownComputer'),
+                computer: machineName ?? t('settingsApiTokens.detail.unknownComputer'),
             })}
             subtitleLines={0}
             mode="info"
@@ -285,18 +291,24 @@ function ApiTokenTargetFacts(props: Readonly<{ token: AccountApiTokenSummaryV1 }
     );
 }
 
+function selectMachineDisplayNameById(machines: readonly Machine[]): Readonly<Record<string, string | null>> {
+    return Object.fromEntries(machines.map((machine) => [machine.id, getMachineDisplayName(machine) ?? null]));
+}
+
 /** Mounted only for a restricted grant, so an unrestricted token's page never subscribes to every session. */
 function ApiTokenTargetRows(props: Readonly<{ sessions: readonly string[]; machines: readonly string[]; iconColor: string }>) {
-    const allMachines = useAllMachines();
+    // Rows show names only; select them so live resource publications cannot re-render this page.
+    const machineNameById: Readonly<Record<string, string | null>> = useAllMachines(selectMachineDisplayNameById);
     const allSessions = useAllSessions();
-    const machineById = new Map(allMachines.map((machine) => [machine.id, machine]));
+    const scope = useActiveServerAccountScope();
+    const isSessionVisible = useSessionRecordingVisibility();
     const sessionById = new Map(allSessions.map((session) => [session.id, session]));
     return (
         <>
             {props.machines.map((machineId) => (
                 <Item
                     key={`machine:${machineId}`}
-                    title={getMachineDisplayName(machineById.get(machineId)) ?? t('settingsApiTokens.detail.unknownComputer')}
+                    title={machineNameById[machineId] ?? t('settingsApiTokens.detail.unknownComputer')}
                     subtitle={t('settingsApiTokens.detail.computerCovers')}
                     icon={<Icon name="desktop" size={20} color={props.iconColor} />}
                     mode="info"
@@ -304,13 +316,14 @@ function ApiTokenTargetRows(props: Readonly<{ sessions: readonly string[]; machi
                 />
             ))}
             {props.sessions.map((sessionId) => {
-                const session = sessionById.get(sessionId);
+                const visible = isSessionVisible({ sessionId, serverId: scope?.serverId });
+                const session = visible ? sessionById.get(sessionId) : undefined;
                 const machineId = session?.metadata?.machineId;
                 return (
                     <Item
                         key={`session:${sessionId}`}
-                        title={session ? getSessionName(session) : t('settingsApiTokens.detail.unknownSession')}
-                        subtitle={machineId ? getMachineDisplayName(machineById.get(machineId)) ?? undefined : undefined}
+                        title={!visible ? t('settings.session') : session ? getSessionName(session) : t('settingsApiTokens.detail.unknownSession')}
+                        subtitle={machineId ? machineNameById[machineId] ?? undefined : undefined}
                         mode="info"
                         showChevron={false}
                     />

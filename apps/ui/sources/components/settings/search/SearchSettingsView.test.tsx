@@ -3,7 +3,8 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemorySettingsV1Schema, type MemorySettingsV1 } from '@happier-dev/protocol/memory/memorySettings';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { ActionsSettingsV1Schema, PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -363,7 +364,7 @@ describe('SearchSettingsView', () => {
         const screen = await renderSearchSettings();
         await renderedControl(screen, 'search-settings-agent:acme.archive');
         options.projectionFailure = 'error';
-        await act(async () => publishMachineContributionRegistryProjectionInvalidation({ machineId: 'm1', serverId }));
+        await act(async () => publishMachineContributionRegistryProjectionInvalidation({ machineId: 'm1', serverId }, 'authority'));
         await renderedControl(screen, 'search-settings-agents-error');
         expect(screen.findHostByTestId('search-settings-agent:acme.archive')).not.toBeNull();
         expect(screen.findHostByTestId('search-settings-agents-retry')).not.toBeNull();

@@ -1,8 +1,9 @@
 import type {
-    PluginDiagnosticDataV1,
+    PluginDiagnosticDataV1} from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
+import type {
     PluginSessionHookInstallPreviewV1,
     PluginSessionHookInstallationStatusV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/hookManagementV1';
 
 export type ExternalSessionsQualifiedAgent = Readonly<{
     pluginId: string;

@@ -178,7 +178,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // Retain the selected computer until the shared host decision places this provisioner's acquire role.
     const [acquireTarget, setAcquireTarget] = React.useState<'account' | 'daemon' | undefined>();
     const accountAcquire = !creationPreset && acquireTarget === 'account';
-    const controllerCandidate = pooledDraft ? undefined
+    // Pool authoring reads choices in the existing controller scope; acquire alone binds its target.
+    const controllerCandidate = pooledDraft ? delegatedAcquire ? undefined : scope.controller
         : creationPreset ? draft ? draft.controller : creationPreset.controller : draft?.controller ?? scope.controller;
     const requestedController = accountAcquire ? undefined : controllerCandidate;
     const requestedControllerPresent = useServerScopedMachine(props.serverId, requestedController?.machineId,
@@ -186,9 +187,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             && machine.installationId === requestedController?.installationId, [requestedController?.installationId]));
     const catalogController = (!props.presetId || !!creationPreset) && !delegatedAcquire && requestedController && requestedControllerPresent
         ? requestedController : undefined;
-    const catalogPlacementAvailable = pooledDraft || requestedController === undefined || catalogController !== undefined;
+    const catalogPlacementAvailable = requestedController === undefined || catalogController !== undefined;
     const catalog = useManagedProvisioners(props.serverId, onApprovalPending, catalogController,
-        { enabled: !setupOnlyEdit && !pooledDraft && !delegatedAcquire && catalogPlacementAvailable && (!props.presetId || !!creationPreset), contributionKey: props.provisioner });
+        { enabled: !setupOnlyEdit && !delegatedAcquire && catalogPlacementAvailable && (!props.presetId || !!creationPreset), contributionKey: props.provisioner });
     const accountHost = useManagedProvisionerRuntimeHost({ serverId: props.serverId, accountScope: catalog.binding?.scope });
     // A page that names its controller (deep link, reload, handoff) before the Home's machine list has synced
     // has not been refused anything: it waits for the list that will either contain the controller or not.
@@ -216,9 +217,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const optionsAbort = React.useRef<AbortController | null>(null);
     const reviewed = React.useRef<ManagedConfigurationFactsV1 | null>(null);
     const delegatedProvisioner = React.useMemo(() => delegatedAcquire ? projectManagedPresetProvisioner(preset) : undefined, [preset, delegatedAcquire]);
-    const catalogProvisioner = delegatedProvisioner ?? (pooledDraft ? draft?.provisioner
-        : catalog.provisioners.find(row => buildQualifiedPluginContributionKey(row.contribution) === props.provisioner));
+    const catalogProvisioner = delegatedProvisioner ?? catalog.provisioners.find(row => buildQualifiedPluginContributionKey(row.contribution) === props.provisioner);
     const retry = () => {
+        bumpReadRevision();
         if (catalog.binding && catalog.homeId && catalogProvisioner) refreshManagedProvisionerAvailability(catalog.binding,
             { homeId: catalog.homeId, ...(controller ? { controller } : {}), contribution: catalogProvisioner.contribution });
         readOptions();
@@ -293,7 +294,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const requiredCredentialSelections = credentialSelections.filter(credential => requiredCredentialPurposes?.some(({ purpose }) =>
         qualifiedPurposeKey(purpose) === qualifiedPurposeKey(credential.purpose)));
     const credentialsCurrent = pluginJsonValuesEqual(requiredCredentials, requiredCredentialSelections);
-    const credentialsReady = delegatedReview !== undefined || pooledDraft && draft?.optionStatus === 'current' || requiredCredentialPurposes !== undefined
+    const credentialsReady = delegatedReview !== undefined || requiredCredentialPurposes !== undefined
         && requiredCredentialSelections.length === requiredCredentialPurposes.length && credentialsCurrent;
     const credentialInput = React.useMemo(() => Object.fromEntries((credentialPurposes ?? []).map(({ purpose }, index) => [String(index),
         credentialSelections.find(credential => qualifiedPurposeKey(credential.purpose) === qualifiedPurposeKey(purpose))?.account])), [credentialPurposes, credentialSelections]);
@@ -301,7 +302,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const provisioner = catalogProvisioner ?? draft?.provisioner;
     const controller = hostAvailability ? hostAvailability.controller : requestedController;
     const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller: catalogController, accountScope: catalog.binding?.scope, provisioner, refreshKey: readRevision, purpose: 'repair', onApprovalPending });
-    const optionsInput = useManagedProvisionerOptionsInput({ binding: catalog.binding, controller: catalogController, provisioner: delegatedAcquire || pooledDraft ? undefined : catalogProvisioner,
+    const optionsInput = useManagedProvisionerOptionsInput({ binding: catalog.binding, controller: catalogController, provisioner: delegatedAcquire ? undefined : catalogProvisioner,
         refreshKey: readRevision });
     const localizeActionText = usePluginLocalizedTextResolver({ projection: presentation.projection });
     // The account a purpose draws on is named by its service, never by the purpose id.
@@ -324,7 +325,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             presentation: action, projection: presentation.projection, localize: localizeActionText }).inputHints ?? undefined, missing: false };
     }, [optionsInput, presentation.projection, localizeActionText]);
     const optionHints = optionPresentation.hints;
-    const launchPresentationPending = !delegatedReview && !pooledDraft && !optionHints && !presentation.projectionReady && !presentation.projectionFailed;
+    const launchPresentationPending = !delegatedReview && !optionHints && !presentation.projectionReady && !presentation.projectionFailed;
     // Settled without the form: say so with a re-read, rather than offering a size nobody can edit (R93).
     const launchFormUnreadable = optionPresentation.missing && !launchPresentationPending;
     const selectors = React.useMemo(() => draft && optionsInput.kind === 'ready'
@@ -431,8 +432,8 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     }, [presetQuery.sameScope, preset, provisioner, catalogController, teamDenied, props.initialEnrollmentIdentity, delegatedAcquire, delegatedReview, continuation, continuationSeed, continuationSetup, setError]);
 
     React.useEffect(() => {
-        if (delegatedAcquire || pooledDraft || !presetQuery.sameScope || !catalogProvisioner || !catalogPlacementAvailable || catalogProvisioner.credentialPurposes === undefined) return;
-        setDraft(current => current ? refreshManagedConfiguratorProvisioner(current, catalogProvisioner, catalogController) : current);
+        if (delegatedAcquire || !presetQuery.sameScope || !catalogProvisioner || !catalogPlacementAvailable || catalogProvisioner.credentialPurposes === undefined) return;
+        setDraft(current => current ? refreshManagedConfiguratorProvisioner(current, catalogProvisioner, pooledDraft ? undefined : catalogController) : current);
     }, [delegatedAcquire, pooledDraft, presetQuery.sameScope, catalogProvisioner, catalogController, catalogPlacementAvailable, draft?.credentials, draft?.provisioner]);
 
     React.useEffect(() => {
@@ -505,7 +506,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const readOptions = React.useCallback(() => {
         optionsAbort.current?.abort();
         const binding = catalog.binding;
-        if (delegatedAcquire || pooledDraft || !catalogCurrent || !presetQuery.sameScope || !binding || !catalog.homeId || !catalog.client) return;
+        if (delegatedAcquire || !catalogCurrent || !presetQuery.sameScope || !binding || !catalog.homeId || !catalog.client) return;
         if (accountHostPending || accountHostUnreadable || needsApp) return;
         if (!catalogProvisioner || !catalogPlacementAvailable || !credentialsReady) {
             setDraft(current => current && current.optionStatus !== 'unavailable'
@@ -536,7 +537,6 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
 
     React.useEffect(() => { readOptions(); return () => optionsAbort.current?.abort(); }, [readOptions]);
     // Retry re-reads everything the form shows: the provider's presentation and preset, then its options.
-    const retryRead = React.useCallback(() => { bumpReadRevision(); readOptions(); }, [readOptions]);
 
     const effectiveDraft = React.useMemo(() => presetQuery.sameScope && draft && accountSettings.settings
         ? { ...draft, categoryPreferences: accountSettings.settings.machineRetentionDefaultsV1 } : null, [presetQuery.sameScope, draft, accountSettings.settings]);
@@ -611,12 +611,12 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     // One decision owns both admission of the Create control and the reason beside it.
     const creationUnavailableReason = busy ? t('common.loading')
         : !activeBinding?.isCurrent() ? t('common.unavailable')
-        // A pooled preset has no catalog of its own to read; its Save answers to its pool below.
-        : (!delegatedReview && !catalogCurrent && !(props.presetOnly && pooledDraft)) || !catalogProvisioner ? t('managedMachines.providers.unavailable')
+        // Delegated review consumes its saved facts; authoring consumes the current options scope.
+        : (!delegatedReview && !catalogCurrent) || !catalogProvisioner ? t('managedMachines.providers.unavailable')
         : needsApp ? t('managedMachines.add.status.needsApp')
         : accountHostUnreadable ? t('common.unavailable')
         : accountHostPending ? t('managedMachines.options.loading', { provider: title })
-        : (!catalogPlacementAvailable || (teamId || preset?.owner.kind === 'team') && !catalogController) && !delegatedReview ? t('managedMachines.controller.requiredUnnamed')
+        : (!catalogPlacementAvailable || (teamId || preset?.owner.kind === 'team') && !pooledDraft && !catalogController) && !delegatedReview ? t('managedMachines.controller.requiredUnnamed')
         : !credentialsReady ? t('managedMachines.credential.choose')
         : !props.presetOnly && accountSettings.settings?.managedMachineCreationEnabled === false ? t('managedMachines.creation.disabledTitle')
         : !accountSettings.settings || !props.presetOnly && accountSettings.settings.managedMachineCreationEnabled !== true ? t(accountSettings.error ? 'common.unavailable' : 'common.loading')
@@ -927,7 +927,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const formFields = launchFields.filter(field => !sizeFields.includes(field) && !decidedByChoice.has(field.path))
         .map(field => launchRefusal?.fieldPath === field.path
             ? { ...field, description: localized(provisioner.contribution.pluginId, launchRefusal.status) } : field);
-    const launchEditable = !!catalogProvisioner && !pooledDraft && catalogPlacementAvailable && !busy && (!preset || props.presetOnly === true);
+    const launchEditable = !!catalogProvisioner && catalogPlacementAvailable && !busy && (!preset || props.presetOnly === true);
     const advancedKey = draft ? buildQualifiedPluginContributionKey(draft.provisioner.contribution) : '';
     // Decided on the provider's first answer; until then every field stays in view.
     if (draft && draft.optionStatus !== 'loading' && formFields.length > 0 && advancedPaths.current?.key !== advancedKey) {
@@ -968,7 +968,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const choiceState = !draft ? null
         : launchFormUnreadable ? <SurfaceStateCard kind="warning" size="line" testID="managed-config.form-unavailable"
             title={t('managedMachines.options.error')}
-            action={{ label: t('common.retry'), onPress: retryRead, testID: 'managed-config.form-unavailable:action' }} />
+            action={{ label: t('common.retry'), onPress: retry, testID: 'managed-config.form-unavailable:action' }} />
         : draft.check?.available === false ? <SurfaceStateCard kind="warning" size="line" testID="managed-config.unavailable" title={t('managedMachines.providers.unavailable')}
             diagnosticCode={draft.check.nativeCause ? describeManagedNativeFailureDiagnostic(draft.check.code ?? 'provider_unavailable', draft.check.nativeCause) : undefined}
             reason={draft.check.status ? localized(provisioner.contribution.pluginId, draft.check.status) : undefined} />

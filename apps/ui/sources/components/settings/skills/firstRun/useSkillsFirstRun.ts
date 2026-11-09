@@ -2,8 +2,7 @@ import * as React from 'react';
 import { SkillsRulesSetOutputV1Schema } from '@happier-dev/protocol/actions/specs/capabilityRules';
 import { isReadOnlySkillProvenanceV1, type SkillListItemV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { useLocalSetting } from '@/sync/domains/state/storage';
-import { getStorage } from '@/sync/domains/state/storageStore';
+import { capabilityDismissalState, usePersistentUiStateValue } from '@/sync/domains/state/persistentUiState';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { usePromptLibraryCatalogSelection } from '@/sync/store/usePromptLibraryCatalog';
 import { useShallow } from 'zustand/react/shallow';
@@ -20,7 +19,7 @@ export function useSkillsFirstRun(items: readonly SkillListItemV1[]) {
   const scope = useAccountSettingsScope();
   const scopeKey = scope ? `${scope.serverId}:${scope.accountId}` : null;
   const execution = useMountedActionExecution(scope);
-  const decidedAt = useLocalSetting('skillsFirstRunDecidedAt');
+  const decidedAt = usePersistentUiStateValue(capabilityDismissalState, 'skillsFirstRunDecidedAt') ?? null;
   const selection = React.useMemo(() => buildSkillsFirstRunSelection(items), [items]);
   const selectFirstVisit = React.useCallback((catalog: PromptLibraryCatalogValueSnapshot<'skill-rules'>) => catalog.status === 'ready' && catalog.value
     ? resolveSkillsFirstVisit(items, { rules: catalog.value.rules, decidedAt }) : null,
@@ -39,7 +38,7 @@ export function useSkillsFirstRun(items: readonly SkillListItemV1[]) {
   const [pending, setPending] = React.useState(false);
   const [errorCode, setErrorCode] = React.useState<string | null>(null);
   const inFlight = React.useRef<Promise<boolean> | null>(null);
-  const notNow = React.useCallback(() => getStorage().getState().applyLocalSettings({ skillsFirstRunDecidedAt: Date.now() }, { source: 'ui' }), []);
+  const notNow = React.useCallback(() => capabilityDismissalState.set('skillsFirstRunDecidedAt', Date.now()), []);
   const turnOn = React.useCallback((): Promise<boolean> => {
     if (inFlight.current) return inFlight.current;
     if (!firstVisit || !execution.ready || selectedIds.length === 0) return Promise.resolve(false);
@@ -51,7 +50,7 @@ export function useSkillsFirstRun(items: readonly SkillListItemV1[]) {
         const parsed = SkillsRulesSetOutputV1Schema.safeParse(receipt.result);
         if (!parsed.success) { setErrorCode('invalid_action_output'); return false; }
         if (!parsed.data.ok) { setErrorCode(parsed.data.code); return false; }
-        getStorage().getState().applyLocalSettings({ skillsFirstRunDecidedAt: Date.now() }, { source: 'ui' });
+        capabilityDismissalState.set('skillsFirstRunDecidedAt', Date.now());
         return true;
       } catch (error) {
         setErrorCode(error instanceof Error ? error.message : 'catalog_unavailable'); return false;

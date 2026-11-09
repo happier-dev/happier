@@ -174,7 +174,7 @@ const AuthorizedDirectoryList = React.memo(function AuthorizedDirectoryList(prop
         if (event.entityIds !== undefined
             && !event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)) return;
         void loadSetup();
-    }), [loadSetup, props.scope.serverId]);
+    }, { reconnect: 'refresh' }), [loadSetup, props.scope.serverId]);
 
     const createSource = React.useCallback(async (option: TeamDirectorySourceSetupOptionV1) => {
         if (!props.mutationsAvailable || !projectionCurrent) return;

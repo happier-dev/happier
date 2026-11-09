@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ApiTokenGrantV1 } from '@happier-dev/protocol';
+import type { ApiTokenGrantV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { deriveEmbedAccessFromGrantV1 } from '@happier-dev/protocol/embed';
 
 import {

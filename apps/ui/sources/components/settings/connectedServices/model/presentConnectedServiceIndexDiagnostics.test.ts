@@ -6,9 +6,19 @@ import {
     presentConnectedServiceIndexDiagnosticCopy,
     presentConnectedServiceIndexDiagnostics,
     presentConnectedServiceRegistryReadFailure,
+    presentConnectedServiceRegistryReadState,
 } from './presentConnectedServiceIndexDiagnostics';
 
 describe('Connected service index read diagnostics', () => {
+    it('keeps partial Machine coverage quiet while preserving pending, empty and failed read verdicts', () => {
+        expect(presentConnectedServiceRegistryReadState({ status: 'stale', errorReason: 'partial_machine_failure' })).toBeNull();
+        expect(presentConnectedServiceRegistryReadState({ status: 'error', errorReason: 'partial_machine_failure' })).toBeNull();
+        expect(presentConnectedServiceRegistryReadState({ status: 'loading', errorReason: null })).toBeNull();
+        expect(presentConnectedServiceRegistryReadState({ status: 'ready', errorReason: null })).toBeNull();
+        expect(presentConnectedServiceRegistryReadState({ status: 'error', errorReason: 'transport' })).not.toBeNull();
+        expect(presentConnectedServiceRegistryReadState({ status: 'stale', errorReason: 'malformed' })).not.toBeNull();
+    });
+
     it('keeps a service pending until negotiation and its descriptor read settle, then presents the actual verdict', () => {
         const service = { pluginId: 'acme.service', localId: 'custom-service' };
         const entry: ConnectedServiceRegistryEntry = {
@@ -30,12 +40,24 @@ describe('Connected service index read diagnostics', () => {
         expect(project(settled, 'indeterminate').sheets[0]).toMatchObject({
             statusLine: t('common.loading'), supportDetails: null, canAdd: false,
         });
+        // The reason leads (what is wrong and what to do), never a bare "Blocked".
         expect(project(settled, 'advertised-v4').sheets[0]).toMatchObject({
-            statusLine: t('common.blocked'), supportDetails: expect.any(String), canAdd: false,
+            statusLine: t('connectedServicesSettings.runtimeNotLoaded'), supportDetails: expect.any(String), canAdd: false,
         });
         const available: ConnectedServiceRegistryEntry = { ...settled, executable: true,
             availability: { state: 'available', reason: 'resolved' }, diagnostics: [] };
         expect(project(available, 'advertised-v4').connectable.map(candidate => candidate.service)).toEqual([service]);
+    });
+
+    it('leaves a service that only lacks a machine to run it quiet: the page and the + menu say it once', () => {
+        const entry: ConnectedServiceRegistryEntry = { serviceId: 'gemini',
+            service: { pluginId: 'happier.agent.gemini', localId: 'gemini' },
+            connectCommand: '', supportsOauth: true, executable: false, projectionStatus: 'ready',
+            availability: { state: 'blocked', reason: 'execution_origin_unavailable' }, diagnostics: [] };
+        const result = presentConnectedServiceIndexDiagnostics({ entry });
+        expect(result.primary).toBeNull();
+        // The fact stays available in the service's details.
+        expect(result.supportDetails).toContain(t('common.blocked'));
     });
 
     it('keeps an answered available service usable when its plugin reports an unrelated runtime diagnostic', () => {

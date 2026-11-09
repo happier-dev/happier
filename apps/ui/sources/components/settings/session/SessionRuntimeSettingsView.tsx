@@ -5,7 +5,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { Item } from '@/components/ui/lists/Item';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
-import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { SettingTextInput } from '@/components/settings/shell/SettingTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
 import { t } from '@/text';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -52,12 +52,12 @@ export const SessionRuntimeSettingsView = React.memo(function SessionRuntimeSett
                     {selectedTerminalHost === 'tmux' && <>
                         <SettingAnchor setting={SESSION_RUNTIME_SETTINGS.settings.sessionName}>
                             <FieldItem label={t('profiles.tmuxSession')} supportingText={t('common.optional')}>
-                                <FieldTextInput
+                                <SettingTextInput
                                     testID="settings-session-tmux-name"
                                     accessibilityLabel={t('profiles.tmuxSession')}
                                     placeholder={t('profiles.tmux.sessionNamePlaceholder')}
                                     value={tmuxSessionName}
-                                    onChangeText={(value) => { void setSetting(SESSION_RUNTIME_SETTINGS.settings.sessionName, value); }}
+                                    onCommit={(value) => setSetting(SESSION_RUNTIME_SETTINGS.settings.sessionName, value)}
                                     autoCapitalize="none" monospace
                                 />
                             </FieldItem>
@@ -72,12 +72,13 @@ export const SessionRuntimeSettingsView = React.memo(function SessionRuntimeSett
                         </SettingAnchor>
                         {tmuxIsolated && <SettingAnchor setting={SESSION_RUNTIME_SETTINGS.settings.tmpDir}>
                             <FieldItem label={t('profiles.tmuxTempDir')} supportingText={t('common.optional')}>
-                                <FieldTextInput
+                                <SettingTextInput
                                     testID="settings-session-tmux-tmpdir"
                                     accessibilityLabel={t('profiles.tmuxTempDir')}
                                     placeholder={t('profiles.tmux.tempDirPlaceholder')}
                                     value={tmuxTmpDir ?? ''}
-                                    onChangeText={(value) => { void setSetting(SESSION_RUNTIME_SETTINGS.settings.tmpDir, value.trim().length > 0 ? value : null); }}
+                                    normalize={value => value.trim().length > 0 ? value : ''}
+                                    onCommit={(value) => setSetting(SESSION_RUNTIME_SETTINGS.settings.tmpDir, value || null)}
                                     autoCapitalize="none" monospace
                                 />
                             </FieldItem>

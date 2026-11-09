@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { PluginManifestV2Schema } from '@happier-dev/protocol';
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { PluginDetailScreen } from './PluginDetailScreen';
@@ -105,6 +105,7 @@ vi.mock('../model/usePluginSettingsScreenState', () => ({
         installedPluginsRead: !pluginSettingsState.failed,
         isDaemonSettingsTargetCurrent: () => true,
         isPluginActionInFlight: () => false,
+        pluginActionApproval: { approvalId: null, approvalPending: false, serverId: null, approvalSummary: null },
         pluginProjectionById: {},
         pluginProjectionV2: null,
         pluginTruthSettled: pluginSettingsState.pluginTruthSettled,

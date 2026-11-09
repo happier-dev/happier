@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import type { AuthEntryProjectionV1 } from '@happier-dev/protocol';
+import type { AuthEntryProjectionV1 } from '@happier-dev/protocol/auth/entry';
 import type {
   IdentityConnectionV1,
   TeamIdentityEligibleProviderV1,
@@ -188,7 +188,7 @@ const AuthorizedAuthenticationContent = React.memo(
             isHomeAdministrationAccountChange(event)
           )
             refreshHomeEntry();
-        }),
+        }, { reconnect: 'refresh' }),
       [props.scope.serverId, refreshHomeEntry],
     );
     const currentHomeEntry =

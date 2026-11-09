@@ -47,6 +47,10 @@ const modalState = vi.hoisted(() => ({
     confirmWith: null as null | (() => Promise<boolean>),
     confirms: [] as Array<{ title: string; body: string }>,
     alerts: [] as Array<{ title: string; body: string }>,
+    /** What the person types into the reason prompt; `null` cancels it. */
+    promptResult: 'Impersonation report' as string | null,
+    promptResults: [] as Array<string | null>,
+    prompts: [] as Array<{ title: string; body: string | undefined; defaultValue?: string }>,
 }));
 const routerBack = vi.hoisted(() => vi.fn());
 const announceAccessibilityMessage = vi.hoisted(() => vi.fn());
@@ -80,6 +84,10 @@ installSettingsViewCommonModuleMocks({
             alertAsync: async (title: string, body: string) => {
                 modalState.alerts.push({ title, body });
             },
+            prompt: async (title: string, body?: string, options?: { defaultValue?: string }) => {
+                modalState.prompts.push({ title, body, defaultValue: options?.defaultValue });
+                return modalState.promptResults.length ? modalState.promptResults.shift() : modalState.promptResult;
+            },
         },
     }),
 });
@@ -102,6 +110,9 @@ const ROLE_PATH = '/v1/home/accounts/role/set';
 const DISABLE_PATH = '/v1/home/accounts/disable';
 const DELETE_PATH = '/v1/home/accounts/delete';
 const SIGN_OUT_PATH = '/v1/home/accounts/sign-out-everywhere';
+const RESTRICT_PATH = '/v1/home/public-profiles/ada/restrict';
+const RESTORE_PATH = '/v1/home/public-profiles/ada/restore';
+const RECLAIM_PATH = '/v1/home/public-profiles/ada/handle-reclaim';
 
 /**
  * The answer the Home actually returns from the disable intent: its declared
@@ -179,6 +190,9 @@ beforeEach(async () => {
     modalState.confirmWith = null;
     modalState.confirms = [];
     modalState.alerts = [];
+    modalState.promptResult = 'Impersonation report';
+    modalState.promptResults = [];
+    modalState.prompts = [];
     routerBack.mockReset();
     announceAccessibilityMessage.mockReset();
     sockets.clear();
@@ -763,5 +777,123 @@ describe('HomeAdministrationAccountScreen', () => {
         expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('home-account-delete');
         expect(screen.getTextContent()).toContain('homeGovernance.errorTeamOwnerTransferRequired');
         expect(harness.requestsFor(DELETE_PATH)).toHaveLength(0);
+    });
+    describe('public profile moderation', () => {
+        it('uses the server decision even when the general Home projection grants management', async () => {
+            const home = await addAdministeredHome({ detail: homeAccountDetailFixture('ada', {
+                publicProfile: { managementCapability: { status: 'unavailable', reason: 'not_authorized' }, restricted: false },
+            }) });
+            const screen = await renderAccount(home);
+            const ids = collectRenderedTestIds(screen.tree.toJSON());
+            expect(ids).not.toContain('home-account-public-profile-restrict');
+            expect(ids).not.toContain('home-account-public-profile-restore');
+            expect(ids).not.toContain('home-account-public-profile-reclaim');
+        });
+
+        it('restricts the public profile with the typed reason through the exact Home and refreshes the audit trail', async () => {
+            const home = await addAdministeredHome();
+            harness.answer(home, RESTRICT_PATH, { body: { kind: 'updated', record: null } });
+
+            const screen = await renderAccount(home);
+            expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('home-account-public-profile-restore');
+            expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('home-account-public-profile-reclaim');
+            await screen.pressByTestIdAsync('home-account-public-profile-restrict');
+
+            await waitForHomeGovernance(() => expect(harness.requestsFor(RESTRICT_PATH)).toHaveLength(1));
+            const [request] = harness.requestsFor(RESTRICT_PATH);
+            expect(request?.serverId).toBe(home);
+            // The target Account is the route (`/public-profiles/ada/restrict`); the body carries only the reason.
+            expect(request?.input).toEqual({ reason: 'Impersonation report' });
+            expect(request?.token).toBe(createAccountTokenForTests('account-admin', { currentAccount: true }));
+            expect(harness.requestsFor(RESTORE_PATH)).toHaveLength(0);
+            await waitForHomeGovernance(() => expect(harness.requestsFor(GET_PATH).length).toBeGreaterThan(1));
+        });
+
+        it('restores the public profile with the typed reason', async () => {
+            const home = await addAdministeredHome({ detail: homeAccountDetailFixture('ada', {
+                publicProfile: { managementCapability: { status: 'available' }, restricted: true },
+            }) });
+            harness.answer(home, RESTORE_PATH, { body: { kind: 'updated', record: null } });
+
+            const screen = await renderAccount(home);
+            expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('home-account-public-profile-restrict');
+            modalState.promptResult = '  Reviewed, no violation  ';
+            await screen.pressByTestIdAsync('home-account-public-profile-restore');
+
+            await waitForHomeGovernance(() => expect(harness.requestsFor(RESTORE_PATH)).toHaveLength(1));
+            expect(harness.requestsFor(RESTORE_PATH)[0]?.input).toEqual({ reason: 'Reviewed, no violation' });
+            expect(harness.requestsFor(RESTRICT_PATH)).toHaveLength(0);
+        });
+
+        it('sends nothing when the reason is cancelled or left blank', async () => {
+            const home = await addAdministeredHome();
+            const screen = await renderAccount(home);
+
+            for (const reason of [null, '   ']) {
+                modalState.promptResult = reason;
+                await screen.pressByTestIdAsync('home-account-public-profile-restrict');
+            }
+            await flushHookEffects();
+
+            expect(modalState.prompts).toHaveLength(2);
+            expect(harness.requestsFor(RESTRICT_PATH)).toHaveLength(0);
+        });
+
+        it('hides owner management when the server denies an admin', async () => {
+            const home = await addAdministeredHome({
+                projection: {
+                    viewer: { accountId: 'account-admin', homeRole: 'admin', status: 'active' },
+                    capabilities: { ...homeGovernanceProjectionFixture().capabilities, manageHomeRoles: false },
+                },
+                detail: homeAccountDetailFixture('ada', { homeRole: 'owner', publicProfile: {
+                    managementCapability: { status: 'unavailable', reason: 'not_authorized' }, restricted: false,
+                } }),
+            });
+
+            const screen = await renderAccount(home);
+            const ids = collectRenderedTestIds(screen.tree.toJSON());
+
+            expect(ids).not.toContain('home-account-public-profile-restrict');
+            expect(ids).not.toContain('home-account-public-profile-restore');
+            expect(ids).not.toContain('home-account-public-profile-reclaim');
+        });
+
+        it('reclaims the reviewed exact username with reason and notice through the existing Action', async () => {
+            const home = await addAdministeredHome({ detail: homeAccountDetailFixture('ada', {
+                profile: { ...homeAccountDetailFixture('ada').profile, username: 'reviewed_handle' },
+            }) });
+            harness.answer(home, RECLAIM_PATH, { body: { username: null, reclaimed: true } });
+            modalState.promptResults = ['  Impersonation  ', '  Contact this Home operator to appeal.  '];
+            const screen = await renderAccount(home);
+            await screen.pressByTestIdAsync('home-account-public-profile-reclaim');
+            await waitForHomeGovernance(() => expect(harness.requestsFor(RECLAIM_PATH)).toHaveLength(1));
+            expect(harness.requestsFor(RECLAIM_PATH)[0]).toMatchObject({ serverId: home, input: {
+                username: 'reviewed_handle', reason: 'Impersonation', notice: 'Contact this Home operator to appeal.',
+            } });
+            await waitForHomeGovernance(() => expect(harness.requestsFor(GET_PATH).length).toBeGreaterThan(1));
+        });
+
+        it('keeps reclaim reason and notice after a stale-name refusal and cancels without dispatch', async () => {
+            const home = await addAdministeredHome({ detail: homeAccountDetailFixture('ada', {
+                profile: { ...homeAccountDetailFixture('ada').profile, username: 'reviewed_handle' },
+            }) });
+            harness.answer(home, RECLAIM_PATH, { status: 409, body: { error: 'username-changed' } });
+            const screen = await renderAccount(home);
+            modalState.promptResults = ['Impersonation', 'Contact the operator.'];
+            await screen.pressByTestIdAsync('home-account-public-profile-reclaim');
+            await waitForHomeGovernance(() => expect(modalState.alerts).toHaveLength(1));
+            expect(modalState.alerts[0]?.body).toContain('publicProfileReclaimChangedBody');
+            modalState.promptResults = ['Impersonation', null];
+            await screen.pressByTestIdAsync('home-account-public-profile-reclaim');
+            expect(modalState.prompts.slice(-2).map(prompt => prompt.defaultValue)).toEqual(['Impersonation', 'Contact the operator.']);
+            expect(harness.requestsFor(RECLAIM_PATH)).toHaveLength(1);
+        });
+
+        it('does not infer operator authority from a Home answer without profile facts', async () => {
+            const home = await addAdministeredHome({ detail: homeAccountDetailFixture('ada', { publicProfile: undefined }) });
+            const screen = await renderAccount(home);
+            expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('home-account-public-profile-reclaim');
+            expect(collectRenderedTestIds(screen.tree.toJSON())).not.toContain('home-account-public-profile-restrict');
+        });
     });
 });

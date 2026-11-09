@@ -2,7 +2,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
-import { signAccountContentKeyBindingV1, tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { signAccountContentKeyBindingV1} from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
@@ -23,8 +24,8 @@ import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storage';
 import { encryptDataKeyForRecipientV0 } from '@/sync/encryption/directShareEncryption';
-import { t } from '@/text';
 import { AES256Encryption } from '@/sync/encryption/encryptor';
+import { t } from '@/text';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
 import {
@@ -47,7 +48,6 @@ vi.mock('react-native', async () => {
     });
 });
 
-afterEach(() => {
 
 /** Session `session-1`'s own layout-1 shared metadata, sealed with its key (fill 7) as the Home serves it. */
 const SESSION_1_BOUND_METADATA = {
@@ -55,6 +55,7 @@ const SESSION_1_BOUND_METADATA = {
     metadataLayoutVersion: 1,
 };
 
+afterEach(() => {
     standardCleanup();
     storage.setState(storage.getInitialState(), true);
     resetServerFeaturesClientForTests();
@@ -192,8 +193,8 @@ describe('member encrypted-access state', () => {
             preparedCount: 4,
             skippedCount: 1,
             repairRequiredCount: 1,
-            recipientUnavailableReason: null,
             sessionKeyUnprovenCount: 0,
+            recipientUnavailableReason: null,
             exceptions: {
                 callerEnvelopeRepairRequiredCount: 0,
                 callerVisibleNonTransferableSessionCount: 2,
@@ -213,8 +214,8 @@ describe('member encrypted-access state', () => {
             skippedCount: 0,
             // Nothing failed on this device, which must not erase what the Home reported.
             repairRequiredCount: 0,
-            recipientUnavailableReason: null,
             sessionKeyUnprovenCount: 0,
+            recipientUnavailableReason: null,
             exceptions: {
                 callerEnvelopeRepairRequiredCount: 1,
                 callerVisibleNonTransferableSessionCount: 4,
@@ -227,7 +228,6 @@ describe('member encrypted-access state', () => {
         });
     });
 
-    it('reloads the membership for a replacement Account instead of reporting a failure', () => {
     it('explains Sessions whose served key did not prove it is theirs as history this device cannot share', () => {
         expect(projectTeamMemberPreparationOutcome({
             status: 'incomplete',
@@ -246,6 +246,7 @@ describe('member encrypted-access state', () => {
         });
     });
 
+    it('reloads the membership for a replacement Account instead of reporting a failure', () => {
         // A provider reset keeps the Team-membership id while replacing its Account.
         // Continuing would seal history to the person who left.
         expect(projectTeamMemberPreparationOutcome({
@@ -253,8 +254,8 @@ describe('member encrypted-access state', () => {
             preparedCount: 2,
             skippedCount: 0,
             repairRequiredCount: 0,
-            recipientUnavailableReason: null,
             sessionKeyUnprovenCount: 0,
+            recipientUnavailableReason: null,
             exceptions: null,
         })).toEqual({ kind: 'recipient_changed' });
     });
@@ -265,8 +266,8 @@ describe('member encrypted-access state', () => {
             preparedCount: 0,
             skippedCount: 0,
             repairRequiredCount: 0,
-            recipientUnavailableReason: null,
             sessionKeyUnprovenCount: 0,
+            recipientUnavailableReason: null,
             exceptions: null,
         })).toEqual({ kind: 'membership_changed' });
     });
@@ -277,8 +278,8 @@ describe('member encrypted-access state', () => {
             preparedCount: 0,
             skippedCount: 0,
             repairRequiredCount: 0,
-            recipientUnavailableReason: null,
             sessionKeyUnprovenCount: 0,
+            recipientUnavailableReason: null,
             exceptions: null,
         })).toEqual({ kind: 'checking' });
     });
@@ -289,8 +290,8 @@ describe('member encrypted-access state', () => {
             preparedCount: 0,
             skippedCount: 0,
             repairRequiredCount: 0,
-            recipientUnavailableReason: null,
             sessionKeyUnprovenCount: 0,
+            recipientUnavailableReason: null,
             exceptions: null,
         })).toEqual({ kind: 'failed' });
     });
@@ -301,8 +302,8 @@ describe('member encrypted-access state', () => {
             preparedCount: 0,
             skippedCount: 0,
             repairRequiredCount: 0,
-            recipientUnavailableReason: 'encryption_setup_required',
             sessionKeyUnprovenCount: 0,
+            recipientUnavailableReason: 'encryption_setup_required',
             exceptions: null,
         })).toEqual({ kind: 'setup_required', reason: 'encryption_setup_required' });
     });
@@ -509,8 +510,8 @@ describe('TeamMemberEncryptionSection mounted membership history', () => {
                         new Uint8Array(32).fill(7),
                         encodeBase64(managerKeys.publicKey, 'base64'),
                     ),
-                }],
                     ...SESSION_1_BOUND_METADATA,
+                }],
                 exceptions: {
                     callerEnvelopeRepairRequiredCount: 0,
                     callerVisibleNonTransferableSessionCount: 0,

@@ -79,7 +79,9 @@ export const ActionSettingsTargetModeControl = React.memo(function ActionSetting
     const approvalTabs: readonly SegmentedTab<ActionSettingsApprovalControlValue>[] = state.approvalWaivable
         ? [
             { id: 'off', label: t('settingsActions.modes.off') },
-            { id: 'ask_first', label: t('settingsActions.modes.askFirst') },
+            { id: 'ask_first', label: t('settingsActions.modes.askFirst'),
+                ...(state.approvalPromptUnavailable ? { disabled: true,
+                    unavailableReason: t('settingsActions.targets.foreign_session_html_resources.subtitle') } : {}) },
             { id: 'allowed', label: t('settingsActions.modes.allowed') },
         ]
         : [

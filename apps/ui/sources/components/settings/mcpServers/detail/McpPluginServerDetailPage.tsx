@@ -8,7 +8,7 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { t } from '@/text';
 
 import { usePluginMcpServerItems } from '../collection/usePluginMcpServerItems';
-import { McpServerMark } from '../identity/McpServerMark';
+import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import type { McpSavedSecretAvailability } from '../status/mcpServerStatus';
 import { resolveSavedSecretReference } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import {
@@ -71,7 +71,7 @@ const McpPluginServerDetail = React.memo(function McpPluginServerDetail(
     <ItemList keyboardShouldPersistTaps="handled">
       <CapabilityDetailHeader
         testID="mcp.plugin.header"
-        mark={<McpServerMark transport={server.transport} size={28} />}
+        mark={<HappierBrandMark brand={{ displayName: name }} pixelSize={28} externallyLabelled />}
         title={name}
         purpose={server.description}
         facts={{

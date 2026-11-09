@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ActionExecuteResult } from '@happier-dev/protocol';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { buildEmbedParentGrantV1, type EmbedConfigV1 } from '@happier-dev/protocol/embed';
 
 // Randomness is a genuine system boundary; the controller must send exactly this selector.

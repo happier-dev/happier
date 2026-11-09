@@ -11,7 +11,7 @@ import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import { SettingAnchor, SettingRow } from '@/components/settings/shell/SettingRow';
 import type { SettingRef } from '@/components/settings/catalog/settingDeclarations';
 import { NOTIFICATIONS_SETTINGS } from '@/components/settings/notifications/notificationsSettings';
-import type { DeclaredSettingsWrite } from '@/components/settings/shell/useDeclaredSettingsWrite';
+import type { DeclaredSettingsWrite } from '@/components/settings/shell/useSettingActionFeedback';
 
 type ActivitySurfaceChoice<T extends string | number> = Readonly<{
     value: T;
@@ -19,7 +19,23 @@ type ActivitySurfaceChoice<T extends string | number> = Readonly<{
 }>;
 
 type ActivitySurfacesSettingsSectionProps = Readonly<{
-    localSettings: LocalSettings;
+    localSettings: Pick<LocalSettings,
+        | 'activitySurfacesEnabled'
+        | 'liveActivitiesEnabled'
+        | 'widgetsEnabled'
+        | 'liveActivitiesStrategy'
+        | 'activitySurfaceTapTarget'
+        | 'activitySurfacePrivacyMode'
+        | 'liveActivitiesMode'
+        | 'liveActivitiesMaxConcurrent'
+        | 'liveActivitiesShowPreviewText'
+        | 'liveActivitiesAllowActionButtons'
+        | 'liveActivitiesIncludeReady'
+        | 'liveActivitiesIncludeThinking'
+        | 'widgetsPresetMode'
+        | 'widgetsShowPreviewText'
+        | 'widgetsShowMachinePath'
+    >;
     setSetting: DeclaredSettingsWrite;
     renderMode?: 'all' | 'shared_only';
 }>;

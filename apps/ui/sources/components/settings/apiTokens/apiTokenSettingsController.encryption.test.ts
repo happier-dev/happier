@@ -8,9 +8,10 @@ vi.mock('@/modal', async () => {
 });
 import {
     parseAccountApiTokenCredentialV1,
-    openApiTokenEncryptionAccessV1,
     type AccountApiTokenEncryptionAccessV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/auth/accountApiTokens';
+import {
+    openApiTokenEncryptionAccessV1} from '@happier-dev/protocol/crypto/apiTokenEncryptionAccess';
 import { decodeBase64 } from '@/encryption/base64';
 
 import {

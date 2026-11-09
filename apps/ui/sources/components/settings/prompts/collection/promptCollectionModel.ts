@@ -1,4 +1,5 @@
-import type { PromptFoldersV1, PromptInvocationsV1 } from '@happier-dev/protocol';
+import type { PromptFoldersV1} from '@happier-dev/protocol/prompts/library/promptFoldersV1';
+import type { PromptInvocationsV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
 
 import { classifyArtifactBrowserKind, projectArtifactBrowserTree, type ArtifactBrowserArtifact, type ArtifactBrowserTreeNode } from '@/components/artifacts/artifactBrowserModel';
 import { createHappierCollectionVisitMemory, resolveHappierCollectionInitialKey } from '@happier-dev/plugin-ui/presentation';

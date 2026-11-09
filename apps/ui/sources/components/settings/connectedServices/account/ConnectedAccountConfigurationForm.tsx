@@ -35,6 +35,9 @@ import {
     useConnectedAccountInvalidFieldFocus,
 } from './useConnectedAccountInvalidFieldFocus';
 import { useConnectedAccountDraftNavigationGuard } from './useConnectedAccountDraftNavigationGuard';
+import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import type { ConnectedAccountConfigurationSecretSelections } from './connectedAccountConfigurationDraft';
+import { ConnectedAccountConfigurationSecretField } from './ConnectedAccountConfigurationSecretField';
 
 const stylesheet = StyleSheet.create((theme) => ({
     description: {
@@ -136,6 +139,9 @@ export type ConnectedAccountConfigurationFormProps = Readonly<{
     fields: readonly PluginConfigurationSettingFieldV2[];
     values: Readonly<Record<string, JsonValue>>;
     configuredSecretFieldIds: readonly string[];
+    /** Service-only reference mode. Account and attempt forms retain live inline input. */
+    secretRefs?: Readonly<Record<string, string>>;
+    accountLifetime?: ActiveServerAccountScopeLifetime;
     saving: boolean;
     navigation?: unknown;
     /** In a setup panel: Cancel (local) in the flow's footer. */
@@ -146,12 +152,13 @@ export type ConnectedAccountConfigurationFormProps = Readonly<{
     onSubmit(input: Readonly<{
         values: Readonly<Record<string, PluginJsonValueV2>>;
         secretValues: Readonly<Record<string, string>>;
+        selectedSecrets?: ConnectedAccountConfigurationSecretSelections;
     }>): Promise<boolean | void> | boolean | void;
 }>;
 
 export type ConnectedAccountConfigurationSubmission = Parameters<ConnectedAccountConfigurationFormProps['onSubmit']>[0];
 export type ConnectedAccountConfigurationFieldsProps = Pick<ConnectedAccountConfigurationFormProps,
-    'embedded' | 'localize' | 'fields' | 'values' | 'configuredSecretFieldIds' | 'saving'
+    'embedded' | 'localize' | 'fields' | 'values' | 'configuredSecretFieldIds' | 'secretRefs' | 'accountLifetime' | 'saving'
     | 'guide' | 'guideFieldId'>;
 
 /** Shared controls and parsing for a standalone settings draft or one manual sign-in draft. */
@@ -166,6 +173,7 @@ export function useConnectedAccountConfigurationFields(
         initialDraft
     ));
     const [invalidFieldIds, setInvalidFieldIds] = React.useState<readonly string[]>([]);
+    const [selectedSecrets, setSelectedSecrets] = React.useState<ConnectedAccountConfigurationSecretSelections>({});
 
     const fields = React.useMemo(
         () => [...props.fields]
@@ -182,6 +190,8 @@ export function useConnectedAccountConfigurationFields(
             fields: props.fields,
             draft,
             configuredSecretFieldIds: props.configuredSecretFieldIds,
+            secretRefs: props.secretRefs,
+            selectedSecrets,
         });
         if (!submission.ok) {
             const invalidIds = new Set([
@@ -196,15 +206,17 @@ export function useConnectedAccountConfigurationFields(
         return {
             values: submission.values,
             secretValues: submission.secretValues,
+            ...(submission.selectedSecrets === undefined ? {} : { selectedSecrets: submission.selectedSecrets }),
         };
-    }, [draft, fields, props]);
+    }, [draft, fields, props, selectedSecrets]);
     const discardDraft = React.useCallback(() => {
         setDraft(initialDraft);
         setInvalidFieldIds([]);
+        setSelectedSecrets({});
     }, [initialDraft]);
-    const isDirty = React.useMemo(() => props.fields.some((field) => (
+    const isDirty = React.useMemo(() => Object.keys(selectedSecrets).length > 0 || props.fields.some((field) => (
         JSON.stringify(draft[field.id]) !== JSON.stringify(initialDraft[field.id])
-    )), [draft, initialDraft, props.fields]);
+    )), [draft, initialDraft, props.fields, selectedSecrets]);
     const registerInvalidFieldTarget = useConnectedAccountInvalidFieldFocus({
         invalidFieldIds,
         announcement: t('connectedServices.account.configurationInvalid'),
@@ -226,6 +238,26 @@ export function useConnectedAccountConfigurationFields(
             'connected-account-configuration',
             field.id,
         );
+        if (field.secret === true && props.secretRefs !== undefined) {
+            const selection = selectedSecrets[field.id];
+            return <ConnectedAccountConfigurationSecretField
+                key={field.id}
+                fieldId={field.id}
+                title={title}
+                description={description}
+                secretRef={selection === undefined ? props.secretRefs[field.id] ?? null : selection?.ref ?? null}
+                selection={selection}
+                accountLifetime={props.accountLifetime}
+                disabled={disabled}
+                invalid={invalid}
+                errorId={errorId}
+                registerTarget={registerInvalidFieldTarget}
+                onChange={(next) => {
+                    setSelectedSecrets(current => ({ ...current, [field.id]: next }));
+                    setInvalidFieldIds(current => current.filter(id => id !== field.id));
+                }}
+            />;
+        }
         if (control === 'switch') {
             const value = draft[field.id] === true;
             return (

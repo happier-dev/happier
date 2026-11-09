@@ -2,11 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { createElement } from 'react';
 import {
-    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
-    DEFAULT_ACTIONS_SETTINGS_V1,
+    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import {
+    DEFAULT_ACTIONS_SETTINGS_V1} from '@happier-dev/protocol/account/settings/accountSettings';
+import {
     HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1,
     TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/changes';
 import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { useManagedIdentityProviders } from '@/components/settings/home/identity/useManagedIdentityProviders';
 import { useManagedGitHubApps } from '@/components/settings/home/githubApps/useManagedGitHubApps';

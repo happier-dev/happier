@@ -21,7 +21,7 @@ import { SettingRow } from '@/components/settings/shell/SettingRow';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Icon } from '@/components/ui/icons/Icon';
-import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
@@ -131,8 +131,6 @@ export const HomesDeviceScreen = React.memo(function HomesDeviceScreen() {
                             testID="settings.server.connectionDetails.header"
                             {...state.headerProps}
                             title={t('server.homes.connectionDetails')}
-                            rightElement={<ExpandableItemCaret expanded={state.expanded} />}
-                            showChevron={false}
                         />
                     )}
                 >

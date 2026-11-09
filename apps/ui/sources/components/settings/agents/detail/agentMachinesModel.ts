@@ -78,8 +78,14 @@ function canRun(agent: MachineAgent | null): boolean {
 }
 
 /** Where it is installed first, then where it could be; machines that can't run it, then offline ones (known before unknown), last. */
+/** Both kinds read "Couldn't check this machine". */
+function saysCouldNotCheck(row: AgentMachineRow): boolean {
+  return row.status.kind === 'unknown' || row.status.kind === 'unavailable';
+}
+
 function sortRank(row: AgentMachineRow): number {
-  if (!row.machine.online) return row.agent ? 3 : 4;
+  if (!row.machine.online) return row.agent ? 3 : 5;
+  if (saysCouldNotCheck(row)) return 4;
   if (!canRun(row.agent)) return 2;
   return row.agent?.installed ? 0 : 1;
 }
@@ -135,7 +141,8 @@ export function buildAgentMachineRows(
         : baseStatus;
     const primary = live ? resolveMachineAgentRowAction(agent) : null;
     const actions: AgentMachineAction[] = [];
-    if (machine.online && (inventoryStatus === 'error' || (agent.stale && agent.staleReason === 'error')))
+    // Asking again waits for the answer already on its way: a machine being checked offers no retry.
+    if (machine.online && inventoryStatus !== 'loading' && (inventoryStatus === 'error' || (agent.stale && agent.staleReason === 'error')))
       actions.push({ kind: 'checkAgain' });
     if (pinnedUpdate && (primary === null || primary.kind === 'update'))
       actions.push({ kind: 'update' });
@@ -152,8 +159,25 @@ export function buildAgentMachineRows(
       expandable: live && canRun(agent),
     };
   });
+  // While an online machine's check is still on its way, the order is the machines' own (online before offline):
+  // ranking by answers that are still arriving would reshuffle the list under the person's eyes.
+  const settled = input.machines.every((machine) => {
+    if (!machine.online) return true;
+    const status = input.inventoryStatusByMachineId.get(machine.machineId) ?? 'loading';
+    return status !== 'loading' && status !== 'idle';
+  });
+  const rank = settled ? sortRank : (row: AgentMachineRow) => (row.machine.online ? 0 : 1);
   return rows
     .map((row, index) => ({ row, index }))
-    .sort((a, b) => sortRank(a.row) - sortRank(b.row) || a.index - b.index)
+    .sort((a, b) => rank(a.row) - rank(b.row) || a.index - b.index)
     .map(({ row }) => row);
+}
+
+/**
+ * How many rows the list opens with. Machines with no news wait behind "N more": an offline machine that never reported
+ * this agent, and one that did not answer, whose words would only repeat down the list. At least one row always shows.
+ */
+export function countAgentMachineRowsToShow(rows: readonly AgentMachineRow[]): number {
+  const withNews = rows.filter((row) => (row.machine.online || row.agent !== null) && !saysCouldNotCheck(row)).length;
+  return rows.length === 0 ? 0 : Math.max(1, withNews);
 }

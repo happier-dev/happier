@@ -422,6 +422,7 @@ export function ManagedMachineSections(props: SectionProps) {
                     isCurrent: () => binding.isCurrent() && !interest.signal.aborted,
                 });
                 if (!binding.isCurrent() || interest.signal.aborted) return false;
+                if (!prepared) return false;
                 if (!prepared.ok) {
                     fail(homeDomainFailureCode(homeDomainFailureFromActionFailure(prepared, 'machines.setup.plan')));
                     return false;

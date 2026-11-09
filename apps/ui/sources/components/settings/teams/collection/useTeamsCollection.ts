@@ -26,10 +26,7 @@ export type TeamsCollection = Readonly<{
     visibleActiveRows: readonly TeamsDirectoryRow[];
     visibleArchivedRows: readonly TeamsDirectoryRow[];
     showArchived: boolean;
-    /**
-     * Whether "Show archived" has anything behind it: archived Teams, or an archive a Home could not
-     * read (not known to be empty). A control over an empty set is not offered.
-     */
+    /** Archive browsing is available without first reading the archive. */
     offerArchived: boolean;
     toggleArchived: () => void;
     /** Still being read, as opposed to read and refused. */
@@ -78,9 +75,7 @@ export function useTeamsCollection(options: Readonly<{
         ...(sourceHint ? { serverIds: [sourceHint.serverId] } : {}),
     });
     const createEligibility = useHomeGovernanceEligibilitySnapshots(active.scopes);
-    // The archived query is a separate page sequence with its own ordering. Its first page is read
-    // with the active one, so "Show archived" is only offered when there is something behind it.
-    const archived = useTeamsDirectory({ archived: 'archived', enabled: sourceHint === null });
+    const archived = useTeamsDirectory({ archived: 'archived', enabled: sourceHint === null && showArchived });
     const selected = useTeamBinding(options.selectedAddress?.serverId ?? '', options.selectedAddress?.teamId ?? '');
     const selectedRow = selected.kind === 'bound' && selected.state.kind === 'ready'
         ? { address: selected.address, team: selected.state.team, homeName: selected.homeName }
@@ -138,8 +133,7 @@ export function useTeamsCollection(options: Readonly<{
         const snapshot = createEligibility.snapshotsByServerId.get(scope.serverId);
         return snapshot?.data?.teamsEnabled === true && snapshot.data.createTeam;
     });
-    const offerArchived = archivedRows.length > 0
-        || archived.unavailableHomes.some((home) => home.reason !== 'loading');
+    const offerArchived = sourceHint === null && active.scopes.length > 0;
 
     // Only a current answer from a Home that offers Teams can explain creation.
     const createGuidance = React.useMemo(() => resolveTeamsCreateGuidance({

@@ -44,15 +44,15 @@ const MemberRailRow = React.memo(function MemberRailRow(props: Readonly<{
   const { theme } = useUnistyles();
   const person = resolveAccountDisplayName({ profile: membership.account, accountId: membership.accountId, viewerAccountId: props.viewerAccountId });
   return <Item
+    rowRole="catalogRow"
     testID={`team-members-rail-row:${membership.id}`}
     title={person.name}
     // Suspension leads the rail's one subtitle line instead of squeezing the name with a pill.
     subtitle={membership.status === 'suspended'
       ? `${t('teams.status.suspended')} · ${teamMemberRowSubtitle(membership, person)}`
       : teamMemberRowSubtitle(membership, person)}
-    subtitleLines={1}
     subtitleLeading={membership.status === 'suspended' ? <StatusDot size={6} color={theme.colors.state.warning.foreground} /> : undefined}
-    icon={<HappierCollectionListMark><Avatar id={membership.accountId} size={MEMBER_RAIL_AVATAR_SIZE} imageUrl={membership.account.avatarUrl} /></HappierCollectionListMark>}
+    icon={<HappierCollectionListMark rowRole="catalogRow"><Avatar id={membership.accountId} size={MEMBER_RAIL_AVATAR_SIZE} imageUrl={membership.account.avatarUrl} /></HappierCollectionListMark>}
     selected={props.selected}
     density="compact"
     showChevron={false}

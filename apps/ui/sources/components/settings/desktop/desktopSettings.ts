@@ -1,5 +1,7 @@
 import { defineSettingsPage, settingsHosts } from '@/components/settings/catalog/settingDeclarations';
 import { desktopLoginStartBinding } from './desktopLoginStart';
+import { desktopWindowChromeBinding } from './desktopWindowChromeBinding';
+import { desktopCapturePreferenceBinding } from './desktopCapturePreferenceBinding';
 
 
 /**
@@ -9,6 +11,23 @@ import { desktopLoginStartBinding } from './desktopLoginStart';
 export const DESKTOP_SETTINGS = defineSettingsPage({
     pageId: 'desktop',
     sections: {
+        screenCapture: {
+            titleKey: 'screenCapture.settings.title',
+            host: settingsHosts.tauriDesktop,
+            settings: {
+                captureShortcut: { storage: desktopCapturePreferenceBinding('captureShortcut') },
+                instantWindowShortcut: { storage: desktopCapturePreferenceBinding('instantWindowShortcut') },
+                recordingShortcut: { storage: desktopCapturePreferenceBinding('recordingShortcut') },
+                captureSound: {},
+                captureIncludeWindowText: {},
+                captureIncludeWindowShadow: { storage: desktopCapturePreferenceBinding('includeWindowShadow') },
+                captureFolder: { storage: desktopCapturePreferenceBinding('libraryFolder') },
+            },
+        },
+        window: {
+            host: settingsHosts.desktop,
+            settings: { nativeTitleBar: { storage: desktopWindowChromeBinding } },
+        },
         startup: {
             titleKey: 'settingsDesktop.startupTitle',
             host: settingsHosts.desktop,

@@ -7,6 +7,8 @@ import { useProfilesListModel } from '@/components/profiles/useProfilesListModel
 import { ProfileCompatibilityIcon } from '@/components/sessions/new/components/ProfileCompatibilityIcon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon } from '@/components/ui/icons/Icon';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Item } from '@/components/ui/lists/Item';
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import { t } from '@/text';
@@ -21,6 +23,8 @@ import {
     resolveProfileCollectionSelection,
 } from './profileCollectionRoutes';
 import { useProfilesCollection } from './useProfilesCollection';
+import { profileRailContext, profileRailStatus } from './profileColumnAdapter';
+import { CollectionStatusGlyph } from '@/components/ui/lists/collection/CollectionStatusGlyph';
 import { CollectionDraftRow, CollectionList, CollectionListGroupLabel, collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { HappierCollectionListMark } from '@happier-dev/plugin-ui/presentation';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
@@ -85,7 +89,8 @@ export const ProfileCollectionRail = React.memo(function ProfileCollectionRail()
             testID="settings.profiles.rail"
             title={t('settingsFeatures.profiles')}
             // The machine environment and an open draft are collection choices too.
-            count={collection.isInitialLoading ? undefined : total + 1 + (selection.kind === 'draft' ? 1 : 0)}
+            // Unknown is not zero: a failed first read leaves the count open.
+            count={collection.isInitialLoading || collection.isReadFailed ? undefined : total + 1 + (selection.kind === 'draft' ? 1 : 0)}
             headerAction={(
                 <IconButton
                     testID="settings.profiles.rail.add"
@@ -104,21 +109,29 @@ export const ProfileCollectionRail = React.memo(function ProfileCollectionRail()
             } : null}
         >
             {selection.kind === 'draft' ? <ProfileDraftRow /> : null}
-            {collection.isInitialLoading ? (
-                <Item
-                    testID="settings.profiles.rail.loading"
-                    title={t('common.loading')}
-                    density="compact"
-                    showChevron={false}
-                    mode="info"
+            {/* Saved profiles that never loaded are named once, above the built-in choices that still work. An open
+                profile's own page already explains the same failure and offers Retry, so the rail stays quiet then. */}
+            {collection.isReadFailed ? (
+                <SurfaceStateCard
+                    testID="settings.profiles.rail.readFailed"
+                    size="line"
+                    kind="unavailable"
+                    title={t('profilesPage.listReadFailedTitle')}
+                    action={selection.kind !== 'profile' && collection.retryRead ? {
+                        label: t('common.retry'),
+                        onPress: collection.retryRead,
+                        testID: 'settings.profiles.rail.readFailed.retry',
+                    } : undefined}
                 />
-            ) : sections.length === 0 ? (
-                <Item
-                    testID="settings.profiles.rail.empty"
-                    title={searchable && query.trim() ? t('common.noMatches') : t('profilesPage.emptyTitle')}
-                    density="compact"
-                    showChevron={false}
-                    mode="info"
+            ) : null}
+            {/* Loading and empty are the rail's one quiet line, so the list never shifts when the answer arrives. */}
+            {collection.isInitialLoading || sections.length === 0 ? (
+                <EmptyState
+                    testID={collection.isInitialLoading ? 'settings.profiles.rail.loading' : 'settings.profiles.rail.empty'}
+                    layout="line"
+                    lineLoading={collection.isInitialLoading}
+                    title={collection.isInitialLoading ? t('common.loading')
+                        : searchable && query.trim() ? t('common.noMatches') : t('profilesPage.emptyTitle')}
                 />
             ) : sections.map((section, index) => (
                 <React.Fragment key={section.id}>
@@ -140,17 +153,19 @@ export const ProfileCollectionRail = React.memo(function ProfileCollectionRail()
                     ) : null}
                     {section.profiles.map((profile) => {
                         const enabled = collection.isEnabled(profile);
-                        const status = collection.describeStatus(profile);
-                        const summary = model.describeProfile(profile);
+                        const state = profileRailStatus({ enabled, migration: collection.migrationStatusOf(profile.id) });
+                        const context = profileRailContext(model.describeProfile(profile), model.strings.anyAgentLabel);
                         return (
                             <Item
+                                rowRole="catalogRow"
                                 key={`${section.id}:${profile.id}`}
                                 testID={`settings.profiles.row.${profile.id}`}
                                 title={getProfileDisplayName(profile)}
-                                titleStyle={enabled ? undefined : collectionListStyles.dimmedTitle}
-                                subtitle={status ? `${summary} · ${status}` : summary}
+                                dimmed={!enabled}
+                                subtitle={context}
+                                rightElement={state ? <CollectionStatusGlyph status={state.status} label={state.label} /> : undefined}
                                 icon={(
-                                    <HappierCollectionListMark dimmed={!enabled}>
+                                    <HappierCollectionListMark rowRole="catalogRow" dimmed={!enabled}>
                                         <ProfileCompatibilityIcon profile={profile} backendEntries={model.resolvedBackendEntries} size={24} />
                                     </HappierCollectionListMark>
                                 )}
@@ -179,6 +194,7 @@ const ProfileDraftRow = React.memo(function ProfileDraftRow() {
     const { theme } = useUnistyles();
     return (
         <CollectionDraftRow
+            rowRole="item"
             testID="settings.profiles.rail.draft"
             titles={titles}
             placeholder={t('profilesPage.newProfileTitle')}
@@ -199,11 +215,12 @@ const DefaultEnvironmentRow = React.memo(function DefaultEnvironmentRow(props: R
     const { theme } = useUnistyles();
     return (
         <Item
+            rowRole="catalogRow"
             testID="settings.profiles.row.defaultEnvironment"
             title={t('profiles.noProfile')}
             subtitle={t('profiles.noProfileDescription')}
             icon={(
-                <HappierCollectionListMark>
+                <HappierCollectionListMark rowRole="catalogRow">
                     <Icon name="house" size={20} color={theme.colors.text.secondary} />
                 </HappierCollectionListMark>
             )}

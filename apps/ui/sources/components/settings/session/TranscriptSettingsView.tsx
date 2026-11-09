@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { AccountSettings } from '@happier-dev/protocol';
+import type { AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 import { Icon } from '@/components/ui/icons/Icon';
 
 import { Text } from '@/components/ui/text/Text';
@@ -11,7 +11,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { Switch } from '@/components/ui/forms/Switch';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { TranscriptTemplateSetting } from './TranscriptTemplateSetting';
 import { ChatLinkOpenLocationSetting } from './ChatLinkOpenLocationSetting';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
@@ -75,7 +75,6 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
     const [transcriptMessageMakeRepeatableActionEnabled, setTranscriptMessageMakeRepeatableActionEnabled] = useSettingMutable('transcriptMessageMakeRepeatableActionEnabled');
     const [transcriptMessagePluginActionsEnabled, setTranscriptMessagePluginActionsEnabled] = useSettingMutable('transcriptMessagePluginActionsEnabled');
     const [transcriptMessageSendToSessionEnabled, setTranscriptMessageSendToSessionEnabled] = useSettingMutable('transcriptMessageSendToSessionEnabled');
-    const [transcriptMessageSendToSessionTemplate, setTranscriptMessageSendToSessionTemplate] = useSettingMutable('transcriptMessageSendToSessionTemplate');
     const [transcriptBulkCopyFormat, setTranscriptBulkCopyFormat] = useSettingMutable('transcriptBulkCopyFormat');
 
     const [sessionThinkingDisplayMode] = useSettingMutable('sessionThinkingDisplayMode');
@@ -210,9 +209,6 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
     const selectedThinkingDescription = thinkingDisplayOptions.find((option) => option.id === normalizedThinkingSelectedId)?.subtitle;
 
     const tToolDetail = t as (key: any) => string;
-    const templateValue = typeof transcriptMessageSendToSessionTemplate === 'string' ? transcriptMessageSendToSessionTemplate : '{{MESSAGES}}';
-    const templateMissingPlaceholder = typeof transcriptMessageSendToSessionTemplate === 'string'
-        && !transcriptMessageSendToSessionTemplate.includes('{{MESSAGES}}');
 
     return (
         <ItemList ref={popoverBoundaryRef} style={{ paddingTop: 0 }}>
@@ -578,32 +574,7 @@ export const TranscriptSettingsView = React.memo(function TranscriptSettingsView
                     showChevron={false}
                     onPress={() => setTranscriptMessageSendToSessionEnabled(!(transcriptMessageSendToSessionEnabled === true))}
                 />
-                <SettingRow
-                    testID="settings-session-transcript-message-send-template-field"
-                    setting={TRANSCRIPT_SETTINGS.settings.sendToSessionTemplate}
-                    subtitle={t('settingsSession.transcript.messageActions.template.subtitle')}
-                    subtitleLines={0}
-                    accessoryLayout="stacked"
-                    showChevron={false}
-                    rightElement={(
-                        <View style={{ gap: theme.space.s6 }}>
-                            <FieldTextInput
-                                testID="settings-session-transcript-message-send-template-input"
-                                accessibilityLabel={t('settingsSession.transcript.messageActions.template.title')}
-                                value={templateValue}
-                                onChangeText={setTranscriptMessageSendToSessionTemplate}
-                                placeholder={t('settingsSession.transcript.messageActions.template.placeholder')}
-                                multiline
-                                monospace
-                            />
-                            {templateMissingPlaceholder ? (
-                                <Text style={[styles.templateTip, { color: theme.colors.state.warning.foreground }]}>
-                                    {t('settingsSession.transcript.messageActions.template.warningMissingPlaceholder')}
-                                </Text>
-                            ) : null}
-                        </View>
-                    )}
-                />
+                <TranscriptTemplateSetting tipStyle={styles.templateTip} />
                 <SettingAnchor setting={TRANSCRIPT_SETTINGS.settings.bulkCopyFormat}>
                     <SegmentedChoiceItem<TranscriptBulkCopyFormat>
                         subtitleLines={0}

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { getAgentCore, getAgentStaticModels } from '@happier-dev/agents';
 import { buildBackendTargetKeyV2, type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
 import { PluginBackendExecutionRunCapabilitiesV1Schema } from '@happier-dev/protocol/plugins/backendDefinitionV1';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
@@ -87,7 +87,8 @@ export function useAgentModelChoices(params: Readonly<{
     const { snapshot: acpCatalog } = useAcpCatalogForServer(params.serverId, undefined, { enabled: observing });
     const catalogReady = acpCatalog?.catalog.status === 'ready' && !acpCatalog.stale;
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey') as Record<string, boolean> | undefined;
-    const daemon = useDaemonMergedProjectionInputs({ machineId: params.machineId ?? null, serverId: params.serverId ?? null, enabled: observing && Boolean(params.machineId) });
+    const daemon = useDaemonMergedProjectionInputs({ machineId: params.machineId ?? null, serverId: params.serverId ?? null,
+        sections: ['agentsById'], enabled: observing && Boolean(params.machineId) });
     const entries = React.useMemo(() => getResolvedBackendCatalogEntries({ enabledAgentIds,
         acpCatalogSnapshot: acpCatalog?.catalog, backendEnabledByTargetKey,
         retainedAcpCatalogRecord: acpCatalog?.data,
@@ -95,7 +96,14 @@ export function useAgentModelChoices(params: Readonly<{
         mergedProviderProjectionById: daemon.inputs?.mergedProviderProjectionById,
         mergedBackendProjectionById: daemon.inputs?.mergedBackendProjectionById,
     }), [enabledAgentIds, acpCatalog, backendEnabledByTargetKey, daemon.inputs]);
-    const selected = decodeScmDiffSummaryModelOverride(params.value);
+    const { selected, selectedModelSelection, canonicalSelectedId } = React.useMemo(() => {
+        const selected = decodeScmDiffSummaryModelOverride(params.value);
+        // The stored selector decoder already admitted this exact model reference.
+        const selectedModelSelection: ProviderBoundModelRef | null = selected?.modelSelection ?? null;
+        return { selected, selectedModelSelection,
+            canonicalSelectedId: selected ? encodeScmDiffSummaryModelOverride({ backendTargetKey: selected.backendTargetKey,
+                modelId: selected.modelId, modelSelection: selected.modelSelection }) : params.value };
+    }, [params.value]);
     const catalogValue = params.value || params.observedValue || '';
     const purpose = params.purpose ?? 'walkthrough';
     const [summaryCatalog, setSummaryCatalog] = React.useState<Readonly<{
@@ -148,19 +156,9 @@ export function useAgentModelChoices(params: Readonly<{
     const accountMetadataUnavailable = executableCatalog?.unavailableReason === 'account_metadata_unavailable'
         || [...unavailableTargets.values()].includes('account_metadata_unavailable');
     // Retained choices remain explicit options; a failed read cannot authorize an automatic choice.
-    const catalogInput = { executableProfiles: executableCatalog?.profiles, automaticProfiles: catalogReadFailed ? [] : executableCatalog?.automaticProfiles,
-        discoveryTargetKeys: executableCatalog?.discoveryTargetKeys, probeFailureTargetKeys: [...probeFailures.keys()] };
-    const selectedModelSelection = selected?.backendTargetKey && selected.modelId
-        ? ProviderBoundModelRefSchema.parse({ agentTargetKey: selected.backendTargetKey, providerConnectionId: null, modelId: selected.modelId }) : null;
-    const selectedEntry = entries.find((entry) => {
-        const target = targetFor(entry);
-        return target && buildBackendTargetKeyV2(target) === selected?.backendTargetKey;
-    });
-    const discoveryEntry = entries.find(entry => {
-        const target = targetFor(entry);
-        return target && buildBackendTargetKeyV2(target) === discoveryTargetKey;
-    });
-    const sources = entries.map(entry => {
+    const selectedEntry = entries.find(entry => entry.backendTargetKey === selected?.backendTargetKey);
+    const discoveryEntry = entries.find(entry => entry.backendTargetKey === discoveryTargetKey);
+    const sources = React.useMemo(() => entries.map(entry => {
         const staticModels = getAgentStaticModels(entry.agentId, { catalogOnly: true });
         const capability = entry.capabilities?.executionRun === undefined ? null
             : PluginBackendExecutionRunCapabilitiesV1Schema.safeParse(entry.capabilities.executionRun);
@@ -169,29 +167,36 @@ export function useAgentModelChoices(params: Readonly<{
             selectable: entry.kind !== 'configuredBackend' || catalogReady,
             runnerCapable: capability === null || (capability.success && capability.data.supported),
             discoverable: purpose === 'runner' || entry.kind === 'configuredBackend' || entry === discoveryEntry || entry === selectedEntry || agentFormats?.includes('json') === true };
-    });
-    const initialDefault = projectAgentModelChoices({ purpose, sources, ...catalogInput, selected: selectedModelSelection,
-        defaultBackendTarget: params.defaultBackendTarget, defaultModelTitle: t('agentInput.model.useCliSettings') }).defaultProfile;
-    const defaultEntry = entries.find(entry => {
-        const target = targetFor(entry);
-        return target && buildBackendTargetKeyV2(target) === initialDefault?.modelSelector?.backendTargetKey;
-    });
+    }), [entries, catalogReady, purpose, discoveryEntry, selectedEntry]);
+    // Runner discovery follows the selected target or its explicit default;
+    // finding that target does not need a first full model projection.
+    const defaultTarget = React.useMemo(() => ({ target: params.defaultBackendTarget,
+        key: params.defaultBackendTarget ? buildBackendTargetKeyV2(params.defaultBackendTarget) : null,
+    }), [params.defaultBackendTarget?.backendId, params.defaultBackendTarget?.configuredBackendId, params.defaultBackendTarget?.sourceKind]);
+    const defaultTargetKey = defaultTarget.key;
+    const defaultEntry = entries.find(entry => entry.backendTargetKey === defaultTargetKey);
     const probeEntry = discoveryEntry ?? selectedEntry ?? (!params.value ? defaultEntry : undefined);
-    const probeTarget = probeEntry ? targetFor(probeEntry) : params.defaultBackendTarget;
+    const probeTarget = React.useMemo(() => probeEntry ? targetFor(probeEntry) : defaultTarget.target,
+        [probeEntry, defaultTarget]);
     const probe = useNewSessionPreflightModelsState({ backendTarget: probeTarget,
+        backendTargetKey: probeEntry?.backendTargetKey ?? defaultTargetKey ?? undefined,
         runtimeCarrierAgentId: probeEntry?.agentId, selectedMachineId: params.machineId ?? null,
         capabilityServerId: params.serverId ?? '',
         cwd: params.cwd,
         enabled: purpose === 'runner' && observing && Boolean(params.machineId) && (probeEntry?.kind !== 'configuredBackend' || catalogReady),
     });
-    const projected = projectAgentModelChoices({ purpose, ...catalogInput, selected: selectedModelSelection,
-        defaultBackendTarget: params.defaultBackendTarget, defaultModelTitle: t('agentInput.model.useCliSettings'),
+    const defaultModelTitle = t('agentInput.model.useCliSettings');
+    const projected = React.useMemo(() => projectAgentModelChoices({ purpose,
+        executableProfiles: executableCatalog?.profiles, automaticProfiles: catalogReadFailed ? undefined : executableCatalog?.automaticProfiles,
+        discoveryTargetKeys: executableCatalog?.discoveryTargetKeys,
+        probeFailureTargetKeys: executableCatalog?.probeFailures?.map(failure => failure.backendTargetKey),
+        selected: selectedModelSelection, defaultBackendTarget: defaultTarget.target, defaultModelTitle,
         sources: sources.map(source => {
-            const target = targetFor(source.entry);
-            const key = target ? buildBackendTargetKeyV2(target) : null;
+            const key = source.entry.backendTargetKey;
             const dynamic = key && probe.preflightModelsTargetKey === key ? probe.preflightModels : null;
             return { ...source, models: dynamic?.availableModels ?? source.models };
-        }) });
+        }) }), [purpose, executableCatalog, catalogReadFailed, selectedModelSelection, defaultTarget,
+            defaultModelTitle, sources, probe.preflightModelsTargetKey, probe.preflightModels]);
     const { selections, catalogProfiles, defaultProfile } = projected;
     const discoveryTargets = new Map<string, string>();
     const customModelTargets = new Map<string, string>();
@@ -281,7 +286,7 @@ export function useAgentModelChoices(params: Readonly<{
     const defaultSelection = defaultProfile ? selections.get(defaultProfile.catalogId) : undefined;
     // An unset choice follows the default: it resolves to that row's selection without writing it.
     if (defaultSelection && purpose === 'walkthrough') selections.set('', defaultSelection);
-    const effectiveId = (selected ? encodeScmDiffSummaryModelOverride(selected) : params.value)
+    const effectiveId = canonicalSelectedId
         || (purpose === 'walkthrough' && defaultSelection ? defaultProfile!.catalogId : '');
     const restoredSelection = selections.get(effectiveId);
     if (params.value && restoredSelection) selections.set(params.value, restoredSelection);
@@ -293,6 +298,9 @@ export function useAgentModelChoices(params: Readonly<{
         : t(needsMachine ? 'walkthroughSettings.chooseMachineForModels' : 'walkthroughSettings.noModels');
     return { open, setOpen, emptyLabel, discoveryTargetKey, setDiscoveryTargetKey, selections, discoveryTargets, customModelTargets, items, sections,
         catalogProfiles, defaultProfile, groups: projected.groups,
+        // Absence during an in-flight read is not an observed unavailable selection.
+        ...(purpose === 'walkthrough' ? { catalogStatus: executableCatalog ? 'ready' as const
+            : catalogReadFailed ? 'error' as const : awaitingCatalog ? 'loading' as const : 'idle' as const } : {}),
         selectedItem: items.find(item => item.id === effectiveId), selectionAvailable: selections.has(params.value),
         onRefresh: purpose === 'walkthrough' ? () => setCatalogRefresh(value => value + 1) : probe.probe.onRefresh };
 }

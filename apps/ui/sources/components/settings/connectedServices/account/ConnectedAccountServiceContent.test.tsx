@@ -4,8 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { ConnectedServiceAuthGroupPolicyV1Schema, type PluginConnectedAccountAuthenticationModeV2, type QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
+import { ConnectedServiceAuthGroupPolicyV1Schema} from '@happier-dev/protocol/connect/connected-service-schemas';
+import { type PluginConnectedAccountAuthenticationModeV2} from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
+import { type QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { ConnectedAccountServiceContent } from './ConnectedAccountServiceContent';
+import { QualifiedAccountDetailView } from './QualifiedAccountDetailView';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -103,6 +106,22 @@ const modes = [{
 }] satisfies PluginConnectedAccountAuthenticationModeV2[];
 
 describe('ConnectedAccountServiceContent focused ownership', () => {
+    it('feeds held sign-in provenance and refresh time to the account detail without a credential read', async () => {
+        const authenticationProvenance = { authenticatedAt: 1_000, machine: { serverId: 'home-a', machineId: 'machine-a' } };
+        const held = { ...account, authenticationProvenance, lastRefreshSuccessAt: 2_000 };
+        const screen = await renderContent(<ConnectedAccountServiceContent isControllerCurrent={captureActiveServerAccountScopeCurrentness().isCurrent}
+            title="Acme" service={service} focus={{ kind: 'account', accountId: 'work' }}
+            modes={modes} accounts={[held]} busy={false} />);
+        const facts = screen.findByType(QualifiedAccountDetailView).props;
+        expect(facts.authenticationProvenance).toBe(authenticationProvenance);
+        expect(facts.lastRefreshSuccessAt).toBe(2_000);
+        const old = await renderContent(<ConnectedAccountServiceContent isControllerCurrent={captureActiveServerAccountScopeCurrentness().isCurrent}
+            title="Acme" service={service} focus={{ kind: 'account', accountId: 'work' }}
+            modes={modes} accounts={[account]} busy={false} />);
+        expect(old.findByType(QualifiedAccountDetailView).props.authenticationProvenance).toBeUndefined();
+        expect(old.findByType(QualifiedAccountDetailView).props.lastRefreshSuccessAt).toBeUndefined();
+    });
+
     beforeEach(() => {
         boundary.push.mockClear();
         boundary.replace.mockClear();
@@ -181,7 +200,10 @@ describe('ConnectedAccountServiceContent focused ownership', () => {
             labelsByKey={{ [connectedEntitySubjectKeyV1({ kind: 'group', ...group.ref })]: 'Personal team' }}
         />);
         expect(screen.getTextContent()).toContain('Personal team');
-        await screen.pressByTestIdAsync('connected-services-pool-detail:member:other:active-radio');
+        // Make active is the first action in the member's ⋯ menu.
+        const member = screen.root.findAll((node) => node.props?.testID === 'connected-services-pool-detail:member:other'
+            && typeof node.props?.onMakeActive === 'function')[0]!;
+        await act(async () => { member.props.onMakeActive(); });
         await vi.waitFor(() => expect(setActiveAccount).toHaveBeenLastCalledWith({
             group, account: { service, accountId: 'other' }, overrideRuntimeCooldown: true,
         }));

@@ -1,5 +1,7 @@
 import * as React from 'react';
 import type { PublicProfilePreparedAtmosphereV1 } from '@happier-dev/protocol/account/publicProfileAtmosphere';
+import { PublicProfilePreparedAppearanceV1Schema, type PublicProfileAppearanceV1,
+  type PublicProfilePreparedAppearanceV1 } from '@happier-dev/protocol/account/publicProfilePublication';
 
 import { encodeBase64 } from '@/encryption/base64';
 
@@ -17,6 +19,19 @@ export function preparedPictureCopy(
     data: `data:${mimeType};base64,${base64}`,
     copyId: `prepared-${base64.length}-${base64.slice(-24)}`,
   };
+}
+
+/** Reuse the draft's reviewed edition, including the normalized pixels already read on this device. */
+export function prepareAppliedProfileAppearance(appearance: PublicProfileAppearanceV1 | null,
+  pictureData: string | null): PublicProfilePreparedAppearanceV1 | null {
+  if (!appearance) return null;
+  if (appearance.atmosphere.source !== 'picture') return { theme: appearance.theme, atmosphere: appearance.atmosphere };
+  const content = pictureData?.match(/^data:([^;]+);base64,(.+)$/u);
+  if (!content) return null;
+  const { ref: _ref, ...picture } = appearance.atmosphere.picture;
+  const prepared = PublicProfilePreparedAppearanceV1Schema.safeParse({ theme: appearance.theme,
+    atmosphere: { source: 'picture', picture: { ...picture, content: { mimeType: content[1], base64: content[2] } } } });
+  return prepared.success ? prepared.data : null;
 }
 
 /**

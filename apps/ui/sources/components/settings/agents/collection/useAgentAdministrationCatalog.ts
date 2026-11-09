@@ -18,9 +18,75 @@ import {
     useMachineAdministrationTargetSelection,
     type MachineAdministrationTargetSelectionV1,
 } from '@/sync/domains/machines/administration/useTargetSelection';
+import { areMachineDisplaySemanticsEqual } from '@/sync/domains/machines/machineDisplayRenderable';
 import { t } from '@/text';
 import { describeMachineLockedReason, getMachineSentenceName, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { presentMachineAdministrationTargetState } from '@/components/settings/machines/MachineAdministrationTargetSelector';
+import { PROVIDER_DECLARATION_CONTEXT_SECTIONS } from '@/providers/catalog/accountProviderDeclarations';
+
+function sameCatalogCandidate(left: MachineAdministrationCandidateV1, right: MachineAdministrationCandidateV1): boolean {
+    return left.target.machineId === right.target.machineId
+        && left.target.serverIdentityId === right.target.serverIdentityId
+        && left.displayName === right.displayName
+        && left.displayNameParts?.name === right.displayNameParts?.name
+        && left.displayNameParts?.hint === right.displayNameParts?.hint
+        && left.serverLabel === right.serverLabel
+        && left.availability === right.availability
+        && left.observation === right.observation
+        && left.replacementTarget?.machineId === right.replacementTarget?.machineId;
+}
+
+/**
+ * The Agents catalog reads, of each machine: its identity and labels, whether it is available, its
+ * replacement, its published agent inventory and platform (the display semantics), and the selected
+ * target and its state. It does not read heartbeat clocks (`updatedAt`/`activeAt`, whose presence owner
+ * is separate) or any field outside the display record (daemon state versions and the like). A machine
+ * write that changes none of what is read keeps the previous selection, so the catalog and every row
+ * built from it stay as they are. Operations resolve their target fresh at call time, so retaining the
+ * selection retains no execution authority.
+ */
+export function retainCatalogTargetSelection(
+    previous: MachineAdministrationTargetSelectionV1 | undefined,
+    next: MachineAdministrationTargetSelectionV1,
+): MachineAdministrationTargetSelectionV1 {
+    if (previous === undefined || previous === next) return next;
+    const same = previous.pickerRows.length === next.pickerRows.length
+        && previous.pickerRows.every((row, index) => {
+            const other = next.pickerRows[index]!;
+            return row === other || (row.serverId === other.serverId && row.serverName === other.serverName
+                && sameCatalogCandidate(row.candidate, other.candidate)
+                && areMachineDisplaySemanticsEqual(row.machine, other.machine));
+        })
+        && sameCatalogState(previous.state, next.state)
+        && machineAdministrationTargetsEqualOrBothNull(previous.selectedTarget, next.selectedTarget)
+        && previous.selectedTargetServerMatchesActiveAccount === next.selectedTargetServerMatchesActiveAccount
+        && previous.canExecute === next.canExecute
+        && previous.changeIntent === next.changeIntent;
+    return same ? previous : next;
+}
+
+function sameCatalogState(left: MachineAdministrationTargetSelectionV1['state'], right: MachineAdministrationTargetSelectionV1['state']): boolean {
+    if (left === right) return true;
+    if (left.kind !== right.kind) return false;
+    if (left.kind === 'unselected' && right.kind === 'unselected') {
+        return left.candidates.length === right.candidates.length
+            && left.candidates.every((candidate, index) => sameCatalogCandidate(candidate, right.candidates[index]!));
+    }
+    if (left.kind === 'unselected' || right.kind === 'unselected') return false;
+    const leftCandidate = 'machine' in left ? left.machine : left.snapshot;
+    const rightCandidate = 'machine' in right ? right.machine : right.snapshot;
+    return machineAdministrationTargetsEqual(left.target, right.target)
+        && (leftCandidate === null || rightCandidate === null ? leftCandidate === rightCandidate : sameCatalogCandidate(leftCandidate, rightCandidate))
+        && (left.kind !== 'missing' || (right.kind === 'missing' && left.inventoryKnown === right.inventoryKnown && left.inventoryStatus === right.inventoryStatus))
+        && (left.kind !== 'replaced' || (right.kind === 'replaced' && left.replacementTarget?.machineId === right.replacementTarget?.machineId));
+}
+
+function machineAdministrationTargetsEqualOrBothNull(
+    left: MachineAdministrationTargetSelectionV1['selectedTarget'],
+    right: MachineAdministrationTargetSelectionV1['selectedTarget'],
+): boolean {
+    return left === null || right === null ? left === right : machineAdministrationTargetsEqual(left, right);
+}
 
 /**
  * The machine the Agents pages manage. Agents show a machine's last known state while it is away,
@@ -116,7 +182,9 @@ export function useAgentAdministrationCatalog(options?: Readonly<{
     loadProjection?: boolean;
 }>): AgentAdministrationCatalog {
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
-    const targetSelection = useAgentsAdministrationTargetSelection();
+    const retainedSelection = React.useRef<MachineAdministrationTargetSelectionV1 | undefined>(undefined);
+    const targetSelection = retainCatalogTargetSelection(retainedSelection.current, useAgentsAdministrationTargetSelection());
+    retainedSelection.current = targetSelection;
     const scope = useAgentsMachineScope(targetSelection);
     const { snapshot: acpCatalog } = useAcpCatalogForServer(scope.projectionScope?.serverId
         ?? (targetSelection.selectedTarget === null || targetSelection.selectedTargetServerMatchesActiveAccount
@@ -125,7 +193,9 @@ export function useAgentAdministrationCatalog(options?: Readonly<{
         machineId: scope.projectionScope?.machineId ?? null,
         serverId: scope.projectionScope?.serverId ?? null,
         enabled: scope.projectionScope !== null,
-        load: options?.loadProjection,
+        load: options?.loadProjection !== false && scope.executionTarget !== null,
+        // Agent entries plus the provider declaration context its consumers build.
+        sections: PROVIDER_DECLARATION_CONTEXT_SECTIONS,
     });
     // Same-scope inputs survive refresh and error: they are inert metadata, and every daemon
     // operation stays gated on a live execution target.
@@ -138,14 +208,21 @@ export function useAgentAdministrationCatalog(options?: Readonly<{
         mergedBackendProjectionById: daemonMergedProjectionInputs?.mergedBackendProjectionById ?? null,
     }), [acpCatalog, backendEnabledByTargetKey, daemonMergedProjectionInputs]);
 
-    return {
+    // One object per distinct catalog content, so a re-render that changed none of its parts
+    // does not hand its consumers a new catalog.
+    const { executionTarget, projectionScope, machineLabel } = scope;
+    const declarationProjection = daemonMergedProjectionInputs?.pluginProjectionV2 ?? null;
+    const projectionCurrent = daemonMergedProjection.phase === 'ready';
+    return React.useMemo((): AgentAdministrationCatalog => ({
         targetSelection,
-        executionTarget: scope.executionTarget,
-        projectionScope: scope.projectionScope,
-        machineOnline: scope.executionTarget !== null,
-        machineLabel: scope.machineLabel,
-        projectionCurrent: daemonMergedProjection.phase === 'ready',
-        declarationProjection: daemonMergedProjection.phase === 'ready' ? daemonMergedProjectionInputs?.pluginProjectionV2 ?? null : null,
+        executionTarget,
+        projectionScope,
+        machineOnline: executionTarget !== null,
+        machineLabel,
+        projectionCurrent,
+        // Declarations describe choices, not execution authority. The projection owner already
+        // fences Account/target changes and retains same-scope metadata while a refresh settles.
+        declarationProjection,
         agentEntries,
-    } as const;
+    }), [targetSelection, executionTarget, projectionScope, machineLabel, projectionCurrent, declarationProjection, agentEntries]);
 }

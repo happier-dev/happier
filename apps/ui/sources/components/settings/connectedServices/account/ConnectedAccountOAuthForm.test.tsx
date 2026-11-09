@@ -3,6 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { installSignedOutAuthForTest } from '@/dev/testkit/fixtures/signedOutAuth';
 
 const openExternalUrlMock = vi.hoisted(() => vi.fn(async () => true));
 
@@ -20,13 +21,18 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('@/utils/url/openExternalUrl', () => ({ openExternalUrl: openExternalUrlMock }));
 
+await import('@/sync/ops/actions/defaultActionExecutor');
+
 describe('ConnectedAccountOAuthForm', () => {
-    beforeEach(() => {
+    let restoreAuth: () => void;
+    beforeEach(async () => {
+        restoreAuth = installSignedOutAuthForTest();
         openExternalUrlMock.mockReset();
         openExternalUrlMock.mockResolvedValue(true);
     });
 
     afterEach(async () => {
+        restoreAuth();
         const { clearActiveUnsavedChangesGuard } = await import('@/utils/navigation/runGuardedNavigation');
         clearActiveUnsavedChangesGuard();
     });

@@ -260,7 +260,8 @@ describe('ActionsSettingsView', () => {
     expect(
       renderedProps(Item).every((item) =>
         String(item.testID).startsWith('settings-actions:action:')
-        || String(item.testID).startsWith('settings-actions:related:'),
+        || String(item.testID).startsWith('settings-actions:related:')
+        || String(item.testID).startsWith('settings-actions:approval-profile:'),
       ),
     ).toBe(true);
   });

@@ -1,15 +1,17 @@
 import * as React from 'react';
-import { RegistryShelf, RegistryShelfAddControl, registryShelfCardKey, registryShelfProjection } from '@/components/capabilities/add/RegistryShelf';
+import { RegistryShelf, RegistryShelfAddControl, registryShelfCardKey, registryShelfProjection, resolveRegistryShelfUnavailable } from '@/components/capabilities/add/RegistryShelf';
 import type { RegistryItemSummaryV1 } from '@happier-dev/protocol/registries';
 import { findHeldSkillV1, type SkillListItemV1 } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { useRegistrySources } from '@/registries/useRegistrySources';
+import { SkillMark } from './SkillKindGlyph';
 import type { SkillsLibrary } from '@/sync/domains/skills/useSkillsLibrary';
+import type { useRegistrySuggestions } from '@/registries/useRegistrySuggestions';
 import { installSkills, retrySkillInstall, describeSkillInstallIncomplete, type SkillInstallAcknowledgment } from './add/skillInstall';
 import { useOpenSkillAddModal } from './add/useOpenSkillAddModal';
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useSkillSourceNames } from './useSkillSourceNames';
 import { skillHref } from './skillsCollectionModel';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -40,19 +42,19 @@ function inLibrary(
  * first page of the first built-in source this host reads directly) as three cards with Add. No items, no
  * shelf: never an empty one.
  */
+/** The card carries the skill's one mark, the same as its column row and Store listing (X3). */
+const skillShelfGlyph = (card: ShelfCard) => <SkillMark brand={card.brandMark} />;
+
 export const SkillsRegistryShelf = React.memo(function SkillsRegistryShelf(
   props: Readonly<{
     library: SkillsLibrary;
-    shelf: Readonly<{
-      items: readonly ShelfCard[];
-      sourceId: string | null;
-      loading: boolean;
-    }>;
+    shelf: Pick<ReturnType<typeof useRegistrySuggestions>,
+      'items' | 'sourceId' | 'loading' | 'error' | 'status' | 'sourceFailures' | 'refresh'>;
     brandNew: boolean;
   }>,
 ) {
   const { library, shelf } = props;
-  const sources = useRegistrySources('skill');
+  const sourceNameFor = useSkillSourceNames();
   const { execute } = useMountedActionExecution(
     library.scope?.serverId ?? null,
   );
@@ -63,10 +65,12 @@ export const SkillsRegistryShelf = React.memo(function SkillsRegistryShelf(
     () => shelf.items.slice(0, SHELF_SIZE),
     [shelf.items],
   );
-  const sourceTitle =
-    sources.sources.find((source) => source.id === shelf.sourceId)?.title ??
-    null;
+  const sourceTitle = shelf.sourceId ? sourceNameFor({ sourceId: shelf.sourceId }) : undefined;
   const { retry } = library;
+  const unavailable = React.useMemo(
+    () => resolveRegistryShelfUnavailable(shelf, (sourceId) => sourceNameFor({ sourceId })),
+    [shelf, sourceNameFor],
+  );
   // "Browse all" opens the same Add modal on Browse, on the registry these cards came from.
   const openAdd = useOpenSkillAddModal();
   const router = useRouter();
@@ -115,9 +119,9 @@ export const SkillsRegistryShelf = React.memo(function SkillsRegistryShelf(
     (card: ShelfCard) =>
       card.publisher?.name ??
       repositoryLabel(card.links?.repository) ??
-      sourceTitle ??
-      card.sourceId,
-    [sourceTitle],
+      sourceNameFor(card) ??
+      t('common.unavailable'),
+    [sourceNameFor],
   );
   const action = React.useCallback(
     (card: ShelfCard) => {
@@ -161,7 +165,9 @@ export const SkillsRegistryShelf = React.memo(function SkillsRegistryShelf(
         : {})}
       items={cards}
       loading={shelf.loading}
+      {...(unavailable ? { unavailable } : {})}
       where={where}
+      glyph={skillShelfGlyph}
       action={action}
       onOpen={open}
       columnTitle={t('capabilities.skills.title')}

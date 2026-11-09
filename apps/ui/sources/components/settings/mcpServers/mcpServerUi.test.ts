@@ -37,11 +37,13 @@ describe('formatDetectedWarning', () => {
         ({ formatDetectedWarning } = await import('./mcpServerUi'));
     });
 
-    it('omits the agent segment for a detection warning that no agent owns instead of rendering an undefined agent', () => {
+    it('says what went wrong in words, naming the Agent only when one owns the warning, never its raw code', () => {
         expect(formatDetectedWarning({ code: 'unsupported', path: 'plugin:config' }))
-            .toBe('unsupported \u00b7 plugin:config');
+            .toBe('tx:capabilities.mcpFound.warningUnsupportedNoAgent \u00b7 plugin:config');
         expect(formatDetectedWarning({ provider: 'gemini', code: 'parse_failed' }))
-            .toBe('gemini \u00b7 parse_failed');
+            .toBe('tx:capabilities.mcpFound.warningParseFailed');
+        expect(formatDetectedWarning({ provider: 'codex', code: 'read_failed', detail: 'Plugin MCP discovery timed out' }))
+            .toBe('tx:capabilities.mcpFound.warningReadFailed \u00b7 Plugin MCP discovery timed out');
     });
 });
 

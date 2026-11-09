@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol';
+import type { AccountApiTokenSummaryV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { buildEmbedParentGrantV1, deriveEmbedAccessFromGrantV1 } from '@happier-dev/protocol/embed';
 
 import {

@@ -1,4 +1,4 @@
-import type { SystemTaskResult } from '@happier-dev/protocol';
+import type { SystemTaskResult } from '@happier-dev/protocol/system/tasks/spec';
 import { removeServerProfileUiAction } from '@/components/serverProfiles/removeServerProfileUiAction';
 import { listServerProfiles, retirePersonalHomeBootstrapCompletion } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';

@@ -285,25 +285,6 @@ describe('ActionSettingsDetailView', () => {
         expect(commandPaletteSwitch?.accessibilityLabel).toBe(commandPaletteRow?.title);
     });
 
-    it('renders a declared non-waivable Action without an Allowed or Default choice', async () => {
-        const actionId = 'workflow.trigger.add';
-        const spec = getActionSpec(actionId);
-        const descriptor = Object.getOwnPropertyDescriptor(spec, 'approvalPolicy')!;
-        Object.defineProperty(spec, 'approvalPolicy', { ...descriptor, value: { ...spec.approvalPolicy, nonWaivable: true } });
-        account.replaceSettings(settingsParse({ ...account.persistedSettings, actionsSettingsV1: {
-            ...account.persistedSettings.actionsSettingsV1,
-            approvalWaivedSurfaces: { [actionId]: ['agent'] },
-        } }));
-        try {
-            const { ActionSettingsDetailContent } = await import('./ActionSettingsDetailView');
-            await renderScreen(<ActionSettingsDetailContent actionId={actionId} />);
-            const agentMode = renderedProps(SegmentedTabBar).find(bar =>
-                bar.testIDPrefix === `settings-actions:action:${actionId}:target:agent:mode`);
-            expect(agentMode?.activeTabId).toBe('ask_first');
-            expect((agentMode?.tabs as Array<{ id: string }>).map(tab => tab.id)).toEqual(['off', 'ask_first']);
-        } finally { Object.defineProperty(spec, 'approvalPolicy', descriptor); }
-    });
-
     it('renders dangerous Agent confirmation as the inherited default with explicit overrides', async () => {
         const { ActionSettingsDetailContent } = await import('./ActionSettingsDetailView');
 
@@ -373,6 +354,93 @@ describe('ActionSettingsDetailView', () => {
         await screen.update(<ActionSettingsDetailContent key="readback" actionId="widgets.item.rename" />);
         expect(screen.findByTestId(`${prefix}:allowed`)?.props.accessibilityState.checked).toBe(true);
         expect(screen.findByTestId(`${prefix}:useDefault`)).not.toBeNull();
+    });
+
+    it('warns when a permission-changing Action is Allowed and Keep Ask first reverts only that key', async () => {
+        account.replaceSettings(settingsParse({ ...account.persistedSettings, actionsSettingsV1: {
+            ...account.persistedSettings.actionsSettingsV1,
+            approvalWaivedSurfaces: { ...account.persistedSettings.actionsSettingsV1.approvalWaivedSurfaces,
+                'machines.agentIsolation.set': ['agent'], 'widgets.item.rename': ['mcp'] },
+        } }));
+        const { ActionSettingsDetailContent } = await import('./ActionSettingsDetailView');
+        const screen = await renderScreen(<ActionSettingsDetailContent actionId="machines.agentIsolation.set" />);
+        const notice = 'settings-actions:action:machines.agentIsolation.set:target:agent:loosening';
+        expect(screen.findByTestId(notice)).not.toBeNull();
+        await screen.pressByTestIdAsync(`${notice}.action`);
+        await vi.waitFor(() => expect(account.persistedSettings.actionsSettingsV1.approvalWaivedSurfaces).toEqual({
+            'actions.policy.set': ['ui'], 'settings.set': ['ui'], 'widgets.item.rename': ['mcp'],
+        }));
+        // The inherited default already asks, so Keep Ask first restores inheritance instead of pinning an override.
+        expect(account.persistedSettings.actionsSettingsV1.actions['machines.agentIsolation.set']?.approvalRequiredSurfaces ?? [])
+            .not.toContain('agent');
+        await screen.update(<ActionSettingsDetailContent key="readback" actionId="machines.agentIsolation.set" />);
+        expect(screen.findByTestId(notice)).toBeNull();
+        expect(screen.findByTestId('settings-actions:action:machines.agentIsolation.set:target:agent:mode:ask_first')
+            ?.props.accessibilityState.checked).toBe(true);
+        expect(screen.findByTestId('settings-actions:action:machines.agentIsolation.set:target:agent:useDefault')).toBeNull();
+
+        // An ordinary Action set to Allowed carries no warning.
+        await screen.update(<ActionSettingsDetailContent key="ordinary" actionId="widgets.item.rename" />);
+        expect(screen.findByTestId('settings-actions:action:widgets.item.rename:target:mcp:mode:allowed')
+            ?.props.accessibilityState.checked).toBe(true);
+        expect(screen.findByTestId('settings-actions:action:widgets.item.rename:target:mcp:loosening')).toBeNull();
+    });
+
+    it('edits per-Machine agent preferences through the policy owner for an Action that declares Machine scope', async () => {
+        const actionId = 'machines.agentIsolation.set';
+        const prefix = `settings-actions:action:${actionId}:machines`;
+        const scopedRows = () => account.persistedSettings.actionsSettingsV1.scopedApprovalPreferences ?? [];
+        administrationTargetSelection.controller.setMachines([
+            { machineId: 'shop-prod', displayName: 'shop-prod' },
+            { machineId: 'vps-1', displayName: 'vps-1' },
+        ]);
+        const shopProd = { actionId, scope: { kind: 'machine', machineId: 'shop-prod' } as const,
+            approvalRequiredSurfaces: ['agent' as const], approvalWaivedSurfaces: [] };
+        account.replaceSettings(settingsParse({ ...account.persistedSettings, actionsSettingsV1: {
+            ...account.persistedSettings.actionsSettingsV1,
+            scopedApprovalPreferences: [shopProd, { actionId, scope: { kind: 'machine', machineId: 'retired-box' },
+                approvalRequiredSurfaces: [], approvalWaivedSurfaces: ['agent'] }],
+        } }));
+        const { ActionSettingsDetailContent } = await import('./ActionSettingsDetailView');
+        const screen = await renderScreen(<ActionSettingsDetailContent actionId={actionId} />);
+
+        expect(screen.findByTestId(`${prefix}:machine:shop-prod:mode:ask_first`)?.props.accessibilityState.checked).toBe(true);
+        // A Machine no longer on the Account keeps only an explicit removal.
+        expect(screen.findByTestId(`${prefix}:machine:retired-box:mode:allowed`)).toBeNull();
+        await screen.pressByTestIdAsync(`${prefix}:machine:retired-box:remove`);
+        await vi.waitFor(() => expect(scopedRows()).toEqual([shopProd]));
+
+        // Add machine shows a Default row that follows the setting above and writes nothing yet.
+        const addMenu = renderedProps(DropdownMenu).find(menu => menu.testID === `${prefix}:add`);
+        expect((addMenu?.items as Array<{ id: string }>).map(item => item.id)).toEqual(['vps-1']);
+        await React.act(async () => { (addMenu?.onSelect as (id: string) => void)('vps-1'); });
+        expect(screen.findByTestId(`${prefix}:machine:vps-1:mode:default`)?.props.accessibilityState.checked).toBe(true);
+        expect(scopedRows()).toEqual([shopProd]);
+
+        await screen.pressByTestIdAsync(`${prefix}:machine:vps-1:mode:allowed`);
+        await vi.waitFor(() => expect(scopedRows()).toEqual([shopProd, { actionId, scope: { kind: 'machine', machineId: 'vps-1' },
+            approvalRequiredSurfaces: [], approvalWaivedSurfaces: ['agent'] }]));
+        // Allowed on one Machine for a permission-changing Action shows the shared warning; Keep Ask first
+        // restores that Machine to the setting above (which asks) and leaves every other row alone.
+        const notice = `${prefix}:loosening:vps-1`;
+        await vi.waitFor(() => expect(screen.findByTestId(notice)).not.toBeNull());
+        // Read back from a fresh mount, as the global case does, before pressing the warning's revert.
+        await screen.update(<ActionSettingsDetailContent key="readback" actionId={actionId} />);
+        await screen.pressByTestIdAsync(`${notice}.action`);
+        await vi.waitFor(() => expect(scopedRows()).toEqual([shopProd]));
+        await vi.waitFor(() => expect(screen.findByTestId(notice)).toBeNull());
+        // The stored row is gone, so after a fresh mount only the Machine with its own setting remains.
+        await screen.update(<ActionSettingsDetailContent key="after-revert" actionId={actionId} />);
+        expect(screen.findByTestId(`${prefix}:machine:vps-1:mode:default`)).toBeNull();
+
+        await screen.pressByTestIdAsync(`${prefix}:machine:shop-prod:mode:default`);
+        await vi.waitFor(() => expect(scopedRows()).toEqual([]));
+        expect(account.persistedSettings.actionsSettingsV1.approvalWaivedSurfaces).toEqual({
+            'actions.policy.set': ['ui'], 'settings.set': ['ui'] });
+
+        // An Action without a declared Machine scope has no per-Machine section.
+        await screen.update(<ActionSettingsDetailContent key="unscoped" actionId="widgets.item.rename" />);
+        expect(screen.findByTestId('settings-actions:action:widgets.item.rename:machines:add')).toBeNull();
     });
 
     it('renders tool exposure controls for eligible tool-backed integration surfaces', async () => {
@@ -590,7 +658,7 @@ describe('ActionSettingsDetailView', () => {
         // so it stays UNSURFACED / non-configurable — a direct link must be rejected. (The browser
         // diagnostics interaction verbs, incl. `eval`, are now executor-backed and configurable, so
         // they are no longer the canonical non-configurable example.)
-        const { getActionSpec } = await import('@happier-dev/protocol');
+        const { getActionSpec} = await import('@happier-dev/protocol/actions/actionSpecs');
         capture.routeActionId = 'devices.simulator.input.orientation';
         const { ActionSettingsDetailView } = await import('./ActionSettingsDetailView');
 

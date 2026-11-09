@@ -1,21 +1,16 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { formatRecoveryKeyForDisplay, maskRecoveryKeyForDisplay } from '@/auth/recovery/secretKeyBackup';
-import { IconButton } from '@/components/ui/buttons/IconButton';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
+import { SecretValueControls, SecretValueText } from '@/components/ui/copy/SecretValueDisclosure';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import type { FocusReturnTarget } from '@/keyboard/focusReturn';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 
 import { useRecoveryKeyDisclosure, type RecoveryKeySource } from './useRecoveryKeyDisclosure';
 
@@ -50,6 +45,7 @@ export const AccountRecoveryKeyItem = React.memo(function AccountRecoveryKeyItem
     const { withRecoveryKey } = useRecoveryKeyDisclosure(props.recoveryEmail, triggerRef, props.source);
     const [revealed, setRevealed] = React.useState<string | null>(null);
     const copyFeedback = useHappierCopyFeedback();
+    const writeClipboard = useClipboardWrite();
     const prefix = props.testIDPrefix ?? 'settings-account-recovery-key';
 
     // A different Account (or none) never inherits a key revealed for the previous one.
@@ -65,13 +61,13 @@ export const AccountRecoveryKeyItem = React.memo(function AccountRecoveryKeyItem
 
     const copy = React.useCallback(() => {
         withRecoveryKey(async (secret) => {
-            if (!await setClipboardStringSafe(takeDisplayForm(secret))) {
+            if (!await writeClipboard(takeDisplayForm(secret))) {
                 Modal.alert(t('common.error'), t('settingsAccount.secretKeyCopyFailed'));
                 return;
             }
             copyFeedback.markCopied();
         });
-    }, [copyFeedback, withRecoveryKey]);
+    }, [copyFeedback, withRecoveryKey, writeClipboard]);
 
     return (
         <Item
@@ -79,16 +75,13 @@ export const AccountRecoveryKeyItem = React.memo(function AccountRecoveryKeyItem
             icon={<Icon name="key" size={18} color={theme.colors.text.secondary} />}
             title={t('settingsAccount.secretKey')}
             subtitle={(
-                <Text
+                <SecretValueText
                     testID={`${prefix}-value`}
-                    style={styles.key}
-                    selectable={revealed !== null}
-                    // The masked form is only a shape; the revealed key wraps so it can be read whole.
-                    numberOfLines={revealed ? undefined : 1}
-                    accessibilityLabel={revealed ? undefined : t('settingsAccount.backupDescription')}
-                >
-                    {revealed ?? MASKED_RECOVERY_KEY}
-                </Text>
+                    revealed={revealed}
+                    mask={MASKED_RECOVERY_KEY}
+                    maskedAccessibilityLabel={t('settingsAccount.backupDescription')}
+                    selectable
+                />
             )}
             accessibilityHint={t('settingsAccount.backupDescription')}
             mode="info"
@@ -96,45 +89,18 @@ export const AccountRecoveryKeyItem = React.memo(function AccountRecoveryKeyItem
             showDivider={props.showDivider}
             rightElementOutsidePressable
             rightElement={(
-                <View style={styles.actions}>
-                    <IconButton
-                        testID={`${prefix}-reveal`}
-                        accessibilityLabel={revealed ? t('settingsAccount.hideRecoveryKey') : t('settingsAccount.showRecoveryKey')}
-                        tooltip={revealed ? t('settingsAccount.hideRecoveryKey') : t('settingsAccount.showRecoveryKey')}
-                        iconName={revealed ? 'eye-slash' : 'eye'}
-                        variant="plain"
-                        onPress={toggleReveal}
-                    />
-                    {copyFeedback.isCopied() ? (
-                        <CopiedPill visible testID={`${prefix}-copied`} />
-                    ) : (
-                        <RoundButton
-                            testID={`${prefix}-copy`}
-                            controlRef={(node) => { triggerRef.current = node; }}
-                            size="small"
-                            display="secondary"
-                            title={t('common.copy')}
-                            accessibilityLabel={`${t('common.copy')}: ${t('settingsAccount.secretKey')}`}
-                            onPress={copy}
-                        />
-                    )}
-                </View>
+                <SecretValueControls
+                    testIDPrefix={prefix}
+                    revealed={revealed !== null}
+                    revealLabel={t('settingsAccount.showRecoveryKey')}
+                    hideLabel={t('settingsAccount.hideRecoveryKey')}
+                    onToggleReveal={toggleReveal}
+                    onCopy={copy}
+                    copied={copyFeedback.isCopied()}
+                    copyAccessibilityLabel={`${t('common.copy')}: ${t('settingsAccount.secretKey')}`}
+                    copyControlRef={(node) => { triggerRef.current = node; }}
+                />
             )}
         />
     );
 });
-
-const styles = StyleSheet.create((theme) => ({
-    key: {
-        ...Typography.mono(),
-        fontSize: 12.5,
-        lineHeight: 18,
-        letterSpacing: 0.5,
-        color: theme.colors.text.secondary,
-    },
-    actions: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s6,
-    },
-}));

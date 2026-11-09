@@ -221,6 +221,7 @@ vi.mock('../model/usePluginSettingsScreenState', () => ({
         installedPluginById: fixture.installedPluginById,
         installedPlugins: [...fixture.installedPluginById.values()],
         isPluginActionInFlight: () => false,
+        pluginActionApproval: { approvalId: null, approvalPending: false, serverId: null, approvalSummary: null },
         isDaemonSettingsTargetCurrent: () => true,
         administrationTargetSelection: { ...administrationTargetSelection, candidates },
         pluginProjectionById: {},

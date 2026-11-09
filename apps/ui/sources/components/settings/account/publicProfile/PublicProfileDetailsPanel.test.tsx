@@ -68,11 +68,9 @@ describe('PublicProfileDetailsPanel', () => {
       bio: 'Building Happier.',
       links: [{ label: 'leeroy.dev', url: 'https://leeroy.dev/' }],
     });
-    // Bio is off by default in Public data, so the panel does not pretend visitors will read it.
-    expect(screen.getTextContent()).toContain(
-      t('publicIdentity.details.notShared', {
-        item: t('publicIdentity.publicData.fields.bio'),
-      }),
-    );
+    // Bio and Links are off by default in Public data (Photo is on): one line says so, never one per row.
+    const items = ['bio', 'links'].map((field) => t(`publicIdentity.publicData.fields.${field as 'bio'}`)).join(', ');
+    expect(screen.getTextContent()).toContain(t('publicIdentity.details.notSharedMany', { items }));
+    expect(screen.getTextContent()).not.toContain(t('publicIdentity.details.notShared', { item: t('publicIdentity.publicData.fields.bio') }));
   });
 });

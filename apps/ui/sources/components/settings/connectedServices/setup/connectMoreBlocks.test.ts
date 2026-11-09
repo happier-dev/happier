@@ -34,14 +34,17 @@ describe('selectConnectMoreOffer', () => {
     const keyed = entry('anthropic', { connectedCount: 1 });
     const github = entry('github', { section: 'tools', usedBy: [], usedByAgentIds: [] });
 
-    it('offers, on the page, the agents’ services nobody connected and nobody set aside, and browses the rest', () => {
+    it('keeps connected agent services available for another account with their count, respecting dismissals and availability', () => {
+        const unavailable = entry('unavailable', { canAdd: false, connectedCount: 2 });
         const offer = selectConnectMoreOffer({
             layout: 'section',
-            catalog: [claude, gemini, keyed, github],
-            connectableKeys: new Set(['claude', 'gemini']),
+            catalog: [claude, gemini, keyed, github, unavailable],
             hidden: new Set(['connect:gemini']),
         });
-        expect(offer.offered.map((candidate) => candidate.serviceKey)).toEqual(['claude']);
+        expect(offer.offered.map(({ serviceKey, connectedCount }) => ({ serviceKey, connectedCount }))).toEqual([
+            { serviceKey: 'claude', connectedCount: 0 },
+            { serviceKey: 'anthropic', connectedCount: 1 },
+        ]);
         expect(offer.browse).toBe(true);
     });
 
@@ -56,7 +59,6 @@ describe('selectConnectMoreOffer', () => {
         const offer = selectConnectMoreOffer({
             layout: 'firstRun',
             catalog: [...featured, openai, anthropic, github],
-            connectableKeys: new Set(['claude', 'chatgpt', 'gemini', 'openai', 'anthropic']),
             hidden: new Set(),
         });
         expect(offer.offered.map((candidate) => candidate.serviceKey)).toEqual(['claude', 'chatgpt', 'gemini']);
@@ -67,7 +69,6 @@ describe('selectConnectMoreOffer', () => {
         const offer = selectConnectMoreOffer({
             layout: 'section',
             catalog: [claude],
-            connectableKeys: new Set(['claude']),
             hidden: new Set(),
         });
         expect(offer.offered).toEqual([claude]);

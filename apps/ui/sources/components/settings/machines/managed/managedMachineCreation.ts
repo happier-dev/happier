@@ -313,6 +313,10 @@ export async function runManagedMachineCreation(input: Readonly<{
                 homeId: machine.homeId, machineId: enrolledMachineId,
                 preset: { ...machine.preset, setup: machine.machineSetup.setup }, isCurrent: current });
             if (!current()) return fail('continuation_retired');
+            if (!prepared) {
+                input.onProgress({ kind: 'idle' });
+                return { kind: 'pending', managedId: machine.id };
+            }
             if (!prepared.ok) return fail(homeDomainFailureCode(homeDomainFailureFromActionFailure(prepared)));
             actionInput = prepared.input;
         }

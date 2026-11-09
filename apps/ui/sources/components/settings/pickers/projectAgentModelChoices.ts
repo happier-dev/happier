@@ -46,7 +46,7 @@ export function projectAgentModelChoices(params: Readonly<{
     const groups = params.sources.flatMap(source => {
         const target = readAgentModelChoiceTarget(source.entry);
         if (!target || params.purpose === 'runner' && !source.runnerCapable) return [];
-        const targetKey = buildBackendTargetKeyV2(target);
+        const targetKey = source.entry.backendTargetKey;
         const models = [...source.models];
         if (params.purpose === 'runner') {
             if (!models.some(model => model.id === 'default')) models.unshift({ id: 'default', name: params.defaultModelTitle });
@@ -55,7 +55,7 @@ export function projectAgentModelChoices(params: Readonly<{
         }
         const profiles = params.purpose === 'walkthrough'
             ? (params.executableProfiles ?? []).filter(profile => profile.modelSelector?.backendTargetKey === targetKey)
-            : buildScmDiffSummaryModelProfiles({ backendTarget: target, models, catalogModels: source.catalogModels, agentFormats: source.agentFormats });
+            : buildScmDiffSummaryModelProfiles({ backendTarget: source.entry.backendTarget, models, catalogModels: source.catalogModels, agentFormats: source.agentFormats });
         const discoverable = params.purpose === 'walkthrough' ? params.discoveryTargetKeys?.includes(targetKey) === true : source.discoverable;
         if (params.purpose === 'walkthrough' && profiles.length === 0 && !discoverable && params.probeFailureTargetKeys?.includes(targetKey) !== true) return [];
         const offered = selectAgentModelProfilesForPurpose(profiles, params.purpose);

@@ -15,7 +15,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Switch } from '@/components/ui/forms/Switch';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
-import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -312,8 +312,6 @@ const SystemRecordsDisclosure = React.memo(function SystemRecordsDisclosure(prop
                     subtitle={count === 1
                         ? t('homeGovernance.data.systemRecordsSummary_one')
                         : t('homeGovernance.data.systemRecordsSummary_other', { count })}
-                    rightElement={<ExpandableItemCaret expanded={state.expanded} />}
-                    showChevron={false}
                 />
             )}
         >

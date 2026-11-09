@@ -4,7 +4,7 @@ import type {
     PluginAccountAvailabilityIntentReadResponseV1,
     PluginMachineMaterializationSnapshotV1,
     PluginMachineMaterializationV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/availability/v1';
 
 import {
     buildPluginMachineExecutionOriginCandidates,

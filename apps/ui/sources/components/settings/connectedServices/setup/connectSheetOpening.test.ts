@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveConnectSheetOpening } from './connectSheetOpening';
+import { isConnectSheetKeyRequest, isConnectSheetNpmRegistryRequest, resolveConnectSheetOpening } from './connectSheetOpening';
 
 const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
 const otherService = { pluginId: 'happier.scm.forge.github', localId: 'github-account' };
@@ -7,6 +7,11 @@ const first = { service, accountId: 'personal' };
 const current = { service, accountId: 'work' };
 
 describe('Connect sheet opening choice', () => {
+    it('routes npm profiles to their Machine owner rather than Saved Secrets', () => {
+        const request = { service: { kind: 'npm-registry-profile' as const } };
+        expect(isConnectSheetKeyRequest(request)).toBe(false);
+        expect(isConnectSheetNpmRegistryRequest(request)).toBe(true);
+    });
     it('opens Saved for the same service and prefers the caller’s current account', () => {
         expect(resolveConnectSheetOpening({ service, account: current }, { accounts: [first, current].map(ref => ({ ref, status: 'connected' as const })) }))
             .toMatchObject({ initialMode: 'saved', preselected: current });

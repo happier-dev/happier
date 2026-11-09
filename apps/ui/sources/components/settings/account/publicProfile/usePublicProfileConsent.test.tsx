@@ -26,7 +26,7 @@ async function setup(options: Readonly<{ published?: boolean; refuse?: boolean; 
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
   // The Account HTTP adapter is the system boundary; preparation, schemas, masking and
-  // follow-on refresh admission run through the real shared Action executor.
+  // atomic update admission run through the real shared Action executor.
   const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async args => {
     if (args.actionId === 'account.public_profile.get') return serverRecord
       ? { kind: 'ready', context, record: serverRecord } : { kind: 'absent', context };
@@ -65,7 +65,7 @@ async function setup(options: Readonly<{ published?: boolean; refuse?: boolean; 
 }
 
 describe('published profile consent', () => {
-  it('dispatches policy alone immediately, acknowledges a hide with Usage unavailable, and undoes through another update', async () => {
+  it('acknowledges a hide without Usage and refuses an Undo that cannot prepare its widened facts', async () => {
     const { hook, writes, release } = await setup();
     const privateLayout = hook.getCurrent().draft!.layout;
     const privateLook = hook.getCurrent().draft!.appearance;
@@ -77,18 +77,18 @@ describe('published profile consent', () => {
     await act(async () => { await hook.getCurrent().updateField('tokens', false); });
     expect(writes).toHaveLength(1);
     await act(async () => { release(); await pending; });
-    expect(hook.getCurrent().state).toMatchObject({ kind: 'acknowledged', refresh: 'unavailable' });
+    expect(hook.getCurrent().state).toMatchObject({ kind: 'acknowledged' });
     expect(hook.getCurrent().record!.snapshot!.facts).not.toHaveProperty('activeDays');
     expect(hook.getCurrent().draft!.policy.fields.activeDays).toBe(false);
     expect(hook.getCurrent().draft!.layout).toBe(privateLayout);
     expect(hook.getCurrent().draft!.appearance).toBe(privateLook);
     await act(async () => { await hook.getCurrent().undo(); });
-    expect(writes).toHaveLength(2);
-    expect(writes[1]).toEqual({ policy: initialRecord.policy });
-    expect(hook.getCurrent().draft!.policy.fields.activeDays).toBe(true);
+    expect(hook.getCurrent().state).toMatchObject({ kind: 'failed', errorCode: 'public_profile_preparation_unavailable' });
+    expect(writes).toHaveLength(1);
+    expect(hook.getCurrent().draft!.policy.fields.activeDays).toBe(false);
     expect(hook.getCurrent().record!.snapshot!.facts).not.toHaveProperty('activeDays');
     await act(async () => { await hook.getCurrent().reload(); });
-    expect(hook.getCurrent().record!.policy!.fields.activeDays).toBe(true);
+    expect(hook.getCurrent().record!.policy!.fields.activeDays).toBe(false);
   });
 
   it('reconciles an uncertain response by reading the committed policy without replaying the write', async () => {

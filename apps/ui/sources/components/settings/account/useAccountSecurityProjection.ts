@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { AccountSecurityGetResponseV1 } from '@happier-dev/protocol';
+import type { AccountSecurityGetResponseV1 } from '@happier-dev/protocol/auth/accountSecurity';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import {

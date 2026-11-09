@@ -9,6 +9,7 @@ import type { CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 export type BugReportDiagnosticsPreviewArtifact = {
   filename: string;
@@ -72,14 +73,13 @@ export function BugReportDiagnosticsPreviewModal(props: Readonly<{
   const leading = React.useMemo(() => {
     if (!selected) return null;
     return (
-      <Pressable
+      <HappierPressable
         onPress={() => setSelected(null)}
         accessibilityRole="button"
         accessibilityLabel={t('common.back')}
-        hitSlop={10}
       >
         <Icon name="arrow-left" size={16} color={theme.colors.text.secondary} />
-      </Pressable>
+      </HappierPressable>
     );
   }, [selected, theme.colors.text.secondary]);
 

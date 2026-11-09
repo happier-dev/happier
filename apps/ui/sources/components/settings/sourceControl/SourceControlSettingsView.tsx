@@ -18,7 +18,7 @@ import { MachineAdministrationTargetSelector } from '@/components/settings/machi
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import { useMachineAdministrationTargetSelection } from '@/sync/domains/machines/administration/useTargetSelection';
 import type { ScmCommitStrategy } from '@/scm/settings/commitStrategy';
-import type { ScmDiffArea } from '@happier-dev/protocol';
+import type { ScmDiffArea } from '@happier-dev/protocol/scm/workingSnapshot';
 import { getLanguageEnglishName, getLanguageNativeName, SUPPORTED_LANGUAGE_CODES, t, type TranslationKey } from '@/text';
 import type { ImageBackground, ImageBackgroundByKind } from '@/sync/domains/settings/registry/local/localSettingDefinitions.files';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -33,7 +33,7 @@ import {
     normalizeScmRemoteConfirmPolicy,
     shouldConfirmRemoteOperation,
 } from '@/scm/settings/remoteConfirmationPolicy';
-import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
+import { CommitMessageInstructionsSetting } from './CommitMessageInstructionsSetting';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { getAgentDropdownMenuItems } from '@/components/settings/pickers/agentDropdownItems';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -43,6 +43,8 @@ import { SettingAnchor, SettingRow, SettingSection } from '@/components/settings
 import { SOURCE_CONTROL_SETTINGS } from '@/components/settings/sourceControl/sourceControlSettings';
 import { ScmDiffSummaryModelPicker } from '@/components/settings/sourceControl/ScmDiffSummaryModelPicker';
 import { WalkthroughSavedSettings } from '@/components/settings/sourceControl/WalkthroughSavedSettings';
+import { FileEditorAiSuggestionSettings } from '@/components/settings/sourceControl/FileEditorAiSuggestionSettings';
+import { ResourceOpenLocationSetting } from '@/components/settings/sourceControl/ResourceOpenLocationSetting';
 
 
 /**
@@ -258,9 +260,11 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
     const [wrapLinesInDiffs, setWrapLinesInDiffs] = useSettingMutable('wrapLinesInDiffs');
     const [scmCommitMessageGeneratorEnabled, setScmCommitMessageGeneratorEnabled] = useSettingMutable('scmCommitMessageGeneratorEnabled');
     const [scmCommitMessageGeneratorBackendId] = useSettingMutable('scmCommitMessageGeneratorBackendId');
-    const [scmCommitMessageGeneratorInstructions, setScmCommitMessageGeneratorInstructions] = useSettingMutable('scmCommitMessageGeneratorInstructions');
     const [scmIncludeCoAuthoredBy, setScmIncludeCoAuthoredBy] = useSettingMutable('scmIncludeCoAuthoredBy');
     const [filesEditorAutoSave, setFilesEditorAutoSave] = useSettingMutable('filesEditorAutoSave');
+    const [formatOnSave, setFormatOnSave] = useSettingMutable('filesEditorFormatOnSave');
+    const [inlayHints, setInlayHints] = useSettingMutable('filesEditorInlayHints');
+    const [semanticHighlighting, setSemanticHighlighting] = useSettingMutable('filesEditorSemanticHighlighting');
     const [markdownDefaultEditMode, setMarkdownDefaultEditMode] = useSettingMutable('markdownDefaultEditMode');
     const markdownRichEditorEnabled = useFeatureEnabled('files.markdownRichEditor');
     const backendSettingsRegistry = React.useMemo(
@@ -297,9 +301,6 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
         agentIds: enabledAgentIds.includes(effectiveCommitMessageGeneratorBackendId as AgentId)
             ? enabledAgentIds : [...enabledAgentIds, effectiveCommitMessageGeneratorBackendId as AgentId],
     }), [effectiveCommitMessageGeneratorBackendId, enabledAgentIds]);
-    const effectiveCommitMessageGeneratorInstructions = typeof scmCommitMessageGeneratorInstructions === 'string'
-        ? scmCommitMessageGeneratorInstructions
-        : '';
     const effectiveIncludeCoAuthoredBy = scmIncludeCoAuthoredBy === true;
     const effectiveRemoteConfirmPolicy = normalizeScmRemoteConfirmPolicy(scmRemoteConfirmPolicy);
     const confirmsPull = shouldConfirmRemoteOperation(effectiveRemoteConfirmPolicy, 'pull');
@@ -341,18 +342,21 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
         backendUiRegistry.getPlugin(plugin.backendId).diffModeConfig(null).availableModes
             .some((mode) => DIFF_MODE_OPTIONS.some((option) => option.id === mode))
     ));
+    // Independent setting bindings settle without changing the Machine control.
+    // Keep its node stable so phone chrome does not withdraw and republish it on each settlement.
+    const headerActions = React.useMemo(() => scmWriteOperationsEnabled ? (
+        <MachineAdministrationTargetSelector
+            selection={administrationTargetSelection}
+            testIDPrefix="settings.sourceControl.administration.target"
+            presentation="chip"
+        />
+    ) : undefined, [administrationTargetSelection, scmWriteOperationsEnabled]);
 
     return (
         <ItemList style={{ paddingTop: 0 }}>
             <SettingsPageHeader
                 description={t('settingsSourceControl.page.description')}
-                actions={scmWriteOperationsEnabled ? (
-                    <MachineAdministrationTargetSelector
-                        selection={administrationTargetSelection}
-                        testIDPrefix="settings.sourceControl.administration.target"
-                        presentation="chip"
-                    />
-                ) : undefined}
+                actions={headerActions}
             />
 
             {scmWriteOperationsEnabled ? <>
@@ -404,23 +408,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                     </SettingAnchor>
                 ) : null}
                 {effectiveCommitMessageGeneratorEnabled ? (
-                    <SettingRow
-                        subtitleLines={0}
-                        setting={SOURCE_CONTROL_SETTINGS.settings.commitMessageInstructions}
-                        accessoryLayout="stacked"
-                        showChevron={false}
-                        rightElement={(
-                            <FieldTextInput
-                                testID="settings.sourceControl.commitMessageInstructions"
-                                accessibilityLabel={t(SOURCE_CONTROL_SETTINGS.settings.commitMessageInstructions.titleKey)}
-                                placeholder={t('settingsSourceControl.commitMessageGenerator.instructionsPlaceholder')}
-                                value={effectiveCommitMessageGeneratorInstructions}
-                                multiline
-                                autoCapitalize="sentences"
-                                onChangeText={(value) => setScmCommitMessageGeneratorInstructions(String(value))}
-                            />
-                        )}
-                    />
+                    <CommitMessageInstructionsSetting />
                 ) : null}
                 <SettingRow
                     subtitleLines={0}
@@ -597,11 +585,10 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                 <ImageBackgroundRow value={filesImageBackgroundByKind} onChange={setFilesImageBackgroundByKind} />
             </ItemGroup>
             </SettingSection>
+            </> : null}
 
-            <ItemGroup
-                title={t('settingsSourceControl.page.remote.title')}
-                description={t('settingsSourceControl.page.remote.description')}
-            >
+            <ResourceOpenLocationSetting>
+                {scmWriteOperationsEnabled ? <>
                 <SettingRow
                     subtitleLines={0}
                     setting={SOURCE_CONTROL_SETTINGS.settings.confirmBeforePulling}
@@ -647,8 +634,10 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                         onChange={setScmPullRequestPlacement}
                     />
                 </SettingAnchor>
-            </ItemGroup>
+                </> : null}
+            </ResourceOpenLocationSetting>
 
+            {scmWriteOperationsEnabled ? <>
             <SettingSection section={SOURCE_CONTROL_SETTINGS.sectionRefs.routing} answersFor={backendPlugins.length > 0 ? undefined : BACKEND_SECTIONS}>
             <ItemGroup
                 title={t('settingsSourceControl.page.routing.title')}
@@ -807,6 +796,14 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                     onPress={() => setFilesEditorAutoSave(filesEditorAutoSave !== true)}
                     showChevron={false}
                 />
+                <SettingRow setting={SOURCE_CONTROL_SETTINGS.settings.editorFormatOnSave} showChevron={false}
+                    rightElement={<Switch value={formatOnSave} onValueChange={setFormatOnSave} />} onPress={() => setFormatOnSave(!formatOnSave)} />
+                <SettingAnchor setting={SOURCE_CONTROL_SETTINGS.settings.editorInlayHints}>
+                    <SegmentedChoiceItem<'off' | 'parameters' | 'all'> title={t('files.pane.menu.inlayHints')} value={inlayHints} onChange={setInlayHints}
+                        options={[{ id: 'off', label: t('files.pane.menu.inlayOff') }, { id: 'parameters', label: t('files.pane.menu.inlayParameters') }, { id: 'all', label: t('files.pane.menu.inlayAll') }]} />
+                </SettingAnchor>
+                <SettingRow setting={SOURCE_CONTROL_SETTINGS.settings.editorSemanticHighlighting} showChevron={false}
+                    rightElement={<Switch value={semanticHighlighting} onValueChange={setSemanticHighlighting} />} onPress={() => setSemanticHighlighting(!semanticHighlighting)} />
                 {markdownRichEditorEnabled ? (
                     <SettingAnchor setting={SOURCE_CONTROL_SETTINGS.settings.markdownEditMode}>
                         <SegmentedChoiceItem<'rich' | 'raw'>
@@ -820,6 +817,7 @@ export const SourceControlSettingsView = React.memo(function SourceControlSettin
                     </SettingAnchor>
                 ) : null}
             </ItemGroup>
+            <FileEditorAiSuggestionSettings machineId={executionTarget?.machine.id ?? null} serverId={executionTarget?.serverId ?? null} />
         </ItemList>
     );
 });

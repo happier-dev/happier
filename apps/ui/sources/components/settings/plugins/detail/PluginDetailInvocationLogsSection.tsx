@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { PluginInvocationLogRecordV1 } from '@happier-dev/protocol';
+import type { PluginInvocationLogRecordV1 } from '@happier-dev/protocol/daemon/plugin-invocation-logs';
 import { getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 
 import {

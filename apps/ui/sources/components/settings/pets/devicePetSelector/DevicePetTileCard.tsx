@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { PetPackageSourceV1 } from '@happier-dev/protocol';
+import type { PetPackageSourceV1 } from '@happier-dev/protocol/pets/source';
 
 import {
     DEFAULT_BUILT_IN_PET_ID,

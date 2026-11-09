@@ -59,6 +59,9 @@ async function renderPage(requested: string, rowMounted: boolean) {
     return screen;
 }
 
+/** Production hosts always receive their tab's workspace navigation; these reveal tests never navigate. */
+const hostedNavigation = { push: vi.fn(), replace: vi.fn(), back: vi.fn() };
+
 describe('SettingSection', () => {
     it('refreshes a mounted declaration label on a locale change', async () => {
         const { t, getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings } = await import('@/text');
@@ -86,7 +89,7 @@ describe('SettingSection', () => {
         const anchor = PAGE.settings.indexMode.anchor;
         const render = (presented: boolean) => <DestinationInstanceHost
             tabId="retained-settings" ref={{ kind: 'settings', params: { setting: anchor } }}
-            pathname="/settings/memory" focused={presented} visible={presented}>
+            pathname="/settings/memory" focused={presented} visible={presented} navigation={hostedNavigation}>
             <SettingRow setting={PAGE.settings.indexMode} />
         </DestinationInstanceHost>;
         const screen = await renderScreen(render(false), {
@@ -205,7 +208,7 @@ describe('SettingSection', () => {
         const screen = await renderScreen(<>
             {[true, false].map((rowMounted, index) => <DestinationInstanceHost key={index}
                 tabId={`settings-${index}`} ref={{ kind: 'settings', params: { setting: PAGE.settings.indexMode.anchor } }}
-                pathname="/settings/memory" focused={index === 0} visible>
+                pathname="/settings/memory" focused={index === 0} visible navigation={hostedNavigation}>
                 <SettingSection section={PAGE.sectionRefs.indexing}>
                     {rowMounted ? <SettingRow setting={PAGE.settings.indexMode} /> : null}
                 </SettingSection>

@@ -1,19 +1,23 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { Switch } from '@/components/ui/forms/Switch';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
 import { Item } from '@/components/ui/lists/Item';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { openComposerPlacementCustomizer } from '@/components/sessions/agentInput/components/openComposerPlacementCustomizer';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { t, type TranslationKeyNoParams } from '@/text';
-import { useLocalSetting, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import { useLocalSettingMutable, useSetting, useSettingMutable } from '@/sync/domains/state/storage';
+import { useHardwareKeyboard } from '@/components/ui/selectionList/useHardwareKeyboard';
 import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
-import { getStorage } from '@/sync/domains/state/storageStore';
+import { useComposerBannerCollapseRecord, writeComposerBannerCollapse } from '@/sync/domains/state/composerBannerUiState';
 import { normalizeComposerBannerCollapseRecord } from '@/components/sessions/composerBanners/composerBannerCollapse';
 import type { BusySteerSendPolicy, MessageSendMode } from '@/sync/domains/session/control/submitMode';
-import type { NewSessionPresentationModeV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
+import type { NewSessionAfterSendMode, NewSessionPresentationModeV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
 import {
     SESSION_INACTIVE_RESUME_POLICY_VALUES,
     type SessionInactiveResumePolicy,
@@ -27,16 +31,15 @@ import { ComposerActionBarPreview, ComposerChipDensityPreview } from '@/componen
 type PendingQueueDrainMode = 'one_at_a_time' | 'drain_all';
 type PendingQueueDeliveryTiming = 'after_foreground_ready' | 'after_runtime_idle';
 type AgentInputHistoryScope = 'perSession' | 'global';
-type ActionBarLayout = 'auto' | 'wrap' | 'scroll' | 'collapsed';
+type ActionBarLayout = 'auto' | 'wrap' | 'scroll';
 type ChipDensity = 'auto' | 'labels' | 'icons';
 
-const ACTION_BAR_LAYOUTS = ['auto', 'wrap', 'scroll', 'collapsed'] as const satisfies readonly ActionBarLayout[];
+const ACTION_BAR_LAYOUTS = ['auto', 'wrap', 'scroll'] as const satisfies readonly ActionBarLayout[];
 const CHIP_DENSITIES = ['auto', 'labels', 'icons'] as const satisfies readonly ChipDensity[];
 const ACTION_BAR_DESCRIPTION_KEYS: Record<ActionBarLayout, TranslationKeyNoParams> = {
     auto: 'settingsSessionPages.composer.actionBarAutoDescription',
     wrap: 'settingsSessionPages.composer.actionBarWrapDescription',
     scroll: 'settingsSessionPages.composer.actionBarScrollDescription',
-    collapsed: 'settingsSessionPages.composer.actionBarCollapsedDescription',
 };
 const CHIP_DENSITY_DESCRIPTION_KEYS: Record<ChipDensity, TranslationKeyNoParams> = {
     auto: 'settingsSessionPages.composer.chipsAutoDescription',
@@ -45,6 +48,7 @@ const CHIP_DENSITY_DESCRIPTION_KEYS: Record<ChipDensity, TranslationKeyNoParams>
 };
 
 export const SessionComposerSettingsView = React.memo(function SessionComposerSettingsView() {
+    const { theme } = useUnistyles();
     const [messageSendMode, setMessageSendMode] = useSettingMutable('sessionMessageSendMode');
     const [busySteerSendPolicy, setBusySteerSendPolicy] = useSettingMutable('sessionBusySteerSendPolicy');
     const [nonSteerableSendPrompt, setNonSteerableSendPrompt] = useSettingMutable('sessionNonSteerableSendPrompt');
@@ -59,10 +63,13 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
     const [agentInputChipDensity, setAgentInputChipDensity] = useSettingMutable('agentInputChipDensity');
     const [newSessionPresentationMode, setNewSessionPresentationMode] = useSettingMutable('newSessionPresentationModeV1');
     const [newSessionDraftEntryMode, setNewSessionDraftEntryMode] = useSettingMutable('newSessionDraftEntryMode');
+    const [newSessionAfterSend, setNewSessionAfterSend] = useSettingMutable('newSessionAfterSendV1');
+    const [keepFocusAfterSendSetting, setKeepFocusAfterSend] = useLocalSettingMutable('composerKeepFocusAfterSend');
+    const hasHardwareKeyboard = useHardwareKeyboard();
+    const keepFocusAfterSend = keepFocusAfterSendSetting ?? hasHardwareKeyboard;
     const [composerSurfaceStyle, setComposerSurfaceStyle] = useSettingMutable('composerSurfaceStyle');
-    const [composerPromptLibraryButtonEnabled, setComposerPromptLibraryButtonEnabled] = useSettingMutable('composerPromptLibraryButtonEnabled');
     const [rememberBannerVisibility, setRememberBannerVisibility] = useSettingMutable('sessionComposerRememberBannerVisibility');
-    const collapsedBannerKinds = useLocalSetting('sessionComposerCollapsedBannerKinds');
+    const collapsedBannerKinds = useComposerBannerCollapseRecord();
     const hiddenBannerCount = Object.keys(normalizeComposerBannerCollapseRecord(collapsedBannerKinds)).length;
     const enterToSendEnabled = Platform.OS === 'web' ? agentInputEnterToSend : agentInputEnterToSendNative;
     const setEnterToSendEnabled = React.useCallback((value: boolean) => {
@@ -125,6 +132,20 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
                         onChange={setNewSessionDraftEntryMode}
                     />
                 </SettingAnchor>
+                <SettingAnchor setting={settings.afterSend}>
+                    <SegmentedChoiceItem<NewSessionAfterSendMode>
+                        subtitleLines={0}
+                        testID="settings-new-session-after-send"
+                        testIDPrefix="settings-new-session-after-send"
+                        title={t(settings.afterSend.titleKey)}
+                        options={[
+                            { id: 'open', label: t('settingsSession.newSessionAfterSend.openTitle'), description: t('settingsSession.newSessionAfterSend.openSubtitle') },
+                            { id: 'startAnother', label: t('settingsSession.newSessionAfterSend.startAnotherTitle'), description: t('settingsSession.newSessionAfterSend.startAnotherSubtitle') },
+                        ]}
+                        value={newSessionAfterSend ?? (newSessionPresentationMode === 'docked' ? 'startAnother' : 'open')}
+                        onChange={setNewSessionAfterSend}
+                    />
+                </SettingAnchor>
                 <SettingAnchor setting={settings.presentation}>
                     <SegmentedChoiceItem<NewSessionPresentationModeV1>
                         subtitleLines={0}
@@ -154,6 +175,14 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
                     rightElement={<Switch value={enterToSendEnabled} onValueChange={setEnterToSendEnabled} />}
                     showChevron={false}
                     onPress={() => setEnterToSendEnabled(!enterToSendEnabled)}
+                />
+                <SettingRow
+                    setting={settings.keepFocus}
+                    testID="settings-keep-composer-focus-after-send"
+                    subtitle={t('settingsSession.inputBehavior.keepFocusSubtitle')}
+                    rightElement={<Switch value={keepFocusAfterSend} onValueChange={setKeepFocusAfterSend} />}
+                    showChevron={false}
+                    onPress={() => setKeepFocusAfterSend(!keepFocusAfterSend)}
                 />
                 {settingRendersOnHost(settings.historyScope) ? (
                     <SettingAnchor setting={settings.historyScope}>
@@ -284,9 +313,13 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
                 title={t('settingsSessionPages.composer.layoutSection')}
                 description={t('settingsSession.input.footer')}
             >
-                <SettingRow setting={settings.promptLibraryButton} testID="settings-composer-prompt-library-button"
-                    rightElement={<Switch value={composerPromptLibraryButtonEnabled !== false} onValueChange={setComposerPromptLibraryButtonEnabled} />}
-                    showChevron={false} onPress={() => setComposerPromptLibraryButtonEnabled(composerPromptLibraryButtonEnabled === false)} />
+                {/* One device-local placement for every composer: what stays in the row, goes in + or is hidden. */}
+                <SettingRow
+                    setting={settings.customize}
+                    testID="settings-composer-customize"
+                    icon={<Icon name="sliders-horizontal" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
+                    onPress={() => openComposerPlacementCustomizer()}
+                />
                 <SettingAnchor setting={settings.actionBar}>
                     <Item
                         testID="settings-composer-action-bar"
@@ -366,7 +399,7 @@ export const SessionComposerSettingsView = React.memo(function SessionComposerSe
                         title={t('settingsSession.banners.resetHiddenTitle')}
                         subtitle={t('settingsSession.banners.resetHiddenSubtitle')}
                         detail={String(hiddenBannerCount)}
-                        onPress={() => getStorage().getState().applyLocalSettings({ sessionComposerCollapsedBannerKinds: {} }, { source: 'ui' })}
+                        onPress={() => writeComposerBannerCollapse({})}
                         showChevron={false}
                     />
                 ) : null}

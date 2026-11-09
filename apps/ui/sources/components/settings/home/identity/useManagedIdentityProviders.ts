@@ -87,7 +87,7 @@ export function useManagedIdentityProviders(
                 && !event.entityIds.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)
             ) return;
             refresh();
-        });
+        }, { reconnect: 'refresh' });
     }, [ownerTeamId, refresh, scope.serverId]);
 
     return React.useMemo(() => ({ state, refresh }), [refresh, state]);

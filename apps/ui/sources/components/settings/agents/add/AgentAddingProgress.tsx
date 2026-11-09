@@ -6,6 +6,8 @@ import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 
 import type { MachineAgentJob } from '@/agents/machineAgents/machineAgentTypes';
 import { useAgentInstallJob } from '@/agents/machineAgents/installJobs/useAgentInstallJob';
+import { AgentInstallJobRpcError } from '@/agents/machineAgents/installJobs/api';
+import { presentAgentInstallJobRpcFailure } from '@/agents/machineAgents/installJobs/presentAgentInstallJobFailure';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -83,9 +85,12 @@ export function AgentAddingProgress(
     machines: readonly AgentAddMachine[];
     /** The machines the add asked to install now (online ones, Install: Now). */
     installOn: readonly string[];
+    failures?: readonly Readonly<{ machineId: string; errorCode: string }>[];
+    onRetryInstall: (machineId: string) => Promise<void>;
     testID: string;
   }>,
 ): React.ReactElement {
+  const failures = new Map(props.failures?.map(failure => [failure.machineId, failure]));
   return (
     <AgentAddingFrame name={props.name} testID={props.testID}>
       {props.machines.map((machine) => (
@@ -95,6 +100,8 @@ export function AgentAddingProgress(
           definitionId={props.definitionId}
           serverId={props.serverId}
           installingNow={props.installOn.includes(machine.machineId)}
+          failure={failures.get(machine.machineId)}
+          onRetryInstall={props.onRetryInstall}
           testID={`${props.testID}.machine.${machine.machineId}`}
         />
       ))}
@@ -140,16 +147,23 @@ function AgentInstallProgressRow(
     definitionId: string;
     serverId: string | null;
     installingNow: boolean;
+    failure?: Readonly<{ machineId: string; errorCode: string }>;
+    onRetryInstall: (machineId: string) => Promise<void>;
     testID: string;
   }>,
 ): React.ReactElement {
-  const { job, start, cancel } = useAgentInstallJob({
+  const { job, cancel } = useAgentInstallJob({
     serverId: props.serverId ?? '',
     machineId: props.machine.machineId,
     agentId: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1.localId,
     definitionId: props.definitionId,
   });
-  const progress = presentAgentInstallProgress({
+  const [retrying, setRetrying] = React.useState(false);
+  const [retryFailure, setRetryFailure] = React.useState<string | null>(null);
+  const progress: AgentInstallProgress = retryFailure ? { phase: 'failed', message: retryFailure } : props.failure ? {
+    phase: 'failed',
+    message: presentAgentInstallJobRpcFailure(new AgentInstallJobRpcError(props.failure.errorCode)).body,
+  } : presentAgentInstallProgress({
     job,
     installingNow: props.installingNow,
     offline: props.machine.offline,
@@ -158,10 +172,19 @@ function AgentInstallProgressRow(
     <AgentInstallProgressItem
       machine={props.machine}
       progress={progress}
+      retrying={retrying}
       onRetry={() => {
-        void start('install', { consent: { vendorRecipe: false } }).catch(
-          () => undefined,
-        );
+        if (retrying) return;
+        setRetrying(true);
+        setRetryFailure(null);
+        void (async () => {
+          try {
+            await props.onRetryInstall(props.machine.machineId);
+          } catch (error) {
+            setRetryFailure(error instanceof Error ? error.message : presentAgentInstallJobRpcFailure(error).body);
+          }
+          finally { setRetrying(false); }
+        })();
       }}
       onCancel={() => {
         void cancel().catch(() => undefined);
@@ -176,6 +199,7 @@ export function AgentInstallProgressItem(
   props: Readonly<{
     machine: AgentAddMachine;
     progress: AgentInstallProgress;
+    retrying?: boolean;
     onRetry: () => void;
     onCancel: () => void;
     testID: string;
@@ -274,6 +298,8 @@ export function AgentInstallProgressItem(
           title={t('capabilities.agentAdd.adding.tryAgain')}
           onPress={props.onRetry}
           testID={`${props.testID}.retry`}
+          loading={props.retrying}
+          disabled={props.retrying}
         />
       );
       subtitle = (
@@ -294,6 +320,8 @@ export function AgentInstallProgressItem(
           title={t('capabilities.agentAdd.adding.install')}
           onPress={props.onRetry}
           testID={`${props.testID}.retry`}
+          loading={props.retrying}
+          disabled={props.retrying}
         />
       );
       subtitle = t('capabilities.agentAdd.adding.cancelled');

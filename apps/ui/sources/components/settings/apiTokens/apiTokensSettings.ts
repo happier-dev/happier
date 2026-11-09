@@ -4,12 +4,6 @@ import { defineSettingsPage } from '@/components/settings/catalog/settingDeclara
 export const API_TOKEN_SETTINGS = defineSettingsPage({
     pageId: 'apiTokens',
     sections: {
-        cliApprovals: {
-            titleKey: 'settingsApiTokens.cliPolicy.sectionTitle',
-            settings: {
-                cliApprovals: {},
-            },
-        },
         security: {
             titleKey: 'settingsApiTokens.securityTitle',
             settings: {

@@ -95,7 +95,7 @@ describe('Agent contributed Account preferences', () => {
             body: PluginAccountSettingsReadResponseV1Schema.parse({ status: 'absent' }),
         });
         publishAppliedActiveServerRuntimeAvailability(false);
-        const screen = await renderScreen(<AgentContributedSettingsSection
+        const screen = await renderScreen(<AgentContributedSettingsSection agentId="test.agent/agent"
             pluginSettingsProjection={projection}
             targetSelection={selection(false)}
             executionTarget={null}
@@ -123,7 +123,7 @@ describe('Agent contributed Account preferences', () => {
         account.home.answer(account.serverId, 'POST /v1/account/plugin-settings/test.agent', {
             body: PluginAccountSettingsMutationResponseV1Schema.parse({ status: 'updated', revision: 1 }),
         });
-        const screen = await renderScreen(<AgentContributedSettingsSection
+        const screen = await renderScreen(<AgentContributedSettingsSection agentId="test.agent/agent"
             pluginSettingsProjection={projection}
             targetSelection={selection(foreign)}
             executionTarget={null}
@@ -199,7 +199,7 @@ describe('Agent contributed Account preferences', () => {
                 }],
             }],
         };
-        const screen = await renderScreen(<AgentContributedSettingsSection
+        const screen = await renderScreen(<AgentContributedSettingsSection agentId="test.agent/agent"
             pluginSettingsProjection={scopedProjection}
             targetSelection={selection(false)}
             executionTarget={null}

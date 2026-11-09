@@ -1,7 +1,7 @@
 import { isConnectedServiceCredentialHealthStatusUsable, type ConnectedServiceCredentialHealthStatusV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
-import type { ConnectSheetAccountRequest, ConnectSheetRequest, ConnectSheetKeyRequest } from './ConnectedServiceSetupModal';
+import type { ConnectSheetAccountRequest, ConnectSheetRequest, ConnectSheetKeyRequest, ConnectSheetNpmRegistryRequest } from './ConnectedServiceSetupModal';
 
 type SavedKey = Readonly<{ ref: string; kind?: 'apiKey' | 'token' | 'password' | 'other' | null }>;
 
@@ -20,6 +20,10 @@ export type ConnectSheetInventory<Key extends SavedKey = SavedKey> = Readonly<{
 /** One opening decision; unrelated inventory remains available to the body's Saved tab. */
 export function isConnectSheetKeyRequest(request: ConnectSheetRequest): request is ConnectSheetKeyRequest {
     return request.service !== undefined && 'kind' in request.service && request.service.kind === 'key';
+}
+
+export function isConnectSheetNpmRegistryRequest(request: ConnectSheetRequest): request is ConnectSheetNpmRegistryRequest {
+    return request.service !== undefined && 'kind' in request.service && request.service.kind === 'npm-registry-profile';
 }
 
 export function resolveConnectSheetOpening<Key extends SavedKey>(request: ConnectSheetAccountRequest | ConnectSheetKeyRequest, inventory: ConnectSheetInventory<Key>): ConnectSheetOpening<Key> {

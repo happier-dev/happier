@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 
 import {
     registerNativeThemePreferenceTransitionController,
@@ -86,6 +87,67 @@ describe('theme preference transitions', () => {
                 pseudoElement: '::view-transition-new(root)',
             }),
         );
+    });
+
+    it('commits a hidden document theme without starting a transition or preparing choreography', async () => {
+        const mutation = vi.fn();
+        const animate = vi.fn();
+        const startViewTransition = vi.fn((update: () => void) => {
+            update();
+            return { ready: Promise.resolve() };
+        });
+        const prepare = vi.fn();
+        const unregister = registerWebThemePreferenceChoreography({ prepare });
+        try {
+            await runThemePreferenceChange({
+                currentPreference: 'light', nextPreference: 'dark', systemTheme: 'light',
+                platform: 'web', reduceMotion: false, forceAnimate: true, mutation,
+                document: { visibilityState: 'hidden', documentElement: { animate }, startViewTransition } as unknown as Document,
+            });
+        } finally { unregister(); }
+        expect(mutation).toHaveBeenCalledOnce();
+        expect(startViewTransition).not.toHaveBeenCalled();
+        expect(prepare).not.toHaveBeenCalled();
+        expect(animate).not.toHaveBeenCalled();
+    });
+
+    it('keeps the committed theme when the document becomes hidden before the transition is ready', async () => {
+        const ready = createDeferred<void>();
+        const mutation = vi.fn();
+        const animate = vi.fn();
+        const documentLike = {
+            visibilityState: 'visible', documentElement: { animate },
+            startViewTransition: (update: () => void) => {
+                update();
+                return { ready: ready.promise, updateCallbackDone: Promise.resolve() };
+            },
+        };
+        const run = runThemePreferenceChange({
+            currentPreference: 'light', nextPreference: 'dark', systemTheme: 'light',
+            platform: 'web', reduceMotion: false, mutation, document: documentLike as unknown as Document,
+        });
+        const result = expect(run).resolves.toBeUndefined();
+        documentLike.visibilityState = 'hidden';
+        ready.reject(new DOMException('Transition skipped for hidden document', 'InvalidStateError'));
+        await result;
+        expect(mutation).toHaveBeenCalledOnce();
+        expect(animate).not.toHaveBeenCalled();
+    });
+
+    it('preserves a failed web theme mutation when a transition is skipped', async () => {
+        const failure = new Error('theme mutation failed');
+        const documentLike = {
+            visibilityState: 'visible', documentElement: { animate: vi.fn() },
+            startViewTransition: (update: () => void) => {
+                const done = Promise.resolve().then(update);
+                return { ready: done.then(() => { throw new DOMException('Skipped', 'InvalidStateError'); }), updateCallbackDone: done };
+            },
+        };
+        await expect(runThemePreferenceChange({
+            currentPreference: 'light', nextPreference: 'dark', systemTheme: 'light',
+            platform: 'web', reduceMotion: false, mutation: () => { throw failure; },
+            document: documentLike as unknown as Document,
+        })).rejects.toBe(failure);
     });
 
     it('hands the web reveal to a registered choreography, prepared before the old view is captured', async () => {

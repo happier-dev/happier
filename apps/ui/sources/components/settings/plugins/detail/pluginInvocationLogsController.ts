@@ -3,7 +3,7 @@ import type {
     DaemonPluginInvocationLogReadResponseV1,
     PluginInvocationLogReadQueryV1,
     PluginInvocationLogRecordV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/plugin-invocation-logs';
 
 import type { PluginInvocationLogMachineReadTarget } from '@/sync/ops/pluginInvocationLogs';
 

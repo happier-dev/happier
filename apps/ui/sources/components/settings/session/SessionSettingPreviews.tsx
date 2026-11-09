@@ -8,7 +8,7 @@ import { resolveAgentInputActionBarLayout } from '@/components/sessions/agentInp
 import { useUnistyles } from 'react-native-unistyles';
 
 import { MessageViewWithSessionCommon } from '@/components/sessions/transcript/MessageView';
-import { UserMessageBubble } from '@/components/sessions/transcript/UserMessageBubble';
+import { UserMessageBubble, userMessageBubbleAlignerStyle } from '@/components/sessions/transcript/UserMessageBubble';
 import type { Theme } from '@/theme';
 import { ToolCallsGroupViewWithSessionCommon } from '@/components/sessions/transcript/turns/toolCalls/ToolCallsGroupView';
 import type {
@@ -66,7 +66,7 @@ const FORK_COMMON: TranscriptForkCommon = {
     sessionForkSupportSource: null,
 };
 
-const TOOL_ROUTE_COMMON: TranscriptToolRouteCommon = { messagesById: {}, reducerState: null };
+const TOOL_ROUTE_COMMON: TranscriptToolRouteCommon = { reducerState: null };
 
 type ThinkingDisplay = Pick<Settings, 'sessionThinkingDisplayMode' | 'sessionThinkingInlinePresentation' | 'sessionThinkingInlineChrome'>;
 type ToolChromeMode = TranscriptToolChromeCommon['toolViewTimelineChromeMode'];
@@ -338,7 +338,7 @@ export const SessionTranscriptSample = React.memo(function SessionTranscriptSamp
 type ChipLabels = 'all' | 'core' | 'none';
 
 /** The composer panel with the real action chips, as `AgentInput` lays them out. */
-export function SessionComposerSample(props: Readonly<{ layout: 'wrap' | 'scroll' | 'collapsed'; labels: ChipLabels; width?: number | '100%' }>) {
+export function SessionComposerSample(props: Readonly<{ layout: 'wrap' | 'scroll'; labels: ChipLabels; width?: number | '100%' }>) {
     const { theme } = useUnistyles();
     const tint = theme.colors.composer.chipTint;
     const textStyle = React.useMemo(() => resolveAgentInputActionChipTextStyle(theme), [theme]);
@@ -375,7 +375,7 @@ export function SessionComposerSample(props: Readonly<{ layout: 'wrap' | 'scroll
 }
 
 export const ComposerActionBarPreview = React.memo(function ComposerActionBarPreview(props: Readonly<{
-    layout: 'auto' | 'wrap' | 'scroll' | 'collapsed';
+    layout: 'auto' | 'wrap' | 'scroll';
 }>) {
     // Auto shows the flow it resolves to on this device, through the live composer's own rule.
     const isMobileLayout = isMobileLayoutWidth(useWindowDimensions().width);
@@ -423,7 +423,7 @@ export const EmbeddedChatPreview = React.memo(function EmbeddedChatPreview(props
                 accessibilityElementsHidden
             >
                 <View style={{ width: EMBEDDED_CHAT_CANVAS_WIDTH, transform: [{ scale }], transformOrigin: 'bottom left', padding: theme.space.s10, gap: theme.space.s10 }}>
-                    <View style={{ alignSelf: 'flex-end', maxWidth: '100%' }}>
+                    <View style={userMessageBubbleAlignerStyle}>
                         <UserMessageBubble theme={theme}>
                             <Text style={{ color: theme.colors.message.user.foreground }}>{t('settingsSessionPages.preview.userMessage')}</Text>
                         </UserMessageBubble>

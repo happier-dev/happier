@@ -20,7 +20,6 @@ import {
 import { useSetting } from '@/sync/domains/state/storage';
 import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
 import { WorkspaceSyncRelationshipList } from '@/components/workspaces/sync/WorkspaceSyncRelationshipList';
-import { WorkspaceSyncLegacyStateRecovery } from '@/components/workspaces/sync/WorkspaceSyncLegacyStateRecovery';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { SettingAnchor, SettingSection } from '@/components/settings/shell/SettingRow';
@@ -171,7 +170,6 @@ export const SessionHandoffSettingsView = React.memo(function SessionHandoffSett
                 </SettingAnchor>
             </ItemGroup>
 
-            <WorkspaceSyncLegacyStateRecovery />
             <WorkspaceSyncRelationshipList />
         </ItemList>
     );

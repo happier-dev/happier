@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { PluginConnectedAccountAuthenticationModeV2 } from '@happier-dev/protocol';
+import type { PluginConnectedAccountAuthenticationModeV2 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 
 import { rankConnectedAccountSetupModes } from './rankConnectedAccountSetupModes';
 

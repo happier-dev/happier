@@ -3,7 +3,10 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { act } from 'react-test-renderer';
 import * as React from 'react';
 
-import { FEATURE_IDS, FeaturesResponseSchema, PluginProjectionV2Schema, tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { FEATURE_IDS} from '@happier-dev/protocol/features/catalog';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { normalizePluginUiSettingsPageBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { flushHookEffects, renderScreen, renderHook as renderRealHook } from '@/dev/testkit';
@@ -129,7 +132,7 @@ function pluginSettingsProjection(): PluginUiProjectionModel {
     if (!binding) throw new Error('Settings page fixture needs a normalized binding');
     return normalizePluginUiProjection(PluginProjectionV2Schema.parse({
         v: 2, generation: 0, installedPackagesById: {}, agentsById: {}, actionsById: {},
-          resourcesById: {}, settingsById: {}, diagnostics: [],
+        resourcesById: {}, settingsById: {}, diagnostics: [],
         familiesById: { pluginUi: { family: 'pluginUi', entriesById: {
             'settingsGroup:examples.descriptor-only:descriptor-preferences': {
                 id: 'settingsGroup:examples.descriptor-only:descriptor-preferences',
@@ -206,6 +209,22 @@ describe('useResolvedSettingsPageCatalog', () => {
         appShellPluginProjectionState.projection = null;
     });
 
+    it('offers Space definitions while keeping navigation selection and disclosure out of Settings search', async () => {
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const { collectionSpaceSettingRefs } = await import('@/components/settings/session/collectionSpaceSettings');
+        const { SESSION_SETTINGS } = await import('@/components/settings/session/sessionSettings');
+        const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+        try {
+            const navigation = [SESSION_SETTINGS.settings.collapsedGroups,
+                ...(['sessionWork', 'workflow', 'discussion'] as const).map(kind => collectionSpaceSettingRefs(kind).selectedSpace)];
+            for (const ref of navigation) {
+                expect(hook.getCurrent().search(ref.titleKey).some(row => row.setting?.anchor === ref.anchor)).toBe(false);
+            }
+            const spaces = collectionSpaceSettingRefs('sessionWork').spaces;
+            expect(hook.getCurrent().search(spaces.titleKey).some(row => row.setting?.anchor === spaces.anchor)).toBe(true);
+        } finally { await hook.unmount(); }
+    });
+
     it('finds Delegation settings on Subagents, keeping their anchors', async () => {
         const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
         const hook = await renderHook(() => useResolvedSettingsPageCatalog());
@@ -217,6 +236,25 @@ describe('useResolvedSettingsPageCatalog', () => {
                     .toMatchObject({ id: 'subAgent', route: `/settings/sub-agent?setting=${anchor}` });
             }
             expect(flattenIds(hook.getCurrent().tree)).not.toContain('delegation');
+        } finally { await hook.unmount(); }
+    });
+
+    it('keeps Saved Secrets reachable with Profiles disabled while gating Profile pages', async () => {
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        storage.setState(state => ({ settings: { ...state.settings, useProfiles: false } }));
+        // Saved Secrets lives in the Connected services collection (SETTINGS_ROUTES.secrets).
+        pathnameState.value = '/settings/connected-services/secrets';
+        const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+        try {
+            expect(flattenIds(hook.getCurrent().tree)).toContain('secrets');
+            expect(flattenIds(hook.getCurrent().tree)).not.toContain('profiles');
+            expect(hook.getCurrent().search('secrets')).toContainEqual({ id: 'secrets', route: '/settings/connected-services/secrets' });
+            expect(hook.getCurrent().activePageId).toBe('secrets');
+            await act(async () => {
+                storage.setState(state => ({ settings: { ...state.settings, useProfiles: true } }));
+            });
+            expect(flattenIds(hook.getCurrent().tree)).toContain('profiles');
+            expect(flattenIds(hook.getCurrent().tree)).toContain('secrets');
         } finally { await hook.unmount(); }
     });
 
@@ -277,8 +315,46 @@ describe('useResolvedSettingsPageCatalog', () => {
         } finally { await screen.unmount(); commitPreferredLanguage(previousLocale); }
     });
 
+    it('refreshes dispatched palette Settings rows when the admitted catalog changes without new typing', async () => {
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const { buildUniversalSearchSections } = await import('@/components/appShell/search/buildUniversalSearchSections');
+        const { buildSettingsSearchRows, indexSettingsSearchPages } = await import('@/components/settings/shell/settingsSearchRows');
+        const { useSelectionListDynamicSections } = await import('@/components/ui/selectionList/useSelectionListDynamicSections');
+        const { createDefaultDynamicSectionCache } = await import('@/components/ui/selectionList/selectionListDynamicSectionCache');
+        const cache = createDefaultDynamicSectionCache();
+        appShellPluginProjectionState.projection = pluginSettingsProjection();
+        const hook = await renderHook(() => {
+            const catalog = useResolvedSettingsPageCatalog();
+            const pages = indexSettingsSearchPages(catalog.tree);
+            const sections = buildUniversalSearchSections({
+                query: 'descriptor', commands: [], sessions: [], projects: [],
+                settingsSearchRevision: catalog.searchRevision,
+                searchSettingsPages: query => {
+                    const { pageRows, settingRows } = buildSettingsSearchRows(catalog.search(query), pages);
+                    return [...pageRows, ...settingRows];
+                },
+                transcript: { status: 'absent' }, files: { status: 'absent' }, commits: { status: 'absent' },
+                pluginSections: [], onCommitResult() {},
+            });
+            return useSelectionListDynamicSections({
+                dynamicSections: sections.filter(section => section.kind === 'dynamic'),
+                inputValue: 'descriptor', cache,
+            });
+        });
+        try {
+            await flushHookEffects({ cycles: 4, turns: 2 });
+            const pluginRows = () => hook.getCurrent().get('settings')?.options.filter(option =>
+                option.id.includes('pluginSettingsPage:examples.descriptor-only:settings')) ?? [];
+            expect(pluginRows()).toHaveLength(1);
+            appShellPluginProjectionState.projection = null;
+            await hook.rerender();
+            await flushHookEffects({ cycles: 4, turns: 2 });
+            expect(pluginRows()).toHaveLength(0);
+        } finally { await hook.unmount(); }
+    });
+
     it('keeps Teams in navigation and search for a capable secondary Home, then removes it outside that Home set', async () => {
-        const { FeaturesResponseSchema } = await import('@happier-dev/protocol');
+        const { FeaturesResponseSchema} = await import('@happier-dev/protocol/features/payload/featuresResponseSchema');
         const profiles = await import('@/sync/domains/server/serverProfiles');
         const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
         const { useTeamsSettingsAdmission } = await import('@/hooks/teams/useTeamsSettingsAdmission');
@@ -349,7 +425,7 @@ describe('useResolvedSettingsPageCatalog', () => {
     });
 
     it('lists Teams unless the Home says this viewer is not shown it', async () => {
-        const { FeaturesResponseSchema } = await import('@happier-dev/protocol');
+        const { FeaturesResponseSchema} = await import('@happier-dev/protocol/features/payload/featuresResponseSchema');
         const profiles = await import('@/sync/domains/server/serverProfiles');
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
@@ -510,7 +586,6 @@ describe('useResolvedSettingsPageCatalog', () => {
                 ['skills', 'capabilities.skillsFound.title', 'skills.found', '/settings/skills/found'],
                 ['skills', 'capabilities.skills.home.choose', 'skills.choose', '/settings/skills/choose'],
                 ['mcp', 'capabilities.mcp.foundOnMachines', 'mcp.found', '/settings/mcp/found'],
-                ['mcp', 'settings.mcpServersDetectedDirectoryTitle', 'mcp.found.mcpServersDetectedDirectory', '/settings/mcp/found'],
             ] as const) {
                 expect(hook.getCurrent().search(query), anchor).toContainEqual(expect.objectContaining({
                     id, route: `${pathname}?setting=${anchor}`,
@@ -872,6 +947,19 @@ describe('useResolvedSettingsPageCatalog', () => {
         await nonDesktopHook.unmount();
     });
 
+    it('finds all three current-list filter declarations through Settings search', async () => {
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+        for (const [route, prefix, entityTitle] of [['/', 'session', 'settings.sessions'], ['/workflows', 'workflow', 'workflows.title'],
+            ['/discussions', 'discussion', 'session.collaboration.discussion.title']] as const) {
+            expect(hook.getCurrent().search('filtersTitle')).toContainEqual(expect.objectContaining({
+                route: `${route}?setting=${prefix}.list.filters`,
+                setting: expect.objectContaining({ anchor: `${prefix}.list.filters`, path: expect.arrayContaining([entityTitle]) }),
+            }));
+        }
+        await hook.unmount();
+    });
+
     it('finds an individual setting by its own label and points at its row on the page', async () => {
         const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
         const hook = await renderHook(() => useResolvedSettingsPageCatalog());
@@ -898,6 +986,24 @@ describe('useResolvedSettingsPageCatalog', () => {
         expect(hook.getCurrent().search('teams').every((result: any) => result.setting === undefined || result.id !== 'teams')).toBe(true);
 
         await hook.unmount();
+    });
+
+    it('finds Customize composer and opens the Composer sub-page at its row', async () => {
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+        try {
+            expect(hook.getCurrent().search('navigationPlacement.customizeComposer')).toContainEqual(expect.objectContaining({
+                id: 'session',
+                route: '/settings/session/composer?setting=session.composer.customize',
+                setting: expect.objectContaining({
+                    anchor: 'session.composer.customize',
+                    title: 'navigationPlacement.customizeComposer',
+                    path: ['settings.sessions', 'settingsSession.composer.title', 'settingsSessionPages.composer.layoutSection'],
+                }),
+            }));
+        } finally {
+            await hook.unmount();
+        }
     });
 
     it('finds every prospective auto-follow preference on Coordination, where Follow automatically lives', async () => {

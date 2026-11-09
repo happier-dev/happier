@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { AppState } from 'react-native';
-import type { ManagedIdentityProviderOwnerV1, ManagedIdentityProviderV1 } from '@happier-dev/protocol';
+import type { ManagedIdentityProviderOwnerV1, ManagedIdentityProviderV1 } from '@happier-dev/protocol/identity/providers';
 
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
@@ -19,7 +19,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { useUnsavedChangesBeforeRemoveGuard } from '@/utils/navigation/useUnsavedChangesBeforeRemoveGuard';
 import { promptUnsavedChangesAlert } from '@/utils/ui/promptUnsavedChangesAlert';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
@@ -84,13 +84,14 @@ export const ManagedOidcProviderEditorContent = React.memo(function ManagedOidcP
     );
     const initialProvider = React.useRef(props.provider ?? null).current;
     const copyFeedback = useHappierCopyFeedback();
+    const writeClipboard = useClipboardWrite(props.scope);
     const copyCallbackUrl = React.useCallback(async (url: string) => {
-        if (!await setClipboardStringSafe(url)) {
+        if (!await writeClipboard(url)) {
             await Modal.alertAsync(t('common.error'), t('items.failedToCopyToClipboard'));
             return;
         }
         copyFeedback.markCopied();
-    }, [copyFeedback]);
+    }, [copyFeedback, writeClipboard]);
     const initialDraft = React.useRef(
         initialProvider ? managedOidcDraftFromProvider(initialProvider) : EMPTY_MANAGED_OIDC_PROVIDER_DRAFT,
     ).current;

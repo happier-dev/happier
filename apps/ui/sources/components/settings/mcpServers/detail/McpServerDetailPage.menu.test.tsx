@@ -2,7 +2,7 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { McpServerCatalogEntryV1Schema } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import { encodeMcpServerInstallLinkV1 } from '@happier-dev/protocol/mcp/servers/import/parseMcpServerImportV1';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installBrowserClipboardBoundary, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { resolveSavedSecretReference } from '@/sync/store/settings/savedSecretCatalogSnapshot';
@@ -14,7 +14,7 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
 // HTTP and clipboard are boundaries; mounted Action admission/currentness and link production stay real.
-vi.mock('@/utils/ui/clipboard', () => ({ setClipboardStringSafe: boundary.copy }));
+vi.mock('expo-clipboard', () => ({ setStringAsync: boundary.copy }));
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { readPresentationNotice, retirePresentationNotice } = await import('@/components/sessions/presentation/presentationNotices');
@@ -44,6 +44,7 @@ beforeEach(async () => {
   disposeActionLoader = await installRealActionExecutorModuleLoader();
   boundary.copy.mockClear();
   boundary.copy.mockResolvedValue(true);
+  installBrowserClipboardBoundary(async text => { await boundary.copy(text); });
   retirePresentationNotice();
   catalogHasServer = true;
   const serverId = await harness.addHome({ name: 'MCP menu', serverUrl: HOME_URL,
@@ -81,7 +82,7 @@ describe('saved MCP server header menu', () => {
   });
 
   it('says so when the clipboard refuses the link', async () => {
-    boundary.copy.mockResolvedValue(false);
+    boundary.copy.mockRejectedValue(new DOMException('', 'NotAllowedError'));
     const current = await page();
     await waitForHomeGovernance(() => expect(current.actions()).toHaveLength(2));
     await current.actions()[1]!.onSelect();

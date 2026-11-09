@@ -26,6 +26,7 @@ import { Modal } from '@/modal';
 import { resolveAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import {
     resolveHomeAccountAdministrationActions,
+    resolveHomePublicProfileModeration,
     type HomeAccountActionAvailability,
 } from '@/sync/domains/home/governance/homeAccountAdministration';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -33,6 +34,8 @@ import {
     deleteHomeAccount,
     disableHomeAccount,
     enableHomeAccount,
+    moderateHomePublicProfile,
+    reclaimHomePublicProfileHandle,
     setHomeAccountRole,
     signOutHomeAccountEverywhere,
     type HomeGovernanceMutationOutcome,
@@ -55,7 +58,7 @@ const TEAM_MARK_SIZE = 28;
 
 type PendingAction = Readonly<
     | { kind: 'role'; role: HomeRoleV1 }
-    | { kind: 'disable' | 'enable' | 'delete' | 'signOutEverywhere' }
+    | { kind: 'disable' | 'enable' | 'delete' | 'signOutEverywhere' | 'restrictProfile' | 'restoreProfile' | 'reclaimHandle' }
 >;
 
 /** The reason an entitled-but-blocked action gives instead of an inert control. */
@@ -77,6 +80,12 @@ function pendingActionLabel(action: PendingAction): string {
             return t('homeGovernance.deleteAccount');
         case 'signOutEverywhere':
             return t('homeGovernance.person.signOutEverywhereDone');
+        case 'restrictProfile':
+            return t('homeGovernance.person.publicProfileRestrictedDone');
+        case 'restoreProfile':
+            return t('homeGovernance.person.publicProfileRestoredDone');
+        case 'reclaimHandle':
+            return t('homeGovernance.person.publicProfileReclaimedDone');
     }
 }
 
@@ -103,6 +112,7 @@ const PersonDetail = React.memo(function PersonDetail(props: Readonly<{
     const { context, detail, onChanged } = props;
     const [pendingAction, setPendingAction] = React.useState<PendingAction | null>(null);
     const operationInFlightRef = React.useRef(false);
+    const reclaimDraftRef = React.useRef({ reason: '', notice: '' });
     const busy = pendingAction !== null;
     const labelMethods = useMethodLabels(context);
 
@@ -185,6 +195,55 @@ const PersonDetail = React.memo(function PersonDetail(props: Readonly<{
         );
     }, [runForCapturedAccount, detail]);
 
+    /** Asks for the audited reason first; a cancelled or blank reason sends nothing. */
+    const moderateProfile = React.useCallback(async (operation: 'restrict' | 'restore') => {
+        if (operationInFlightRef.current) return;
+        const restricting = operation === 'restrict';
+        const reason = (await Modal.prompt(
+            restricting
+                ? t('homeGovernance.person.publicProfileRestrictTitle', { account: name })
+                : t('homeGovernance.person.publicProfileRestoreTitle', { account: name }),
+            restricting
+                ? t('homeGovernance.person.publicProfileRestrictBody')
+                : t('homeGovernance.person.publicProfileRestoreBody'),
+            {
+                placeholder: t('homeGovernance.person.publicProfileReason'),
+                confirmText: restricting
+                    ? t('homeGovernance.person.publicProfileRestrictAction')
+                    : t('homeGovernance.person.publicProfileRestoreAction'),
+            },
+        ))?.trim();
+        if (!reason) return;
+        await runForCapturedAccount(
+            { kind: restricting ? 'restrictProfile' : 'restoreProfile' },
+            (scope) => moderateHomePublicProfile({ scope, accountId: detail.accountId, operation, reason }),
+        );
+    }, [runForCapturedAccount, detail.accountId, name]);
+
+    const reclaimHandle = React.useCallback(async () => {
+        const username = detail.profile.username;
+        if (operationInFlightRef.current || !username) return;
+        const title = t('homeGovernance.person.publicProfileReclaimTitle', { username });
+        const reason = (await Modal.prompt(title, t('homeGovernance.person.publicProfileReclaimReasonBody'), {
+            placeholder: t('homeGovernance.person.publicProfileReason'),
+            defaultValue: reclaimDraftRef.current.reason,
+            confirmText: t('common.continue'),
+        }))?.trim();
+        if (!reason) return;
+        reclaimDraftRef.current.reason = reason;
+        const notice = (await Modal.prompt(title, t('homeGovernance.person.publicProfileReclaimNoticeBody'), {
+            placeholder: t('homeGovernance.person.publicProfileReclaimNotice'),
+            defaultValue: reclaimDraftRef.current.notice,
+            confirmText: t('homeGovernance.person.publicProfileReclaim'),
+        }))?.trim();
+        if (!notice) return;
+        reclaimDraftRef.current.notice = notice;
+        const outcome = await runForCapturedAccount({ kind: 'reclaimHandle' }, scope => reclaimHomePublicProfileHandle({
+            scope, accountId: detail.accountId, username, reason, notice,
+        }));
+        if (outcome?.kind === 'succeeded') reclaimDraftRef.current = { reason: '', notice: '' };
+    }, [detail.accountId, detail.profile.username, runForCapturedAccount]);
+
     const confirmSignOutEverywhere = React.useCallback(() => {
         void runForCapturedAccount(
             { kind: 'signOutEverywhere' },
@@ -246,6 +305,10 @@ const PersonDetail = React.memo(function PersonDetail(props: Readonly<{
         ? t('homeGovernance.retryDeletion')
         : t('homeGovernance.deleteAccount');
 
+    const publicProfile = resolveHomePublicProfileModeration({
+        target: detail,
+        mutationsAvailable: context.mutationsAvailable,
+    });
     const now = Date.now();
     const methodLabels = labelMethods(detail.authentication.usableMethodIds);
     const providerLabels = labelMethods(detail.authentication.linkedProviderIds);
@@ -392,6 +455,90 @@ const PersonDetail = React.memo(function PersonDetail(props: Readonly<{
                     />
                 ) : null}
             </ItemGroup>
+
+            {publicProfile.state === 'hidden' ? null : (
+                <ItemGroup
+                    title={t('homeGovernance.person.publicProfile')}
+                    description={t('homeGovernance.person.publicProfileDescription')}
+                >
+                    {publicProfile.state === 'unavailable' ? (
+                        <Item
+                            testID="home-account-public-profile-unavailable"
+                            title={t('homeGovernance.person.publicProfileUnavailable')}
+                            subtitle={homeActionUnavailableReasonLabel(publicProfile.reason)}
+                            subtitleLines={0}
+                            showChevron={false}
+                            mode="info"
+                        />
+                    ) : null}
+                    {publicProfile.state === 'available' && !detail.publicProfile?.restricted ? (
+                        <Item
+                            testID="home-account-public-profile-restrict-row"
+                            title={t('homeGovernance.person.publicProfileRestrict')}
+                            subtitle={t('homeGovernance.person.publicProfileRestrictDescription')}
+                            subtitleLines={0}
+                            showChevron={false}
+                            mode="info"
+                            accessoryLayout="adaptive"
+                            rightElement={(
+                                <RoundButton
+                                    testID="home-account-public-profile-restrict"
+                                    size="small"
+                                    display="secondary"
+                                    title={t('homeGovernance.person.publicProfileRestrictAction')}
+                                    disabled={busy}
+                                    loading={pendingAction?.kind === 'restrictProfile'}
+                                    onPress={busy ? undefined : () => { void moderateProfile('restrict'); }}
+                                />
+                            )}
+                        />
+                    ) : null}
+                    {publicProfile.state === 'available' && detail.publicProfile?.restricted ? (
+                        <Item
+                            testID="home-account-public-profile-restore-row"
+                            title={t('homeGovernance.person.publicProfileRestore')}
+                            subtitle={t('homeGovernance.person.publicProfileRestoreDescription')}
+                            subtitleLines={0}
+                            showChevron={false}
+                            mode="info"
+                            accessoryLayout="adaptive"
+                            rightElement={(
+                                <RoundButton
+                                    testID="home-account-public-profile-restore"
+                                    size="small"
+                                    display="secondary"
+                                    title={t('homeGovernance.person.publicProfileRestoreAction')}
+                                    disabled={busy}
+                                    loading={pendingAction?.kind === 'restoreProfile'}
+                                    onPress={busy ? undefined : () => { void moderateProfile('restore'); }}
+                                />
+                            )}
+                        />
+                    ) : null}
+                    {publicProfile.state === 'available' && detail.profile.username ? (
+                        <Item
+                            testID="home-account-public-profile-reclaim-row"
+                            title={t('homeGovernance.person.publicProfileReclaim')}
+                            subtitle={t('homeGovernance.person.publicProfileReclaimDescription', { username: detail.profile.username })}
+                            subtitleLines={0}
+                            showChevron={false}
+                            mode="info"
+                            accessoryLayout="adaptive"
+                            rightElement={(
+                                <RoundButton
+                                    testID="home-account-public-profile-reclaim"
+                                    size="small"
+                                    display="secondary"
+                                    title={t('homeGovernance.person.publicProfileReclaim')}
+                                    disabled={busy}
+                                    loading={pendingAction?.kind === 'reclaimHandle'}
+                                    onPress={busy ? undefined : () => { void reclaimHandle(); }}
+                                />
+                            )}
+                        />
+                    ) : null}
+                </ItemGroup>
+            )}
 
             <ItemGroup
                 title={t('homeGovernance.person.recentActivity')}

@@ -10,11 +10,13 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { CollectionLandingState } from '@/components/ui/lists/collection/CollectionLandingState';
 import { t } from '@/text';
 
 import { openProfileCollectionHref } from './ProfileCollectionList';
 import { DEFAULT_ENVIRONMENT_ROUTE, newProfileRoute, profileRoute, readLastVisitedProfileId } from './profileCollectionRoutes';
 import { useProfilesCollection, type ProfilesCollection } from './useProfilesCollection';
+import { profileRailStatus } from './profileColumnAdapter';
 import { resolveHappierCollectionInitialKey, useHappierCollectionIndexView } from '@happier-dev/plugin-ui/presentation';
 
 /**
@@ -27,10 +29,27 @@ export const ProfileSettingsIndex = React.memo(function ProfileSettingsIndex() {
     const collection = useProfilesCollection();
     if (!collection.useProfiles) return <ProfilesOffPage collection={collection} />;
     if (view === 'pending') return null;
+    if (collection.isInitialLoading && view === 'land') return (
+        <CollectionLandingState testID="settings.profiles.collection.loading" kind="loading" title={t('common.loading')} />
+    );
     if (collection.isInitialLoading) return (
         <ItemList style={{ paddingTop: 0 }}>
             <SettingsPageHeader description={t('settingsProfilesPage.pageDescription')} />
-            <SurfaceStateCard testID="settings.profiles.collection.loading" kind="loading" size="line" title={t('common.loading')} />
+            <SurfaceStateCard testID="settings.profiles.collection.loading" kind="loading" title={t('common.loading')} />
+        </ItemList>
+    );
+    // Saved profiles that never loaded are unknown, not an empty "Your profiles" section; the rail names
+    // the same failure beside a landed profile.
+    if (collection.isReadFailed && view !== 'land') return (
+        <ItemList style={{ paddingTop: 0 }}>
+            <SettingsPageHeader description={t('settingsProfilesPage.pageDescription')} />
+            <SurfaceStateCard
+                testID="settings.profiles.collection.readFailed"
+                kind="unavailable"
+                title={t('profilesPage.listReadFailedTitle')}
+                reason={t('profilesPage.readFailedDescription')}
+                action={collection.retryRead ? { label: t('common.retry'), onPress: collection.retryRead } : undefined}
+            />
         </ItemList>
     );
     if (view === 'land') return <ProfileCollectionLanding collection={collection} />;
@@ -121,7 +140,10 @@ const ProfileCollectionPage = React.memo(function ProfileCollectionPage(props: R
             onEditProfile={(profile) => open(profileRoute(profile.id), 'ProfileCollectionPage.edit')}
             onDuplicateProfile={(profile) => open(newProfileRoute(profile.id), 'ProfileCollectionPage.duplicate')}
             onDeleteProfile={(profile) => { void collection.requestDelete(profile); }}
-            getProfileSubtitleExtra={collection.describeStatus}
+            getProfileStatus={(profile) => profileRailStatus({
+                enabled: collection.isEnabled(profile),
+                migration: collection.migrationStatusOf(profile.id),
+            })}
             onSecretBadgePress={collection.chooseDefaultSecret}
             getSecretOverrideReady={collection.isSecretOverrideReady}
         />

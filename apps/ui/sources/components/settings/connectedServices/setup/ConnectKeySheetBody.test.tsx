@@ -78,6 +78,26 @@ afterEach(async () => {
 });
 
 describe('Connect sheet key body', () => {
+  it('leads a new key with the declared guide, and drops it for a saved key', async () => {
+    const deepseek = entry({});
+    const screen = await renderScreen(
+      <ConnectKeySheetBody
+        catalog={catalog([deepseek])}
+        linkableEntries={[deepseek]}
+        initialMode="new"
+        preselected={null}
+        loading={false}
+        scope={null}
+        guide={{ consoleUrl: 'https://provider.example/keys', steps: ['Open API keys', 'Create a key.'] }}
+        onResult={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.findHostByTestId('connected-account-manual:step:1')).toBeTruthy();
+    await screen.pressByTestIdAsync('connect-key-sheet:mode:saved');
+    expect(screen.findHostByTestId('connected-account-manual:step:1')).toBeNull();
+  });
+
   it('opens on the preselected saved key and returns it as selected, without copying it', async () => {
     const onResult = vi.fn();
     const screen = await renderScreen(

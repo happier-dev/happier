@@ -14,6 +14,7 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { publishHomeAccountChangeWake } from '@/sync/runtime/orchestration/homeAccountChange';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
 
 const routerPush = vi.hoisted(() => vi.fn());
@@ -111,13 +112,22 @@ describe('PublicProfileSettingsScreen approval defaults', () => {
     // covered at the shared approval-policy owner (actionApprovalPolicy.test.ts).
     harness.answer(serverId, 'GET /v1/account/public-profile', { select: () => ({ body: owner() }) });
     harness.answer(serverId, 'POST /v2/usage/query', { body: accounting });
-    harness.answer(serverId, 'POST /v1/account/public-profile/resume', { select: () => {
+    const profileReads = () => harness.requests.filter(request => request.method === 'GET'
+      && request.path === '/v1/account/public-profile').length;
+    let readsAtResumeEffect = 0;
+    harness.answer(serverId, 'POST /v1/account/public-profile/resume', { select: async () => {
       state = 'published';
-      return { respondAfter: resumeResponse.promise, body: { kind: 'updated', record: record() } };
+      await resumeResponse.promise;
+      readsAtResumeEffect = profileReads();
+      publishHomeAccountChangeWake(serverId, { t: 'account-change', changeKinds: ['account'],
+        entityIds: ['public-profile'], sessionSystemRecords: [] }, 'socket');
+      return { body: { kind: 'updated', record: record() } };
     } });
     harness.answer(serverId, 'PUT /v1/account/public-profile/snapshot', {
-      respondAfter: refreshResponse.promise,
-      body: { kind: 'updated', record: record() },
+      select: async () => {
+        await refreshResponse.promise;
+        return { body: { kind: 'updated', record: record() } };
+      },
     });
     const features = createRootLayoutFeaturesResponse({
       features: { account: { publicProfiles: { enabled: true } } },
@@ -140,6 +150,8 @@ describe('PublicProfileSettingsScreen approval defaults', () => {
       await act(async () => resumeResponse.resolve());
       await vi.waitFor(() => expect(screen.findByTestId('settings-public-profile-pause')).toBeTruthy());
       expect(screen.findByTestId('settings-public-profile-resume')).toBeNull();
+      await vi.waitFor(() => expect(screen.findByTestId('settings-public-profile-pause')?.props.disabled).toBe(false));
+      expect(profileReads() - readsAtResumeEffect).toBe(1);
 
       const sync = screen.findByTestId('settings-public-profile-sync');
       expect(sync).toBeTruthy();

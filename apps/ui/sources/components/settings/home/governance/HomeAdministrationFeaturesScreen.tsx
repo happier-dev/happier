@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
-import type { FeatureDecision, FeatureId } from '@happier-dev/protocol';
+import type { FeatureDecision} from '@happier-dev/protocol/features/decision';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import type {
     HomeSettingEntryV1,
     HomeSettingIgnoredReasonV1,
@@ -13,7 +14,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Switch } from '@/components/ui/forms/Switch';
 import { Icon } from '@/components/ui/icons/Icon';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
-import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -325,8 +326,6 @@ const FeatureFamilyDisclosure = React.memo(function FeatureFamilyDisclosure(prop
                     {...state.headerProps}
                     title={title}
                     subtitle={count === 1 ? t('homeGovernance.features.familyCount_one') : t('homeGovernance.features.familyCount_other', { count })}
-                    rightElement={<ExpandableItemCaret expanded={state.expanded} />}
-                    showChevron={false}
                 />
             )}
         >

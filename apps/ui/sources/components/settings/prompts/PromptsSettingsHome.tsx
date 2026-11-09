@@ -6,6 +6,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { useArtifacts, useArtifactsLoaded } from '@/sync/domains/state/storage';
+import { PROMPT_LIBRARY_ARTIFACT_KINDS } from '@/sync/domains/artifacts/artifactInventory';
 import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
 import { useHomeAiLaunchProfileCatalog } from '@/sync/store/useAiLaunchProfiles';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
@@ -19,8 +20,8 @@ import { Icon } from '@/components/ui/icons/Icon';
  */
 export const PromptsSettingsHome = React.memo(() => {
   const router = useRouter();
-  const artifacts = useArtifacts();
-  const artifactsLoaded = useArtifactsLoaded();
+  const artifacts = useArtifacts('promptLibrary');
+  const artifactsLoaded = useArtifactsLoaded(PROMPT_LIBRARY_ARTIFACT_KINDS);
   const invocations = usePromptLibraryCatalogValue('invocations').value;
   const folders = usePromptLibraryCatalogValue('folders').value;
   const coding = usePromptLibraryCatalogValue('coding').value;

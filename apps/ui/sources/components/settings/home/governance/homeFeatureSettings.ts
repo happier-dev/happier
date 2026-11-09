@@ -1,4 +1,4 @@
-import { FEATURE_IDS, type FeatureId } from '@happier-dev/protocol/features/catalog';
+import { FEATURE_IDS, getCanonicalFeatureId, type FeatureId } from '@happier-dev/protocol/features/catalog';
 import type { HomeSettingsProjectionV1 } from '@happier-dev/protocol/home/governance';
 
 import {
@@ -20,7 +20,7 @@ const COMMON = new Set<FeatureId>(HOME_COMMON_FEATURE_IDS);
 function featureSettings(ids: readonly FeatureId[]): Record<string, SettingDeclaration> {
     const sections = builtInSettingsPageSections('homeAdministration.features');
     const declared = { ...sections.common?.settings, ...sections.advanced?.settings };
-    return Object.fromEntries(ids.filter(id => Object.hasOwn(declared, id)).map(id => [id, declared[id]]));
+    return Object.fromEntries(ids.filter(id => getCanonicalFeatureId(id) === id && Object.hasOwn(declared, id)).map(id => [id, declared[id]]));
 }
 
 const sections = {

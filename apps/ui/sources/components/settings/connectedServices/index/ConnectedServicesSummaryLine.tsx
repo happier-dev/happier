@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';
@@ -38,16 +40,16 @@ export const ConnectedServicesSummaryLine = React.memo(function ConnectedService
             <View style={stylesheet.asOf}>
                 {props.asOf !== null ? <SurfaceAsOfLabel at={props.asOf} testID="connected-services-summary-as-of" /> : null}
                 {props.onRefreshAll ? (
-                    <Pressable
+                    <HappierPressable
                         testID="connected-services-summary-refresh-all"
                         accessibilityRole="button"
-                        hitSlop={8}
+                        hitTarget={HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE}
                         onPress={props.onRefreshAll}
                         style={stylesheet.refresh}
                     >
                         <Icon name="arrows-clockwise" size={13} color={theme.colors.text.primary} />
                         <Text style={stylesheet.refreshLabel}>{t('connectedServicesCollection.refreshAll')}</Text>
-                    </Pressable>
+                    </HappierPressable>
                 ) : null}
             </View>
         </View>

@@ -87,7 +87,8 @@ export function useManagedProvisioners(serverId: string, onApprovalPending?: (re
             const keepPresentation = current.lifetime === lifetime && current.accountId === binding.accountId;
             return retainShallow(current, { lifetime, binding, accountId: binding.accountId, requestKey,
                 provisioners: keepPresentation ? current.provisioners : EMPTY_PROVISIONERS,
-                checks: keepPresentation ? current.checks : EMPTY_CHECKS,
+                // Cards stay across a new controller; what the last one answered about them doesn't.
+                checks: keepPresentation && current.requestKey === requestKey ? current.checks : EMPTY_CHECKS,
                 settled: keepPresentation ? current.settled : null,
                 error: keepPresentation ? current.error : null, loading: true });
         });

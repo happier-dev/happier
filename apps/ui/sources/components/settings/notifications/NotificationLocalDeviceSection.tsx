@@ -9,10 +9,10 @@ import { NOTIFICATIONS_SETTINGS } from '@/components/settings/notifications/noti
 import {
     areLocalNotificationsOff, readLocalNotificationPreference, type LocalNotificationPreferenceId,
 } from '@/components/settings/notifications/localNotificationPreferences';
-import type { DeclaredSettingsWrite } from '@/components/settings/shell/useDeclaredSettingsWrite';
+import type { DeclaredSettingsWrite } from '@/components/settings/shell/useSettingActionFeedback';
 
 type NotificationLocalDeviceSectionProps = Readonly<{
-    localSettings: LocalSettings;
+    localSettings: Pick<LocalSettings, 'attentionDeviceOverridesV1'>;
     setSetting: DeclaredSettingsWrite;
 }>;
 

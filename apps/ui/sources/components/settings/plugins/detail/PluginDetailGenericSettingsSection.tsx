@@ -1,3 +1,4 @@
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -17,10 +18,10 @@ import {
 } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { useProjectedPluginLocalizedTextResolver } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { SavedSecretPickerModal } from '@/components/ui/forms/valueRefs/SavedSecretPickerModal';
+import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { SchemaFieldControl, resolveSchemaFieldKind } from '@/components/settings/schemaFields/SchemaFieldControl';
 import { SchemaFieldRow, SchemaFieldStatusLine } from '@/components/settings/schemaFields/SchemaFieldRow';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
@@ -30,6 +31,7 @@ import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { useMountedPluginSettingsActionAdapter } from '@/components/settings/plugins/model/useMountedPluginSettingsActionAdapter';
 import { projectAccountDeclaredPluginSettingsGroups } from '@/sync/domains/plugins/settings/accountDeclaredPluginSettings';
 import {
+    formatPluginSettingsAdministrationRevision,
     resolveScopedPluginSettingsTarget,
     type ScopedPluginSettingsAccountTarget,
     type ScopedPluginSettingsDaemonTarget,
@@ -38,13 +40,13 @@ import {
     type ScopedPluginSettingsTarget,
 } from '@/sync/domains/plugins/settings/scopedPluginSettingsAdapter';
 import {
-    createScopedPluginSettingsSetMutation,
     projectScopedPluginSettingsField,
     projectScopedPluginSettingsFields,
     readScopedPluginSettingsDeclaredFieldValue,
     resolveScopedPluginSettingsDeclaredFieldMutation,
     scopedPluginSettingsFieldDeclarationIdentity,
     type ScopedPluginSettingsFieldModel,
+    type ScopedPluginSettingsProjectionState,
     useScopedPluginSettingsProjection,
 } from '@/sync/domains/plugins/settings/scopedPluginSettingsProjection';
 import {
@@ -172,8 +174,6 @@ export function PluginSettingTextField(props: Readonly<{
     onCommit: () => void;
     /** Account SavedSecret deletion is always an explicit user action. */
     onDelete?: () => void;
-    /** Binds a host-private existing SavedSecret without projecting its id. */
-    onBindExisting?: () => void;
     /** Removes only the current binding; it preserves the SavedSecret record. */
     onUnbind?: () => void;
     /** Safe presence state only; the SavedSecret value never reaches the control. */
@@ -279,17 +279,6 @@ export function PluginSettingTextField(props: Readonly<{
                                     onPress={props.onUnbind}
                                 />
                             ) : null}
-                            {props.onBindExisting ? (
-                                <RoundButton
-                                    testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.bind`}
-                                    size="normal"
-                                    display="inverted"
-                                    title={t('settings.mcpServersImportMappingSavedSecret')}
-                                    accessibilityLabel={`${t('settings.mcpServersImportMappingSavedSecret')}: ${props.field.title}`}
-                                    disabled={props.saving || props.persistenceDisabled}
-                                    onPress={props.onBindExisting}
-                                />
-                            ) : null}
                             <RoundButton
                                 testID={`settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}.save`}
                                 size="normal"
@@ -299,6 +288,93 @@ export function PluginSettingTextField(props: Readonly<{
                                 disabled={!props.dirty || props.saving || props.persistenceDisabled || props.commitDisabled}
                                 loading={props.saving}
                                 onPress={props.onCommit}
+                            />
+                            </>
+                        )}
+                    >
+                        {null}
+                    </SectionButtonRow>
+                </View>
+            )}
+        />
+    );
+}
+
+/**
+ * An Account-custodied secret setting: whether a key is linked, and the one control that links one
+ * (Add key, or Replace once linked) through the Connect sheet. Delete and Remove keep their meanings;
+ * the secret's value never reaches this control.
+ */
+function PluginSettingSecretBindingField(props: Readonly<{
+    pluginId: string;
+    group: PluginProjectionEditableSettingsGroup;
+    field: PluginProjectionEditableSettingField;
+    configured: boolean;
+    saving: boolean;
+    persistenceDisabled: boolean;
+    /** Receives the press, so the sheet hangs from the button that opened it. */
+    onChoose: (event?: unknown) => void;
+    onDelete?: () => void;
+    onUnbind?: () => void;
+    errorMessage?: string | null;
+}>) {
+    const id = `settings.plugins.detail.${props.pluginId}.settings.${props.group.id}.${props.field.key}`;
+    const chooseLabel = t(props.configured ? 'settingsProvidersCollection.replace' : 'settingsProvidersCollection.addKey');
+    const busy = props.saving || props.persistenceDisabled;
+    return (
+        <SchemaFieldRow
+            testID={`${id}.input.row`}
+            title={props.field.title}
+            hint={props.field.subtitle ?? undefined}
+            layout="stacked"
+            control={(
+                <View style={stylesheet.fieldStack}>
+                    {props.configured ? (
+                        <SchemaFieldStatusLine testID={`${id}.status`}>
+                            {t('memorySearchSettings.embeddings.secretSet')}
+                        </SchemaFieldStatusLine>
+                    ) : null}
+                    {props.errorMessage ? (
+                        <SchemaFieldStatusLine testID={`${id}.error`} tone="danger">
+                            {props.errorMessage}
+                        </SchemaFieldStatusLine>
+                    ) : null}
+                    <SectionButtonRow
+                        trailing={(
+                            <>
+                            {props.onDelete ? (
+                                <RoundButton
+                                    testID={`${id}.delete`}
+                                    size="normal"
+                                    display="quietDestructive"
+                                    title={t('settingsPlugins.secretFieldActions.delete')}
+                                    accessibilityLabel={`${t('settingsPlugins.secretFieldActions.delete')}: ${props.field.title}`}
+                                    accessibilityHint={t('settingsPlugins.secretFieldActions.deleteHint')}
+                                    disabled={busy}
+                                    onPress={props.onDelete}
+                                />
+                            ) : null}
+                            {props.onUnbind ? (
+                                <RoundButton
+                                    testID={`${id}.unbind`}
+                                    size="normal"
+                                    display="inverted"
+                                    title={t('settingsPlugins.secretFieldActions.unbind')}
+                                    accessibilityLabel={`${t('settingsPlugins.secretFieldActions.unbind')}: ${props.field.title}`}
+                                    accessibilityHint={t('settingsPlugins.secretFieldActions.unbindHint')}
+                                    disabled={busy}
+                                    onPress={props.onUnbind}
+                                />
+                            ) : null}
+                            <RoundButton
+                                testID={`${id}.bind`}
+                                size="normal"
+                                display={props.configured ? 'inverted' : undefined}
+                                title={chooseLabel}
+                                accessibilityLabel={`${chooseLabel}: ${props.field.title}`}
+                                disabled={busy}
+                                loading={props.saving}
+                                onPress={props.onChoose}
                             />
                             </>
                         )}
@@ -346,17 +422,12 @@ function PluginSettingAccountSecretField(props: Readonly<{
         ? secretSettings.state.revision
         : null;
     const loading = secretSettings.state.loading;
-    // Raw Account-secret input is presentation-local and disappears with this
-    // host control. The shared record owns only safe status/revision/mutation.
-    const [draft, setDraft] = React.useState('');
     const [saving, setSaving] = React.useState(false);
     const [saveFailed, setSaveFailed] = React.useState(false);
     const [saveOutcomeUnknown, setSaveOutcomeUnknown] = React.useState(false);
-    const [dirty, setDirty] = React.useState(false);
     const writePending = secretSettings.state.writePending;
     const mountedRef = React.useRef(true);
     const operationIdRef = React.useRef(0);
-    const draftVersionRef = React.useRef(0);
     const lifetimeIdentityRef = React.useRef(props.lifetimeIdentity);
     const targetIdentity = props.target?.serverIdentityId ?? '';
     const accountScopeIsCurrent = React.useCallback((): boolean => {
@@ -384,12 +455,8 @@ function PluginSettingAccountSecretField(props: Readonly<{
         if (!lifetime) return;
         const retirement = lifetime.onRetire(() => {
             // The shared Account record retires its read/watch/write state.
-            // This presentation owner also holds raw draft/error bytes, so
-            // clear them synchronously and fence its pending continuation.
+            // Retire the field-local mutation result with the Account lifetime.
             operationIdRef.current += 1;
-            draftVersionRef.current += 1;
-            setDraft('');
-            setDirty(false);
             setSaving(false);
             setSaveFailed(false);
             setSaveOutcomeUnknown(false);
@@ -401,9 +468,6 @@ function PluginSettingAccountSecretField(props: Readonly<{
         lifetimeIdentityRef.current = props.lifetimeIdentity;
         const operationId = operationIdRef.current + 1;
         operationIdRef.current = operationId;
-        draftVersionRef.current += 1;
-        setDraft('');
-        setDirty(false);
         setSaving(false);
         setSaveFailed(false);
         setSaveOutcomeUnknown(false);
@@ -423,7 +487,6 @@ function PluginSettingAccountSecretField(props: Readonly<{
         ) return;
         const operationId = operationIdRef.current + 1;
         operationIdRef.current = operationId;
-        const draftVersion = draftVersionRef.current;
         setSaving(true);
         setSaveFailed(false);
         setSaveOutcomeUnknown(false);
@@ -465,10 +528,6 @@ function PluginSettingAccountSecretField(props: Readonly<{
                 setSaveFailed(result !== null);
                 return;
             }
-            if (draftVersionRef.current === draftVersion) {
-                setDraft('');
-                setDirty(false);
-            }
             setSaving(false);
             setSaveFailed(false);
             setSaveOutcomeUnknown(false);
@@ -485,11 +544,6 @@ function PluginSettingAccountSecretField(props: Readonly<{
         });
     }, [accountScopeIsCurrent, loading, props.enabled, props.field.key, props.lifetimeIdentity, revision, saving, secretSettings, writePending]);
 
-    const save = React.useCallback(() => {
-        const mutation = createScopedPluginSettingsSetMutation(draft);
-        if (mutation) commit(mutation);
-    }, [commit, draft]);
-
     const deleteSecret = React.useCallback(() => {
         commit({ kind: 'delete' });
     }, [commit]);
@@ -498,56 +552,25 @@ function PluginSettingAccountSecretField(props: Readonly<{
         commit({ kind: 'unbind' });
     }, [commit]);
 
-    const bindExistingSecret = React.useCallback(() => {
+    const bindExistingSecret = React.useCallback((event?: unknown) => {
         if (!revision || loading || saving || writePending || !props.enabled || !accountScopeIsCurrent()) return;
-        Modal.show({
-            component: SavedSecretPickerModal,
-            props: {
-                // A binding identity is never projected back into the control,
-                // so this picker is deliberately not told which secret is
-                // currently configured.
-                selectedId: null,
-                includeNoneRow: false,
-                allowAdd: false,
-                allowEdit: false,
-                onSelectId: (savedSecretId) => {
-                    if (!savedSecretId) return;
-                    commit({ kind: 'bind', savedSecretId });
-                },
-            },
-            chrome: {
-                kind: 'card',
-                title: t('settings.mcpServersPickSecretTitle'),
-                dimensions: { size: 'lg' },
-            },
-            closeOnBackdrop: true,
+        void presentConnectSheet({ anchor: resolvePressTriggerAnchor(event), service: { kind: 'key', suggestedName: props.field.title }, scope: props.accountLifetime?.scope ?? null, bindingTarget: { kind: 'plugin', pluginId: props.pluginId, localId: props.field.key } }).then(result => {
+            if (result.kind !== 'dismissed') commit({ kind: 'bind', savedSecretId: result.secretRef });
         });
-    }, [accountScopeIsCurrent, commit, loading, props.enabled, revision, saving, writePending]);
+    }, [accountScopeIsCurrent, commit, loading, props.accountLifetime, props.enabled, props.field.key, props.field.title, props.pluginId, revision, saving, writePending]);
 
+    // The value is never typed here: Add key / Replace opens the Connect sheet (a new key or a saved one).
     return (
-        <PluginSettingTextField
+        <PluginSettingSecretBindingField
             pluginId={props.pluginId}
             group={props.group}
             field={props.field}
-            value={draft}
-            dirty={dirty}
+            configured={configured}
             saving={saving}
-            saveFailed={saveFailed}
             persistenceDisabled={!props.enabled || !accountScopeIsCurrent() || loading || writePending || revision === null}
-            acceptDraftInputWhileBusy={props.enabled && accountScopeIsCurrent() && !loading && revision !== null}
-            onChangeText={(value) => {
-                if (!accountScopeIsCurrent()) return;
-                draftVersionRef.current += 1;
-                setDraft(value);
-                setDirty(true);
-                setSaveFailed(false);
-                setSaveOutcomeUnknown(false);
-            }}
-            onCommit={save}
+            onChoose={bindExistingSecret}
             onDelete={configured ? deleteSecret : undefined}
-            onBindExisting={bindExistingSecret}
             onUnbind={configured ? unbindSecret : undefined}
-            status={configured ? t('memorySearchSettings.embeddings.secretSet') : null}
             errorMessage={saveOutcomeUnknown
                 ? t('settingsProviders.errors.mutationOutcomeUnknownDescription')
                 : saveFailed ? t('settingsPlugins.genericSettingsSaveError') : null}
@@ -935,6 +958,11 @@ export function PluginSettingDaemonSecretField(props: Readonly<{
     );
 }
 
+export type PluginSettingsAccountContentProjection = Readonly<
+    Pick<ScopedPluginSettingsProjectionState, 'values' | 'ready' | 'loading' | 'writePending'>
+    & { revision: string | null; error: boolean }
+>;
+
 type PluginDetailGenericSettingsSectionProps = Readonly<{
     pluginId: string;
     projection: PluginProjectionEntry | null;
@@ -963,6 +991,7 @@ type PluginDetailGenericSettingsSectionProps = Readonly<{
      * detail: one titled section of disclosures, one per declared section, each summarised.
      */
     presentation?: Readonly<{ kind: 'sections' }> | Readonly<{ kind: 'disclosures'; title: string }>;
+    renderAccountContent?: (projection: PluginSettingsAccountContentProjection) => React.ReactNode;
 }>;
 
 function isSameSettingValue(value: unknown, fallback: unknown): boolean {
@@ -1010,8 +1039,6 @@ const PluginSettingsSectionDisclosure = React.memo(function PluginSettingsSectio
                     subtitle={props.description ?? undefined}
                     subtitleLines={2}
                     detail={props.summary}
-                    showChevron={false}
-                    rightElement={<ExpandableItemCaret expanded={state.expanded} />}
                 />
             )}
         >
@@ -1160,6 +1187,17 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
         () => new Map(scopedSettings.fieldModels.map((model) => [model.field.key, model] as const)),
         [scopedSettings.fieldModels],
     );
+    const accountContentProjection = React.useMemo<PluginSettingsAccountContentProjection>(() => ({
+        values: Object.fromEntries(ordinaryFields.map(field => [field.key, readScopedPluginSettingsDeclaredFieldValue({
+            values, field, serverIdentityId: props.perActiveServerIdentityId ?? null,
+        })])),
+        revision: scopedSettings.state.revision === null ? null : formatPluginSettingsAdministrationRevision(scopedSettings.state.revision),
+        ready: scopedSettings.state.ready,
+        loading: scopedSettings.state.loading,
+        writePending: scopedSettings.state.writePending,
+        error: scopedSettings.state.error !== null,
+    }), [ordinaryFields, values, props.perActiveServerIdentityId, scopedSettings.state.revision,
+        scopedSettings.state.ready, scopedSettings.state.loading, scopedSettings.state.writePending, scopedSettings.state.error]);
     const visibleGroups = React.useMemo(() => sortedGroups.flatMap((group) => {
         const visibleFields = group.fields.filter((field) => (
             field.presentation?.hidden !== true
@@ -1199,16 +1237,16 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
             ...(params.hasDraft ? { draft: params.draft } : {}),
             ...(isCurrent ? { isCurrent } : {}),
         }).then((result) => {
-            if (result?.status !== 'ready') return;
+            if (result?.status !== 'ready' && result?.status !== 'applied') return;
             emitPluginSettingChangedEvent({
                 pluginId: props.pluginId,
                 scope: props.scope.kind,
                 previousValue,
-                nextValue: readScopedPluginSettingsDeclaredFieldValue({
+                nextValue: result.status === 'ready' ? readScopedPluginSettingsDeclaredFieldValue({
                     values: result.snapshot.values,
                     field: params.field,
                     serverIdentityId: props.daemonServerIdentityId ?? null,
-                }),
+                }) : params.hasDraft ? params.draft : params.model.draft,
                 field: params.field,
             });
         });
@@ -1479,6 +1517,7 @@ function PluginDetailScopedSettingsSection(props: PluginDetailGenericSettingsSec
             });
     return (
         <>
+            {props.scope.kind === 'account' ? props.renderAccountContent?.(accountContentProjection) : null}
             {asDisclosures && shownGroups.length > 0 ? (
                 <ItemGroup
                     title={disclosureTitle}

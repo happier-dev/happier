@@ -17,7 +17,6 @@ import { useWhereItsOnNames } from '@/components/capabilities/where/useWhereItsO
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import {
   ExpandableItem,
-  ExpandableItemCaret,
 } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -48,6 +47,7 @@ import type { McpServerRecovery } from './mcpServerRecovery';
 import { useMcpServerUpdate } from './useMcpServerUpdate';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { refreshMcpServerCatalog } from '@/sync/engine/settings/mcpServerCatalogEngine';
+import { useMcpAgentTakes } from '../add/useMcpAddPlaces';
 
 function formatTime(ms: number): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -77,7 +77,8 @@ export function useMcpServerDetail(
   projection: ReturnType<typeof useReachProjection>;
   placeMachines: { machineId: string; name: string; online: boolean | null }[];
   projects: ReturnType<typeof useWhereItsOnNames>['projects'];
-  agentIds: string[];
+  agentIds: readonly string[];
+  agentTakes: ReturnType<typeof useMcpAgentTakes>;
   names: ReturnType<typeof useWhereItsOnNames>['names'];
   onMachines: readonly (McpServerMachineFact & Readonly<{ lastSeenAt: number | null }>)[];
   tests: ReturnType<typeof useMcpServerMachineTests>;
@@ -87,13 +88,14 @@ export function useMcpServerDetail(
   signIn: ReturnType<typeof useMcpServerSignIn>;
   statuses: ReturnType<typeof mcpServerStatus>;
   machineStatuses: ReturnType<typeof mcpServerMachineStatuses>;
-  testOnline: () => void;
+  testMachines: () => void;
 } {
   const router = useRouter();
   const serverId = server.id;
   const reach = useReachRules('mcp_server', serverId);
   const projection = useReachProjection('mcp_server', serverId);
-  const { machines, scope } = useReachMachines();
+  const { machines, scope, placeMachines: machineNames, agentIds } = useReachMachines();
+  const agentTakes = useMcpAgentTakes(machines);
   const tests = useMcpServerMachineTests(serverId, server);
   const updateExecution = useMountedActionExecution(scope);
   const reloadCatalog = React.useCallback(() => scope ? refreshMcpServerCatalog(scope) : Promise.resolve(), [scope]);
@@ -109,14 +111,10 @@ export function useMcpServerDetail(
       })),
     [machines],
   );
-  const agentIds = React.useMemo(
-    () => [...new Set(machines.flatMap((machine) => machine.agentIds))],
-    [machines],
-  );
   const tools = useMcpServerTools(serverId, catalogRevision, agentIds);
   const { names, projects } = useWhereItsOnNames({
     agentIds,
-    machines: placeMachines,
+    machines: machineNames,
     machineId: tools.list?.perAgent.machineId ?? null,
     serverId: scope?.serverId ?? null,
   });
@@ -191,13 +189,8 @@ export function useMcpServerDetail(
     () => mcpServerMachineStatuses(statusInput),
     [statusInput],
   );
-  const testOnline = React.useCallback(
-    () =>
-      runTest(
-        onMachines
-          .filter((machine) => machine.online)
-          .map((machine) => machine.machineId),
-      ),
+  const testMachines = React.useCallback(
+    () => runTest(onMachines.map((machine) => machine.machineId)),
     [onMachines, runTest],
   );
 
@@ -207,6 +200,7 @@ export function useMcpServerDetail(
     placeMachines,
     projects,
     agentIds,
+    agentTakes,
     names,
     onMachines,
     tests,
@@ -216,7 +210,7 @@ export function useMcpServerDetail(
     signIn,
     statuses,
     machineStatuses,
-    testOnline,
+    testMachines,
   };
 }
 
@@ -319,12 +313,14 @@ export function McpServerWhereAndTools(
         presentation="section"
         rules={detail.reach.rules}
         status={detail.reach.status}
+        valueAvailable={detail.reach.valueAvailable}
         projection={detail.reach.status === 'ready' ? detail.projection : null}
         places={{
           agentIds: detail.agentIds,
           machines: detail.placeMachines,
           projects: detail.projects,
         }}
+        agentTakes={detail.agentTakes}
         onChange={detail.reach.change}
         onUndo={async () => {
           await detail.reach.undoLast();
@@ -427,7 +423,7 @@ export function McpServerMachinesAndDetails(
           label: t('capabilities.mcp.detail.test'),
           icon: 'play',
           busy: running,
-          onPress: detail.testOnline,
+          onPress: detail.testMachines,
         }}
       />
       {hasDetails ? (
@@ -437,11 +433,11 @@ export function McpServerMachinesAndDetails(
             expanded={detailsOpen}
             onExpandedChange={setDetailsOpen}
             showDivider={false}
-            header={({ headerProps, expanded }) => (
+            header={({ headerProps }) => (
               <Item
                 {...(headerProps as Readonly<Record<string, unknown>>)}
                 title={t('capabilities.mcp.detail.detailsTitle')}
-                leftElement={<ExpandableItemCaret expanded={expanded} />}
+                keepChevronWithRightElement
                 rightElement={
                   version ? (
                     <Text
@@ -455,7 +451,6 @@ export function McpServerMachinesAndDetails(
                     </Text>
                   ) : undefined
                 }
-                showChevron={false}
               />
             )}
           >

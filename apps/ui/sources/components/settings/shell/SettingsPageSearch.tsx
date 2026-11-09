@@ -1,9 +1,12 @@
 import * as React from 'react';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
+
+import { ItemList } from '@/components/ui/lists/ItemList';
 
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { t } from '@/text';
-import { useResolvedSettingsPageCatalog } from '@/components/settings/catalog/runtime/useResolvedSettingsPageCatalog';
-import { SettingsSearchResults, useSettingsSearch } from '@/components/settings/shell/SettingsSearchResults';
+import { SettingsQueryResults, useSettingsSearch } from '@/components/settings/shell/SettingsSearchResults';
 import { useSettingsPageSearchQuery } from './SettingsPageSearchContext';
 
 /**
@@ -14,15 +17,15 @@ import { useSettingsPageSearchQuery } from './SettingsPageSearchContext';
 export const SettingsPageSearch = React.memo(function SettingsPageSearch(props: Readonly<{
     children: React.ReactNode;
 }>) {
-    const catalog = useResolvedSettingsPageCatalog();
     // The query stays when a result opens, so coming back returns to the results.
-    const search = useSettingsSearch(catalog, {
+    const search = useSettingsSearch({
         clearOnOpen: false,
         queryState: useSettingsPageSearchQuery(),
         tag: 'SettingsPageSearch.open',
     });
+    // The header is fixed above the page body; a live query swaps the body for the windowed results list.
     return (
-        <>
+        <View style={styles.page}>
             <CompactSearchField
                 testID="settings-page-search"
                 placement="page"
@@ -31,15 +34,19 @@ export const SettingsPageSearch = React.memo(function SettingsPageSearch(props: 
                 placeholder={t('settingsSearch.placeholder')}
             />
             {search.active ? (
-                <SettingsSearchResults
+                <SettingsQueryResults
                     presentation="page"
-                    results={search.results}
-                    tree={catalog.tree}
+                    query={search.normalizedQuery}
                     testIDPrefix="settings-page-search.result"
                     emptyTestID="settings-page-search.empty"
                     onOpen={search.openRoute}
                 />
-            ) : props.children}
-        </>
+            ) : <ItemList style={styles.body}>{props.children}</ItemList>}
+        </View>
     );
+});
+
+const styles = StyleSheet.create({
+    page: { flex: 1, minHeight: 0 },
+    body: { paddingTop: 0 },
 });

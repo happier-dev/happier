@@ -11,7 +11,7 @@ import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/
 import { createSystemTaskRunner } from '@/components/systemTasks/createSystemTaskRunner';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import type { PreparedPersonalHomeRelocationTask } from './PersonalHomeRuntimeControlSection';
-import type { SystemTaskSpec } from '@happier-dev/protocol';
+import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import type { RelayRuntimeStatusData } from './relayRuntimeStatus';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;

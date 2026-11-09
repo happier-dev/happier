@@ -8,7 +8,7 @@ import type {
 import type { McpServerCollectionRow } from '../collection/mcpServerCollectionModel';
 import { presentCapabilityStatus, type CapabilityStatus } from '@/components/capabilities/status/capabilityStatusPresentation';
 
-import { mcpServerAttentionStatus, mcpServerMissingKeyNames, type McpSavedSecretAvailability, type McpServerSignInFact } from '../status/mcpServerStatus';
+import { mcpServerAttentionStatus, mcpServerMissingKeyNames, type McpSavedSecretAvailability, type McpServerSignInFact, type McpServerStatusInput } from '../status/mcpServerStatus';
 import { mcpSignInFact, type McpSignInView } from '../signIn/mcpSignInGrantView';
 
 export type McpHomeServer = Readonly<{
@@ -39,6 +39,7 @@ export type McpHomeServer = Readonly<{
 export type McpHomeSuggestionMark = Readonly<{
   key: string;
   iconUrl: string | null;
+  brandMark?: import('@/components/ui/media/HappierBrandMark').HostCatalogMark;
   title: string;
 }>;
 
@@ -79,8 +80,11 @@ export function buildMcpHome(
     savedSecretCatalog: McpSavedSecretAvailability;
     firstVisitDismissed: boolean;
     suggestions?: readonly McpHomeSuggestionMark[];
+    machineFactsOf?: (row: McpServerCollectionRow) => Pick<McpServerStatusInput, 'tests' | 'machines'>;
+    previous?: McpHome;
   }>,
 ): McpHome {
+  const previousById = new Map(input.previous?.servers.map(server => [server.id, server]));
   const servers = input.rows.map((row): McpHomeServer => {
     const { server } = row;
     const signIn = mcpServerSignsIn(server) ? input.signInOf(server.id) : null;
@@ -92,10 +96,17 @@ export function buildMcpHome(
           entry: server,
           signIn: signInFact,
           savedSecretCatalog: input.savedSecretCatalog,
+          ...input.machineFactsOf?.(row),
         });
     const group = server.transport === 'stdio' ? 'machine' : 'account';
     const tools = server.toolsSnapshot?.tools;
+    const identity = signIn?.state === 'connected' ? signIn.identity : null;
     const missingKeys = status?.kind === 'key' ? [...mcpServerMissingKeyNames(server, input.savedSecretCatalog)] : NO_KEYS;
+    const previous = previousById.get(server.id);
+    if (previous?.server === server && JSON.stringify(previous.signIn) === JSON.stringify(signInFact)
+      && previous.missingKeys.join('\n') === missingKeys.join('\n') && previous.bindings === row.bindings && previous.title === row.title && previous.brandMark === row.brandMark
+      && previous.off === off && previous.identity === identity && previous.status?.kind === status?.kind
+      && previous.status?.detail === status?.detail && previous.status?.machineName === status?.machineName) return previous;
     return {
       id: server.id,
       title: row.title,
@@ -107,7 +118,7 @@ export function buildMcpHome(
       status,
       signIn: signInFact,
       missingKeys,
-      identity: signIn?.state === 'connected' ? signIn.identity : null,
+      identity,
       toolCount: tools ? tools.length : null,
       tokens: tools ? tools.reduce((sum, tool) => sum + tool.tokens, 0) : null,
       off,
@@ -141,6 +152,15 @@ export function buildMcpHome(
   const more =
     ordered.length > MCP_RING_ROOM ? ordered.length - (MCP_RING_ROOM - 1) : 0;
   const legendOrder = [...inUse].sort(byName);
+  const firstVisitLine = !input.firstVisitDismissed && servers.length > 0
+    && !servers.some(server => mcpServerSignsIn(server.server));
+  const previous = input.previous;
+  if (previous && previous.firstVisitLine === firstVisitLine && previous.servers.length === servers.length
+    && servers.every((server, index) => server === previous.servers[index])
+    && previous.ring.marks.length === ringMarks.length && ringMarks.every((mark, index) => {
+      const held = previous.ring.marks[index];
+      return held?.key === mark.key && held.tether === mark.tether && held.faded === mark.faded;
+    })) return previous;
   return {
     servers,
     attention,
@@ -156,9 +176,6 @@ export function buildMcpHome(
       toolsKnown: inUse.some((server) => server.toolCount !== null),
     },
     needsYou: attention.length,
-    firstVisitLine:
-      !input.firstVisitDismissed &&
-      servers.length > 0 &&
-      !servers.some((server) => mcpServerSignsIn(server.server)),
+    firstVisitLine,
   };
 }

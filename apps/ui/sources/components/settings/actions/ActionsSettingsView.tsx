@@ -3,7 +3,7 @@ import { View, Platform } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { type ActionSettingsActionId, type ActionsSettingsV1 } from '@happier-dev/protocol';
+import { type ActionSettingsActionId, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -22,6 +22,7 @@ import { t } from '@/text';
 
 import {
     buildActionSettingsEntries,
+    ACTION_SETTINGS_PROJECTION_SECTIONS,
     buildActionSettingsContributedActions,
     type ActionSettingsEntry,
 } from './buildActionSettingsEntries';
@@ -34,8 +35,11 @@ import {
 } from './resolveActionSettingsEntryStatusSummary';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
+import { ApprovalProfilesSection } from './ApprovalProfilesSection';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { PluginMark } from '@/components/settings/plugins/PluginMark';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { parseQualifiedPluginResourcePolicyId } from '@happier-dev/protocol/actions/actionSettings';
 
 const ACTION_SETTINGS_SEGMENT_SIZE = 8;
 
@@ -84,6 +88,8 @@ function buildActionSettingsVirtualizedSegments(
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
+    // In page flow the field sits in the column like Settings' own page search: no toolbar band or hairline.
+    searchAfterProfiles: { marginTop: PAGE_LIST_METRICS.sectionGapPx },
     actionRightAccessory: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -185,6 +191,7 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
         machineId: executionTarget?.machine.id ?? null,
         serverId: executionTarget?.serverId ?? null,
         enabled: executionTarget !== null,
+        sections: ACTION_SETTINGS_PROJECTION_SECTIONS,
     });
     const contributedActions = React.useMemo(() => (
         executionTarget && daemonMergedProjection.inputs
@@ -267,7 +274,8 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
 
     const renderSegment = React.useCallback(({ item: segment }: Readonly<{ item: ActionSettingsVirtualizedSegment }>) => {
         const pluginId = segment.first && segment.items[0]?.entry.kind !== 'host'
-            ? parseQualifiedPluginActionId(segment.items[0]?.entry.actionId)?.pluginId : null;
+            ? (parseQualifiedPluginActionId(segment.items[0]?.entry.actionId)
+                ?? parseQualifiedPluginResourcePolicyId(segment.items[0]?.entry.actionId))?.pluginId : null;
         const installedPackage = pluginId ? daemonMergedProjection.inputs?.pluginProjectionV2?.installedPackagesById[pluginId] : null;
         return (
         <ItemGroup
@@ -312,7 +320,10 @@ export const ActionsSettingsView = React.memo(function ActionsSettingsView() {
                             />
                         )}
                     />
+                    <ApprovalProfilesSection />
                     <CompactSearchField
+                        // The search belongs to the actions below, so it opens a new section after the profiles.
+                        style={styles.searchAfterProfiles}
                         placement="page"
                         value={searchQuery}
                         onChangeText={setSearchQuery}

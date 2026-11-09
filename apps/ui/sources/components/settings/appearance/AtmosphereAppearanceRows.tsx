@@ -4,7 +4,7 @@ import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { Switch } from '@/components/ui/forms/Switch';
-import { useHomeAtmosphereEditor } from '@/components/atmosphere/look/atmosphereEditor';
+import { useHomeAtmosphereEditor, useHomeAtmosphereValueEditor } from '@/components/atmosphere/look/atmosphereEditor';
 import { useSetting } from '@/sync/store/settingsReadHooks';
 import { AtmospherePlacesField, AtmosphereShowOnSelector, useAtmosphereShowOn } from '@/components/atmosphere/look/AtmosphereShowOnControl';
 import {
@@ -63,7 +63,7 @@ export function useAtmosphereMomentsSummary(): string {
 
 /** Where the background shows: Everywhere, Home only, or the places picked (plan A3). */
 export function AtmosphereWhereItShows() {
-  const state = useAtmosphereShowOn(useHomeAtmosphereEditor());
+  const state = useAtmosphereShowOn(useHomeAtmosphereValueEditor());
   if (!state) return null;
   return (
     <ItemGroup
@@ -78,7 +78,7 @@ export function AtmosphereWhereItShows() {
 
 /** The per-moment switches. The page that hosts them says what moments are. */
 export function AtmosphereMoments() {
-  const { value, updateHome } = useHomeAtmosphereEditor();
+  const { value, updateHome } = useHomeAtmosphereValueEditor();
   const momentOn = (id: MomentId) => isAtmosphereMomentOn(value.moments, id);
   const setMoment = (id: MomentId, on: boolean) =>
     updateHome((current) => ({

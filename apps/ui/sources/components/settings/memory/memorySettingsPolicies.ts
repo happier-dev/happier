@@ -2,7 +2,7 @@ import type {
     MemoryContentPolicyV1,
     MemoryCoveragePolicyV1,
     MemorySettingsV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/memory/memorySettings';
 
 export const DEFAULT_MEMORY_COVERAGE_POLICY: MemoryCoveragePolicyV1 = { type: 'full' };
 

@@ -27,7 +27,7 @@ afterEach(() => {
 const input = {
   exportedAt: '2026-09-26T00:00:00.000Z',
   environment: { appVersion: '0.3.0', platform: 'ios', deploymentType: 'cloud' },
-  artifacts: [{ filename: 'logs.txt', sourceKind: 'ui-mobile' as const, contentType: 'text/plain', content: 'synthetic log' }],
+  artifacts: [{ filename: 'logs.txt', sourceKind: 'ui-mobile' as const, contentType: 'text/plain', content: 'synthetic log token=private-native-canary' }],
 } satisfies Parameters<typeof exportBugReportDiagnosticsBundle>[0];
 describe('exportBugReportDiagnosticsBundle', () => {
   it('shares one serialized bundle and removes completed iOS custody', async () => {
@@ -36,6 +36,8 @@ describe('exportBugReportDiagnosticsBundle', () => {
       expect(contents.schemaVersion).toBe(1);
       expect(contents.exportedAt).toBe(input.exportedAt);
       expect(JSON.stringify(contents)).toContain('synthetic log');
+      expect(JSON.stringify(contents)).not.toContain('private-native-canary');
+      expect(JSON.stringify(contents)).toContain('[REDACTED]');
       expect(uri).toContain('/happier-downloads/');
     });
     await exportBugReportDiagnosticsBundle(input);

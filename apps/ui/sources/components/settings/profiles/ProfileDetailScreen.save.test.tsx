@@ -4,6 +4,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createDeferred, invokeTestInstanceHandler, renderScreen } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createArtifactListHttpResponse } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { ProfileRowMutationV1Schema, PROFILE_ROWS_ROUTE_V1, PROFILE_RECORDS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileRecordV1';
@@ -39,7 +40,7 @@ installDisconnectedServerSocketBoundary();
 
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { refreshProfileCatalog, resetProfileCatalogEngineForTests } = await import('@/sync/engine/settings/profileCatalogEngine');
-const { resetProfileCatalogSnapshotsForTests } = await import('@/sync/store/settings/profileCatalogSnapshot');
+const { getProfileCatalogSnapshot, resetProfileCatalogSnapshotsForTests } = await import('@/sync/store/settings/profileCatalogSnapshot');
 const { ProfileDetailScreen } = await import('./ProfileDetailScreen');
 const { ProfileCollectionRail } = await import('./ProfileCollectionList');
 const { ProfileSettingsIndex } = await import('./ProfileSettingsIndex');
@@ -58,12 +59,16 @@ async function setupAcknowledgedSave(options: Readonly<{ initialRecord?: Profile
         routeParams.cloneFromProfileId = undefined;
         const acknowledgement = createDeferred<Response>();
         const catalogRelease = createDeferred<void>();
+        const displayRefreshStarted = createDeferred<void>();
+        const displayRefreshRelease = createDeferred<void>();
+        let holdNextCatalogRead = false;
         let holdCatalog = options.holdInitialCatalog ?? false;
         let catalogFailed = false;
         const rows: Array<{ id: string; revision: number; content: unknown }> = options.initialRecord
             ? [{ id: options.initialRecord.id, revision: 1, content: { t: 'plain', v: options.initialRecord } }] : [];
         let writtenId: string | null = null;
         let writtenRecord: ProfileRecordV1 | null = null;
+        let writtenRevision = 1;
         const connection = await restoreServerAccountForTest({ serverUrl: 'https://profile-save.example.test', accountId: 'alice', request: async (url, init) => {
             const path = new URL(String(url)).pathname;
             if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
@@ -72,12 +77,17 @@ async function setupAcknowledgedSave(options: Readonly<{ initialRecord?: Profile
             if (path === '/v2/account/settings') return Response.json({ version: 1, content: { t: 'plain',
                 v: options.useProfiles === undefined ? {} : { useProfiles: options.useProfiles } } });
             // An exact-kind read (shared launch Profiles) answers the filtered envelope.
-            if (path === '/v1/artifacts') return Response.json(new URL(String(url)).searchParams.has('kinds') ? { items: [], hasUnclassified: false, coverage: { status: 'complete', unclassifiedCount: 0 } } : []);
+            if (path === '/v1/artifacts') return createArtifactListHttpResponse(new URL(String(url)), []);
             if (path === '/v1/account/authoring-memory') return Response.json({ rows: [] });
             if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return Response.json({ status: 'listed', rows: [], coverage: 'complete' });
             if (path === PROFILE_TRANSFER_ROUTE_V1) return Response.json({ status: 'absent' });
             if (path === PROFILE_REFERENCE_GUARD_ROUTE_V1) return Response.json({ status: 'ready', revision: 3 });
             if (path === PROFILE_ROWS_ROUTE_V1) {
+                if (holdNextCatalogRead) {
+                    holdNextCatalogRead = false;
+                    displayRefreshStarted.resolve();
+                    await displayRefreshRelease.promise;
+                }
                 if (holdCatalog) await catalogRelease.promise;
                 if (catalogFailed) return new Response(null, { status: 503 });
                 return Response.json({ status: 'listed', rows, nextCursor: null, complete: true,
@@ -87,10 +97,14 @@ async function setupAcknowledgedSave(options: Readonly<{ initialRecord?: Profile
                 const mutation = ProfileRowMutationV1Schema.parse(JSON.parse(String(init?.body)));
                 writtenId = mutation.id;
                 writtenRecord = mutation.content?.t === 'plain' ? mutation.content.v : null;
+                writtenRevision = (rows.find(row => row.id === mutation.id)?.revision ?? 0) + 1;
                 const response = await acknowledgement.promise;
                 const outcome: unknown = await response.clone().json();
                 if (typeof outcome === 'object' && outcome !== null && 'status' in outcome && outcome.status === 'updated') {
-                    rows.push({ id: mutation.id, revision: 1, content: mutation.content });
+                    const index = rows.findIndex(row => row.id === mutation.id);
+                    const row = { id: mutation.id, revision: writtenRevision, content: mutation.content };
+                    if (index === -1) rows.push(row);
+                    else rows[index] = row;
                 }
                 return response;
             }
@@ -98,6 +112,7 @@ async function setupAcknowledgedSave(options: Readonly<{ initialRecord?: Profile
         } });
         onTestFinished(async () => {
             catalogRelease.resolve();
+            displayRefreshRelease.resolve();
             acknowledgement.resolve(Response.json({ status: 'conflict', revision: 1 }));
             await connection.dispose();
             resetProfileCatalogEngineForTests();
@@ -110,11 +125,18 @@ async function setupAcknowledgedSave(options: Readonly<{ initialRecord?: Profile
         return {
             loadCatalog: () => { holdCatalog = false; catalogRelease.resolve(); },
             failCatalog: () => { catalogFailed = true; holdCatalog = false; catalogRelease.resolve(); },
+            recoverCatalog: () => { catalogFailed = false; },
             retire: () => connection.dispose(),
             refreshWhilePending: () => { holdCatalog = true; return refreshProfileCatalog(scope); },
+            holdDisplayRefresh: () => {
+                holdNextCatalogRead = true;
+                return { started: displayRefreshStarted.promise, completed: refreshProfileCatalog(scope),
+                    release: () => displayRefreshRelease.resolve() };
+            },
+            catalog: () => getProfileCatalogSnapshot(scope),
             writtenId: () => writtenId,
             writtenRecord: () => writtenRecord,
-            acknowledge: () => acknowledgement.resolve(Response.json({ status: 'updated', revision: 1, cursor: 1, referenceGuardRevision: 3 })),
+            acknowledge: () => acknowledgement.resolve(Response.json({ status: 'updated', revision: writtenRevision, cursor: 1, referenceGuardRevision: 3 })),
             refuse: () => acknowledgement.resolve(Response.json({ status: 'conflict', revision: 1 })),
         };
 }
@@ -223,6 +245,36 @@ describe('Profile editor acknowledged save', () => {
         expect(alerts).not.toHaveBeenCalled();
     });
 
+    it('acknowledges the edited Profile while its display catalog HTTP refresh remains held', async () => {
+        const source = { ...createEmptyCustomProfile(), name: 'Research' };
+        const record: ProfileRecordV1 = { v: 1, id: source.id, definition: { kind: 'inline', profile: source },
+            enabled: true, promptStack: [], skillSeeds: [], secretBindings: { MASKED: null } };
+        const save = await setupAcknowledgedSave({ initialRecord: record });
+        const screen = await renderScreen(<ProfileDetailScreen target={{ kind: 'profile', profileId: source.id }} />);
+        await act(async () => { screen.tree.changeTextByTestId('profile-slim-name', 'Research updated'); });
+        const refresh = save.holdDisplayRefresh();
+        let refreshSettled = false;
+        void refresh.completed.then(() => { refreshSettled = true; });
+        try {
+            await act(async () => { await refresh.started; });
+            expect(save.catalog()).toMatchObject({ catalog: { status: 'loading' }, stale: true, dataComplete: true });
+            await act(async () => { screen.tree.pressByTestId('settings.profiles.detail.save'); });
+            await vi.waitFor(() => expect(save.writtenId()).toBe(source.id));
+            expect(save.writtenRecord()).toMatchObject({ secretBindings: { MASKED: null },
+                definition: { profile: { name: 'Research updated' } } });
+            expect(refreshSettled).toBe(false);
+            await act(async () => { save.acknowledge(); });
+            await vi.waitFor(() => expect(screen.tree.findByTestId('profile-slim-name')?.props.value).toBe('Research updated'));
+            await vi.waitFor(() => expect(navigation.dirty).toBe(false));
+            expect(save.catalog()?.data?.find(row => row.record.id === source.id)).toMatchObject({ revision: 2,
+                record: { secretBindings: { MASKED: null }, definition: { profile: { name: 'Research updated' } } } });
+            expect(refreshSettled).toBe(false);
+            expect(alerts).not.toHaveBeenCalled();
+        } finally {
+            await act(async () => { refresh.release(); await refresh.completed; });
+        }
+    });
+
     it('preserves the draft without writing when pending catalog hydration fails', async () => {
         const save = await setupAcknowledgedSave({ holdInitialCatalog: true });
         const screen = await renderScreen(<ProfileDetailScreen target={{ kind: 'draft', cloneFrom: null }} />);
@@ -294,6 +346,28 @@ describe('Profile editor acknowledged save', () => {
         await act(async () => { save.loadCatalog(); });
         await vi.waitFor(() => expect(screen.tree.findByTestId('settings.profiles.detail.notFound')).not.toBeNull());
         expect(screen.tree.findByTestId('profile-slim-name')).toBeNull();
+    });
+
+    it.each(['profile', 'clone'] as const)('keeps a failed %s read distinct from absence and retries the same source', async kind => {
+        const source = { ...createEmptyCustomProfile(), name: 'Research' };
+        const save = await setupAcknowledgedSave({ holdInitialCatalog: true, initialRecord: { v: 1, id: source.id,
+            definition: { kind: 'inline', profile: source }, enabled: true, promptStack: [], skillSeeds: [], secretBindings: {} } });
+        const screen = await renderScreen(<ProfileDetailScreen target={kind === 'profile'
+            ? { kind: 'profile', profileId: source.id } : { kind: 'draft', cloneFrom: source.id }} />);
+        expect(screen.tree.findByTestId('settings.profiles.detail.loading')).not.toBeNull();
+        await act(async () => { save.failCatalog(); });
+        await vi.waitFor(() => expect(screen.tree.findByTestId('settings.profiles.detail.unavailable')).not.toBeNull());
+        expect(screen.tree.findByTestId('settings.profiles.detail.notFound')).toBeNull();
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        const failure = screen.tree.findByType(SurfaceStateCard);
+        // Keep the reader's typed HTTP503 reason intact through the refusal presenter.
+        expect(failure.props.diagnosticCode).toBe('unreachable');
+        expect(failure.props.action).toMatchObject({ label: expect.any(String), onPress: expect.any(Function) });
+        save.recoverCatalog();
+        await act(async () => { await failure.props.action.onPress(); });
+        await vi.waitFor(() => expect(screen.tree.findByTestId('profile-slim-name')?.props.value)
+            .toBe(kind === 'profile' ? 'Research' : 'Research (Copy)'));
+        expect(screen.tree.findByTestId('settings.profiles.detail.unavailable')).toBeNull();
     });
 
     it('keeps a saved-profile lookup loading until hydration can prove whether it exists', async () => {
