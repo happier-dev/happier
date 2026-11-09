@@ -345,10 +345,6 @@ run_local() {
     cd -- "${command_repo_root:-$repo_root}/$explicit_relative_cwd" || exit 1
     invoked_cwd=$(pwd -P) || exit 1
   fi
-  # Exact package dispatchers only launch their script's executor. Delegate
-  # before acquiring local consumption custody, including on placed workers;
-  # the script's finite local payload owns its actual installed-tree span.
-  try_run_self_dispatching_package_command "$@"
   # Explicit local compilation keeps admission even in CI. Finite producers
   # and compiler leaves inherit this fact without reserving their parent.
   if [ "${explicit_local_compilation_override-0}" = 1 ]; then
@@ -369,6 +365,10 @@ run_local() {
   unset HAPPIER_HSTACK_DISPATCH_CONTROL
   HAPPIER_HSTACK_EXECUTION=1
   export HAPPIER_HSTACK_EXECUTION
+  # Exact package dispatchers inherit this placement and admission requirement
+  # before replacing the launcher. Their finite payload still owns admission
+  # and its installed-tree span; the package-manager parent reserves neither.
+  try_run_self_dispatching_package_command "$@"
   local_script_policy_resolved=0
   case "${1-}" in
     --script=*)

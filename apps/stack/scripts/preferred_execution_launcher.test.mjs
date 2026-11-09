@@ -59,6 +59,7 @@ const executionNeutralEnv = Object.fromEntries(
     'HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE',
     'HAPPIER_HSTACK_DISPATCH_CONTROL',
     'HAPPIER_HSTACK_EXECUTION',
+    'HAPPIER_HSTACK_LOCAL_ADMISSION_REQUIRED',
     'HAPPIER_TYPECHECK_DISPATCHED',
     'HAPPIER_STACK_CLI_HOME_DIR',
     'HAPPIER_HOME_DIR',
@@ -394,7 +395,7 @@ test('controller explicit local compilation refuses without override and overrid
   const compilerArgs = ['--noEmit', '-p', 'apps/ui/tsconfig.json'];
   await writeFile(join(checkout, 'apps/ui/tsconfig.json'), JSON.stringify({ compilerOptions: { noEmit: true }, files: ['fixture.ts'] }));
   await writeFile(join(checkout, 'apps/ui/fixture.ts'), 'export {};\n');
-  const compilerPath = resolveTypeScriptCliInvocation({ args: compilerArgs, workspaceDir: checkout }).compilerPath;
+  const { compilerPath, admissionClass } = resolveTypeScriptCliInvocation({ args: compilerArgs, workspaceDir: checkout, repoRoot: checkout });
   await writeFile(compiler, `process.stdout.write('compiler-started\\n'); process.exit(7);\n`);
   // The real entry and selector derive repository identity from their location.
   // Keep that identity in this fixture while forwarding installed dependencies.
@@ -461,7 +462,7 @@ syncBuiltinESMExports();
   assert.equal(refused.status, 1, refused.stderr);
   assert.equal(refused.stdout, '');
   assert.match(refused.stderr, /AUTO.*--allow-local-compilation/);
-  const uiFloorKiB = resolveHeavyweightMemoryFloorKiB('compilation-ui', { machine: 'local' });
+  const uiFloorKiB = resolveHeavyweightMemoryFloorKiB(admissionClass, { machine: 'local' });
   const insufficient = await invoke(uiFloorKiB - 1, ['--allow-local-compilation'], { CI: '1' });
   assert.equal(insufficient.status, 75, insufficient.stderr);
   assert.equal(insufficient.stdout, '');
@@ -475,6 +476,34 @@ syncBuiltinESMExports();
   const localFloor = await invoke(packageFloorKiB - 1, ['--allow-local-compilation'], {}, ['apps/stack/bin/hstack-exec', '--heavyweight-admission', '--class=package-dist', '--', 'node', '-e', '']);
   assert.equal(localFloor.status, 75, localFloor.stderr);
   assert.match(localFloor.stderr, /HSTACK_MEMORY_CAPACITY/);
+
+  // Public package scripts enter another launcher before the compiler. Keep
+  // the real dispatch graph; only the package-manager process is adapted.
+  await writeFile(join(checkout, 'package.json'), JSON.stringify({ private: true, packageManager, scripts: {
+    typecheck: 'apps/stack/bin/hstack-exec --script=typecheck:local',
+    'typecheck:local': `node scripts/workspaces/runTypeScriptCli.mjs ${compilerArgs.map(arg => JSON.stringify(arg)).join(' ')}`,
+  } }));
+  await executable(join(bin, 'pnpm'), [
+    '#!/bin/sh',
+    'case "$3" in',
+    `  typecheck) shift 3; exec /bin/sh ${JSON.stringify(native)} --script=typecheck:local -- "$@" ;;`,
+    `  typecheck:local) exec ${JSON.stringify(process.execPath)} ${JSON.stringify(lifecycle)} ;;`,
+    '  *) exit 97 ;;',
+    'esac',
+    '',
+  ].join('\n'));
+  for (const payload of [['--script=typecheck'], ['pnpm', 'run', '--silent', 'typecheck']]) {
+    const nestedRefused = await invoke(uiFloorKiB - 1, ['--allow-local-compilation'], { CI: '1' }, payload);
+    assert.equal(nestedRefused.status, 75, nestedRefused.stderr);
+    assert.equal(nestedRefused.stdout, '');
+    assert.match(nestedRefused.stderr, /HSTACK_MEMORY_CAPACITY/);
+    const nestedAdmitted = await invoke(40 * 1024 * 1024, ['--allow-local-compilation'], {
+      CI: '1', HAPPIER_EXEC_CONFIG_PATH: join(root, 'must-not-consult-remote-placement.json'),
+    }, payload);
+    assert.equal(nestedAdmitted.status, 7, nestedAdmitted.stderr);
+    assert.equal(nestedAdmitted.stdout, 'compiler-started\n');
+    assert.deepEqual(JSON.parse(await readFile(parentState, 'utf8')), { admitted: false });
+  }
 });
 
 test('worker disk admission rejects an exhausted write filesystem before starting payload', async t => {
