@@ -27,10 +27,6 @@ export function readDaemonTerminalPtyConfig(env: NodeJS.ProcessEnv): DaemonTermi
     max: 50_000_000,
   });
   const bufferMaxEvents = parseIntEnv(env.HAPPIER_DAEMON_TERMINAL_BUFFER_MAX_EVENTS, 5000, { min: 256, max: 100_000 });
-  const bufferRetentionMs = parseIntEnv(env.HAPPIER_DAEMON_TERMINAL_BUFFER_RETENTION_MS, 10 * 60_000, {
-    min: 1000,
-    max: 24 * 60 * 60_000,
-  });
   const urlParseBufferLimit = parseIntEnv(env.HAPPIER_DAEMON_TERMINAL_URL_PARSE_BUFFER_LIMIT, 32_768, {
     min: 1024,
     max: 1_000_000,
@@ -58,7 +54,6 @@ export function readDaemonTerminalPtyConfig(env: NodeJS.ProcessEnv): DaemonTermi
     sessionManager: {
       bufferMaxBytes,
       bufferMaxEvents,
-      bufferRetentionMs,
       urlParseBufferLimit,
       urlDedupeLimit,
       maxWriteChunkBytes,

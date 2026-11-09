@@ -46,15 +46,10 @@ type StoredChunk = {
 export function createTerminalByteRing(params: Readonly<{
   maxBytes: number;
   maxChunks: number;
-  maxAgeMs?: number;
   now?: () => number;
 }>): TerminalByteRing {
   const maxBytes = Math.max(1, Math.trunc(params.maxBytes));
   const maxChunks = Math.max(1, Math.trunc(params.maxChunks));
-  const maxAgeMs =
-    typeof params.maxAgeMs === 'number' && Number.isFinite(params.maxAgeMs)
-      ? Math.max(1, Math.trunc(params.maxAgeMs))
-      : Number.POSITIVE_INFINITY;
   const now = params.now ?? (() => Date.now());
 
   let chunks: StoredChunk[] = [];
@@ -71,10 +66,7 @@ export function createTerminalByteRing(params: Readonly<{
     return true;
   };
 
-  const trim = (currentTimeMs: number) => {
-    while (chunks.length && currentTimeMs - chunks[0]!.timestampMs > maxAgeMs) {
-      if (!dropOldest()) break;
-    }
+  const trim = () => {
     while (chunks.length > maxChunks || retainedBytes > maxBytes) {
       if (!dropOldest()) break;
     }
@@ -104,9 +96,9 @@ export function createTerminalByteRing(params: Readonly<{
     nextSeq += 1;
     chunks.push(stored);
     retainedBytes += stored.bytes.length;
-    // Advance the retained output window only when new output arrives. Reading
-    // a quiet or finished terminal must not erase its last retained bytes.
-    trim(timestampMs);
+    // Elapsed time does not consume memory. Keep reload history until the
+    // existing byte/chunk budget requires an observable retention gap.
+    trim();
 
     return {
       seq: stored.seq,

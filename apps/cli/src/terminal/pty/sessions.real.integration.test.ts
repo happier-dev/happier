@@ -1,3 +1,8 @@
+import { createRequire } from 'node:module';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { encodeAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { Buffer } from 'node:buffer';
 import { execFileSync } from 'node:child_process';
 import { createConnection, type Socket } from 'node:net';
@@ -12,7 +17,7 @@ import type { PtyExitEvent, PtyProvider } from './provider';
 
 const config: TerminalPtySessionManagerConfig = {
   bufferMaxBytes: 1_000_000, bufferMaxEvents: 1000,
-  bufferRetentionMs: 600_000, urlParseBufferLimit: 32_768, maxWriteChunkBytes: 16_384,
+  urlParseBufferLimit: 32_768, maxWriteChunkBytes: 16_384,
   defaultCols: 80, defaultRows: 24,
 };
 
@@ -142,7 +147,7 @@ describe.skipIf(process.platform === 'win32')('finite PTY process custody', () =
           output,
         }).toMatchObject({ childAlive: true });
       }
-      expect(manager.input({ terminalId: accepted.terminalId, data: 'exit-parent\n' })).toEqual({ ok: true });
+      expect(await manager.input({ terminalId: accepted.terminalId, data: 'exit-parent\n' })).toEqual({ ok: true });
       if (jobControl) {
         // A live descendant can retain a slave reference even after closing
         // fd1/2. The relay then correctly retains finite custody while draining;
@@ -262,5 +267,54 @@ describe.skipIf(process.platform === 'win32')('finite PTY process custody', () =
       manager.dispose();
       if (descendantPid && isPidAlive(descendantPid)) await terminateProcessTree({ pid: descendantPid });
     }
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('native inherited PTY launch transport', () => {
+  it('runs the real shim payload with TTY input/output, native dimensions and an observed nonzero exit', async () => {
+    const provider = createPythonPtyRelayProvider({ env: process.env, platform: process.platform });
+    if (!provider) throw new Error('POSIX PTY relay is unavailable');
+    const root = await mkdtemp(join(tmpdir(), 'happier-native-pty-'));
+    const require = createRequire(import.meta.url);
+    const shimUrl = new URL('../../daemon/agentIsolation/agentLaunchShim.ts', import.meta.url).href;
+    const frameUrl = new URL('../../daemon/agentIsolation/agentLaunchFrame.ts', import.meta.url).href;
+    // Existing tsx source loader is the child invocation owner; no CLI dist or
+    // separate package/release representation is produced for this source test.
+    const source = `
+      const { readAgentLaunchFrame } = await import(${JSON.stringify(frameUrl)});
+      const AGENT_LAUNCH_TERMINAL_READY = '\\x1b]777;happier-agent-launch-ready\\x07';
+      const AGENT_LAUNCH_TERMINAL_ACCEPTED = '\\x1b]777;happier-agent-launch-accepted\\x07';
+      const { executeAgentLaunchPayload } = await import(${JSON.stringify(shimUrl)});
+      if (!process.stdin.isTTY || !process.stdout.isTTY) throw new Error('fixture tty unavailable');
+      process.stdin.setRawMode(true);
+      process.stdout.write(AGENT_LAUNCH_TERMINAL_READY);
+      const payload = await readAgentLaunchFrame(process.stdin, 'terminal');
+      process.stdin.pause(); process.stdin.setRawMode(false);
+      const observed = await executeAgentLaunchPayload(payload, { agentHome: ${JSON.stringify(root)},
+        input: process.stdin, stdout: process.stdout, stderr: process.stderr,
+        terminal: { accepted: () => process.stdout.write(AGENT_LAUNCH_TERMINAL_ACCEPTED) } });
+      process.exitCode = observed.code ?? 1;
+    `;
+    const payload = { v: 1 as const, executable: process.execPath, cwd: root,
+      args: ['-e', 'process.stdout.write(JSON.stringify({tty:process.stdin.isTTY&&process.stdout.isTTY,cols:process.stdout.columns,rows:process.stdout.rows})+"\\n");process.stdin.once("data", data=>{process.stdout.write("echo:"+data);process.exit(7)});'],
+      runtimeHome: join(root, 'runtime/person'), environment: {}, selectedMaterials: [] };
+    const manager = createTerminalPtySessionManager({ ptyProvider: provider, config, env: process.env });
+    try {
+      const opened = await manager.ensure({ terminalKey: 'native-inherited', cwd: root, cols: 99, rows: 31,
+        authorizedNativeLaunch: { command: process.execPath, args: ['--import', require.resolve('tsx/esm'), '--input-type=module', '-e', source],
+          cwd: process.cwd(), env: { ...Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string,string] => typeof entry[1] === 'string')),
+            TSX_TSCONFIG_PATH: resolve('tsconfig.json') }, stdinPreamble: encodeAgentLaunchFrame(payload), release() {} },
+        launchProcess: { file: process.execPath, args: [], initialInput: 'member-input\n' },
+      });
+      if (!opened.ok) throw new Error(opened.errorCode);
+      expect(await manager.waitForExit({ terminalId: opened.terminalId })).toMatchObject({ kind: 'exited', exit: { exitCode: 7 } });
+      const read = manager.readBytes({ terminalId: opened.terminalId, byteOffset: 0, maxBytes: 1_000_000, maxChunks: 1000 });
+      if (!read.ok || read.mode !== 'bytes') throw new Error('Expected real PTY bytes');
+      const output = Buffer.concat(read.chunks.map(chunk => chunk.bytes)).toString('utf8');
+      expect(output).toContain('"tty":true');
+      expect(output).toContain('"cols":99,"rows":31');
+      expect(output).toContain('echo:member-input');
+      expect(output).not.toContain('happier-agent-launch-');
+    } finally { manager.dispose(); await rm(root, { recursive: true, force: true }); }
   });
 });

@@ -25,29 +25,22 @@ describe('createTerminalByteRing', () => {
     expect(nextRead.droppedBeforeByteOffset).toBe(0);
   });
 
-  it('bounds retained bytes by age', () => {
-    let now = 0;
-    const ringParams: Parameters<typeof createTerminalByteRing>[0] & { maxAgeMs: number } = {
-      maxBytes: 1024,
-      maxChunks: 10,
-      maxAgeMs: 1000,
-      now: () => now,
-    };
-    const ring = createTerminalByteRing(ringParams);
+  it.each([{ maxBytes: 6, maxChunks: 10 }, { maxBytes: 1024, maxChunks: 2 }])('bounds retained bytes by the byte/chunk budget (%j)', limits => {
+    const ring = createTerminalByteRing(limits);
 
     ring.write(Buffer.from('old'));
-    now = 1500;
     ring.write(Buffer.from('new'));
+    ring.write(Buffer.from('end'));
 
     const read = ring.read({ byteOffset: 0, maxBytes: 1024, maxChunks: 10 });
-    expect(read.availableByteOffset).toBe(6);
+    expect(read.availableByteOffset).toBe(9);
     expect(read.gap).toEqual({
       droppedBeforeByteOffset: 3,
       nextAvailableByteOffset: 3,
       reason: 'ring_overflow',
     });
-    expect(Buffer.concat(read.chunks.map((chunk) => chunk.bytes)).toString('utf8')).toBe('new');
-    expect(read.nextByteOffset).toBe(6);
+    expect(Buffer.concat(read.chunks.map((chunk) => chunk.bytes)).toString('utf8')).toBe('newend');
+    expect(read.nextByteOffset).toBe(9);
     expect(read.droppedBeforeByteOffset).toBe(3);
   });
 });

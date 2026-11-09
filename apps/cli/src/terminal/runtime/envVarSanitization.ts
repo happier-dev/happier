@@ -1,8 +1,8 @@
-const VALID_ENV_VAR_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
+import { isValidProcessEnvKey } from '@/utils/processEnv/environmentKeys';
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
 export function isValidEnvVarKey(key: string): boolean {
-    return VALID_ENV_VAR_KEY.test(key) && !FORBIDDEN_KEYS.has(key);
+    return isValidProcessEnvKey(key) && !FORBIDDEN_KEYS.has(key);
 }
 
 export function sanitizeEnvVarRecord(raw: unknown): Record<string, string> {

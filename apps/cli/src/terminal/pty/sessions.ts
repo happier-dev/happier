@@ -89,12 +89,13 @@ export type TerminalPtyMachineCustody = TerminalPtyCustodyBase & Readonly<{
 }>;
 export type TerminalPtyCustody = TerminalPtyProjectCustody | TerminalPtySessionCustody | TerminalPtyMachineCustody;
 
+type TerminalPtyInputOptions = Readonly<{ signal?: AbortSignal }>;
+
 export type TerminalPtyEnsureInput = Readonly<{
   terminalKey: string;
   cwd: string;
   cols?: number;
   rows?: number;
-  initialCommand?: string;
   launchProcess?: TerminalLaunchProcess;
   /** Actual B4 final tuple, supplied only by the host Project preparation owner. */
   authorizedProjectLaunch?: HostAuthorizedPluginExecLaunch;
@@ -124,7 +125,6 @@ function terminalStorageKey(input: TerminalPtyEnsureInput): string {
 export type TerminalPtySessionManagerConfig = Readonly<{
   bufferMaxBytes: number;
   bufferMaxEvents: number;
-  bufferRetentionMs: number;
   urlParseBufferLimit: number;
   urlDedupeLimit?: number;
   maxWriteChunkBytes: number;
@@ -187,6 +187,8 @@ export type TerminalPtySessionManager = Readonly<{
   getCustody: (terminalId: string) => TerminalPtyCustody | null;
   getNativeExecutionIdentity?: (terminalId: string) => AgentIsolationMemberNativeIdentity | null;
   isFiniteHeld: (terminalId: string) => boolean;
+  /** Born as admitted finite work (`holdUntilExit`); fixed for the terminal's life, unlike the settling hold. */
+  isFiniteRun: (terminalId: string) => boolean;
   ensure: (input: TerminalPtyEnsureInput) => Promise<EnsureOk | ErrorResult>;
   waitForExit: (input: Readonly<{ terminalId: string; signal?: AbortSignal; onOutcomeUncertain?: () => void }>) => Promise<TerminalProcessExitObservation>;
   requestStop: (input: Readonly<{ terminalId: string }>) => Promise<TerminalProcessStopObservation>;
@@ -195,9 +197,11 @@ export type TerminalPtySessionManager = Readonly<{
   read: (input: Readonly<{ terminalId: string; cursor: number; maxBytes: number; maxEvents: number }>) => ReadOk | ErrorResult;
   readBytes: (input: Readonly<{ terminalId: string; byteOffset: number; maxBytes: number; maxChunks: number }>) => TerminalByteReadResult;
   readByteStream: (input: TerminalByteStreamReadRequest) => TerminalByteStreamReadResponse;
+  /** Settles on this terminal's next output, exit or removal; the caller re-reads. */
+  waitForByteStreamChange?: (input: Readonly<{ terminalId: string; signal: AbortSignal; remainingMs?: number }>) => Promise<'changed' | 'deadline' | 'aborted'>;
   acknowledgeByteStream: (input: TerminalByteStreamAckRequest) => TerminalByteStreamAckResponse;
-  inputEvent: (input: TerminalStreamInputRequest) => TerminalStreamInputResponse;
-  input: (input: Readonly<{ terminalId: string; data: string }>) => SimpleOk | ErrorResult;
+  inputEvent: (input: TerminalStreamInputRequest, options?: TerminalPtyInputOptions) => Promise<TerminalStreamInputResponse>;
+  input: (input: Readonly<{ terminalId: string; data: string }>, options?: TerminalPtyInputOptions) => Promise<SimpleOk | ErrorResult>;
   resize: (input: Readonly<{ terminalId: string; cols: number; rows: number }>) => SimpleOk | ErrorResult;
   close: (input: Readonly<{ terminalId: string }>) => SimpleOk | ErrorResult;
   dispose: () => void;
@@ -313,11 +317,13 @@ type PtySession = {
   sessionId?: string;
   requesterAccountId?: string;
   custody?: TerminalPtyCustody;
+  finiteRun: boolean;
   finiteHold: boolean;
   stopPending: boolean;
   stopUnconfirmed: boolean;
   stopRequested: boolean;
   exitObservers: Set<(observation: TerminalProcessExitEvent) => void>;
+  byteStreamWakes: Set<() => void>;
   outputObservers: Set<() => void>;
   cols: number;
   rows: number;
@@ -498,7 +504,12 @@ export function createTerminalPtySessionManager(params: Readonly<{
       try { listener(); } catch { /* Observation cannot alter retained PTY custody. */ }
     }
   };
+  const wakeByteStreamReads = (session: PtySession) => {
+    for (const wake of session.byteStreamWakes) wake();
+    session.byteStreamWakes.clear();
+  };
   const recordIo = (session: PtySession) => {
+    wakeByteStreamReads(session);
     session.lastActivityAtMs = now();
     delete session.terminalGuardStateV1;
     delete session.guardWarningFailedPolicy;
@@ -510,6 +521,8 @@ export function createTerminalPtySessionManager(params: Readonly<{
       items: Array.from(sessionsById.values(), (session): LiveWorkItemV1 => ({
         category: 'terminal',
         ownerRef: session.terminalId,
+        // Access-loss inventory is compared with the receiver's routing profile;
+        // Process roots below carry the separate immutable Home birth.
         attribution: session.custody ? {
           serverId: session.custody.serverId, accountId: session.custody.requesterAccountId,
           machineId: session.custody.machineId, installationId: session.custody.installationId,
@@ -552,6 +565,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
     for (const observer of session.exitObservers) observer({ kind: 'unavailable' });
     session.exitObservers.clear();
     session.outputObservers.clear();
+    wakeByteStreamReads(session);
     retireSessionOwner(session, () => {
       try {
         session.pty.kill();
@@ -590,7 +604,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
       || input.requesterAccountId !== undefined && input.requesterAccountId !== requesterAccountId)) return okDisabled('terminal_forbidden');
     if (input.custody?.kind === 'session' && input.sessionId !== input.custody.sessionId) return okDisabled('terminal_forbidden');
     const storageKey = terminalStorageKey(input);
-    if (input.holdUntilExit && (!input.launchProcess || input.initialCommand || input.launchProcess.initialInput)) {
+    if (input.holdUntilExit && (!input.launchProcess || input.launchProcess.initialInput)) {
       return okDisabled('terminal_invalid_request');
     }
     if (input.nativeExecutionIdentity && !(input.authorizedNativeLaunch ?? input.authorizedProjectLaunch)?.stdinPreamble) return okDisabled('terminal_forbidden');
@@ -623,7 +637,6 @@ export function createTerminalPtySessionManager(params: Readonly<{
         if (!!prior !== !!next || prior && next && (prior.digest !== next.digest || prior.username !== next.username
           || prior.agentUid !== next.agentUid || prior.agentGid !== next.agentGid || prior.home !== next.home)) return okDisabled('terminal_forbidden');
       }
-
       if (existing?.ended && (existing.finiteHold || existing.stopPending || existing.stopUnconfirmed)) return okDisabled('terminal_busy');
       if (existing && !existing.ended) {
         const cols = typeof input.cols === 'number' && Number.isFinite(input.cols) ? Math.max(2, Math.trunc(input.cols)) : existing.cols;
@@ -690,7 +703,6 @@ export function createTerminalPtySessionManager(params: Readonly<{
     const byteRing = createTerminalByteRing({
       maxBytes: config.bufferMaxBytes,
       maxChunks: config.bufferMaxEvents,
-      maxAgeMs: config.bufferRetentionMs,
       now,
     });
     const urlDetector = createTerminalUrlDetector({
@@ -709,11 +721,13 @@ export function createTerminalPtySessionManager(params: Readonly<{
       ...(input.sessionId ? { sessionId: input.sessionId } : {}),
       ...(requesterAccountId ? { requesterAccountId } : {}),
       ...(input.custody ? { custody: Object.freeze({ ...input.custody }) } : {}),
+      finiteRun: input.holdUntilExit === true,
       finiteHold: input.holdUntilExit === true,
       stopPending: false,
       stopUnconfirmed: false,
       stopRequested: false,
       exitObservers: new Set(),
+      byteStreamWakes: new Set(),
       outputObservers: new Set(),
       cols,
       rows,
@@ -800,6 +814,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
         pushDetectedUrls(session, session.urlDetector.flush(), config, finalByteOffset);
         session.ended = true;
         session.exit = { exitCode: e.exitCode ?? null, signal: typeof e.signal === 'number' ? e.signal : null };
+        wakeByteStreamReads(session);
         if (!session.stopPending && !session.stopUnconfirmed) {
           const windowsCustody = session.pty.windowsJobCustody;
           const groupId = session.pty.ownedProcessGroupId;
@@ -864,7 +879,19 @@ export function createTerminalPtySessionManager(params: Readonly<{
       });
       if (params.ownerRemainder) {
         session.ownerCapture = params.ownerRemainder.capture({ kind: 'terminal', terminalId,
-          ...(input.sessionId ? { sessionId: input.sessionId } : {}) }).catch(() => {
+          ...(input.sessionId ? { sessionId: input.sessionId } : {}) }).then(captured => {
+          // Presenter removal can precede the pending native census. Preserve
+          // the admitted birth only where that census could no longer read it.
+          const custody = session.custody;
+          const homeServerIdentityId = custody?.homeServerIdentityId;
+          if (!captured || !custody || !homeServerIdentityId) return captured;
+          return { ...captured, roots: captured.roots.map(root => root.owner.kind === 'terminal'
+            && root.owner.terminalId === terminalId && !root.requesterWorkAttributionV1
+            ? { ...root, requesterWorkAttributionV1: {
+              serverId: homeServerIdentityId, machineId: custody.machineId,
+              installationId: custody.installationId, accountId: custody.requesterAccountId,
+            } } : root) };
+        }).catch(() => {
           // Shared observation owns diagnostics; an unavailable census cannot block native close.
           return undefined;
         });
@@ -885,22 +912,12 @@ export function createTerminalPtySessionManager(params: Readonly<{
       }
     }
     if (input.launchProcess?.initialInput) {
-      try {
-        pty.write(input.launchProcess.initialInput);
-      } catch {
+      const sent = await inputData({ terminalId, data: input.launchProcess.initialInput }, { signal: input.signal });
+      if (!sent.ok) {
         closeById(terminalId);
-        return okDisabled('terminal_spawn_failed');
+        return sent.errorCode === 'terminal_forbidden' ? sent : okDisabled('terminal_spawn_failed');
       }
     }
-    if (input.initialCommand && input.initialCommand.trim()) {
-      const cmd = input.initialCommand.endsWith('\n') ? input.initialCommand : `${input.initialCommand}\n`;
-      try {
-        pty.write(cmd);
-      } catch {
-        // ignore
-      }
-    }
-
     return { ok: true, terminalId, reused: false };
   };
 
@@ -1193,10 +1210,17 @@ export function createTerminalPtySessionManager(params: Readonly<{
     return { ok: true };
   };
 
-  const inputData = (input: Readonly<{ terminalId: string; data: string }>): SimpleOk | ErrorResult => {
+  const inputData = async (input: Readonly<{ terminalId: string; data: string }>, options?: TerminalPtyInputOptions): Promise<SimpleOk | ErrorResult> => {
     const session = sessionsById.get(input.terminalId);
-    if (!session) return okDisabled('terminal_not_found');
-    if (session.ended) return okDisabled('terminal_not_found');
+    // A first command may exit the shell. Retain its actual native birth before
+    // making it writable, using the same witness already owned by retirement.
+    if (session?.ownerCapture) {
+      const outcome = await waitForChangeOrDeadline({ signal: options?.signal,
+        waitForChange: async () => { await session.ownerCapture; } });
+      if (outcome === 'aborted') return okDisabled('terminal_forbidden');
+    }
+    if (options?.signal?.aborted) return okDisabled('terminal_forbidden');
+    if (!session || sessionsById.get(input.terminalId) !== session || session.ended) return okDisabled('terminal_not_found');
     try {
       session.pty.write(String(input.data ?? ''));
     } catch {
@@ -1206,8 +1230,11 @@ export function createTerminalPtySessionManager(params: Readonly<{
     return { ok: true };
   };
 
-  const inputEvent = (input: TerminalStreamInputRequest): TerminalStreamInputResponse => {
+  const inputEvent = async (input: TerminalStreamInputRequest, options?: TerminalPtyInputOptions): Promise<TerminalStreamInputResponse> => {
     const action = terminalInputEventToPtyAction(input.event);
+    if (options?.signal?.aborted) {
+      return { ok: false, code: 'terminal_forbidden', message: 'terminal_forbidden' };
+    }
     if (action.kind === 'unsupported') {
       return { ok: false, code: action.code, message: action.message };
     }
@@ -1220,7 +1247,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
         ? { ok: true }
         : { ok: false, code: result.errorCode, message: result.error };
     }
-    const result = inputData({ terminalId: input.terminalId, data: action.data });
+    const result = await inputData({ terminalId: input.terminalId, data: action.data }, options);
     return result.ok
       ? { ok: true }
       : { ok: false, code: result.errorCode, message: result.error };
@@ -1282,7 +1309,6 @@ export function createTerminalPtySessionManager(params: Readonly<{
       try { session.pty.kill('SIGTERM'); return { kind: 'requested' }; }
       catch { session.stopUnconfirmed = true; notifyLiveWorkChanged(); return { kind: 'unconfirmed' }; }
     }
-
     const windowsCustody = session.pty.windowsJobCustody;
     if (windowsCustody) {
       session.stopRequested = true;
@@ -1445,6 +1471,7 @@ export function createTerminalPtySessionManager(params: Readonly<{
     getCustody: (terminalId) => sessionsById.get(terminalId)?.custody ?? null,
     getNativeExecutionIdentity: terminalId => sessionsById.get(terminalId)?.nativeExecutionIdentity ?? null,
     isFiniteHeld: (terminalId) => sessionsById.get(terminalId)?.finiteHold === true,
+    isFiniteRun: (terminalId) => sessionsById.get(terminalId)?.finiteRun === true,
     waitForExit,
     requestStop,
     observeOutput: ({ terminalId, maxLength, onOutput }) => {
@@ -1462,6 +1489,16 @@ export function createTerminalPtySessionManager(params: Readonly<{
     read,
     readBytes,
     readByteStream,
+    waitForByteStreamChange: async ({ terminalId, signal, remainingMs }) => await waitForChangeOrDeadline({ signal,
+      ...(remainingMs === undefined ? {} : { remainingMs }),
+      waitForChange: async released => {
+        const session = sessionsById.get(terminalId);
+        if (!session) return;
+        await new Promise<void>(resolve => {
+          released.addEventListener('abort', () => { session.byteStreamWakes.delete(resolve); resolve(); }, { once: true });
+          session.byteStreamWakes.add(resolve);
+        });
+      } }),
     acknowledgeByteStream,
     inputEvent,
     input: inputData,

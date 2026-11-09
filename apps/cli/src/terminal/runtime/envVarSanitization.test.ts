@@ -68,4 +68,18 @@ describe('envVarSanitization', () => {
             ALSO_OK: 123,
         });
     });
+
+    it.each(['linux', 'darwin', 'win32'] as const)('accepts Windows system names with parentheses only on Windows (%s)', platform => {
+        const original = Object.getOwnPropertyDescriptor(process, 'platform')!;
+        Object.defineProperty(process, 'platform', { ...original, value: platform });
+        try {
+            const environment = { 'ProgramFiles(x86)': 'D:\\Applications (x86)', 'commonprogramfiles(x86)': 'D:\\Common Files' };
+            const result = validateEnvVarRecordStrict(environment);
+            if (platform === 'win32') expect(result).toEqual({ ok: true, env: environment });
+            else expect(result.ok).toBe(false);
+            expect(validateEnvVarRecordStrict({ 'CUSTOM(x86)': 'not-a-system-key' }).ok).toBe(false);
+        } finally {
+            Object.defineProperty(process, 'platform', original);
+        }
+    });
 });

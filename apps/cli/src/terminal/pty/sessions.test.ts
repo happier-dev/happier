@@ -29,6 +29,7 @@ import { executeHostFiniteTerminalProcess } from './finiteProcess';
 import { encodeAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
 import { createPythonPtyRelayProvider, resolvePythonPtyRelayExecutable } from './pythonRelay';
+import { readDaemonTerminalPtyConfig } from './config';
 
 // Supplemental OS evidence; ordinary owner regressions below need neither Bash nor Python.
 describe.skipIf(process.platform === 'win32' || !existsSync('/bin/bash')
@@ -193,7 +194,6 @@ function defaultConfig(overrides?: Partial<TerminalPtySessionManagerConfig>): Te
   return {
     bufferMaxBytes: 1_000_000,
     bufferMaxEvents: 1000,
-    bufferRetentionMs: 10 * 60_000,
     urlParseBufferLimit: 32_768,
     maxWriteChunkBytes: 16_384,
     defaultCols: 80,
@@ -205,11 +205,47 @@ function defaultConfig(overrides?: Partial<TerminalPtySessionManagerConfig>): Te
 const BASH_ENV: NodeJS.ProcessEnv = { SHELL: '/bin/bash' };
 
 describe('finite natural tree settlement', () => {
+  it('replays the complete live Shell history after idle output resumes and a fresh renderer attaches', async () => {
+    let clock = 0;
+    const provider = new FakePtyProvider();
+    const config = readDaemonTerminalPtyConfig({}).sessionManager;
+    const manager = createTerminalPtySessionManager({ ptyProvider: provider, platform: 'linux', env: BASH_ENV,
+      config, now: () => clock });
+    try {
+      const accepted = await manager.ensure({ terminalKey: 'reload-idle-history', cwd: '/fixture' });
+      if (!accepted.ok) throw new Error(accepted.errorCode);
+      const history = Array.from({ length: 1600 }, (_, index) => `retained Shell history ${index} beyond the preview limit 世界\r\n`).join('');
+      const tail = 'after idle prompt$ ';
+      provider.spawned[0]!.pty.emitData(Buffer.from(history));
+      clock += 40 * 60_000;
+      provider.spawned[0]!.pty.emitData(Buffer.from(tail));
+      const output: Uint8Array[] = [];
+      let cursor = 0;
+      let pages = 0;
+      let gap = false;
+      do {
+        const response = TerminalStreamReadResponseSchema.parse(manager.readByteStream({ terminalId: accepted.terminalId,
+          byteOffset: cursor, rendererId: 'fresh-page', surfaceEpoch: 0 }));
+        if (!response.ok) throw new Error(response.code);
+        gap ||= response.frames.some(frame => frame.t === 'gap');
+        output.push(...response.frames.flatMap(frame => frame.t === 'bytes' ? [decodeTerminalStreamBytesFrame(frame)] : []));
+        expect(response.nextByteOffset).toBeGreaterThan(cursor);
+        cursor = response.nextByteOffset;
+        pages += 1;
+        if (cursor === response.availableByteOffset) break;
+      } while (true);
+      expect(Buffer.concat(output).byteLength).toBe(Buffer.byteLength(history + tail));
+      expect(Buffer.concat(output).toString('utf8')).toBe(history + tail);
+      expect(gap).toBe(false);
+      expect(cursor).toBe(Buffer.byteLength(history + tail));
+      expect(pages).toBe(Math.ceil(cursor / config.maxWriteChunkBytes));
+    } finally { manager.dispose(); }
+  });
   it('replays tiny output after a long idle hold and its later exit, through the strict stream consumer', async () => {
     let clock = 0;
     const provider = new FakePtyProvider();
     const manager = createTerminalPtySessionManager({ ptyProvider: provider, platform: 'linux', env: BASH_ENV,
-      config: defaultConfig({ bufferRetentionMs: 1000 }), now: () => clock });
+      config: defaultConfig(), now: () => clock });
     try {
       const accepted = await manager.ensure({ terminalKey: 'finished-replay', cwd: '/fixture', holdUntilExit: true,
         launchProcess: { file: '/installed/echo', args: [] } });
@@ -507,7 +543,7 @@ describe('TerminalPtySessionManager', () => {
       expect(await manager.restart(input)).toMatchObject({ ok: false, errorCode: 'terminal_busy' });
       expect(provider.spawned).toHaveLength(1);
       expect(retainedPty.killCount).toBe(0);
-      expect(manager.input({ terminalId: opened.terminalId, data: 'existing-control' })).toEqual({ ok: true });
+      expect(await manager.input({ terminalId: opened.terminalId, data: 'existing-control' })).toEqual({ ok: true });
       retainedPty.emitData('attached-output');
       expect(manager.read({ terminalId: opened.terminalId, cursor: 0, maxBytes: 1000, maxEvents: 10 })).toMatchObject({ ok: true,
         events: [{ t: 'data', data: 'attached-output' }] });
@@ -660,7 +696,7 @@ describe('TerminalPtySessionManager', () => {
       projectKey: 'project', rootPath: '/project', requesterAccountId: 'bob' };
     const authorizedProjectLaunch = await authorizeResolvedProjectExecLaunchForHost({
       launch: { command: '/managed/native-wrapper', args: ['exec', '/bin/bash'], cwd: '/project/native-workdir', env: { PATH: '/native/bin' } },
-      projectLaunch: { status: 'ready', reviewedEffectDigest: 'reviewed', environment: { selection: { kind: 'host' }, root: custody.rootPath,
+      projectLaunch: { status: 'ready', reviewedEffectDigest: 'reviewed', toolchain: { selection: { kind: 'host' }, root: custody.rootPath,
         platform: 'linux', io: { resolveTool: async () => null, run: async () => { throw new Error('Host environment must not spawn native tooling'); } } } },
       signal: new AbortController().signal, assertCurrent() {},
     });
@@ -1838,31 +1874,32 @@ describe('TerminalPtySessionManager', () => {
     if (!ensured.ok) throw new Error('expected ok');
     const pty = provider.spawned[0]?.pty;
     if (!pty) throw new Error('missing fake pty');
+    const options = { signal: new AbortController().signal };
 
-    expect(manager.inputEvent({
+    expect(await manager.inputEvent({
       terminalId: ensured.terminalId,
       event: { t: 'text', text: 'ls' },
-    })).toEqual({ ok: true });
-    expect(manager.inputEvent({
+    }, options)).toEqual({ ok: true });
+    expect(await manager.inputEvent({
       terminalId: ensured.terminalId,
       event: { t: 'paste', text: 'a\nb', bracketed: true },
-    })).toEqual({ ok: true });
-    expect(manager.inputEvent({
+    }, options)).toEqual({ ok: true });
+    expect(await manager.inputEvent({
       terminalId: ensured.terminalId,
       event: { t: 'key', key: 'Enter', modifiers: [] },
-    })).toEqual({ ok: true });
-    expect(manager.inputEvent({
+    }, options)).toEqual({ ok: true });
+    expect(await manager.inputEvent({
       terminalId: ensured.terminalId,
       event: { t: 'key', key: 'c', modifiers: ['ctrl'] },
-    })).toEqual({ ok: true });
-    expect(manager.inputEvent({
+    }, options)).toEqual({ ok: true });
+    expect(await manager.inputEvent({
       terminalId: ensured.terminalId,
       event: { t: 'ime', phase: 'commit', text: 'あ' },
-    })).toEqual({ ok: true });
-    expect(manager.inputEvent({
+    }, options)).toEqual({ ok: true });
+    expect(await manager.inputEvent({
       terminalId: ensured.terminalId,
       event: { t: 'resize', cols: 120, rows: 40 },
-    })).toEqual({ ok: true });
+    }, options)).toEqual({ ok: true });
 
     expect(pty.writes).toEqual([
       'ls',
@@ -1890,7 +1927,7 @@ describe('TerminalPtySessionManager', () => {
     const pty = provider.spawned[0]?.pty;
     if (!pty) throw new Error('missing fake pty');
 
-    expect(manager.inputEvent({
+    expect(await manager.inputEvent({
       terminalId: ensured.terminalId,
       event: { t: 'mouse', kind: 'down', button: 0, x: 1, y: 1, modifiers: [] },
     })).toEqual({
@@ -2054,11 +2091,12 @@ describe('TerminalPtySessionManager', () => {
 });
 
 describe('TerminalPtySessionManager terminal->port registration', () => {
-  it.each(['close', 'exit'] as const)('retains the terminal owner and observes its surviving child after %s', async (ending) => {
+  it.each(['close', 'exit', 'initial input', 'immediate input', 'immediate event', 'close before input', 'cancelled input'] as const)('retains the terminal owner Home identity across routing aliases and observes its surviving child after %s', async (ending) => {
     const scope = resolveProcessOwnerScopeKey(configuration.happyHomeDir);
     const rootPid = 4321;
     const childPid = 4322;
     let sampledAt = 1_000;
+    let censusReads = 0;
     let unblock!: () => void;
     const censusGate = new Promise<void>((resolve) => { unblock = resolve; });
     const rows = new Map<number, { parent: number; ticks: number; tag: string }>([
@@ -2068,7 +2106,7 @@ describe('TerminalPtySessionManager terminal->port registration', () => {
     ]);
     const censusDependencies: ProcessCensusDependencies = { platform: 'linux', selfPid: process.pid, now: () => sampledAt,
       linuxBoundary: {
-        async readdir() { await censusGate; return [...rows.keys()].map(String); },
+        async readdir() { censusReads++; await censusGate; return [...rows.keys()].map(String); },
         async readlink() { return '/fixture'; },
         async readFile(path) {
           const pid = Number(path.split('/')[2]);
@@ -2082,15 +2120,27 @@ describe('TerminalPtySessionManager terminal->port registration', () => {
       } };
     const registry = createTerminalProcessRegistry();
     const endedRoots: HappierProcessRootSource[] = [];
+    let manager: ReturnType<typeof createTerminalPtySessionManager>;
     const runtime = createProcessOwnershipRuntime({ platform: 'linux', daemonScopeKey: scope, censusDependencies,
       listRoots: snapshot => listHappierProcessRoots({ snapshot, platform: 'linux', daemonScopeKey: scope,
-        terminalRegistry: registry, endedRoots }) });
+        terminalRegistry: registry, endedRoots,
+        terminalRequesterAttribution: terminalId => {
+          const custody = manager.getCustody(terminalId);
+          return custody ? { serverId: ending === 'immediate event' ? 'srv_foreign_terminal' : 'srv_terminal_home', machineId: custody.machineId,
+            installationId: custody.installationId, accountId: custody.requesterAccountId } : undefined;
+        } }) });
     const pass = createLeftBehindPass({ processOwnershipRuntime: runtime });
     const firstPassOwners: string[] = [];
     const remainder = createEndOwnerRemainder({ processOwnershipRuntime: runtime, platform: 'linux', daemonScopeKey: scope,
       retainEndedRoots: roots => { endedRoots.push(...roots); },
       firstPass: async owner => { firstPassOwners.push(owner.kind); await pass.firstPass(owner); } });
     class ExitingPty extends FakePty {
+      override write(data: string) {
+        // Input consumes the pending birth witness; it never starts a second census.
+        expect(censusReads).toBe(1);
+        super.write(data);
+        if (ending === 'initial input' || ending === 'immediate input' || ending === 'immediate event') this.kill();
+      }
       override kill() {
         super.kill();
         rows.delete(rootPid);
@@ -2099,7 +2149,7 @@ describe('TerminalPtySessionManager terminal->port registration', () => {
       }
     }
     const pty = new ExitingPty(rootPid);
-    const manager = createTerminalPtySessionManager({ config: defaultConfig(), platform: 'linux',
+    manager = createTerminalPtySessionManager({ config: defaultConfig(), platform: 'linux',
       env: BASH_ENV, terminalRegistry: registry, ownerRemainder: remainder,
       ptyProvider: { spawn(input) {
         // PTY creation is the genuine OS boundary; both native processes inherit the host tag.
@@ -2108,9 +2158,43 @@ describe('TerminalPtySessionManager terminal->port registration', () => {
         return pty;
       } } });
     try {
-      const ensured = await manager.ensure({ terminalKey: 'left-behind', cwd: '/fixture' });
+      const opening = manager.ensure({ terminalKey: 'left-behind', cwd: '/fixture', custody: {
+        kind: 'machine', serverId: 'daemon-profile-alias', homeServerIdentityId: 'srv_terminal_home',
+        machineId: 'machine', installationId: 'installation',
+        requesterAccountId: 'owner', rootPath: '/fixture',
+      }, ...(ending === 'initial input' ? { launchProcess: { file: '/bin/bash', args: [], initialInput: 'nohup sleep 3600 & exit\n' } } : {}) });
+      if (ending === 'initial input') unblock();
+      const ensured = await opening;
       if (!ensured.ok) throw new Error(ensured.errorCode);
-      if (ending === 'close') {
+      if (ending === 'immediate input' || ending === 'immediate event' || ending === 'close before input'
+        || ending === 'cancelled input') {
+        // A person can submit a command as soon as open returns, before the
+        // asynchronous first census has witnessed the terminal's native birth.
+        const data = 'nohup sleep 3600 & exit\n';
+        const controller = new AbortController();
+        const sent = ending === 'immediate event'
+          ? manager.inputEvent({ terminalId: ensured.terminalId, event: { t: 'text', text: data } })
+          : manager.input({ terminalId: ensured.terminalId, data }, {
+            signal: controller.signal,
+          });
+        if (ending === 'close before input') expect(manager.close({ terminalId: ensured.terminalId })).toEqual({ ok: true });
+        if (ending === 'cancelled input') controller.abort();
+        if (ending === 'cancelled input') {
+          // Cancellation releases this caller without cancelling its owner's witness.
+          await expect(sent).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+        }
+        unblock();
+        if (ending === 'close before input') {
+          await expect(sent).resolves.toMatchObject({ ok: false, errorCode: 'terminal_not_found' });
+          expect(pty.writes).toEqual([]);
+        } else if (ending === 'cancelled input') {
+          await expect(sent).resolves.toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+          expect(pty.writes).toEqual([]);
+          expect(manager.close({ terminalId: ensured.terminalId })).toEqual({ ok: true });
+        } else await expect(sent).resolves.toEqual({ ok: true });
+      } else if (ending === 'initial input') {
+        expect(pty.writes).toEqual(['nohup sleep 3600 & exit\n']);
+      } else if (ending === 'close') {
         expect(manager.close({ terminalId: ensured.terminalId })).toEqual({ ok: true });
         expect(pty.killCount).toBe(0);
         expect(registry.lookupByPid(rootPid)).not.toBeNull();
@@ -2126,6 +2210,11 @@ describe('TerminalPtySessionManager terminal->port registration', () => {
       const observed = await runtime.readOwners({ freshness: 'fresh' });
       expect(observed.status === 'ok' && observed.rows.find(row => row.pid === childPid))
         .toMatchObject({ owner: { kind: 'terminal', terminalId: ensured.terminalId }, ownerEnded: true, level: 'left_behind' });
+      expect(endedRoots).toContainEqual(expect.objectContaining({
+        owner: { kind: 'terminal', terminalId: ensured.terminalId },
+        requesterWorkAttributionV1: { serverId: ending === 'immediate event' ? 'srv_foreign_terminal' : 'srv_terminal_home',
+          machineId: 'machine', installationId: 'installation', accountId: 'owner' },
+      }));
       expect(rows.has(childPid)).toBe(true);
       expect(registry.lookupByPid(rootPid)).toBeNull();
       expect(await pass.readConfirmed()).toEqual({ status: 'ok', items: [] });
@@ -2393,5 +2482,4 @@ describe('native requester PTY transport', () => {
       expect(manager.list()).toHaveLength(0);
     } finally { manager.dispose(); }
   });
-
 });
