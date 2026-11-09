@@ -392,7 +392,7 @@ export function readTriageListFailureLine(
     : text('plugins.triage.surface.failure.suffix', 'could not be read')}`;
   return Object.freeze({
     label: `${title}. ${text('plugins.triage.surface.failure.retained', 'Their entries may be missing or out of date.')}${oneReason && !unreachable ? ` ${resolveSourceFailureReason(text, lineReason(first!))}` : ''}`,
-    recovery: 'retry',
+    recovery: failure.sources.every((source) => source.needsConnectionChange === true) ? 'manageSources' : 'retry',
   });
 }
 

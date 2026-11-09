@@ -184,7 +184,7 @@ describe('resolveTriageListShellState', () => {
     expect(readTriageListFailureLine({ kind: 'sources', sources: [
       { sourceInstanceId: 'a', displayName: 'GitHub', reason: 'Needs you to sign in again.', needsConnectionChange: true },
       { sourceInstanceId: 'b', displayName: 'Linear', reason: 'Could not be reached just now.', retryable: false, needsConnectionChange: true },
-    ] }, undefined, 'en')).toEqual({ label: 'GitHub and Linear could not be read. Their entries may be missing or out of date.', recovery: 'retry' });
+    ] }, undefined, 'en')).toEqual({ label: 'GitHub and Linear could not be read. Their entries may be missing or out of date.', recovery: 'manageSources' });
     expect(readTriageListFailureLine({ kind: 'sources', sources: [
       { sourceInstanceId: 'b', displayName: 'Linear', reason: 'Could not be reached just now.', retryable: false, needsConnectionChange: true },
     ] }).label).toBe('Linear could not be read. Their entries may be missing or out of date.');

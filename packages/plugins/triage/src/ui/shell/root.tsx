@@ -2107,7 +2107,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       onPress={() => executeMountedOperation({ kind: 'setSourceManagementOpen', open: true })} />
   ) : undefined;
   // Beside a status line the same fix is a plain action, as Retry is beside its sentence.
-  const sourceManagementStatusAction = sourceManagementAction === undefined ? undefined : (
+  const sourceManagementStatusAction = (
     <TriageFailureLineAction label={text('plugins.triage.surface.sources.manage', 'Manage sources')}
       onPress={() => executeMountedOperation({ kind: 'setSourceManagementOpen', open: true })} />
   );

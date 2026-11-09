@@ -3,6 +3,8 @@ import { act } from 'react';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit, PluginUiTestkitOpenSurfaceInput } from '@happier-dev/plugin-sdk/testing';
 import { TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1 } from '../actions/resolveResourceProtocol.js';
+import { createTriageMountedUiActionHandler } from '../actions/mountedUi.js';
+import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema } from '../actions/mountedUiProtocol.js';
 import type {
     PluginUiSessionServerStartDraftV1,
     PluginUiTargetedContributionContributorV1,
@@ -543,8 +545,20 @@ async function mountShell(harness: Harness, hostedDetail: boolean | Readonly<{ a
             }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
-                executeAction: async ({ action, input }) =>
-                    await harness.executeAction({ action, input }) as never,
+                executeAction: async ({ action, input, signal }) => {
+                    // The host routes this addressed Action back to this mount's real dispatcher;
+                    // it is not a list read or a replacement for the pressed callback.
+                    if (testkitTriageActionId(action) === TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1) {
+                        return await createTriageMountedUiActionHandler()(TriageMountedUiInputV1Schema.parse(input), {
+                            plugin: { id: 'happier.triage', version: '0.0.0' },
+                            contribution: { id: TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1,
+                                qualifiedId: `happier.triage/actions/${TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1}` },
+                            invocationSurface: 'ui', signal: signal ?? fixture.context.signal,
+                            ui: fixture.context.hostApi, ephemeralSharedScope,
+                        }) as never;
+                    }
+                    return await harness.executeAction({ action, input }) as never;
+                },
                 selectActionInput: async ({ request, signal }) => {
                     if ('operation' in request) {
                         const operation = request.operation;
@@ -670,6 +684,9 @@ describe('Edit action… opens the one actions editor through the Triage page', 
         await pressAction(shell, 'Fix options');
         await pressMenuItem(shell, 'Edit action…');
         expect(opens).toEqual([expect.objectContaining(EDITOR)]);
+        await expect(shell.getByRole('button', { name: 'Fix options' })).resolves.toBeDefined();
+        expect(harness.startRequests).toHaveLength(0);
+        expect(harness.configuredRequests).toHaveLength(0);
     }, 60_000);
 
     it('from the standalone detail of a resolved resource', async () => {
