@@ -2886,16 +2886,16 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
           {/* The header's pieces (the toolbar, a banner the page puts under it, a stale-data line) stand apart. A
               Collection that is the page (it carries the page's name) opens with the pane header's top space, as the
               host's identity row does while the page loads, so the toolbar never sits on the pane's edge. */}
-          {largeTitle === null ? (
-            <View style={props.title === undefined && props.pageRoot !== true ? headerStackStyle : pageHeaderStackStyle}>{header}{headerTokenLine}</View>
-          ) : (
-            <>
-              {/* Core's page title owner at its display step; its own top space under the navigation row. */}
-              <HappierPageHeader title={largeTitle} largeTitle
-                testID={props.testID === undefined ? undefined : `${props.testID}:large-title`} />
-              <View style={headerStackStyle}>{header}{headerTokenLine}</View>
-            </>
+          {/* Core's page title owner at its display step; its own top space under the navigation row. The header stays
+              the same element whether or not the large title leads it, so a focused search survives the host handing
+              the page its large title at a phone width (QB80). */}
+          {largeTitle === null ? null : (
+            <HappierPageHeader title={largeTitle} largeTitle
+              testID={props.testID === undefined ? undefined : `${props.testID}:large-title`} />
           )}
+          <View style={largeTitle !== null || (props.title === undefined && props.pageRoot !== true) ? headerStackStyle : pageHeaderStackStyle}>
+            {header}{headerTokenLine}
+          </View>
         </CollectionToolbarOverflowContext.Provider>
       </CollectionToolbarCompactContext.Provider>
     </PageColumn>

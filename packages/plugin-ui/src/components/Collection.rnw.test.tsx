@@ -3571,6 +3571,30 @@ describe('the search field', () => {
     view.unmount();
   });
 
+  it('keeps the focused search when the page name becomes the phone large title (QB80, READY161)', async () => {
+    // Live READY161: at 390 the host hands the page its large title; the toolbar moved under it and the field remounted.
+    const pageChrome = { showsTitle: true, largeTitle: false };
+    const view = mount({
+      title: 'PRs & Issues',
+      search: { label: 'Search entries', value: '1998', onValueChange: () => undefined, testID: 'search' },
+      header: (slots) => <CollectionToolbar slots={slots} lens={<Text testID="lens">Mine</Text>} />,
+      pageChrome,
+    });
+    view.measure(1440);
+    const field = () => (view.query('search')!.matches('input') ? view.query('search')! : view.query('search')!.querySelector('input'))!;
+    const before = field();
+    await act(async () => { before.focus(); before.setSelectionRange(1, 1); });
+    for (const largeTitle of [true, false]) {
+      pageChrome.largeTitle = largeTitle;
+      await act(async () => { view.update({}); });
+      view.measure(largeTitle ? 390 : 1440);
+      await act(async () => { await Promise.resolve(); });
+      expect(field(), `the field is remounted with largeTitle=${largeTitle}`).toBe(before);
+      expect(document.activeElement).toBe(before);
+    }
+    view.unmount();
+  });
+
   it('draws no token line while nothing narrows the list', () => {
     const view = mount({ search: { label: 'Search entries', value: '', onValueChange: () => undefined, testID: 'search' } });
     view.measure(1440);
