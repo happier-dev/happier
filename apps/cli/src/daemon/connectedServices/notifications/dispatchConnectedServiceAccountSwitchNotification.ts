@@ -1,6 +1,5 @@
 import type {
   AccountSettings,
-  ConnectedServiceId,
 } from '@happier-dev/protocol';
 
 import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification';
@@ -9,10 +8,10 @@ import type { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../acco
 import { isBackgroundConnectedServiceSwitchReason } from '../connectedServiceSwitchEventVisibility';
 import {
   loadConnectedServiceNotificationProfilesById,
-  readLegacyConnectedServiceNotificationServiceId,
   resolveConnectedServiceNotificationDisplayName,
   resolveConnectedServiceNotificationProfileLabel,
   type ConnectedServiceNotificationProfileSummary,
+  type ConnectedServiceNotificationAccountReader,
 } from './connectedServiceNotificationLabels';
 
 type ConnectedServiceAccountSwitchNotificationSource = Readonly<{
@@ -41,10 +40,8 @@ function resolveUsagePercent(input: Readonly<{
   profileId: string | null;
 }>): number | null {
   if (!input.profileId) return null;
-  const serviceId = readLegacyConnectedServiceNotificationServiceId(input.serviceId);
-  if (!serviceId) return null;
   const snapshot = input.runtimeQuotaSnapshots.getSnapshot({
-    serviceId,
+    serviceId: input.serviceId,
     groupId: input.groupId,
     profileId: input.profileId,
   });
@@ -67,10 +64,8 @@ export async function dispatchConnectedServiceAccountSwitchNotificationAsync(par
   settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
   expoPushSender?: ExpoPushActivityNotificationSender | null;
   runtimeQuotaSnapshots: ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore;
-  listConnectedServiceProfiles(input: Readonly<{ serviceId: ConnectedServiceId }>): Promise<Readonly<{
-    serviceId: ConnectedServiceId;
-    profiles: ReadonlyArray<ConnectedServiceNotificationProfileSummary>;
-  }>>;
+  listQualifiedConnectedAccounts: ConnectedServiceNotificationAccountReader;
+  profilesById?: ReadonlyMap<string, ConnectedServiceNotificationProfileSummary>;
   source: ConnectedServiceAccountSwitchNotificationSource;
   nowMs?: () => number;
   dedupeWindowMs?: number;
@@ -81,9 +76,10 @@ export async function dispatchConnectedServiceAccountSwitchNotificationAsync(par
   if (params.source.reason === 'manual') return;
 
   const serviceDisplayName = resolveConnectedServiceNotificationDisplayName(params.source.serviceId);
-  const profilesById = await loadConnectedServiceNotificationProfilesById({
+  const profilesById = params.profilesById ?? await loadConnectedServiceNotificationProfilesById({
     serviceId: params.source.serviceId,
-    listConnectedServiceProfiles: params.listConnectedServiceProfiles,
+    profileIds: [params.source.fromProfileId, params.source.toProfileId],
+    listQualifiedConnectedAccounts: params.listQualifiedConnectedAccounts,
   });
   await dispatchActivityNotificationAsync({
     settings: params.settings,

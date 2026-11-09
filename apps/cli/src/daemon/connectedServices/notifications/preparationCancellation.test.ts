@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { NotificationChannelRecordV1Schema } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
-import { ConnectedServiceCredentialHttpClient } from '@/api/client/connectedServiceCredentialApi';
+import { listQualifiedConnectedAccountsV4 } from '@/api/client/qualifiedConnectedAccountApi';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
 import { readSavedSecretCatalogForOperation } from '@/settings/secrets/savedSecretCatalogRead';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
@@ -10,11 +10,18 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { dispatchActivityNotificationAsync } from '@/notifications/activity/dispatchActivityNotification';
 import { dispatchConnectedServiceCredentialHealthNotificationAsync } from './dispatchConnectedServiceCredentialHealthNotification';
+import type { ConnectedServiceNotificationAccountReader } from './connectedServiceNotificationLabels';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 describe('connected-service notification preparation cancellation', () => {
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 
   it('joins the aborted profile read and never continues to notification delivery', async () => {
+    const settings = accountSettingsParse({});
+    setActiveAccountSettingsSnapshot({ settings, source: 'network', settingsVersion: 1, loadedAtMs: 1,
+      settingsSecretsReadKeys: [], notificationChannelCatalog: { status: 'ready', revision: 1, diagnostics: [], channels: [
+        NotificationChannelRecordV1Schema.parse({ v: 1, id: 'push', kind: 'expo_push', enabled: true, topics: {} }),
+      ] } });
     const controller = new AbortController();
     const reason = new Error('profile preparation cancelled');
     let observedSignal: AbortSignal | undefined;
@@ -23,10 +30,10 @@ describe('connected-service notification preparation cancellation', () => {
       controller.abort(reason);
       throw reason;
     });
-    const api = new ConnectedServiceCredentialHttpClient({ token: 'notification-cancellation' });
     const request = {
-      settings: accountSettingsParse({}), signal: controller.signal,
-      listConnectedServiceProfiles: api.listConnectedServiceProfiles.bind(api),
+      settings, signal: controller.signal, expoPushSender: { sendToAllDevicesAsync: async () => true },
+      listQualifiedConnectedAccounts: (input: Parameters<ConnectedServiceNotificationAccountReader>[0]) =>
+        listQualifiedConnectedAccountsV4({ token: 'notification-cancellation', ...input }),
       source: { sessionId: 'session', serviceId: 'openai-codex' as const, profileId: 'profile', status: 'reconnect_required' as const },
     };
     await expect(dispatchConnectedServiceCredentialHealthNotificationAsync(request)).rejects.toBe(reason);

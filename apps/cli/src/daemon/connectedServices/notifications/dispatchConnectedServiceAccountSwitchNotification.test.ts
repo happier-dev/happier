@@ -6,7 +6,20 @@ import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSna
 
 import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
 import { dispatchConnectedServiceAccountSwitchNotificationAsync } from './dispatchConnectedServiceAccountSwitchNotification';
-import { dispatchConnectedServiceCredentialHealthNotificationAsync } from './dispatchConnectedServiceCredentialHealthNotification';
+import { dispatchConnectedServiceCredentialHealthNotificationAsync, dispatchConnectedServiceCredentialHealthNotificationsAsync } from './dispatchConnectedServiceCredentialHealthNotification';
+import { commitConnectedServiceAccountSwitchSessionEvent } from '../runtimeAuth/commitConnectedServiceAccountSwitchSessionEvent';
+import { type ConnectedServiceNotificationAccountReader, type ConnectedServiceNotificationProfileSummary } from './connectedServiceNotificationLabels';
+
+function createAccountReader(profiles: readonly ConnectedServiceNotificationProfileSummary[]) {
+    return vi.fn<ConnectedServiceNotificationAccountReader>(async ({ accounts }) => ({
+        accounts: accounts.map((ref) => {
+            const profile = profiles.find((candidate) => candidate.profileId === ref.accountId);
+            return { ref, displayName: profile?.displayName ?? undefined, providerIdentity: {
+                email: profile?.providerEmail, accountId: profile?.providerAccountId,
+            } };
+        }),
+    }));
+}
 
 describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
     let settings: ReturnType<typeof accountSettingsParse>;
@@ -36,7 +49,7 @@ describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
         const sendToAllDevicesAsync = vi.fn(async () => { return true; });
         const runtimeQuotaSnapshots = new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore();
         runtimeQuotaSnapshots.recordSnapshot({
-            serviceId: 'openai-codex',
+            serviceId: 'happier.agent.codex/openai-codex',
             groupId: 'main',
             profileId: 'primary',
             snapshot: {
@@ -64,7 +77,7 @@ describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
             },
         });
         runtimeQuotaSnapshots.recordSnapshot({
-            serviceId: 'openai-codex',
+            serviceId: 'happier.agent.codex/openai-codex',
             groupId: 'main',
             profileId: 'backup',
             snapshot: {
@@ -97,18 +110,14 @@ describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
             expoPushSender: { sendToAllDevicesAsync },
             settingsSecretsReadKeys: [],
             runtimeQuotaSnapshots,
-            listConnectedServiceProfiles: vi.fn(async () => ({
-                serviceId: 'openai-codex' as const,
-                profiles: [
+            listQualifiedConnectedAccounts: createAccountReader([
                     { profileId: 'primary', status: 'connected' as const, providerEmail: 'main@example.test' },
                     { profileId: 'backup', status: 'connected' as const, providerEmail: 'backup@example.test' },
-                ],
-            })),
+                ]),
             source: {
                 sessionId: 'session-1',
                 sessionTitle: 'Fix checkout flow',
-                // Daemon event ingress qualifies the source before dispatch;
-                // quota snapshots and the released profile-list port stay scalar.
+                // Both runtime quota snapshots and the event carry the qualified service identity.
                 serviceId: 'happier.agent.codex/openai-codex',
                 groupId: 'main',
                 fromProfileId: 'primary',
@@ -137,18 +146,15 @@ describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
         );
     });
 
-    it('does not read bundled account labels for an unrelated qualified service with the same local id', async () => {
+    it('loads only the two foreign qualified accounts named by a switch', async () => {
         const sendToAllDevicesAsync = vi.fn(async () => true);
-        const listConnectedServiceProfiles = vi.fn(async () => ({
-            serviceId: 'openai-codex' as const,
-            profiles: [{ profileId: 'primary', providerEmail: 'private@example.test' }],
-        }));
+        const listQualifiedConnectedAccounts = createAccountReader([{ profileId: 'primary', displayName: 'Research' }, { profileId: 'backup', displayName: 'Personal' }]);
         await dispatchConnectedServiceAccountSwitchNotificationAsync({
             settings,
             expoPushSender: { sendToAllDevicesAsync },
             settingsSecretsReadKeys: [],
             runtimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
-            listConnectedServiceProfiles,
+            listQualifiedConnectedAccounts,
             source: {
                 sessionId: 'session-custom',
                 serviceId: 'acme.custom/openai-codex',
@@ -159,13 +165,17 @@ describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
             },
             dedupeWindowMs: 0,
         });
-        expect(listConnectedServiceProfiles).not.toHaveBeenCalled();
+        expect(listQualifiedConnectedAccounts).toHaveBeenCalledExactlyOnceWith({ accounts: [
+            { service: { pluginId: 'acme.custom', localId: 'openai-codex' }, accountId: 'primary' },
+            { service: { pluginId: 'acme.custom', localId: 'openai-codex' }, accountId: 'backup' },
+        ] });
         expect(sendToAllDevicesAsync).toHaveBeenCalledWith(
             expect.any(String),
             expect.not.stringContaining('private@example.test'),
             expect.objectContaining({
                 serviceId: 'acme.custom/openai-codex',
-                fromProfileLabel: 'Connected account',
+                fromProfileLabel: 'Research',
+                toProfileLabel: 'Personal',
                 fromUsagePercent: null,
                 toUsagePercent: null,
             }),
@@ -173,27 +183,112 @@ describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
         );
     });
 
+    it('shares one exact summary read between a foreign switch transcript and push', async () => {
+        const stageTranscriptEvent = vi.fn(async () => ({ persisted: true as const, delivered: false }));
+        const sendToAllDevicesAsync = vi.fn(async () => true);
+        const listQualifiedConnectedAccounts = vi.fn(async () => ({ accounts: [
+            { ref: { service: { pluginId: 'acme.custom', localId: 'service' }, accountId: 'from' }, displayName: 'Research' },
+            { ref: { service: { pluginId: 'acme.custom', localId: 'service' }, accountId: 'to' }, providerIdentity: { email: 'personal@example.test' } },
+        ] }));
+        const source = { sessionId: 'shared-switch', serviceId: 'acme.custom/service', groupId: 'main',
+            fromProfileId: 'from', toProfileId: 'to', reason: 'usage_limit' };
+        const profilesById = await commitConnectedServiceAccountSwitchSessionEvent({
+            mutationCustody: { stageTranscriptEvent }, sessionId: source.sessionId,
+            event: { type: 'connected_service_account_switch', ...source }, listQualifiedConnectedAccounts,
+        });
+        await dispatchConnectedServiceAccountSwitchNotificationAsync({
+            settings, expoPushSender: { sendToAllDevicesAsync }, listQualifiedConnectedAccounts, profilesById,
+            runtimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(), source, dedupeWindowMs: 0,
+        });
+        expect(listQualifiedConnectedAccounts).toHaveBeenCalledTimes(1);
+        expect(listQualifiedConnectedAccounts).toHaveBeenCalledWith({ accounts: [
+            { service: { pluginId: 'acme.custom', localId: 'service' }, accountId: 'from' },
+            { service: { pluginId: 'acme.custom', localId: 'service' }, accountId: 'to' },
+        ] });
+        expect(stageTranscriptEvent).toHaveBeenCalledWith(expect.objectContaining({ data: expect.objectContaining({
+            fromProfileLabel: 'Research', toProfileLabel: 'personal@example.test',
+        }) }));
+        expect(sendToAllDevicesAsync).toHaveBeenCalledWith(expect.any(String), expect.any(String),
+            expect.objectContaining({ fromProfileLabel: 'Research', toProfileLabel: 'personal@example.test' }), expect.anything());
+    });
+
+    it('hydrates a foreign health target once for recipient fanout', async () => {
+        const sendToAllDevicesAsync = vi.fn(async () => true);
+        const listQualifiedConnectedAccounts = vi.fn(async () => ({ accounts: [
+            { ref: { service: { pluginId: 'acme.custom', localId: 'service' }, accountId: 'affected' }, displayName: 'Research' },
+        ] }));
+        await dispatchConnectedServiceCredentialHealthNotificationsAsync({
+            settings, expoPushSender: { sendToAllDevicesAsync }, listQualifiedConnectedAccounts,
+            targets: ['health-foreign-one', 'health-foreign-two'].map(sessionId => ({ sessionId })),
+            source: { serviceId: 'acme.custom/service', profileId: 'affected', status: 'reconnect_required' },
+            dedupeWindowMs: 0,
+        });
+        expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(2);
+        expect(listQualifiedConnectedAccounts).toHaveBeenCalledExactlyOnceWith({ accounts: [
+            { service: { pluginId: 'acme.custom', localId: 'service' }, accountId: 'affected' },
+        ] });
+        expect(sendToAllDevicesAsync).toHaveBeenCalledWith(expect.any(String), expect.any(String),
+            expect.objectContaining({ serviceId: 'acme.custom/service', profileLabel: 'Research' }), expect.anything());
+    });
+
+    it('does not read account summaries when health delivery has no enabled channel', async () => {
+        setActiveAccountSettingsSnapshot({ settings, source: 'network', settingsVersion: 2, loadedAtMs: 2,
+            settingsSecretsReadKeys: [], notificationChannelCatalog: {
+                status: 'ready', revision: 2, diagnostics: [], channels: [],
+            } });
+        const listQualifiedConnectedAccounts = createAccountReader([{ profileId: 'affected', displayName: 'Research' }]);
+        const sendToAllDevicesAsync = vi.fn(async () => true);
+        await dispatchConnectedServiceCredentialHealthNotificationsAsync({
+            settings, listQualifiedConnectedAccounts, expoPushSender: { sendToAllDevicesAsync },
+            targets: [{ sessionId: 'disabled-health-one' }, { sessionId: 'disabled-health-two' }],
+            source: { serviceId: 'acme.custom/service', profileId: 'affected', status: 'reconnect_required' },
+        });
+        expect(listQualifiedConnectedAccounts).not.toHaveBeenCalled();
+        expect(sendToAllDevicesAsync).not.toHaveBeenCalled();
+    });
+
+    it('does not read account summaries for a duplicate suppressed health delivery', async () => {
+        const listQualifiedConnectedAccounts = createAccountReader([{ profileId: 'affected', displayName: 'Research' }]);
+        const sendToAllDevicesAsync = vi.fn(async () => true);
+        const request = { settings, expoPushSender: { sendToAllDevicesAsync }, listQualifiedConnectedAccounts,
+            targets: [{ sessionId: 'duplicate-health' }],
+            source: { serviceId: 'acme.custom/service', profileId: 'affected', status: 'reconnect_required' as const },
+            nowMs: () => 1000,
+        };
+        await dispatchConnectedServiceCredentialHealthNotificationsAsync(request);
+        await dispatchConnectedServiceCredentialHealthNotificationsAsync(request);
+        expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(1);
+        expect(listQualifiedConnectedAccounts).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not read account summaries for health delivery without recipients', async () => {
+        const listQualifiedConnectedAccounts = createAccountReader([{ profileId: 'affected', displayName: 'Research' }]);
+        await dispatchConnectedServiceCredentialHealthNotificationsAsync({
+            settings, listQualifiedConnectedAccounts, targets: [],
+            source: { serviceId: 'acme.custom/service', profileId: 'affected', status: 'reconnect_required' },
+        });
+        expect(listQualifiedConnectedAccounts).not.toHaveBeenCalled();
+    });
+
     it.each(['copied identifiers', 'lookup failure'] as const)('delivers neutral account names for %s', async (scenario) => {
         const sendToAllDevicesAsync = vi.fn(async (_title: string, _body: string) => true);
-        const listConnectedServiceProfiles = async () => {
+        const readAccounts = createAccountReader([
+            { profileId: 'from-internal', displayName: 'from-internal' },
+            { profileId: 'to-internal', displayName: 'provider-internal', providerAccountId: 'provider-internal' },
+        ]);
+        const listQualifiedConnectedAccounts: ConnectedServiceNotificationAccountReader = async (input) => {
             if (scenario === 'lookup failure') throw new Error('profile transport unavailable');
-            return {
-                serviceId: 'openai-codex' as const,
-                profiles: [
-                    { profileId: 'from-internal', displayName: 'from-internal' },
-                    { profileId: 'to-internal', displayName: 'provider-internal', providerAccountId: 'provider-internal' },
-                ],
-            };
+            return readAccounts(input);
         };
         await dispatchConnectedServiceAccountSwitchNotificationAsync({
-            settings, expoPushSender: { sendToAllDevicesAsync }, listConnectedServiceProfiles,
+            settings, expoPushSender: { sendToAllDevicesAsync }, listQualifiedConnectedAccounts,
             runtimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
             source: { sessionId: `switch-${scenario}`, serviceId: 'openai-codex', groupId: 'main',
                 fromProfileId: 'from-internal', toProfileId: 'to-internal', reason: 'usage_limit' },
             dedupeWindowMs: 0,
         });
         await dispatchConnectedServiceCredentialHealthNotificationAsync({
-            settings, expoPushSender: { sendToAllDevicesAsync }, listConnectedServiceProfiles,
+            settings, expoPushSender: { sendToAllDevicesAsync }, listQualifiedConnectedAccounts,
             source: { sessionId: `health-${scenario}`, serviceId: 'openai-codex',
                 profileId: 'to-internal', status: 'reconnect_required' },
             dedupeWindowMs: 0,
@@ -214,13 +309,10 @@ describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
             expoPushSender: { sendToAllDevicesAsync },
             settingsSecretsReadKeys: [],
             runtimeQuotaSnapshots,
-            listConnectedServiceProfiles: vi.fn(async () => ({
-                serviceId: 'openai-codex' as const,
-                profiles: [
+            listQualifiedConnectedAccounts: createAccountReader([
                     { profileId: 'primary', status: 'connected' as const, providerEmail: 'main@example.test' },
                     { profileId: 'backup', status: 'connected' as const, providerEmail: 'backup@example.test' },
-                ],
-            })),
+                ]),
             source: {
                 sessionId: 'session-soft',
                 sessionTitle: 'Refactor billing',
@@ -251,13 +343,10 @@ describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
             expoPushSender: { sendToAllDevicesAsync },
             settingsSecretsReadKeys: [],
             runtimeQuotaSnapshots,
-            listConnectedServiceProfiles: vi.fn(async () => ({
-                serviceId: 'openai-codex' as const,
-                profiles: [
+            listQualifiedConnectedAccounts: createAccountReader([
                     { profileId: 'primary', status: 'connected' as const, providerEmail: 'main@example.test' },
                     { profileId: 'backup', status: 'connected' as const, providerEmail: 'backup@example.test' },
-                ],
-            })),
+                ]),
             source: {
                 sessionId: 'session-manual',
                 sessionTitle: 'Manual switch',
@@ -283,13 +372,10 @@ describe('dispatchConnectedServiceAccountSwitchNotificationAsync', () => {
             expoPushSender: { sendToAllDevicesAsync },
             settingsSecretsReadKeys: [],
             runtimeQuotaSnapshots,
-            listConnectedServiceProfiles: vi.fn(async () => ({
-                serviceId: 'openai-codex' as const,
-                profiles: [
+            listQualifiedConnectedAccounts: createAccountReader([
                     { profileId: 'primary', status: 'connected' as const, providerEmail: 'main@example.test' },
                     { profileId: 'backup', status: 'connected' as const, providerEmail: 'backup@example.test' },
-                ],
-            })),
+                ]),
             source: {
                 sessionId: 'session-fanout',
                 sessionTitle: 'Implement auth fanout',

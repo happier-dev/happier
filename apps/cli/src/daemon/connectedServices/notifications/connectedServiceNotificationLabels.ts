@@ -1,10 +1,7 @@
-import {
-  ConnectedServiceIdSchema,
-  readBuiltInLegacyConnectedAccountServiceKeyIngress,
-  readBuiltInLegacyConnectedServiceIdForQualifiedService,
-} from '@happier-dev/protocol/connect/connected-service-bindings';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
+import type { QualifiedConnectedAccountProfileV4, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
 import { resolveConnectedAccountPrimaryNameV1 } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
 
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
@@ -17,9 +14,22 @@ export type ConnectedServiceNotificationProfileSummary = Readonly<{
   providerAccountId?: string | null;
 }>;
 
+export type ConnectedServiceNotificationAccountReader = (input: Readonly<{
+  accounts: readonly QualifiedConnectedAccountRef[];
+  signal?: AbortSignal;
+}>) => Promise<Readonly<{
+  accounts: readonly Pick<QualifiedConnectedAccountProfileV4, 'ref' | 'displayName' | 'providerIdentity'>[];
+}>>;
+
+function readNotificationService(serviceId: string): QualifiedConnectedAccountRef['service'] | null {
+  const service = parseQualifiedPluginContributionKey(serviceId);
+  if (service) return service;
+  const legacyServiceKey = readBuiltInLegacyConnectedAccountServiceKeyIngress(serviceId);
+  return legacyServiceKey ? parseQualifiedPluginContributionKey(legacyServiceKey) : null;
+}
+
 export function readConnectedServiceNotificationDisplayText(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const normalized = value.replace(/\s+/g, ' ').trim();
+  const normalized = resolvePluginLocalizedStringV2Text(value).replace(/\s+/g, ' ').trim();
   return normalized.length > 0 ? normalized : null;
 }
 
@@ -42,8 +52,7 @@ export function resolveConnectedServiceNotificationProfileLabel(
 export function resolveConnectedServiceNotificationDisplayName(
   serviceId: string,
 ): string | null {
-  const qualifiedServiceId = readBuiltInLegacyConnectedAccountServiceKeyIngress(serviceId);
-  const service = qualifiedServiceId ? parseQualifiedPluginContributionKey(qualifiedServiceId) : null;
+  const service = readNotificationService(serviceId);
   if (!service) return null;
   const contribution = readCurrentContributionRegistry()
     .connectedAccountDescriptors
@@ -56,29 +65,29 @@ export function resolveConnectedServiceNotificationDisplayName(
   );
 }
 
-/** Read the retained scalar profile/quota ports without changing the notification's qualified identity. */
-export function readLegacyConnectedServiceNotificationServiceId(value: string): ConnectedServiceId | null {
-  const legacy = ConnectedServiceIdSchema.safeParse(value);
-  if (legacy.success) return legacy.data;
-  const service = parseQualifiedPluginContributionKey(value);
-  return service ? readBuiltInLegacyConnectedServiceIdForQualifiedService(service) : null;
-}
-
 export async function loadConnectedServiceNotificationProfilesById(input: Readonly<{
   serviceId: string;
+  profileIds: readonly (string | null)[];
   signal?: AbortSignal;
-  listConnectedServiceProfiles(input: Readonly<{ serviceId: ConnectedServiceId; signal?: AbortSignal }>): Promise<Readonly<{
-    serviceId: ConnectedServiceId;
-    profiles: ReadonlyArray<ConnectedServiceNotificationProfileSummary>;
-  }>>;
+  listQualifiedConnectedAccounts: ConnectedServiceNotificationAccountReader;
 }>): Promise<ReadonlyMap<string, ConnectedServiceNotificationProfileSummary>> {
   input.signal?.throwIfAborted();
-  const serviceId = readLegacyConnectedServiceNotificationServiceId(input.serviceId);
-  if (!serviceId) return new Map();
+  const service = readNotificationService(input.serviceId);
+  if (!service) return new Map();
+  const accountIds = new Set(input.profileIds.filter((id): id is string => id !== null));
+  if (accountIds.size === 0) return new Map();
   try {
-    const result = await input.listConnectedServiceProfiles({ serviceId, ...(input.signal ? { signal: input.signal } : {}) });
+    const result = await input.listQualifiedConnectedAccounts({
+      accounts: [...accountIds].map((accountId) => ({ service, accountId })),
+      ...(input.signal ? { signal: input.signal } : {}),
+    });
     input.signal?.throwIfAborted();
-    return new Map(result.profiles.map((profile) => [profile.profileId, profile]));
+    return new Map(result.accounts.map((profile) => [profile.ref.accountId, {
+      profileId: profile.ref.accountId,
+      displayName: profile.displayName,
+      providerEmail: profile.providerIdentity?.email,
+      providerAccountId: profile.providerIdentity?.accountId,
+    }]));
   } catch {
     input.signal?.throwIfAborted();
     return new Map();

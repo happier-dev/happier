@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveConnectedServiceNotificationProfileLabel } from './connectedServiceNotificationLabels';
+import { readConnectedServiceNotificationDisplayText, resolveConnectedServiceNotificationProfileLabel } from './connectedServiceNotificationLabels';
 
 describe('resolveConnectedServiceNotificationProfileLabel', () => {
+  it('renders localized contribution title fallbacks through the canonical formatter', () => {
+    expect(readConnectedServiceNotificationDisplayText({
+      key: 'acme.service.title', fallback: '  {name}  account  ', params: { name: 'Research' },
+    })).toBe('Research account');
+  });
+
   it('does not expose provider account ids as public profile labels', () => {
     const profilesById = new Map([
       ['profile-local-safe', {

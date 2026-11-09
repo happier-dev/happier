@@ -82,6 +82,25 @@ vi.mock('@/ui/logger', () => ({
 }));
 
 describe('dispatchActivityNotificationAsync', () => {
+  it('prepares admitted content once across selected delivery channels', async () => {
+    const event = { topic: 'connected_service_credential_health' as const, sessionId: 'lazy-health-content',
+      serviceId: 'acme.example/service', profileId: 'account', status: 'reconnect_required' as const,
+      profileLabel: null };
+    let preparations = 0;
+    const sendToAllDevicesAsync = vi.fn(async () => true);
+    await dispatchActivityNotificationAsync({
+      settings: accountSettingsParse({}), event, pluginNotifications: null,
+      notificationChannelCatalog: { status: 'ready', revision: 1, diagnostics: [], channels: ['first', 'second'].map(id =>
+        NotificationChannelRecordV1Schema.parse({ v: 1, id, kind: 'expo_push', enabled: true, topics: {} })) },
+      prepareEventContent: async () => { preparations += 1; return { ...event, profileLabel: 'Research' }; },
+      expoPushSender: { sendToAllDevicesAsync }, dedupeWindowMs: 0,
+    });
+    expect(preparations).toBe(1);
+    expect(sendToAllDevicesAsync).toHaveBeenCalledTimes(2);
+    expect(sendToAllDevicesAsync).toHaveBeenCalledWith(expect.any(String), expect.any(String),
+      expect.objectContaining({ profileLabel: 'Research' }), expect.anything());
+  });
+
   it('lists vault signing references without acquisition and acquires each selected reference once per notification', async () => {
     const home = 'https://vault-notification.example';
     const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'vault-account' })).toString('base64url')}.signature`, encryption: null };

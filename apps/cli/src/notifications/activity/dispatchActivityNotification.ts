@@ -323,6 +323,8 @@ async function dispatchActivityNotification(params: Readonly<{
   isCurrent?: (signal?: AbortSignal) => boolean | Promise<boolean>;
   settingsSecretsReadKeys?: ReadonlyArray<Uint8Array | null | undefined>;
   event: ActivityNotificationEvent;
+  /** Derive admitted notification content without changing event identity or policy. */
+  prepareEventContent?: () => Promise<ActivityNotificationEvent>;
   /** Current local-controller native delivery only; external destinations need source opt-in. */
   serviceHealthCommit?: Readonly<{
     receipt: AccountNoticeWriteReceipt; machineId: string; controllerMachineId: string | null | undefined;
@@ -419,6 +421,8 @@ async function dispatchActivityNotification(params: Readonly<{
   const pluginNotifications = serviceHealth ? null : params.pluginNotifications === undefined
     ? createHostPluginNotificationChannels()
     : params.pluginNotifications;
+  let preparedEventContent: ActivityNotificationEvent | undefined;
+  const readEventContent = async () => preparedEventContent ??= await params.prepareEventContent?.() ?? params.event;
 
   // Admit the entire selected signing set before any outward delivery. A
   // missing credential must not produce a partially delivered occurrence.
@@ -483,6 +487,7 @@ async function dispatchActivityNotification(params: Readonly<{
       || expoDecision.delivery === 'suppress' || admission.homeOwnsPush) continue;
     outcome.attemptedChannels += 1;
     if (params.expoPushSender) {
+      const event = await readEventContent();
       try { await assertCurrent(); } catch (error) {
         recordChannel(channel.id, 'expo_push', notificationFailureCause(error));
         throw error;
@@ -491,7 +496,7 @@ async function dispatchActivityNotification(params: Readonly<{
         preparationSignal = undefined;
         const accepted = await sendExpoPushActivityNotificationAsync({
           channel,
-          event: params.event,
+          event,
           sender: params.expoPushSender,
           deliveryOptions: {
             ...resolveExpoPushDeliveryOptions(expoDecision),
@@ -550,6 +555,7 @@ async function dispatchActivityNotification(params: Readonly<{
     if (decision.delivery === 'suppress') {
       continue;
     }
+    const event = await readEventContent();
     await assertCurrent();
     outcome.attemptedChannels += 1;
     preparationSignal = undefined;
@@ -557,7 +563,7 @@ async function dispatchActivityNotification(params: Readonly<{
       await sendWebhookActivityNotificationAsync({
         channel,
         previewBehavior: decision.previewBehavior,
-        event: params.event,
+        event,
         savedSecretMaterializer,
         assertCurrent,
         nowMs: params.nowMs,
@@ -580,10 +586,11 @@ async function dispatchActivityNotification(params: Readonly<{
       if (!selects(channel.value)) continue;
       const decision = channelDecision(channel.kind);
       if (decision.delivery !== 'suppress') {
+        const event = await readEventContent();
         outcome.attemptedChannels += 1;
         preparationSignal = undefined;
         try {
-          const content = buildActivityNotificationContent(params.event, {
+          const content = buildActivityNotificationContent(event, {
             readyIncludeMessageText: decision.previewBehavior === 'include_preview',
             requestIncludeMessageText: decision.previewBehavior === 'include_preview',
             previewBehavior: decision.previewBehavior,

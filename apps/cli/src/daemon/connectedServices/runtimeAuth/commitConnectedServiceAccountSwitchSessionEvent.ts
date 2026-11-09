@@ -1,12 +1,13 @@
 import { buildAgentEventLocalId } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 import { normalizeConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
-import type { ConnectedServiceId, ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol';
+import type { ConnectedServiceUxDiagnosticV1 } from '@happier-dev/protocol';
 
 import {
   loadConnectedServiceNotificationProfilesById,
   resolveConnectedServiceNotificationDisplayName,
   resolveConnectedServiceNotificationProfileLabel,
   type ConnectedServiceNotificationProfileSummary,
+  type ConnectedServiceNotificationAccountReader,
 } from '../notifications/connectedServiceNotificationLabels';
 import { isBackgroundConnectedServiceSwitchReason } from '../connectedServiceSwitchEventVisibility';
 import type { DaemonSessionMutationCustody } from '../usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
@@ -447,11 +448,8 @@ export async function commitConnectedServiceAccountSwitchSessionEvent(params: Re
   mutationCustody: Pick<DaemonSessionMutationCustody, 'stageTranscriptEvent'>;
   sessionId: string;
   event: unknown;
-  listConnectedServiceProfiles?: (input: Readonly<{ serviceId: ConnectedServiceId }>) => Promise<Readonly<{
-    serviceId: ConnectedServiceId;
-    profiles: ReadonlyArray<ConnectedServiceNotificationProfileSummary>;
-  }>>;
-}>): Promise<void> {
+  listQualifiedConnectedAccounts?: ConnectedServiceNotificationAccountReader;
+}>): Promise<ReadonlyMap<string, ConnectedServiceNotificationProfileSummary> | undefined> {
   const deferral = parseRuntimeSwitchDeferralEvent(params.event);
   if (deferral) {
     const eventId = buildSwitchDeferralEventId(deferral);
@@ -554,10 +552,11 @@ export async function commitConnectedServiceAccountSwitchSessionEvent(params: Re
   if (isSameProfileRuntimeSwitchEvent(parsed)) return;
 
   // Event-carried labels preserve human names for clients without hydrated profiles.
-  const profilesById = params.listConnectedServiceProfiles
+  const profilesById = params.listQualifiedConnectedAccounts
     ? await loadConnectedServiceNotificationProfilesById({
       serviceId: parsed.serviceId,
-      listConnectedServiceProfiles: params.listConnectedServiceProfiles,
+      profileIds: [parsed.fromProfileId, parsed.toProfileId],
+      listQualifiedConnectedAccounts: params.listQualifiedConnectedAccounts,
     })
     : new Map<string, ConnectedServiceNotificationProfileSummary>();
   const serviceTitle = resolveConnectedServiceNotificationDisplayName(parsed.serviceId) ?? 'Provider';
@@ -581,4 +580,5 @@ export async function commitConnectedServiceAccountSwitchSessionEvent(params: Re
       mode: parsed.mode,
     },
   });
+  return profilesById;
 }

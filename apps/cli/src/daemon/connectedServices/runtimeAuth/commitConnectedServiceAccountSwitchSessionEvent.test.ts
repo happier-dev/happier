@@ -131,12 +131,8 @@ describe('commitConnectedServiceAccountSwitchSessionEvent', () => {
         mode: 'hot_apply',
         generation: 4,
       },
-      listConnectedServiceProfiles: async () => ({
-        serviceId: 'claude-subscription',
-        profiles: [
-          { profileId: 'old-profile', displayName: 'Old' },
-          { profileId: 'new-profile', displayName: 'New' },
-        ],
+      listQualifiedConnectedAccounts: async ({ accounts }) => ({
+        accounts: accounts.map((ref) => ({ ref, displayName: ref.accountId === 'old-profile' ? 'Old' : 'New' })),
       }),
     });
 
@@ -186,10 +182,9 @@ describe('commitConnectedServiceAccountSwitchSessionEvent', () => {
       sessionId: 'sess-neutral',
       event: { type: 'connected_service_account_switch', serviceId: 'openai-codex',
         fromProfileId: 'old-internal', toProfileId: 'new-internal', reason: 'manual' },
-      listConnectedServiceProfiles: async () => ({ serviceId: 'openai-codex', profiles: [
-        { profileId: 'old-internal', displayName: 'ChatGPT' },
-        { profileId: 'new-internal', displayName: 'new-internal' },
-      ] }),
+      listQualifiedConnectedAccounts: async ({ accounts }) => ({ accounts: accounts.map((ref) => ({
+        ref, displayName: ref.accountId === 'old-internal' ? 'ChatGPT' : 'new-internal',
+      })) }),
     });
     expect(mutationCustody.stageTranscriptEvent).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ fromProfileLabel: 'Connected account', toProfileLabel: 'Connected account' }),

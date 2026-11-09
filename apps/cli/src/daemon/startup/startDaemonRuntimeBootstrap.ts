@@ -56,7 +56,7 @@ import type {
 } from '../connectedServices/qualifiedConnectedAccountV4Support';
 import { startConnectedServiceRefreshLoop } from '../connectedServices/refresh/startConnectedServiceRefreshLoop';
 import { createConnectedServiceQuotaLoopCoordinator, createConnectedServiceRefreshLoopCoordinator } from './connectedServiceLoopCoordinators';
-import { dispatchConnectedServiceCredentialHealthNotificationAsync } from '../connectedServices/notifications/dispatchConnectedServiceCredentialHealthNotification';
+import { dispatchConnectedServiceCredentialHealthNotificationsAsync } from '../connectedServices/notifications/dispatchConnectedServiceCredentialHealthNotification';
 import { dispatchConnectedServiceAutomaticQuotaResetNotificationAsync, dispatchConnectedServiceQuotaLifecycleNotificationAsync } from '../connectedServices/notifications/dispatchConnectedServiceQuotaLifecycleNotification';
 import {
   ConnectedServiceQuotasCoordinator,
@@ -628,18 +628,19 @@ export async function startDaemonConnectedServiceRuntime(
             sessionId: `connected-service:${diagnostic.serviceId}:${diagnostic.profileId}`,
             tracked: null,
           }];
-        await Promise.all(notificationTargets.map(async (target) => {
-          await dispatchConnectedServiceCredentialHealthNotificationAsync({
+        await dispatchConnectedServiceCredentialHealthNotificationsAsync({
             signal,
             settings: settingsSnapshot?.settings ?? null,
             secretSources: params.secretSources,
             operationContext: params.savedSecretOperationContext,
             settingsSecretsReadKeys: settingsSnapshot?.settingsSecretsReadKeys ?? [],
             expoPushSender: params.api.push(),
-            listConnectedServiceProfiles: params.api.listConnectedServiceProfiles.bind(params.api),
-            source: {
+            listQualifiedConnectedAccounts: (selection) => listQualifiedConnectedAccountsV4({ token: params.credentials.token, ...selection }),
+            targets: notificationTargets.map((target) => ({
               sessionId: target.sessionId,
               sessionTitle: resolveTrackedSessionNotificationTitle(target.tracked),
+            })),
+            source: {
               serviceId: diagnostic.serviceId,
               profileId: diagnostic.profileId,
               status: healthStatus,
@@ -654,7 +655,6 @@ export async function startDaemonConnectedServiceRuntime(
               { min: 0, max: 24 * 60 * 60_000 },
             ),
           });
-        }));
       },
     });
 
