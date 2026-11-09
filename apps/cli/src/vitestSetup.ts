@@ -28,6 +28,46 @@ if (!opencodePath) {
   });
 }
 
+// Clean non-Windows checkouts lack this release-built native asset. Supply only that missing
+// package-owned file at the filesystem boundary; actual runtime roots and staged files remain real.
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const { createWindowsServiceLauncherPeFixture } = await import('../../../scripts/testing/windowsServiceLauncherPeFixture.mjs');
+  return {
+    ...actual,
+    readFileSync: (...args: Parameters<typeof actual.readFileSync>) => {
+      const path = args[0];
+      if (typeof path === 'string' && path.replaceAll('\\', '/').endsWith('/native/windows/bin/windows-x64/happier-service-launcher.exe')
+        && !actual.existsSync(path)) {
+        const bytes = createWindowsServiceLauncherPeFixture();
+        const option = args[1];
+        const encoding = typeof option === 'string' ? option : option?.encoding;
+        return encoding ? bytes.toString(encoding) : bytes;
+      }
+      return actual.readFileSync(...args);
+    },
+  };
+});
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  const { existsSync } = await import('node:fs');
+  const { createWindowsServiceLauncherPeFixture } = await import('../../../scripts/testing/windowsServiceLauncherPeFixture.mjs');
+  return {
+    ...actual,
+    readFile: async (...args: Parameters<typeof actual.readFile>) => {
+      const path = args[0];
+      if (typeof path === 'string' && path.replaceAll('\\', '/').endsWith('/native/windows/bin/windows-x64/happier-service-launcher.exe')
+        && !existsSync(path)) {
+        const bytes = createWindowsServiceLauncherPeFixture();
+        const option = args[1];
+        const encoding = typeof option === 'string' ? option : option?.encoding;
+        return encoding ? bytes.toString(encoding) : bytes;
+      }
+      return actual.readFile(...args);
+    },
+  };
+});
+
 // CLI tests should not inherit embedded build-policy gating (set in CI).
 // Clear it by default so feature tests can opt-in explicitly per case.
 process.env.HAPPIER_FEATURE_POLICY_ENV = '';

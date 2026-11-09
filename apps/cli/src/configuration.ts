@@ -12,6 +12,7 @@ import { readCliProcessArgs } from './cli/parseArgs'
 import { applyRuntimeContextPrefixEnv, parseRuntimeContextPrefixArgs } from './utils/env/runtimeContextArgv'
 import {
   resolveManagedCliReleaseChannelSync,
+  applyPersistedManagedToolsRoot,
 } from '@happier-dev/cli-common/firstPartyRuntime'
 import { CANONICAL_DAEMON_STATE_BASENAME } from './daemon/ownership/daemonOwnershipPaths'
 import { isServerIdFilesystemSafe, sanitizeServerIdForFilesystem } from './server/serverId'
@@ -274,6 +275,7 @@ class Configuration {
 
     // Directory configuration - Priority: HAPPIER_HOME_DIR env > default home dir
     this.happyHomeDir = resolveCliHappyHomeDir(process.env)
+    applyPersistedManagedToolsRoot({ env: process.env, happyHomeDir: this.happyHomeDir })
 
     const homeStoragePaths = resolveCliHomeStoragePaths(this.happyHomeDir)
     this.logsDir = homeStoragePaths.logsDir

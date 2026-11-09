@@ -28,6 +28,11 @@ export function bugReportUsage(): string {
     '  --no-similar-issues                Skip searching for similar issues',
     '  --server-version <version>',
     '  --deployment-type <cloud|self-hosted|enterprise>',
+    '  --session-id <id>                  Select the exact Happier session for diagnostics',
+    '  --include-daemon-logs / --no-include-daemon-logs       Default: included',
+    '  --include-session-logs / --no-include-session-logs     Default: included',
+    '  --include-provider-transcript / --no-include-provider-transcript   Default: excluded',
+    '  --attach <path> / --attach-session-log <path> / --attach-provider-transcript <path> (repeatable)',
     '  -h, --help',
   ].join('\n');
 }

@@ -8,11 +8,26 @@
 
 import { isFamilyHelpRequest, isTopLevelHelpRequest, readCliProcessArgs } from './cli/processArgs';
 import { isTopLevelVersionRequest, printCliVersion } from './cli/version';
+import type { MachineEffectInternalRecord } from './machines/setup/effectInternalProtocol';
 
 const isCliDistIntegrityProbe = process.env.HAPPIER_CLI_DIST_INTEGRITY_PROBE === '1';
 
 if (!isCliDistIntegrityProbe && isTopLevelVersionRequest(readCliProcessArgs())) {
   printCliVersion();
+} else if (!isCliDistIntegrityProbe && readCliProcessArgs()[0] === 'machine' && readCliProcessArgs()[1] === 'effect-internal') {
+  // The already admitted root process consumes only its closed stdin plan. It
+  // must not initialize Account state, update itself or start another daemon.
+  void import('./machines/setup/effectInternal').then(async ({ runMachineSetupEffectInternal }) => {
+    process.exitCode = await runMachineSetupEffectInternal(readCliProcessArgs().slice(2));
+  }).catch(() => {
+    // Even an unavailable module graph settles the private protocol without
+    // exposing loader errors or announcing readiness to receive the plan.
+    const record: MachineEffectInternalRecord = { type: 'result', result: {
+      status: 'unavailable', reason: 'entry_unavailable', completedStepIds: [], daemonRestartRequired: false,
+    } };
+    process.stdout.write(JSON.stringify(record) + '\n');
+    process.exitCode = 1;
+  });
 } else if (!isCliDistIntegrityProbe && readCliProcessArgs()[0] === 'workspace-effect') {
   // Native private pipe only; never enter Account/daemon/bootstrap under member UID.
   void import('./cli/commands/workspaceEffect').then(({ runWorkspaceEffectCommand }) =>

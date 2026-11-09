@@ -8,11 +8,9 @@ import {
  * Resolve the authoritative Happier runtime-context env from the process's
  * resolved `configuration` singleton.
  *
- * This is the value injected into every coding-agent subprocess at the spawn
- * seam (the canonical Agent Session or configured-ACP launch resolver) so that
- * shell-bridge `happier tools` invocations — and their child CLI process — read
- * credentials from the correct home dir and talk to the correct server
- * regardless of what the agent's shell tool happens to inherit.
+ * Managed CLI integrations and opt-in current-user Windows shell bridges use
+ * this explicit Home/server selection. POSIX Agent tool bridges consume the
+ * admitted Session MCP reference without reading custodian Account credentials.
  *
  * `configuration` has already merged env overrides with persisted server
  * selection, so this is the single resolved view; consumers do not re-resolve.

@@ -1,4 +1,5 @@
 import axios, { AxiosError, type AxiosAdapter, type AxiosRequestConfig, type AxiosResponse, type InternalAxiosRequestConfig } from 'axios'
+import { Readable } from 'node:stream'
 import type { FastifyInstance } from 'fastify'
 import type { InjectOptions, Response as LightMyRequestResponse } from 'light-my-request'
 import { vi } from 'vitest'
@@ -119,7 +120,7 @@ export function installAxiosFastifyAdapter(params: Readonly<{ app: FastifyInstan
       typeof injectResponse.payload === 'string' ? injectResponse.payload : String(injectResponse.payload ?? '')
 
     const response: AxiosResponse = {
-      data: parseResponsePayload(payloadText, contentType),
+      data: config.responseType === 'stream' ? Readable.from([Buffer.from(payloadText, 'utf8')]) : parseResponsePayload(payloadText, contentType),
       status: injectResponse.statusCode,
       statusText: injectResponse.statusMessage ?? '',
       headers: responseHeaders,

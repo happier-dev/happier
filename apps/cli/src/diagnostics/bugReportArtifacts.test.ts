@@ -1,16 +1,17 @@
 import { createServer } from 'node:http';
-import { basename } from 'node:path';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { basename, join } from 'node:path';
+import { writeFileSync } from 'node:fs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 
-import type { collectBugReportMachineDiagnosticsSnapshot } from './bugReportMachineDiagnostics';
+
+const checkpointFixture = vi.hoisted(() => ({ homeDir: '' }));
 
 const {
   readCredentialsMock,
   readStoredCredentialsMock,
   readSettingsMock,
-  collectBugReportMachineDiagnosticsSnapshotMock,
-  readBugReportLogTailMock,
-  buildDoctorSnapshotMock,
+  readDaemonStateMock,
 } = vi.hoisted(() => ({
   readCredentialsMock: vi.fn<() => Promise<{ token: string } | null>>(async () => null),
   readStoredCredentialsMock: vi.fn<() => Promise<{ token: string; encryption: null } | null>>(async () => null),
@@ -39,58 +40,13 @@ const {
         lastUsedAt: 0,
       },
     },
-    lastChangesCursorByServerIdByAccountId: {
-      cloud: {
-        acct_old: 10,
-      },
-    },
   })),
-  collectBugReportMachineDiagnosticsSnapshotMock: vi.fn<typeof collectBugReportMachineDiagnosticsSnapshot>(async () => ({
-    daemonState: {
-      pid: 100,
-      httpPort: 3001,
-      startedAt: 1,
-      startedWithCliVersion: '1.0.0',
-      hasControlToken: true,
-      daemonLogPath: '/Users/alice/.happier/logs/daemon.log',
-    },
-    daemonLogs: [
-      { file: 'daemon.log', path: '/Users/alice/.happier/logs/daemon.log', modifiedAt: '2026-02-11T00:00:00.000Z' },
-    ],
-    doctorSnapshot: {
-      capturedAt: '2026-02-11T00:00:00.000Z',
-      server: {
-        activeServerId: 'cloud',
-        serverUrl: 'https://api.happier.dev',
-        publicServerUrl: 'https://api.happier.dev',
-        webappUrl: 'https://app.happier.dev',
-      },
-      accountId: null,
-      settings: {
-        activeServerId: 'cloud',
-        servers: [],
-        knownAccountIds: [],
-      },
-    },
-    runtime: {
-      cwd: '/Users/alice/private/project',
-      platform: 'darwin',
-      nodeVersion: 'v20.0.0',
-    },
-    stackContext: {
-      stackName: 'qa-stack',
-      stackEnvPath: '/Users/alice/private/project/.stack/env',
-      runtimeStatePath: '/Users/alice/private/project/.stack/stack.runtime.json',
-      runtimeState: '{"stackName":"qa-stack"}',
-      logCandidates: ['/Users/alice/private/project/.stack/logs/runner.log'],
-    },
-  })),
-  readBugReportLogTailMock: vi.fn(async (path: string) => `tail for ${path}`),
-  buildDoctorSnapshotMock: vi.fn(async () => ({ source: 'standalone-doctor' })),
+  readDaemonStateMock: vi.fn(async () => null),
 }));
 
 vi.mock('@/configuration', () => ({
   configuration: {
+    get happyHomeDir() { return checkpointFixture.homeDir; },
     activeServerId: 'cloud',
     serverUrl: 'https://api.happier.dev',
     publicServerUrl: 'https://api.happier.dev',
@@ -99,27 +55,24 @@ vi.mock('@/configuration', () => ({
   },
 }));
 
-vi.mock('@/persistence', () => ({
+vi.mock('@/persistence', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/persistence')>()),
   readCredentials: readCredentialsMock,
   readStoredCredentials: readStoredCredentialsMock,
   readSettings: readSettingsMock,
-}));
-
-vi.mock('@/diagnostics/bugReportMachineDiagnostics', () => ({
-  collectBugReportMachineDiagnosticsSnapshot: collectBugReportMachineDiagnosticsSnapshotMock,
-  readBugReportLogTail: readBugReportLogTailMock,
-}));
-
-vi.mock('@/ui/doctorSnapshot', () => ({
-  buildDoctorSnapshot: buildDoctorSnapshotMock,
+  readDaemonState: readDaemonStateMock,
 }));
 
 import { collectBugReportDiagnosticsArtifacts } from './bugReportArtifacts';
 
 describe('collectBugReportDiagnosticsArtifacts', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
+    checkpointFixture.homeDir = await createTempDir('happier-bug-report-cursors-');
+    writeFileSync(join(checkpointFixture.homeDir, 'changes-cursors.json'), JSON.stringify({ cloud: { acct_old: 10 } }));
   });
+
+  afterEach(async () => { await removeTempDir(checkpointFixture.homeDir); });
 
   it('redacts sensitive invocation input and strips absolute paths in JSON artifacts', async () => {
     const payload = Buffer.from(JSON.stringify({ sub: 'acct_123' })).toString('base64url');
@@ -149,9 +102,9 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     const stackContextArtifact = result.artifacts.find((entry) => entry.filename === 'stack-context.json');
 
     expect(cliContextArtifact).toBeDefined();
-    expect(doctorSnapshotArtifact).toBeDefined();
+    expect(doctorSnapshotArtifact).toBeUndefined();
     expect(daemonSummaryArtifact).toBeDefined();
-    expect(stackContextArtifact).toBeDefined();
+    expect(stackContextArtifact).toBeUndefined();
 
     const cliContext = JSON.parse(String(cliContextArtifact?.content ?? '{}')) as Record<string, unknown>;
     expect(cliContext.invocationArgs).toBeUndefined();
@@ -167,21 +120,9 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     expect(cliContext.settingsActiveServerId).toBe('cloud');
     expect(cliContext.settingsServers).toBeDefined();
 
-    const doctorSnapshot = JSON.parse(String(doctorSnapshotArtifact?.content ?? '{}')) as Record<string, unknown>;
-    expect(doctorSnapshot.capturedAt).toBe('2026-02-11T00:00:00.000Z');
-    expect(JSON.stringify(doctorSnapshot)).not.toContain('admin:secret');
-    expect(JSON.stringify(doctorSnapshot)).not.toContain('?token=');
-    expect(buildDoctorSnapshotMock).not.toHaveBeenCalled();
-
     const daemonSummary = JSON.parse(String(daemonSummaryArtifact?.content ?? '{}')) as Record<string, unknown>;
+    expect(daemonSummary.daemonState).toBeNull();
     expect(JSON.stringify(daemonSummary)).not.toContain('/Users/alice/');
-    expect(JSON.stringify(daemonSummary)).toContain('"daemonLogPath":"daemon.log"');
-
-    const stackContext = JSON.parse(String(stackContextArtifact?.content ?? '{}')) as Record<string, unknown>;
-    expect(JSON.stringify(stackContext)).not.toContain('/Users/alice/');
-    expect(JSON.stringify(stackContext)).toContain('"stackEnvPath":"env"');
-    expect(JSON.stringify(stackContext)).toContain('"runtimeStatePath":"stack.runtime.json"');
-    expect(JSON.stringify(stackContext)).toContain('"runner.log"');
   });
 
   it('skips daemon/stack/server collectors when accepted kinds only allow cli artifacts', async () => {
@@ -202,7 +143,6 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
       });
 
       expect(result.artifacts.every((artifact) => artifact.sourceKind === 'cli')).toBe(true);
-      expect(collectBugReportMachineDiagnosticsSnapshotMock).not.toHaveBeenCalled();
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
       fetchSpy.mockRestore();
@@ -234,50 +174,33 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
     expect(cliContext.invocationSummary?.flags ?? []).toContain('--api-key');
   });
 
-  it('uses basename-only stack log filenames for windows-style paths', async () => {
-    collectBugReportMachineDiagnosticsSnapshotMock.mockResolvedValueOnce({
-      daemonState: {
-        pid: 100,
-        httpPort: 3001,
-        startedAt: 1,
-        startedWithCliVersion: '1.0.0',
-        hasControlToken: true,
-        daemonLogPath: 'C:\\Users\\alice\\.happier\\logs\\daemon.log',
-      },
-      daemonLogs: [],
-      doctorSnapshot: null,
-      runtime: {
-        cwd: 'C:\\Users\\alice\\private\\project',
-        platform: 'win32',
-        nodeVersion: 'v20.0.0',
-      },
-      stackContext: {
-        stackName: 'qa-stack',
-        stackEnvPath: 'C:\\Users\\alice\\private\\project\\.stack\\env',
-        runtimeStatePath: 'C:\\Users\\alice\\private\\project\\.stack\\stack.runtime.json',
-        runtimeState: '{"stackName":"qa-stack"}',
-        logCandidates: ['C:\\Users\\alice\\private\\project\\.stack\\logs\\runner.log'],
-      },
-    });
-
+  it('collects only allowlisted context when all automatic log kinds are disabled', async () => {
     const result = await collectBugReportDiagnosticsArtifacts({
-      includeDiagnostics: true,
-      acceptedKinds: ['stack-service'],
-      maxArtifactBytes: 256_000,
-      serverUrl: 'https://api.happier.dev',
-      activeServerId: 'main',
-      rawArgs: ['--title', 'bug'],
+      includeDiagnostics: true, acceptedKinds: ['cli', 'daemon', 'stack-service'], maxArtifactBytes: 256_000,
+      serverUrl: 'https://api.happier.dev', activeServerId: 'main', rawArgs: [],
+      logSelection: { daemon: false, session: false, provider: false },
     });
+    expect(result.artifacts.map(entry => entry.filename).sort()).toEqual(['cli-context.json', 'daemon-summary.json']);
+    const context = JSON.parse(result.artifacts.find(entry => entry.filename === 'cli-context.json')!.content);
+    expect(context.sessionDiagnostics.logs.every((entry: { status: string }) => entry.status === 'disabled')).toBe(true);
+  });
 
-    const stackLogArtifact = result.artifacts.find((entry) => entry.filename.endsWith('.log'));
-    expect(stackLogArtifact).toBeDefined();
-    expect(stackLogArtifact?.filename).toContain('runner.log');
-    expect(stackLogArtifact?.filename.toLowerCase()).not.toContain('users');
-    expect(stackLogArtifact?.filename).not.toContain('\\');
+  it('keeps explicit provider-file consent separate from automatic provider collection', async () => {
+    const path = join(checkpointFixture.homeDir, 'explicit.jsonl');
+    writeFileSync(path, 'EXPLICIT_PROVIDER_BODY');
+    const result = await collectBugReportDiagnosticsArtifacts({
+      includeDiagnostics: true, acceptedKinds: ['cli', 'provider-transcript'], maxArtifactBytes: 256_000,
+      serverUrl: 'https://api.happier.dev', activeServerId: 'main', rawArgs: [],
+      logSelection: { daemon: false, session: false, provider: false }, extraAttachments: [{ path, sourceKind: 'provider-transcript' }],
+    });
+    expect(result.artifacts.find(entry => entry.sourceKind === 'provider-transcript')?.content).toBe('EXPLICIT_PROVIDER_BODY');
+    const context = JSON.parse(result.artifacts.find(entry => entry.filename === 'cli-context.json')!.content);
+    expect(context.sessionDiagnostics.logs.find((entry: { kind: string }) => entry.kind === 'provider')).toEqual({ kind: 'provider', status: 'disabled' });
+    expect(JSON.stringify(context)).not.toContain('EXPLICIT_PROVIDER_BODY');
   });
 
   it('adds diagnostics collection status to cli context artifact', async () => {
-    collectBugReportMachineDiagnosticsSnapshotMock.mockRejectedValueOnce(new Error('machine diagnostics failed'));
+    readDaemonStateMock.mockRejectedValueOnce(new Error('machine diagnostics failed'));
 
     const result = await collectBugReportDiagnosticsArtifacts({
       includeDiagnostics: true,
@@ -390,6 +313,37 @@ describe('collectBugReportDiagnosticsArtifacts', () => {
       expect(String(cliContext.diagnosticsCollection?.serverDiagnostics?.detail ?? '')).toContain('404');
     } finally {
       fetchSpy.mockRestore();
+    }
+  });
+
+  it('collects redirected server diagnostics without forwarding the Home bearer', async () => {
+    readStoredCredentialsMock.mockResolvedValueOnce({ token: 'fixture', encryption: null });
+    let secondHopRequests = 0;
+    let secondHopCredentialPresent = false;
+    const server = createServer((request, response) => {
+      if (request.url === '/diagnostics') {
+        secondHopRequests++;
+        secondHopCredentialPresent ||= Boolean(request.headers.authorization);
+        response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ captured: true }));
+      } else {
+        const address = server.address();
+        if (!address || typeof address === 'string') throw new Error('Missing test listener');
+        response.writeHead(307, { location: `http://127.0.0.2:${address.port}/diagnostics` }).end();
+      }
+    });
+    await new Promise<void>(resolve => server.listen(0, '0.0.0.0', resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('Missing test listener');
+      const result = await collectBugReportDiagnosticsArtifacts({ includeDiagnostics: true, acceptedKinds: ['server'],
+        maxArtifactBytes: 256_000, serverUrl: `http://127.0.0.1:${address.port}`, activeServerId: 'main', rawArgs: [] });
+      const artifact = result.artifacts.find(entry => entry.filename === 'server-diagnostics.json');
+      expect(JSON.parse(String(artifact?.content))).toEqual({ captured: true });
+      expect(secondHopRequests).toBe(1);
+      expect(secondHopCredentialPresent).toBe(false);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     }
   });
 });

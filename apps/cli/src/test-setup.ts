@@ -14,13 +14,13 @@ import {
   execOrThrow,
   resolveCurrentBinaryTarget,
   resolveProcessCustodyRuntimeExecutableName,
-  stageProcessCustodyRuntime,
+  prepareProcessCustodyRuntime,
   type RunCommand,
 } from '@happier-dev/cli-common/componentArtifacts'
 
 import { resolvePnpmCommandInvocation } from '../../../scripts/workspaces/execPnpmCommand.mjs'
 import { createWorkspaceChildBuildEnv } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs'
-import { ensureBuildArtifactsReadyOnce, withCliTestBuildLock } from './testSetupBuildCoordinator'
+import { ensureBuildArtifactsReadyOnce } from './testSetupBuildCoordinator'
 import { isCliTestBuildSkipped } from '../scripts/vitestPreparation.mjs'
 
 export type CliTestBuildMode = 'none' | 'full'
@@ -77,11 +77,23 @@ function spawnPnpmSync(args: readonly string[], cwd: string, env = process.env) 
 }
 
 async function ensureDistBuiltOnce(projectRoot: string): Promise<void> {
+  // Native/source-only preparation imports this module too. Load the compiled
+  // dist owners only for a consumer that actually needs the compiled payload.
+  const inputOwnerUrl = new URL('../../stack/scripts/utils/proc/cli_runtime_inputs.mjs', import.meta.url).href
+  const readinessOwnerUrl = new URL('../../stack/scripts/utils/proc/pm.mjs', import.meta.url).href
+  const [{ readHappyCliRuntimeInputFreshness }, { isCliDistFreshForInputs }] = await Promise.all([
+    import(inputOwnerUrl) as Promise<typeof import('../../stack/scripts/utils/proc/cli_runtime_inputs.mjs')>,
+    import(readinessOwnerUrl) as Promise<typeof import('../../stack/scripts/utils/proc/pm.mjs')>,
+  ])
   const distEntrypoint = resolveDistEntrypointPath(projectRoot)
   await ensureBuildArtifactsReadyOnce({
     lockPath: resolveBuildLockPath(projectRoot),
     markerPaths: [distEntrypoint],
     lockLabel: 'CLI dist build',
+    isReady: async () => isCliDistFreshForInputs(
+      distEntrypoint,
+      await readHappyCliRuntimeInputFreshness(projectRoot),
+    ),
     runBuild: ({ heldLockValue }) => {
       const buildResult = spawnPnpmSync(
         ['run', 'build'],
@@ -121,18 +133,8 @@ export function resolveNativeCustodyTarget(projectRoot: string) {
 
 export async function prepareNativeCustody(projectRoot: string, runCommand: RunCommand = execOrThrow): Promise<void> {
   const { target } = resolveNativeCustodyTarget(projectRoot)
-  // Go owns source/module/build-cache currentness. An existing executable is
-  // only an artifact-presence fact, never proof that current source was built.
-  await withCliTestBuildLock({
-    lockPath: resolveBuildLockPath(projectRoot),
-    lockLabel: 'CLI native process custody',
-  }, async () => {
-    await stageProcessCustodyRuntime({
-      repoRoot: resolveRepoRoot(projectRoot),
-      payloadDir: projectRoot,
-      target,
-      runCommand,
-    })
+  await prepareProcessCustodyRuntime({
+    repoRoot: resolveRepoRoot(projectRoot), payloadDir: projectRoot, target, runCommand,
   })
 }
 

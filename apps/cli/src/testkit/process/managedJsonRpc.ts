@@ -11,8 +11,7 @@ export async function createManagedJsonRpcTestClient(params: Readonly<{
 }>) {
     const executable = { kind: 'systemTool', id: 'fixture.json-rpc' } as const;
     const exec = createStablePluginExecService({
-        environment: params.environment ?? {},
-         signal: new AbortController().signal,
+        environment: params.environment ?? {}, signal: new AbortController().signal,
         isOccurrenceCurrent: () => true,
         resolveExecutable: async () => ({ command: params.command }),
         resolvePath: async () => params.cwd,
@@ -31,8 +30,7 @@ export async function connectManagedJsonRpcTestClient(params: Readonly<{
     requestTimeoutMs?: number;
     signal?: AbortSignal;
 }>) {
-    const exec = createStablePluginExecService({
-         environment: {}, signal: new AbortController().signal,
+    const exec = createStablePluginExecService({ environment: {}, signal: new AbortController().signal,
         isOccurrenceCurrent: () => true,
         resolveExecutable: async () => { throw new Error('Endpoint connections must not launch a process'); },
         resolvePath: async () => params.cwd,

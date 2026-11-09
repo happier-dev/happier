@@ -110,4 +110,12 @@ describe('buildScopedProcessEnv', () => {
       expect(() => buildScopedProcessEnv({ baseEnv: {}, unsetEnvKeys: [name] })).toThrow();
     },
   );
+
+  it('can explicitly unset Windows system names with parentheses using Windows identity', () => {
+    expect(buildScopedProcessEnv({
+      baseEnv: { 'ProgramFiles(x86)': 'D:\\Applications (x86)', ProgramFiles: 'D:\\Applications' },
+      unsetEnvKeys: ['PROGRAMFILES(X86)'], platform: 'win32',
+    })).toEqual({ ProgramFiles: 'D:\\Applications' });
+    expect(() => buildScopedProcessEnv({ baseEnv: {}, unsetEnvKeys: ['ProgramFiles(x86)'], platform: 'linux' })).toThrow();
+  });
 });

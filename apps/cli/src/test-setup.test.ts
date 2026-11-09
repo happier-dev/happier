@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import childProcess from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -18,6 +20,9 @@ describe('CLI test global setup', () => {
     const fixtureRoots: string[] = [];
 
     async function createSetupFixture() {
+        // Go toolchain discovery is an OS process boundary, like compilation.
+        vi.spyOn(childProcess, 'execFileSync').mockReturnValue('fixture-go-env');
+        syncBuiltinESMExports();
         const repoRoot = await mkdtemp(join(tmpdir(), 'happier-cli-test-setup-'));
         fixtureRoots.push(repoRoot);
         const projectRoot = join(repoRoot, 'apps', 'cli');
@@ -25,6 +30,9 @@ describe('CLI test global setup', () => {
         await writeFile(join(repoRoot, 'package.json'), '{}');
         await writeFile(join(repoRoot, 'pnpm-lock.yaml'), '');
         await writeFile(join(repoRoot, 'pnpm-workspace.yaml'), 'packages: []\n');
+        await mkdir(join(projectRoot, 'native', 'processcustody'), { recursive: true });
+        await writeFile(join(projectRoot, 'native', 'processcustody', 'go.mod'), 'module fixture\n\ngo 1.26.6\n');
+        await writeFile(join(projectRoot, 'native', 'processcustody', 'main.go'), 'package main\n');
         const executablePath = join(projectRoot, 'tools', 'unpacked',
             `happier-process-custody${process.platform === 'win32' ? '.exe' : ''}`);
         // The Go process is the system boundary; setup, staging and publication
@@ -44,6 +52,7 @@ describe('CLI test global setup', () => {
             delete process.env.HAPPIER_CLI_TEST_SKIP_BUILD;
         }
         vi.restoreAllMocks();
+        syncBuiltinESMExports();
         vi.doUnmock('node:child_process');
         vi.resetModules();
         await Promise.all(fixtureRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
@@ -278,6 +287,7 @@ describe('CLI test global setup', () => {
         await prepareNativeCustody(projectRoot, runCommand);
 
         await withWorkspaceBundleLock(async () => {
+            await prepareNativeCustody(projectRoot, runCommand);
             await setup(options);
             await expect(readFile(executablePath, 'utf8')).resolves.toBe('compiled native custody');
         }, { lockPath: join(resolve(projectRoot, '..', '..'), '.project/tmp/cli-dist-build.lock') });
@@ -300,16 +310,33 @@ describe('CLI test global setup', () => {
         await expect(stat(executablePath)).rejects.toMatchObject({ code: 'ENOENT' });
     });
 
-    it('publishes dist under the canonical repo lock and forwards its live lease to the build process', async () => {
+    it.each(['absent', 'stale', 'current'] as const)('prepares %s dist from current inputs under the canonical publication lock', async (state) => {
         delete process.env.HAPPIER_CLI_TEST_SKIP_BUILD;
         const { projectRoot, runCommand } = await createSetupFixture();
+        await writeFile(join(projectRoot, 'package.json'), JSON.stringify({
+            name: '@happier-dev/test-setup-fixture', version: '0.0.0',
+        }));
         const distEntrypoint = join(projectRoot, 'dist', 'index.mjs');
         const lockPath = join(resolve(projectRoot, '..', '..'), '.project/tmp/cli-dist-build.lock');
+        const sourcePath = join(projectRoot, 'src', 'index.ts');
+        await mkdir(dirname(sourcePath), { recursive: true });
+        await writeFile(sourcePath, 'export const version = 1;');
+        if (state !== 'absent') {
+            await mkdir(dirname(distEntrypoint), { recursive: true });
+            await writeFile(distEntrypoint, 'export const version = 1;');
+            cliDistBuildManifest.writeCliDistBuildManifest(distEntrypoint, {
+                inputFingerprint: (await readHappyCliRuntimeInputFreshness(projectRoot)).fingerprint,
+            });
+        }
+        if (state === 'stale') await writeFile(sourcePath, 'export const version = 2;');
+        const inputFingerprint = (await readHappyCliRuntimeInputFreshness(projectRoot)).fingerprint;
         const spawnSync = vi.fn((_command: string, _args: readonly string[], options: { env?: NodeJS.ProcessEnv }) => {
+            expect(_args).toEqual(['run', 'build']);
             const lease: unknown = JSON.parse(options.env?.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD ?? 'null');
             expect(lease).toEqual(expect.objectContaining({ v: 1, path: lockPath, token: expect.any(String) }));
             mkdirSync(dirname(distEntrypoint), { recursive: true });
-            writeFileSync(distEntrypoint, 'built dist');
+            writeFileSync(distEntrypoint, 'export const version = 2;');
+            cliDistBuildManifest.writeCliDistBuildManifest(distEntrypoint, { inputFingerprint });
             return { status: 0, stdout: '', stderr: '' };
         });
         // Only the package-manager process is replaced; the publication owner,
@@ -327,8 +354,13 @@ describe('CLI test global setup', () => {
             },
         });
 
-        expect(spawnSync).toHaveBeenCalledTimes(1);
-        await expect(readFile(distEntrypoint, 'utf8')).resolves.toBe('built dist');
+        expect(spawnSync).toHaveBeenCalledTimes(state === 'current' ? 0 : 1);
+        await expect(readFile(distEntrypoint, 'utf8')).resolves.toBe(
+            state === 'current' ? 'export const version = 1;' : 'export const version = 2;',
+        );
+        expect(cliDistBuildManifest.readCliDistBuildManifest(distEntrypoint)).toMatchObject({
+            ok: true, manifest: { inputFingerprint },
+        });
         await expect(stat(lockPath)).rejects.toMatchObject({ code: 'ENOENT' });
     });
 });

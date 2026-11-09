@@ -9,6 +9,7 @@ const createUserScopedSocketConnection = sockets.createUserScopedSocketConnectio
 
 export type RequesterCurrentnessSocketHarness = Readonly<{
     server: Server;
+    serverUrl: string;
     clients: Socket[];
     settleTransport(): Promise<void>;
     disconnect(): Promise<void>;
@@ -30,10 +31,11 @@ export async function createRequesterCurrentnessSocketHarness(): Promise<Request
     await new Promise<void>(resolve => http.listen(0, '127.0.0.1', resolve));
     const address = http.address();
     if (!address || typeof address === 'string') throw new Error('Missing socket listen address');
+    const serverUrl = `http://127.0.0.1:${address.port}`;
     const clients: Socket[] = [];
     const failedUpgrades = new WeakSet<Socket>();
     const redirect = vi.spyOn(sockets, 'createUserScopedSocketConnection').mockImplementation(options => {
-        const connection = createUserScopedSocketConnection({ ...options, serverUrl: `http://127.0.0.1:${address.port}` });
+        const connection = createUserScopedSocketConnection({ ...options, serverUrl });
         // This is the genuine network socket, with default event typing at the test boundary.
         const client = connection.socket as Socket;
         // Remember a native failure even if it precedes the fixture's settling call.
@@ -59,6 +61,7 @@ export async function createRequesterCurrentnessSocketHarness(): Promise<Request
     };
     return {
         server,
+        serverUrl,
         clients,
         async settleTransport() {
             await Promise.all(clients.map(async client => {
@@ -128,6 +131,7 @@ export async function createRequesterCurrentnessSocketHarness(): Promise<Request
         async close() {
             redirect.mockRestore();
             clients.forEach(client => client.disconnect());
+            server.disconnectSockets(true);
             await new Promise<void>(resolve => server.close(() => resolve()));
         },
     };

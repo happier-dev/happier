@@ -430,11 +430,3 @@ export function bindApiSessionSocketSequenceMock(
 
     mockIo.mockImplementation(() => fallbackSocket);
 }
-
-export async function flushApiSessionClientMessageCommitQueue(client: {
-    messageCommitQueueTail: Promise<unknown>;
-    providerTranscriptDispatchTail?: Promise<unknown>;
-}): Promise<void> {
-    await client.providerTranscriptDispatchTail;
-    await client.messageCommitQueueTail;
-}

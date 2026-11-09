@@ -1,6 +1,9 @@
 import { bugReportUsage } from './bugReportHelp';
 export { bugReportUsage } from './bugReportHelp';
 import chalk from 'chalk';
+import { resolveBugReportLogSelection, type BugReportLogSelection } from '@happier-dev/protocol/bugs/reports/machineDiagnostics';
+
+export type BugReportAttachmentArg = { path: string; sourceKind: 'attachment' | 'session-log' | 'provider-transcript' };
 import type {
   BugReportDeploymentType,
   BugReportFrequency,
@@ -9,6 +12,9 @@ import type {
 import { BUG_REPORT_DEFAULT_ISSUE_OWNER, BUG_REPORT_DEFAULT_ISSUE_REPO } from '@happier-dev/protocol/bugs/reports/types';
 
 export type ParsedBugReportArgs = {
+  sessionId: string;
+  logSelection: BugReportLogSelection;
+  attachments: BugReportAttachmentArg[];
   showHelp: boolean;
   title: string;
   githubUsername: string;
@@ -33,6 +39,9 @@ export type ParsedBugReportArgs = {
 
 export function parseBugReportArgs(args: string[]): ParsedBugReportArgs {
   const parsed: ParsedBugReportArgs = {
+    sessionId: '',
+    logSelection: resolveBugReportLogSelection(),
+    attachments: [],
     showHelp: false,
     title: '',
     githubUsername: '',
@@ -79,6 +88,20 @@ export function parseBugReportArgs(args: string[]): ParsedBugReportArgs {
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
+    const logFlags = { '--include-daemon-logs': ['daemon', true], '--no-include-daemon-logs': ['daemon', false], '--include-session-logs': ['session', true], '--no-include-session-logs': ['session', false], '--include-provider-transcript': ['provider', true], '--no-include-provider-transcript': ['provider', false] } as const;
+    if (Object.hasOwn(logFlags, arg)) {
+      const [kind, enabled] = logFlags[arg as keyof typeof logFlags];
+      parsed.logSelection[kind] = enabled;
+      continue;
+    }
+    if (arg === '--session-id') { [parsed.sessionId, index] = readValue(index, arg); continue; }
+    if (arg === '--attach' || arg === '--attach-session-log' || arg === '--attach-provider-transcript') {
+      let path: string;
+      [path, index] = readValue(index, arg);
+      path = path.trim();
+      if (path) parsed.attachments.push({ path, sourceKind: arg === '--attach' ? 'attachment' : arg === '--attach-session-log' ? 'session-log' : 'provider-transcript' });
+      continue;
+    }
     if (arg === '-h' || arg === '--help') {
       parsed.showHelp = true;
       continue;
@@ -186,6 +209,7 @@ export function parseBugReportArgs(args: string[]): ParsedBugReportArgs {
     throw new Error(`Unknown argument for bug-report command: ${arg}`);
   }
 
+  parsed.sessionId = parsed.sessionId.trim();
   parsed.title = parsed.title.trim();
   parsed.githubUsername = parsed.githubUsername.trim();
   parsed.summary = parsed.summary.trim();

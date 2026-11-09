@@ -8,9 +8,8 @@
  * relying on whatever a parent happened to inherit. Consumers should let these
  * OVERRIDE inherited env for the same keys.
  *
- * Used by:
- * - the shell-bridge command policy when HAPPIER_SHELL_BRIDGE_CONTEXT_ENV opts in
- *   to command-local context env for environments with stale shell startup exports
+ * Used by managed CLI launch integrations. Agent tool bridges instead inherit
+ * their Session MCP reference and do not receive custodian Home context here.
  *
  * NO secrets (access/refresh tokens, API keys, credential file contents) belong
  * here. Only home dir, active server id, daemon lifecycle scope, and resolved server/webapp URLs.

@@ -1,17 +1,17 @@
 import { stripCliApiTokenEnvironment } from '@/auth/cliApiToken';
+import { isValidProcessEnvKey } from './environmentKeys';
 
 /** Caller-supplied environment keys, not a snapshot of every host process field. */
 export type ProcessEnvInput = Readonly<Record<string, string | undefined>>;
 
-const ENVIRONMENT_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/u;
-
 export function normalizeUnsetEnvKeys(
   unsetEnvKeys: readonly string[] | undefined,
+  platform: NodeJS.Platform = process.platform,
 ): readonly string[] {
   const normalized: string[] = [];
   const seen = new Set<string>();
   for (const rawName of unsetEnvKeys ?? []) {
-    if (!ENVIRONMENT_VARIABLE_NAME_PATTERN.test(rawName)) {
+    if (!isValidProcessEnvKey(rawName, platform)) {
       throw new Error(`Invalid environment variable unset key: ${JSON.stringify(rawName)}`);
     }
     const identity = rawName.toLowerCase();
@@ -25,8 +25,9 @@ export function normalizeUnsetEnvKeys(
 export function stripUnsetEnvironmentVariables(
   environment: ProcessEnvInput,
   unsetEnvKeys: readonly string[] | undefined,
+  platform: NodeJS.Platform = process.platform,
 ): Record<string, string> {
-  const unsetNames = new Set(normalizeUnsetEnvKeys(unsetEnvKeys).map((key) => key.toUpperCase()));
+  const unsetNames = new Set(normalizeUnsetEnvKeys(unsetEnvKeys, platform).map((key) => key.toUpperCase()));
   const compactEnvironment: Record<string, string> = {};
   for (const [key, value] of Object.entries(environment)) {
     if (typeof value !== 'string' || unsetNames.has(key.toUpperCase())) continue;
@@ -70,5 +71,5 @@ export function buildScopedProcessEnv(params: Readonly<{
   platform?: NodeJS.Platform;
 }>): Record<string, string> {
   return stripCliApiTokenEnvironment(mergeProcessEnv({ ...params,
-    baseEnv: stripUnsetEnvironmentVariables(params.baseEnv, params.unsetEnvKeys) }));
+    baseEnv: stripUnsetEnvironmentVariables(params.baseEnv, params.unsetEnvKeys, params.platform) }));
 }

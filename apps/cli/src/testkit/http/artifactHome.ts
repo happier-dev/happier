@@ -8,10 +8,11 @@ export function artifactKindListResponse<T>(items: readonly T[]): Readonly<{
   return { items, hasUnclassified: false, coverage: ArtifactKindCoverageV1Schema.parse({ status: 'complete', unclassifiedCount: 0 }) };
 }
 
-/** GET /v1/artifacts answers a bare array unless the request selects kinds, which answers the envelope. */
+/** GET /v1/artifacts answers a bare array unless the request selects membership, which answers the envelope. */
 export function artifactListResponse<T>(url: string, items: readonly T[]): readonly T[] | ReturnType<typeof artifactKindListResponse<T>> {
   const { searchParams } = new URL(url, 'http://home.test');
-  return ['kind', 'kinds', 'unclassified'].some(name => searchParams.has(name)) ? artifactKindListResponse(items) : items;
+  return ['kind', 'kinds', 'browserListed', 'approvalStates', 'approvalSessionIds', 'unclassified']
+    .some(name => searchParams.has(name)) ? artifactKindListResponse(items) : items;
 }
 
 type ArtifactRow = Readonly<{ id: string }> & Readonly<Record<string, unknown>>;

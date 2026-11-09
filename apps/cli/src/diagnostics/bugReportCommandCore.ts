@@ -308,6 +308,9 @@ export async function runBugReportCommand(
         serverUrl: activeServer.serverUrl,
         activeServerId: activeServer.id,
         rawArgs: args,
+        sessionId: parsed.sessionId || undefined,
+        logSelection: parsed.logSelection,
+        extraAttachments: parsed.attachments.length ? parsed.attachments : undefined,
       })
     : { artifacts: [], environment: baseEnvironment };
 

@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { configuration } from '@/configuration';
-import { readStoredCredentials } from '@/persistence';
+import { hasStoredSessionCredentialProvenance, readStoredCredentials, readStoredCredentialsForServerId } from '@/persistence';
 import { createRequesterSessionCredentialCustody, retireRequesterSessionCredentialCustody } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { resolveAbsentSessionControlEnvKeys, stripSessionControlEnvOverrides } from '@/session/runtime/control/sessionControlEnvironment';
 
@@ -24,6 +24,7 @@ describe('requester Session private credential custody', () => {
     vi.stubEnv('HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE', join(directory, 'missing-bob.key'));
     try {
       expect(await readStoredCredentials()).toBeNull();
+      expect(await readStoredCredentialsForServerId(configuration.activeServerId)).toBeNull();
     } finally { Object.assign(configuration, { privateKeyFile: original }); }
   });
 
@@ -38,7 +39,14 @@ describe('requester Session private credential custody', () => {
     vi.stubEnv('HAPPIER_SESSION_REQUESTER_SESSION_ID', 'another-session');
     expect(await readStoredCredentials()).toBeNull();
     vi.stubEnv('HAPPIER_SESSION_REQUESTER_SESSION_ID', binding.sessionId);
-    expect((await readStoredCredentials())?.token).toBe('bob-token');
+    const child = await readStoredCredentials();
+    expect(child?.token).toBe('bob-token');
+    expect(hasStoredSessionCredentialProvenance(child)).toBe(false);
+    expect(hasStoredSessionCredentialProvenance({ token: 'person-token', encryption: null,
+      credentialProvenance: 'stored_session' })).toBe(true);
+    const selected = await readStoredCredentialsForServerId(configuration.activeServerId);
+    expect(selected?.requesterSessionCredentialScope?.requesterSession?.sessionId).toBe(binding.sessionId);
+    expect(await readStoredCredentialsForServerId('another-home')).toBeNull();
     expect(await retireRequesterSessionCredentialCustody({ ...binding, attribution: { ...binding.attribution, accountId: 'alice' } })).toBe(false);
     expect((await readStoredCredentials())?.token).toBe('bob-token');
     expect(await retireRequesterSessionCredentialCustody(binding)).toBe(true);
