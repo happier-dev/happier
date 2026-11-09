@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { PluginError } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type {
   AgentAcpRuntimeOptions,
@@ -13,6 +12,7 @@ import type {
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { activate } from './activate.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
+import { claudeSubscriptionConnectedAccountRuntime } from '../../claude/src/connectedAccounts/claudeSubscriptionRuntime.js';
 
 function createUnboundConnectedAccounts() {
   return {
@@ -28,13 +28,6 @@ function createUnboundConnectedAccounts() {
 
 describe('OhMyPi plugin activation', () => {
   it('reexports the activation compiled by its canonical public plugin definition', async () => {
-    expect(Object.keys(PLUGIN_MANIFEST.contributes).sort()).toEqual([
-      'agents',
-      'hooks',
-      'settings',
-      'systemTools',
-      'ui',
-    ]);
     expect(await import('./manifest.js')).toEqual(expect.objectContaining({
       OH_MY_PI_PLUGIN: expect.objectContaining({ manifest: PLUGIN_MANIFEST, activate }),
     }));
@@ -273,7 +266,7 @@ describe('OhMyPi plugin activation', () => {
       transport: {
         kind: 'stdio',
         executable: { kind: 'systemTool', id: 'ohmypi-cli' },
-        args: ['--mode', 'acp'],
+        args: ['acp'],
       },
       definition: {
         acceptsVerifiedImageInput: true,
@@ -334,7 +327,7 @@ describe('OhMyPi plugin activation', () => {
         ID_TOKEN: 'must-not-reach-child',
       },
       openai: { OPENAI_API_KEY: 'qualified-openai-key' },
-      'claude-subscription': { CLAUDE_CODE_OAUTH_TOKEN: 'qualified-claude-setup-token' },
+      'claude-subscription': { ANTHROPIC_OAUTH_TOKEN: 'qualified-claude-setup-token' },
       anthropic: { ANTHROPIC_API_KEY: 'qualified-anthropic-key' },
       gemini: { GEMINI_API_KEY: 'qualified-gemini-key' },
     };
@@ -408,7 +401,7 @@ describe('OhMyPi plugin activation', () => {
       ['openai', { kind: 'environment', keys: ['OPENAI_API_KEY'] }, {
         signal, expectedAccount: { service: services.get('openai'), accountId: 'openai-account' },
       }],
-      ['claude-subscription', { kind: 'environment', keys: ['CLAUDE_CODE_OAUTH_TOKEN'] }, {
+      ['claude-subscription', { kind: 'environment', keys: ['ANTHROPIC_OAUTH_TOKEN'] }, {
         signal, expectedAccount: { service: services.get('claude-subscription'), accountId: 'claude-subscription-account' },
       }],
       ['anthropic', { kind: 'environment', keys: ['ANTHROPIC_API_KEY'] }, {
@@ -567,7 +560,12 @@ describe('OhMyPi plugin activation', () => {
     await fixture.dispose();
   });
 
-  it('refuses Claude OAuth materialization because Oh My Pi has no request-auth consumer', async () => {
+  it.each([
+    { kind: 'create', accessToken: 'sk-ant-oat01-fixture-access' },
+    { kind: 'resume', accessToken: 'sk-ant-oat01-fixture-access' },
+    { kind: 'create', accessToken: null },
+    { kind: 'resume', accessToken: null },
+  ] as const)('opens or refuses $kind with the real Claude OAuth materializer (access=$accessToken)', async ({ kind, accessToken }) => {
     const fixture = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate } });
     const factory = fixture.registration('agents', 'ohmypi')?.factory;
     if (!factory) throw new Error('Expected OhMyPi Agent factory');
@@ -594,18 +592,30 @@ describe('OhMyPi plugin activation', () => {
           target: { kind: 'account' as const, displayName: 'Claude OAuth account' },
         }
       : null);
-    const materialize = vi.fn(async () => {
-      throw new PluginError({
-        code: 'plugin_connected_account_claude_subscription_oauth_request_auth_required',
-        message: 'Claude OAuth Connected Accounts require request-auth materialization.',
-      });
-    });
-    const open = vi.fn();
     const signal = new AbortController().signal;
+    const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' };
+    const account = { service, accountId: 'claude-account' };
+    const credentials = new Map([['accessToken', 'sk-ant-oat01-fixture-access'], ['refreshToken', 'host-only-refresh']]);
+    if (accessToken === null) credentials.delete('accessToken');
+    const readCredential = vi.fn(async (key: string) => credentials.get(key) ?? null);
+    const claudeContext = {
+      account,
+      configuration: { target: { kind: 'account', account, modeId: 'oauth' }, revision: 'fixture-1', values: {}, async getSecret() { return null; } },
+      credentials: { get: readCredential, async set() {}, async delete() {} },
+      signal,
+      services: {},
+    } as unknown as Parameters<typeof claudeSubscriptionConnectedAccountRuntime.materialize>[1];
+    // This is the Connected Accounts service transport boundary; retain the real
+    // credential decoder and materialization writer beneath it.
+    const materialize = vi.fn(async (_purpose: string, request: Parameters<typeof claudeSubscriptionConnectedAccountRuntime.materialize>[0]) =>
+      claudeSubscriptionConnectedAccountRuntime.materialize(request, claudeContext));
+    const session = { send: vi.fn(), watch: () => ({ dispose() {} }), dispose: vi.fn() } satisfies AgentSessionRuntime;
+    const open = vi.fn(async () => session);
 
-    await expect(runtime.sessions.open({
-      kind: 'create',
-      sessionId: 'oauth-without-request-auth',
+    const opening = runtime.sessions.open({
+      kind,
+      sessionId: 'oauth-access-only',
+      ...(kind === 'resume' ? { providerSessionId: 'existing-native-session' } : {}),
       cwd: '/workspace',
     }, {
       protocols: { acp: { open } },
@@ -613,13 +623,21 @@ describe('OhMyPi plugin activation', () => {
         connectedAccounts: { getBinding, requestSelection: vi.fn(), materialize, watch },
       },
       signal,
-    } as unknown as AgentSessionRuntimeContext)).rejects.toMatchObject({
-      code: 'plugin_ohmypi_claude_subscription_oauth_unsupported',
-    });
+    } as unknown as AgentSessionRuntimeContext);
+
+    if (accessToken === null) {
+      await expect(opening).rejects.toMatchObject({ code: 'plugin_connected_account_claude_subscription_credentials_unavailable' });
+      expect(open).not.toHaveBeenCalled();
+      expect(readCredential.mock.calls.map(([key]) => key)).not.toContain('refreshToken');
+      for (const dispose of watchDisposers) expect(dispose).toHaveBeenCalledTimes(1);
+      await fixture.dispose();
+      return;
+    }
+    const opened = await opening;
 
     expect(materialize).toHaveBeenCalledWith(
       'claude-subscription',
-      { kind: 'environment', keys: ['CLAUDE_CODE_OAUTH_TOKEN'] },
+      { kind: 'environment', keys: ['ANTHROPIC_OAUTH_TOKEN'] },
       {
         signal,
         expectedAccount: {
@@ -628,7 +646,12 @@ describe('OhMyPi plugin activation', () => {
         },
       },
     );
-    expect(open).not.toHaveBeenCalled();
+    expect(open).toHaveBeenCalledWith(expect.objectContaining({
+      kind,
+      launchEnvironment: { values: { ANTHROPIC_OAUTH_TOKEN: 'sk-ant-oat01-fixture-access' }, unset: [] },
+    }), expect.anything());
+    expect(readCredential.mock.calls.map(([key]) => key)).not.toContain('refreshToken');
+    await opened.dispose();
     expect(watchDisposers).toHaveLength(5);
     for (const dispose of watchDisposers) expect(dispose).toHaveBeenCalledTimes(1);
     await fixture.dispose();

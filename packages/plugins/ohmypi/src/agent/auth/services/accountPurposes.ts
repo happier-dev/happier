@@ -15,9 +15,9 @@ export const OH_MY_PI_CONNECTED_ACCOUNT_PURPOSES = [{
 }, {
   purpose: 'claude-subscription',
   service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
-  materializationKey: CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.environmentKey,
-  launchEnvironmentKey: 'ANTHROPIC_OAUTH_TOKEN',
-  credentialKinds: ['token'],
+  materializationKey: CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.oauth.accessTokenEnvironmentKey,
+  launchEnvironmentKey: CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.oauth.accessTokenEnvironmentKey,
+  credentialKinds: ['token', 'oauth'],
 }, {
   purpose: 'anthropic',
   service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },

@@ -1,9 +1,8 @@
 import type { JsonValue, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 
-import { buildOhMyPiPreflightModelsFromListModelsOutput } from '../preflight/models.js';
+import { buildOhMyPiPreflightModelsFromListModelsOutput, OH_MY_PI_CLI_MODELS_COMMAND_ARGS } from '../preflight/models.js';
 import { OH_MY_PI_SYSTEM_TOOL_ID } from '../systemTool.js';
 
-const OH_MY_PI_LIST_MODELS_ARGS = ['--list-models'] as const;
 const OH_MY_PI_PREFLIGHT_TIMEOUT_MS = 10_000;
 const OH_MY_PI_PREFLIGHT_OUTPUT_MAX_BYTES = 256 * 1024;
 
@@ -105,7 +104,7 @@ export async function resolveOhMyPiDaemonSpawnPrerequisites(
     toolId: OH_MY_PI_SYSTEM_TOOL_ID,
     lookupNames: ['omp'],
     sourcePreference: 'system-first',
-    args: OH_MY_PI_LIST_MODELS_ARGS,
+    args: OH_MY_PI_CLI_MODELS_COMMAND_ARGS,
     cwd: readCwd(payload),
     env: { ...readRuntimeSelectionEnv(payload), CI: '1' },
     timeoutMs: OH_MY_PI_PREFLIGHT_TIMEOUT_MS,
@@ -128,7 +127,7 @@ export async function resolveOhMyPiDaemonSpawnPrerequisites(
   }
 
   const rawDiagnostic = firstDiagnosticLine(result.stdout, result.stderr);
-  const diagnostic = rawDiagnostic?.toLowerCase().startsWith('provider')
+  const diagnostic = rawDiagnostic?.toLowerCase().startsWith('provider') || rawDiagnostic?.startsWith('{')
     ? 'OhMyPi has no chat-capable models. Configure a chat model or provider API key before starting a session.'
     : rawDiagnostic
     ?? 'OhMyPi has no available models. Set provider API keys before starting a session.';

@@ -43,7 +43,7 @@ describe('OhMyPi daemon spawn prerequisites', () => {
 
     expect(fixture.runSystemTool).toHaveBeenCalledWith(expect.objectContaining({
       toolId: 'ohmypi-cli',
-      args: ['--list-models'],
+      args: ['models', '--json'],
       cwd: '/repo',
       env: { CI: '1' },
     }));
@@ -53,10 +53,7 @@ describe('OhMyPi daemon spawn prerequisites', () => {
     const fixture = createSpawnTools({
       ok: true,
       exitCode: 0,
-      stdout: [
-        'provider      model                       context  max-out  thinking  images',
-        'openai        gpt-5.4                     272K     128K     yes       yes',
-      ].join('\n'),
+      stdout: JSON.stringify({ models: [{ provider: 'anthropic', id: 'claude-sonnet-4-5', kind: 'chat', thinking: ['medium'] }] }),
       stderr: '',
     });
 
@@ -70,10 +67,7 @@ describe('OhMyPi daemon spawn prerequisites', () => {
     const fixture = createSpawnTools({
       ok: true,
       exitCode: 0,
-      stdout: [
-        'provider      model                       context  max-out  thinking  images',
-        'openai        gpt-5.4                     272K     128K     yes       yes',
-      ].join('\n'),
+      stdout: JSON.stringify({ models: [{ provider: 'openai', id: 'gpt-5.4', kind: 'chat', thinking: ['medium'] }] }),
       stderr: '',
     });
 
@@ -97,11 +91,7 @@ describe('OhMyPi daemon spawn prerequisites', () => {
     const fixture = createSpawnTools({
       ok: true,
       exitCode: 0,
-      stdout: [
-        'provider  model                    context  max-out  thinking  images',
-        'ollama    nomic-embed-text:latest  2.0K     2.0K     -         no',
-        'ollama    qwen3-embedding:8b       41K      8.2K     -         no',
-      ].join('\n'),
+      stdout: JSON.stringify({ models: [{ provider: 'ollama', id: 'nomic-embed-text:latest', kind: 'embedding', thinking: null }] }),
       stderr: '',
     });
 

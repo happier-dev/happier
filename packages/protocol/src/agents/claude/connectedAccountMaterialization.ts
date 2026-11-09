@@ -14,6 +14,7 @@ export const CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 = Object.freeze({
   }),
   oauth: Object.freeze({
     authenticationModeId: 'oauth',
+    accessTokenEnvironmentKey: 'ANTHROPIC_OAUTH_TOKEN',
     requestAuthRequiredErrorCode:
       'plugin_connected_account_claude_subscription_oauth_request_auth_required',
   }),
@@ -25,5 +26,13 @@ export const CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1 = Object.fre
   kind: 'environment' as const,
   keys: Object.freeze([
     CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.environmentKey,
+  ]),
+});
+
+/** Access-only native clients restart/rematerialize through the host on renewal. */
+export const CLAUDE_SUBSCRIPTION_ACCESS_TOKEN_ENVIRONMENT_REQUEST_V1 = Object.freeze({
+  kind: 'environment' as const,
+  keys: Object.freeze([
+    CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.oauth.accessTokenEnvironmentKey,
   ]),
 });

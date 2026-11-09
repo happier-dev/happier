@@ -32,7 +32,7 @@ describe('OhMyPi plugin manifest', () => {
         service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' },
         required: false,
         materializationKinds: ['environment'],
-        credentialKinds: ['token'],
+        credentialKinds: ['token', 'oauth'],
       }, {
         purpose: 'anthropic',
         service: { pluginId: 'happier.agent.claude', localId: 'anthropic' },

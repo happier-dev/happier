@@ -1,5 +1,4 @@
-import type { PluginConnectedAccountPortableAuthenticationContext } from './services/connectedAccounts.js';
-import { AGY_OAUTH_ALLOW_RAW_AUTHORIZATION_CODE, AGY_OAUTH_AUTHORIZE_URL, AGY_OAUTH_CALLBACK_URL, AGY_OAUTH_CLIENT_ID, AGY_OAUTH_CLIENT_SECRET, AGY_OAUTH_SCOPES, AGY_OAUTH_TOKEN_URL, AGY_OAUTH_USERINFO_URL } from '@happier-dev/protocol/providers/agy/oauth';
+export { ANTIGRAVITY_OAUTH_PROFILE } from '@happier-dev/protocol/agents/antigravity/oauth-profile';
 /**
  * Connected Account authoring, binding, materialization, usage, and runtime
  * contracts. This module is a projection only: canonical Protocol-owned
@@ -9,10 +8,10 @@ import { AGY_OAUTH_ALLOW_RAW_AUTHORIZATION_CODE, AGY_OAUTH_AUTHORIZE_URL, AGY_OA
  * single package-local boundary.
  */
 
-import { CLAUDE_OAUTH_AUTHORIZE_URL, CLAUDE_OAUTH_CALLBACK_URL, CLAUDE_OAUTH_CLIENT_ID, CLAUDE_OAUTH_TOKEN_URL } from '@happier-dev/protocol/providers/claude/oauth-profile';
-import { CODEX_NATIVE_HOME as canonicalCodexNativeHome, CODEX_CONNECTED_SERVICE_HOME_DIRECTORY_NAME as canonicalCodexConnectedServiceHomeDirectoryName } from '@happier-dev/protocol/agents/codex/native-home-policy';
-import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 as canonicalClaudeSubscriptionMaterializationContractV1, CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1 as canonicalClaudeSubscriptionSetupTokenEnvironmentRequestV1 } from '@happier-dev/protocol/connect/claude-subscription-materialization';
-import { OPENAI_CODEX_AUTH_BASE_URL, OPENAI_CODEX_AUTHORIZE_URL, OPENAI_CODEX_CLIENT_ID, OPENAI_CODEX_DEVICE_REDIRECT_URI, OPENAI_CODEX_DEVICE_TOKEN_URL, OPENAI_CODEX_DEVICE_USER_CODE_URL, OPENAI_CODEX_DEVICE_VERIFICATION_URL, OPENAI_CODEX_SCOPE, OPENAI_CODEX_SCOPES, OPENAI_CODEX_TOKEN_URL } from '@happier-dev/protocol/providers/codex/oauth';
+export { CLAUDE_SUBSCRIPTION_OAUTH_PROFILE } from '@happier-dev/protocol/agents/claude/oauth-profile';
+export { CODEX_NATIVE_HOME, CODEX_CONNECTED_SERVICE_HOME_DIRECTORY_NAME } from '@happier-dev/protocol/agents/codex/native-home-policy';
+export { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1, CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1 } from '@happier-dev/protocol/agents/claude/connected-account-materialization';
+export { OPENAI_CODEX_OAUTH_PROFILE } from '@happier-dev/protocol/agents/codex/oauth-profile';
 import { buildConnectedServiceCredentialRecord as buildProtocolConnectedServiceCredentialRecord } from '@happier-dev/protocol/connect/build-connected-service-credential-record';
 import type {
     ConnectedAccountHttpHeadersRequest,
@@ -71,7 +70,8 @@ import type { AgentAccountUsageMeter } from './agentRuntime/accountUsage.js';
 import type { Disposable } from './lifecycle.js';
 import type { PluginInvocationContext } from './invocation.js';
 import type { HttpService } from './services/io.js';
-import type { ConnectedAccountAuthenticationModeRuntime as CommonAuthenticationModeRuntime, ConnectedAccountEstablishedReadContext } from '@happier-dev/cli-common/connectedAccounts';
+import type { ConnectedAccountAuthenticationModeRuntime as CommonAuthenticationModeRuntime, ConnectedAccountEstablishedReadContext, ConnectedAccountEstablishedRuntime } from '@happier-dev/cli-common/connectedAccounts';
+import type { PluginConnectedAccountPortableAuthenticationContext } from './services/connectedAccounts.js';
 import type { ConnectedAccountMaterialization } from './connected-accounts/materialization.js';
 export type { ConnectedAccountMaterialization } from './connected-accounts/materialization.js';
 
@@ -85,102 +85,13 @@ export {
 } from './cloud/quotaTiming.js';
 export { parseProviderResetAt, type ProviderResetTextEvidenceParser } from './cloud/quotaReset.js';
 
-/** Nonsecret native-home facts shared by the bundled Codex declaration and materialization. */
-export const CODEX_NATIVE_HOME: Readonly<{
-    environmentKey: 'CODEX_HOME';
-    defaultRelativePath: '.codex';
-}> = canonicalCodexNativeHome;
-export const CODEX_CONNECTED_SERVICE_HOME_DIRECTORY_NAME: 'codex-home' =
-    canonicalCodexConnectedServiceHomeDirectoryName;
 
-/** Public, nonsecret OAuth metadata shared by Claude Subscription authors. */
-export const CLAUDE_SUBSCRIPTION_OAUTH_PROFILE: Readonly<{
-    authorizeUrl: string;
-    callbackUrl: string;
-    clientId: string;
-    tokenUrl: string;
-}> = Object.freeze({
-    authorizeUrl: CLAUDE_OAUTH_AUTHORIZE_URL,
-    callbackUrl: CLAUDE_OAUTH_CALLBACK_URL,
-    clientId: CLAUDE_OAUTH_CLIENT_ID,
-    tokenUrl: CLAUDE_OAUTH_TOKEN_URL,
-});
+export type ClaudeSubscriptionMaterializationContractV1 =
+    typeof import('@happier-dev/protocol/agents/claude/connected-account-materialization').CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1;
 
-/** Registered installed-app facts shared by Antigravity personal OAuth and native materialization. */
-export const ANTIGRAVITY_OAUTH_PROFILE: Readonly<{
-    allowRawAuthorizationCode: true;
-    authorizeUrl: string;
-    callbackUrl: string;
-    clientId: string;
-    clientSecret: string;
-    tokenUrl: string;
-    userinfoUrl: string;
-    scopes: readonly string[];
-}> = Object.freeze({
-    allowRawAuthorizationCode: AGY_OAUTH_ALLOW_RAW_AUTHORIZATION_CODE,
-    authorizeUrl: AGY_OAUTH_AUTHORIZE_URL,
-    callbackUrl: AGY_OAUTH_CALLBACK_URL,
-    clientId: AGY_OAUTH_CLIENT_ID,
-    clientSecret: AGY_OAUTH_CLIENT_SECRET,
-    tokenUrl: AGY_OAUTH_TOKEN_URL,
-    userinfoUrl: AGY_OAUTH_USERINFO_URL,
-    scopes: AGY_OAUTH_SCOPES,
-});
+export type ClaudeSubscriptionSetupTokenEnvironmentRequestV1 =
+    typeof import('@happier-dev/protocol/agents/claude/connected-account-materialization').CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1;
 
-export type ClaudeSubscriptionMaterializationContractV1 = Readonly<{
-    service: Readonly<{
-        pluginId: string;
-        localId: string;
-    }>;
-    setupToken: Readonly<{
-        authenticationModeId: string;
-        environmentKey: string;
-    }>;
-    oauth: Readonly<{
-        authenticationModeId: string;
-        requestAuthRequiredErrorCode: string;
-    }>;
-    unsupportedEnvironmentRequestErrorCode: string;
-}>;
-
-export type ClaudeSubscriptionSetupTokenEnvironmentRequestV1 = Readonly<{
-    kind: 'environment';
-    keys: readonly string[];
-}>;
-
-export const CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1:
-ClaudeSubscriptionMaterializationContractV1 = canonicalClaudeSubscriptionMaterializationContractV1;
-export const CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1:
-ClaudeSubscriptionSetupTokenEnvironmentRequestV1 = canonicalClaudeSubscriptionSetupTokenEnvironmentRequestV1;
-
-/** Public, nonsecret OAuth and device-flow metadata shared by Codex authors. */
-export const OPENAI_CODEX_OAUTH_PROFILE: Readonly<{
-    authBaseUrl: string;
-    authorizeUrl: string;
-    clientId: string;
-    scope: string;
-    scopes: readonly string[];
-    tokenUrl: string;
-    device: Readonly<{
-        redirectUri: string;
-        tokenUrl: string;
-        userCodeUrl: string;
-        verificationUrl: string;
-    }>;
-}> = Object.freeze({
-    authBaseUrl: OPENAI_CODEX_AUTH_BASE_URL,
-    authorizeUrl: OPENAI_CODEX_AUTHORIZE_URL,
-    clientId: OPENAI_CODEX_CLIENT_ID,
-    scope: OPENAI_CODEX_SCOPE,
-    scopes: OPENAI_CODEX_SCOPES,
-    tokenUrl: OPENAI_CODEX_TOKEN_URL,
-    device: Object.freeze({
-        redirectUri: OPENAI_CODEX_DEVICE_REDIRECT_URI,
-        tokenUrl: OPENAI_CODEX_DEVICE_TOKEN_URL,
-        userCodeUrl: OPENAI_CODEX_DEVICE_USER_CODE_URL,
-        verificationUrl: OPENAI_CODEX_DEVICE_VERIFICATION_URL,
-    }),
-});
 
 export { ConnectedAccountPurposeDeclarationsV1Schema } from '@happier-dev/protocol/connect/connected-account-purposes';
 export { ConnectedAccountAuthFailureRequestV1Schema, ConnectedAccountQuotaFailureRequestV1Schema, ConnectedAccountRequestAuthUsesV1Schema } from '@happier-dev/protocol/connect/connected-account-request-auth';
@@ -308,13 +219,17 @@ export {
 
 /** @realm daemon */
 export type {
+    PluginConnectedAccountHealthResult as ConnectedAccountHealthResult,
+    PluginConnectedAccountRegistrationApi,
+} from './services/connectedAccounts.js';
+
+/** @realm any */
+export type {
     PluginConnectedAccountAuthenticationContext as ConnectedAccountAuthenticationContext,
     PluginConnectedAccountPortableAuthenticationContext as ConnectedAccountPortableAuthenticationContext,
     PluginConnectedAccountAuthenticationModeRuntime as ConnectedAccountAuthenticationModeRuntime,
     PluginConnectedAccountCredentialStore as ConnectedAccountCredentialStore,
-    PluginConnectedAccountHealthResult as ConnectedAccountHealthResult,
     PluginConnectedAccountManualCompletion as ConnectedAccountManualCompletion,
-    PluginConnectedAccountRegistrationApi,
     PluginConnectedAccountRuntimeConfiguration as ConnectedAccountRuntimeConfiguration,
 } from './services/connectedAccounts.js';
 
@@ -328,13 +243,7 @@ export type ConnectedAccountPortableRuntime = Readonly<{
     authentication: Readonly<{
         modes: Readonly<Record<string, CommonAuthenticationModeRuntime<PluginConnectedAccountPortableAuthenticationContext>>>;
     }>;
-}> & {
-    materialize?(
-        request: ConnectedAccountMaterializationRequest,
-        context: ConnectedAccountPortableReadContext,
-        options?: Readonly<{ signal?: AbortSignal; existingFiles?: Readonly<Record<string, Uint8Array>> }>,
-    ): Promise<ConnectedAccountMaterialization>;
-};
+}> & Partial<Pick<ConnectedAccountEstablishedRuntime<ConnectedAccountPortableReadContext>, 'materialize'>>;
 
 /** Authentication-only registrations remain valid portable runtimes. @realm any */
 export type ConnectedAccountAuthenticationRuntime = ConnectedAccountPortableRuntime;
@@ -471,8 +380,9 @@ export type ConnectedAccountListedAccount = Readonly<{
     connectedAccountBases: readonly string[];
 }>;
 /**
- * A bounded metadata listing. `complete` is the only complete result: any
- * elision — the clamped request limit or a storage cap — reports `truncated`.
+ * An authorized metadata listing. `complete` means no accounts were elided.
+ * Elision from an explicit caller limit or an owning storage boundary reports
+ * `truncated`.
  * There is no resumable cursor.
  */
 export type ConnectedAccountMetadataList = Readonly<{
@@ -481,12 +391,12 @@ export type ConnectedAccountMetadataList = Readonly<{
 }>;
 export type ConnectedAccountListRequest = Readonly<{
     purpose: string;
-    /** Host-clamped upper bound on returned accounts. */
+    /** Explicit caller demand; omission requests the full authorized inventory. */
     limit?: number;
 }>;
 export type ConnectedAccountListedMaterializationRequest = Readonly<{
     purpose: string;
-    /** An exact account from the current bounded listing; never a selector. */
+    /** An exact account from the current metadata listing; never a selector. */
     account: ConnectedAccountRef;
     materialization: ConnectedAccountMaterializationRequest;
 }>;
@@ -619,8 +529,9 @@ export interface ConnectedAccountsService {
     ): Promise<ConnectedAccountMetadataList>;
     /**
      * Materializes one account admitted by the exact current target of the
-     * declared purpose. The host re-verifies target membership and currentness
-     * before and after materialization; the selected binding is not changed.
+     * declared purpose. The host verifies target membership and currentness at
+     * credential acquisition, then retains local cancellation and the selected
+     * materializer's lifecycle; the selected binding is not changed.
      */
     materializeListedAccount(
         request: ConnectedAccountListedMaterializationRequest,
@@ -664,5 +575,3 @@ export const buildConnectedServiceCredentialRecord: (
             }>;
         }>,
 ) => ConnectedServiceCredentialRecordV1 = buildProtocolConnectedServiceCredentialRecord;
-
-export type { ConnectedAccountEstablishedReadContext } from '@happier-dev/cli-common/connectedAccounts';

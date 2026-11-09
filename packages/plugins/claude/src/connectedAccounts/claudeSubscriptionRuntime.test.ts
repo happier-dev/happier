@@ -191,6 +191,35 @@ describe('Claude Subscription Connected Account', () => {
     }
   });
 
+  it.each([
+    { scenario: 'initial 503', statuses: [503], status: 503 },
+    { scenario: 'retried 503', statuses: [500, 503], status: 503 },
+    { scenario: 'retried 429', statuses: [503, 429], status: 429 },
+  ])('preserves the provider delay for $scenario without another immediate read', async ({ statuses, status }) => {
+    const runtime = activateConnectedAccountRuntime();
+    let requests = 0;
+    const request = vi.fn(async () => {
+      const index = requests++;
+      const responseStatus = statuses[index] ?? 200;
+      return {
+        status: responseStatus,
+        finalUrl: 'https://api.anthropic.com/api/oauth/usage',
+        headers: index === statuses.length - 1 ? { 'Retry-After': '30' } : {},
+        body: new TextEncoder().encode('{}'),
+      };
+    });
+    await expect(runtime.quota?.({
+      ...readContext('oauth', new Map([['accessToken', 'claude-access']])),
+      services: {
+        exec: { agentCli: { async checkReadiness() { return { launchable: [{ agentId: 'claude', version: '2.1.296' }] }; } } },
+        http: { request },
+      },
+    } as Parameters<NonNullable<PluginConnectedAccountRuntime['quota']>>[0])).rejects.toMatchObject({
+      name: 'ConnectedServiceQuotaFetchError', status, quotaFetchErrorCode: 'provider_backoff', retryAfterMs: 30_000,
+    });
+    expect(request).toHaveBeenCalledTimes(statuses.length);
+  });
+
   it.each(['oauth', 'native-import'] as const)('replaces attested context through a successful %s credential refresh', async (authenticationModeId) => {
     const runtime = activateConnectedAccountRuntime();
     const staged = credentialStore();
@@ -254,7 +283,8 @@ describe('Claude Subscription Connected Account', () => {
           account: { uuid: 'provider-user-b' }, organization: { uuid: 'organization-b' },
         })) };
       } } },
-    })).resolves.toMatchObject({ status: 'outcomeUnknown' });
+    })).resolves.toMatchObject({ status: 'reconnectRequired',
+      diagnostic: { code: 'claude_subscription_oauth_identity_mismatch' } });
     expect(staged.values.size).toBe(0);
     expect(await context.credentials.get('providerAccountId')).toBe('provider-user-a');
   });
@@ -283,7 +313,10 @@ describe('Claude Subscription Connected Account', () => {
             })) };
         } } },
       });
-      expect(result.status).toBe(scenario === 'unavailable' || scenario === 'mismatch' ? 'outcomeUnknown' : 'connected');
+      expect(result.status).toBe(scenario === 'unavailable' ? 'unavailable' : scenario === 'mismatch' ? 'reconnectRequired' : 'connected');
+      if (scenario === 'mismatch') expect(result).toMatchObject({
+        diagnostic: { code: 'claude_subscription_profile_identity_mismatch' },
+      });
       expect(requests).toEqual(['GET']);
       expect(original.get('accessToken')).toBe('current-access');
       expect(original.get('refreshToken')).toBe('current-refresh');
@@ -300,7 +333,7 @@ describe('Claude Subscription Connected Account', () => {
   );
 
   it.each([
-    [429, 'outcomeUnknown'], [503, 'outcomeUnknown'], [401, 'reconnectRequired'],
+    [429, 'unavailable'], [503, 'unavailable'], [401, 'reconnectRequired'],
   ] as const)('preserves stored credentials without staging when refresh returns %s (%s)', async (status, outcome) => {
     const runtime = activateConnectedAccountRuntime();
     const original = new Map([['accessToken', 'current-access'], ['refreshToken', 'current-refresh']]);
@@ -319,7 +352,9 @@ describe('Claude Subscription Connected Account', () => {
       } } },
     } as Parameters<typeof runtime.refresh>[0];
 
-    await expect(runtime.refresh(context)).resolves.toMatchObject({ status: outcome });
+    await expect(runtime.refresh(context)).resolves.toMatchObject({ status: outcome,
+      ...(status === 401 ? { diagnostic: { details: { credentialRefreshFailureKind: 'provider_401' } } } : {}),
+    });
     expect(staged.values.size).toBe(0);
     expect(credentials.values).toEqual(original);
     await expect(runtime.status(context)).resolves.toMatchObject({ status: 'connected' });
@@ -453,7 +488,44 @@ describe('Claude Subscription Connected Account', () => {
     expect(attempted.values).toEqual(new Map([['setupToken', 'sk-ant-oat01-token']]));
   });
 
-  it('exchanges Claude PKCE OAuth and stages the nested immutable account identity', async () => {
+  it.each([
+    { response: 429, status: 'unavailable', code: 'claude_subscription_oauth_unavailable' },
+    { response: 503, status: 'unavailable', code: 'claude_subscription_oauth_unavailable' },
+    { response: 401, status: 'rejected', code: 'claude_subscription_oauth_rejected' },
+    { response: 'lost', status: 'outcomeUnknown', code: 'claude_subscription_oauth_outcome_unknown' },
+    { response: 'incomplete', status: 'unavailable', code: 'claude_subscription_oauth_response_invalid' },
+    { response: 'malformed', status: 'unavailable', code: 'claude_subscription_oauth_response_invalid' },
+    { response: 'profileMismatch', status: 'rejected', code: 'claude_subscription_profile_identity_mismatch' },
+  ] as const)('classifies an OAuth completion from its actual response ($response)', async scenario => {
+    const mode = activateConnectedAccountRuntime().authentication.modes.oauth;
+    if (!mode || mode.kind !== 'oauthAuthorizationCode') throw new Error('OAuth mode unavailable');
+    const attempted = credentialStore();
+    const context = {
+      attempt: { kind: 'connect', attemptId: 'classified-oauth' },
+      signal: new AbortController().signal,
+      services: { http: { async request(request: { method: string; url: string }) {
+        if (scenario.response === 'lost') throw new Error('Synthetic lost HTTP response');
+        return { status: typeof scenario.response === 'number' ? scenario.response : 200,
+          finalUrl: request.url, headers: {}, body: new TextEncoder().encode(scenario.response === 'malformed' ? 'unparseable-json' : JSON.stringify(
+            scenario.response === 'profileMismatch'
+              ? request.method === 'POST'
+                ? { access_token: 'synthetic-access', refresh_token: 'synthetic-refresh', account: { uuid: 'expected-user' } }
+                : { account: { uuid: 'different-user' }, organization: { uuid: 'different-organization' } }
+              : {},
+          )) };
+      } } },
+      attemptCredentials: attempted.store,
+    } as Parameters<typeof mode.complete>[1];
+    await expect(mode.complete({ code: 'synthetic-code', callbackUrl: 'https://example.test/callback',
+      state: 'synthetic-state', pkceVerifier: 'synthetic-verifier' }, context)).resolves.toMatchObject({
+      status: scenario.status, diagnostic: { code: scenario.code,
+        ...(typeof scenario.response === 'number' ? { details: { httpStatus: scenario.response } } : {}),
+      },
+    });
+    expect(attempted.values.size).toBe(0);
+  });
+
+  it.each(['connect', 'reconnect'] as const)('exchanges Claude PKCE OAuth and stages the nested immutable account identity (%s)', async kind => {
     const runtime = activateConnectedAccountRuntime();
     const mode = runtime.authentication.modes.oauth;
     if (!mode || mode.kind !== 'oauthAuthorizationCode') {
@@ -478,7 +550,9 @@ describe('Claude Subscription Connected Account', () => {
     }));
     const signal = new AbortController().signal;
     const context = {
-      attempt: { kind: 'connect', attemptId: 'claude-oauth-attempt' },
+      attempt: kind === 'connect' ? { kind, attemptId: 'claude-oauth-attempt' }
+        : { kind, attemptId: 'claude-oauth-attempt', account: {
+          service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, accountId: 'existing-account' } },
       signal,
       services: { exec: { agentCli: { async checkReadiness() { return { launchable: [{ agentId: 'claude', version: '2.1.296' }] }; } } }, http: { request } },
       attemptCredentials: attempted.store,
@@ -629,6 +703,22 @@ describe('Claude Subscription Connected Account', () => {
     )).rejects.toThrow(/do not support HTTP-header/u);
   });
 
+  it.each(['oauth', 'native-import'] as const)('materializes %s access-only environment without reading the host refresh token', async (mode) => {
+    const runtime = activateConnectedAccountRuntime();
+    const context = readContext(mode, new Map([
+      ['accessToken', 'oauth-access'],
+      ['refreshToken', 'host-owned-refresh'],
+    ]));
+    const read = vi.spyOn(context.credentials, 'get');
+    await expect(runtime.materialize(
+      { kind: 'environment', keys: ['ANTHROPIC_OAUTH_TOKEN'] }, context,
+    )).resolves.toEqual({ kind: 'environment', env: { ANTHROPIC_OAUTH_TOKEN: 'oauth-access' } });
+    expect(read.mock.calls.map(([key]) => key)).not.toContain('refreshToken');
+    await expect(runtime.materialize(
+      { kind: 'environment', keys: ['ANTHROPIC_API_KEY'] }, context,
+    )).rejects.toMatchObject({ code: 'plugin_connected_account_claude_subscription_environment_request_unsupported' });
+  });
+
   it('materializes setup tokens as native credentials and as the explicitly requested token environment', async () => {
     const runtime = activateConnectedAccountRuntime();
     const files = await runtime.materialize(
@@ -650,6 +740,10 @@ describe('Claude Subscription Connected Account', () => {
       kind: 'environment',
       env: { CLAUDE_CODE_OAUTH_TOKEN: 'setup-token' },
     });
+    await expect(runtime.materialize(
+      { kind: 'environment', keys: ['ANTHROPIC_OAUTH_TOKEN'] },
+      readContext('setup-token', new Map([['setupToken', 'setup-token']])),
+    )).resolves.toEqual({ kind: 'environment', env: { ANTHROPIC_OAUTH_TOKEN: 'setup-token' } });
     await expect(runtime.materialize(
       { kind: 'environment', keys: ['ANTHROPIC_API_KEY'] },
       readContext('setup-token', new Map([['setupToken', 'setup-token']])),
@@ -705,7 +799,7 @@ describe('Claude Subscription Connected Account', () => {
       services: { exec: { agentCli: { async checkReadiness() { return { launchable: [{ agentId: 'claude', version: '2.1.296' }] }; } } }, http: { request } },
     })).resolves.toMatchObject({
       observedAtMs: expect.any(Number),
-      planLabel: 'max',
+      planLabel: 'Claude Max',
       limits: expect.arrayContaining([
         {
           id: 'five_hour',
