@@ -5,12 +5,12 @@ import { join } from 'path';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol';
-import { createGitWorkspace, createTestRpcManager, runGit as git } from './testRpcHarness';
+import { createGitWorkspace, createTestGitRpcManager, runGit as git } from './testRpcHarness';
 
 describe('git RPC handlers', () => {
     it('returns NOT_REPOSITORY for file diff requests outside a git repository', async () => {
         const workspace = mkdtempSync(join(tmpdir(), 'happier-git-rpc-'));
-        const { call } = createTestRpcManager({ workingDirectory: workspace });
+        const { call } = createTestGitRpcManager({ workingDirectory: workspace });
         const response = await call<any, { cwd?: string; path: string; area?: 'included' | 'pending' | 'both' }>(
             RPC_METHODS.SCM_DIFF_FILE,
             {
@@ -26,7 +26,7 @@ describe('git RPC handlers', () => {
 
     it('returns NOT_REPOSITORY for commit diff requests outside a git repository', async () => {
         const workspace = mkdtempSync(join(tmpdir(), 'happier-git-rpc-'));
-        const { call } = createTestRpcManager({ workingDirectory: workspace });
+        const { call } = createTestGitRpcManager({ workingDirectory: workspace });
         const response = await call<any, { cwd?: string; commit: string }>(
             RPC_METHODS.SCM_DIFF_COMMIT,
             {
@@ -46,7 +46,7 @@ describe('git RPC handlers', () => {
         git(workspace, ['commit', '-m', 'add file']);
         writeFileSync(join(workspace, 'a.txt'), 'after\n');
 
-        const { call } = createTestRpcManager({ workingDirectory: workspace });
+        const { call } = createTestGitRpcManager({ workingDirectory: workspace });
         const enrichment = await call<{
             success: boolean;
             worktrees?: Array<{ path: string; changeCount?: number; lastActivityAt?: number }>;
@@ -81,7 +81,7 @@ describe('git RPC handlers', () => {
         writeFileSync(join(workspace, 'a.txt'), 'after\n');
         git(workspace, ['config', 'diff.external', './external-diff.sh']);
 
-        const { call } = createTestRpcManager({ workingDirectory: workspace });
+        const { call } = createTestGitRpcManager({ workingDirectory: workspace });
         const diff = await call<any, { cwd?: string; path: string; area?: 'included' | 'pending' | 'both' }>(
             RPC_METHODS.SCM_DIFF_FILE,
             {
@@ -107,7 +107,7 @@ describe('git RPC handlers', () => {
 
         writeFileSync(join(workspace, 'a.txt'), 'after\n');
 
-        const { call } = createTestRpcManager({ workingDirectory: workspace });
+        const { call } = createTestGitRpcManager({ workingDirectory: workspace });
         const diff = await call<any, { cwd?: string; path: string; area?: 'included' | 'pending' | 'both' }>(
             RPC_METHODS.SCM_DIFF_FILE,
             {
@@ -137,7 +137,7 @@ describe('git RPC handlers', () => {
         git(workspace, ['config', 'diff.external', './external-diff.sh']);
         const sha = git(workspace, ['rev-parse', 'HEAD']);
 
-        const { call } = createTestRpcManager({ workingDirectory: workspace });
+        const { call } = createTestGitRpcManager({ workingDirectory: workspace });
         const diff = await call<any, { cwd?: string; commit: string }>(RPC_METHODS.SCM_DIFF_COMMIT, {
             cwd: '.',
             commit: sha,
@@ -157,7 +157,7 @@ describe('git RPC handlers', () => {
         git(workspace, ['commit', '-m', 'init']);
         writeFileSync(join(workspace, newlinePath), 'after\n');
 
-        const { call } = createTestRpcManager({ workingDirectory: workspace });
+        const { call } = createTestGitRpcManager({ workingDirectory: workspace });
         const status = await call<any, { cwd?: string }>(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: '.' });
 
         expect(status.success).toBe(true);
@@ -179,7 +179,7 @@ describe('git RPC handlers', () => {
 
         git(workspace, ['mv', oldPath, newPath]);
 
-        const { call } = createTestRpcManager({ workingDirectory: workspace });
+        const { call } = createTestGitRpcManager({ workingDirectory: workspace });
         const status = await call<any, { cwd?: string }>(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: '.' });
 
         expect(status.success).toBe(true);
@@ -198,7 +198,7 @@ describe('git RPC handlers', () => {
         git(workspace, ['commit', '-m', 'init']);
         writeFileSync(join(workspace, tabPath), 'after\n');
 
-        const { call } = createTestRpcManager({ workingDirectory: workspace });
+        const { call } = createTestGitRpcManager({ workingDirectory: workspace });
         const status = await call<any, { cwd?: string }>(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: '.' });
 
         expect(status.success).toBe(true);
@@ -216,7 +216,7 @@ describe('git RPC handlers', () => {
         git(workspace, ['commit', '-m', 'init']);
         writeFileSync(join(workspace, unicodePath), 'after\n');
 
-        const { call } = createTestRpcManager({ workingDirectory: workspace });
+        const { call } = createTestGitRpcManager({ workingDirectory: workspace });
         const status = await call<any, { cwd?: string }>(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: '.' });
 
         expect(status.success).toBe(true);

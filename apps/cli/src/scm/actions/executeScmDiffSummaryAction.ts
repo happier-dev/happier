@@ -3,7 +3,7 @@ import { ExecutionRunStartResponseSchema, ExecutionRunStartFailureDetailsV1Schem
 import { randomUUID } from 'node:crypto';
 import { ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryFailureReasonCodeSchema, buildScmDiffSummaryCacheKey, SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION } from '@happier-dev/protocol/scm/diffSummary';
 import { ActionApprovalRequestCreatedResultSchema, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildBackendTargetKeyV2, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { ActionExecuteResult, BackendTargetRefV2, ScmDiffSummaryGenerateInput, ScmDiffSummaryGenerateOutput, ScmDiffSummaryOutputKind, ScmDiffSummaryOutputs } from '@happier-dev/protocol';
 
 import { captureScmComparison, readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
@@ -14,7 +14,6 @@ import { createCliSettingsCatalogServices } from '@/session/actions/settingsCata
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { resolveScmDiffSummaryModelSelection, resolveScmDiffSummarySettings, SCM_DIFF_SUMMARY_SETTING_KEYS } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
-import { ProviderDefaultModelSelectionsByAgentTargetKeyV1StoredSchema } from '@happier-dev/protocol/providers/selection/v1';
 import type { StoredCredentials } from '@/persistence';
 import { loadScmPullRequestDraftEvidence } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/loadScmDiffSummaryContext';
 import { logger } from '@/ui/logger';
@@ -75,7 +74,13 @@ export async function executeScmDiffSummaryAction(params: Readonly<{
     const outputLanguage = params.request.outputLanguage ?? resolvedSettings.outputLanguage;
     const investigateSurroundingFiles = params.request.investigateSurroundingFiles ?? resolvedSettings.investigateSurroundingFiles;
     let selector = params.request.modelSelector;
+    if (selector?.modelSelection) selector = { ...selector,
+        backendTargetKey: selector.modelSelection.agentTargetKey, modelId: selector.modelSelection.modelId };
     let backendTarget = params.backendTarget;
+    if (selector?.backendTargetKey && (selector.modelId || selector.profileId)) {
+        try { backendTarget = readBackendTargetRefV2(parseBackendTargetKeyV2(selector.backendTargetKey)); }
+        catch { return failure('Diff-summary model target is unavailable', 'MODEL_UNAVAILABLE'); }
+    }
     if (!selector?.modelId && !selector?.profileId) {
         const storedValue = selector?.backendTargetKey ? '' : settings[SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride];
         const catalog = await createCliSettingsCatalogServices({ signal: params.signal, credentials: params.credentials }).readScmDiffSummaryCatalog?.(settings, storedValue);
@@ -97,8 +102,8 @@ export async function executeScmDiffSummaryAction(params: Readonly<{
         summarySchemaVersion: SCM_DIFF_SUMMARY_CACHE_SCHEMA_VERSION, outputs: requestedOutputs, scopeKey: sessionId,
         investigateSurroundingFiles,
         ...(outputLanguage ? { outputLanguage } : {}),
-        resolvedSelector: { catalogId: JSON.stringify({ backendTargetKey: backendTarget ? buildBackendTargetKeyV2(backendTarget) : null,
-            modelId: selector?.modelId ?? 'default', ...(selector?.profileId ? { profileId: selector.profileId } : {}) }) },
+        resolvedSelector: { catalogId: JSON.stringify({ ...selector,
+            backendTargetKey: backendTarget ? buildBackendTargetKeyV2(backendTarget) : null, modelId: selector?.modelId ?? 'default' }) },
     });
     return scmDiffSummaryResultStore.admitGeneration({ cwd: params.request.cwd, ...(sessionId ? { sessionId } : {}), key, outputs: requestedOutputs,
         bypass: Boolean(params.request.pullRequestDraft) || params.request.cachePolicy?.mode === 'bypass', ...(params.signal ? { signal: params.signal } : {}) }, async () => {
@@ -120,6 +125,8 @@ export async function executeScmDiffSummaryAction(params: Readonly<{
             ...(backendTarget ? { generator: { backendTarget,
                 ...(investigateSurroundingFiles ? { investigateSurroundingFiles: true } : {}),
                 ...(selector?.profileId ? { profileId: selector.profileId } : {}),
+                ...(selector?.modelSelection ? { modelSelection: selector.modelSelection } : {}),
+                ...(selector?.connectedServices !== undefined ? { connectedServices: selector.connectedServices } : {}),
                 ...(selector?.modelId ? { modelId: selector.modelId } : {}) } } : {}),
         });
         const scope = { cwd: params.request.cwd, resultId: saved.resultId, ...(sessionId ? { sessionId } : {}) };
@@ -140,25 +147,28 @@ export async function executeScmDiffSummaryAction(params: Readonly<{
         if (!backendTarget) return failed('Diff-summary model target is unavailable', 'MODEL_UNAVAILABLE');
         if (!sessionId && !params.machineId) return failed('Diff-summary generation requires an admitted execution target');
         const inputId = randomUUID();
+        const explicitModelChoice = Boolean(params.request.modelSelector?.modelId || params.request.modelSelector?.profileId || selector?.modelSelection);
+        const { cachePolicy: _cachePolicy, ...intentInput } = params.request;
         const startInput = {
             sessionId: sessionId ?? null,
             ...(!sessionId ? { machineId: params.machineId, cwd: params.request.cwd } : {}),
             kind: EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary,
             intent: 'scm_diff_summary',
             localInputId: inputId,
-            backendTarget: sessionId && !params.request.modelSelector?.modelId && !params.request.modelSelector?.profileId
+            backendTarget: sessionId && !explicitModelChoice
                 ? params.backendTarget ?? backendTarget : backendTarget,
             permissionMode: 'read_only',
             retentionPolicy: 'resumable',
             runClass: 'long_lived',
             ioMode: 'streaming',
             ...(selector?.profileId ? { profileId: selector.profileId } : {}),
-            // Automatic summary defaults are fallback input. A known attached
-            // parent supplies its applied model at the runner admission owner.
-            ...(selector?.modelId && (!sessionId || params.request.modelSelector?.modelId) ? { modelId: selector.modelId } : {}),
+            ...(selector?.modelSelection ? { modelSelection: selector.modelSelection } : {}),
+            ...(selector?.connectedServices !== undefined ? { connectedServices: selector.connectedServices } : {}),
+            // A known attached parent supplies its applied model at the runner
+            // admission owner; an unusable parent requires an explicit choice.
+            ...(selector?.modelId && (!sessionId || explicitModelChoice) ? { modelId: selector.modelId } : {}),
             // Only a host-owned saved evidence id crosses admission, never client diff bytes.
-            intentInput: { ...params.request, outputs: requestedOutputs, investigateSurroundingFiles,
-                ...(params.request.pullRequestDraft ? { cachePolicy: { mode: 'bypass' } } : {}),
+            intentInput: { ...intentInput, outputs: requestedOutputs, investigateSurroundingFiles,
                 ...(outputLanguage ? { outputLanguage } : {}), ...(selector ? { modelSelector: selector } : {}), ...(sessionId ? { sessionId } : {}), comparisonId: captured.comparison.id,
                 resultId: saved.resultId, expectedRevision: saved.revision },
             waitForCompletion: false,
@@ -199,30 +209,9 @@ export async function executeScmDiffSummaryAction(params: Readonly<{
                     : result.ok ? 'outcomeUnknown' : readExecutionRunStartRunCreation(result.details) });
             return result;
         };
-        let startResult = await start(startInput);
+        const startResult = await start(startInput);
         // Losing Start's observation does not revoke its saved revision: that
         // same request may still be preparing or publishing on the receiver.
-        if (!startResult.ok && startResult.errorCode === 'execution_run_parent_selection_unavailable'
-            && readExecutionRunStartRunCreation(startResult.details) === 'noRunCreated'
-            && !params.request.modelSelector?.modelId && !params.request.modelSelector?.profileId && selector?.modelId) {
-            // A different default Agent must pass the canonical Action gate itself.
-            // Only a proven empty admission permits this fallback; an unknown
-            // outcome must never create another Run for the captured comparison.
-            const defaults = ProviderDefaultModelSelectionsByAgentTargetKeyV1StoredSchema.safeParse(
-                settings.providerDefaultModelSelectionsByAgentTargetKeyV1 ?? {},
-            );
-            if (!defaults.success) return failed('Diff-summary model is unavailable');
-            const agentTargetKey = buildBackendTargetKeyV2(backendTarget);
-            startResult = await start({
-                ...startInput,
-                backendTarget,
-                modelId: selector.modelId,
-                modelSelection: {
-                    ...(defaults.data[agentTargetKey]?.ref ?? { agentTargetKey, providerConnectionId: null }),
-                    modelId: selector.modelId,
-                },
-            });
-        }
         if (!startResult.ok) {
             const noRunCreated = readExecutionRunStartRunCreation(startResult.details) === 'noRunCreated';
             if (!noRunCreated) return latestOutput(undefined, undefined, 'outcomeUnknown');

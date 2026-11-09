@@ -45,10 +45,11 @@ function reasonFor(response: ScmCommitCreateResponse): ScmCommitPlanApplication[
 async function applyRemaining(input: Readonly<{ store: ScmDiffSummaryResultStore; scope: ScmDiffSummaryResultScope;
   backend: ScmBackend; context: ScmBackendContext }>): Promise<ScmDiffSummaryResultResponse> {
   const { store, scope, backend, context } = input;
-  let current = await store.read(scope);
-  if (!current.success || !current.result.application) return current;
-  const initialApplication = current.result.application;
   const savedScope = await store.readStoredScope(scope);
+  if (!savedScope) return failure('result_not_found', 'Saved result is unavailable in this repository/session.');
+  let current: ScmDiffSummaryResultResponse = { success: true, result: savedScope.result };
+  if (!current.result.application) return current;
+  const initialApplication = current.result.application;
   const comparison = (await readCapturedScmComparison({ cwd: scope.cwd,
     comparisonId: current.result.application.acceptance.comparisonId,
     ...(savedScope?.sessionId ? { sessionId: savedScope.sessionId } : {}) })).comparison;
@@ -82,9 +83,8 @@ async function applyRemaining(input: Readonly<{ store: ScmDiffSummaryResultStore
     }
   }
   while (true) {
-    current = await store.read(scope);
     if (!current.success || !current.result.application) return current;
-    const application = current.result.application;
+    const application: ScmCommitPlanApplication = current.result.application;
     if (application.status !== 'applying') return current;
     if (application.stopAfterCurrent || context.signal?.aborted) return store.mutateApplication(scope, (result) => ({
       ...result.application!, status: 'stopped', reason: context.signal?.aborted ? 'cancelled' : result.application!.reason ?? 'stopped' }));
@@ -101,10 +101,6 @@ async function applyRemaining(input: Readonly<{ store: ScmDiffSummaryResultStore
     if (!expectedIndexTreeOid) return store.mutateApplication(scope, (result) => ({ ...result.application!,
       status: 'failed', reason: 'staging_conflict', steps: result.application!.steps.map((entry, position) => position === index
         ? { ...entry, state: 'not_published', error: 'The previous publication has no verified reconciled index. Capture a fresh pending proposal before continuing.' } : entry) }));
-    const observed = await target(backend, context);
-    if (observed.expectedHeadOid !== expectedParent || observed.expectedRef !== application.acceptance.expectedRef) {
-      return store.mutateApplication(scope, (result) => ({ ...result.application!, status: 'failed', reason: 'head_moved' }));
-    }
     const remainingRefs = new Set(plan.groups.slice(index).flatMap((candidate) => candidate.changeRefs));
     const paths = [...new Set(comparison.inventory.files.filter((file) => file.occurrences.some((occurrence) => remainingRefs.has(occurrence.id)))
       .flatMap((file) => [file.path, ...(file.previousPath ? [file.previousPath] : [])]))];
@@ -116,13 +112,13 @@ async function applyRemaining(input: Readonly<{ store: ScmDiffSummaryResultStore
     const candidate = materialized.steps.find((entry) => entry.groupId === step.groupId)!;
     const previousTreeOid = expectedParent ? await git(scope.cwd, ['--no-replace-objects', 'rev-parse', `${expectedParent}^{tree}`]) : materialized.baseTreeOid;
     if (previousTreeOid === candidate.targetTreeOid) throw new Error('The accepted group has no remaining exact changes; reselect it before accepting.');
-    const writing = await store.mutateApplication(scope, (result) => {
+    const writing: ScmDiffSummaryResultResponse = await store.mutateApplication(scope, (result) => {
       if (result.application!.status !== 'applying' || result.application!.stopAfterCurrent) return result.application!;
       return { ...result.application!, steps: result.application!.steps.map((entry, position) => position === index
         ? { ...entry, state: 'writing', targetTreeOid: candidate.targetTreeOid, expectedHeadOid: expectedParent } : entry) };
     });
     if (!writing.success) return writing;
-    if (writing.result.application?.steps[index]?.state !== 'writing') continue;
+    if (writing.result.application?.steps[index]?.state !== 'writing') { current = writing; continue; }
     let response: ScmCommitCreateResponse;
     try {
       response = await backend.commitCreate({ context, request: { cwd: scope.cwd, message: group.message,
@@ -152,6 +148,7 @@ async function applyRemaining(input: Readonly<{ store: ScmDiffSummaryResultStore
         ...(response.errorCode ? { errorCode: response.errorCode } : {}), ...(response.error ? { error: response.error } : {}),
       } : entry) }));
     if (!recorded.success || recorded.result.application?.status !== 'applying') return recorded;
+    current = recorded;
     if (step.acceptedHookTreeOid) {
       expectedSourceTree = (await mergeScmCommitPlanHookTree({ cwd: scope.cwd, originalTreeOid: candidate.targetTreeOid,
         acceptedHookTreeOid: step.acceptedHookTreeOid, targetTreeOid: expectedSourceTree })).targetTreeOid;

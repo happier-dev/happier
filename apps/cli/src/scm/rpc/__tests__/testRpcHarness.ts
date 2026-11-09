@@ -74,7 +74,7 @@ export function createTestRpcManager(params?: { scopePrefix?: string; machineId?
         return decrypted as TResponse;
     }
 
-    return { call };
+    return { call, invokeLocal: manager.invokeLocal.bind(manager) };
 }
 
 export function runGit(cwd: string, args: string[]): string {

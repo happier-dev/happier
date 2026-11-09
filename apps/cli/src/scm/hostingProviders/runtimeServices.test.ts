@@ -979,11 +979,9 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
     }
   });
 
-  it('recognizes a configured deployment anywhere inside the canonical authorized inventory bound', async () => {
+  it('recognizes a configured deployment beyond the old metadata ceiling', async () => {
     const service = { pluginId: GITHUB_PLUGIN_MANIFEST.id, localId: 'github-account' } as const;
-    // A user whose 21st authorized deployment is still far below the canonical Connected
-    // Account metadata ceiling must not lose recognition of it.
-    const accounts = Array.from({ length: 21 }, (_, index) => createListedDeploymentAccount(
+    const accounts = Array.from({ length: 300 }, (_, index) => createListedDeploymentAccount(
       service,
       `account-${index}`,
       `https://forge-${index}.example.test`,
@@ -1019,11 +1017,11 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
 
     expect(registry?.detectRemote({
       remoteName: 'origin',
-      remoteUrl: 'https://forge-20.example.test/team/repository.git',
+      remoteUrl: 'https://forge-299.example.test/team/repository.git',
     })).toMatchObject({
       kind: 'resolved',
       providerId: GITHUB_SCM_HOSTING_PROVIDER_ID,
-      provider: { baseUrl: 'https://forge-20.example.test' },
+      provider: { baseUrl: 'https://forge-299.example.test' },
     });
     expect(registry?.diagnostics).toEqual([]);
   });

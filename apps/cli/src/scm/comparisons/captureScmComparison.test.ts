@@ -6,8 +6,8 @@ import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { configuration } from '@/configuration';
 import { createScmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
-import { applyScmReviewedMarkIntent, isScmSelectionReviewed } from '@happier-dev/protocol/scm/reviewedMarks';
-import { buildScmReviewScopeId } from '@happier-dev/protocol/scm/comparisonOccurrences';
+import { applyScmReviewedMarkIntent } from '@happier-dev/protocol/scm/reviewedMarks';
+import { buildScmChangeKeys, buildScmReviewScopeId } from '@happier-dev/protocol/scm/comparisonOccurrences';
 import { retainRepositoryCheckpointTurnEvidence } from '../checkpoints/sessionEvidence';
 import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
 import { encodeRepositoryCheckpointScope } from '../checkpoints/refs';
@@ -167,8 +167,7 @@ describe('captured SCM comparison storage', () => {
       const record = applyScmReviewedMarkIntent(first.comparison, null, refs, true);
       expect(new Set(captures.map(capture => scope(capture.comparison))).size).toBe(4);
       for (const captured of captures.slice(1)) {
-        expect(isScmSelectionReviewed(record, captured.comparison,
-          captured.comparison.inventory.files.flatMap(file => file.occurrences.map(change => change.id)))).toBe(false);
+        expect(record.scopeId).not.toBe(scope(captured.comparison));
       }
       // A pre-normalization retained capture stores selectors in metadata/session, not source.
       const path = join(configuration.activeServerDir, 'runtime', 'scm', 'comparisons',
@@ -181,7 +180,7 @@ describe('captured SCM comparison storage', () => {
       expect(retained.comparison.id).toBe(first.comparison.id);
       expect(retained.comparison.inventory).toEqual(first.comparison.inventory);
       expect(scope(retained.comparison)).toBe(scope(first.comparison));
-      expect(isScmSelectionReviewed(record, retained.comparison, refs)).toBe(true);
+      expect(record.reviewedChangeKeys).toEqual(refs.flatMap(ref => buildScmChangeKeys(retained.comparison).get(ref) ?? []));
       await expect(readCapturedScmComparison({ cwd: fixture.rootPath, sessionId: first.sessionId,
         comparisonId: first.comparison.id, source: { kind: 'turnCheckpoint', sessionId: 'foreign-session' } }))
         .rejects.toMatchObject({ code: 'DIFF_UNAVAILABLE' });
@@ -209,7 +208,7 @@ describe('captured SCM comparison storage', () => {
         if (!result.success) throw new Error(result.error);
         expect(result.result.output.comparison?.id).toBe(first.comparison.id);
         expect(result.result.output.comparison?.source).toEqual(first.comparison.source);
-        expect(isScmSelectionReviewed(record, result.result.output.comparison!, refs)).toBe(true);
+        expect(record.reviewedChangeKeys).toEqual(refs.flatMap(ref => buildScmChangeKeys(result.result.output.comparison!).get(ref) ?? []));
       }
     } finally {
       await Promise.all(captures.map(capture => deleteCapturedScmComparison({ cwd: fixture.rootPath,

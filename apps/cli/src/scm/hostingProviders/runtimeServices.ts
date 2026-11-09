@@ -553,8 +553,6 @@ export function createHostScmHostingProviderRuntimeServices(
                 }
                 const signal = options?.signal ?? new AbortController().signal;
                 const service = createStablePluginExecService({
-
-
                     signal,
                     isOccurrenceCurrent: () => {
                         const latest = input.scmHostingProvidersById.get(qualifiedId);

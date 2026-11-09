@@ -1,12 +1,13 @@
 import { EXECUTION_RUN_KIND_BY_INTENT } from '@happier-dev/protocol/execution/runs/startRequest';
 import { randomUUID } from 'node:crypto';
+import { bindScmRefineSavedSessionV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema, ExecutionRunSendResponseSchema, readExecutionRunStartRunCreation } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { SessionInputAdmissionRejectionCodeV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 import { resolveExecutionRunInteractionAffordances } from '@happier-dev/protocol/execution/runs/interactionAffordances';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ScmDiffSummaryResultReadInputSchema, ScmDiffSummaryResultEditInputSchema, ScmDiffSummaryResultRevisionInputSchema, ScmDiffSummaryRefineInputSchema, ScmDiffSummaryAddOutputsInputSchema, ScmDiffSummaryDiscussInputSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
-import type { ScmActionExecute, ScmActionId, ScmDiffSummaryResultResponse, ScmDiffSummaryResultDeleteResponse, ScmDiffSummaryOutputKind, ActionExecutorContext, ScmReviewExplanationRequester, ScmDiffSummaryGeneratorSelection } from '@happier-dev/protocol';
+import type { ScmActionExecute, ScmActionId, ScmDiffSummaryResultResponse, ScmDiffSummaryResultDeleteResponse, ScmDiffSummaryOutputKind, ActionExecutorContext, ActionExecuteResult, ScmReviewExplanationRequester, ScmDiffSummaryGeneratorSelection } from '@happier-dev/protocol';
 import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 import { buildDiffSummaryPrompt, buildDiffSummaryRefinementTask } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/buildDiffSummaryPrompt';
 import { presentScmDiffSummaryModelContext, scopeScmDiffSummaryComparison } from '@/agent/runtime/bridges/executionRun/kinds/scmDiffSummary/presentScmDiffSummaryModelContext';
@@ -21,7 +22,7 @@ export async function executeScmDiffSummaryResultAction(params: Readonly<{
   actionId: ScmDiffSummarySavedActionId; input: unknown; cwd: string; sessionId?: string;
   executeCanonicalAction?: ExecuteCanonicalAction; signal?: AbortSignal;
   actionContext?: ActionExecutorContext;
-}>): Promise<ScmDiffSummaryResultResponse | ScmDiffSummaryResultDeleteResponse> {
+}>): Promise<ScmDiffSummaryResultResponse | ScmDiffSummaryResultDeleteResponse | Extract<ActionExecuteResult, { ok: false }>> {
   const request = ScmDiffSummaryResultReadInputSchema.parse({
     cwd: params.cwd, resultId: (params.input as { resultId: string }).resultId,
   });
@@ -37,21 +38,26 @@ export async function executeScmDiffSummaryResultAction(params: Readonly<{
     if (params.actionId === 'scm.diffSummary.result.undo') return store.undo({ ...scope, expectedRevision: input.expectedRevision });
     return store.delete({ ...scope, expectedRevision: input.expectedRevision });
   }
-  const read = await store.read(scope);
-  if (!read.success) return read;
-  const result = read.result;
+  const storedScope = await store.readStoredScope(scope);
+  if (!storedScope) return { success: false, errorCode: 'result_not_found', error: 'Saved result is unavailable in this repository/session.' };
+  const result = storedScope.result;
   const input = params.actionId === 'scm.diffSummary.refine' ? ScmDiffSummaryRefineInputSchema.parse(params.input)
     : params.actionId === 'scm.diffSummary.addOutputs' ? ScmDiffSummaryAddOutputsInputSchema.parse(params.input)
       : ScmDiffSummaryDiscussInputSchema.parse(params.input);
   if (input.expectedRevision !== result.revision) return { success: false, errorCode: 'revision_conflict',
     error: 'The saved result changed. Reconcile the current revision before sending.', latestRevision: result.revision };
-  const storedScope = await store.readStoredScope(scope);
-  const sessionId = storedScope?.sessionId;
+  const sessionId = storedScope.sessionId;
   const machineId = params.actionContext?.externalActionTarget?.kind === 'machine'
     ? params.actionContext.externalActionTarget.machineId : params.actionContext?.executionRunTargetMachineId;
   const runTarget = { sessionId: sessionId ?? null };
   const execute = params.executeCanonicalAction;
   if ((!sessionId && !machineId) || !execute) return { success: false, errorCode: 'discussion_unavailable', error: 'The saved generator target is unavailable.' };
+  const root = params.actionContext?.externalActionExecutionAuthorization;
+  const scopedAuthorization = sessionId && root
+    ? params.actionContext?.signExternalActionApprovalInput
+      ? bindScmRefineSavedSessionV1({ authorization: root, sessionId, sign: params.actionContext.signExternalActionApprovalInput })
+      : null : undefined;
+  if (scopedAuthorization === null) return { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' };
   const previousRunId = result.output.runId;
   const observed = previousRunId ? await execute('execution.run.get', { ...runTarget, runId: previousRunId, includeStructured: true }).catch(() => null) : null;
   const parsedRun = observed?.ok ? ExecutionRunGetResponseSchema.safeParse(observed.result) : null;
@@ -93,7 +99,7 @@ export async function executeScmDiffSummaryResultAction(params: Readonly<{
     : params.actionId === 'scm.diffSummary.addOutputs'
       ? `Add the requested outputs: ${outputs.join(', ')}. Use the saved comparison and existing outputs. Publish the requested structured outputs.`
       : '';
-  const citations = (await store.readStoredScope(scope))?.reviewFindingCitations ?? [];
+  const citations = storedScope.reviewFindingCitations ?? [];
   const evidenceContext = `Saved result ${result.resultId}, revision ${result.revision}.\n${JSON.stringify(presentScmDiffSummaryModelContext(targetedStops
     ? { comparisonId: comparison.id, title: result.output.outputs?.walkthrough?.value?.title, stops: targetedStops, files: scopedComparison.inventory.files }
     : { comparisonId: comparison.id, outputs: result.output.outputs, ...(selectedStops ? { selectedStopIds: stopIds } : {}) }, scopedComparison, citations))}`;
@@ -166,15 +172,25 @@ export async function executeScmDiffSummaryResultAction(params: Readonly<{
   }
   if (!previousRunId || (!affordances.canSend && !affordances.canResume)) return { success: false,
     errorCode: 'discussion_unavailable', error: 'The generator cannot continue. Start a new conversation explicitly.' };
-  // Pending admits the exact recipient before its existing target reconciler
-  // resumes a retained runtime. Native provisioning is not input admission.
-  const inputId = randomUUID();
+  // Refine and Discuss explicitly recover their retained generator. Ordinary
+  // Pending input never grants authority to reopen a terminal Run.
+  if (sessionId && affordances.canResume
+    && (params.actionId === 'scm.diffSummary.refine' || params.actionId === 'scm.diffSummary.discuss')) {
+    const ensured = await execute('execution.run.ensure', { ...runTarget, runId: previousRunId, resume: true });
+    // The canonical child Action already normalizes transport failures. Keep its
+    // failure envelope intact rather than recoding it as a saved-result failure.
+    if (!ensured.ok) return ensured;
+  }
+  const inputId = scopedAuthorization?.binding.requestId ?? randomUUID();
   const begun = await store.beginInput({ ...scope, inputId, expectedRevision: input.expectedRevision, outputs, ...(stopIds && !discuss ? { stopIds } : {}),
     ...(explanationRequest ? { reviewExplanation: explanationRequest } : {}) });
   if (!begun.success) return begun;
   const sent = await (sessionId
-    ? execute('session.message.send', { sessionId, recipient: { kind: 'execution_run', runId: previousRunId }, message, localId: inputId },
-      discuss ? { sessionMessageDisplayText: discuss.message } : undefined)
+    ? execute('session.message.send', { sessionId, recipient: { kind: 'execution_run', runId: previousRunId }, message, localId: inputId,
+        ...(params.actionId === 'scm.diffSummary.refine' ? { requestedAction: { v: 1, kind: 'send_now' } } : {}) },
+      { sessionMessageDisplayText: userInstructions ?? taskInstructions,
+        ...(scopedAuthorization ? { scmRefineInputAuthorization: scopedAuthorization } : {}),
+        ...(discuss && stopIds ? { sessionMessageScmWalkthroughQuestion: { resultId: result.resultId, revision: result.revision, stopIds: [...stopIds] } } : {}) })
     : execute('execution.run.send', { ...runTarget, runId: previousRunId, message, localInputId: inputId,
       ...(affordances.canResume ? { resume: true } : {}) })).catch(() => null);
   if (!sent) return { success: false, errorCode: 'admission_unknown', error: 'The generator input admission is unconfirmed.' };

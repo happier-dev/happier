@@ -3,6 +3,16 @@ import { ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol';
 import { summarizeScmDiffSummarySevenDayCost } from './scmDiffSummarySevenDayCost';
 
 describe('saved change explanation cost projection', () => {
+  it('reads only retained cost, not the comparison or saved reading body', () => {
+    const untilMs = 1_000;
+    const payload = { cost: { estimatedUsd: 0.25 },
+      get comparison(): never { throw new Error('Cost projection read comparison evidence'); },
+      get outputs(): never { throw new Error('Cost projection read saved prose'); } };
+    expect(summarizeScmDiffSummarySevenDayCost([{ intent: 'scm_diff_summary', startedAtMs: untilMs,
+      structuredMeta: { kind: 'scm_diff_summary.v1', payload } }], untilMs))
+      .toMatchObject({ status: 'partial', estimatedUsd: 0.25, pricedRunCount: 1, unpricedRunCount: 0 });
+  });
+
   it('sums only actual recent execution records and discloses incomplete cost coverage', () => {
     const untilMs = 10 * 24 * 60 * 60 * 1000;
     const payload = (estimatedUsd?: number) => ({ kind: 'scm_diff_summary.v1', payload: { ...ScmDiffSummaryGenerateOutputSchema.parse({

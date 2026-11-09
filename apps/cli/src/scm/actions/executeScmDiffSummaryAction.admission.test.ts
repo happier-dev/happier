@@ -553,8 +553,12 @@ describe('SCM generation through real host admission', () => {
                         expect(signals).toEqual([]);
                         if (intentInput.expectedRevision === undefined) throw new Error('Generation must bind its saved revision');
                         if (!intentInput.resultId) throw new Error('Machine generation must save its result before Run admission');
-                        expect(await scmDiffSummaryResultStore.readStoredScope({ cwd: fixture.rootPath, sessionId,
-                            resultId: intentInput.resultId })).toEqual({ cwd: fixture.rootPath, sessionId });
+                        const stored = await scmDiffSummaryResultStore.readStoredScope({ cwd: fixture.rootPath, sessionId,
+                            resultId: intentInput.resultId });
+                        if (!stored) throw new Error('Expected the admitted saved comparison');
+                        const { result: savedResult, ...scope } = stored;
+                        expect(scope).toEqual({ cwd: fixture.rootPath, sessionId });
+                        expect(savedResult.resultId).toBe(intentInput.resultId);
                         const stale = await client.call<unknown, unknown>(method, { ...startRequest,
                             intentInput: { ...intentInput, expectedRevision: intentInput.expectedRevision + 1 } });
                         expect(stale).toMatchObject({ ok: false, errorCode: 'execution_run_profile_preparation_failed',

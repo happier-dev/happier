@@ -7,9 +7,44 @@ import { buildRepositoryCheckpointRefs, encodeRepositoryCheckpointScope } from '
 import { gitCheckpointAdapter } from './gitCheckpointAdapter';
 import { findRepositoryCheckpointTurnEvidenceByReceipt, readRepositoryCheckpointBranchEvidence, readRepositoryCheckpointCommitEvidence, readRepositoryCheckpointInitialEvidence, readRepositoryCheckpointPullRequestEvidence, readRepositoryCheckpointTurnEvidence, retainRepositoryCheckpointTurnEvidence } from './sessionEvidence';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { collectUsageWorkSources } from '@happier-dev/protocol/usage/usageWorkSources';
+import { resolveUsagePageAggregation, UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { createTestGitRpcManager } from '../rpc/__tests__/testRpcHarness';
 
 describe('checkpoint/commit correspondence', () => {
+  it('reports non-repository Usage work as unsupported while preserving actual Session refusals', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'happier-usage-non-repository-'));
+    try {
+      const { call } = createTestGitRpcManager({ workingDirectory: cwd });
+      const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, includeComparison: false,
+        includeQuotaHistory: false, includeSessionEvidence: false, includeWorkEvidence: true });
+      const value = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { eventCount: 1,
+        tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 },
+        cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } },
+        sessionMembership: { turns: [{ sessionId: 'non-repository-session', turnId: 'turn', executions: ['happier'] }] } });
+      const accounting = [{ query, value, status: 'available' as const }];
+      const read = (authorized: boolean) => collectUsageWorkSources({ queries: [query], accounting,
+        assertCurrent: () => {}, readSession: async sessionId => (method, request) => call(method, request,
+          authorized ? { kind: 'session.write', sessionId } : undefined) });
+
+      // The real SCM ingress/detector returns NOT_REPOSITORY for all four reads.
+      const work = await read(true);
+      const result = UsageQueryBatchResultSchema.parse(resolveUsagePageAggregation({ queries: [query], accounting, work }));
+      expect(work[0]).toMatchObject({ status: 'unsupported', evidence: [], branchEvidence: [] });
+      expect(work[0]).not.toHaveProperty('errorCode');
+      expect(result.results[0]?.sources).toContainEqual({ source: 'work', status: 'unsupported' });
+      expect(result.results[0]?.accounting?.totals.tokens.total).toBe(1);
+      expect(result.results[0]?.work?.outcomes ?? []).toEqual([]);
+      expect(result.results[0]?.work?.branches ?? []).toEqual([]);
+
+      // Removing the transport's authenticated Session proof must still quarantine.
+      const denied = await read(false);
+      expect(denied[0]).toMatchObject({ status: 'error', errorCode: 'work_evidence_failed', evidence: [], branchEvidence: [] });
+    } finally { rmSync(cwd, { recursive: true, force: true }); }
+  });
+
   it('uses only server-stamped exact Session proof at the encrypted SCM ingress', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'happier-work-ingress-'));
     try {

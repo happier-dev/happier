@@ -6,9 +6,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     createActionExecutor, type ActionExecutorDeps, ExecutionRunStartRequestSchema,
     ScmComparisonSchema, ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryResultResponseSchema,
-    ScmReviewedMarksRecordSchema, ScmReviewedMarkResponseSchema, applyScmReviewedMarkIntent,
+    ScmReviewedMarksRecordSchema, ScmReviewedMarkResponseSchema, applyScmReviewedMarkIntent, buildScmChangeKeys,
     type ScmComparison, type ScmDiffSummaryResultReadInput, type ScmDiffSummaryResultEditInput,
-    type ScmDiffSummaryResultResponse, type ScmReviewedMarksRecord, type ScmReviewedMarkResponse, type ScmReviewedMarkInput,
+    type ScmDiffSummaryResultResponse, type ScmReviewedMarksRecord, type ScmReviewedMarkResponse, type ScmReviewedUnmarkInput,
+    type ScmDiffSummaryResultClearInput, type ScmDiffSummaryResultClearResponse,
 } from '@happier-dev/protocol';
 import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
@@ -33,18 +34,19 @@ await import(uiSetupPath);
 vi.doUnmock(fileURLToPath(new URL('../../../../ui/sources/components/ui/icons/Icon.tsx', import.meta.url)));
 const uiResultsPath = new URL('../../../../ui/sources/sync/ops/scmDiffSummary/results.ts', import.meta.url).href;
 const uiMarksPath = new URL('../../../../ui/sources/dev/testkit/harness/scmActionTransport.ts', import.meta.url).href;
+const uiSavedPath = new URL('../../../../ui/sources/sync/ops/scmDiffSummary/savedResultOperations.ts', import.meta.url).href;
 type UiResultsModule = Readonly<{
     createScmDiffSummaryResultOperations(params: Readonly<{ machineId: string; shouldContinue(): boolean;
         actionExecutor: ReturnType<typeof createActionExecutor> }>): Readonly<{
         read(input: ScmDiffSummaryResultReadInput): Promise<ScmDiffSummaryResultResponse>;
         edit(input: ScmDiffSummaryResultEditInput): Promise<ScmDiffSummaryResultResponse>;
-        setReviewed(input: ScmReviewedMarkInput, reviewed: boolean): Promise<ScmReviewedMarkResponse>;
+        setReviewed(input: ScmReviewedUnmarkInput, reviewed: boolean): Promise<ScmReviewedMarkResponse>;
     }>;
 }>;
 type UiMarksModule = Readonly<{
     createScmReviewedMarksOperationsWithTransport(params: Readonly<{ comparison: ScmComparison;
         credentials: Readonly<{ token: string }>; encryption: null; shouldContinue(): boolean;
-        setReviewedAction(refs: readonly string[], reviewed: boolean): Promise<ScmReviewedMarkResponse>;
+        setReviewedAction(input: ScmReviewedUnmarkInput, reviewed: boolean): Promise<ScmReviewedMarkResponse>;
         request(path: string, init?: RequestInit): Promise<Response> }>): Readonly<{
         read(): Promise<Readonly<{ record: ScmReviewedMarksRecord | null }>>;
         setReviewed(refs: readonly string[], reviewed: boolean): Promise<ScmReviewedMarkResponse>;
@@ -53,6 +55,13 @@ type UiMarksModule = Readonly<{
 }>;
 const { createScmDiffSummaryResultOperations }: UiResultsModule = await import(uiResultsPath);
 const { createScmReviewedMarksOperationsWithTransport }: UiMarksModule = await import(uiMarksPath);
+const { createScmDiffSummarySavedResultOperations }: Readonly<{
+    createScmDiffSummarySavedResultOperations(params: Readonly<{ machineId: string; shouldContinue(): boolean;
+        actionExecutor: ReturnType<typeof createActionExecutor> }>): Readonly<{
+        clear(input: ScmDiffSummaryResultClearInput): Promise<ScmDiffSummaryResultClearResponse>;
+        retryMarksCleanup(failure: unknown): Promise<ScmReviewedMarkResponse>;
+    }>;
+}> = await import(uiSavedPath);
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -96,20 +105,24 @@ describe('captured comparison, structured publication and personal marks', () =>
             }] } });
             expect(ScmDiffSummaryGenerateOutputSchema.safeParse({ ...publication, executablePatch: 'forged' }).success).toBe(false);
 
-            const scmActionExecute: NonNullable<ActionExecutorDeps['scmActionExecute']> = ({ actionId, input, context, executeCanonicalAction }) =>
-                executeScmActionOperation({ actionId, input, actionContext: context, executeCanonicalAction,
+            let nativeClearCalls = 0;
+            const scmActionExecute: NonNullable<ActionExecutorDeps['scmActionExecute']> = ({ actionId, input, context, executeCanonicalAction }) => {
+                if (actionId === 'scm.diffSummary.result.clear') nativeClearCalls++;
+                return executeScmActionOperation({ actionId, input, actionContext: context, executeCanonicalAction,
                     workingDirectory: cwd, accessPolicy: { kind: 'restrictedRoots', roots: [cwd] },
                     executeReviewedMarks: (captured, request, reviewed) => createCliScmReviewedMarkAction({
                         credentials: { token: 'journey-account', encryption: null }, serverBaseUrl: 'https://journey.test',
                         resolveAuthorizationHeaders: () => ({ Authorization: 'Bearer journey-account' }),
                         ...('id' in captured ? { comparison: captured } : { source: captured }),
-                        ...('changeKeys' in request ? { changeKeys: request.changeKeys } : { changeRefs: request.changeRefs }), reviewed,
+                        ...('reset' in request ? { reset: true as const } : 'changeKeys' in request ? { changeKeys: request.changeKeys } : { changeRefs: request.changeRefs }), reviewed,
                     }),
                 });
+            };
             const settings = { v: 1, actions: {}, approvalWaivedSurfaces: {
                 'scm.diffSummary.result.edit': ['cli', 'ui'],
                 'scm.diffSummary.reviewed.mark': ['cli', 'ui'],
                 'scm.diffSummary.reviewed.unmark': ['cli', 'ui'],
+                'scm.diffSummary.result.clear': ['cli', 'ui'],
             } } satisfies ActionsSettingsV1;
             // The fixture's explicit Account choices use the real policy owner;
             // only SCM outward transport is configured for this Action family.
@@ -141,12 +154,14 @@ describe('captured comparison, structured publication and personal marks', () =>
             let version = -1;
             let content: string | null = null;
             let injectConcurrentMark = false;
+            let failNextMarkWrite = false;
             const record = (refs: string[]) => applyScmReviewedMarkIntent(comparison, null, refs, true);
             const encode = (value: unknown) => Buffer.from(JSON.stringify({ t: 'plain', v: value })).toString('base64');
             const route = (path: string, body?: { mutations: { key: string; value: string; version: number }[] }) => {
                 if (path.endsWith('/currentness')) return { status: 200, data: currentness };
                 if (!body) return content === null ? { status: 404, data: {} }
                     : { status: 200, data: { key: decodeURIComponent(path.slice('/v1/kv/'.length)), value: content, version } };
+                if (failNextMarkWrite) { failNextMarkWrite = false; return { status: 503, data: { error: 'Account KV unavailable' } }; }
                 const mutation = body.mutations[0]!;
                 if (injectConcurrentMark) { injectConcurrentMark = false; content = encode(record(occurrences.slice(0, 2).map(change => change.id))); version++; }
                 if (mutation.version !== version) return { status: 409, data: { success: false, errors: [{ key: mutation.key, value: content, version, error: 'version-mismatch' }] } };
@@ -164,7 +179,7 @@ describe('captured comparison, structured publication and personal marks', () =>
             const cliMark = ScmReviewedMarkResponseSchema.parse(marked.result);
             expect(cliMark).toMatchObject({ success: true, record: record([firstRef]) });
             const marks = createScmReviewedMarksOperationsWithTransport({ comparison, credentials: { token: 'journey-account' },
-                setReviewedAction: (refs, reviewed) => ui.setReviewed({ ...markInput, changeRefs: [...refs] }, reviewed),
+                setReviewedAction: (input, reviewed) => ui.setReviewed(input, reviewed),
                 encryption: null, shouldContinue: () => true, request: async (path, init) => {
                     const answer = route(path, init?.body ? JSON.parse(String(init.body)) : undefined);
                     return Response.json(answer.data, { status: answer.status });
@@ -178,9 +193,35 @@ describe('captured comparison, structured publication and personal marks', () =>
                 const stored = JSON.parse(Buffer.from(content!, 'base64').toString('utf8'));
                 expect(ScmReviewedMarksRecordSchema.parse(stored.v)).toEqual(record([occurrences[1]!.id]));
                 expect(ScmReviewedMarksRecordSchema.safeParse({ ...stored.v, generatedReviewed: true }).success).toBe(false);
+                const firstKey = buildScmChangeKeys(comparison).get(firstRef)![0]!;
+                const keyed = { v: 2 as const, cwd, comparisonId: comparison.id, source: comparison.source, changeKeys: [firstKey] };
+                expect(await ui.setReviewed(keyed, true)).toMatchObject({ success: true,
+                    record: { reviewedChangeKeys: [...record([occurrences[1]!.id]).reviewedChangeKeys, firstKey] } });
+                expect(await ui.setReviewed({ ...keyed, changeKeys: ['forged'] }, true))
+                    .toMatchObject({ success: false, errorCode: 'reviewed_marks_invalid_selection' });
+                content = encode({ ...record([firstRef]), reviewedChangeKeys: [firstKey, 'obsolete-key'] }); version++;
+                expect(await ui.setReviewed({ v: 2, cwd, comparisonId: comparison.id, source: comparison.source, reset: true }, false))
+                    .toMatchObject({ success: true, record: { reviewedChangeKeys: [] } });
                 expect(await ui.read(scope)).toMatchObject({ success: true, result: { output: {
                     outputs: { walkthrough: { value: { title: 'Human reading' } } }, comparison,
                 } } });
+                content = encode(record([firstRef])); version++;
+                const savedOperations = createScmDiffSummarySavedResultOperations({ machineId: 'journey-machine',
+                    shouldContinue: () => true, actionExecutor: executor });
+                failNextMarkWrite = true;
+                const cleared = await savedOperations.clear({ results: [{ ...scope, expectedRevision: manual.success ? manual.result.revision : -1,
+                    comparisonId: comparison.id }] });
+                expect(cleared).toMatchObject({ success: true, deleted: [{ resultId: scope.resultId }], failures: [{
+                    resultId: scope.resultId, resultDeleted: true, errorCode: 'reviewed_marks_cleanup_failed',
+                    retry: { actionId: 'scm.diffSummary.reviewed.unmark', input: { comparisonId: comparison.id, reset: true } },
+                }] });
+                // The public admission owner deliberately conceals missing retained provenance.
+                expect(await ui.read(scope)).toMatchObject({ success: false, errorCode: 'result_unavailable' });
+                expect(nativeClearCalls).toBe(1);
+                if (!cleared.success) throw new Error(cleared.error);
+                expect(await savedOperations.retryMarksCleanup(cleared.failures[0])).toMatchObject({ success: true, record: { reviewedChangeKeys: [] } });
+                expect(nativeClearCalls).toBe(1);
+                expect(JSON.parse(Buffer.from(content!, 'base64').toString('utf8')).v.reviewedChangeKeys).toEqual([]);
             } finally { marks.retire(); }
         } finally { await removeTempDir(cwd); }
     });

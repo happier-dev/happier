@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { rm, writeFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
@@ -9,6 +9,8 @@ import axios from 'axios';
 import { ExecutionRunStartRequestSchema, ExecutionRunScmDiffSummaryInputV1Schema, ScmComparisonSchema, accountSettingsParse, buildBackendTargetKeyV2, type ScmComparisonSource } from '@happier-dev/protocol';
 import { getAgentStaticModels } from '@happier-dev/agents';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
+import { decodeScmDiffSummaryModelOverride, encodeScmDiffSummaryModelOverride } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
+import { resolveExecutionRunChildSelection } from '@/agent/runtime/bridges/executionRun/runtime/openInputs';
 
 import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
 import { gitCheckpointAdapter, resolveGitCheckpointBackendContext } from '@/scm/checkpoints/gitCheckpointAdapter';
@@ -39,6 +41,9 @@ import { resolveTrackedSessionRunnerActivity } from '@/daemon/sessionRunnerRunti
 import type { TrackedSession } from '@/daemon/types';
 import { requestPlannedRunnerRestart } from '@/daemon/plannedRunnerRestart/requestPlannedRunnerRestart';
 import { logger } from '@/ui/logger';
+import { configuration } from '@/configuration';
+import { executeScmDiffSummaryClear } from '@happier-dev/protocol/scm';
+import { createScmReviewedMarksRecordPort } from '@happier-dev/protocol/scm/reviewedMarks';
 
 const BACKEND_TARGET = { kind: 'backend' as const, backendId: 'codex', sourceKind: 'built_in' as const };
 
@@ -110,6 +115,27 @@ describe('executeScmDiffSummaryAction', () => {
         await writeFile(join(fixture.rootPath, fixture.trackedPath), 'Changed before admission\n');
         return fixture;
     }
+
+    it.each(['decoded', 'modelReferenceOnly'] as const)('admits decoded own sign-in through the run selection owner without inheriting a pool (%s)', async shape => {
+        const fixture = await changedRepository();
+        const decoded = decodeScmDiffSummaryModelOverride(encodeScmDiffSummaryModelOverride({
+            backendTargetKey: buildBackendTargetKeyV2(BACKEND_TARGET), modelId: 'gpt-6-luna',
+        }))!;
+        const modelSelector = shape === 'decoded' ? decoded : { modelSelection: decoded.modelSelection, connectedServices: decoded.connectedServices };
+        let resolved: ReturnType<typeof resolveExecutionRunChildSelection> | undefined;
+        await executeScmDiffSummaryAction({ request: { cwd: fixture.rootPath, source: { kind: 'workingTree' }, modelSelector },
+            sessionId: 'own-sign-in-parent', backendTarget: { kind: 'backend', backendId: 'claude' },
+            executeCanonicalAction: async (_actionId, input) => {
+                const start = ExecutionRunStartRequestSchema.parse(input);
+                resolved = resolveExecutionRunChildSelection({ ...start, lifecycle: 'attached', parent: {
+                    status: 'applied', backendTarget: BACKEND_TARGET, modelId: 'parent-model', connectedServices: {
+                        v: 2, bindingsByServiceId: { 'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'codex-pool' } },
+                    },
+                } });
+                return { ok: true, result: { runId: 'native-selection-run', callId: 'call', sidechainId: 'sidechain' } };
+            } });
+        expect(resolved).toMatchObject({ modelId: 'gpt-6-luna', connectedServices: null });
+    });
 
     function savedSummaryOutput(captured: Awaited<ReturnType<typeof captureScmComparison>>, summaryMarkdown: string) {
         const changeRefs = captured.comparison.inventory.files.flatMap(file => file.occurrences.map(occurrence => occurrence.id));
@@ -495,10 +521,12 @@ describe('executeScmDiffSummaryAction', () => {
             if (admitted.backendTarget?.kind !== 'backend') throw new Error('Expected a backend target');
             expect(getAgentStaticModels(admitted.backendTarget.backendId, { catalogOnly: true })
                 .find(model => model.id === admitted.modelId)?.costTier).toBe('low');
-            expect(await scmDiffSummaryResultStore.readStoredScope({ cwd: fixture.rootPath, resultId: generated.resultId! }))
-                .toEqual({ cwd: fixture.rootPath });
-            expect(await scmDiffSummaryResultStore.read({ cwd: fixture.rootPath, resultId: generated.resultId! }))
-                .toMatchObject({ success: true, result: { output: { inputId: generated.success ? generated.inputId : undefined } } });
+            const stored = await scmDiffSummaryResultStore.readStoredScope({ cwd: fixture.rootPath, resultId: generated.resultId! });
+            if (!stored) throw new Error('Expected the detached saved result');
+            const { result, ...scope } = stored;
+            expect(scope).toEqual({ cwd: fixture.rootPath });
+            expect(result).toMatchObject({ resultId: generated.resultId,
+                output: { inputId: generated.success ? generated.inputId : undefined } });
         } finally {
             if (previous) setActiveAccountSettingsSnapshot(previous); else clearActiveAccountSettingsSnapshot();
         }
@@ -537,31 +565,38 @@ describe('executeScmDiffSummaryAction', () => {
         expect(admitted?.backendTarget).toEqual(BACKEND_TARGET);
     });
 
-    it.each(['noRunCreated', 'outcomeUnknown'] as const)('uses a different configured default Agent only after %s admission evidence', async runCreation => {
+    it.each(['noRunCreated', 'outcomeUnknown'] as const)('does not retry an automatic walkthrough with the Account default after %s Start evidence', async runCreation => {
         const fixture = await changedRepository();
-        const inputs: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];
-        const generated = await executeScmDiffSummaryAction({ request: { cwd: fixture.rootPath,
-            source: { kind: 'workingTree' }, outputs: ['commitPlan'] }, sessionId: 'summary-default-admission',
-            backendTarget: BACKEND_TARGET, executeCanonicalAction: async (_actionId, input) => {
-                inputs.push(ExecutionRunStartRequestSchema.parse(input));
-                return inputs.length === 1 ? { ok: false, errorCode: 'execution_run_parent_selection_unavailable',
-                    error: 'Parent unavailable', details: withExecutionRunStartFailureDetails(undefined, runCreation) }
-                    : { ok: true, result: { runId: 'configured-default-run', callId: 'call', sidechainId: 'sidechain' } };
-            },
+        const sessionId = 'summary-default-admission';
+        let attempts = 0;
+        // Only the Run transport is external: public Action admission, capture,
+        // automatic model resolution and the retained-result store stay real.
+        const start = vi.fn(async () => ++attempts === 1
+            ? { ok: false, code: 'execution_run_parent_selection_unavailable', message: 'Parent unavailable',
+                details: withExecutionRunStartFailureDetails(undefined, runCreation) }
+            : { runId: 'configured-default-run', callId: 'call', sidechainId: 'sidechain' });
+        const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+            isActionApprovalRequired: () => false,
+            executionRunCheckProtocolV2: async () => ({ ok: true }), executionRunStart: start,
+            scmActionExecute: async ({ input, executeCanonicalAction }) => executeScmDiffSummaryAction({
+                request: ScmDiffSummaryGenerateInputSchema.parse(input), sessionId,
+                backendTarget: BACKEND_TARGET, executeCanonicalAction }),
         });
+        const response = await executor.execute('scm.diffSummary.generate', { cwd: fixture.rootPath,
+            source: { kind: 'workingTree' }, outputs: ['walkthrough'] }, { surface: 'cli', defaultSessionId: sessionId });
+        expect(start).toHaveBeenCalledTimes(1);
+        expect(response.ok).toBe(true);
+        if (!response.ok) throw new Error(response.errorCode);
+        const generated = ScmDiffSummaryGenerateOutputSchema.parse(response.result);
+        expect(generated.runId).toBeUndefined();
         if (runCreation === 'outcomeUnknown') {
-            expect(inputs).toHaveLength(1);
-            expect(generated).toMatchObject({ revision: 0, outputs: { commitPlan: { state: 'pending' } } });
-            expect(generated.runId).toBeUndefined();
+            expect(generated).toMatchObject({ revision: 0, admission: 'outcomeUnknown', outputs: { walkthrough: { state: 'pending' } } });
         } else {
-            expect(generated).toMatchObject({ success: true, runId: 'configured-default-run' });
-            expect(inputs).toHaveLength(2);
-            expect(inputs[0]?.backendTarget).toEqual(BACKEND_TARGET);
-            const selector = ExecutionRunScmDiffSummaryInputV1Schema.parse(inputs[0]?.intentInput).modelSelector;
-            expect(buildBackendTargetKeyV2(inputs[1]!.backendTarget!)).toBe(selector?.backendTargetKey);
-            expect(inputs[1]?.modelSelection).toMatchObject({ modelId: selector?.modelId, providerConnectionId: null });
-            expect(inputs[1]?.localInputId).toBe(inputs[0]?.localInputId);
+            expect(generated).toMatchObject({ success: false, errorCode: 'MODEL_UNAVAILABLE', nextAction: 'chooseModel',
+                outputs: { walkthrough: { state: 'failed', reasonCode: 'MODEL_UNAVAILABLE' } } });
         }
+        expect(await scmDiffSummaryResultStore.read({ cwd: fixture.rootPath, sessionId, resultId: generated.resultId! }))
+            .toMatchObject({ success: true, result: { output: generated } });
     });
 
     it.each(['branch', 'commit', 'pullRequest'] as const)('generates the first walkthrough from retained %s endpoints after the source moves', async (kind) => {
@@ -824,6 +859,65 @@ describe('executeScmDiffSummaryAction', () => {
         const explicit = await executeScmDiffSummaryAction({ ...params, request: { ...params.request, cachePolicy: { mode: 'bypass' } } });
         expect(explicit.resultId).not.toBe(output.resultId);
         expect(executeCanonicalAction).toHaveBeenCalledTimes(2);
+    });
+
+    it('reuses the saved generation once, writes no output cache, and generates fresh after Clear or explicit bypass', async () => {
+        const fixture = await changedRepository();
+        const sessionId = randomUUID();
+        const cachePath = join(configuration.happyHomeDir, 'cache', 'scm-diff-summary', 'v1.json');
+        const readCache = () => readFile(cachePath, 'utf8').catch(error => {
+            if (error.code === 'ENOENT') return null;
+            throw error;
+        });
+        const beforeCache = await readCache();
+        let admissions = 0;
+        // The Run transport/model response is the boundary; Action admission,
+        // capture, profile publication, saved reuse and Clear all remain real.
+        const executeCanonicalAction = async (_action: string, input: unknown) => {
+            const request = ExecutionRunStartRequestSchema.parse(input);
+            const prepared = await ScmDiffSummaryProfile.prepareStartParams!({ request, cwd: fixture.rootPath, sessionId });
+            if (!prepared) throw new Error('Generation preparation is unavailable');
+            const runId = `cache-deletion-run-${++admissions}`;
+            const start: ExecutionRunProfileStartParams = { ...request, sessionId, runId, callId: runId, sidechainId: runId,
+                backendId: 'codex', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+                instructions: typeof prepared.instructions === 'string' ? prepared.instructions : '',
+                intentInput: prepared.intentInput, startedAtMs: admissions,
+                modelSelection: request.modelSelection ?? undefined, effectiveEngine: { agentId: 'codex', modelId: 'test-model' },
+                retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming' };
+            expect.soft(start.instructions).not.toBe('');
+            const initial = await ScmDiffSummaryProfile.onStarted!({ start, rawText: '', finishedAtMs: admissions });
+            await ScmDiffSummaryProfile.onTurnComplete!({ start, turnId: runId, inputIds: [request.localInputId!],
+                previousStructuredMeta: initial?.structuredMeta, finishedAtMs: admissions + 1,
+                rawText: JSON.stringify({ summaryMarkdown: `Generation ${admissions}` }) });
+            return { ok: true as const, result: { runId, callId: runId, sidechainId: runId } };
+        };
+        const params = { request: { cwd: fixture.rootPath, source: { kind: 'workingTree' as const },
+            modelSelector: { modelId: 'test-model' } }, sessionId, backendTarget: BACKEND_TARGET, executeCanonicalAction };
+        const first = await executeScmDiffSummaryAction(params);
+        expect(first).toMatchObject({ success: true, summaryMarkdown: 'Generation 1' });
+        expect.soft(await readCache()).toEqual(beforeCache);
+        expect(await executeScmDiffSummaryAction(params)).toEqual(first);
+        expect(admissions).toBe(1);
+        const cleared = await executeScmDiffSummaryClear({ input: { results: [{ cwd: fixture.rootPath, sessionId,
+            resultId: first.resultId!, expectedRevision: first.revision!, comparisonId: first.comparison!.id }] },
+            assertCurrent: () => {},
+            list: async () => ({ success: true, ...await scmDiffSummaryResultStore.list() }),
+            read: reference => scmDiffSummaryResultStore.read(reference),
+            delete: reference => scmDiffSummaryResultStore.delete(reference),
+            clearReviewedMarks: comparison => createScmReviewedMarksRecordPort({ comparison, transport: {
+                read: async () => ({ value: null, version: -1 }),
+                compareAndSet: async () => ({ success: true, version: 1 }),
+            } }).clear(),
+        });
+        expect(cleared).toMatchObject({ success: true, deleted: [{ resultId: first.resultId }], failures: [] });
+        const fresh = await executeScmDiffSummaryAction(params);
+        expect(fresh).toMatchObject({ success: true, summaryMarkdown: 'Generation 2' });
+        expect(fresh.resultId).not.toBe(first.resultId);
+        expect(admissions).toBe(2);
+        const bypassed = await executeScmDiffSummaryAction({ ...params, request: { ...params.request, cachePolicy: { mode: 'bypass' } } });
+        expect(bypassed).toMatchObject({ success: true, summaryMarkdown: 'Generation 3' });
+        expect(bypassed.resultId).not.toBe(fresh.resultId);
+        expect(admissions).toBe(3);
     });
 
     it.each([true, false])('publishes a fresh walkthrough through the initial Run input identity with explicit id %s', async explicitInputId => {

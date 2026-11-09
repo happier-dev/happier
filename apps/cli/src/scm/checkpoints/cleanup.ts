@@ -8,7 +8,6 @@ import type {
     RepositoryCheckpointCleanupResult,
     RepositoryCheckpointListedRef,
 } from './types';
-import { scmDiffSummaryCacheStore } from '@/agent/executionRuns/tasks/scmDiffSummary/cache/cacheStore';
 
 const DEFAULT_MAX_FINALIZED_TURNS = 100;
 const DEFAULT_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -23,12 +22,6 @@ export async function disposeOwnedRepositoryCheckpointRef(input: Readonly<{
     }
     const result = await runGitCheckpointCommand({ cwd: input.cwd, args: ['update-ref', '-d', expected.ref, input.expectedOid] });
     if (!result.success) throw new Error(result.stderr || 'Temporary checkpoint ref cleanup failed');
-}
-
-function applyDiffSummaryCacheCleanup(receipts: RepositoryCheckpointCleanupResult['receipts']): void {
-    for (const receipt of receipts) {
-        scmDiffSummaryCacheStore.applyCheckpointCleanupReceipt(receipt);
-    }
 }
 
 function isOlderThan(input: {
@@ -106,7 +99,6 @@ export async function pruneRepositoryCheckpointRefs(
                     refs: prunedRefs,
                 }]
                 : [];
-            applyDiffSummaryCacheCleanup(receipts);
             return {
                 success: false,
                 prunedCount: prunedRefs.length,
@@ -124,7 +116,6 @@ export async function pruneRepositoryCheckpointRefs(
             refs: prunedRefs,
         }]
         : [];
-    applyDiffSummaryCacheCleanup(receipts);
 
     return {
         success: true,

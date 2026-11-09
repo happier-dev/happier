@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { ScmHostingProviderRefSchema } from '@happier-dev/protocol';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
-import { createPluginRegistrationScope } from '@happier-dev/plugin-sdk/host/registration';
+import { createPluginRegistrationScope } from '@/plugins/runtime/api/registrationScope';
 import type { HostingProviderRuntimeRegistration as ScmHostingProviderRuntimeRegistration } from '@happier-dev/plugin-sdk/scm/hosting';
 
 import type { ActivationTarget } from '../../plugins/runtime/lifecycle/activation/targets';

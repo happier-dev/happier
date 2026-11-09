@@ -15,7 +15,9 @@ export function observeCloneInitialCheckout(
             reconciliation: { kind: 'repository_status', cwd: clone.destinationPath }, nextActions: [{ kind: 'refresh' }],
         },
     };
-    if (snapshot.branch.head === initialCheckout.branch && !snapshot.branch.detached && headOid === initialCheckout.commit) return clone;
+    const matchesBranch = initialCheckout.branch === null ? snapshot.branch.detached
+        : snapshot.branch.head === initialCheckout.branch && !snapshot.branch.detached;
+    if (matchesBranch && headOid === initialCheckout.commit) return clone;
     return {
         success: false, destinationPath: clone.destinationPath, errorCode: 'SCM_SOURCE_CHANGED',
         error: 'Checkout was created, but its current branch or commit does not match the requested pin.',

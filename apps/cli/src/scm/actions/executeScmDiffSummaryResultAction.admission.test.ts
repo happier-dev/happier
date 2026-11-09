@@ -1,4 +1,10 @@
 import axios, { AxiosHeaders } from 'axios';
+import nacl from 'tweetnacl';
+import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { bindScmRefineSavedSessionV1, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { createActionExecutor, type ActionExecutorContext } from '@happier-dev/protocol';
+import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -12,13 +18,160 @@ import { configuration } from '@/configuration';
 import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
 import { captureScmComparison, deleteCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
 import { removeTempDir } from '@/testkit/fs/tempDir';
-import { buildReviewUnits } from '@happier-dev/protocol/scm/comparisonOccurrences';
+import { buildReviewUnits, buildScmChangeKeys } from '@happier-dev/protocol/scm/comparisonOccurrences';
 import { ScmDiffFileResponseSchema } from '@happier-dev/protocol/scm';
 import { createTestGitScmBackendRegistry } from '@/scm/rpc/__tests__/testRpcHarness';
+import { retainExecutionRunState } from '@/daemon/executionRunRegistry';
 
 afterEach(() => vi.restoreAllMocks());
 
 describe('saved SCM producer admission', () => {
+  it('admits usage scope only for in-window SCM runs and still excludes private costs', async () => {
+    await withTempDir('happier-usage-scope-', async cwd => {
+      const now = Date.now();
+      const day = 24 * 60 * 60 * 1000;
+      const records = [
+        { sessionId: 'usage-allowed', intent: 'scm_diff_summary', startedAtMs: now - 100, cost: 1 },
+        { sessionId: 'usage-private', intent: 'scm_diff_summary', startedAtMs: now - 100, cost: 100 },
+        { sessionId: 'usage-finished', intent: 'scm_diff_summary', startedAtMs: now - 8 * day, finishedAtMs: now - 100, cost: 0.5 },
+        { sessionId: 'usage-review', intent: 'review', startedAtMs: now - 100, cost: 100 },
+        { sessionId: 'usage-old', intent: 'scm_diff_summary', startedAtMs: now - 8 * day, cost: 100 },
+        { sessionId: 'usage-future', intent: 'scm_diff_summary', startedAtMs: now + day, cost: 100 },
+      ] as const;
+      for (const record of records) {
+        await retainExecutionRunState({ runId: record.sessionId, callId: record.sessionId, sidechainId: record.sessionId,
+          sessionId: record.sessionId, depth: 0, intent: record.intent,
+          backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: 'Read',
+          permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
+          launch: { cwd }, status: 'succeeded', startedAtMs: record.startedAtMs,
+          ...('finishedAtMs' in record ? { finishedAtMs: record.finishedAtMs } : {}),
+          structuredMeta: { kind: 'scm_diff_summary.v1', payload: ScmDiffSummaryGenerateOutputSchema.parse({
+            success: true, summaryMarkdown: 'Retained', sourceKey: 'usage',
+            metadata: { source: { kind: 'workingTree' }, sourceKey: 'usage' }, cost: { estimatedUsd: record.cost } }) },
+        });
+      }
+      const admitted: (string | undefined)[] = [];
+      const response = await executeScmActionOperation({ actionId: 'scm.diffSummary.result.list', input: { includeUsage: true },
+        workingDirectory: cwd, accessPolicy: { kind: 'restrictedRoots', roots: [cwd] },
+        // This is the real caller's Session authorization boundary, not a substituted scope owner.
+        authorizeSession: async id => { admitted.push(id); return id !== 'usage-private'; } });
+      expect(response).toMatchObject({ success: true, sevenDayCost: {
+        status: 'partial', estimatedUsd: 1.5, pricedRunCount: 2, unpricedRunCount: 0 } });
+      expect(admitted.sort()).toEqual(['usage-allowed', 'usage-finished', 'usage-private']);
+    });
+  });
+
+  it('spends a restricted Refine grant on its own child, never on direct Session send', async () => {
+    await withTempDir('happier-refine-root-', async cwd => {
+      const sessionId = 'session';
+      const output = ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'comparison',
+        metadata: { source: { kind: 'workingTree' }, sourceKey: 'comparison' },
+        comparison: { id: 'comparison', source: { kind: 'workingTree' }, repository: { rootPath: cwd }, endpoints: {},
+          inventory: { state: 'complete', files: [], reasons: [] } },
+        requestedOutputs: ['walkthrough'], outputs: { walkthrough: { state: 'complete', value: {
+          title: 'Saved', intro: '', stops: [], otherChangeRefs: [] } } },
+        analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] }, runId: 'saved-generator' });
+      const saved = await scmDiffSummaryResultStore.create({ cwd, sessionId, output });
+      const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: [
+        'scm.diffSummary.refine', 'execution.run.get', 'execution.run.ensure',
+      ] }, targets: { sessions: [sessionId], machines: ['machine'] } };
+      const credential = { accountId: 'account', principalId: 'principal', credentialId: 'pat', grant };
+      const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-issued-refine', binding: {
+        serverIdentityId: 'home', accountId: 'account', custodianAccountId: 'account', principalId: credential.principalId,
+        credentialId: credential.credentialId, grant, machineId: 'machine', installationId: 'installation',
+        actionId: 'scm.diffSummary.refine', requestId: 'refine-input', requestEnvelopeDigest: 'A'.repeat(43),
+        target: { kind: 'machine', machineId: 'machine' },
+      } });
+      const keys = nacl.sign.keyPair();
+      const context: ActionExecutorContext = { surface: 'api', authority: 'account_automation',
+        actionCaller: { kind: 'host' }, externalActionCredential: credential, externalActionExecutionAuthorization: authorization,
+        externalActionTarget: authorization.binding.target, defaultSessionId: sessionId, defaultSessionMachineId: 'machine',
+        signExternalActionApprovalInput: args => signExternalActionApprovalInputV1({ authorizationToken: args.authorization.token,
+          actionId: args.actionId, target: args.target, input: args.input, privateKey: keys.secretKey }),
+      };
+      const sends: string[] = [];
+      vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, statusText: 'OK', headers: {},
+        config: { headers: new AxiosHeaders() }, data: { session: createSessionRecordFixture({ id: sessionId,
+          encryptionMode: 'plain', metadata: JSON.stringify({ path: cwd }), share: null }) } });
+      // Only daemon Run/message transport is replaced; saved-scope admission and child policy stay real.
+      const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+        scmActionExecute: async args => executeScmActionOperation({ actionId: args.actionId,
+          input: args.input, workingDirectory: cwd, sessionId, actionContext: args.context, executeCanonicalAction: args.executeCanonicalAction,
+          authorizeSession: async id => Boolean(id && await fetchSessionById({ reason: 'session-control', token: 'fixture-account', sessionId: id })) }),
+        executionRunGet: async () => ({ run: { runId: 'saved-generator', callId: 'call', sidechainId: 'sidechain',
+          intent: 'scm_diff_summary', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+          permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
+          status: 'running', startedAtMs: 0, lifecycle: { v: 1, state: 'current' },
+          interaction: { kind: 'retained_agent_session.v1', capabilities: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true } } } }),
+        sessionSendMessage: async request => { sends.push(request.localId!); return { status: 'accepted', localId: request.localId! }; },
+      });
+      const input = { cwd, resultId: saved.resultId, expectedRevision: saved.revision, output: 'walkthrough', instructions: 'Clarify.' };
+      const refined = await executor.execute('scm.diffSummary.refine', input, context);
+      expect(refined, JSON.stringify(refined)).toMatchObject({ ok: true,
+        result: { success: true, inputId: 'refine-input' } });
+      expect(sends).toEqual(['refine-input']);
+      // Even the real bound fact and matching input id cannot turn a direct call into a private child.
+      const bound = bindScmRefineSavedSessionV1({ authorization, sessionId, sign: context.signExternalActionApprovalInput! });
+      expect(await executor.execute('session.message.send', { sessionId, message: 'Not a Refine child', localId: 'refine-input',
+        recipient: { kind: 'execution_run', runId: 'saved-generator' }, requestedAction: { v: 1, kind: 'send_now' } },
+        { ...context, externalActionExecutionAuthorization: bound }))
+        .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+      expect(sends).toHaveLength(1);
+      expect(await executor.execute('scm.diffSummary.refine', input, { ...context,
+        externalActionCredential: { ...credential, grant: { ...grant,
+          actions: { families: [], ids: ['execution.run.get', 'execution.run.ensure'] } } } }))
+        .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+      expect(sends).toHaveLength(1);
+    });
+  });
+
+  it('keeps comparison selection body-free and reads an admitted exact id once, without disclosing denied scopes', async () => {
+    await withTempDir('happier-saved-selection-', async cwd => {
+      const output = ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'selected-comparison',
+        metadata: { source: { kind: 'workingTree' }, sourceKey: 'selected-comparison' },
+        comparison: { id: 'selected-comparison', source: { kind: 'workingTree' }, repository: { rootPath: cwd }, endpoints: {},
+          inventory: { state: 'complete', files: [], reasons: [] } }, requestedOutputs: ['walkthrough'],
+        outputs: { walkthrough: { state: 'complete', value: { title: 'Allowed', intro: '', stops: [], otherChangeRefs: [] } } },
+        analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] } });
+      const allowed = await scmDiffSummaryResultStore.create({ cwd, output });
+      const denied = await scmDiffSummaryResultStore.create({ cwd, sessionId: 'private', output });
+      const parse = JSON.parse;
+      let bodies = 0;
+      const spy = vi.spyOn(JSON, 'parse').mockImplementation((text, reviver) => {
+        if (typeof text === 'string' && text.startsWith('{"result":')) bodies++;
+        return parse(text, reviver);
+      });
+      try {
+        const base = { workingDirectory: cwd, accessPolicy: { kind: 'restrictedRoots' as const, roots: [cwd] } };
+        const selected = await executeScmActionOperation({ ...base, actionId: 'scm.diffSummary.result.list',
+          input: { query: { cwd, sessionId: null, comparisons: [{ source: { kind: 'workingTree' }, outputs: ['walkthrough'] }] } } });
+        expect(selected).toMatchObject({ success: true, count: 1, results: [{ resultId: allowed.resultId }] });
+        expect(selected).not.toHaveProperty('sevenDayCost');
+        expect(bodies).toBe(0);
+        expect(await executeScmActionOperation({ ...base, actionId: 'scm.diffSummary.result.list',
+          input: { query: { cwd, sessionId: 'private', comparisons: [{ source: { kind: 'workingTree' }, outputs: ['walkthrough'] }] } } }))
+          .toMatchObject({ success: true, count: 0, bytes: 0, results: [] });
+        bodies = 0;
+        expect(await executeScmActionOperation({ ...base, actionId: 'scm.diffSummary.result.read', input: { cwd, resultId: allowed.resultId } }))
+          .toMatchObject({ success: true });
+        expect(bodies).toBe(1);
+        bodies = 0;
+        const refused = await executeScmActionOperation({ ...base, actionId: 'scm.diffSummary.result.read', input: { cwd, resultId: denied.resultId } });
+        expect(refused).toMatchObject({ success: false, errorCode: 'result_unavailable' });
+        expect(refused).not.toHaveProperty('result');
+        expect(bodies).toBe(1);
+        bodies = 0;
+        const settings = await executeScmActionOperation({ ...base, actionId: 'scm.diffSummary.result.list', input: { includeUsage: true } });
+        expect(settings).toMatchObject({ success: true, count: 1, sevenDayCost: { status: 'unavailable' } });
+        expect(bodies).toBe(0);
+        expect(JSON.stringify(settings)).not.toContain(denied.resultId);
+      } finally {
+        spy.mockRestore();
+        await scmDiffSummaryResultStore.delete({ cwd, resultId: allowed.resultId, expectedRevision: 0 });
+        await scmDiffSummaryResultStore.delete({ cwd, sessionId: 'private', resultId: denied.resultId, expectedRevision: 0 });
+      }
+    });
+  });
   it('marks the live working-tree diff by content key without capturing it, and rejects stale keys', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-live-marks-' });
     const cwd = fixture.rootPath;
@@ -28,7 +181,7 @@ describe('saved SCM producer admission', () => {
     } };
     const executeReviewedMarks: NonNullable<ExecuteScmActionOperationParams['executeReviewedMarks']> = (evidence, request, reviewed) => {
       const port = createScmReviewedMarksRecordPort('id' in evidence ? { comparison: evidence, transport } : { source: evidence, transport });
-      return 'changeKeys' in request ? port.setReviewedKeys(request.changeKeys, reviewed) : port.setReviewed(request.changeRefs, reviewed);
+      return 'reset' in request ? port.clear() : 'changeKeys' in request ? port.setReviewedKeys(request.changeKeys, reviewed) : port.setReviewed(request.changeRefs, reviewed);
     };
     const base = { workingDirectory: cwd, accessPolicy: { kind: 'restrictedRoots' as const, roots: [cwd] },
       registry: createTestGitScmBackendRegistry(), executeReviewedMarks };
@@ -40,6 +193,13 @@ describe('saved SCM producer admission', () => {
       const changeKeys = buildReviewUnits(fixture.trackedPath, 'combined', diff.diff ?? '').map(unit => unit.key);
       expect(changeKeys.length).toBeGreaterThan(0);
       const input = { v: 2, cwd, source: { kind: 'workingTree' }, changeKeys };
+      expect(await executeScmActionOperation({ ...base, actionId: 'scm.diffSummary.reviewed.mark', input }))
+        .toMatchObject({ success: true, record: { reviewedChangeKeys: changeKeys } });
+      if (!value || typeof value !== 'object') throw new Error('Mark did not produce a record');
+      value = { ...value, reviewedChangeKeys: [...changeKeys, 'obsolete-key'] };
+      expect(await executeScmActionOperation({ ...base, actionId: 'scm.diffSummary.reviewed.unmark',
+        input: { v: 2, cwd, source: { kind: 'workingTree' }, reset: true } }))
+        .toMatchObject({ success: true, record: { reviewedChangeKeys: [] } });
       expect(await executeScmActionOperation({ ...base, actionId: 'scm.diffSummary.reviewed.mark', input }))
         .toMatchObject({ success: true, record: { reviewedChangeKeys: changeKeys } });
       await writeFile(join(cwd, fixture.trackedPath), 'Rewritten after display\n');
@@ -63,7 +223,7 @@ describe('saved SCM producer admission', () => {
     expect(refs.length).toBeGreaterThan(0);
     const executeReviewedMarks = vi.fn<NonNullable<ExecuteScmActionOperationParams['executeReviewedMarks']>>((evidence, request, reviewed) => {
       const port = createScmReviewedMarksRecordPort('id' in evidence ? { comparison: evidence, transport } : { source: evidence, transport });
-      return 'changeKeys' in request ? port.setReviewedKeys(request.changeKeys, reviewed) : port.setReviewed(request.changeRefs, reviewed);
+      return 'reset' in request ? port.clear() : 'changeKeys' in request ? port.setReviewedKeys(request.changeKeys, reviewed) : port.setReviewed(request.changeRefs, reviewed);
     });
     const base = { workingDirectory: cwd, accessPolicy: { kind: 'restrictedRoots' as const, roots: [cwd] }, executeReviewedMarks };
     const input = { v: 2, cwd, comparisonId: captured.comparison.id, source: captured.comparison.source, changeRefs: refs };
@@ -72,6 +232,21 @@ describe('saved SCM producer admission', () => {
         .toMatchObject({ success: true, record: applyScmReviewedMarkIntent(captured.comparison, null, refs, true) });
       expect(await executeScmActionOperation({ ...base, actionId: 'scm.diffSummary.reviewed.unmark', input }))
         .toMatchObject({ success: true, record: { reviewedChangeKeys: [] } });
+      const changeKeys = [...buildScmChangeKeys(captured.comparison).values()].flat();
+      const { changeRefs: _refs, ...capturedSelector } = input;
+      expect(await executeScmActionOperation({ ...base, actionId: 'scm.diffSummary.reviewed.mark',
+        input: { ...capturedSelector, changeKeys: [changeKeys[0]] } }))
+        .toMatchObject({ success: true, record: { reviewedChangeKeys: [changeKeys[0]] } });
+      expect(await executeScmActionOperation({ ...base, actionId: 'scm.diffSummary.reviewed.mark',
+        input: { ...capturedSelector, changeKeys: ['forged'] } }))
+        .toMatchObject({ success: false });
+      expect(value).toMatchObject({ reviewedChangeKeys: [changeKeys[0]] });
+      value = { ...applyScmReviewedMarkIntent(captured.comparison, null, refs, true), reviewedChangeKeys: [...changeKeys, 'obsolete-key'] };
+      const reset = { ...capturedSelector, reset: true };
+      await expect(executeScmActionOperation({ ...base, actionId: 'scm.diffSummary.reviewed.mark', input: reset }))
+        .rejects.toBeInstanceOf(Error);
+      expect(await executeScmActionOperation({ ...base, actionId: 'scm.diffSummary.reviewed.unmark', input: reset }))
+        .toMatchObject({ success: true, record: { reviewedChangeKeys: [] } });
       executeReviewedMarks.mockClear();
       for (const rejected of [
         { input: { ...input, comparisonId: privateCapture.comparison.id, sessionId: 'private' } },
@@ -79,6 +254,10 @@ describe('saved SCM producer admission', () => {
         { input: { ...input, cwd: join(cwd, '..') } },
       ]) {
         expect(await executeScmActionOperation({ ...base, actionId: 'scm.diffSummary.reviewed.mark', ...rejected }))
+          .toMatchObject({ success: false, errorCode: 'result_unavailable' });
+        const { changeRefs: _selection, ...resetInput } = rejected.input;
+        expect(await executeScmActionOperation({ ...base, actionId: 'scm.diffSummary.reviewed.unmark', ...rejected,
+          input: { ...resetInput, reset: true } }))
           .toMatchObject({ success: false, errorCode: 'result_unavailable' });
       }
       expect(executeReviewedMarks).not.toHaveBeenCalled();
@@ -164,7 +343,7 @@ describe('saved SCM producer admission', () => {
         const response = await executeScmActionOperation({ actionId: 'scm.diffSummary.result.read',
           input: { cwd, resultId: saved.resultId }, workingDirectory: cwd,
           accessPolicy: { kind: 'restrictedRoots', roots: [cwd] }, sessionId,
-          authorizeSession: async id => Boolean(await fetchSessionById({ token: 'admitted-account', sessionId: id, serverUrl })),
+          authorizeSession: async id => id !== undefined && Boolean(await fetchSessionById({ reason: 'session-control', token: 'admitted-account', sessionId: id, serverUrl })),
         });
         expect(response).toMatchObject(serverUrl.endsWith('home-a.test')
           ? { success: true, result: { resultId: saved.resultId } }
@@ -175,7 +354,7 @@ describe('saved SCM producer admission', () => {
       expect(await executeScmActionOperation({ actionId: 'scm.diffSummary.result.read',
         input: { cwd, resultId: saved.resultId }, workingDirectory: cwd, sessionId,
         actionContext: { serverId: `${configuration.activeServerId}-other` },
-        authorizeSession: async id => Boolean(await fetchSessionById({ token: 'admitted-account', sessionId: id,
+        authorizeSession: async id => id !== undefined && Boolean(await fetchSessionById({ reason: 'session-control', token: 'admitted-account', sessionId: id,
           serverUrl: 'https://home-a.test' })),
       })).toMatchObject({ success: false, errorCode: 'result_unavailable' });
     });
@@ -266,7 +445,8 @@ describe('saved SCM producer admission', () => {
         await expect(read).resolves.toMatchObject({ success: false, errorCode: 'result_unavailable' });
         expect(JSON.stringify(await read)).not.toContain('private-unreadable-value');
         const list = await executeScmActionOperation({ actionId: 'scm.diffSummary.result.list', input: {}, workingDirectory: cwd });
-        expect(list).toMatchObject({ success: false, errorCode: 'result_unavailable' });
+        expect(list).toMatchObject({ success: true });
+        expect(JSON.stringify(list)).not.toContain(saved.resultId);
         expect(JSON.stringify(list)).not.toContain('private-unreadable-value');
       } finally {
         await writeFile(path, original);

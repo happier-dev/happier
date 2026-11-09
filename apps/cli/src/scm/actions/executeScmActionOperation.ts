@@ -20,6 +20,7 @@ import type * as scm from '@happier-dev/protocol/scm';
 import { parseScmRepositoryCloneRpcRequest, projectScmLegacyRpcResponse } from './scmRpcCompatibility';
 import { isStoredScmReviewEvidenceAction } from './placement';
 import { prepareDiscardAgainstComparison, type PreparedComparisonDiscard } from './discard/discardAgainstComparison';
+import { applySuggestions } from './applySuggestions';
 import { WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protocol/machines/workspaceFiles';
 
 import { resolveFilesystemAccessPolicy, type FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
@@ -32,7 +33,7 @@ import { findCapturedComparisonFile, projectCapturedComparison, projectCapturedS
 import type { ReadRepositoryCheckpointTranscriptPage } from '@/scm/checkpoints/readRepositoryCheckpointTranscriptPage';
 import type { ReadPullRequestComparisonPage } from '@/scm/comparisons/readPullRequestComparisonPage';
 import { executeScmDiffSummaryResultAction } from './executeScmDiffSummaryResultAction';
-import { summarizeScmDiffSummarySevenDayCost } from './scmDiffSummarySevenDayCost';
+import { isScmDiffSummarySevenDayCostRecord, summarizeScmDiffSummarySevenDayCost } from './scmDiffSummarySevenDayCost';
 import { executeScmCommitPlanAction } from '../commitPlans/executeScmCommitPlanAction';
 import { readRepositoryCheckpointBranchEvidence, readRepositoryCheckpointPullRequestEvidence } from '../checkpoints/sessionEvidence';
 import { scmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
@@ -141,6 +142,8 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
     }
 
     switch (params.actionId) {
+        case 'scm.suggestion.apply':
+            return runMutation(() => applySuggestions(params.input as scm.ScmSuggestionApplyRequest, routeBase));
         case 'scm.hostingRepository.get':
             return readScmHostingRepository({
                 selector: (params.input as ScmHostingRepositoryGetRequestV1).selector,
@@ -168,6 +171,7 @@ async function runLocalScmAction(params: ExecuteScmActionOperationParams & Reado
                 // Permission-filter costs too: unrelated workspace usage is not this caller's data.
                 const allowedRecords = [];
                 for (const record of records ?? []) {
+                    if (!isScmDiffSummarySevenDayCostRecord(record.state, untilMs)) continue;
                     const cwd = record.state.launch?.cwd;
                     const sessionId = record.state.sessionId;
                     if (cwd && await admitReviewScope(params, { cwd, ...(sessionId ? { sessionId } : {}) })) allowedRecords.push(record);

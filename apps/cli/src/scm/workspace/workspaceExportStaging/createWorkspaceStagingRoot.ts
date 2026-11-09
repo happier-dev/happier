@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { z } from 'zod/mini';
@@ -16,11 +17,11 @@ export type WorkspaceStagingRoot = Readonly<{
     markerFilePath: string;
 }>;
 
-export const WorkspaceStagingRootMarkerSchema = z.strictObject({
+export const WorkspaceStagingRootMarkerSchema = lazyZodSchema(() => z.strictObject({
     schemaVersion: z.literal(1),
     stagingId: z.string().check(z.minLength(1)),
     rootDirectory: z.string().check(z.minLength(1)),
-});
+}));
 export type WorkspaceStagingRootMarker = z.infer<typeof WorkspaceStagingRootMarkerSchema>;
 const StoredWorkspaceStagingRootMarkerSchema = createStoredReadSchema(WorkspaceStagingRootMarkerSchema);
 

@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 
@@ -11,7 +12,7 @@ import { hashWorkspaceFile } from '../workspaceExportPackaging/hashWorkspaceFile
 import { scanWorkspaceManifest } from '../workspaceExportPackaging/scanWorkspaceManifest';
 import { resolveWorkspaceManifestSafeFilterPolicyFromEntries } from '../workspaceExportPackaging/workspaceManifestSafeFilterPolicy';
 
-const workspaceManifestDigestSchema = z.string().check(z.regex(/^sha256:[a-f0-9]{64}$/));
+const workspaceManifestDigestSchema = lazyZodSchema(() => z.string().check(z.regex(/^sha256:[a-f0-9]{64}$/)));
 
 export type StagedWorkspaceBlobFailure =
     | Readonly<{

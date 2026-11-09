@@ -1,4 +1,4 @@
-import { access, mkdir, rename } from 'node:fs/promises';
+import { access, link, lstat, mkdir, readdir, readlink, rename, symlink, unlink } from 'node:fs/promises';
 import { dirname, join, relative } from 'node:path';
 
 import type { WorkspaceManifest } from '@happier-dev/protocol';
@@ -98,9 +98,16 @@ export async function promoteStagedWorkspace(params: Readonly<{
     scmRegistry?: ScmBackendRegistry;
     prepareEntryAccess?: WorkspaceMaterializedEntryAccess;
     pinnedRoot?: PinnedUnixDirectoryAccess;
+    /** Host-owned existing-file custody. No public caller can choose this admission. */
+    existingTarget?: Readonly<{
+        retainedRelativePath: string;
+        assertCurrent(): Promise<void>;
+        recordCreated(path: string): Promise<void>;
+    }>;
 }>): Promise<PromoteStagedWorkspaceResult> {
     await assertVerifiedStagingRootMarker(params.stagingRoot);
-    await assertTargetWorkspaceDoesNotExist(params.targetWorkspaceDirectory);
+    if (params.existingTarget) await params.existingTarget.assertCurrent();
+    else await assertTargetWorkspaceDoesNotExist(params.targetWorkspaceDirectory);
 
     const verification = await verifyStagedWorkspace({
         workspaceDirectory: params.stagingRoot.workspaceDirectory,
@@ -120,8 +127,32 @@ export async function promoteStagedWorkspace(params: Readonly<{
         pinnedRoot: params.pinnedRoot,
     });
 
-    await mkdir(dirname(params.targetWorkspaceDirectory), { recursive: true });
-    await rename(params.stagingRoot.workspaceDirectory, params.targetWorkspaceDirectory);
+    if (params.existingTarget) {
+        const custody = params.existingTarget;
+        const promote = async (source: string, target: string, relativePath: string): Promise<void> => {
+            await custody.assertCurrent();
+            const stat = await lstat(source);
+            if (stat.isDirectory()) {
+                // Only the admitted retained file's ancestors may preexist.
+                if (!custody.retainedRelativePath.startsWith(`${relativePath}/`)) {
+                    await mkdir(target); await custody.recordCreated(target);
+                }
+                for (const name of await readdir(source)) await promote(join(source, name), join(target, name), `${relativePath}/${name}`);
+            } else {
+                // Exclusive creation cannot overwrite a foreign entry racing promotion.
+                if (stat.isSymbolicLink()) await symlink(await readlink(source), target);
+                else await link(source, target);
+                await custody.recordCreated(target);
+                await unlink(source);
+            }
+        };
+        for (const name of await readdir(params.stagingRoot.workspaceDirectory)) {
+            await promote(join(params.stagingRoot.workspaceDirectory, name), join(params.targetWorkspaceDirectory, name), name);
+        }
+    } else {
+        await mkdir(dirname(params.targetWorkspaceDirectory), { recursive: true });
+        await rename(params.stagingRoot.workspaceDirectory, params.targetWorkspaceDirectory);
+    }
 
     return {
         targetWorkspaceDirectory: params.targetWorkspaceDirectory,

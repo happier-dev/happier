@@ -26,7 +26,7 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 const executeScmActionOperation = (params: Parameters<typeof executeScmOperation>[0]) => executeScmOperation({ ...params,
   // The authenticated Home network is replaced; the Session parser and admission are real.
-  authorizeSession: async sessionId => Boolean(await fetchSessionById({ token: 'authorized-account', sessionId })),
+  authorizeSession: async sessionId => sessionId === undefined || Boolean(await fetchSessionById({ reason: 'session-control', token: 'authorized-account', sessionId })),
 });
 const output = ScmDiffSummaryGenerateOutputSchema.parse({ success: true, sourceKey: 'comparison',
   metadata: { source: { kind: 'workingTree' }, sourceKey: 'comparison' },
@@ -52,6 +52,69 @@ function createScmResultActionExecutor(scmActionExecute: NonNullable<ActionExecu
 }
 
 describe('saved SCM result Action boundary', () => {
+  it('records the Add outputs request separately from its saved generator context', async () => {
+    const saved = await scmDiffSummaryResultStore.create({ cwd, sessionId: 'session', output });
+    const messages: Array<{ message: string; displayText?: string }> = [];
+    const executor = createScmResultActionExecutor(({ actionId, input, context, executeCanonicalAction }) =>
+      executeScmActionOperation({ actionId, input, actionContext: context, executeCanonicalAction,
+        workingDirectory: cwd, accessPolicy: { kind: 'restrictedRoots', roots: [cwd] } }), {
+      executionRunGet: async () => ({ run }),
+      sessionSendMessage: async request => {
+        messages.push({ message: request.message, displayText: request.displayText });
+        return { status: 'accepted', localId: request.localId };
+      },
+    });
+    try {
+      expect(await executor.execute('scm.diffSummary.addOutputs', { cwd, resultId: saved.resultId,
+        expectedRevision: saved.revision, outputs: ['commitPlan'] }, { surface: 'cli', bypassApprovals: true }))
+        .toMatchObject({ ok: true, result: { success: true } });
+      expect(messages).toHaveLength(1);
+      const sent = messages[0]!;
+      expect(typeof sent.displayText === 'string' && sent.displayText.includes('commitPlan')).toBe(true);
+      expect(sent.displayText?.includes(saved.resultId)).toBe(false);
+      expect(sent.message.includes(saved.resultId)).toBe(true);
+      expect(readMessageDisplayText({ text: sent.message, displayText: sent.displayText }) === sent.message).toBe(false);
+    } finally {
+      await scmDiffSummaryResultStore.delete({ cwd, resultId: saved.resultId, expectedRevision: saved.revision });
+    }
+  });
+
+  it('records only the supplied refinement instructions while delivering the full task to the generator', async () => {
+    const instructions = 'Clarify the selection explanation.';
+    const reading = { title: 'Selection', intro: 'Saved introduction', stops: [{ id: 'selection', title: 'Keep selection',
+      explanationMarkdown: 'The selected change survives refresh.', changeRefs: [] }], otherChangeRefs: [] };
+    const saved = await scmDiffSummaryResultStore.create({ cwd, sessionId: 'session', output: ScmDiffSummaryGenerateOutputSchema.parse({
+      ...output, outputs: { ...output.outputs, walkthrough: { state: 'complete', value: reading } },
+    }) });
+    const messages: Array<{ message: string; displayText?: string }> = [];
+    const executor = createScmResultActionExecutor(({ actionId, input, context, executeCanonicalAction }) =>
+      executeScmActionOperation({ actionId, input, actionContext: context, executeCanonicalAction,
+        workingDirectory: cwd, accessPolicy: { kind: 'restrictedRoots', roots: [cwd] } }), {
+      executionRunGet: async () => ({ run }),
+      // Replace only the remote Session transport. The public Action executor,
+      // saved-result admission, prompt builder and transcript display reader are real.
+      sessionSendMessage: async request => {
+        messages.push({ message: request.message, displayText: request.displayText });
+        return { status: 'accepted', localId: request.localId };
+      },
+    });
+    try {
+      expect(await executor.execute('scm.diffSummary.refine', { cwd, resultId: saved.resultId,
+        expectedRevision: saved.revision, output: 'walkthrough', stopIds: ['selection'], instructions },
+      { surface: 'cli', bypassApprovals: true })).toMatchObject({ ok: true, result: { success: true } });
+      expect(messages).toHaveLength(1);
+      const message = messages[0]!;
+      const meta = SessionMessageMetaSchema.parse({ displayText: message.displayText });
+      // Compare without dumping the internal task if the privacy assertion fails.
+      expect(readMessageDisplayText({ text: message.message, displayText: meta.displayText }) === instructions).toBe(true);
+      expect(message.message.includes(instructions)).toBe(true);
+      expect(message.message.includes(saved.resultId)).toBe(true);
+      expect(message.message.includes(reading.stops[0]!.explanationMarkdown)).toBe(true);
+      expect(message.message === instructions).toBe(false);
+    } finally {
+      await scmDiffSummaryResultStore.delete({ cwd, resultId: saved.resultId, expectedRevision: saved.revision });
+    }
+  });
   it('refines the full current reading from a stop conversation and publishes an update receipt', async () => {
     const stops = ['one', 'two', 'three', 'four'].map(id => ({ id, title: id,
       explanationMarkdown: `Explanation ${id}`, changeRefs: [] }));
@@ -115,12 +178,14 @@ describe('saved SCM result Action boundary', () => {
       ...output, outputs: { ...output.outputs, walkthrough: { state: 'complete', value: reading } },
     }) });
     const messages: Array<{ recipient: unknown; message: string; displayText?: string }> = [];
+    const metas: unknown[] = [];
     const executor = createScmResultActionExecutor(({ actionId, input, context, executeCanonicalAction }) =>
       executeScmActionOperation({ actionId, input, actionContext: context, executeCanonicalAction,
         workingDirectory: cwd, accessPolicy: { kind: 'restrictedRoots', roots: [cwd] } }), {
       executionRunGet: async () => ({ run }),
       sessionSendMessage: async request => {
         messages.push({ recipient: request.recipient, message: request.message, displayText: request.displayText });
+        metas.push(request.messageMeta);
         return { status: 'accepted', localId: request.localId };
       },
     });
@@ -131,6 +196,9 @@ describe('saved SCM result Action boundary', () => {
       message: expect.stringContaining(question), displayText: question }]);
     const displayedMeta = SessionMessageMetaSchema.parse({ displayText: messages[0]!.displayText });
     expect(readMessageDisplayText({ text: messages[0]!.message, displayText: displayedMeta.displayText })).toBe(question);
+    // The question names the stop it was asked about on its own transcript row, so the walkthrough can project it.
+    expect(SessionMessageMetaSchema.parse(metas[0]).scmWalkthroughQuestionV1)
+      .toEqual({ resultId: saved.resultId, revision: saved.revision, stopIds: ['selection'] });
     expect(messages[0]!.message).toContain('The selected change survives refresh.');
     expect(messages[0]!.message).toContain('Answer the user in prose');
     expect(messages[0]!.message).not.toContain('For each finding');
@@ -140,24 +208,36 @@ describe('saved SCM result Action boundary', () => {
     expect(await executor.execute('session.message.send', { sessionId: 'session', message: 'A separate question',
       localId: 'separate-input' }, { surface: 'cli', bypassApprovals: true })).toMatchObject({ ok: true });
     expect(messages.at(-1)).toEqual({ recipient: undefined, message: 'A separate question', displayText: undefined });
+    expect(metas.at(-1)).toBeUndefined();
     expect(await executor.execute('session.message.send', { sessionId: 'session', message: 'Agent-only text',
       displayText: 'Caller-supplied display' }, { surface: 'cli', bypassApprovals: true }))
       .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
     expect(messages).toHaveLength(2);
   });
-  it.each(['scm.diffSummary.refine', 'scm.diffSummary.addOutputs', 'scm.diffSummary.discuss'] as const)(
-    'admits %s to the recoverable original through Pending without awaiting native provisioning', async actionId => {
+  it.each([
+    ['scm.diffSummary.refine', 'failed'], ['scm.diffSummary.refine', 'cancelled'],
+    ['scm.diffSummary.discuss', 'failed'], ['scm.diffSummary.discuss', 'cancelled'],
+    ['scm.diffSummary.addOutputs', 'running'],
+  ] as const)(
+    'admits %s to its %s original only after explicit recovery when required', async (actionId, status) => {
       const saved = await scmDiffSummaryResultStore.create({ cwd, sessionId: 'session', output });
       const admissions: string[] = [];
+      let recoveryAccepted = status === 'running';
       const executor = createScmResultActionExecutor(({ actionId, input, context, executeCanonicalAction }) =>
         executeScmActionOperation({ actionId, input, actionContext: context, executeCanonicalAction,
           workingDirectory: cwd, accessPolicy: { kind: 'restrictedRoots', roots: [cwd] } }), {
         // These are the remote Run and Session transport boundaries. The Action executor,
         // saved-result owner, lifecycle projection and input bookkeeping remain real.
-        executionRunGet: async () => ({ run: { ...run, status: 'failed', interaction: undefined,
-          lifecycle: { v: 1, state: 'recoverable' }, error: { code: 'execution_run_host_lost', message: 'Host lost' } } }),
-        executionRunEnsure: async () => { throw new Error('Pending owns recovery after admission'); },
+        executionRunGet: async () => ({ run: { ...run, status, ...(status === 'running' ? {} : { interaction: undefined,
+          lifecycle: { v: 1 as const, state: 'recoverable' as const }, error: { code: 'execution_run_host_lost', message: 'Host lost' } }) } }),
+        executionRunEnsure: async (_sessionId, request) => {
+          expect(status).not.toBe('running');
+          expect(request).toMatchObject({ runId: run.runId, resume: true });
+          recoveryAccepted = true;
+          return { ok: true };
+        },
         sessionSendMessage: async request => {
+          expect(recoveryAccepted).toBe(true);
           expect(request.recipient).toEqual({ kind: 'execution_run', runId: run.runId });
           admissions.push(request.localId!);
           return { status: 'accepted', localId: request.localId };
@@ -172,6 +252,32 @@ describe('saved SCM result Action boundary', () => {
       expect(await scmDiffSummaryResultStore.readInput({ cwd, resultId: saved.resultId, inputIds: admissions })).not.toBeNull();
     });
 
+  it.each(['refused', 'transportFailure', 'typedTransportFailure'] as const)('preserves %s explicit recovery failure without admitting Refine input', async outcome => {
+    const saved = await scmDiffSummaryResultStore.create({ cwd, sessionId: 'session', output });
+    const send = vi.fn<NonNullable<ActionExecutorDeps['sessionSendMessage']>>(async request => ({ status: 'accepted', localId: request.localId }));
+    const executor = createScmResultActionExecutor(({ actionId, input, context, executeCanonicalAction }) =>
+      executeScmActionOperation({ actionId, input, actionContext: context, executeCanonicalAction,
+        workingDirectory: cwd, accessPolicy: { kind: 'restrictedRoots', roots: [cwd] } }), {
+      executionRunGet: async () => ({ run: { ...run, status: 'failed', interaction: undefined, lifecycle: { v: 1, state: 'recoverable' } } }),
+      executionRunEnsure: async () => {
+        if (outcome === 'transportFailure') throw new Error('Recovery transport unavailable');
+        if (outcome === 'typedTransportFailure') throw Object.assign(new Error('Recovery connection lost'), { code: 'ECONNRESET' });
+        return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Explicit recovery refused' };
+      },
+      sessionSendMessage: send,
+    });
+    expect(await executor.execute('scm.diffSummary.refine', { cwd, resultId: saved.resultId, expectedRevision: 0,
+      output: 'walkthrough', instructions: 'Shorten it.' }, { surface: 'cli', bypassApprovals: true }))
+      .toMatchObject(outcome === 'refused'
+        ? { ok: false, errorCode: 'execution_run_not_allowed', error: 'Explicit recovery refused' }
+        : outcome === 'typedTransportFailure'
+          ? { ok: false, errorCode: 'server_unreachable', error: 'Recovery connection lost' }
+          : { ok: false, errorCode: 'action_failed', error: 'Recovery transport unavailable' });
+    expect(send).not.toHaveBeenCalled();
+    expect(await scmDiffSummaryResultStore.read({ cwd, resultId: saved.resultId })).toMatchObject({ success: true,
+      result: { revision: saved.revision, output: saved.output } });
+  });
+
   it.each(['rejected', 'outcomeUnknown', 'transportFailure', 'invalidParameters'] as const)('preserves the actual %s follow-up admission outcome', async outcome => {
     const saved = await scmDiffSummaryResultStore.create({ cwd, sessionId: 'session', output });
     let attemptedInputId = '';
@@ -181,6 +287,7 @@ describe('saved SCM result Action boundary', () => {
       executeCanonicalAction: async (actionId, request) => {
         if (actionId === 'execution.run.get') return { ok: true, result: { run: { ...run, status: 'failed',
           interaction: undefined, lifecycle: { v: 1, state: 'recoverable' } } } };
+        if (actionId === 'execution.run.ensure') return { ok: true, result: { ok: true } };
         attemptedInputId = String((request as { localId: string }).localId);
         return outcome === 'invalidParameters' ? { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' }
         : outcome === 'transportFailure'
@@ -291,7 +398,10 @@ describe('saved SCM result Action boundary', () => {
     ] });
     expect(await execute('scm.diffSummary.result.clear', { results: [{ cwd, sessionId: 'saved-session',
       resultId: saved.resultId, expectedRevision: 1, comparisonId: 'comparison' }] }))
-      .toMatchObject({ success: true, deleted: [{ resultId: saved.resultId, comparisonId: 'comparison' }], failures: [] });
+      .toMatchObject({ success: true, deleted: [{ resultId: saved.resultId, comparisonId: 'comparison' }], failures: [{
+        resultId: saved.resultId, comparisonId: 'comparison', errorCode: 'reviewed_marks_cleanup_failed', resultDeleted: true,
+        retry: { actionId: 'scm.diffSummary.reviewed.unmark', input: { comparisonId: 'comparison', reset: true } },
+      }] });
     expect(await scmDiffSummaryResultStore.read({ cwd: '/private', resultId: excluded.resultId })).toMatchObject({ success: true });
     const applying = await scmDiffSummaryResultStore.create({ cwd, output: ScmDiffSummaryGenerateOutputSchema.parse({ ...output,
       requestedOutputs: ['summary', 'walkthrough', 'commitPlan'], outputs: { ...output.outputs,

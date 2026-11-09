@@ -22,6 +22,7 @@ export type ScmBackendPluginRuntimeRegistry = Readonly<{
     resolveConnectedAccountPurposeBindingOwner?:
         Parameters<typeof createHostScmHostingProviderRuntimeServices>[0]['resolveConnectedAccountPurposeBindingOwner'];
     managedDependencies?: Pick<StablePluginManagedDependenciesHost, 'resolveExecutable'>;
+    scmCommandRunner?: ResolvedExecutablePluginRuntimeRegistry['scmCommandRunner'];
     scmBackendsById?: ResolvedExecutablePluginRuntimeRegistry['scmBackendsById'];
     scmBackendRegistrations?: ResolvedExecutablePluginRuntimeRegistry['scmBackendRegistrations'];
 }>;
@@ -61,6 +62,7 @@ export function createPluginScmBackendRegistryFromRuntimeRegistry(
     return createRegisteredScmBackendRegistry({
         definitions,
         registrations,
+        scmCommandRunner: runtimeRegistry.scmCommandRunner,
         hostingProviderRuntimeServices: createHostScmHostingProviderRuntimeServices({
             contributes: runtimeRegistry.contributes,
             scmHostingProvidersById: runtimeRegistry.scmHostingProvidersById ?? new Map(),

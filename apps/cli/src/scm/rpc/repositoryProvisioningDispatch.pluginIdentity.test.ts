@@ -16,7 +16,7 @@ import { createBareRemoteRepository, createWorkspace, makeCloneTargetDescription
 import { runScmRepositoryCloneRoute, runScmRepositoryInitRoute } from './repositoryProvisioningDispatch';
 
 describe('clone initial-checkout callback boundary', () => {
-    for (const callback of ['built-in', 'ignores-pin', 'omits-head-fact'] as const) {
+    for (const callback of ['built-in', 'ignores-pin', 'attaches-detached-pin', 'omits-head-fact'] as const) {
         it(`settles exact pin honestly for ${callback}`, async () => {
             const parent = createWorkspace();
             const remote = createBareRemoteRepository();
@@ -39,7 +39,8 @@ describe('clone initial-checkout callback boundary', () => {
                     clone: async (input: Parameters<typeof clone>[0]) => {
                         const result = await clone({ ...input, request: callback === 'ignores-pin'
                             ? makeRequest(input.request.destinationParentPath, remote, input.request.destinationDirectoryName)
-                            : input.request });
+                            : callback === 'attaches-detached-pin'
+                                ? { ...input.request, initialCheckout: { branch: 'main', commit: pin } } : input.request });
                         if (callback !== 'omits-head-fact' || !result.success || !result.snapshot) return result;
                         const { headOid: _unavailable, ...branch } = result.snapshot.branch;
                         return { ...result, snapshot: { ...result.snapshot, branch } };
@@ -52,15 +53,15 @@ describe('clone initial-checkout callback boundary', () => {
                 hostingProviderRuntimeServices: createScmHostingProviderRuntimeServicesForTest(
                     makeProviderRegistry(makeCloneTargetDescription(remote))),
             })]);
-            const request = { ...makeRequest(parent, remote), initialCheckout: { branch: 'main' as const, commit: pin } };
+            const request = { ...makeRequest(parent, remote), initialCheckout: { branch: callback === 'attaches-detached-pin' ? null : 'main' as const, commit: pin } };
             const result = await runScmRepositoryCloneRoute({ request, workingDirectory: parent, registry });
             const destinationPath = join(parent, request.destinationDirectoryName);
             if (callback === 'built-in') {
                 expect(result).toMatchObject({ success: true, destinationPath,
                     snapshot: { branch: { head: 'main', detached: false, headOid: pin } } });
-            } else if (callback === 'ignores-pin') {
+            } else if (callback === 'ignores-pin' || callback === 'attaches-detached-pin') {
                 expect(result).toMatchObject({ success: false, destinationPath, errorCode: 'SCM_SOURCE_CHANGED',
-                    outcome: { kind: 'failed', repositoryState: { headOid: newer } } });
+                    outcome: { kind: 'failed', repositoryState: { headOid: callback === 'ignores-pin' ? newer : pin } } });
             } else {
                 expect(result).toMatchObject({ success: false, destinationPath, errorCode: 'COMMAND_OUTCOME_UNKNOWN',
                     outcome: { kind: 'outcome_unknown', reconciliation: { kind: 'repository_status', cwd: destinationPath } } });

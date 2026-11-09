@@ -17,6 +17,7 @@ export type ScmWorkspaceIntegrationWorkspaceLocationResult = Readonly<{
     capabilities: ScmCapabilities;
     inspection: ScmWorkspaceIntegrationWorkspaceLocationInspection;
     repositoryIdentity?: ScmHostingRepositoryIdentityV1;
+    parentRootPath?: string;
     workspaceLocationScm?: Readonly<{
         provider: NonNullable<ScmWorkspaceIntegrationWorkspaceInspection['scmProvider']>;
         rootPath: string;
@@ -29,7 +30,12 @@ function normalizeCheckoutDiscovery(
     inspection: ScmWorkspaceIntegrationWorkspaceInspection,
 ): readonly ScmWorkspaceIntegrationCheckoutDiscovery[] {
     if (inspection.checkoutDiscovery) {
-        return inspection.checkoutDiscovery;
+        return inspection.checkoutDiscovery.map((entry) => {
+            if (!entry.parentRootPath || entry.path
+                && getPathRemainderWithinBase(entry.path, inspection.rootPath) === '') return entry;
+            const { parentRootPath: _parentRootPath, ...discovery } = entry;
+            return discovery;
+        });
     }
 
     return (inspection.checkoutProviderKinds ?? []).map((kind) => ({ kind }));
@@ -65,6 +71,7 @@ export async function inspectWorkspaceLocationWithScmWorkspace(input: Readonly<{
         }
 
         const checkoutDiscovery = normalizeCheckoutDiscovery(inspection);
+        const parentRootPath = checkoutDiscovery.find(entry => entry.parentRootPath)?.parentRootPath;
         let repositoryIdentity: ScmHostingRepositoryIdentityV1 | null = null;
         if (input.includeRepositoryIdentity) {
             const status = await resolved.selection.backend.statusSnapshot({
@@ -86,6 +93,7 @@ export async function inspectWorkspaceLocationWithScmWorkspace(input: Readonly<{
             }),
             inspection,
             ...(repositoryIdentity ? { repositoryIdentity } : {}),
+            ...(parentRootPath ? { parentRootPath } : {}),
             workspaceLocationScm: inspection.scmProvider ? {
                 provider: inspection.scmProvider,
                 rootPath: inspection.rootPath,

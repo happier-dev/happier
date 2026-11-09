@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { ScmHostingProviderContributionSchema } from '@happier-dev/protocol';
 import type { PluginApi } from '@happier-dev/plugin-sdk';
@@ -13,17 +13,24 @@ import {
 } from '@happier-dev/plugins-scm-gitlab';
 
 import { createScmHostingProviderRegistry } from './registry';
+import { resolveScmHostingRepositoryAddress } from './resolveAddress';
 
 type PluginScmHostingProviderRuntime = Parameters<
     PluginApi['scm']['registerHostingProvider']
 >[1];
+
+const cleanups: Array<() => void | Promise<void>> = [];
+
+afterEach(async () => {
+    while (cleanups.length > 0) await cleanups.pop()?.();
+});
 
 async function createBundledRegistry(input: Readonly<{
     manifest: typeof GITHUB_PLUGIN_MANIFEST | typeof GITLAB_PLUGIN_MANIFEST;
     activate: typeof activateGithub | typeof activateGitlab;
 }>) {
     const registrations: ScmHostingProviderRuntimeRegistration[] = [];
-    await input.activate({
+    const cleanup = await input.activate({
         connectedAccounts: {
             register() {
                 return { dispose() {} };
@@ -37,6 +44,11 @@ async function createBundledRegistry(input: Readonly<{
         backgroundServices: {
             register() {},
         },
+        resources: {
+            registerDynamicResource() {
+                return { dispose() {} };
+            },
+        },
         scm: {
             registerHostingProvider(id: string, registration: PluginScmHostingProviderRuntime) {
                 registrations.push({ id, ...registration });
@@ -44,6 +56,7 @@ async function createBundledRegistry(input: Readonly<{
             },
         },
     } as unknown as Parameters<typeof input.activate>[0]);
+    if (typeof cleanup === 'function') cleanups.push(cleanup);
 
     return createScmHostingProviderRegistry({
         providers: (input.manifest.contributes.scmHostingProviders ?? []).map((provider) => {
@@ -99,6 +112,31 @@ describe('bundled SCM hosting-provider identity', () => {
         })).toEqual({
             kind: 'resolved',
             url: expectedUrl,
+        });
+    });
+
+    it.each([
+        'https://github.com/happier-dev/ship-pp-private',
+        'github.com/happier-dev/ship-pp-private',
+        'https://github.com/happier-dev/happier.git',
+    ])('resolves the public-profile repository address through the bundled GitHub contribution: %s', async (address) => {
+        const registry = await createBundledRegistry({
+            manifest: GITHUB_PLUGIN_MANIFEST,
+            activate: activateGithub,
+        });
+
+        await expect(resolveScmHostingRepositoryAddress({ address, registry })).resolves.toMatchObject({
+            success: true,
+            kind: 'resolved',
+            selector: {
+                provider: { id: `${GITHUB_PLUGIN_MANIFEST.id}/github`, kind: 'github' },
+                repository: {
+                    nameWithOwner: address.includes('ship-pp-private')
+                        ? 'happier-dev/ship-pp-private'
+                        : 'happier-dev/happier',
+                },
+                protocol: 'https',
+            },
         });
     });
 });

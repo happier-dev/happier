@@ -251,6 +251,7 @@ export function createRegisteredScmBackendRegistry(input: Readonly<{
     definitions: readonly RegisteredScmBackendDefinition[];
     registrations: readonly RegisteredScmBackendActivation[];
     hostingProviderRuntimeServices?: ScmHostingProviderRuntimeServices;
+    scmCommandRunner?: import('../runtime').ScmCommandRunner;
 }>): Readonly<{
     backends: readonly ScmBackend[];
     diagnostics: readonly PluginCompatibilityDiagnostic[];
@@ -316,6 +317,7 @@ export function createRegisteredScmBackendRegistry(input: Readonly<{
             executableDefinition,
             registration: registrationEntry.registration,
             hostingProviderRuntimeServices: input.hostingProviderRuntimeServices,
+            scmCommandRunner: input.scmCommandRunner,
         }));
     }
 

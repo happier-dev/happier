@@ -47,8 +47,13 @@ async function setup(detached = false) {
 
 describe('accepted commit plan through registered canonical writer', () => {
   it('returns a complete application that can settle its approval as strict JSON', async () => {
-    const { cwd, accept } = await setup();
+    const { cwd, accept, store } = await setup();
+    // Observe the real persistence API; the Git writer and store remain real.
+    const reads = vi.spyOn(store, 'read');
+    const scopedReads = vi.spyOn(store, 'readStoredScope');
     const response = await accept();
+    expect(reads).toHaveBeenCalledTimes(1);
+    expect(scopedReads).toHaveBeenCalledTimes(1);
     expect(response).toMatchObject({ success: true, result: { application: { status: 'complete' } } });
     expect(git(cwd, ['log', '--format=%s', '-2']).split('\n')).toEqual(['fix: b.txt', 'fix: a.txt']);
     expect(() => getActionSpec('approval.request.decide').outputSchema.parse({
@@ -211,11 +216,17 @@ describe('accepted commit plan through registered canonical writer', () => {
     expect(git(cwd, ['rev-list', '--count', 'HEAD'])).toBe('2');
   }, 20000);
   it.skipIf(process.platform === 'win32')('stops on a moved HEAD after a landed step and preserves the actual actor commit', async () => {
-    const { cwd, accept, result } = await setup();
+    const { cwd, accept, result, store, registry } = await setup();
+    // Pass-through cost probes: native writer, Git, locking and persistence stay real.
+    const captureTarget = vi.spyOn(registry.listBackends()[0]!, 'commitCaptureTarget');
+    const reads = vi.spyOn(store, 'read');
     const hook = join(cwd, '.git', 'hooks', 'post-commit');
     writeFileSync(hook, '#!/bin/sh\nif [ ! -f actor-done ]; then\ntouch actor-done\nactor=$(git commit-tree HEAD^{tree} -p HEAD -m actor)\ngit update-ref HEAD "$actor"\nfi\n'); chmodSync(hook, 0o755);
     const failed = result(await accept());
-    expect(failed.application).toMatchObject({ status: 'failed', reason: 'head_moved', nextGroupIndex: 1 });
+    expect(captureTarget).toHaveBeenCalledTimes(1);
+    expect(reads).toHaveBeenCalledTimes(1);
+    expect(failed.application).toMatchObject({ status: 'failed', reason: 'head_moved', nextGroupIndex: 1,
+      steps: [{ state: 'published' }, { state: 'not_published', errorCode: 'COMMIT_HEAD_CHANGED' }] });
     expect(git(cwd, ['log', '-1', '--format=%s'])).toBe('actor');
     expect(git(cwd, ['rev-parse', 'HEAD^'])).toBe(failed.application!.steps[0].commitSha);
     expect(git(cwd, ['show', 'HEAD:b.txt'])).toBe('base');

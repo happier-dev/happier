@@ -1,11 +1,21 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
 import { readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { ScmChangeDiscardResponseSchema } from '@happier-dev/protocol/scm';
 import { applyInverseEdits } from '@happier-dev/protocol/diff/hunks';
 import { buildReviewUnits } from '@happier-dev/protocol/scm/comparisonOccurrences';
-import type { FileReviewNoteV1 } from '@happier-dev/protocol/messages/structured/fileReviewNoteV1';
+import { FILE_REVIEW_NOTE_KIND, formatFileReviewNoteV1, type FileReviewNoteV1 } from '@happier-dev/protocol/messages/structured/fileReviewNoteV1';
+import { buildCodexAppServerTurnInput } from '@happier-dev/plugins-codex/agent/runtime/appServer/turnInput';
+import type { UserMessage } from '@/api/types';
+import { createPermissionModeQueueState } from '@/agent/runtime/createPermissionModeQueueState';
+import { runPermissionModePromptLoop } from '@/agent/runtime/runPermissionModePromptLoop';
+import { createRuntimeOverrideSynchronizers } from '@/agent/runtime/createRuntimeOverrideSynchronizers';
+import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
+import type { RuntimeTurnOperations } from '@/agent/runtime/turns/runtimeTurnOperations';
+import { createSessionProviderInputOutcomeBinding, type SessionProviderInputOutcome } from '@/agent/runtime/session/input/providerInputOutcome';
+import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { MessageBuffer } from '@/ui/ink/messageBuffer';
 import { createScmBackendRegistry } from '@/scm/registry';
 import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/registeredScmBackendAdapter';
 import { createLocalScmRepositoryFixture, runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
@@ -18,7 +28,7 @@ import { gitCheckpointAdapter } from '@/scm/checkpoints/gitCheckpointAdapter';
 import { retainRepositoryCheckpointTurnEvidence } from '@/scm/checkpoints/sessionEvidence';
 import { createTestGitRpcManager } from '@/scm/rpc/__tests__/testRpcHarness';
 import { prepareScmFileBytesExport, type ScmFileBytesExportInput } from '../deliverScmFileAtRevision';
-import { DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES } from '@happier-dev/protocol/features/payload/capabilities/machineTunnelCapabilities';
+import { WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES } from '@happier-dev/protocol/machines/workspaceFiles';
 import { createDirectTransferServerLifecycle } from '@/machines/transfer/directTransferServerLifecycle';
 import { commitGuardedFileReplace } from '@/rpc/handlers/fileSystem/commitGuardedFileReplace';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
@@ -74,7 +84,7 @@ describe('comparison discard through the SCM Action executor', () => {
     try {
       const evidence = captured.comparison.inventory.files.find(value => value.path === fixture.trackedPath)!;
       expect(evidence.occurrences).toHaveLength(3);
-      const input = { cwd: fixture.rootPath, entries: [{ path: fixture.trackedPath, kind: 'comparison',
+      const input = { cwd: fixture.rootPath, outcomeVersion: 1, entries: [{ path: fixture.trackedPath, kind: 'comparison',
         against: { source: captured.comparison.source, comparisonId: captured.comparison.id },
         changeRefs: [evidence.occurrences[1]!.id], includeUndo: true, expectedHash: hash(Buffer.from(after)) }] };
       const result = ScmChangeDiscardResponseSchema.parse(await call('scm.change.discard', input, authorization));
@@ -92,7 +102,7 @@ describe('comparison discard through the SCM Action executor', () => {
     } finally { await deleteCapturedScmComparison({ cwd: fixture.rootPath, comparisonId: captured.comparison.id, sessionId: captured.sessionId }); }
   });
 
-  it('sends one next-turn review note for two units and no note after a refused stale request', async () => {
+  it('sends one next-turn review note through the real prompt loop, settles provider acceptance, and omits refused requests', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-discard-note-' });
     roots.push(fixture.rootPath);
     const file = join(fixture.rootPath, fixture.trackedPath);
@@ -101,24 +111,106 @@ describe('comparison discard through the SCM Action executor', () => {
     runScmExecutable(fixture.rootPath, 'git', ['add', fixture.trackedPath]);
     runScmExecutable(fixture.rootPath, 'git', ['commit', '-m', 'review note base']);
     const after = before.replace('line 3\n', 'first change\n').replace('line 58\n', 'last change\n');
-    await writeFile(file, after);
-    const diff = runScmExecutable(fixture.rootPath, 'git', ['diff', '--no-color', '-U3', 'HEAD', '--', fixture.trackedPath]);
-    const keys = buildReviewUnits(fixture.trackedPath, 'combined', diff).map(unit => unit.key);
-    expect(keys).toHaveLength(2);
+    const captured = await captureTurn(fixture.rootPath, async () => { await writeFile(file, after); });
+    onTestFinished(async () => { await deleteCapturedScmComparison({ cwd: fixture.rootPath,
+      comparisonId: captured.comparison.id, sessionId: captured.sessionId }); });
+    const evidence = captured.comparison.inventory.files.find(value => value.path === fixture.trackedPath)!;
+    expect(evidence.occurrences).toHaveLength(2);
     const notes: (FileReviewNoteV1 & { sessionId: string })[] = [];
+    let receive: ((message: UserMessage) => boolean | void) | undefined;
+    const session = createMutableApiSessionClientFixture({ sessionId: captured.sessionId, overrides: {
+      onUserMessage: handler => { receive = handler; },
+    } });
+    const state = createPermissionModeQueueState({ session,
+      agentTargetKey: 'agent:happier.agent.codex/codex', initialPermissionMode: 'default' });
+    onTestFinished(() => { state.messageQueue.close(); });
     const input = { cwd: fixture.rootPath, entries: [{ path: fixture.trackedPath, kind: 'comparison',
-      against: { source: { kind: 'workingTree' } }, changeKeys: keys, expectedHash: hash(Buffer.from(after)), includeUndo: true }] };
+      against: { source: captured.comparison.source, comparisonId: captured.comparison.id },
+      changeRefs: evidence.occurrences.map(occurrence => occurrence.id), expectedHash: hash(Buffer.from(after)), includeUndo: true }] };
     // These two ports are genuine Home authority and outward note-delivery boundaries.
     const params = { actionId: 'scm.change.discard' as const, input, registry, workingDirectory: fixture.rootPath,
-      sessionId: 'review-session', authorizeSession: async (id: string) => id === 'review-session',
-      emitFileReviewNote: async (note: FileReviewNoteV1 & { sessionId: string }) => { notes.push(note); } };
+      sessionId: captured.sessionId, authorizeSession: async (id: string | undefined) => id === captured.sessionId,
+      emitFileReviewNote: async (note: FileReviewNoteV1 & { sessionId: string }) => {
+        notes.push(note);
+        if (!receive) throw new Error('Missing Session input binding');
+        const { sessionId: _sessionId, ...payload } = note;
+        receive({ role: 'user', localId: 'discard-note', content: { type: 'text', text: formatFileReviewNoteV1(payload) },
+          inputAdmissionReceipt: { v: 1, issuer: 'authenticatedMachine', nextTurnNote: FILE_REVIEW_NOTE_KIND },
+          meta: { happier: { kind: FILE_REVIEW_NOTE_KIND, payload } } });
+      } };
     const reverted = ScmChangeDiscardResponseSchema.parse(await executeScmActionOperation(params));
     expect(reverted).toMatchObject({ success: true });
     expect(await readFile(file, 'utf8')).toBe(before);
     expect(applyInverseEdits(before, reverted.entries![0]!.inverseEdits!)).toEqual({ ok: true, text: after });
-    expect(notes).toEqual([{ action: 'discard', sessionId: 'review-session', paths: [fixture.trackedPath], changeCount: 2 }]);
+    expect(notes).toEqual([{ action: 'discard', sessionId: captured.sessionId, paths: [fixture.trackedPath], turnId: captured.turnId }]);
     expect(await executeScmActionOperation(params)).toMatchObject({ success: false, errorCode: 'FILE_CHANGED' });
     expect(notes).toHaveLength(1);
+    // A successful real Discard is quiet until a real input arrives. Its note
+    // must survive the production queue and prompt loop into Codex's codec.
+    expect(state.messageQueue.size()).toBe(0);
+    state.messageQueue.push({ text: 'Continue', localId: 'next-input' }, { permissionMode: 'default' });
+    const nativeInputs: ReturnType<typeof buildCodexAppServerTurnInput>[] = [];
+    const primaryInputIds: (readonly string[] | undefined)[] = [];
+    const failures: unknown[] = [];
+    const settlements: SessionProviderInputOutcome[] = [];
+    const pendingLocalIds = new Set(['discard-note', 'next-input']);
+    const binding = createSessionProviderInputOutcomeBinding({ getTarget: () => ({
+      sessionId: session.sessionId, hasPendingProviderInput: localId => pendingLocalIds.has(localId),
+      async observeProviderInputSettlement(outcome) {
+        settlements.push(outcome);
+        if (outcome.kind === 'accepted') pendingLocalIds.delete(outcome.localId);
+        return true;
+      },
+    }) });
+    onTestFinished(() => { binding.clearAcceptedEffects(); });
+    // Only the external Agent process port is replaced. Queue admission, the
+    // prompt loop, final context preparation and the native input codec are real.
+    const runtime = {
+      beginTurnLifecycle() {},
+      async sendTurnPrompt(text, meta) {
+        nativeInputs.push(buildCodexAppServerTurnInput({ text, structuredInput: meta?.structuredInput }));
+        primaryInputIds.push(meta?.localIds);
+        if (!meta?.localId) throw new Error('Missing native primary input identity');
+        binding.observeProviderInputOutcome({ type: 'input-accepted', localInputId: meta.localId,
+          userMessageSeq: meta.userMessageSeq ?? null, userMessageSeqs: meta.userMessageSeqs,
+          delivery: { kind: 'newTurn', turnId: 'native-review-turn' } });
+      },
+      async waitForTurnCompletion() {},
+      subscribeRuntimeEvents: () => () => {},
+      async cancelTurn() {},
+      readSessionIdentity: () => ({ sessionId: 'native-review-thread' }),
+      async updateSessionRuntimeConfig() {},
+      async resetOrDisposeRuntime() {},
+    } satisfies RuntimeTurnOperations;
+    const lifetime = new AbortController();
+    onTestFinished(() => { lifetime.abort(); });
+    const permissionHandler = new ProviderEnforcedPermissionHandler(session, { logPrefix: '[FileReviewNotes]' });
+    let finished = false;
+    await runPermissionModePromptLoop({
+      providerName: 'Codex', agentMessageType: 'codex', explicitPermissionMode: undefined,
+      session, messageQueue: state.messageQueue, runtime,
+      permissionHandler,
+      createOverrideSynchronizer: (isStarted) => createRuntimeOverrideSynchronizers({
+        agentTargetKey: 'agent:happier.agent.codex/codex', session, isStarted,
+        runtime: { async setSessionMode() {}, async setSessionModelSelection() {}, async setSessionConfigOption() {} },
+      }),
+      messageBuffer: new MessageBuffer(), shouldExit: () => finished,
+      getAbortSignal: () => lifetime.signal, keepAlive() {}, setThinking() {},
+      sendReady: () => { finished = true; },
+      currentPermissionModeUpdatedAt: state.getCurrentPermissionModeUpdatedAt(),
+      setCurrentPermissionMode: state.setCurrentPermissionMode,
+      setCurrentPermissionModeUpdatedAt: state.setCurrentPermissionModeUpdatedAt,
+      registerProviderAcceptedEffect: binding.registerProviderAcceptedEffect, formatPromptErrorMessage: String,
+      onPromptFailure: error => { failures.push(error); },
+    });
+    expect(failures).toEqual([]);
+    expect(nativeInputs).toEqual([[{ type: 'text', text: `Continue\n\n<happier_review_note>${JSON.stringify({
+      text: `The person reviewing your work discarded your changes in ${JSON.stringify(fixture.trackedPath)} (turn "turn-1"). Do not reapply them unless asked.`,
+    })}</happier_review_note>` }]]);
+    expect(primaryInputIds).toEqual([['next-input']]);
+    await vi.waitFor(() => expect(settlements.filter(outcome => outcome.kind === 'accepted')
+      .map(outcome => outcome.localId).sort()).toEqual(['discard-note', 'next-input']));
+    expect(state.messageQueue.getContextOnlyMessages()).toEqual([]);
   });
 
   it('omits a run count for one captured Git hunk containing two review runs', async () => {
@@ -248,39 +340,36 @@ describe('comparison discard through the SCM Action executor', () => {
     runScmExecutable(fixture.rootPath, 'git', ['add', '.']);
     runScmExecutable(fixture.rootPath, 'git', ['commit', '-m', 'aggregate restore base']);
     // Each pre-image's base64 takes exactly half the raw response budget; its envelope pushes their aggregate over.
-    const previous = Buffer.alloc(Math.floor(DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES * 3 / 8), 255);
-    const captured = await captureTurn(fixture.rootPath, async () => {
-      for (const path of paths) await writeFile(join(fixture.rootPath, path), previous);
-    });
+    const previous = Buffer.alloc(Math.floor(WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES * 3 / 8), 255);
+    for (const path of paths) await writeFile(join(fixture.rootPath, path), previous);
     const disposers: (() => void | Promise<void>)[] = [];
     let published = false;
     try {
       const result = ScmChangeDiscardResponseSchema.parse(await executeScmActionOperation({ actionId: 'scm.change.discard', registry,
-        workingDirectory: fixture.rootPath, sessionId: captured.sessionId, authorizeSession: async id => id === captured.sessionId,
+        workingDirectory: fixture.rootPath,
         input: { cwd: fixture.rootPath, entries: paths.map(path => ({ path, kind: 'comparison',
-          against: { source: captured.comparison.source, comparisonId: captured.comparison.id }, includeUndo: true })) },
+          against: { source: { kind: 'workingTree' } }, includeUndo: true })) },
         prepareFileBytesExport: async input => await prepareScmFileBytesExport({ ...input, lifecycle: {
           clearPublishedTransfer: () => true,
           publishTransferWhenReady: async input => {
             // Publication is an external capability boundary. All file reads/writes and payload preparation stay real.
-            for (const path of paths) expect(await readFile(join(fixture.rootPath, path))).toEqual(previous);
+            for (const path of paths) expect((await readFile(join(fixture.rootPath, path))).equals(previous)).toBe(true);
             const source = input.payloadSource;
             if (!source || source.kind !== 'file') throw new Error('Prepared export must use its owned byte source');
-            expect(await readFile(source.filePath)).toEqual(previous);
+            expect((await readFile(source.filePath)).equals(previous)).toBe(true);
             if (source.dispose) disposers.push(source.dispose);
             published = true;
             return { transferId: input.transferId, transferToken: 'test-capability', endpointCandidates: [], expiresAt: Date.now() + 60_000 };
           },
         } }),
       }));
-      expect(result.success).toBe(true);
+      expect({ success: result.success, errorCode: result.errorCode, error: result.error }).toMatchObject({ success: true });
       expect(published).toBe(true);
-      expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES);
+      expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES);
       expect(result.entries?.some(entry => entry.previous && 'export' in entry.previous)).toBe(true);
       for (const path of paths) expect(await readFile(join(fixture.rootPath, path))).toEqual(Buffer.from([0, 1, 2]));
     } finally {
       await Promise.all(disposers.map(dispose => dispose()));
-      await deleteCapturedScmComparison({ cwd: fixture.rootPath, comparisonId: captured.comparison.id, sessionId: captured.sessionId });
     }
   });
 
@@ -288,14 +377,26 @@ describe('comparison discard through the SCM Action executor', () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-discard-large-unit-' });
     roots.push(fixture.rootPath);
     const file = join(fixture.rootPath, fixture.trackedPath);
-    const before = `${'a'.repeat(DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES)}\n`;
-    const after = `${'b'.repeat(DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES)}\n`;
+    // Each JSON-escaped control character uses six bytes in either side of
+    // the inverse, while the real Git diff retains its one-byte text form.
+    // This crosses the reply boundary without bypassing Git's output budget.
+    const spanLength = Math.floor(WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES / 12) + 1;
+    const before = `${'\u0001'.repeat(spanLength)}\n`;
+    const after = `${'\u0002'.repeat(spanLength)}\n`;
     await writeFile(file, before);
     runScmExecutable(fixture.rootPath, 'git', ['add', fixture.trackedPath]);
     runScmExecutable(fixture.rootPath, 'git', ['commit', '-m', 'large unit base']);
     await writeFile(file, after);
-    const diff = runScmExecutable(fixture.rootPath, 'git', ['diff', '--no-color', '-U3', 'HEAD', '--', fixture.trackedPath]);
-    const keys = buildReviewUnits(fixture.trackedPath, 'combined', diff).map(unit => unit.key);
+    const selection = await registry.selectBackend({ cwd: fixture.rootPath, workingDirectory: fixture.rootPath });
+    if (!selection?.backend.diffFile) throw new Error('The real Git diff owner is unavailable');
+    const diff = await selection.backend.diffFile({
+      context: { cwd: fixture.rootPath, projectKey: fixture.rootPath, detection: selection.detection },
+      request: { cwd: fixture.rootPath, path: fixture.trackedPath, area: 'both' },
+    });
+    expect({ success: diff.success, errorCode: diff.errorCode, error: diff.error }).toMatchObject({ success: true });
+    if (!diff.success || diff.diff === undefined) throw new Error('Expected an admitted real Git diff');
+    const keys = buildReviewUnits(fixture.trackedPath, 'combined', diff.diff).map(unit => unit.key);
+    expect(keys.length).toBeGreaterThan(0);
     const lifecycle = createDirectTransferServerLifecycle({ bindPort: 0, listenerClasses: ['loopback_http'] });
     try {
     const response = ScmChangeDiscardResponseSchema.parse(await executeScmActionOperation({ actionId: 'scm.change.discard', registry,
@@ -307,13 +408,13 @@ describe('comparison discard through the SCM Action executor', () => {
       input: { cwd: fixture.rootPath, entries: [{ path: fixture.trackedPath, kind: 'comparison',
         against: { source: { kind: 'workingTree' } }, changeKeys: keys, includeUndo: true }] } }));
     if (publisher === 'unavailable') {
-      expect(response).toMatchObject({ success: false, errorCode: 'COMPARISON_UNAVAILABLE' });
-      expect(await readFile(file, 'utf8')).toBe(after);
+      expect(response).toMatchObject({ success: false, errorCode: 'COMPARISON_UNAVAILABLE', error: 'Prepared Undo delivery is unavailable' });
+      expect((await readFile(file)).equals(Buffer.from(after))).toBe(true);
       return;
     }
-    expect(response.success).toBe(true);
-    expect(await readFile(file, 'utf8')).toBe(before);
-    expect(Buffer.byteLength(JSON.stringify(response))).toBeLessThanOrEqual(DEFAULT_MACHINE_TUNNEL_SERVER_ROUTED_MAX_RAW_PAYLOAD_BYTES);
+    expect({ success: response.success, errorCode: response.errorCode, error: response.error }).toMatchObject({ success: true });
+    expect((await readFile(file)).equals(Buffer.from(before))).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(response))).toBeLessThanOrEqual(WORKSPACE_FILE_RPC_MAX_RESPONSE_UTF8_BYTES);
     const entry = response.entries![0]!;
     expect(entry.inverseEdits).toBeUndefined();
     if (!entry.previous || !('export' in entry.previous)) throw new Error('Oversized inverse must use its exact preimage export');

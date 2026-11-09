@@ -1,11 +1,16 @@
-import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { z } from 'zod/mini';
 import axios from 'axios';
-import { rm, writeFile } from 'node:fs/promises';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, AccountProfileSchema, AccountSettingsV2GetResponseSchema, ActionIdSchema, ApprovalRequestSchema, createActionExecutor, FeaturesResponseSchema, RPC_METHODS } from '@happier-dev/protocol';
+import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1, AccountProfileSchema, AccountSettingsV2GetResponseSchema, ApprovalRequestSchema, createActionExecutor, FeaturesResponseSchema, RPC_METHODS } from '@happier-dev/protocol';
 import type { RpcHandler } from '@/api/rpc/types';
 import { registerScmHandlers } from '@/rpc/handlers/scm';
 import { createBlockingApprovalCoordinator } from '@happier-dev/protocol/actions';
+import { ScmChangeDiscardResponseSchema, ScmDiffFileResponseSchema } from '@happier-dev/protocol/scm';
 
 import { configuration } from '@/configuration';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -20,6 +25,9 @@ import { createScmHostingProviderRuntimeServicesForTest } from '../../../../../p
 import { createBareGitRemoteFixture, createLocalScmRepositoryFixture, runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
 import { executeScmActionOperation } from './executeScmActionOperation';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
+import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
+import { callMcpToolWithResolvedTimeout } from '@/mcp/mcpToolCallRequestOptions';
 
 describe('SCM Action execution at the Git backend', () => {
   const registration = createGitScmBackendRuntimeRegistration();
@@ -31,12 +39,32 @@ describe('SCM Action execution at the Git backend', () => {
   const repositories: string[] = [];
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     resetActiveAccountSettingsSnapshotForTests();
   });
 
   afterAll(async () => {
     await Promise.all(repositories.map((path) => rm(path, { recursive: true, force: true })));
+  });
+
+  it('retains a 300 KiB Discard Undo receipt inside the actual socket reply limit', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-scm-undo-reply-' });
+    repositories.push(fixture.rootPath);
+    const file = join(fixture.rootPath, fixture.trackedPath);
+    const baseline = await readFile(file);
+    const edited = Buffer.from('é😀'.repeat(55_000));
+    await writeFile(file, edited);
+    const response = ScmChangeDiscardResponseSchema.parse(await executeScmActionOperation({ actionId: 'scm.change.discard',
+      input: { cwd: fixture.rootPath, entries: [{ path: fixture.trackedPath, kind: 'comparison',
+        against: { source: { kind: 'workingTree' } }, includeUndo: true }] },
+      registry, workingDirectory: fixture.rootPath,
+    }));
+    expect(response).toMatchObject({ success: true, entries: [{ status: 'restored' }] });
+    const previous = response.entries?.[0]?.previous;
+    expect(previous && 'inlineBase64' in previous && Buffer.from(previous.inlineBase64, 'base64').equals(edited)).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(response))).toBeGreaterThan(300 * 1024);
+    expect(await readFile(file)).toEqual(baseline);
   });
 
   it('emits one HEAD discard note only for files changed before the successful Action', async () => {
@@ -167,10 +195,20 @@ describe('SCM Action execution at the Git backend', () => {
     expect(runScmExecutable(remote.remotePath, 'git', ['rev-parse', `refs/heads/${fixture.branchName}`])).toBe(fixture.headCommit);
   });
 
-  it('approves an agent mutation before changing the selected repository and settles its real result', async () => {
+  it.each([
+    { surface: 'agent', actionId: 'scm.change.include', moved: false },
+    { surface: 'agent', actionId: 'scm.change.discard', moved: false },
+    { surface: 'mcp', actionId: 'scm.change.discard', moved: false },
+    { surface: 'agent', actionId: 'scm.change.discard', moved: true },
+  ] as const)('waits for delayed $surface approval of $actionId (moved=$moved) and settles its real Git result', async ({ surface, actionId, moved }) => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-scm-action-' });
     repositories.push(fixture.rootPath);
-    await writeFile(join(fixture.rootPath, fixture.trackedPath), 'changed through Action\n');
+    const file = join(fixture.rootPath, fixture.trackedPath);
+    const before = Array.from({ length: 40 }, (_, index) => `line ${index + 1}\n`).join('');
+    await writeFile(file, before);
+    runScmExecutable(fixture.rootPath, 'git', ['commit', '-am', 'discovery base']);
+    const changed = before.replace('line 3\n', 'person change\n').replace('line 30\n', 'own change\n');
+    await writeFile(file, changed);
     const sessionId = 'c111111111111111111111111';
     const machineId = 'machine-action-test';
     const serverApiUrl = 'https://scm-action-approval.test';
@@ -218,6 +256,8 @@ describe('SCM Action execution at the Git backend', () => {
     let approved = false;
     let requestedAction: string | undefined;
     const approvalCoordinator = createBlockingApprovalCoordinator();
+    let ready!: (value: Parameters<typeof approvalCoordinator.resolveBlockingDecision>[0]) => void;
+    const waiting = new Promise<Parameters<typeof approvalCoordinator.resolveBlockingDecision>[0]>(resolve => { ready = resolve; });
     const unused = async (): Promise<never> => { throw new Error('Unrelated Action dependency was invoked'); };
     const executor = createActionExecutor({
       executionRunStart: unused, executionRunList: unused, executionRunGet: unused,
@@ -241,27 +281,82 @@ describe('SCM Action execution at the Git backend', () => {
       approvalsUpdate: async () => ({ ok: true }),
       approvalsWaitForDecision: async ({ artifactId, request, signal }) => {
         const pending = approvalCoordinator.waitForDecision({ artifactId, request, ...(signal ? { signal } : {}) });
-        await approvalCoordinator.resolveBlockingDecision({ artifactId, request: { ...request, status: 'approved', decision: { kind: 'approve', decidedAtMs: Date.now() } }, decision: 'approve' });
-        approved = true;
+        ready({ artifactId, request: { ...request, status: 'approved', decision: { kind: 'approve', decidedAtMs: Date.now() } }, decision: 'approve' });
         const decision = await pending;
         if (!('actionId' in decision.request)) throw new Error('Expected a canonical Action approval decision');
         return { ...decision, request: ApprovalRequestSchema.parse(decision.request) };
       },
       scmActionExecute: async ({ actionId, input }) => {
-        expect(approved).toBe(true);
+        if (actionId !== 'scm.diff.file') expect(approved).toBe(true);
         return executeScmActionOperation({ actionId, input, registry, workingDirectory: fixture.rootPath });
       },
     });
 
-    const result = await executor.execute(ActionIdSchema.parse('scm.change.include'), {
-      cwd: fixture.rootPath, paths: [fixture.trackedPath],
-    }, { surface: 'agent', authority: 'account_automation', serverId: configuration.activeServerId,
+    const context = { surface, authority: 'account_automation' as const, serverId: configuration.activeServerId,
       actionRequestId: 'scm-include-action-test',
-      defaultSessionId: sessionId, defaultSessionMachineId: machineId });
+      defaultSessionId: sessionId, defaultSessionMachineId: machineId };
+    const bridge = createActionToolExecutorBridge({ surface, executor: {
+      execute: (id, input, toolContext) => executor.execute(id, input, { ...context, ...toolContext }),
+    } });
+    const server = new McpServer({ name: 'happier', version: '1' });
+    registerHappierMcpBuiltInTools(server, { sessionId, sessionMachineId: machineId, workingDirectory: fixture.rootPath, surface,
+      deps: { ...bridge, changeTitle: unused, resolveActionOptions: args => bridge.resolveActionOptions(args, sessionId) } });
+    // Replace only the Agent process connection; MCP dispatch, approval, SCM
+    // registration, content-key projection and Git operations all remain real.
+    const client = new Client({ name: 'scm-discovery-agent', version: '1' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    onTestFinished(async () => { await client.close(); await server.close(); approvalCoordinator.dispose(); });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const execute = async (id: string, input: unknown): Promise<unknown> => {
+      const result = await callMcpToolWithResolvedTimeout({ client, toolName: 'action_execute', args: { actionId: id, input } });
+      const content = result.content.find(item => item.type === 'text');
+      if (!content || content.type !== 'text') throw new Error('Missing MCP Action result');
+      const value: unknown = JSON.parse(content.text);
+      expect(result.isError).not.toBe(true);
+      return value;
+    };
+    const diff = ScmDiffFileResponseSchema.parse(await execute('scm.diff.file', { cwd: fixture.rootPath, path: fixture.trackedPath, area: 'both' }));
+    expect(diff).toMatchObject({ success: true, reviewUnits: expect.any(Array) });
+    // Read the proposed projection as a consumer without a cast or requiring
+    // the producer type to exist before this regression earns its first RED.
+    const { reviewUnits } = z.object({ reviewUnits: z.array(z.object({ key: z.string() })) }).parse(diff);
+    expect(reviewUnits).toHaveLength(2);
+    if (actionId === 'scm.change.include') {
+      const pending = ScmDiffFileResponseSchema.parse(await execute('scm.diff.file', { cwd: fixture.rootPath, path: fixture.trackedPath }));
+      expect(pending.success).toBe(true);
+      expect(pending).not.toHaveProperty('reviewUnits');
+    }
+    const ownKey = reviewUnits[1]!.key;
+    const input = actionId === 'scm.change.include' ? { cwd: fixture.rootPath, paths: [fixture.trackedPath] }
+      : { cwd: fixture.rootPath, entries: [{ path: fixture.trackedPath, kind: 'comparison',
+        against: { source: { kind: 'workingTree' } }, changeKeys: [ownKey], includeUndo: true }] };
+    let settled = false;
+    const execution = execute(actionId, input).then(result => { settled = true; return result; });
+    const decision = await Promise.race([waiting, execution.then(() => { throw new Error('Action returned before approval'); })]);
+    expect(await readFile(file, 'utf8')).toBe(changed);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(settled).toBe(false);
+    expect(approvalCoordinator.getLiveWaiterCount(decision.artifactId)).toBe(1);
+    vi.useRealTimers();
+    if (moved) await writeFile(file, changed.replace('own change\n', 'changed again\n'));
+    approved = true;
+    expect(await approvalCoordinator.resolveBlockingDecision(decision)).toEqual({ resolved: true });
+    const result = await execution;
 
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { success: true } });
-    expect(requestedAction).toBe('scm.change.include');
-    expect(runScmExecutable(fixture.rootPath, 'git', ['diff', '--cached', '--name-only'])).toBe(fixture.trackedPath);
+    expect(requestedAction).toBe(actionId);
+    if (moved) {
+      expect(ScmChangeDiscardResponseSchema.parse(result)).toMatchObject({ success: false, errorCode: 'CHANGE_MOVED_ON' });
+      expect(await readFile(file, 'utf8')).toBe(changed.replace('own change\n', 'changed again\n'));
+    } else if (actionId === 'scm.change.include') {
+      expect(result).toMatchObject({ success: true });
+      expect(runScmExecutable(fixture.rootPath, 'git', ['diff', '--cached', '--name-only'])).toBe(fixture.trackedPath);
+    } else {
+      expect(result).toMatchObject({ success: true, entries: [{ status: 'reverted' }] });
+      expect(await readFile(file, 'utf8')).toBe(before.replace('line 3\n', 'person change\n'));
+      expect(runScmExecutable(fixture.rootPath, 'git', ['diff', '--cached', '--name-only'])).toBe('');
+    }
   });
 
   it('projects only the legacy RPC outer failure code while retaining the canonical outcome', async () => {

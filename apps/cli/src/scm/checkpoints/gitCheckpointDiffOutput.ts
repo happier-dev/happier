@@ -8,11 +8,12 @@ import { runGitCheckpointCommand } from './gitCheckpointCommands';
 export async function readGitCheckpointDiffOutput(input: Readonly<{
     cwd: string;
     args: readonly string[];
+    env?: Parameters<typeof runGitCheckpointCommand>[0]['env'];
 }>): Promise<ScmExecResult> {
     const directory = await mkdtemp(join(tmpdir(), 'happier-checkpoint-diff-'));
     const outputPath = join(directory, 'diff');
     try {
-        const result = await runGitCheckpointCommand({ cwd: input.cwd,
+        const result = await runGitCheckpointCommand({ cwd: input.cwd, env: input.env,
             args: ['diff', '--no-ext-diff', '--no-textconv', '--no-color', `--output=${outputPath}`, ...input.args] });
         if (!result.success) return result;
         // Decode once into a contiguous string. readFile's UTF-8 chunk decoder
