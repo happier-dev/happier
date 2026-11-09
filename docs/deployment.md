@@ -46,15 +46,19 @@ admitted-child transport. Prepared references stay pinned through review. Only
 explicit `detachKeepRunning` uses Account storage. Native admission explains unsupported target shapes with a sanitized
 cause, a reason and a remedy.
 
-In 0.3 development, a lost teardown HTTP response follows the existing controller
-Action operation selected by the native Environment intent identity (Home,
-Environment and `requestKey`), derived by the shared Protocol owner rather than the
-HTTP envelope's request id. The terminal operation result decides success or
-failure; Environment absence alone does not prove the
-requested cleanup completed. Failed observation retains the unknown outcome.
-This recovery neither repeats teardown nor adds a polling timer. A removal refused
-because a deploy is running offers History and the receipt's existing Stop Action,
-using the receipt owner's cancellability and cancellation-consequence facts.
+In 0.3 development, a lost native Action HTTP response follows the existing
+controller Action operation for Add, Deploy, teardown and restore. The host and UI
+consume the shared Protocol request-identity owner: creation intent, Environment
+intent or prepared restore identity takes precedence over the transport request
+id. Actions without a derived identity retain their original transport request id;
+template previews create no operation. The terminal operation result decides
+success or failure, including acknowledged partial Add progress. A fully reconciled
+terminal result can end observation while an earlier terminal-read reply is lost;
+a result-free list summary still requires the complete record. Environment absence
+alone does not prove cleanup completed. Failed observation retains the unknown
+outcome. Recovery neither repeats the effect nor adds a polling timer. A removal
+refused because a deploy is running offers History and the receipt's existing Stop
+Action, using the receipt owner's cancellability and cancellation-consequence facts.
 
 In 0.3 development, Stop and remove reviews native named volumes through the same
 `deployments.teardown` Action with `mode: 'preview'`. The controller observes
@@ -519,13 +523,8 @@ The installed controller derives the exact provider id, credential
 principal and operation identity from retained content and calls the target's
 declared observe Action through the existing reviewed-child owner. Receipt content
 and terminal state use the same installation-signed transition and CAS as Deploy;
-no second work queue or observation scheduler is introduced. On current development
-source, own-server calls to `deployments.receipts.observe` and
-`deployments.observation.get` return `unsupported_action` with
-`reason: target_not_supported`, the target kind and a `deployments.receipts.get`
-recovery hint. Read that receipt for its recorded result and use
-`deployments.health.read` or `deployments.logs.read` for native state; native
-settlement remains with the rollout owner. Reassigned controllers cannot borrow an earlier accepted
+no second work queue or observation scheduler is introduced. Own-server receipts
+are unsupported. Reassigned controllers cannot borrow an earlier accepted
 installation's receipt custody; that retained-operation recovery boundary remains
 separate from future-controller selection.
 
@@ -2764,6 +2763,10 @@ exposure similarly names `networkExposure`.
 The shared recovery projection describes a native-execution `deployment_conflict`
 as ambiguous running service generation and directs the person to Machine
 services. Review-admission conflicts retain their fresh-review recovery.
+Store's partial Domain result uses this same presentation owner to read its
+retained Domain failure; a wrapper's generic recovery does not replace the
+native required fact or authored remedy. Completed installation steps remain
+in the partial result.
 Own-server retained-service recovery accepts a single native Compose project
 whose services come from different retained source folders, as when Compose
 reuses an unchanged app container while adding a database. The existing source

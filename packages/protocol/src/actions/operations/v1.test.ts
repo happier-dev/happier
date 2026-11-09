@@ -20,6 +20,7 @@ import {
   ActionOperationListV1ResponseSchema,
   ActionOperationSnapshotPushV1Schema,
   projectActionOperationSnapshotForV1Reader,
+  readActionOperationTerminalResultV1,
 } from './v1.js';
 
 const baseSnapshot = {
@@ -35,6 +36,18 @@ const baseSnapshot = {
 } as const;
 
 describe('Action operation v1 contract', () => {
+  it('recovers failed and cancelled restore steps from the retained terminal receipt', () => {
+    const result = { steps: [{ id: 'restore', status: 'failed' }] };
+    const failed = ActionOperationSnapshotV1Schema.parse({ ...baseSnapshot, actionId: 'deployments.backups.restore',
+      state: 'failed', startedAt: 110, settledAt: 120, result,
+      error: { errorCode: 'restore_failed', error: 'restore_failed' } });
+    expect(readActionOperationTerminalResultV1(failed)).toEqual({ ok: false, errorCode: 'restore_failed',
+      error: 'restore_failed', details: result });
+    const cancelled = ActionOperationSnapshotV1Schema.parse({ ...failed, state: 'cancelled', error: undefined });
+    expect(readActionOperationTerminalResultV1(cancelled)).toEqual({ ok: false,
+      errorCode: 'cancelled', error: 'cancelled', details: result });
+    expect(readActionOperationTerminalResultV1(ActionOperationSnapshotV1Schema.parse(baseSnapshot))).toBeNull();
+  });
   it('retains current setup step facts and omits the setup reference for released V1 readers', () => {
     const steps = [{ planIndex: 0, stepId: 'install', label: { key: 'setup.install', fallback: 'Install tools' },
       state: 'failed', failureCause: 'native_effect_failed' }];

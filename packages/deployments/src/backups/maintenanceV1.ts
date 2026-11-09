@@ -1,5 +1,4 @@
-import { DeploymentBackupFailureResultV1Schema, type DeploymentBackupFailureResultV1,
-    type DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployment-protocol';
 import { isResticSnapshotBoundToManifestV1, readResticRepositoryConfigV1, readResticSnapshotsV1 } from './manifestV1.js';
 import { selectResticForgetCandidatesV1 } from './retentionV1.js';
 import { backupOperationFailureV1, backupOperationStepV1, executeBackupOperationStepV1,
@@ -15,27 +14,8 @@ export type DeploymentBackupPruneInputV1 = DeploymentBackupReadInputV1 & Readonl
 export type DeploymentBackupPruneResultV1 = Readonly<{
     kind: 'pruned' | 'kept'; removedSnapshotIds: readonly string[];
 }>;
-export type DeploymentBackupMaintenanceFailureEvidenceV1 = Readonly<{
-    removedSnapshotIds?: readonly string[]; uncertainSnapshotIds?: readonly string[];
-    probe?: DeploymentBackupFailureResultV1['probe'];
-}>;
-
-/** The Action failure presenter may disclose these native identities, never arbitrary thrown details or payloads. */
-export function readDeploymentBackupMaintenanceFailureEvidenceV1(error: unknown): DeploymentBackupMaintenanceFailureEvidenceV1 | undefined {
-    if (!error || typeof error !== 'object' || !('details' in error)) return undefined;
-    const details = error.details;
-    if (!details || typeof details !== 'object' || Array.isArray(details)) return undefined;
-    const candidate = {
-        ...('removedSnapshotIds' in details ? { removedSnapshotIds: details.removedSnapshotIds } : {}),
-        ...('uncertainSnapshotIds' in details ? { uncertainSnapshotIds: details.uncertainSnapshotIds } : {}),
-        ...('probe' in details && details.probe !== undefined ? { probe: details.probe } : {}),
-    };
-    if (!Object.keys(candidate).length) return undefined;
-    const parsed = DeploymentBackupFailureResultV1Schema.safeParse({ step: '', code: '', ...candidate });
-    if (!parsed.success) return undefined;
-    const { step, code, ...evidence } = parsed.data;
-    return evidence;
-}
+export { readDeploymentBackupMaintenanceFailureEvidenceV1, type DeploymentBackupMaintenanceFailureEvidenceV1 }
+    from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 
 /** Restic owns policy grouping/locking/compaction. This owner deletes only proven-owned, unprotected exact ids. */
 export async function pruneDeploymentBackupsV1(input: DeploymentBackupPruneInputV1): Promise<DeploymentBackupPruneResultV1> {

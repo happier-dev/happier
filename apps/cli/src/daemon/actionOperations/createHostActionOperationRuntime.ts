@@ -19,14 +19,14 @@ import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessi
 import { isDeepStrictEqual } from 'node:util';
 import { readDeploymentArchiveOperationIdentityForHost } from '@/deployments/targets/ownServer/archiveFilesystemAdmission';
 import type { ManagedNativeOperationSettlement, ManagedMachineOperationSettlementContext } from '@/machines/managed/managedIntentReconciler';
-import { DeploymentActionInputSchemasV1, DeploymentReceiptResultV1Schema, DeploymentDeployInputV1Schema, readDeploymentEnvironmentOperationRequestIdV1,
+import { DeploymentActionInputSchemasV1, DeploymentReceiptResultV1Schema, DeploymentDeployInputV1Schema,
+  readDeploymentActionOperationRequestIdV1, isDeploymentTemplatePreviewInputV1,
   type DeploymentDeployInputV1, type DeploymentDeployIntentInputV1,
   type DeploymentPendingAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { isDeploymentChildEffectActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol';
 import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
-import { readDeploymentTemplateCreationOperationRequestIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { MachineServiceAdoptInputV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
 
@@ -57,23 +57,7 @@ function readDeploymentOperationRequestId(actionId: string, input: unknown): str
       'adopt', parsed.data.serverId, parsed.data.machineId, parsed.data.serviceId, parsed.data.requestKey,
     ]);
   }
-  if (actionId === 'deployments.backups.restore') {
-    const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
-    if (!parsed.success || parsed.data.mode !== 'confirm') return undefined;
-    // One prepared restore can enter the destructive native phase once. The
-    // incumbent runner compares the complete input before returning its result.
-    return computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
-      'restore', parsed.data.prepareOperationId,
-    ]);
-  }
-  if (actionId === 'deployments.templates.instantiate') {
-    const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
-    return parsed.success ? readDeploymentTemplateCreationOperationRequestIdV1(parsed.data) : undefined;
-  }
-  if (!isDeploymentChildEffectActionIdV1(actionId) && actionId !== 'deployments.teardown') return undefined;
-  const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
-  if (!parsed.success || !('requestKey' in parsed.data)) return undefined;
-  return readDeploymentEnvironmentOperationRequestIdV1(parsed.data);
+  return readDeploymentActionOperationRequestIdV1(actionId, input);
 }
 
 function readRequestId(actionId: string, input: unknown): string | undefined {
@@ -291,9 +275,8 @@ export function createHostActionOperationRuntime(deps: Readonly<{
       } : undefined;
     const actionId = ActionIdSchema.safeParse(request.actionId);
     const spec = actionId.success ? getActionSpec(actionId.data) : null;
-    const template = request.actionId === 'deployments.templates.instantiate'
-      ? DeploymentActionInputSchemasV1['deployments.templates.instantiate'].safeParse(request.input) : null;
-    if (!scope || !spec || !(request.operation ?? spec.operation) || template?.success && template.data.mode === 'preview') {
+    if (!scope || !spec || !(request.operation ?? spec.operation)
+      || isDeploymentTemplatePreviewInputV1(request.actionId, request.input)) {
       // Actions without a host operation consume their carried review in the action executor.
       if (!scope && (request.operation ?? spec?.operation)
         && carriesNativeConfirmation(request.actionId, request.rpcContext)) return { ok: false,

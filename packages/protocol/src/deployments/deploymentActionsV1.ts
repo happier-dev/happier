@@ -38,7 +38,7 @@ import { ProjectSourceOwnerV1Schema, ProjectSourceV1Schema, ProjectSourcesListIn
 import { ScmHostingRepositoryIdentityV1Schema } from '../scm/hostingRepositoryIdentity.js';
 import { ArtifactJsonUpdateHttpInputV1Schema } from '../artifacts/artifactMutationHttpV1.js';
 import { ArtifactQuotaExceededV1Schema } from '../artifacts/artifactActionsV1.js';
-import type { DeploymentTransportActionIdV1 } from './deploymentActionIdsV1.js';
+import { isDeploymentChildEffectActionIdV1, type DeploymentTransportActionIdV1 } from './deploymentActionIdsV1.js';
 import { DeploymentEnvironmentRefV1Schema } from './deploymentEnvironmentRefV1.js';
 import { DeploymentDeployIntentInputV1Schema } from './deploymentDeployIntentV1.js';
 import { DeploymentOnFailureV1Schema } from './storedAppInputV1.js';
@@ -85,7 +85,7 @@ import { DeploymentRepositoryComposeV1Schema, DeploymentStoredDefinitionV1Schema
   DeploymentSourceIntentV1Schema } from './storedAppInputV1.js';
 import { DeploymentPrepareInputV1Schema, DeploymentPrepareResultV1Schema } from './deploymentPreparationV1.js';
 import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiateResultV1Schema,
-  DeploymentTemplateInstantiationReviewV1Schema } from './deploymentTemplateInstantiationV1.js';
+  DeploymentTemplateInstantiationReviewV1Schema, readDeploymentTemplateCreationOperationRequestIdV1 } from './deploymentTemplateInstantiationV1.js';
 import { DeploymentPublishPrepareInputV1Schema, DeploymentPublishPrepareResultV1Schema } from './deploymentPublishPreparationV1.js';
 export * from './deploymentPublishPreparationV1.js';
 import { DeploymentHealthCurrentInputV1Schema, DeploymentHealthCurrentSuccessV1Schema,
@@ -818,6 +818,33 @@ export function readDeploymentEnvironmentOperationRequestIdV1(input: Readonly<{
     : computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
       input.serverId, input.environmentId, input.requestKey,
     ]);
+}
+
+/** The host producer and reconnecting caller observe the same native intent,
+ * independently of the transport envelope that carried it. */
+export function readDeploymentActionOperationRequestIdV1(actionId: string, input: unknown): string | undefined {
+  if (actionId === 'deployments.backups.restore') {
+    const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
+    if (!parsed.success || parsed.data.mode !== 'confirm') return undefined;
+    return computeCanonicalDomainSeparatedDigest('happier-deployment-operation-request-v1', [
+      'restore', parsed.data.prepareOperationId,
+    ]);
+  }
+  if (actionId === 'deployments.templates.instantiate') {
+    const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
+    return parsed.success ? readDeploymentTemplateCreationOperationRequestIdV1(parsed.data) : undefined;
+  }
+  if (!isDeploymentChildEffectActionIdV1(actionId) && actionId !== 'deployments.teardown') return undefined;
+  const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
+  if (!parsed.success || !('requestKey' in parsed.data)) return undefined;
+  return readDeploymentEnvironmentOperationRequestIdV1(parsed.data);
+}
+
+/** Template preview has an operation declaration but never creates a host receipt. */
+export function isDeploymentTemplatePreviewInputV1(actionId: string, input: unknown): boolean {
+  if (actionId !== 'deployments.templates.instantiate') return false;
+  const parsed = DeploymentActionInputSchemasV1[actionId].safeParse(input);
+  return parsed.success && parsed.data.mode === 'preview';
 }
 
 /** The signer and Home derive the same body binding; the proof itself is never part of its digest. */

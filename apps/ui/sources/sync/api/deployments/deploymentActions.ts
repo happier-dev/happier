@@ -1,8 +1,8 @@
-import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, readDeploymentEnvironmentOperationRequestIdV1, DeploymentEnvironmentGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, isDeploymentMachineTransportActionIdV1, isDeploymentPromoteActionIdV1, isDeploymentReadActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, readDeploymentActionOperationRequestIdV1, isDeploymentTemplatePreviewInputV1, DeploymentEnvironmentGetResultV1Schema, DeploymentCancelTransitionInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentTargetLinkInputV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreateInputV1, type DeploymentEnvironmentCreateIntentInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DEPLOYMENT_CANCEL_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1, isDeploymentActionIdV1, isDeploymentMachineTransportActionIdV1, isDeploymentPromoteActionIdV1, isDeploymentReadActionIdV1, isDeploymentTargetLinkActionIdV1, type DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { isActionOutcomeUnknownErrorCodeV1, ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionOutcomeUnknownErrorCodeV1, ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentTemplateInstantiateResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
@@ -17,11 +17,40 @@ import { withActionAccountRequestSignal, type LazyActionAccountContext } from '@
 import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { randomUUID } from '@/platform/randomUUID';
 import { observeActionOperationByRequestId } from '@/sync/domains/actionOperations/observeActionOperationByRequestId';
+import { readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { prepareUiDeploymentTargetLink } from './prepareUiDeploymentTargetLink';
 import { DeploymentInvalidV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 function creationMachine(input: DeploymentEnvironmentCreateInputV1 | DeploymentEnvironmentCreateIntentInputV1) {
     return input.controllerMachineId ?? input.firstTargetLink?.machines[0]?.machineId;
+}
+
+/** Recover this issued native request's retained result without replaying its effect. */
+export async function recoverUiDeploymentActionResult(params: Readonly<{
+    account: LazyActionAccountContext; actionId: string; input: unknown; machineId: string;
+    requestId: string; context: ActionExecutorContext; execution: ActionExecuteResult;
+}>): Promise<ActionExecuteResult> {
+    const { account, actionId, input, machineId, requestId, context, execution } = params;
+    if (execution.ok || !isActionOutcomeUnknownErrorCodeV1(execution.errorCode)
+        || !isDeploymentActionIdV1(actionId)) return execution;
+    const spec = getActionSpec(actionId);
+    if (!spec.operation || isDeploymentTemplatePreviewInputV1(actionId, input)) return execution;
+    try {
+        const operation = await withActionAccountRequestSignal(account, context.signal, signal => observeActionOperationByRequestId({
+            serverId: account.serverId, accountId: account.accountId, machineId, signal,
+            requestIdentity: { actionId, requestId: readDeploymentActionOperationRequestIdV1(actionId, input) ?? requestId },
+        }));
+        account.assertCurrent();
+        if (!operation) return execution;
+        const terminal = readActionOperationTerminalResultV1(operation);
+        if (!terminal) return execution;
+        if (!terminal.ok) return terminal;
+        const settled = spec.outputSchema?.safeParse(terminal.result);
+        if (settled?.success) return { ...terminal, ok: true, result: settled.data };
+    } catch {
+        // Observation can also be unavailable; preserve the original uncertainty.
+    }
+    return execution;
 }
 
 /** Account-bound storage and the existing Machine Action transport; no UI native effects. */
@@ -44,30 +73,7 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
             actionCaller: context.actionCaller, authority: context.authority,
             ...(invocation ? { invocation } : {}), signal: context.signal,
             onTransportIssued: context.onTransportIssued });
-        if (actionId !== DEPLOYMENT_TEARDOWN_ACTION_ID_V1 || result.ok
-            || !isActionOutcomeUnknownErrorCodeV1(result.errorCode)) return result;
-        // A lost HTTP response is not a failed teardown. Join this request's existing
-        // runner; never resubmit the effect or infer success from Environment absence.
-        try {
-            const retainedRequestId = ('environmentId' in input && 'requestKey' in input
-                ? readDeploymentEnvironmentOperationRequestIdV1(input) : undefined) ?? requestId;
-            const operation = await withActionAccountRequestSignal(account, context.signal, signal => observeActionOperationByRequestId({
-                serverId: account.serverId, accountId: account.accountId, machineId, signal,
-                requestIdentity: { actionId, requestId: retainedRequestId },
-            }));
-            account.assertCurrent();
-            if (!operation) return result;
-            if (operation.state === 'succeeded') {
-                const settled = DeploymentActionOutputSchemasV1[actionId].safeParse(operation.result);
-                if (settled.success && 'environmentId' in settled.data && 'environmentId' in input
-                    && settled.data.environmentId === input.environmentId) return { ok: true as const, result: settled.data };
-            } else if (operation.state === 'failed' && operation.error) {
-                return { ok: false as const, ...operation.error };
-            }
-        } catch {
-            // Observation can also be unavailable; keep the original uncertainty.
-        }
-        return result;
+        return recoverUiDeploymentActionResult({ account, actionId, input, machineId, requestId, context, execution: result });
     }
     async function storage(actionId: DeploymentTransportActionIdV1, input: DeploymentActionInputV1, context: ActionExecutorContext) {
         account.assertCurrent();

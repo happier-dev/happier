@@ -10,6 +10,17 @@ type RequesterSessionSpawnDisposition = Readonly<{ kind: 'own' }>
     | Readonly<{ kind: 'requester'; disclosure: ReturnType<typeof projectRequesterSessionCredentialDisclosure> & Readonly<{ custodian: Readonly<{ accountId: string; displayName?: string | null }> }> }>
     | Readonly<{ kind: 'refused'; result: Extract<SessionSpawnNewResultV1, { type: 'error' }> }>;
 
+/** The inventory owner already classifies a known own Machine; uncertain custody still needs access. */
+export async function readRequesterSessionSpawnDisposition(params: Readonly<{
+    accountId: string;
+    machineId: string;
+    isShared: boolean | undefined;
+    readAccess(): Promise<unknown>;
+}>): Promise<RequesterSessionSpawnDisposition> {
+    if (params.isShared === false) return { kind: 'own' };
+    return resolveRequesterSessionSpawnDisposition({ ...params, access: await params.readAccess() });
+}
+
 /** Current Home access selects credential custody only; C41 remains the admission authority. */
 export function resolveRequesterSessionSpawnDisposition(params: Readonly<{
     accountId: string;

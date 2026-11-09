@@ -1,20 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
-  isDeploymentBackupActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 import type {
   ActionOperationCancelV1Response,
   ActionExecuteResult,
 } from '@happier-dev/protocol/actions';
 import { ActionOperationDomainRefV1Schema, ActionOperationFailureV1Schema, ActionOperationObservationV1Schema,
-  canRetainProjectSetupReviewV1 } from '@happier-dev/protocol/actions/operations/v1';
+  canRetainProjectSetupReviewV1, readActionOperationTerminalResultV1, projectDeploymentBackupFailureResultV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { ProjectPrepareNoLaunchResultV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
 import { OpenProjectResultV1Schema, projectOpenProjectRefusalV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { DeploymentBackupFailureResultV1Schema, DeploymentRestoreFailureResultV1Schema,
-  MachineReachabilityConfigureResultV1Schema } from '@happier-dev/protocol';
-import { readDeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/deployments';
+import { MachineReachabilityConfigureResultV1Schema } from '@happier-dev/protocol';
 import { MachineServiceAdoptResultV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -61,45 +58,6 @@ type ActiveInvocation = Readonly<{
   decideSetupReview: (decision: ActionOperationSetupDecision) => Promise<void>;
   serviceMoveStart?: { claimed: boolean };
 }>;
-
-/** Retain only named native backup facts; executor diagnostics never enter receipts. */
-function projectDeploymentBackupFailureResult(actionId: string, errorCode: string, details: unknown) {
-  if (!details || typeof details !== 'object' || Array.isArray(details)) return undefined;
-  if (actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1) {
-    const parsed = DeploymentRestoreFailureResultV1Schema.safeParse({ steps: 'steps' in details ? details.steps : undefined });
-    return parsed.success ? parsed.data : undefined;
-  }
-  if (!isDeploymentBackupActionIdV1(actionId) || !('step' in details) || typeof details.step !== 'string') return undefined;
-  const partial = readDeploymentBackupMaintenanceFailureEvidenceV1({ details });
-  const parsed = DeploymentBackupFailureResultV1Schema.safeParse({ step: details.step, code: errorCode, ...partial });
-  return parsed.success ? parsed.data : undefined;
-}
-
-function terminalResult(snapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1): ActionExecuteResult | null {
-  const metadata = snapshot.operationCredentialUses ? { operationCredentialUses: snapshot.operationCredentialUses } : {};
-  if (snapshot.state === 'succeeded') return { ok: true, result: snapshot.result, ...metadata };
-  if (snapshot.state === 'failed') {
-    const spawn = snapshot.actionId === 'session.spawn_new'
-      ? SessionSpawnNewActionResultV1Schema.safeParse(snapshot.result) : null;
-    if (spawn?.success && spawn.data.type === 'error') return { ok: true, result: spawn.data, ...metadata };
-    const backupFailure = projectDeploymentBackupFailureResult(snapshot.actionId,
-      snapshot.error?.errorCode ?? 'action_operation_failed', snapshot.result);
-    return {
-      ok: false,
-      errorCode: snapshot.error?.errorCode ?? 'action_operation_failed',
-      error: snapshot.error?.error ?? 'action_operation_failed',
-      ...(snapshot.error?.effectAttempted !== undefined ? { effectAttempted: snapshot.error.effectAttempted } : {}),
-      ...(snapshot.error?.failureCause ? { failureCause: snapshot.error.failureCause } : {}),
-      ...(snapshot.error?.details ? { details: snapshot.error.details } : backupFailure ? { details: backupFailure } : {}),
-      ...metadata,
-    };
-  }
-  if (snapshot.state === 'cancelled') {
-    const details = projectDeploymentBackupFailureResult(snapshot.actionId, 'cancelled', snapshot.result);
-    return { ok: false, errorCode: 'cancelled', error: 'cancelled', ...(details ? { details } : {}), ...metadata };
-  }
-  return null;
-}
 
 function createCancellationRequestError(): Error {
   const error = new Error('Action operation cancellation requested');
@@ -220,7 +178,7 @@ export function createActionOperationRunner(deps: Readonly<{
       // while ordinary callers can still return its earlier private acceptance.
       const settledResult = () => {
         const snapshot = deps.store.get(request.scope, operationId);
-        return snapshot ? terminalResult(snapshot) : null;
+        return snapshot ? readActionOperationTerminalResultV1(snapshot) : null;
       };
       try {
         const result = await invocation.result;
@@ -478,7 +436,7 @@ export function createActionOperationRunner(deps: Readonly<{
             return executionResult;
           }
           const backupFailure = !executionResult.ok
-            ? projectDeploymentBackupFailureResult(action.actionId, executionResult.errorCode, executionResult.details) : undefined;
+            ? projectDeploymentBackupFailureResultV1(action.actionId, executionResult.errorCode, executionResult.details) : undefined;
           if (!executionResult.ok && executionResult.errorCode === 'cancelled') {
             deps.store.cancel(operationId, backupFailure);
           } else if (executionResult.ok) {
@@ -592,7 +550,7 @@ export function createActionOperationRunner(deps: Readonly<{
       if (!pendingApproval && isFiniteProjectCommand(action.actionId) && existing.domainRef?.kind === 'projectCommand') {
         return { ok: true, result: { operation: existing } };
       }
-      const settled = terminalResult(existing) ?? (pendingApproval && reviewedPendingApproval ? { ok: true as const, result: existing.result,
+      const settled = readActionOperationTerminalResultV1(existing) ?? (pendingApproval && reviewedPendingApproval ? { ok: true as const, result: existing.result,
         ...(existing.operationCredentialUses ? { operationCredentialUses: existing.operationCredentialUses } : {}) } : null);
       const reentry = pendingApproval
         ? request.rejoinPendingApproval && hasMatchingInputIdentity ? 'replay' : reviewedPendingApproval ? 'resume' : 'fresh'
@@ -685,7 +643,7 @@ export function createActionOperationRunner(deps: Readonly<{
     const hasApprovalHold = (snapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1) => includeSetupReview
       && snapshot.progress?.kind === 'phase' && snapshot.progress.phase === 'waiting_for_approval';
     const snapshot = deps.store.get(scope, operationId);
-    if (!snapshot || terminalResult(snapshot) || !requireSettlement && snapshot.observation || includeSetupReview && snapshot.setupReview || hasManagedPrompt(snapshot) || hasApprovalHold(snapshot)) return snapshot;
+    if (!snapshot || readActionOperationTerminalResultV1(snapshot) || !requireSettlement && snapshot.observation || includeSetupReview && snapshot.setupReview || hasManagedPrompt(snapshot) || hasApprovalHold(snapshot)) return snapshot;
     const invocation = active.get(operationId);
     if (!invocation && !requireSettlement) return snapshot;
     // Cancelling observation is not a request to stop the admitted command.
@@ -696,7 +654,7 @@ export function createActionOperationRunner(deps: Readonly<{
       const completion = new Promise<ReturnType<typeof deps.store.get>>(resolve => {
           const inspect = () => {
             const current = deps.store.get(scope, operationId);
-            if (current && (terminalResult(current) || !requireSettlement && current.observation || includeSetupReview && current.setupReview || hasManagedPrompt(current) || hasApprovalHold(current))) resolve(current);
+            if (current && (readActionOperationTerminalResultV1(current) || !requireSettlement && current.observation || includeSetupReview && current.setupReview || hasManagedPrompt(current) || hasApprovalHold(current))) resolve(current);
           };
           unsubscribe = deps.store.subscribe(inspect);
           inspect();
@@ -769,7 +727,7 @@ export function createActionOperationRunner(deps: Readonly<{
         const abort = () => { cleanup(); reject(signal?.reason ?? createCancellationRequestError()); };
         const observeSnapshot = () => {
           const snapshot = deps.store.get(scope, operationId);
-          if (!snapshot || terminalResult(snapshot) || snapshot.observation
+          if (!snapshot || readActionOperationTerminalResultV1(snapshot) || snapshot.observation
             || (snapshot.domainRef?.kind === 'projectCommand' && snapshot.domainRef.purpose === 'script' && snapshot.domainRef.terminalId)
             || !active.has(operationId)) {
             cleanup();

@@ -2479,6 +2479,13 @@ identity matches that active account; missing or mismatched clocks are `null`.
 Observation time and legacy switch timestamps do not stand in for this fact.
 These are 0.3 development-source read projections, not a new selection writer.
 
+In 0.3 development source, `connectedServices.pools.get { group }` reads one
+qualified pool through the captured Account's existing group endpoint. Its
+`{ group }` result includes the saved policy, ordered membership and active
+account. The safe Account read requires no approval or Machine and does not
+read credentials, refresh quota or change selection. Missing pools retain the
+existing Action refusal; the input accepts only the qualified group reference.
+
 `session.draft.append { sessionId, text, sourceSessionId?, discussionSource? }` is a client-placed
 intent on the Session's repository-backed composer draft owner. It returns
 `{ status: 'appended', sessionId, createdAtMs }` after appending to the captured
@@ -9595,14 +9602,15 @@ their caller-lifetime and reconnect withdrawal.
 
 For transported RPCs in 0.3 development, the existing `rpc-cancel` follows the
 caller's connection-local correlation through the Home to the exact target.
-The target's `RpcHandlerManager` owns the native acknowledgement: once it has
-observed cancellation, it skips abandoned response encoding and suppresses the
-callback, including cancellation received during asynchronous encoding or
-cleanup. Machine, Session and ephemeral receivers share this owner. Calls with
-`waitForResultOnCancel: true` keep their cooperative result custody; the Home
-forwards that existing policy to the target. Older daemons may still send their
-late result, which an already-cancelled caller discards. Cancellation cannot
-retract bytes emitted before it reaches the target.
+The target's `RpcHandlerManager` owns the native acknowledgement: cancellation
+signals the handler, while the handler's settled success or failure is encoded
+and acknowledged even if cancellation arrived during execution, encoding or
+cleanup. Machine, Session and ephemeral receivers share this owner. The Home
+retires a departed HTTP caller's wait; that connection cannot receive a late
+reply. `waitForResultOnCancel: true` retains the existing cooperative wait for
+callers that can still receive the result. Native deployment callers recover a
+lost reply from their existing Action operation, without repeating the effect.
+Cancellation cannot erase a settled result or retract bytes already emitted.
 
 In 0.3 development, an issued call whose original Socket.IO namespace is
 lost settles as `RPC_OUTCOME_UNKNOWN`, including reads, without waiting for its

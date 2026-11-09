@@ -27,7 +27,7 @@ import { ManagedControllerV1Schema } from '../../machines/managed/managedMachine
 import { ManagedResourceV1Schema, MachineProvisionerNativeCauseV1Schema } from '../../machines/managed/providerFactsV1.js';
 import { MachineAdministratorUsernameV1Schema } from '../../machines/adminAccessV1.js';
 import { ActionApprovalRequestCreatedResultSchema, ActionOperationCredentialUseV1Schema, ActionFailureCauseV1Schema,
-  readActionFailureCauseV1, UNKNOWN_ACTION_FAILURE_CAUSE_V1 } from '../actionExecutionResult.js';
+  readActionFailureCauseV1, UNKNOWN_ACTION_FAILURE_CAUSE_V1, type ActionExecuteResult } from '../actionExecutionResult.js';
 import { WorkspaceExecutionConfigAddressV1Schema } from '../../workspaces/projectWorkerPreferencesV1.js';
 import { ActionOperationIdentifierV1Schema, ACTION_OPERATION_REQUEST_ID_MAX_LENGTH_V1 } from './identifierV1.js';
 import { MachineAgentIsolationReadyPreviewV1Schema, MachineAgentIsolationUnavailableStatusV1Schema, MachineAgentIsolationPolicyV1Schema } from '../../machines/agentIsolationV1.js';
@@ -37,8 +37,9 @@ import { GuestServiceFailureFactsV1Schema } from '../../ssh/commandFailure.js';
 import { OpenProjectRefusalV1Schema } from '../../projects/openProjectV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from '../../deployments/deploymentDomainFailureV1.js';
 import { DeploymentFailureRecoveryV1Schema } from '../../deployments/deploymentFailureRecoveryV1.js';
-import { DeploymentBackupFailureResultV1Schema } from '../../deployments/deploymentBackupActionsV1.js';
-import { DeploymentRestoreFailureResultV1Schema } from '../../deployments/deploymentBackupRestoreV1.js';
+import { DeploymentBackupFailureResultV1Schema, readDeploymentBackupMaintenanceFailureEvidenceV1,
+  type DeploymentBackupFailureResultV1 } from '../../deployments/deploymentBackupActionsV1.js';
+import { DeploymentRestoreFailureResultV1Schema, type DeploymentRestoreFailureResultV1 } from '../../deployments/deploymentBackupRestoreV1.js';
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, isDeploymentBackupActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 export { ActionOperationIdentifierV1Schema, ACTION_OPERATION_REQUEST_ID_MAX_LENGTH_V1 } from './identifierV1.js';
 export { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from './methodsV1.js';
@@ -564,6 +565,47 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
   }
 })));
 export type ActionOperationSnapshotV1 = Readonly<z.infer<typeof ActionOperationSnapshotV1Schema>>;
+
+/** Retain only named native backup facts; executor diagnostics never enter receipts. */
+export function projectDeploymentBackupFailureResultV1(actionId: string, errorCode: string,
+  details: unknown): DeploymentBackupFailureResultV1 | DeploymentRestoreFailureResultV1 | undefined {
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return undefined;
+  if (actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1) {
+    const parsed = DeploymentRestoreFailureResultV1Schema.safeParse({ steps: 'steps' in details ? details.steps : undefined });
+    return parsed.success ? parsed.data : undefined;
+  }
+  if (!isDeploymentBackupActionIdV1(actionId) || !('step' in details) || typeof details.step !== 'string') return undefined;
+  const partial = readDeploymentBackupMaintenanceFailureEvidenceV1({ details });
+  const parsed = DeploymentBackupFailureResultV1Schema.safeParse({ step: details.step, code: errorCode, ...partial });
+  return parsed.success ? parsed.data : undefined;
+}
+
+/** Rejoin and transport recovery consume the same retained Action settlement. */
+export function readActionOperationTerminalResultV1(snapshot: ActionOperationSnapshotV1): ActionExecuteResult | null {
+  const metadata = snapshot.operationCredentialUses ? { operationCredentialUses: snapshot.operationCredentialUses } : {};
+  if (snapshot.state === 'succeeded') return { ok: true, result: snapshot.result, ...metadata };
+  if (snapshot.state === 'failed') {
+    const spawn = snapshot.actionId === 'session.spawn_new'
+      ? SessionSpawnNewActionResultV1Schema.safeParse(snapshot.result) : null;
+    if (spawn?.success && spawn.data.type === 'error') return { ok: true, result: spawn.data, ...metadata };
+    const backupFailure = projectDeploymentBackupFailureResultV1(snapshot.actionId,
+      snapshot.error?.errorCode ?? 'action_operation_failed', snapshot.result);
+    return {
+      ok: false,
+      errorCode: snapshot.error?.errorCode ?? 'action_operation_failed',
+      error: snapshot.error?.error ?? 'action_operation_failed',
+      ...(snapshot.error?.effectAttempted !== undefined ? { effectAttempted: snapshot.error.effectAttempted } : {}),
+      ...(snapshot.error?.failureCause ? { failureCause: snapshot.error.failureCause } : {}),
+      ...(snapshot.error?.details ? { details: snapshot.error.details } : backupFailure ? { details: backupFailure } : {}),
+      ...metadata,
+    };
+  }
+  if (snapshot.state === 'cancelled') {
+    const details = projectDeploymentBackupFailureResultV1(snapshot.actionId, 'cancelled', snapshot.result);
+    return { ok: false, errorCode: 'cancelled', error: 'cancelled', ...(details ? { details } : {}), ...metadata };
+  }
+  return null;
+}
 
 /** The closed ../0.2 reader at 37a6541578749067b49d4579be8c752c9591b8c8
  * predates current domain and review facts. Project only the V1 outward seam;

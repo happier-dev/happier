@@ -7,7 +7,8 @@ import { DeploymentEnvironmentListInputV1Schema, DeploymentEnvironmentUpdateInpu
   DeploymentTargetLinkHeaderV1Schema, DeploymentTargetLinkInputV1Schema, DeploymentTargetLinkIntentInputV1Schema, DeploymentTargetLinkResultV1Schema,
   DeploymentTargetLinksListInputV1Schema, DeploymentTargetLinksListResultV1Schema,
   DeploymentReceiptResultV1Schema, DeploymentActionInputSchemasV1, DeploymentRollbackInputV1Schema, DeploymentTeardownInputV1Schema,
-  DeploymentAccountChangeHintV1Schema, buildDeploymentAccountChangeV1, readDeploymentAccountChangeV1 } from './deploymentActionsV1.js';
+  DeploymentAccountChangeHintV1Schema, buildDeploymentAccountChangeV1, readDeploymentAccountChangeV1,
+  readDeploymentActionOperationRequestIdV1, readDeploymentEnvironmentOperationRequestIdV1 } from './deploymentActionsV1.js';
 import { bindHomeDomainHttpRequestV1 } from '../actions/homeDomainHttpBinding.js';
 import { getActionSpec, listActionSpecsForSurface, resolveActionPermissionChangingV1,
   resolveActionExecutionPlacementForInput } from '../actions/actionSpecs.js';
@@ -34,6 +35,21 @@ import { createDeploymentDomainContentArtifactIdV1, projectDeploymentNativeAdmis
   isDeploymentDomainNativeAdmissionV1 } from './deploymentCandidatePublicationV1.js';
 
 describe('existing deployment restart', () => {
+  it('recovers the same retained native intent without conflating restore preparation', () => {
+    const teardown = { serverId: 'home', environmentId: 'environment', requestKey: 'remove', reason: 'manual' };
+    expect(readDeploymentActionOperationRequestIdV1('deployments.teardown', teardown))
+      .toBe(readDeploymentEnvironmentOperationRequestIdV1(teardown));
+    expect(readDeploymentActionOperationRequestIdV1('deployments.teardown', { ...teardown, requestKey: undefined })).toBeUndefined();
+    const restore = { serverId: 'home', environmentId: 'environment', machineId: 'machine', installationId: 'installation',
+      targetLinkId: 'target', deploymentId: 'deployment', restoreBackupId: 'backup', expectedRevision: 1 };
+    const confirmed = readDeploymentActionOperationRequestIdV1('deployments.backups.restore',
+      { ...restore, mode: 'confirm', prepareOperationId: 'prepared' });
+    expect(confirmed).toEqual(expect.any(String));
+    expect(readDeploymentActionOperationRequestIdV1('deployments.backups.restore', { ...restore, mode: 'prepare' })).toBeUndefined();
+    expect(readDeploymentActionOperationRequestIdV1('deployments.backups.restore',
+      { ...restore, mode: 'confirm', prepareOperationId: 'other-preparation' })).not.toBe(confirmed);
+    expect(readDeploymentActionOperationRequestIdV1('deployments.environments.get', teardown)).toBeUndefined();
+  });
   it('binds remote native inventory to its Environment and prevents preview from executing native removal', () => {
     const input = { serverId: 'home', environmentId: 'environment', targetLinkId: 'target', reason: 'manual' };
     const review = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'prepare', actionId: 'deployments.teardown',

@@ -1,4 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
+import { readDeploymentActionOperationRequestIdV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { Platform } from 'react-native';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -18,25 +22,30 @@ import { DeploymentTargetLinkInputV1Schema, DeploymentTargetLinksListInputV1Sche
 import { DeploymentTargetLinkProviderContentV1Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 
 // Only authenticated Home HTTP, daemon transport and device credential IO are replaced.
+vi.mock('socket.io-client', async importOriginal => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 const homes = createHomeGovernanceHarness();
 const initialPlatform = Platform.OS;
 installHomeGovernanceBoundaries(homes);
+installDisconnectedServerSocketBoundary();
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 const { createUiDeploymentActionDeps } = await import('./deploymentActions');
 const { prepareCatalogAppPublish } = await import('@/sync/ops/actions/deploymentPublishActions');
 let account: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | null = null;
+let operationSocketBoundary: ReturnType<typeof installDisconnectedServerSocketBoundary> | undefined;
 let serverId: string;
 const content = { contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1 };
 const uiHost = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
 
 beforeEach(async () => {
+    installDisconnectedServerSocketBoundary();
     installHomeGovernanceBoundaries(homes);
     await homes.reset();
     serverId = await homes.addHome({ name: 'Deployment transport', serverUrl: 'https://deployment-transport.test',
         serverIdentityId: 'srv_deployment_transport', accountId: 'owner', currentAccount: true, active: false });
     account = await captureLazyActionAccountContext(serverId);
 });
-afterEach(async () => { account?.dispose(); account = null; await homes.reset();
+afterEach(async () => { operationSocketBoundary?.dispose(); operationSocketBoundary = undefined;
+    account?.dispose(); account = null; await homes.reset();
     Object.defineProperty(Platform, 'OS', { configurable: true, value: initialPlatform }); });
 
 function requireAccount() {
@@ -311,7 +320,7 @@ async function answerApprovalSessionPublication(writer: ReturnType<typeof requir
 async function answerControllerAction(actionId: ActionId, machineId: string,
     execute: Extract<Parameters<typeof createExternalActionAccountHttpBoundary>[0], { requesterInvocation?: 'required' }>['execute'],
     failure?: (result: unknown) => { errorCode: string; error: string } | null,
-    deploymentSource?: Readonly<{ id: string; revision: number }>) {
+    deploymentSource?: Readonly<{ id: string; revision: number }>, loseResponse = false) {
     const writer = requireAccount();
     const { encryption } = await writer.resolveAccountEncryption();
     if (!writer.serverIdentityId) throw new Error('Expected Home identity');
@@ -325,6 +334,7 @@ async function answerControllerAction(actionId: ActionId, machineId: string,
         homes.answer(serverId, path, { select: async (_body, request) => {
             const response = await boundary.handle(new URL(request.url), request.init);
             if (!response) throw new Error('Expected controller HTTP boundary');
+            if (loseResponse && new URL(request.url).pathname === `/v1/actions/${actionId}`) return { dispatchThenFail: true };
             return { status: response.status, body: await response.json() };
         } });
     }
@@ -1407,4 +1417,85 @@ it('tears down a person’s own UI Environment under Account Ask after confirmat
     expect(deleted, JSON.stringify({ deleted, boundaryObservations, machineReads: homes.requestsFor('/v1/machines/read-batch').length })).toMatchObject({ ok: true, result });
     expect(effects).toEqual([input]);
     expect(homes.artifacts(serverId).list()).toHaveLength(0);
+});
+
+it.each(['template applied', 'template partial', 'template reviewed partial', 'template front door', 'deploy front door', 'restore front door', 'restore failure front door'] as const)(
+    'recovers a lost native Action response from its retained result (%s)', async scenario => {
+    const writer = requireAccount();
+    const detail = createDeploymentEnvironmentDetailV1();
+    const machineId = detail.environment.controllerMachineId;
+    const template = scenario.startsWith('template');
+    const actionId = template ? 'deployments.templates.instantiate'
+        : scenario.startsWith('restore') ? 'deployments.backups.restore' : 'deployments.deploy';
+    const input = DeploymentActionInputSchemasV1[actionId].parse(template ? {
+        mode: 'apply', serverId, machineId, projectSourceId: detail.environment.projectSourceId,
+        templateRef: { sourceId: 'apps', itemId: 'database', version: '1', ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+        environment: { kind: 'create', name: 'Database', requestKey: 'lost-template', protection: 'nonProduction',
+            purpose: 'standard', deployerMode: 'managers', controllerMachineId: machineId },
+        target: { kind: 'new', installationId: `installation-${machineId}` }, destination: { kind: 'stored' }, bindings: [],
+    } : actionId === 'deployments.backups.restore' ? {
+        mode: 'confirm', serverId, environmentId: detail.environment.id, machineId,
+        installationId: `installation-${machineId}`, targetLinkId: 'target', deploymentId: 'capture',
+        restoreBackupId: 'backup', expectedRevision: 1, prepareOperationId: 'prepared-restore',
+    } : { serverId, environmentId: detail.environment.id, expectedRevision: 1, requestKey: 'lost-deploy',
+        targetLinkId: 'target', expectedTargetLinkRevision: 1, ...content });
+    const partial = scenario === 'template partial' || scenario === 'template reviewed partial';
+    const reviewedPartial = scenario === 'template reviewed partial';
+    const restoreFailure = scenario === 'restore failure front door';
+    const result = DeploymentActionOutputSchemasV1[actionId].parse(template ? partial
+        ? { kind: 'partial', phase: 'generation', environmentId: detail.environment.id, revision: 2,
+            savedSecrets: [], errorCode: 'deployment_content_unavailable' }
+        : { kind: 'applied', environmentId: detail.environment.id, revision: 2, targetLinkId: 'runtime',
+            definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'b'.repeat(64)}` }, savedSecrets: [] }
+        : actionId === 'deployments.backups.restore' ? { kind: 'restored', verified: true, nextAction: 'none', evidence: {} }
+        : { ok: true, environmentId: detail.environment.id, revision: 2, deploymentId: 'receipt', deploymentRevision: 2, state: 'succeeded' });
+    const effects: unknown[] = [];
+    const failure = reviewedPartial ? { errorCode: 'deployment_content_unavailable', error: 'Template generation stopped', details: result }
+        : restoreFailure ? { errorCode: 'restore_failed', error: 'Restore stopped' } : null;
+    await answerControllerAction(actionId, machineId, admitted => {
+        expect(readDeploymentActionOperationRequestIdV1(actionId, admitted)).toBe(readDeploymentActionOperationRequestIdV1(actionId, input));
+        effects.push(admitted); return result;
+    }, failure ? () => failure : undefined,
+        { id: detail.environment.projectSourceId, revision: 1 }, true);
+    homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, { body: {
+        ok: true, environment: detail.environment, targetLinks: detail.targetLinks.map(item => item.targetLink),
+    } });
+    const requestId = 'lost-http-envelope';
+    const retainedRequestId = readDeploymentActionOperationRequestIdV1(actionId, input) ?? requestId;
+    const operation = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'retained-native', revision: 2,
+        actionId, requestId: retainedRequestId, state: reviewedPartial || restoreFailure ? 'failed' : 'succeeded',
+        scope: { accountId: writer.accountId, machineId }, title: 'Native deployment', createdAt: 1,
+        startedAt: 1, settledAt: 2, cancellation: 'supported',
+        ...(!reviewedPartial ? { result: restoreFailure ? { steps: [{ id: 'safety', status: 'completed' }, { id: 'restore', status: 'failed' }] } : result } : {}),
+        ...(failure ? { error: failure } : {}),
+    });
+    const observations: string[] = [];
+    operationSocketBoundary = installDisconnectedServerSocketBoundary(socket => {
+        configureConnectedServerSocketBoundary(socket);
+        socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (event, request: SocketRpcRequestPayload) => {
+            if (event !== SOCKET_RPC_EVENTS.CALL) throw new Error(`Unexpected socket event: ${event}`);
+            observations.push(request.method);
+            if (request.method === `${machineId}:${ACTION_OPERATION_RPC_METHODS_V2.list}`) {
+                expect(request.params).toEqual({ requestIdentity: { actionId, requestId: retainedRequestId } });
+                const { result: _result, ...summary } = operation;
+                return { ok: true, result: { items: [summary], nextCursor: null } };
+            }
+            if (request.method === `${machineId}:${ACTION_OPERATION_RPC_METHODS_V2.get}`) {
+                return { ok: true, result: { kind: 'found', operation } };
+            }
+            throw new Error(`Unexpected Machine method: ${request.method}`);
+        });
+    }, { serverUrl: writer.endpointUrl, token: writer.credentials.token });
+    const context = { ...uiHost, serverId, expectedAccountId: writer.accountId, actionRequestId: requestId };
+    const recovered = scenario.endsWith('front door')
+        ? await (await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor().executeConfirmed(actionId, input, context)
+        : await createUiDeploymentActionDeps(writer).deploymentTemplateInstantiate!(
+            DeploymentActionInputSchemasV1['deployments.templates.instantiate'].parse(input), context);
+    const expected = failure ? { ok: false, ...failure, ...(restoreFailure ? { details: {
+        steps: [{ id: 'safety', status: 'completed' }, { id: 'restore', status: 'failed' }] } } : {}) }
+        : scenario.endsWith('front door') ? { ok: true, result } : result;
+    expect(recovered, JSON.stringify({ recovered, observations })).toEqual(expected);
+    expect(effects).toEqual([input]);
+    expect(homes.requestsFor(`/v1/actions/${actionId}`)).toHaveLength(1);
+    expect(observations).toContain(`${machineId}:${ACTION_OPERATION_RPC_METHODS_V2.get}`);
 });

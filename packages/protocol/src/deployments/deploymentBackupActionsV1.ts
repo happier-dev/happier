@@ -44,6 +44,27 @@ export const DeploymentBackupFailureResultV1Schema = lazyZodSchema(() => z.union
     uncertainSnapshotIds: z.array(DeploymentBackupSnapshotV1Schema.shape.snapshotId) }),
 ]));
 export type DeploymentBackupFailureResultV1 = z.infer<typeof DeploymentBackupFailureResultV1Schema>;
+export type DeploymentBackupMaintenanceFailureEvidenceV1 = Readonly<{
+  removedSnapshotIds?: readonly string[]; uncertainSnapshotIds?: readonly string[];
+  probe?: DeploymentBackupFailureResultV1['probe'];
+}>;
+
+/** The Action failure presenter may disclose these native identities, never arbitrary thrown details or payloads. */
+export function readDeploymentBackupMaintenanceFailureEvidenceV1(error: unknown): DeploymentBackupMaintenanceFailureEvidenceV1 | undefined {
+  if (!error || typeof error !== 'object' || !('details' in error)) return undefined;
+  const details = error.details;
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return undefined;
+  const candidate = {
+    ...('removedSnapshotIds' in details ? { removedSnapshotIds: details.removedSnapshotIds } : {}),
+    ...('uncertainSnapshotIds' in details ? { uncertainSnapshotIds: details.uncertainSnapshotIds } : {}),
+    ...('probe' in details && details.probe !== undefined ? { probe: details.probe } : {}),
+  };
+  if (!Object.keys(candidate).length) return undefined;
+  const parsed = DeploymentBackupFailureResultV1Schema.safeParse({ step: '', code: '', ...candidate });
+  if (!parsed.success) return undefined;
+  const { step, code, ...evidence } = parsed.data;
+  return evidence;
+}
 export const DeploymentBackupManifestV1Schema = lazyZodSchema(() => z.strictObject({
   schemaVersion: z.literal(1), environmentId: id, sourceId: text, kind: z.enum(['dump', 'volume']),
   configRevision: revision, repositoryId: nativeDigest, snapshot: DeploymentBackupSnapshotV1Schema,

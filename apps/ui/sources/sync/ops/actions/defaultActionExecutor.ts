@@ -59,7 +59,7 @@ import type { SettingOperationResult } from '@/components/settings/catalog/setti
 import type { SettingsDeclarationOperationInputV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 import { recoverHistoricalAutomationTemplates } from '@/sync/ops/account/recoverHistoricalAutomationTemplates';
 import { startAgentSignInRpc, checkAgentSignInRpc } from '@/agents/machineAgents/signIn/api';
-import { buildSessionPermissionRespondRpcParamsV1, buildSessionUserActionAnswerMap } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import { buildSessionPermissionRespondRpcParamsV1, buildSessionUserActionAnswerDetails, buildSessionUserActionAnswerMap } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { buildMachineAgentsDetectRequest, projectMachineAgentsDetectResponse, projectAcpCatalogForMachineInventory, MachineAgentInventoryUnavailableError } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1, listApprovalArtifactsV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { StoredApprovalRequestSchema, readApprovalRequesterDecisionV1, resolveApprovalExecutor, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -157,7 +157,8 @@ import { fetchMachineRows } from '@/sync/engine/machines/syncMachines';
 import { AutonomousExchangeStatusV1Schema } from '@happier-dev/protocol/sessions/messages/autonomousExchangeV1';
 import { readSessionExchangeStatus } from '@/sync/api/session/sessionExchangeApi';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
-import { readCompleteActionSpecV1, supportsSessionMessageInputJsonSchema } from '@happier-dev/protocol/actions/actionInputJsonSchemaValidation';
+import { supportsSessionMessageInputJsonSchema } from '@happier-dev/protocol/actions/actionInputJsonSchemaValidation';
+import { readSessionMessageInputSchema } from './sessionMessageInputSchema';
 import { readServerEnabledBit } from '@happier-dev/protocol/features/serverEnabledBit';
 import { getActionRequiredServerFeatureId } from '@happier-dev/protocol/actions/actionRequiredServerFeature';
 import { projectSessionFollowSourceKeyPreparationAfterSetV1, type SessionFollowSourceKeyPreparationResultV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
@@ -211,7 +212,7 @@ import { bindPresentUserActionConfirmation } from './presentUserConfirmation';
 import { captureLazyActionAccountContext, captureApprovalSettlementAccount, withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
 import { createUiPendingEditAction } from './pendingEdit';
 import { createUiPendingSendNowAction } from './pendingSendNow';
-import { resolveRequesterSessionSpawnDisposition } from './requesterSessionSpawnPreparation';
+import { readRequesterSessionSpawnDisposition, resolveRequesterSessionSpawnDisposition } from './requesterSessionSpawnPreparation';
 import { createUiArtifactAction } from './artifactActionDeps';
 import { createUiBotTemplateAction, readUiOwnedSessionForAction } from './botTemplateActionDeps';
 import { createUiProfileActionExecuteV1 } from './profileActionDeps';
@@ -290,9 +291,7 @@ import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { createUiManagedMachineReferenceReader, createUiMachineDeploymentReferenceReader } from './managedMachineReferenceDeps';
 import { resolveActionOriginationPreferenceFailureV1 } from '@happier-dev/protocol/actions/executor/actionOriginationPreferences';
 import { ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, type ManagedMachineActionIdV1, type ManagedMachineActionOutputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { createRunnerActivationClient, RunnerActivationClientError } from '@/sync/api/ephemeralRunner/runnerActivationClient';
-import type { RunnerActivationCreateRequestV1 } from '@happier-dev/protocol/ephemeralRunner/activation';
-import { getReadyServerFeatures } from '@/sync/api/capabilities/getReadyServerFeatures';
+import { createUiEphemeralRunnerAction } from './ephemeralRunnerAction';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { writeUiSessionStateField } from '@/sync/state/engine';
@@ -395,7 +394,7 @@ import { listProjectsForActions } from './listProjects';
 import { createUiProjectPagesList } from './projectPagesAction';
 import { createProjectSourceActionDeps } from '@/sync/api/projects/projectSourceActions';
 import { createProjectSourceTeamMoveDeps } from '@/sync/api/projects/projectSourceTeamMove';
-import { createUiDeploymentActionDeps } from '@/sync/api/deployments/deploymentActions';
+import { createUiDeploymentActionDeps, recoverUiDeploymentActionResult } from '@/sync/api/deployments/deploymentActions';
 import { DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiateInputV1Schema, resolveDeploymentTemplateExecutionMachineIdV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
@@ -1023,9 +1022,10 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       target: context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget : { kind: 'machine', machineId },
     }) : null;
     if (needsInvocation && !invocation) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
-    const execution = await executeOriginalAccountMachineAction({ account: accountContext,
+    const requestId = context.actionRequestId ?? randomUUID();
+    const issued = await executeOriginalAccountMachineAction({ account: accountContext,
       actionId: args.actionId, input: args.input, machineId,
-      requestId: context.actionRequestId ?? randomUUID(),
+      requestId,
       actionCaller: context.actionCaller,
       machineTarget: context.externalActionTarget?.kind === 'machine' ? context.externalActionTarget : undefined,
       ...(invocation ? { invocation } : {}),
@@ -1035,6 +1035,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         : {}),
       authority: context.authority, signal: context.signal,
       ...(context.onTransportIssued ? { onTransportIssued: context.onTransportIssued } : {}) });
+    const execution = await recoverUiDeploymentActionResult({ account: accountContext,
+      actionId: args.actionId, input: args.input, machineId, requestId, context, execution: issued });
     return execution.ok ? args.actionId === 'projects.open'
       ? await completeUiProjectOpenResult(accountContext, execution.result, context.signal)
       : execution.result : execution;
@@ -1290,10 +1292,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       const parsed = SessionSpawnNewActionInputV2Schema.safeParse(input);
       if (!parsed.success || !areServerProfileIdentifiersEquivalent(parsed.data.executionTarget.serverId, accountContext.serverId)) return defaultPreview;
       const machineId = parsed.data.executionTarget.machineId;
-      const access = await machineAccessAction({ actionId: 'machines.access.grants.list',
-        input: { serverId: accountContext.serverId, machineId }, context, ...(context.signal ? { signal: context.signal } : {}) });
+      const machine = resolveServerScopedMachine(storage.getState(), accountContext.serverId, machineId);
+      const disposition = await readRequesterSessionSpawnDisposition({ accountId: accountContext.accountId, machineId,
+        isShared: machine?.isShared, readAccess: () => machineAccessAction({ actionId: 'machines.access.grants.list',
+          input: { serverId: accountContext.serverId, machineId }, context, ...(context.signal ? { signal: context.signal } : {}) }) });
       accountContext.assertCurrent();
-      const disposition = resolveRequesterSessionSpawnDisposition({ accountId: accountContext.accountId, machineId, access });
       if (disposition.kind !== 'requester') return defaultPreview;
       const [{ AGENT_IDS }, { projectSessionCredentialSignInPurposes },
         { projectConnectedServiceRegistryEntries }, { resolveQualifiedConnectedServiceRegistryDisplayName },
@@ -3111,11 +3114,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         accountContext.assertCurrent();
         if (accountContext.serverId !== serverId) return { type: 'error' as const, code: 'permission_denied' as const, retryable: false as const };
         if (!machineAccessAction) return { type: 'error' as const, code: 'target_unavailable' as const, retryable: true as const };
-        const access = await machineAccessAction({ actionId: 'machines.access.grants.list',
-          input: { serverId, machineId: input.executionTarget.machineId }, context: context ?? {}, ...(signal ? { signal } : {}) });
+        const disposition = await readRequesterSessionSpawnDisposition({ accountId: accountContext.accountId,
+          machineId: input.executionTarget.machineId, isShared: machine?.isShared,
+          readAccess: () => machineAccessAction({ actionId: 'machines.access.grants.list',
+            input: { serverId, machineId: input.executionTarget.machineId }, context: context ?? {}, ...(signal ? { signal } : {}) }) });
         accountContext.assertCurrent();
-        const disposition = resolveRequesterSessionSpawnDisposition({ accountId: accountContext.accountId,
-          machineId: input.executionTarget.machineId, access });
         if (disposition.kind === 'refused') return disposition.result;
         const managedContinuation = context?.invocationServices?.managedContinuation;
         if (disposition.kind === 'requester' || managedContinuation) {
@@ -3664,34 +3667,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         throw error;
       }
     },
-    // Temporary computer activation: the same captured Account/Home transport,
-    // server feature decision and approval lifetime as every other immediate
-    // scoped Action. The activation client stays the one Runner transport owner.
-    ephemeralRunnerAction: async (args) => {
-      if (!accountContext) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
-      accountContext.assertCurrent();
-      const features = await getReadyServerFeatures({ serverId: accountContext.serverId });
-      if (!features || readServerEnabledBit(features, 'sessions.ephemeralRunner') !== true) {
-        return { ok: false, errorCode: 'runner_unavailable', error: 'runner_unavailable' };
-      }
-      const client = createRunnerActivationClient(accountContext.request);
-      try {
-        if (args.actionId === 'sessions.runner.activation.create') {
-          return await client.create(args.input as RunnerActivationCreateRequestV1);
-        }
-        const { activationId } = args.input as Readonly<{ activationId: string }>;
-        if (args.actionId === 'sessions.runner.activation.get') {
-          return await client.read(activationId, args.signal);
-        }
-        await client.cancel(activationId);
-        return { activationId, closed: true };
-      } catch (error) {
-        if (error instanceof RunnerActivationClientError) {
-          return { ok: false, errorCode: error.serverCode ?? error.code, error: error.message };
-        }
-        throw error;
-      }
-    },
+    ephemeralRunnerAction: createUiEphemeralRunnerAction(accountContext),
     pluginWebhookAction: async ({ actionId, input, signal }) => {
       if (!Object.hasOwn(PluginWebhookActionHttpPathsV1, actionId)) {
         return {
@@ -3961,13 +3937,11 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           const execute = createUiAccountAction({ account });
           let advertisedInputSchema: object;
           try {
-            const advertised = await readCompleteActionSpecV1({ actionId: 'session.message.send', signal,
-              read: async schemaInput => execute({ actionId: 'action.spec.get', input: schemaInput, context,
-                ...(signal ? { signal } : {}) }) });
+            advertisedInputSchema = await readSessionMessageInputSchema({ account, session,
+              machineId: target.machineId, context, signal });
             account.assertCurrent();
             throwIfAborted(signal);
-            advertisedInputSchema = advertised.inputSchema;
-            if (!supportsSessionMessageInputJsonSchema(advertised.inputSchema, input)) {
+            if (!supportsSessionMessageInputJsonSchema(advertisedInputSchema, input)) {
               return { ok: false, errorCode: 'session_input_target_update_required', error: 'session_input_target_update_required' };
             }
           } catch {
@@ -4127,16 +4101,18 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         : fieldId === 'intent.context' ? { updated: true } : { showToolCalls: value }), version: result.version };
     },
 
-    sessionPermissionRespond: async ({ sessionId, requestId, turnId, decision, serverId, mode, reason, answers, allowedTools, updatedPermissions, execPolicyAmendment, signal, context }) => {
+    sessionPermissionRespond: async ({ sessionId, requestId, turnId, decision, nativeChoice, serverId, mode, reason, answers, answerDetails, allowedTools, updatedPermissions, execPolicyAmendment, signal, context }) => {
       const reqId = String(requestId ?? '').trim();
       if (!reqId) {
         return { ok: false, errorCode: 'permission_request_not_found', errorMessage: 'permission_request_not_found', sessionId };
       }
       const request = buildSessionPermissionRespondRpcParamsV1({
         id: reqId, decision, ...(turnId ? { turnId } : {}),
+        ...(nativeChoice === undefined ? {} : { nativeChoice }),
         ...(mode === undefined ? {} : { mode }),
         ...(reason === undefined ? {} : { reason }),
         ...(answers === undefined ? {} : { answers }),
+        ...(answerDetails === undefined ? {} : { answerDetails }),
         ...(allowedTools === undefined ? {} : { allowedTools: [...allowedTools] }),
         ...(updatedPermissions === undefined ? {} : { updatedPermissions }),
         ...(execPolicyAmendment === undefined ? {} : { execPolicyAmendment }),
@@ -4148,6 +4124,8 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
       } catch (error) {
         return projectSessionInteractionRpcFailure(error);
       }
+      // Native selections settle from the host's validated stored response and its pushed state.
+      if (request.nativeChoice) return { ok: true };
       // A received effect receipt stays true for its invoker after retirement;
       // only the local feedback belongs to the still-current Account.
       if (accountContext?.accountLifetime.isCurrent() === false) return { ok: true };
@@ -4200,6 +4178,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
         return { ok: false, errorCode: 'permission_request_not_found', errorMessage: 'permission_request_not_found', sessionId };
       }
       const normalizedAnswers = buildSessionUserActionAnswerMap(answers);
+      const answerDetails = buildSessionUserActionAnswerDetails(answers);
       if (disposition !== 'pass_up' && !decision && Object.keys(normalizedAnswers).length === 0) {
         return { ok: false, errorCode: 'invalid_parameters', errorMessage: 'invalid_parameters', sessionId };
       }
@@ -4212,6 +4191,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           id: reqId,
           approved,
           ...(Object.keys(normalizedAnswers).length > 0 ? { answers: normalizedAnswers } : {}),
+          ...(Object.keys(answerDetails).length > 0 ? { answerDetails } : {}),
           ...(typeof reason === 'string' && reason.trim().length > 0 ? { reason: reason.trim() } : {}),
           ...(typeof updatedPermissions !== 'undefined' ? { updatedPermissions } : {}),
         }, { serverId: serverId ?? undefined, signal: ownedSignal,
