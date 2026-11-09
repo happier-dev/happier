@@ -328,19 +328,19 @@ export function buildThisComputerSetupStageModel(params: Readonly<{
             children: [
                 createStageChild({
                     id: 'setup.thisComputer.resolveRelay',
-                    title: t('settings.machineSetupStepResolveRelay'),
+                    title: t('settings.machineEnrollStepResolveRelay'),
                     satisfied: relayReady || Boolean(preflight.activeRelayUrl),
                     details: resolveRelayChildDetails(preflight),
                 }),
                 createStageChild({
                     id: 'setup.thisComputer.checkAuth',
-                    title: t('settings.machineSetupStepCheckAuth'),
+                    title: t('settings.machineEnrollStepCheckAuth'),
                     satisfied: relayReady || !preflight.needsAuth,
                     details: signInChildDetails(preflight),
                 }),
                 createStageChild({
                     id: 'setup.thisComputer.configureRelay',
-                    title: t('settings.machineSetupStepConfigureRelay'),
+                    title: t('settings.machineEnrollStepConfigureRelay'),
                     satisfied: relayReady,
                     details: configureRelayChildDetails(preflight),
                 }),
@@ -358,13 +358,13 @@ export function buildThisComputerSetupStageModel(params: Readonly<{
             children: [
                 createStageChild({
                     id: 'setup.thisComputer.auth.request',
-                    title: t('settings.machineSetupStepAuthRequest'),
+                    title: t('settings.machineEnrollStepAuthRequest'),
                     satisfied: Boolean(preflight.machineId),
                     details: registerRequestChildDetails(preflight),
                 }),
                 createStageChild({
                     id: 'setup.thisComputer.auth.wait',
-                    title: t('settings.machineSetupStepAuthWait'),
+                    title: t('settings.machineEnrollStepAuthWait'),
                     satisfied: Boolean(preflight.machineId),
                     details: registerWaitChildDetails(preflight),
                 }),
@@ -385,20 +385,20 @@ export function buildThisComputerSetupStageModel(params: Readonly<{
                 ...backgroundServiceDecisionChildren,
                 createStageChild({
                     id: 'setup.thisComputer.installService',
-                    title: t('settings.machineSetupStepInstallService'),
+                    title: t('settings.machineEnrollStepInstallService'),
                     satisfied: preflight.serviceInstalled,
                     disabled: false,
                     details: installServiceChildDetails(preflight),
                 }),
                 createStageChild({
                     id: 'setup.thisComputer.startService',
-                    title: t('settings.machineSetupStepStartService'),
+                    title: t('settings.machineEnrollStepStartService'),
                     satisfied: preflight.daemonRunning,
                     details: startServiceChildDetails(preflight),
                 }),
                 createStageChild({
                     id: 'setup.thisComputer.verifyService',
-                    title: t('settings.machineSetupStepVerifyService'),
+                    title: t('settings.machineEnrollStepVerifyService'),
                     satisfied: ready,
                     details: verifyServiceChildDetails(preflight),
                 }),

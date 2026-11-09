@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { validateWorkflowDefinition } from '@happier-dev/protocol/workflows/workflowValidationV1';
 import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
+import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { AutomationTriggerDefinitionBindingV1Schema, sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
 
 import {
     buildTriggerDefinition,
@@ -11,11 +13,52 @@ import {
     createDefaultWhen,
     readTriggerThen,
     readTriggerWhen,
+    readWorkflowTriggerSetForm,
 } from './sessionTriggerForm';
 
 const selection = { agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } };
 
 describe('session trigger form', () => {
+    it('reopens and preserves the exact Run lifecycle source when editing a managed rule', async () => {
+        const { AutomationTriggerDetailSchema} = await import('@happier-dev/protocol/automations/automationTriggerProjectionV1');
+        const source = { kind: 'execution_run', machineId: 'source-machine', runId: 'run-exact', sessionId: 'source-session' } as const;
+        const trigger = AutomationTriggerDetailSchema.parse({ kind: 'runLifecycle', id: 'run-trigger', revision: 1,
+            enabled: true, createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null, source, condition: 'terminal',
+            remainingOccurrences: 1, status: { state: 'waiting', runId: null } });
+        const when = readTriggerWhen(trigger);
+        expect(when).toEqual({ kind: 'runLifecycle', source, condition: 'terminal' });
+        if (when === null) throw new Error('Expected the saved Run condition');
+        expect(buildTriggerDefinition({ when, enabled: false, sessionId: null })).toEqual({
+            kind: 'runLifecycle', source, condition: 'terminal', enabled: false,
+        });
+        expect(buildTriggerExecutionTarget({ kind: 'doAction', actionId: 'machines.managed.delete', input: {} },
+            { kind: 'detached_run' })).toEqual({ kind: 'detached_run' });
+    });
+    it('retains observation-only Event intent when reopening its saved trigger', () => {
+        const binding = AutomationTriggerDefinitionBindingV1Schema.parse({ v: 1, automationId: 'automation',
+            triggerId: '00000000-0000-4000-8000-000000000001', triggerRevision: 1, triggerKind: 'pluginEvent',
+            eventRef: { pluginId: 'example.events', localId: 'deployment-review' }, sourceSelectorId: '00000000-0000-4000-8000-000000000002' });
+        const envelope = sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain', binding,
+            definition: { v: 1, sourceInstanceId: 'repository:42', sourceConfig: {}, displayLabel: 'Repository',
+                filter: null, maximumObservationAgeMs: null } });
+        const set = WorkflowTriggerSetV1Schema.parse({ automationId: 'automation', revision: 1, enabled: true,
+            health: 'available', scopeSessionId: null, observationOnly: { kind: 'observationOnly', templateVersion: 1 },
+            triggers: [{ kind: 'pluginEvent', id: '00000000-0000-4000-8000-000000000001', revision: 1,
+            enabled: true, createdAt: 1, updatedAt: 1, eventRef: { pluginId: 'example.events', localId: 'deployment-review' },
+            sourceSelectorId: '00000000-0000-4000-8000-000000000002', sourceContractVersion: 1,
+            observation: { kind: 'checkpointedPull', watcher: null }, sourceStatus: null, sourceCatalogStatus: null,
+            triggerDefinitionEnvelope: JSON.stringify(envelope) }] });
+        const trigger = set.triggers[0]!;
+        if (trigger.kind !== 'pluginEvent') throw new Error('Expected saved Event');
+        expect(readTriggerWhen(trigger, { kind: 'observationOnly' })).toEqual({ kind: 'pluginEvent', value: null,
+            eventRef: trigger.eventRef, observationOnly: { kind: 'observationOnly' } });
+        const form = readWorkflowTriggerSetForm(set, trigger.id);
+        expect(form).toEqual({ kind: 'observationOnly', enabled: true, when: { kind: 'pluginEvent', value: null,
+            eventRef: trigger.eventRef, observationOnly: { kind: 'observationOnly' } } });
+        expect(form).not.toHaveProperty('then');
+        expect(readWorkflowTriggerSetForm({ ...set, enabled: false }, trigger.id)).toMatchObject({ enabled: false });
+        expect(readWorkflowTriggerSetForm({ ...set, health: 'source_unavailable' }, trigger.id)).toBeNull();
+    });
     it.each(['prComment', 'ciFailed'] as const)('binds declared JSON prUpdate from %s occurrence rather than requiring a constant', kind => {
         const inputs = [{ name: 'prUpdate', valueType: 'json' as const, required: true },
             { name: 'request', valueType: 'string' as const, required: true }];

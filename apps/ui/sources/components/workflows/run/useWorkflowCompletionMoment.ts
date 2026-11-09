@@ -4,7 +4,7 @@ import { hapticsLight } from '@/components/ui/theme/haptics';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 
-import type { WorkflowRunStateV1 } from '@happier-dev/protocol';
+import type { WorkflowRunStateV1 } from '@happier-dev/protocol/workflows';
 
 import { isObservedCompletionTransition } from './workflowRunDetailPresentation';
 

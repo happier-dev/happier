@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SystemTaskJsonObject } from '@happier-dev/protocol';
+import type { SystemTaskJsonObject } from '@happier-dev/protocol/system/tasks/spec';
 
 import type { SystemTaskRunState } from '../types';
 

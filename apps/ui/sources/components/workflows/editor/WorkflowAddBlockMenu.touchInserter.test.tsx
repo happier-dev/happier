@@ -44,23 +44,21 @@ async function renderInserter(revealed: boolean) {
     return renderScreen(<WorkflowAddBlockMenu variant="inserter" revealed={revealed} onAdd={() => {}} scopeLabel="Steps" testID="gap" />);
 }
 
-/** The slot that carries the inserter in the list: the nearest ancestor with the list's own margins. */
+/** The slot that carries the inserter in the list: the nearest ancestor that gates its taps. */
 function slotOf(screen: Awaited<ReturnType<typeof renderInserter>>) {
     let node = screen.findHostByTestId('gap')?.parent ?? null;
-    while (node !== null && StyleSheet.flatten(node.props.style)?.marginVertical === undefined) node = node.parent;
+    while (node !== null && node.props.pointerEvents === undefined) node = node.parent;
     return node;
 }
 
 describe('the between-block inserter under a finger (DESIGN-6 M2)', () => {
-    it('keeps the gap at the document rhythm and never takes a tap while hidden', async () => {
+    it('is drawn as the document gap, reached by hit area, and never takes a tap while hidden', async () => {
         const screen = await renderInserter(false);
         const pressable = StyleSheet.flatten(screen.findHostByTestId('gap')!.props.style({ pressed: false }));
         const slot = slotOf(screen)!;
-        const margin = Number(StyleSheet.flatten(slot.props.style)?.marginVertical);
-        // The touch target stays a full target, but only the rhythm gap shows between blocks.
-        expect(Number(pressable.minHeight)).toBeGreaterThanOrEqual(44);
-        expect(Number(pressable.minHeight) + 2 * margin).toBeLessThan(Number(pressable.minHeight));
-        expect(Number(pressable.minHeight) + 2 * margin).toBeGreaterThan(0);
+        // The inserter keeps the document's gap under every pointer: no touch-sized frame, no negative margins.
+        expect(Number(pressable.minHeight)).toBeLessThan(44);
+        expect(StyleSheet.flatten(slot.props.style)?.marginVertical).toBeUndefined();
         expect(slot.props.pointerEvents).toBe('none');
     });
 

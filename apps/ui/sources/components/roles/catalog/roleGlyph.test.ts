@@ -1,4 +1,4 @@
-import { BUILT_IN_ROLES_V1, BUILT_IN_ROLE_IDS_V1 } from '@happier-dev/protocol';
+import { BUILT_IN_ROLES_V1, BUILT_IN_ROLE_IDS_V1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
 import { describe, expect, it } from 'vitest';
 
 import { resolveHappierRoleGlyph } from '@happier-dev/plugin-ui/presentation';

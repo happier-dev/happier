@@ -2,7 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import {
     DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { renderScreen } from '@/dev/testkit';
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
@@ -20,9 +20,6 @@ installAutomationComponentCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/plugins/shared/InstalledPluginBrandMark', () => ({
-    InstalledPluginBrandMark: () => null,
-}));
 vi.mock('@/components/plugins/shared/installedPluginBrandPresentation', () => ({
     useInstalledPluginBrandPresentation: () => null,
 }));
@@ -94,6 +91,7 @@ describe('PluginEventAutomationComposerContent accessibility', () => {
             eventCatalogStatus: 'ready',
             selectedEvent: event,
             selectEvent: vi.fn(),
+            getEventPresentation: (candidate: { event: { title: string; description: string | null } }) => ({ title: candidate.event.title, description: candidate.event.description }),
             getPluginPresentation: () => ({
                 eventKey: 'acme.github:events/repository',
                 displayName: 'Acme GitHub',

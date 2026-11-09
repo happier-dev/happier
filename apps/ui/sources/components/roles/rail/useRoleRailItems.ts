@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { useRoleCatalog, type RoleCatalogState } from '@/components/roles/catalog/useRoleCatalog';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
-import { describeRolePurpose } from '@/sync/domains/roles/roleCatalog';
+import { describeRolePurpose, roleDisplayName } from '@/sync/domains/roles/roleCatalog';
 
 import type { RoleRailItem } from './rolesRailTypes';
 import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
@@ -56,14 +56,14 @@ export function useRoleRailCatalog(
                 if ([entry?.role, sessionRole, pin && 'enabled' in pin ? pin : undefined].some(isTurnedOff)) return [];
                 // Still named by whichever layer named it; an id no layer names stays findable as written.
                 const name = (pin && 'name' in pin ? pin.name : undefined) ?? sessionRole?.name ?? entry?.role.name ?? roleId;
-                return [{ roleId, name, purpose: '', unavailable: 'role' }];
+                return [{ roleId, name: roleDisplayName({ roleId, name }), purpose: '', unavailable: 'role' }];
             }
             if (!resolved.selection.enabled) return [];
             const role = resolved.selection;
             const engine = presentEngine(role.engine);
             return [{
                 roleId,
-                name: role.name,
+                name: roleDisplayName(role),
                 purpose: describeRolePurpose(role),
                 ...(engine.label ? { engineLabel: engine.label } : {}),
                 ...(engine.icon ? { engineIcon: engine.icon } : {}),

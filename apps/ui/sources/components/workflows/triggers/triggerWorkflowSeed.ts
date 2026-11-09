@@ -1,4 +1,5 @@
-import type { TriggerTargetV1, WorkflowDefinitionV1 } from '@happier-dev/protocol';
+import type { TriggerTargetV1} from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
+import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 
 import {
     updateSessionTrigger,

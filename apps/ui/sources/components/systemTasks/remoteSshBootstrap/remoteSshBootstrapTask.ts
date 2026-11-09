@@ -1,5 +1,6 @@
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
+import type { ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { SystemTaskRunState, SystemTaskRunner } from '../types';
 import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
 import { buildRemoteSshManageHostSystemTaskSpec } from '../specs/remoteSsh/buildRemoteSshManageHostSystemTaskSpec';
@@ -9,6 +10,7 @@ import type { RemoteSshBootstrapFormState, RemoteSshBootstrapPrompt } from './us
 export type RemoteSshTaskTarget = Readonly<{
     runner: SystemTaskRunner; relayUrl: string; homeTarget?: ResolvedHomeTarget;
     webappUrl?: string; publicRelayUrl?: string; serviceMode?: 'user' | 'none';
+    enrollmentIdentity?: ManagedMachineEnrollmentIdentityV1;
     intent?: 'machineSetup' | 'personalHome.create';
     startSpec?: (spec: SystemTaskSpec) => Promise<string>;
 }>;
@@ -25,6 +27,7 @@ export async function startRemoteSshBootstrapTask(options: RemoteSshTaskTarget, 
             relayRuntime: { channel, mode: 'user' }, pairDevice: true, enrollInvokingClient: true, serviceMode: 'none' })
         : buildRemoteSshBootstrapMachineSystemTaskSpec({ ...ssh, relayUrl: options.relayUrl, webappUrl: options.webappUrl,
             publicRelayUrl: options.publicRelayUrl, homeTarget: options.homeTarget, serviceMode: options.serviceMode,
+            enrollmentIdentity: options.enrollmentIdentity,
             channel, installRelayRuntime: form.installRelayRuntime, promptResolution }));
 }
 
@@ -36,7 +39,7 @@ export async function continueRemoteSshBootstrapTask(params: Readonly<{
 }>): Promise<Readonly<{ taskId: string; resolution: RemoteSshPromptResolution }>> {
     const { options, form, taskId, snapshot, prompt } = params;
     const accepted = params.accept ?? true;
-    if (prompt.kind === 'ssh.password') throw new Error('SSH password prompts require the present-user password owner.');
+    if (prompt.kind === 'ssh.password' || prompt.kind === 'administrator.establish') throw new Error('Secret prompts require their transient response owner.');
     if (prompt.kind === 'daemon.replaceRemoteBackgroundServices' || prompt.kind === 'releaseChannel.switchDefaultForSetup') {
         await options.runner.respond(taskId, prompt.kind === 'daemon.replaceRemoteBackgroundServices'
             ? { replaceExistingServices: accepted } : { switchDefaultReleaseChannel: accepted });

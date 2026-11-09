@@ -3,13 +3,15 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
-import { createCapturingLegendListMock } from '@/dev/testkit/mocks/legendList';
+import type { CapturingLegendListMockState } from '@/dev/testkit/mocks/legendList';
 import { dispatchEscapeToLayerStack } from '@/keyboard/escape';
 import type { PluginMachineExecutionOriginCandidateV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
+import { getPluginExecutionOriginCandidateOrigin } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
+import { readPluginEventAutomationWatcherFailure } from './pluginEventAutomationObservationBinding';
 
 import type { PluginEventAutomationComposerModel } from './usePluginEventAutomationComposer';
 import { installAutomationComponentCommonModuleMocks } from '../automationComponentTestHelpers';
@@ -18,22 +20,34 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
 installAutomationComponentCommonModuleMocks();
 
+// Navigation is the app-shell boundary; the push spy records where a watcher remedy leads.
+const routerMock = vi.hoisted(() => ({ current: null as null | Awaited<ReturnType<typeof import('@/dev/testkit/mocks/router')['createExpoRouterMock']>> }));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    routerMock.current = createExpoRouterMock();
+    return routerMock.current.module;
+});
+
 // SelectionList owns its render/filter/activation behavior in this test. Its
 // third-party native recycler remains the system boundary, matching the
 // primitive's own harness so it can render virtual rows deterministically.
-const selectionListLegendMock = createCapturingLegendListMock({
-    renderItems: true,
-    // A recycler receives every option but mounts only its viewport. Rendering
-    // all 60 Item trees in react-test-renderer would erase the very
-    // virtualization behavior this test is intended to exercise.
-    renderItemLimit: 5,
+const selectionListLegendMock = vi.hoisted((): { state: CapturingLegendListMockState | null } => ({ state: null }));
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({
+        renderItems: true,
+        // The recycler receives all options but mounts only its viewport.
+        renderItemLimit: 5,
+    }, (state) => { selectionListLegendMock.state = state; });
 });
 
-vi.mock('@legendapp/list/react-native', () => ({
-    LegendList: selectionListLegendMock.module.LegendList,
-}));
+function requireSelectionListLegendState(): CapturingLegendListMockState {
+    if (!selectionListLegendMock.state) throw new Error('Expected the LegendList module boundary to initialize');
+    return selectionListLegendMock.state;
+}
 
-vi.mock('@/sync/store/hooks', () => ({
+vi.mock('@/sync/store/hooks', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/sync/store/hooks')>(),
     // Item rows inside the real SelectionList read the local density setting.
     // The persistent settings store is outside this composer's presentation
     // contract, so keep that boundary deterministic without replacing list logic.
@@ -55,20 +69,15 @@ vi.mock('@/sync/domains/state/storage', async () => {
     });
 });
 
-vi.mock('@/sync/domains/state/storageStore', () => {
-    // Shared presentation reads local settings through the leaf `settingsReadHooks`, which calls the
-    // store as a selector hook; the persistent store stays the deterministic boundary.
-    const state = { localSettings: { uiContentWidthMode: 'medium', uiFontScale: 1, uiItemDensity: 'comfortable' } };
-    return {
-        getStorage: () => Object.assign(<T,>(selector: (value: typeof state) => T) => selector(state), {
-            getState: () => state,
-        }),
-    };
+vi.mock('@/sync/domains/state/storageStore', async () => {
+    // The real hooks require the complete persistent-store subscription boundary.
+    const { createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+    const defaults = createStorageStoreMock({}).getState();
+    const storage = createStorageStoreMock({ localSettings: { ...defaults.localSettings,
+        uiContentWidthMode: 'medium', uiFontScale: 1, uiItemDensity: 'comfortable' } });
+    return { storage, getStorage: () => storage };
 });
 
-vi.mock('@/components/plugins/shared/InstalledPluginBrandMark', () => ({
-    InstalledPluginBrandMark: () => null,
-}));
 vi.mock('@/components/plugins/shared/installedPluginBrandPresentation', () => ({
     useInstalledPluginBrandPresentation: () => null,
 }));
@@ -143,12 +152,13 @@ const watcherCandidates = [{
     validation: { kind: 'admitted' },
 }] satisfies readonly PluginMachineExecutionOriginCandidateV1[];
 
-function createModel(event: ReturnType<typeof createEvent>): PluginEventAutomationComposerModel {
+function createModel(event: ReturnType<typeof createEvent>, candidates: readonly PluginMachineExecutionOriginCandidateV1[] = watcherCandidates): PluginEventAutomationComposerModel {
     return {
         eligibleEvents: [event],
         eventCatalogStatus: 'ready',
         selectedEvent: event,
         selectEvent: vi.fn(),
+        getEventPresentation: (candidate: { event: { title: string; description: string | null } }) => ({ title: candidate.event.title, description: candidate.event.description }),
         getPluginPresentation: (candidate) => ({
             eventKey: `${candidate.event.identity.pluginId}:${candidate.event.identity.localId}`,
             displayName: 'Acme GitHub',
@@ -171,7 +181,11 @@ function createModel(event: ReturnType<typeof createEvent>): PluginEventAutomati
         refreshWebhookEndpoint: null,
         webhookEndpointRefreshing: false,
         configureSource: vi.fn(),
-        watcherCandidates,
+        watcherCandidates: candidates,
+        watcherFailures: candidates.flatMap(candidate => {
+            const failure = readPluginEventAutomationWatcherFailure(candidate, event);
+            return failure ? [{ ...failure, origin: getPluginExecutionOriginCandidateOrigin(candidate) }] : [];
+        }),
         selectedWatcherOrigin: {
             serverIdentityId: 'srv_account_a',
             materializationRef: {
@@ -201,6 +215,10 @@ function createModel(event: ReturnType<typeof createEvent>): PluginEventAutomati
     };
 }
 
+// Collect the real component after native boundary fixtures initialize, not
+// inside a timed interaction (cold graph transforms can dominate that budget).
+const { PluginEventAutomationComposerContent } = await import('./PluginEventAutomationComposerContent');
+
 const EVENT_TRIGGER_TEST_ID = 'automation-event-picker';
 const FILTER_FIELD_TRIGGER_TEST_ID = 'automation-event-filter-clause-filter-0-field-picker';
 
@@ -208,7 +226,6 @@ async function renderComposer(triggerFocus: Readonly<{
     event: () => void;
     filterField: () => void;
 }>) {
-    const { PluginEventAutomationComposerContent } = await import('./PluginEventAutomationComposerContent');
     return renderScreen(<PluginEventAutomationComposerContent model={createModel(createEvent())} />, {
         createNodeMock: (element) => {
             const elementProps = element.props as { testID?: string };
@@ -225,7 +242,7 @@ describe('PluginEventAutomationComposerContent picker dismissal', () => {
     });
 
     it('finds an event by its human label or exact event id in a virtualized catalog', async () => {
-        selectionListLegendMock.state.reset();
+        requireSelectionListLegendState().reset();
         const selectEvent = vi.fn();
         const eligibleEvents = Array.from({ length: 60 }, (_, index) => createEvent(index));
         const model = {
@@ -234,7 +251,6 @@ describe('PluginEventAutomationComposerContent picker dismissal', () => {
             selectedEvent: eligibleEvents[0]!,
             selectEvent,
         };
-        const { PluginEventAutomationComposerContent } = await import('./PluginEventAutomationComposerContent');
         const screen = await renderScreen(<PluginEventAutomationComposerContent model={model} />);
 
         await act(async () => {
@@ -248,7 +264,7 @@ describe('PluginEventAutomationComposerContent picker dismissal', () => {
         // automations" copy) renders the wrong surface copy and fails here.
         expect(search?.props.placeholder).toBe('automations.form.trigger.searchEvents');
         expect(screen.findByTestId('automation-event-selection-list:section:events:virtualized')).toBeTruthy();
-        expect(selectionListLegendMock.state.props?.data).toHaveLength(eligibleEvents.length);
+        expect(requireSelectionListLegendState().props?.data).toHaveLength(eligibleEvents.length);
 
         await act(async () => {
             search?.props.onChangeText('Repository event 59');
@@ -325,5 +341,77 @@ describe('PluginEventAutomationComposerContent picker dismissal', () => {
             secondHandled = dispatchEscapeToLayerStack(secondEscape);
         });
         expect(secondHandled).toBe(false);
+    });
+});
+
+describe('PluginEventAutomationComposerContent unavailable watchers', () => {
+    afterEach(() => {
+        standardCleanup();
+    });
+
+    it('says why each watcher is unavailable and leads to its remedy while keeping it unselectable', async () => {
+        requireSelectionListLegendState().reset();
+        const candidate = (materializationId: string, validation: PluginMachineExecutionOriginCandidateV1['validation']) => ({
+            ...watcherCandidates[0]!,
+            materialization: { ...watcherCandidates[0]!.materialization, materializationId },
+            validation,
+        }) satisfies PluginMachineExecutionOriginCandidateV1;
+        const selectWatcher = vi.fn();
+        const unavailable = [
+            candidate('untrusted-install', { kind: 'rejected', reason: 'untrusted' }),
+            candidate('old-daemon', { kind: 'rejected', reason: 'daemon_unsupported' }),
+            candidate('offline-install', { kind: 'rejected', reason: 'offline' }),
+        ];
+        const model = {
+            ...createModel(createEvent(), unavailable),
+            selectedWatcherOrigin: null,
+            selectWatcher,
+            // Failure facts belong to the model. The row must not replace
+            // them with another inference from the candidate inventory.
+            watcherCandidates: unavailable.map(value => ({ ...value, validation: { kind: 'admitted' as const } })),
+        };
+        const screen = await renderScreen(<PluginEventAutomationComposerContent model={model} />);
+        await act(async () => {
+            screen.findByProps({ testID: 'automation-event-watcher-picker' }).props.onPress();
+        });
+
+        const row = (id: string) => `automation-event-watcher-option-watcher-machine:${id}`;
+        const text = screen.getTextContent();
+        expect(text).toContain('settingsPlugins.machineMatrix.state.untrusted');
+        expect(text).toContain('pluginSurfaces.originReason.daemon_unsupported');
+        expect(text).toContain('settingsProviders.detail.machineOffline');
+
+        // Install trust and an unsupported daemon each lead to the settings page that can fix them,
+        // once per page; a transient failure has no fabricated control.
+        const remedies = screen.findByTestId('automation-event-watcher-remedies');
+        expect(remedies).not.toBeNull();
+        await act(async () => {
+            screen.findByProps({ testID: 'automation-event-watcher-remedy-plugins' }).props.onPress();
+        });
+        expect(routerMock.current!.spies.push).toHaveBeenLastCalledWith('/settings/plugins');
+        await act(async () => {
+            screen.findByProps({ testID: 'automation-event-watcher-remedy-machines' }).props.onPress();
+        });
+        expect(routerMock.current!.spies.push).toHaveBeenLastCalledWith('/settings/machines');
+        expect(routerMock.current!.spies.push).toHaveBeenCalledTimes(2);
+
+        await act(async () => {
+            screen.findByProps({ testID: row('untrusted-install') }).props.onPress?.();
+        });
+        expect(selectWatcher).not.toHaveBeenCalled();
+    });
+
+    it('offers no settings remedy when every watcher only waits for its machine to return', async () => {
+        requireSelectionListLegendState().reset();
+        const offline: readonly PluginMachineExecutionOriginCandidateV1[] = [
+            { ...watcherCandidates[0]!, validation: { kind: 'rejected', reason: 'offline' } },
+        ];
+        const model = { ...createModel(createEvent(), offline), selectedWatcherOrigin: null };
+        const screen = await renderScreen(<PluginEventAutomationComposerContent model={model} />);
+        await act(async () => {
+            screen.findByProps({ testID: 'automation-event-watcher-picker' }).props.onPress();
+        });
+        expect(screen.getTextContent()).toContain('settingsProviders.detail.machineOffline');
+        expect(screen.findByTestId('automation-event-watcher-remedies')).toBeNull();
     });
 });

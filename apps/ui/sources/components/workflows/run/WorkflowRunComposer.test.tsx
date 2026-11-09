@@ -154,6 +154,17 @@ describe('workflow composer admission', () => {
         expect(text).toContain('workflows.page.sections.aSession');
         await screen.unmount();
     });
+    it('offers the host\'s Agent picker on the review row instead of a read-only summary (R170-3)', async () => {
+        const screen = await renderScreen(<WorkflowRunComposer inputs={[]} values={{}}
+            definition={createWorkflowDefinitionFixture({ defaults: STARTABLE_DEFAULTS })}
+            agentControl={React.createElement('View', { testID: 'review-agent-picker' })}
+            onChangeValues={() => {}} onRun={() => {}} onCancel={() => {}} />);
+        const row = screen.findByTestId('workflow-run-inputs-review-agent');
+        expect(row?.findAll((node: { props: { testID?: string } }) => node.props.testID === 'review-agent-picker').length).toBeGreaterThan(0);
+        // The picker already says which Agent: the row does not say it twice.
+        expect(screen.getTextContent()).not.toContain(t('agentInput.agent.claude'));
+        await screen.unmount();
+    });
     it('reviews a human-only workflow without implying an Agent will run', async () => {
         const screen = await renderScreen(<WorkflowRunComposer inputs={[]} values={{}}
             definition={createWorkflowDefinitionFixture({ defaults: STARTABLE_DEFAULTS,

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { SystemTaskResult } from '@happier-dev/protocol';
+import type { SystemTaskResult } from '@happier-dev/protocol/system/tasks/spec';
 
 import { readTokenOnlyAuthRequestPrompt, respondToTokenOnlyAuthRequestPrompt, type SystemTaskAuthRequestApproval } from './approveSystemTaskAuthRequestPrompt';
 import { presentUnmanagedCliConsent } from './presentUnmanagedCliConsent';
@@ -9,7 +9,7 @@ import { answerThisComputerSetupPrompt } from './thisComputerSetup/answerThisCom
 import { matchesThisComputerSetupScope } from './thisComputerSetup/thisComputerSetupScope';
 import { useSystemTaskSnapshot } from './useSystemTaskSnapshot';
 import type { SystemTaskPromptContinuation, SystemTaskRunState, SystemTaskRunner } from './types';
-import type { SystemTaskSpec } from '@happier-dev/protocol';
+import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import { adoptLocalComputerSetup, readLocalDaemonSharedState, subscribeLocalDaemonSharedState } from '@/components/settings/machines/localControl/localDaemonSharedState';
 import { readLocalDaemonStatusData } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 

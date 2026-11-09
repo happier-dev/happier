@@ -2,25 +2,34 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-    ArtifactAccessRecipientCensusResponseV1Schema,
-    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+    ArtifactAccessRecipientCensusResponseV1Schema} from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import {
+    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import {
     WorkflowDefinitionGetResultV1Schema,
-    WorkflowRunRecipientCensusResponseV1Schema,
-    WorkflowRunRecipientKeyEnvelopesV1Schema,
     WorkflowRunStartRequestV1Schema,
-    WorkflowDefinitionV1Schema,
-    TargetedActionRpcRequestV1Schema,
-    createAccountScopedCryptoMaterialSnapshotV1,
-    convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
-    createWorkflowAccountRunActionOwner,
-    resolveWorkflowRunDataKeyV1,
-    openWorkflowAcceptedSnapshotStoredEnvelopeV1,
-    parseWorkflowStoredContentEnvelopeV1,
-    type AvailableAutomationAccountEncryptionV1,
     type WorkflowRunStartRequestV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workflows/actionsV1';
+import {
+    WorkflowRunRecipientCensusResponseV1Schema,
+    WorkflowRunRecipientKeyEnvelopesV1Schema} from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import {
+    WorkflowDefinitionV1Schema} from '@happier-dev/protocol/workflows/workflowV1';
+import {
+    createAccountScopedCryptoMaterialSnapshotV1} from '@happier-dev/protocol/crypto/accountScopedCipher';
+import {
+    convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import {
+    createWorkflowAccountRunActionOwner} from '@happier-dev/protocol/actions/executor/workflowRunActions';
+import {
+    resolveWorkflowRunDataKeyV1} from '@happier-dev/protocol/workflows/workflowRunDataKeyV1';
+import {
+    openWorkflowAcceptedSnapshotStoredEnvelopeV1,
+    parseWorkflowStoredContentEnvelopeV1} from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import {
+    type AvailableAutomationAccountEncryptionV1} from '@happier-dev/protocol/automations/automationAccountCurrentnessV1';
 import { createWorkflowDefinitionActions } from '@happier-dev/protocol/actions';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { renderScreen } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
@@ -31,10 +40,15 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import type { Artifact, ArtifactCreateRequest } from '@/sync/domains/artifacts/artifactTypes';
 import { resolveAbsolutePath } from '@/utils/path/pathUtils';
 import { projectArtifactStoredKind } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { t } from '@/text';
+import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 
 // Only network, credentials and platform rendering/loading are replaced. The
 // saved Artifact writer/opener, front door, controller and admission stay real.
 installDisconnectedServerSocketBoundary();
+const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+const { createEncryptionFromAuthCredentials } = await import('@/auth/encryption/createEncryptionFromAuthCredentials');
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
 const { callWorkflowAction } = await import('@/sync/domains/workflows/callWorkflowAction');
 const { storage } = await import('@/sync/domains/state/storageStore');
@@ -74,9 +88,9 @@ afterEach(async () => {
 });
 
 describe('saved editor Start through the real front door and Account admission', () => {
-    it.each(['plain', 'e2ee', 'agent'] as const)('admits the reviewed inline draft bound to a readable %s Artifact', async (fixture) => {
+    it.each(['plain', 'e2ee', 'agent', 'shared'] as const)('admits the reviewed inline draft bound to a readable %s Artifact', async (fixture) => {
         const mode = fixture === 'e2ee' ? 'e2ee' : 'plain';
-        const savedDefinition = fixture === 'agent' ? WorkflowDefinitionV1Schema.parse({ version: 1, inputs: [],
+        const savedDefinition = fixture === 'agent' || fixture === 'shared' ? WorkflowDefinitionV1Schema.parse({ version: 1, inputs: [],
             defaults: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
             blocks: [{ kind: 'step', id: 'reply', document: { text: 'Reply exactly QA_FIN20_AGENT_READY. Do not use tools, edit files, or run commands.', references: [], attachments: [] },
                 execution: { acpSessionModeId: 'default', connectedServices: { v: 2, bindingsByServiceId: {
@@ -98,15 +112,32 @@ describe('saved editor Start through the real front door and Account admission',
             ? { kind: 'available', witness: { mode, version: 1, contentKeyFingerprint: null } }
             : { kind: 'available', material, witness: { mode, version: 1,
                 contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(material.contentPublicKeyFingerprint) } };
-        const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+        const token = createAccountTokenForTests(accountId, { currentAccount: true });
+        const credentials = mode === 'plain' ? { token } : { token, secret: Buffer.from(secret).toString('base64url') };
+        const serverUrl = `https://saved-start-${crypto.randomUUID()}.test`;
+        const serverIdentityId = 'srv_saved_workflow_start';
+        let dispatch: (input: unknown) => Promise<unknown> = async () => { throw new Error('start_fixture_not_ready'); };
+        let deliveredRequesterToken: string | undefined;
+        const external = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId, accountId,
+            machineId: 'machine-1', actionId: 'workflow.run.start', tokenEpoch: 0,
+            ...(fixture === 'shared' ? { custodian: { accountId: 'machine-owner', displayName: 'Machine owner' } } : {}),
+            ...(mode === 'e2ee' ? { encryption: await createEncryptionFromAuthCredentials(credentials) } : {}),
+            execute: (input, context) => {
+                deliveredRequesterToken = context.requesterAccountContext.token;
+                return dispatch(input);
+            }, failure: value => {
+                const parsed = ActionExecuteFailureSchema.safeParse(value);
+                return parsed.success ? parsed.data : null;
+            } });
         const artifacts = new Map<string, Artifact>();
         const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
-        const account = await restoreServerAccountForTest({ serverUrl: `https://saved-start-${crypto.randomUUID()}.test`, accountId,
-            credentials: mode === 'plain' ? { token } : { token, secret: Buffer.from(secret).toString('base64url') },
+        const account = await restoreServerAccountForTest({ serverUrl, serverIdentityId, accountId, credentials,
             request: async (url, init) => {
+                const handled = await external.handle(new URL(String(url)), init);
+                if (handled) return handled;
                 const path = new URL(String(url)).pathname;
                 if (path === '/health') return json({});
-                if (path === '/v1/features') return json({ features: { automations: { enabled: true }, workflows: { enabled: true } }, capabilities: {
+                if (path === '/v1/features' || path === '/v1/features/authenticated') return json({ features: { automations: { enabled: true }, workflows: { enabled: true } }, capabilities: {
                     accountStoredContentCompatibility: { v: 1, minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
                         currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, declarationTransport: 'http-header-and-socket-auth-v1' },
                 } });
@@ -123,7 +154,9 @@ describe('saved editor Start through the real front door and Account admission',
                     artifacts.set(row.id, row);
                     return json(row);
                 }
-                if (path === `/v1/artifacts/${definitionId}/access/grants`) return json({ artifactId: definitionId, ownerAccountId: accountId, access: 'owner', grants: [] });
+                // A guest on a shared Machine typically starts a Workflow someone shared with them.
+                if (path === `/v1/artifacts/${definitionId}/access/grants`) return json({ artifactId: definitionId, ownerAccountId: accountId,
+                    access: fixture === 'shared' ? 'edit' : 'owner', grants: [] });
                 const artifact = artifacts.get(definitionId);
                 if (artifact && path === `/v1/artifacts/${definitionId}/access/recipients`) return json(ArtifactAccessRecipientCensusResponseV1Schema.parse({
                     artifactId: definitionId, ownerAccountId: accountId, access: 'owner', encryptionMode: mode,
@@ -170,20 +203,17 @@ describe('saved editor Start through the real front door and Account admission',
                 throw new Error(`unexpected_storage_operation:${operation.operation}`);
             } },
         });
-        machineRpc.mockImplementation(async request => {
-            if (request.method !== getActionSpec('workflow.run.start').bindings?.rpcMethod) {
-                // Native/plugin catalog network reads are unavailable in this fixture;
-                // the fieldless Wait needs no Agent or Provider contribution.
-                return { error: 'method_not_found' };
-            }
+        dispatch = async input => {
             try {
-                const targeted = TargetedActionRpcRequestV1Schema.parse(request.payload);
-                submitted = WorkflowRunStartRequestV1Schema.parse(targeted.input);
+                submitted = WorkflowRunStartRequestV1Schema.parse(input);
                 return await owner.execute({ actionId: 'workflow.run.start', input: submitted,
-                    context: { surface: 'ui', authority: 'present_user', callerPermissionMode: 'default', externalActionTarget: targeted.target } });
+                    context: { surface: 'ui', authority: 'present_user', callerPermissionMode: 'default',
+                        externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory: '/repo' } } } });
             } catch (error) { rpcFailure = error; throw error; }
-        });
-        const machine = createMachineFixture();
+        };
+        // Native/plugin catalog transport is unavailable; Run admission uses the current HTTP boundary above.
+        machineRpc.mockResolvedValue({ error: 'method_not_found' });
+        const machine = createMachineFixture({ access: external.machine.access });
         storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: {} });
         let modals: ReturnType<typeof useModal>['state']['modals'] = [];
         function ObserveModals() { modals = useModal().state.modals; return null; }
@@ -192,24 +222,34 @@ describe('saved editor Start through the real front door and Account admission',
         </AppPaneProvider></ModalProvider>, {
             createNodeMock: () => ({ getBoundingClientRect: () => ({ left: 600, top: 100, width: 160, height: 40 }), contains: () => false, focus: () => {},
                 addEventListener: () => {}, removeEventListener: () => {},
+                ownerDocument: { addEventListener: () => {}, removeEventListener: () => {} },
                 measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(600, 100, 160, 40) }),
         });
         disposals.push(screen.unmount);
-        await vi.waitFor(() => expect(screen.root.findByType(WorkflowEditorBody).props.draft).not.toBeNull());
+        await vi.waitFor(() => expect(screen.root.findByType(WorkflowEditorBody).props.draftStore.get()).not.toBeNull());
         await act(async () => {
             const body = screen.root.findByType(WorkflowEditorBody);
-            body.props.onChange({ ...body.props.draft, blocks: reviewedDefinition.blocks });
+            body.props.onChange({ ...body.props.draftStore.get(), blocks: reviewedDefinition.blocks });
             const onChangeProjectTarget = body.props.onChangeProjectTarget;
             if (!onChangeProjectTarget) throw new Error('Missing workflow Project target handler');
             onChangeProjectTarget({ machineId: 'machine-1', directory: '/repo' });
         });
         await screen.pressByTestIdAsync('workflow-editor-run-now');
         await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
+        if (fixture === 'shared') {
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('machineRequester.fullSignIn', { machine: 'tester.local', retention: 'run' })));
+            expect(screen.getTextContent()).toContain(t('machineRequester.osVisibility', { owner: 'Machine owner', machine: 'tester.local' }));
+            // The footnote never contradicts the disclosure: the guest's run is not on their own machines.
+            expect(screen.findByTestId('workflow-run-inputs-own-machines')).toBeNull();
+        } else {
+            expect(screen.getTextContent()).not.toContain('machineRequester.fullSignIn');
+        }
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
         await vi.waitFor(() => expect(router.spies.push.mock.calls.length + modals.filter(entry => entry.type === 'alert').length).toBeGreaterThan(0));
         expect(rpcFailure).toBeUndefined();
         expect(modals.filter(entry => entry.type === 'alert')).toEqual([]);
         expect(router.spies.push).toHaveBeenCalled();
+        expect(deliveredRequesterToken).toBe(token);
         expect(submitted?.source).toMatchObject({ kind: 'inline', sourceArtifactId: definitionId, definition: reviewedDefinition });
         const admits = operations.filter(operation => operation.operation === 'admit');
         expect(admits).toHaveLength(1);
@@ -228,7 +268,7 @@ describe('saved editor Start through the real front door and Account admission',
             envelope: parseWorkflowStoredContentEnvelopeV1(String(admitted.acceptedEnvelope)) });
         expect(opened).toMatchObject({ kind: 'available', content: { authoredDefinition: reviewedDefinition,
             source: { kind: 'inline', sourceArtifactId: definitionId } } });
-        expect(router.spies.push).toHaveBeenLastCalledWith({ pathname: '/workflows/runs/[runId]', params: { runId: submitted.runId } });
+        expect(router.spies.push).toHaveBeenLastCalledWith(createWorkflowRunRoute(submitted.runId, serverIdentityId));
         expect(artifacts.get(definitionId)?.bodyVersion).toBe(1);
     });
 });

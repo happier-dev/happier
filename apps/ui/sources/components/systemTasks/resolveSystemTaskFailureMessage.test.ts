@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { t } from '@/text';
 
 describe('resolveSystemTaskFailureMessage', () => {
+    it('presents operator authorization recovery through the existing typed cause owner', async () => {
+        const { resolveSystemTaskFailureMessage } = await import('./resolveSystemTaskFailureMessage');
+        const message = resolveSystemTaskFailureMessage({
+            code: 'tailscale_operator_authorization_refused', message: 'private native diagnostic',
+        });
+        expect(message).toBe(t('settings.relayAccess.tailscaleOperatorAuthorizationRefused'));
+        expect(message).not.toBe('private native diagnostic');
+    });
     it('replaces a managed controller request code with localized recovery copy', async () => {
         const { resolveSystemTaskFailureMessage } = await import('./resolveSystemTaskFailureMessage');
         expect(resolveSystemTaskFailureMessage({ code: 'managed_controller_request_failed', message: 'managed_controller_request_failed' }))

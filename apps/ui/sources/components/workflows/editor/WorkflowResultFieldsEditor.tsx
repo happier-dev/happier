@@ -30,7 +30,6 @@ import { Switch } from '@/components/ui/forms/Switch';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import {
   ExpandableItem,
-  ExpandableItemCaret,
 } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemAddRow } from '@/components/ui/lists/ItemAddRow';
@@ -296,8 +295,6 @@ function FieldRow(
           subtitleLines={1}
           {...(consumers === undefined ? {} : { detail: consumers })}
           accessibilityLabel={`${field.name}, ${summary}${consumers === undefined ? '' : `, ${consumers}`}`}
-          showChevron={false}
-          leftElement={<ExpandableItemCaret expanded={expanded} />}
         />
       )}
     >

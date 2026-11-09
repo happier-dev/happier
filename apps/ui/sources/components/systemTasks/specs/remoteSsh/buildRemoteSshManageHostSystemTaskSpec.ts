@@ -1,4 +1,4 @@
-import type { SystemTaskSpec } from '@happier-dev/protocol';
+import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 import { buildSshTarget, parseSshTarget } from '@happier-dev/protocol/ssh/sshTarget';
 
 export function buildRemoteSshManageHostSystemTaskSpec(params: Readonly<{

@@ -11,6 +11,8 @@ import {
 
 describe('resolvePluginEventEditorProjectionMachineId', () => {
     it('keeps Event transport placement distinct from the Automation execution assignment', () => {
+        expect(resolvePluginEventEditorProjectionMachineId({ observation: null, authoringMachineId: null,
+            selectedWatcherMachineId: 'chosen-watcher' })).toBe('chosen-watcher');
         expect(resolvePluginEventEditorProjectionMachineId({
             observation: null,
             authoringMachineId: 'execution-assignment-machine',

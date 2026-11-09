@@ -1,4 +1,4 @@
-import type { SystemTaskSpec } from '@happier-dev/protocol';
+import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 
 import { areServerProfileIdentifiersEquivalent, resolveSavedServerProfileByUrl } from '@/sync/domains/server/serverProfiles';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';

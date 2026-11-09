@@ -1733,9 +1733,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     const selectedAttentionIndex = attentionRows.findIndex((row) => row.id === props.selectedInvocationId);
     const previousHold = attentionRows[selectedAttentionIndex - 1];
     const nextHold = selectedAttentionIndex < 0 ? undefined : attentionRows[selectedAttentionIndex + 1];
-    const selectedHeaderTrailing = selectedAttentionIndex < 0 || attentionRows.length < 2 ? null : <View style={styles.actions}>
+    const selectedHeaderTrailing = selectedAttentionIndex < 0 || attentionRows.length < 2 ? null : <View style={[styles.actions, styles.holdNavigation]}>
         <Text style={styles.provenance}>{t('workflows.run.holdsPosition', { current: selectedAttentionIndex + 1, total: attentionRows.length, more: props.attentionHasMore === true })}</Text>
-        {nextHold === undefined ? null : <Text style={styles.provenance}>{t('workflows.run.nextHoldOccurrence', {
+        {nextHold === undefined ? null : <Text numberOfLines={1} style={[styles.provenance, styles.holdNavigationNext]}>{t('workflows.run.nextHoldOccurrence', {
             step: [invocationLabel(nextHold), invocationOccurrenceLabel(nextHold)].filter(Boolean).join(' · ') || t('workflows.contentUnavailable'),
         })}</Text>}
         <RoundButton testID={`${testIDPrefix}-previous-hold`} size="mini" display="secondary" title="‹"

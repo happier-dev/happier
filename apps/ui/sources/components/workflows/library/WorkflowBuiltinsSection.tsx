@@ -14,6 +14,7 @@ import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflow
 import { t, tLoose } from '@/text';
 import { useWorkflowExistingSessionOptions } from '../screens/useWorkflowExistingSessionOptions';
 import { resolveWorkflowSessionChoice, WORKFLOW_SESSION_RETRY_ITEM_ID, workflowSessionMenuState } from '../presentation/workflowSessionChoice';
+import { workflowSessionOptionRow } from '../presentation/workflowSessionOptionRow';
 import { WorkflowPurposeGlyph } from '../presentation/WorkflowPurposeGlyph';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
 
@@ -57,7 +58,7 @@ export function WorkflowBuiltinSessionButton(props: Readonly<{ entry: BuiltinWor
     const menu = workflowSessionMenuState(resolveWorkflowSessionChoice(sessionOptionsStatus, sessions.length > 0),
         t('workflows.conversation.noSessionsYet'));
     return <DropdownMenu open={open} onOpenChange={setOpen} search searchPlaceholder={t('sessionsList.searchSessionsPlaceholder')}
-        items={[...menu.leadingItems, ...sessions.map((session) => ({ id: session.sessionId, title: session.label }))]}
+        items={[...menu.leadingItems, ...sessions.map((session) => ({ id: session.sessionId, title: session.label, ...workflowSessionOptionRow(session) }))]}
         {...(menu.emptyLabel === undefined ? {} : { emptyLabel: menu.emptyLabel })}
         // Session names are long; the chooser takes the width they need, not the button's.
         matchTriggerWidth={false} popoverPhonePresentation="sheet" popoverAccessibilityLabel={t('workflows.conversation.chooseExistingSession')}

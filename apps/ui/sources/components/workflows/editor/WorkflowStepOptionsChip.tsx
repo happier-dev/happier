@@ -1,4 +1,3 @@
-import { getWorkflowStepOptionsChipPlacement } from '../workflowComposerControlPlacements';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -13,6 +12,8 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { getWorkflowStepOptionsChipPlacement } from '../workflowComposerControlPlacements';
+export { getWorkflowStepOptionsChipPlacement } from '../workflowComposerControlPlacements';
 import type { WorkflowBlock } from '@happier-dev/protocol/workflows/workflowV1';
 
 import { workflowEditorStyles } from './workflowEditorStyles';

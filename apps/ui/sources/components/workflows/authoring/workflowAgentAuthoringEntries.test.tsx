@@ -61,7 +61,7 @@ const { resolveSelectableMessageText } = await import('@/components/sessions/tra
 const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
 const { restoreConnectionToActiveServer, disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
-const { AUTHORING_MEMORY_ROUTE_V1 } = await import('@happier-dev/protocol');
+const { AUTHORING_MEMORY_ROUTE_V1} = await import('@happier-dev/protocol/account/authoringMemory');
 beforeEach(async () => {
     await home.reset();
     resetSessionDraftRepositoryForTests();
@@ -187,7 +187,7 @@ it.each([
         const settings = getStorage()((current) => current.settings);
         if (entry === 'message') {
             const committed: AgentTextMessage = { ...message, kind: 'agent-text', localId: null, createdAt: 1 };
-            return <CommittedMessageActions message={committed} sessionId={session.id} serverId={server.id}
+            return <CommittedMessageActions message={committed} sessionId={session.id} serverId={server.id} touchRevealKey={null}
                 selectableText={resolveSelectableMessageText({ message: committed, isStructuredOnly: false, hasAttachmentBlockToStrip: false })}
                 copyText={message.text} isStructuredOnly={false} canFork={false} isForkAllowed={() => false}
                 forkCommon={{ sessionReplayEnabled: false, sessionReplayMaxSeedChars: 0, sessionReplayStrategy: 'recent_messages',

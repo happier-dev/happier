@@ -52,6 +52,15 @@ describe('workflow composer accessibility', () => {
         expect(screen.findByTestId('workflow-run-inputs-status')?.findAllByProps({ testID: 'workflow-run-inputs-reconciling' }).length).toBeGreaterThan(0);
         expect(screen.findByTestId('workflow-run-inputs-preview')?.findAllByProps({ testID: 'workflow-run-inputs-run' })).toHaveLength(0);
     });
+    it('shows a status badge handed to it in the composer\'s own status row', async () => {
+        const props: WorkflowRunComposerProps = { inputs: [], values: {}, onChangeValues: () => {}, onRun: () => {}, onCancel: () => {} };
+        const screen = await renderScreen(<WorkflowRunComposer {...props}
+            statusBadges={[{ key: 'managed-machine-progress', label: 'Installing Happier on mac-vm-2', testID: 'managed-machine-progress-badge',
+                accessibilityLabel: 'Installing Happier on mac-vm-2', tone: 'neutral' }]} />);
+        expect(screen.findByTestId('managed-machine-progress-badge')).not.toBeNull();
+        await screen.update(<WorkflowRunComposer {...props} />);
+        expect(screen.findByTestId('managed-machine-progress-badge')).toBeNull();
+    });
     it('associates the required repair with the actual main input without an untouched alert', async () => {
         const screen = await mount();
         // 07 §3: untouched fields never show errors. The readiness footnote names

@@ -1,4 +1,5 @@
-import type { SystemTaskSpec } from '@happier-dev/protocol';
+import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
+import type { ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { buildSshTarget, parseSshTarget } from '@happier-dev/protocol/ssh/sshTarget';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 
@@ -27,6 +28,7 @@ export function buildRemoteSshBootstrapMachineSystemTaskSpec(params: Readonly<{
     sshConfigFilePath?: string;
     identityFilePath?: string;
     serviceMode?: 'user' | 'none';
+    enrollmentIdentity?: ManagedMachineEnrollmentIdentityV1;
     sshPassword?: string;
     identityPrivateKey?: string;
     installRelayRuntime?: boolean;
@@ -74,6 +76,7 @@ export function buildRemoteSshBootstrapMachineSystemTaskSpec(params: Readonly<{
                     : {}),
             },
             ...(params.homeTarget ? { homeTarget: params.homeTarget } : {}),
+            ...(params.enrollmentIdentity ? { enrollmentIdentity: params.enrollmentIdentity } : {}),
             channel: params.channel,
             serviceMode,
             knownHostsMode: 'app',

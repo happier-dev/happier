@@ -328,8 +328,9 @@ describe('editor workflow composer', () => {
                 dispatchEvent: events.dispatchEvent.bind(events) });
         }
         const scopeKey = workspaceLayoutScopeKey({ serverId: getActiveServerSnapshot().serverId, accountId: 'account-a', windowId: 'main' });
-        getStorage().setState({ isDataReady: admission === 'shell', localSettings: { ...getStorage().getState().localSettings,
-            workspaceLayoutV1: { [scopeKey]: serializeWorkspaceLayout(createWorkspaceState(pinned)) } } });
+        const { workspaceLayoutsState } = await import('@/sync/domains/state/filePaneUiState');
+        workspaceLayoutsState.set(scopeKey, serializeWorkspaceLayout(createWorkspaceState(pinned)));
+        getStorage().setState({ isDataReady: admission === 'shell' });
         let workspace: WorkspaceNavigationContextValue | undefined;
         function Body() {
             const params = useDestinationParams<Record<string, string>>();
@@ -415,8 +416,7 @@ describe('editor workflow composer', () => {
             expect(kvWrites).toBe(writesBeforeImport);
         }
         // A late persisted-layout publication must not replace an admitted editor.
-        await act(async () => getStorage().setState({ localSettings: { ...getStorage().getState().localSettings,
-            workspaceLayoutV1: { [scopeKey]: serializeWorkspaceLayout(createWorkspaceState(pinned)) } } }));
+        await act(async () => workspaceLayoutsState.set(scopeKey, serializeWorkspaceLayout(createWorkspaceState(pinned))));
         expect(screen.root.findByType(AgentInput)).toBe(input);
         expect(input.props.value).toBe('SECOND');
         const lifetime = captureActiveServerAccountScopeLifetime();
@@ -623,7 +623,6 @@ describe('editor workflow composer', () => {
         const scope = { serverId: getActiveServerSnapshot().serverId, accountId: 'account-a' };
         getStorage().setState({ profileScope: scope,
             settingsScope: scope, isDataReady: true, isSessionDraftsReady: true,
-            localSettings: { ...getStorage().getState().localSettings, workspaceLayoutV1: {} },
             machines: { [machine.id]: machine }, machineListByServerId: {} });
         runStart.mockReset();
         runStart.mockImplementation(async () => { throw new Error('Fixture Machine is offline'); });
@@ -843,6 +842,9 @@ describe('editor workflow composer', () => {
         });
         await screen.pressByTestIdAsync('workflow-editor-run-now');
         await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
+        // Run review of an editable draft can change its Agent right there (R170-3).
+        const { WorkflowRunComposer } = await import('../run/WorkflowRunComposer');
+        expect(screen.root.findByType(WorkflowRunComposer).props.agentControl).toBeTruthy();
         await screen.pressByTestIdAsync('workflow-run-inputs-run');
         expect(startRequests()[0]).toMatchObject({
             source: { kind: 'inline', sourceArtifactId: definitionId, visibleTeamId: 'team-a',

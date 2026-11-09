@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
 import { parseApproveRemoteProvisioningPromptData, parseSshPasswordPromptData, parseSshTrustPromptData, type ReplaceRemoteBackgroundServicesPromptData, type SshTrustPromptData } from '@happier-dev/protocol/system/tasks/promptPayloadContracts';
 import type { SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
+import { ManagedMachineBootstrapEstablishPromptV1Schema, type ManagedMachineBootstrapEstablishPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
 
 import { getSystemTasksRunner } from '@/components/systemTasks/systemTasksRuntime';
 import {
@@ -16,6 +17,7 @@ import type { RemoteSshPromptResolution } from './buildRemoteSshBootstrapMachine
 import { startRemoteSshBootstrapTask, continueRemoteSshBootstrapTask } from './remoteSshBootstrapTask';
 
 export type RemoteSshBootstrapPrompt =
+    | ManagedMachineBootstrapEstablishPromptV1
     | (Readonly<{
         message: string;
     }> & SshTrustPromptData)
@@ -64,6 +66,11 @@ export function resolveRemoteSshBootstrapPrompt(snapshot: SystemTaskRunState | n
         return null;
     }
     const kind = prompt.kind;
+    if (kind === 'administrator.establish') {
+        const parsed = ManagedMachineBootstrapEstablishPromptV1Schema.safeParse({ kind, message: prompt.message,
+            promptId: prompt.data.promptId, administratorUsername: prompt.data.administratorUsername });
+        return parsed.success ? parsed.data : null;
+    }
     if (kind === 'ssh.trustHost' || kind === 'ssh.replaceHostKey') {
         const parsed = parseSshTrustPromptData(kind, prompt.data);
         if (!parsed) {
@@ -170,8 +177,8 @@ export function useRemoteSshBootstrapTask(options: Readonly<{
         if (!prompt) {
             throw new Error('No prompt is waiting for continuation.');
         }
-        if (prompt.kind === 'ssh.password') {
-            throw new Error('SSH password prompts must be answered via answerPasswordPrompt().');
+        if (prompt.kind === 'ssh.password' || prompt.kind === 'administrator.establish') {
+            throw new Error('Secret prompts require their transient response owner.');
         }
         if (!activeTaskId) throw new Error('No remote SSH prompt task is active.');
         latestPasswordDraftRef.current = params.passwordSource === 'draft' || (params.passwordSource === undefined && !startSpec) ? params.sshPassword : '';

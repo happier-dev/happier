@@ -309,7 +309,10 @@ export function buildTriggerTarget(then: TriggerThenValue, scope: 'session' | 'a
 type ActionBinding = Extract<WorkflowBlock, Readonly<{ kind: 'action' }>>['input'][string] | undefined;
 
 /** The trigger set's execution target a Then implies: a background run for "Runs in · A background run". */
-export function buildTriggerExecutionTarget(then: TriggerThenValue): Readonly<{ kind: 'session' | 'detached_run' }> {
+export function buildTriggerExecutionTarget(then: TriggerThenValue,
+    retained?: Readonly<{ kind: 'session' | 'detached_run' }>,
+): Readonly<{ kind: 'session' | 'detached_run' }> {
+    if (then.kind === 'doAction' || then.kind === 'kept') return retained ?? { kind: 'session' };
     return then.kind === 'sendPrompt' && then.runsIn?.kind === 'backgroundRun' ? { kind: 'detached_run' } : { kind: 'session' };
 }
 

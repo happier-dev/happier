@@ -1,17 +1,18 @@
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol';
+import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { ScheduledWorkflowGroup, ScheduledWorkflowSectionView } from './ScheduledWorkflowSection';
 import { projectScheduledWorkflowRows } from './scheduledWorkflowRows';
 
 // Native Markdown SDK boundary, not schedule projection or presentation logic.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({ splitStreamingRevealTextParts: () => [] }));
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
-afterEach(async () => { await standardCleanup(); vi.useRealTimers(); });
+afterEach(async () => { setScreenSharingPrivacyActive(false); await standardCleanup(); vi.useRealTimers(); });
 
 describe('Scheduled Work rows', () => {
     it('names a destination through its Account Home even when another Home has the same Session id', async () => {
@@ -33,6 +34,17 @@ describe('Scheduled Work rows', () => {
             const screen = await renderScreen(<ScheduledWorkflowSectionView rows={projectScheduledWorkflowRows([set])} onOpen={() => {}} />);
             expect(screen.findByTestId('scheduled-workflow:habit:timer-destination:session-one')?.props.accessibilityLabel).toBe('Release review');
             expect(screen.getTextContent()).not.toContain('message.sessionReferenceUnavailable');
+            await act(async () => {
+                storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { 'schedule-home': ['private'] } });
+                storage.getState().setSessionTagAssignmentsOptimistic('schedule-home', session.id, ['private']);
+                setScreenSharingPrivacyActive(true);
+            });
+            expect(screen.findByTestId('scheduled-workflow:habit:timer-destination:session-one')?.props.accessibilityLabel)
+                .toBe('message.sessionReferenceUnavailable');
+            expect(screen.getTextContent()).not.toContain('Release review');
+            await act(async () => setScreenSharingPrivacyActive(false));
+            expect(screen.findByTestId('scheduled-workflow:habit:timer-destination:session-one')?.props.accessibilityLabel).toBe('Release review');
+
         } finally { await act(async () => { storage.setState(previous); }); }
     });
     it('refreshes the occurrence at its rounded display boundary without a data update', async () => {

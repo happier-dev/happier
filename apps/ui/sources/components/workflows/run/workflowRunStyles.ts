@@ -203,6 +203,15 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
     },
+    /** A step header's hold navigation gives way to the column; its Previous and Next always stay reachable. */
+    holdNavigation: {
+        flexShrink: 1,
+        minWidth: 0,
+    },
+    holdNavigationNext: {
+        flexShrink: 1,
+        minWidth: 0,
+    },
     /** The review sheet's subtitle when it carries a trailing control: the modal header's own subtitle role. */
     sheetSubtitle: {
         ...Typography.variant('body'),

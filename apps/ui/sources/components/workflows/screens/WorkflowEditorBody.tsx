@@ -1016,10 +1016,15 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
     const [detailsCompanion, setDetailsCompanion] = React.useState<WorkflowEditorCompanion | null>(null);
     const authoringDraftId = props.authoringDraft?.draftId ?? null;
     const hasAgentTab = Boolean(props.authoringSessionId) || authoringDraftId !== null;
+    // A new conversation opens its pane once, when a pane can show it; a viewport change never reopens one the
+    // person closed.
+    const agentConversation = props.authoringSessionId || authoringDraftId;
+    const openedAgentConversationRef = React.useRef<string | null>(null);
     React.useEffect(() => {
-        if ((!props.authoringSessionId && authoringDraftId === null) || compactLayout) return;
+        if (!agentConversation || compactLayout || openedAgentConversationRef.current === agentConversation) return;
+        openedAgentConversationRef.current = agentConversation;
         setDetailsCompanion('agent');
-    }, [authoringDraftId, compactLayout, props.authoringSessionId]);
+    }, [agentConversation, compactLayout]);
     const editWithAgent = React.useCallback(() => {
         // A live agent conversation is reopened, never replaced by a second one.
         if (hasAgentTab) {

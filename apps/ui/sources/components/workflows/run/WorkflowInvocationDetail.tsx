@@ -45,6 +45,7 @@ import type {
     WorkflowRecoveryContinuation,
     WorkflowSetupOutcome,
 } from './workflowRunDetailPresentation';
+import { resolveWorkflowRecoveryChoices } from './workflowRunDetailPresentation';
 import { projectWorkflowInvocationRequests } from './workflowPermissionRequests';
 import { createReadOnlySessionTranscriptSource } from '@/components/sessions/transcript/source/readOnlySessionTranscriptSource';
 import { SessionTranscriptSourceProvider } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
@@ -310,28 +311,13 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                 output: t('usage.tokenMix.output'),
             });
 
-    // The choices this attempt really has: the recovery projection's answer, joined with the host's wiring.
-    const preparedOffered = recovery.canContinuePrepared && prepared !== null && props.onContinuePrepared !== undefined;
-    const reattachOffered = recovery.canReattach && props.onReattach !== undefined;
-    const retrySameOffered = recovery.canRetrySameConversation && props.onRetrySameConversation !== undefined;
-    const retryFreshOffered = recovery.canRetryFreshAgent && props.onRetryFreshAgent !== undefined;
-    const retryOffered = recovery.canRetry && props.onRetry !== undefined;
-    const replacementOffered = (recovery.canRetrySameConversation || recovery.canRetryFreshAgent)
-        && props.onRetryWithReplacement !== undefined;
-    const restoreOffered = recovery.workspaceUnavailable && recovery.canRestoreWorkspace
-        && props.onRestoreWorkspace !== undefined;
-    const reviewedNewRunOffered = recovery.workspaceUnavailable && recovery.canStartReviewedNewRun
-        && props.onStartReviewedNewRun !== undefined;
-    const anotherAgentOffered = recovery.canRunWithAnotherAgent && props.onRunWithAnotherAgent !== undefined;
-    // One primary: the first offered choice, in the order the lab ranks them; the rest stay secondary.
-    const offeredChoices = ([
-        ['prepared', preparedOffered], ['reattach', reattachOffered], ['same', retrySameOffered],
-        ['fresh', retryFreshOffered], ['retry', retryOffered], ['restore', restoreOffered], ['reviewed', reviewedNewRunOffered],
-        ['another', anotherAgentOffered],
-    ] as const).filter(([, offered]) => offered).map(([choice]) => choice);
+    const {
+        prepared: preparedOffered, reattach: reattachOffered, retrySame: retrySameOffered, retryFresh: retryFreshOffered, retry: retryOffered,
+        replacement: replacementOffered, restore: restoreOffered, reviewed: reviewedNewRunOffered, another: anotherAgentOffered,
+        offered: offeredChoices, choiceOffered, noChoices,
+    } = resolveWorkflowRecoveryChoices(recovery, props);
     const choiceDisplay = (choice: (typeof offeredChoices)[number]) => offeredChoices[0] === choice
         ? props.recoveryPrimaryDisplay ?? 'default' : 'secondary';
-    const choiceOffered = offeredChoices.length > 0 || replacementOffered;
     // Only this attempt's recorded failure explains what happened. Connectivity only affects recovery.
     const failureCause = recovery.failureCause ?? null;
     const usageLimitWait = recovery.usageLimitWait ?? null;
@@ -349,8 +335,6 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
     // With choices, the description says what they keep; without, the one sentence saying when they
     // appear is the sheet's content, so the card never draws an empty tinted sheet under its title.
     const recoveryDescription = recovery.repairGuidance ?? (choiceOffered ? t('workflows.recovery.keptBody') : undefined);
-    const noChoices = !(choiceOffered || recovery.workspaceUnavailable || recovery.waitingForStop
-        || (recovery.remainingNotStartedSiblingCount ?? 0) > 0);
     // With no choice of its own, a step the Run can replay puts Run again right under its failure: the line then
     // says only why, and the button is the way forward (the shared "Investigate with an agent" joins it later).
     const runAgainShown = noChoices && usageLimitWait === null && unavailableMachine === null && props.noChoicesNext === 'run_again'

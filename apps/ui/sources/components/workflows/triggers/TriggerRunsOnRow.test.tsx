@@ -9,7 +9,8 @@ import { authoringMemoryDefaults } from '@/sync/store/domains/authoringMemory';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { installNewSessionComponentsCommonModuleMocks } from '@/components/sessions/new/components/newSessionComponentsTestHelpers';
 
-installNewSessionComponentsCommonModuleMocks();
+installNewSessionComponentsCommonModuleMocks({ text: async () => vi.importActual<typeof import('@/text')>('@/text') });
+const { t } = await vi.importActual<typeof import('@/text')>('@/text');
 // Only the portal/window measurement is replaced; Machine inventory, selection and path policy stay real.
 vi.mock('@/components/ui/popover', async (importOriginal) =>
     (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
@@ -34,6 +35,18 @@ afterEach(async () => {
 });
 
 describe('trigger Runs on', () => {
+    it('discloses trigger credential retention at the shared placement review used by Workflow and guided saves', async () => {
+        const machine = createMachineFixture({ id: 'studio', access: {
+            custodian: { accountId: 'machine-owner', displayName: 'Machine owner' },
+            role: 'use', resourceMode: 'plain', accessState: 'ready',
+        } });
+        if (!home) throw new Error('Expected a bound Home');
+        storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: { [home.home.id]: [machine] } });
+        const screen = await renderScreen(<TriggerRunsOnRow testID="shared-runs-on" target={{ machineId: machine.id, directory: '/repo' }}
+            onChange={vi.fn()} description="Where this trigger runs" />);
+        expect(screen.getTextContent()).toContain(t('machineRequester.fullSignIn', { machine: 'tester.local', retention: 'trigger' }));
+        expect(screen.getTextContent()).toContain(t('machineRequester.osVisibility', { owner: 'Machine owner', machine: 'tester.local' }));
+    });
     it('offers the Home Machine choices on opening Where and chooses their canonical starting project', async () => {
         const onChange = vi.fn();
         const screen = await renderScreen(<TriggerRunsOnRow testID="trigger-runs-on" target={null}

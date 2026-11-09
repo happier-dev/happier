@@ -11,7 +11,7 @@ describe('built-in workflow input presentation', () => {
             'builtin:answer-and-review': ['question', 'answerer', 'reviewer'],
             'builtin:debate': ['question', 'participants', 'rounds', 'digestAuthor', 'previousRoundContext'],
             'builtin:plan-with-a-panel': ['request', 'engines', 'participants', 'previousRoundContext'],
-            'builtin:review-and-converge': ['engines', 'maxRounds', 'apply', 'reviewSession'],
+            'builtin:review-and-converge': ['engines', 'maxRounds', 'apply', 'reviewSession', 'useJudge', 'focus'],
         };
 
         for (const [workflow, inputs] of Object.entries(inputsByWorkflow)) {

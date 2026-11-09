@@ -1,10 +1,14 @@
 import {
-    AutomationDefinitionDetailSchema,
-    AutomationSourceSelectorIdV1Schema,
-    AutomationTriggerIdSchema,
-    sealAutomationTriggerDefinitionStoredEnvelopeV1,
+    AutomationDefinitionDetailSchema} from '@happier-dev/protocol/automations/automationApiV3';
+import {
+    AutomationSourceSelectorIdV1Schema} from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
+import {
+    AutomationTriggerIdSchema} from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import {
+    sealAutomationTriggerDefinitionStoredEnvelopeV1} from '@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent';
+import {
     type PluginJsonValueV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { describe, expect, it, vi } from 'vitest';
 
 import { createAutomationDefinitionFromDetail } from '@/sync/domains/automations/automationDefinitionProjection';
@@ -81,6 +85,15 @@ function eventDefinition(
 }
 
 describe('pluginEventAutomationEditSeed', () => {
+    it('retains observation-only intent when reopening a definition without an execution recipe', () => {
+        const definition = eventDefinition();
+        if (definition.detail.kind !== 'available') throw new Error('Expected private detail');
+        const { executionRecipe: _recipe, ...detail } = definition.detail.value;
+        const observation = createAutomationDefinitionFromDetail(AutomationDefinitionDetailSchema.parse({ ...detail,
+            targetType: null, assignments: [], observationOnly: { kind: 'observationOnly', templateVersion: detail.templateVersion } }));
+        expect(readPluginEventAutomationEditSeed(observation, triggerId, { mode: 'plain' })?.source.observationOnly)
+            .toEqual({ kind: 'observationOnly' });
+    });
     it('opens retained event definitions without discarding opaque source config', () => {
         const sourceConfig = { repository: 'acme/widgets', retired: { nativeField: 'opaque-source-value' } };
         const definition = eventDefinition(4, 'checkpointedPull', { sourceConfig, retired: { enabled: true } });

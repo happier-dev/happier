@@ -7,32 +7,43 @@ import {
 import type { OperationsRunOutcome } from '@/sync/domains/workflows/operationsRunOutcome';
 import type { QualifiedActionOperation } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 import type { ScmPullRequestSummary } from '@happier-dev/protocol/scm/pullRequests';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
+import { formatApprovalStatusLabel } from '@/components/approvals/approvalStatusLabel';
+import {
+  describeActionOperationStatusLabel,
+  readProjectCommandStepExitCode,
+  resolveActionOperationStatus,
+} from '@/components/inbox/actionOperations/actionOperationPresentation';
 import { t } from '@/text';
 import { stripMarkdown } from '@/utils/sessions/messageUtils';
 
-export type OperationsOutcomeLink =
+/** What a link row says about the thing it opens. */
+type OperationsOutcomeLinkFace = Readonly<{ title: string; detail?: string; tone?: 'danger' }>;
+
+export type OperationsOutcomeLink = OperationsOutcomeLinkFace & (
   | Readonly<{ kind: 'pullRequest'; pullRequest: ScmPullRequestSummary }>
   | Readonly<{ kind: 'approval'; serverId: string; artifactId: string }>
   | Readonly<{ kind: 'operation'; serverId: string; machineId: string; operationId: string }>
-  | Readonly<{ kind: 'receipt'; serverId: string; environmentId: string; deploymentId: string }>;
+  | Readonly<{ kind: 'receipt'; serverId: string; environmentId: string; deploymentId: string }>
+);
 
 export type OperationsOutcomeRow = Readonly<{
   key: 'finding' | 'proposal' | 'applied' | 'recovery';
   title: string;
   value: string;
-  /** Finding only: the agent's own Markdown, drawn as a preview; `value` is its plain one-line reading. */
+  /** Finding only: the agent's full retained reply as Markdown; `value` is its plain one-line reading. */
   markdown?: string;
   tone?: 'danger' | 'attention';
   /** The Session that holds the finding, when there is one to open. */
   session?: ActionSessionAddressV1;
   /** Recovery only: whether live health actually answered for this subject. */
   known?: boolean;
-  /** Addresses for the existing PR, approval, operation and receipt views. */
+  /** Addresses for the existing PR, approval, operation and receipt views; a finding's are its commands. */
   links: readonly OperationsOutcomeLink[];
-  /** Actual command snapshots (title, state and projectCommand.exitCode), never parsed test claims. */
-  executions: readonly QualifiedActionOperation[];
+  /** The one link this row's own value names, so the row opens it rather than repeating it beneath. */
+  opens?: OperationsOutcomeLink;
 }>;
-type OutcomeContentRow = Omit<OperationsOutcomeRow, 'links' | 'executions'>;
+type OutcomeContentRow = Omit<OperationsOutcomeRow, 'links' | 'opens'>;
 
 /**
  * D3: what a run found, what it proposes, what it changed and whether the subject recovered, as
@@ -50,7 +61,7 @@ export function presentOperationsOutcomeRows(
       title: t('workflows.triggers.guided.outcome.proposal'),
       value: pullRequest
         ? pullRequest.title
-        : t('workflows.triggers.guided.outcome.awaitingApproval'),
+        : approvalFact(outcome, approval?.artifactId),
     });
   }
   const { operation, receipt, receiptReference } = outcome.appliedEffect;
@@ -64,27 +75,73 @@ export function presentOperationsOutcomeRows(
     });
   }
   rows.push(recoveryRow(outcome.recovery));
-  const executions = outcome.produced.operations.filter(operation => operation.snapshot.domainRef?.kind === 'projectCommand');
-  return rows.map(row => ({ ...row,
-    executions: row.key === 'finding' ? executions : [],
-    links: linksForRow(row.key, outcome),
-  }));
+  return rows.map(row => {
+    const links = linksForRow(row.key, outcome);
+    const opens = namedLink(row.key, links, outcome);
+    return { ...row, links, ...(opens ? { opens } : {}) };
+  });
+}
+
+/** A decided request never reads as still waiting; only the Artifact's own status says otherwise. */
+function approvalFact(outcome: OperationsRunOutcome, artifactId: string | undefined): string {
+  const status = outcome.produced.approvals.find(({ request }) => request.artifactId === artifactId)?.status;
+  return status && status !== 'open'
+    ? formatApprovalStatusLabel(status)
+    : t('workflows.triggers.guided.outcome.awaitingApproval');
+}
+
+function namedLink(
+  key: OperationsOutcomeRow['key'],
+  links: readonly OperationsOutcomeLink[],
+  outcome: OperationsRunOutcome,
+): OperationsOutcomeLink | undefined {
+  if (key === 'proposal') {
+    const { pullRequest, approval } = outcome.proposal;
+    return links.find(link => pullRequest
+      ? link.kind === 'pullRequest' && link.pullRequest === pullRequest
+      : link.kind === 'approval' && link.artifactId === approval?.artifactId);
+  }
+  if (key !== 'applied') return undefined;
+  const { receipt, receiptReference, operation } = outcome.appliedEffect;
+  const deploymentId = receipt?.id ?? receiptReference?.deploymentId;
+  if (deploymentId) return links.find(link => link.kind === 'receipt' && link.deploymentId === deploymentId);
+  return links.find(link => link.kind === 'operation' && (!operation || link.operationId === operation.snapshot.operationId));
+}
+
+function operationFace(snapshot: QualifiedActionOperation['snapshot']): OperationsOutcomeLinkFace {
+  const status = resolveActionOperationStatus(snapshot, 'available');
+  const exitCode = readProjectCommandStepExitCode(snapshot);
+  return {
+    title: snapshot.title,
+    detail: joinHappierFacts(
+      describeActionOperationStatusLabel(status.label),
+      exitCode === null ? null : t('localServices.actions.failure.exitCode', { code: String(exitCode) }),
+    ),
+    ...(status.tone === 'danger' ? { tone: 'danger' as const } : {}),
+  };
 }
 
 function linksForRow(key: OperationsOutcomeRow['key'], outcome: OperationsRunOutcome): readonly OperationsOutcomeLink[] {
   const produced = outcome.produced;
   if (key === 'proposal') return [
-    ...produced.pullRequests.map(pullRequest => ({ kind: 'pullRequest' as const, pullRequest })),
-    ...produced.approvals.map(({ serverId, request }) => ({ kind: 'approval' as const, serverId, artifactId: request.artifactId })),
+    ...produced.pullRequests.map(pullRequest => ({ kind: 'pullRequest' as const, pullRequest, title: pullRequest.title })),
+    ...produced.approvals.map(({ serverId, request }) => ({
+      kind: 'approval' as const, serverId, artifactId: request.artifactId,
+      title: t('workflows.triggers.guided.outcome.proposal'), detail: approvalFact(outcome, request.artifactId),
+    })),
   ];
   if (key === 'recovery') return [];
+  // Command execution is the finding's evidence; every other operation is an applied effect.
   const operations = produced.operations.filter(operation => (operation.snapshot.domainRef?.kind === 'projectCommand') === (key === 'finding'));
   return [
-    ...(key === 'applied' ? produced.pendingOperations.map(address => ({ kind: 'operation' as const, ...address })) : []),
+    ...(key === 'applied' ? produced.pendingOperations.map(address => ({
+      kind: 'operation' as const, ...address, title: t('workflows.triggers.guided.outcome.working'),
+    })) : []),
     ...operations.map(({ serverId, snapshot }) => ({ kind: 'operation' as const, serverId,
-      machineId: snapshot.scope.machineId, operationId: snapshot.operationId })),
-    ...(key === 'applied' ? produced.receipts.map(({ serverId, environmentId, deploymentId }) => ({
+      machineId: snapshot.scope.machineId, operationId: snapshot.operationId, ...operationFace(snapshot) })),
+    ...(key === 'applied' ? produced.receipts.map(({ serverId, environmentId, deploymentId, state }) => ({
       kind: 'receipt' as const, serverId, environmentId, deploymentId,
+      title: t('workflows.triggers.guided.outcome.applied'), detail: deploymentStateLabel(state),
     })) : []),
   ];
 }
@@ -114,7 +171,9 @@ function findingRow(
         ? t('workflows.triggers.guided.outcome.reported')
         // Whether the agent finished lives in its Session; this row never guesses.
         : t(session ? 'workflows.triggers.guided.outcome.inSession' : 'workflows.triggers.guided.outcome.working');
-  return { key: 'finding', title, value, ...(preview?.state === 'available' ? { markdown: preview.text } : {}),
+  // The preview is flattened to one line; the full reply keeps the agent's headings, lists and links.
+  const markdown = finding.result?.output?.text ?? (preview?.state === 'available' ? preview.text : undefined);
+  return { key: 'finding', title, value, ...(markdown ? { markdown } : {}),
     ...(session ? { session } : {}) };
 }
 

@@ -1,4 +1,4 @@
-import type { SystemTaskEvent, SystemTaskJsonObject, SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol';
+import type { SystemTaskEvent, SystemTaskJsonObject, SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
 
 export type SystemTaskRunnerMode = 'tauri' | 'native' | 'dev' | 'unavailable';
 

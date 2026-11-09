@@ -11,10 +11,11 @@ import {
     resolveWorkflowProgressFraction,
 } from './workflowPresentation';
 import type { WorkflowPhaseRollup } from '@/components/sessions/workState/sessionWorkflowActivityTypes';
-import type { SessionWorkflowRunStatusV1 } from '@happier-dev/protocol';
+import type { SessionWorkflowRunStatusV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 
 import { WorkflowStatusIcon } from './workflowStatusIcon';
 import { Icon } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { toolTextBlock } from '@/components/tools/renderers/core/toolDisplayTextTypes';
 
 /**
@@ -65,11 +66,7 @@ export const WorkflowRunHeader = React.memo<WorkflowRunHeaderProps>((props) => {
                     <ToolFindText messageId={props.messageId} blockId="tool-workflow-status" text={props.statusLabel} style={styles.statusLabel} numberOfLines={1} />
                 </View>
                 {typeof props.expanded === 'boolean' ? (
-                    <Icon
-                        name={props.expanded ? 'caret-up' : 'caret-down'}
-                        size={14}
-                        color={theme.colors.text.secondary}
-                    />
+                    <DisclosureCaret expanded={props.expanded} size={14} />
                 ) : null}
             </View>
             {props.totalAgents > 0 ? (

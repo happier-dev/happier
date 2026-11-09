@@ -98,7 +98,7 @@ function AutomationsGateUnavailable(props: Readonly<{
 
     const serverBlocked = support.arm === 'server_disabled';
     const settingHref = support.arm === 'policy_disabled' && support.blockedBy === 'local_policy'
-        ? resolveFeatureToggleHref('automations', props.experimentsEnabled)
+        ? resolveFeatureToggleHref('workflows', props.experimentsEnabled)
         : undefined;
     return (
         <ItemList>

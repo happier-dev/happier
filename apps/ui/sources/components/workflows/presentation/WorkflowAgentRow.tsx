@@ -8,13 +8,13 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { ToolFindText, useToolFindState } from '@/components/tools/renderers/core/ToolFindText';
 import { t } from '@/text';
-import type { SessionWorkflowAgentStatusV1 } from '@happier-dev/protocol';
+import type { SessionWorkflowAgentStatusV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 import { formatTokenCount } from '@/utils/format/usageNumbers';
 import { useTranscriptRowLayoutMutation } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
 
 import { WorkflowAgentDetail } from './WorkflowAgentDetail';
 import { WorkflowStatusIcon } from './workflowStatusIcon';
-import { Icon } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { normalizeResultPreview } from './resultPreview';
 import { toolTextBlock } from '@/components/tools/renderers/core/toolDisplayTextTypes';
 
@@ -108,11 +108,7 @@ export const WorkflowAgentRow = React.memo<WorkflowAgentRowProps>((props) => {
                 ) : null}
             </View>
             {hasDetail ? (
-                <Icon
-                    name={isExpanded ? 'caret-up' : 'caret-down'}
-                    size={14}
-                    color={theme.colors.text.secondary}
-                />
+                <DisclosureCaret expanded={isExpanded} size={14} />
             ) : null}
         </View>
     );

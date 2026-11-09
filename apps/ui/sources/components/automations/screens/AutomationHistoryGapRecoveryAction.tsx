@@ -12,6 +12,7 @@ import {
 } from '@/sync/domains/plugins/availability/projection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { PLUGIN_EVENT_AUTOMATION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
@@ -79,6 +80,8 @@ export function AutomationHistoryGapRecoveryAction(props: Readonly<{
         serverId: origin?.machineTarget.serverId ?? null,
         enabled: status !== null && origin !== null,
         staleMs: 0,
+        // The eligible Event plus the plugin UI facts its recovery Action dispatch reads.
+        sections: PLUGIN_EVENT_AUTOMATION_SECTIONS,
     });
     const eligibleEvent = React.useMemo(() => (
         projection.phase === 'ready'
@@ -119,6 +122,7 @@ export function AutomationHistoryGapRecoveryAction(props: Readonly<{
                         machineId: target.machineId,
                         serverId: target.serverId,
                         staleMs: 0,
+                        sections: PLUGIN_EVENT_AUTOMATION_SECTIONS,
                     }),
                 });
                 if (

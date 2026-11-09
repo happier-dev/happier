@@ -32,10 +32,15 @@ export async function refreshWorkflowRunWindowChanges(
     // A materialized origin is the same immutable relation used by the server query.
     // Unrelated Session pushes need neither a membership request nor a window publication.
     if (change.summaryCurrent && !sources?.length && change.runIds?.length) {
+        // The materialized summary carries the server's own attention predicate
+        // (`attentionRequired`), so an attention-only window changes membership
+        // only when that fact flips; a flip still reads the server's ordered answer.
+        const attentionOnly = filter.attention === 'required' && Object.keys(filter).every(key => key === 'attention');
         const current = change.runIds.every(id => {
             const summary = before.workflowRunsById[workflowRunStoreKey(id, lifetime.scope)]?.summary;
             if (!summary) return false;
             if (filter.originSessionId !== undefined && summary.origin.originSessionId !== filter.originSessionId) return true;
+            if (attentionOnly) return summary.attentionRequired === window.runIds.includes(id);
             return window.runIds.includes(id) && (filter.originSessionId !== undefined
                 || Object.keys(filter).every(key => key === 'runIds' || key === 'targetSessionId'));
         });

@@ -1,7 +1,7 @@
 import { authApproveAtEndpoint } from '@/auth/flows/approve';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
-import type { SystemTaskEvent } from '@happier-dev/protocol';
+import type { SystemTaskEvent } from '@happier-dev/protocol/system/tasks/spec';
 import { parseToken } from '@/utils/auth/parseToken';
 
 /**

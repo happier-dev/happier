@@ -5,13 +5,7 @@ import { useFeatureDecision, type FeatureDecisionScopeParams } from '@/hooks/ser
 /**
  * The one canonical Workflows availability decision.
  *
- * `workflows` is the single availability decision for structured Workflow
- * authoring, and it declares `automations` as its catalog dependency, so the
- * shared dependency resolver — never a caller — decides what an enabled
- * Automations bit implies. Automations enabled with Workflows unavailable is a
- * supported configuration: the released one-shot Automation recipe stays fully
- * authorable while the Workflow-v2 arms that Run admission refuses must not be
- * reachable.
+ * `workflows` is the single availability decision for Workflows and their triggers.
  *
  * Every structured-Workflow entry point resolves availability here, at the exact
  * scope {@link WorkflowsGate} already uses, so the dedicated Workflow routes and

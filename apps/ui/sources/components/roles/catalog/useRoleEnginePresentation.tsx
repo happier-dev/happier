@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { RoleEngineV1 } from '@happier-dev/protocol';
+import type { RoleEngineV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
 import { PROVIDER_REASONING_EFFORT_OPTION_ID } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 
 import { getResolvedBackendCatalogEntries, type ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
@@ -7,6 +7,7 @@ import { getEnabledAgentIds } from '@/agents/catalog/enabled';
 import { AgentCatalogIdentityIcon } from '@/agents/presentation/AgentCatalogIdentityIcon';
 import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
 import { useActiveServerAccountScope, useSetting } from '@/sync/domains/state/storage';
+import { useLastUsedBackendSelection } from '@/hooks/session/useLastUsedBackendSelection';
 import { useAcpCatalog } from '@/sync/store/useAcpCatalog';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { getModelOptionsForAgentType, type ModelOption } from '@/sync/domains/models/modelOptions';
@@ -116,8 +117,7 @@ export function useRoleEnginePresentation(serverId?: string | null): (engine: Ro
     const entriesByTargetKey = React.useMemo(() => new Map<string, ResolvedBackendCatalogEntry>(
         entries.map((entry) => [entry.backendTargetKey, entry]),
     ), [entries]);
-    const lastUsedAgent = useSetting('lastUsedAgent');
-    const lastUsedBackendTarget = useSetting('lastUsedBackendTarget');
+    const { lastUsedAgent, lastUsedBackendTarget } = useLastUsedBackendSelection();
     // A role without an engine runs on the agent a new session would start with: the same preference owner.
     const defaultEntry = React.useMemo(() => {
         // Without an explicit preference, configured rows may determine the default.

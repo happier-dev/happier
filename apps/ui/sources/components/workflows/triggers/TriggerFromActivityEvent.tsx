@@ -56,6 +56,10 @@ function ActivityEventTriggerPopover(props: Readonly<{
                 description={t('workflows.triggers.editor.runsOnAccountDescription')} />}
             onSubmit={async (value, write) => {
                 if (!props.lifetime.isCurrent()) throw new Error('action_account_scope_changed');
+                if (write.observationOnly && write.trigger !== null) {
+                    await addWorkflowTrigger({ trigger: write.trigger, observationOnly: write.observationOnly }, { accountLifetime: props.lifetime });
+                    return;
+                }
                 if (project === null || write.trigger === null || write.target === null) return;
                 await addWorkflowTrigger({ trigger: write.trigger, target: write.target, project,
                     inputs: write.inputs, executionTarget: buildTriggerExecutionTarget(value.then) }, { accountLifetime: props.lifetime });

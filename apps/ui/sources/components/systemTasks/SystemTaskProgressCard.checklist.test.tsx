@@ -2,11 +2,13 @@ import * as React from 'react';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { SystemTaskEvent } from '@happier-dev/protocol';
+import type { SystemTaskEvent } from '@happier-dev/protocol/system/tasks/spec';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import type { SystemTaskRunState } from './types';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { installSignedOutAuthForTest } from '@/dev/testkit/fixtures/signedOutAuth';
 
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
@@ -251,9 +253,16 @@ describe('SystemTaskProgressCard checklist rendering', () => {
         expect(group.props.title).toBeUndefined();
     });
 
-    it('renders an open action for URL prompts and opens the provided URL', async () => {
+    it.each(['https://login.tailscale.com/a/example', 'http://localhost:8080/approve'])('admits the explicit HTTP prompt before opening %s', async url => {
         isDesktopHostMock.mockReturnValue(false);
-        openUrlMock.mockResolvedValueOnce(undefined);
+        openUrlMock.mockClear();
+        const opened = vi.fn();
+        vi.stubGlobal('open', opened);
+        const restoreAuth = installSignedOutAuthForTest();
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const previousSettings = storage.getState().settings;
+        storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+            actions: { 'links.openExternal': { enabled: false } } }) } }));
         const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
 
         const screen = await renderScreen(React.createElement(SystemTaskProgressCard, {
@@ -268,18 +277,49 @@ describe('SystemTaskProgressCard checklist rendering', () => {
                     message: 'Complete sign-in',
                     data: {
                         kind: 'needsUserAction.openUrl',
-                        url: 'https://login.tailscale.com/a/example',
+                        url,
                     },
                 }],
             }),
         }));
 
-        const action = screen.findByTestId('system-task-progress-prompt-action');
-        expect(action?.props?.title).toBe('common.open');
+        try {
+            expect(screen.findByTestId('system-task-progress-prompt-action')?.props.title).toBe('common.open');
+            await screen.pressByTestIdAsync('system-task-progress-prompt-action');
+            expect(openUrlMock).not.toHaveBeenCalled();
+            expect(opened).not.toHaveBeenCalled();
+            storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1 }) } }));
+            await screen.pressByTestIdAsync('system-task-progress-prompt-action');
+            expect(opened).toHaveBeenCalledExactlyOnceWith(url, '_blank', 'noopener,noreferrer');
+            expect(openUrlMock).not.toHaveBeenCalled();
+        } finally {
+            await screen.unmount();
+            storage.setState({ settings: previousSettings });
+            restoreAuth();
+            vi.unstubAllGlobals();
+        }
+    });
 
-        await screen.pressByTestIdAsync('system-task-progress-prompt-action');
-
-        expect(openUrlMock).toHaveBeenCalledWith('https://login.tailscale.com/a/example');
+    it('keeps an explicit non-HTTP prompt on its platform path', async () => {
+        isDesktopHostMock.mockReturnValue(false);
+        openUrlMock.mockClear();
+        const restoreAuth = installSignedOutAuthForTest();
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const previousSettings = storage.getState().settings;
+        storage.setState(state => ({ settings: { ...state.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+            actions: { 'links.openExternal': { enabled: false } } }) } }));
+        const { SystemTaskProgressCard } = await import('./SystemTaskProgressCard');
+        const screen = await renderScreen(<SystemTaskProgressCard snapshot={createSnapshot({ awaitingInput: true,
+            events: [{ protocolVersion: 1, taskId: 'task_1', tsMs: 100, type: 'prompt',
+                data: { kind: 'needsUserAction.openUrl', url: 'tailscale://login' } }] })} />);
+        try {
+            await screen.pressByTestIdAsync('system-task-progress-prompt-action');
+            expect(openUrlMock).toHaveBeenCalledExactlyOnceWith('tailscale://login');
+        } finally {
+            await screen.unmount();
+            storage.setState({ settings: previousSettings });
+            restoreAuth();
+        }
     });
 
     it('uses the tailscale-specific install label for install prompts', async () => {

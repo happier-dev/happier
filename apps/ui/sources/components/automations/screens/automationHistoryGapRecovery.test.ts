@@ -1,28 +1,36 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-    AutomationSourceSelectorIdV1Schema,
-    AutomationTriggerIdSchema,
+    AutomationSourceSelectorIdV1Schema} from '@happier-dev/protocol/automations/automationEventJsonBoundsV1';
+import {
+    AutomationTriggerIdSchema} from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import {
     AutomationDefinitionListItemSchema,
     AutomationDefinitionListResponseSchema,
+    type AutomationDefinitionListItem} from '@happier-dev/protocol/automations/automationApiV3';
+import {
     DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema,
     DaemonContributionRegistryProjectionDescribeResponseSchema,
     DaemonPluginActionSchemasReadRequestSchema,
     DaemonPluginActionSchemasReadResponseSchema,
-    DaemonPluginStructuredMessageActionExecuteRequestSchema,
     DaemonPluginStructuredMessageActionExecuteResponseSchema,
+    type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
+    type DaemonPluginStructuredMessageActionExecuteResponse,
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+    DaemonPluginStructuredMessageActionExecuteRequestSchema,
+    type DaemonPluginStructuredMessageActionExecuteRequest} from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import {
     PluginAvailabilityActionHttpPathsV1,
     PluginAvailabilityIntentReadActionOutputV1Schema,
     PluginAvailabilityIntentsListActionOutputV1Schema,
-    PluginAvailabilityMaterializationsReadActionOutputV1Schema,
-    PluginEventAutomationHistoryGapResetActionInputV1JsonSchema,
-    PluginMachineMaterializationV1Schema,
-    type AutomationDefinitionListItem,
-    type AutomationEventSourceStatusV1,
-    type DaemonContributionRegistryProjectionAutomationEligibleEventV1,
-    type DaemonPluginStructuredMessageActionExecuteRequest,
-    type DaemonPluginStructuredMessageActionExecuteResponse,
-} from '@happier-dev/protocol';
+    PluginAvailabilityMaterializationsReadActionOutputV1Schema} from '@happier-dev/protocol/plugins/availability/actions';
+import {
+    PluginEventAutomationHistoryGapResetActionInputV1JsonSchema} from '@happier-dev/protocol/automations/event-history-gap-reset-action';
+import {
+    PluginMachineMaterializationV1Schema} from '@happier-dev/protocol/plugins/availability/v1';
+import {
+    type AutomationEventSourceStatusV1} from '@happier-dev/protocol/automations/automationEventSourceStatusV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 vi.mock('socket.io-client', async (importOriginal) =>
@@ -295,8 +303,6 @@ function projectionResponse(
                     available: true,
                 },
             },
-
-
             resourcesById: {},
             settingsById: {},
             familiesById: {},
@@ -309,7 +315,7 @@ function projectionResponse(
 async function projectionInputs(event: DaemonContributionRegistryProjectionAutomationEligibleEventV1): Promise<DaemonMergedProjectionInputs | null> {
     rpcEvent = event;
     rpcProjection = projectionResponse(event);
-    return await loadDaemonMergedProjectionInputs({ machineId: MACHINE_ID, serverId: SERVER_ID, staleMs: 0 });
+    return await loadDaemonMergedProjectionInputs({ sections: 'complete', machineId: MACHINE_ID, serverId: SERVER_ID, staleMs: 0 });
 }
 
 function materialization() {

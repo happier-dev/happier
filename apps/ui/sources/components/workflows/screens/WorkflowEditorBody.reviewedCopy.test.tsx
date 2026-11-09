@@ -10,7 +10,15 @@ import { getStorage } from '@/sync/domains/state/storageStore';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { createWorkflowEditorDraft, insertWorkflowEditorBlock } from '@/sync/domains/workflows/workflowEditorDraft';
-import { WorkflowEditorBody, type WorkflowEditorCommands } from './WorkflowEditorBody';
+import { WorkflowEditorBody as StoreWorkflowEditorBody, type WorkflowEditorCommands } from './WorkflowEditorBody';
+import { useControlledWorkflowEditorDraftStore } from '../editor/workflowEditorDraftStore';
+import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
+
+/** These tests hold the draft as a value; the body reads it through its store. */
+function WorkflowEditorBody(props: Omit<React.ComponentProps<typeof StoreWorkflowEditorBody>, 'draftStore'> & Readonly<{ draft: WorkflowEditorDraft }>) {
+    const { draft, ...rest } = props;
+    return <StoreWorkflowEditorBody {...rest} draftStore={useControlledWorkflowEditorDraftStore(draft)} />;
+}
 
 const nativeWindow = vi.hoisted(() => ({ width: 400, height: 800 }));
 

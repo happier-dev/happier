@@ -6,7 +6,7 @@ import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestH
 import { useEntityDragDropRuntime } from '@/components/ui/treeDragDrop/entityDragDropHooks';
 import { bindWorkflowSessionConversation, resolveWorkflowSessionBinding } from '@/sync/domains/workflows/workflowAuthoringSessionBinding';
 import { createWorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
-import { WorkflowConversationBindInputV1Schema } from '@happier-dev/protocol';
+import { WorkflowConversationBindInputV1Schema } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 import { WorkflowStepSessionDropZone, type WorkflowSessionDrop } from './WorkflowStepSessionDropZone';
 
 installPanelCommonModuleMocks({ reactNative: async () => {

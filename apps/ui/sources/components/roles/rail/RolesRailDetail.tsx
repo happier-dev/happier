@@ -10,7 +10,7 @@ import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
 import type { RoleRailItem } from './rolesRailTypes';
-import type { WorkflowRoleV1 } from '@happier-dev/protocol';
+import type { WorkflowRoleV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 import { readSessionRolesV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { useSessionSelector } from '@/sync/domains/state/storage';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -70,8 +70,9 @@ export function RolesRailDetailView(props: RolesRailDetailProps & Readonly<{ rol
         };
     }), [describeConsequence, onManageRoles, roles]);
     const selected = value === null ? null : roles.find((item) => item.roleId === value) ?? null;
-    const effectiveLabel = selected
-        ? joinHappierFacts(selected.name, selected.engineLabel)
+    // The role in use and its model, once (07 §2.3 item 18: "Uses {role} · {model}").
+    const summary = selected
+        ? t('roles.rail.uses', { label: joinHappierFacts(selected.name, selected.engineLabel) })
         : undefined;
 
     // The pane scrolls as one: its way to manage roles travels with the cards.
@@ -101,7 +102,7 @@ export function RolesRailDetailView(props: RolesRailDetailProps & Readonly<{ rol
             <OptionPickerPaneSlotsContext.Provider value={paneSlots}>
                 <OptionPickerOverlay
                     title={t('roles.rail.title')}
-                    effectiveLabel={effectiveLabel}
+                    summary={summary}
                     options={options}
                     selectedValue={value ?? ''}
                     onSelect={onChange}

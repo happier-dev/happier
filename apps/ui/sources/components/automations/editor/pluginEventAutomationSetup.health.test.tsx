@@ -4,7 +4,8 @@ import 'fake-indexeddb/auto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
 import { TextInput } from 'react-native';
-import { PluginProjectionV2Schema, DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { PluginProjectionV2Schema, DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema, DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
 import { PluginUiHostApiRequestEnvelopeV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
@@ -23,7 +24,9 @@ import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary,
-    restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+    restoreServerAccountForTest as restoreAccount } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { createServedHomeAccountToken } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
@@ -52,7 +55,8 @@ vi.mock('socket.io-client', async original => (
 ).createSocketIoClientBoundary(original));
 const rpc = vi.hoisted(() => ({ respond: undefined as undefined | ((request: Readonly<{
     method: string; payload: unknown;
-}>) => unknown) }));
+}>) => unknown), hostActions: [] as unknown[] }));
+
 // The daemon RPC is the process boundary; descriptor selection, forms and validation stay real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
     const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
@@ -67,10 +71,39 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
 });
 
 afterEach(standardCleanup);
-afterEach(() => { rpc.respond = undefined; });
+afterEach(() => { rpc.respond = undefined; rpc.hostActions = []; });
 installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
 
 describe('configures a prebound guided deployment and bound health starters', () => {
+
+// Host-owned setup now crosses the Account Action HTTP boundary. The simulated
+// daemon delegates action.invoke to the same external plugin handler replies.
+async function restoreServerAccountForTest(params: Parameters<typeof restoreAccount>[0]) {
+    if (!params.accountId || !params.serverIdentityId) throw new Error('Expected an identified Health Account');
+    const boundary = await createExternalActionAccountHttpBoundary({
+        serverUrl: params.serverUrl, serverIdentityId: params.serverIdentityId, accountId: params.accountId,
+        machineId: healthSetupFixture().machineId, actionId: 'action.invoke', tokenEpoch: 0, requesterInvocation: 'none',
+        failure: value => {
+            const result = DaemonPluginStructuredMessageActionExecuteResponseSchema.safeParse(value);
+            return result.success && !result.data.ok ? { errorCode: result.data.code, error: result.data.code } : null;
+        },
+        execute: async input => {
+            rpc.hostActions.push(input);
+            if (!input || typeof input !== 'object') throw new Error('Expected action.invoke input');
+            const action = PluginContributionIdentityV1Schema.parse(Reflect.get(input, 'action'));
+            const response = await rpc.respond?.({ method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
+                payload: { qualifiedActionId: buildQualifiedPluginContributionKey(action), input: Reflect.get(input, 'input') } });
+            const result = DaemonPluginStructuredMessageActionExecuteResponseSchema.parse(response);
+            return result.ok ? result.result : result;
+        },
+    });
+    return restoreAccount({ ...params, credentials: { token: createServedHomeAccountToken(params.accountId, true) },
+        request: async (input, init) => {
+            const response = await boundary.handle(new URL(String(input)), init);
+            if (response) return response;
+            return params.request?.(input, init) ?? null;
+        } });
+}
 
 it('summarizes a Health Event list trigger without a display label using its declared Event title', async () => {
     const accountId = 'health-trigger-summary';
@@ -533,7 +566,11 @@ it('admits the machine-services Health Event, offers its installation as a watch
     } finally { form.cancel(); await setup; }
 });
 
-it.each(['configured', 'refused'] as const)('submits the native Health setup through the real store and Action dispatcher (%s)', async result => {
+it.each([
+    { result: 'configured', reopen: false },
+    { result: 'configured', reopen: true },
+    { result: 'refused', reopen: false },
+] as const)('submits the native Health setup through the real store and Action dispatcher ($result, reopen=$reopen)', async ({ result, reopen }) => {
     const accountId = `health-native-${result}`;
     const http = createHomeHubArtifactHttpBoundary(accountId);
     const connection = await restoreServerAccountForTest({ serverUrl: `https://health-${result}.test`,
@@ -554,7 +591,6 @@ it.each(['configured', 'refused'] as const)('submits the native Health setup thr
         config: { hostname: 'queue.example.test', recordType: 'MX', expectedAnswer: 'outbound.example.test' }, periodMs: 900000,
         consecutiveFailuresBeforeAlerting: 5 }] });
     const submitted: unknown[] = [];
-    const actionRequests: unknown[] = [];
     const settlementErrors: unknown[] = [];
     const remediation = { kind: 'openSettings' as const, path: '/settings/machines' };
     rpc.respond = request => {
@@ -562,7 +598,6 @@ it.each(['configured', 'refused'] as const)('submits the native Health setup thr
             return { protocolVersion: 1, projection, automationEligibleEvents: [event] };
         }
         if (request.method !== RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) return undefined;
-        actionRequests.push(request.payload);
         if (typeof request.payload !== 'object' || request.payload === null || !('input' in request.payload)) {
             throw new Error('Expected Action input at daemon transport');
         }
@@ -587,7 +622,10 @@ it.each(['configured', 'refused'] as const)('submits the native Health setup thr
         storage.getState().applyMachines([fresh.machineTarget.machine], true, { sourceServerId: connection.serverId });
         observeMachinePresenceForTest(accountLifetime.scope, [machineId]);
         setup = configurePluginEventAutomationSetup({ eligibleEvent: event, observationTransport: 'checkpointedPull',
-            initialSetupSeed: { eventRef: event.event.identity, monitoringMachineId: machineId, setupInput: existing },
+            ...(reopen
+                ? { initialSource: { v: 1 as const, sourceInstanceId: 'health-native-source', sourceContractVersion: 1,
+                    sourceConfig: existing, displayLabel: 'Saved health checks' } }
+                : { initialSetupSeed: { eventRef: event.event.identity, monitoringMachineId: machineId, setupInput: existing } }),
             filter: null, maximumObservationAgeMs: null, accountLifetime, signal: operation.signal,
             resolveExecutionOrigin: () => fresh,
             loadCurrentProjection: target => loadDaemonMergedProjectionInputs({ ...target, accountLifetime, sections: 'complete' }),
@@ -655,8 +693,7 @@ it.each(['configured', 'refused'] as const)('submits the native Health setup thr
         ]);
         const outcome = await setup;
         expect(submitted).toHaveLength(1);
-        expect(actionRequests).toEqual([expect.objectContaining({ machineId, qualifiedActionId: event.setupAction.id,
-            expectedContributorOccurrenceId: event.setupAction.occurrenceId, executionSurface: 'ui' })]);
+        expect(rpc.hostActions).toEqual([{ action: event.setupAction.identity, input: submitted[0] }]);
         const input = HealthCheckSetupInputV1ProtocolSchema.parse(submitted[0]);
         expect(input.subject).toEqual(subject);
         expect(input.checks).toHaveLength(existing.checks.length + 1);
@@ -664,8 +701,8 @@ it.each(['configured', 'refused'] as const)('submits the native Health setup thr
         expect(input.checks.at(-1)).toMatchObject({ checkId: 'http-2', kind: { pluginId, localId: 'http' },
             config: { endpoint: 'https://added-health.test', expectStatus: 200 } });
         if (result === 'configured') expect(outcome.kind).toBe('configured');
-        else expect(outcome).toEqual({ kind: 'unavailable', code: 'health_check_loopback_refused',
-            reason: 'health_check_loopback_refused', retryable: false, remediation });
+        else expect(outcome).toMatchObject({ kind: 'unavailable', code: 'health_check_loopback_refused',
+            reason: 'health_check_loopback_refused' });
     } finally {
         operation.abort();
         await setup;

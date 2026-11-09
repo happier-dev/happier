@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SystemTaskEvent } from '@happier-dev/protocol';
+import type { SystemTaskEvent } from '@happier-dev/protocol/system/tasks/spec';
 import { t } from '@/text';
 import { presentActiveCliAcquisition, presentCliAcquisitionEvent } from './cliAcquisitionPresentation';
 import { createPlanChecklistLogEntryFromSystemTaskEvent } from './planChecklist/systemTaskEventLogEntry';

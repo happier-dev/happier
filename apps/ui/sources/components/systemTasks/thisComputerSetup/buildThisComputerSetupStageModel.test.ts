@@ -134,8 +134,8 @@ describe('buildThisComputerSetupStageModel', () => {
         });
 
         const registerStage = items.find((item) => item.id === 'setup.thisComputer.stage.registerComputer');
-        expect(registerStage?.title).not.toBe('settings.machineSetupStepAuthRequest');
-        expect(registerStage?.title).not.toBe('settings.machineSetupStepAuthWait');
+        expect(registerStage?.title).not.toBe('settings.machineEnrollStepAuthRequest');
+        expect(registerStage?.title).not.toBe('settings.machineEnrollStepAuthWait');
     });
 
     it('keeps the background-service stage incomplete until the service is actually ready', () => {

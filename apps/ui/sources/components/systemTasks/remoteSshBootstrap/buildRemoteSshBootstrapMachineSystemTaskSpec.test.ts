@@ -5,6 +5,14 @@ import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTar
 import { buildRemoteSshBootstrapMachineSystemTaskSpec } from './buildRemoteSshBootstrapMachineSystemTaskSpec';
 
 describe('buildRemoteSshBootstrapMachineSystemTaskSpec', () => {
+    it.each(['none', 'ask'] as const)('carries dedicated %s identity through the real remote task parser', adminAccessAtCreation => {
+        const enrollmentIdentity = { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'server',
+            adminAccessAtCreation, ...(adminAccessAtCreation === 'ask' ? { administrator: { username: 'operator' } } : {}) } as const;
+        const spec = buildRemoteSshBootstrapMachineSystemTaskSpec({ relayUrl: 'https://home.example.test', channel: 'stable',
+            sshAuth: 'keyfile', sshHost: 'server.example.test', enrollmentIdentity });
+        expect(parseRemoteBootstrapMachineParams(spec.params).enrollmentIdentity).toEqual(enrollmentIdentity);
+    });
+
     it('respects serviceMode=none', () => {
         const spec = buildRemoteSshBootstrapMachineSystemTaskSpec({
             relayUrl: 'http://localhost:53288',

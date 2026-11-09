@@ -1,16 +1,16 @@
-import { parseRelayAccessConfig } from '@happier-dev/cli-common/relayAccess/catalog';
-import { getRelayAccessProviderDescriptor, readBuiltinRelayAccessProviderId } from '@happier-dev/cli-common/relayAccess/catalog';
-import { normalizeRelayAccessCanonicalPublicServerUrl } from '@happier-dev/cli-common/relayAccess/normalizePublicServerUrl';
-import { projectRelayAccessConfigV1 } from '@happier-dev/protocol/system/tasks/relayAccessConfigV1';
 import {
     SYSTEM_TASK_PROTOCOL_VERSION,
     type SystemTaskResult,
     type SystemTaskSpec,
 } from '@happier-dev/protocol/system/tasks/spec';
-import type {
-    RelayAccessConfig,
-    RelayAccessProviderId,
+import {
+    getRelayAccessProviderDescriptor,
+    parseRelayAccessConfig,
+    readBuiltinRelayAccessProviderId,
+    type RelayAccessConfig,
 } from '@happier-dev/cli-common/relayAccess/catalog';
+import { normalizeRelayAccessCanonicalPublicServerUrl } from '@happier-dev/cli-common/relayAccess/normalizePublicServerUrl';
+import { projectRelayAccessConfigV1 } from '@happier-dev/protocol/system/tasks/relayAccessConfigV1';
 import type {
     RelayAccessTaskSnapshot,
     RelayAccessTaskTarget,
@@ -433,7 +433,7 @@ function buildDefaultScenario(spec: SystemTaskSpec, taskId: string): readonly De
                     tsMs: 90,
                     type: 'progress',
                     stepId: 'relay.runtime.install',
-                    message: t('settings.machineSetupStageInstall'),
+                    message: t('settings.machineEnrollStageInstall'),
                 },
             },
             {
@@ -445,7 +445,7 @@ function buildDefaultScenario(spec: SystemTaskSpec, taskId: string): readonly De
                     tsMs: 150,
                     type: 'progress',
                     stepId: 'ssh.complete',
-                    message: t('settings.machineSetupStageFinish'),
+                    message: t('settings.machineEnrollStageFinish'),
                 },
             },
             {
@@ -687,7 +687,7 @@ function buildDefaultScenario(spec: SystemTaskSpec, taskId: string): readonly De
                 type: 'step',
                 stepId: 'task.step.prepare',
                 message: taskKind === 'setup.thisComputer.v1'
-                    ? t('settings.machineSetupStageConnect')
+                    ? t('settings.machineEnrollStageConnect')
                     : t('common.loading'),
             },
         },
@@ -700,7 +700,7 @@ function buildDefaultScenario(spec: SystemTaskSpec, taskId: string): readonly De
                 tsMs: 90,
                 type: 'progress',
                 stepId: 'task.step.installRuntime',
-                message: t('settings.machineSetupStageInstall'),
+                message: t('settings.machineEnrollStageInstall'),
             },
         },
         {
@@ -712,7 +712,7 @@ function buildDefaultScenario(spec: SystemTaskSpec, taskId: string): readonly De
                 tsMs: 150,
                 type: 'progress',
                 stepId: 'task.step.finish',
-                message: t('settings.machineSetupStageFinish'),
+                message: t('settings.machineEnrollStageFinish'),
             },
         },
         {

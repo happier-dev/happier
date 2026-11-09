@@ -2,13 +2,14 @@ import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
     DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createPassThroughModule } from '@/dev/testkit/mocks/components';
-import type { PluginMachineExecutionOriginCandidateV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
+import { getPluginExecutionOriginCandidateOrigin, type PluginMachineExecutionOriginCandidateV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 
 import type { PluginEventAutomationComposerModel } from './usePluginEventAutomationComposer';
+import { readPluginEventAutomationWatcherFailure } from './pluginEventAutomationObservationBinding';
 import { installAutomationComponentCommonModuleMocks } from '../automationComponentTestHelpers';
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -20,9 +21,6 @@ installAutomationComponentCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/plugins/shared/InstalledPluginBrandMark', () => ({
-    InstalledPluginBrandMark: () => null,
-}));
 vi.mock('@/components/plugins/shared/installedPluginBrandPresentation', () => ({
     useInstalledPluginBrandPresentation: () => null,
 }));
@@ -105,6 +103,7 @@ function createModel(options: Readonly<{
         eventCatalogStatus: 'ready',
         selectedEvent: event,
         selectEvent: vi.fn(),
+        getEventPresentation: (candidate: { event: { title: string; description: string | null } }) => ({ title: candidate.event.title, description: candidate.event.description }),
         getPluginPresentation: () => ({
             eventKey: 'acme.github:events/repository',
             displayName: 'Acme GitHub',
@@ -128,6 +127,10 @@ function createModel(options: Readonly<{
         webhookEndpointRefreshing: options.webhookEndpointRefreshing ?? false,
         configureSource: vi.fn(),
         watcherCandidates,
+        watcherFailures: watcherCandidates.flatMap(candidate => {
+            const failure = readPluginEventAutomationWatcherFailure(candidate, event);
+            return failure ? [{ ...failure, origin: getPluginExecutionOriginCandidateOrigin(candidate) }] : [];
+        }),
         selectedWatcherOrigin: {
             serverIdentityId: 'srv_account_a',
             materializationRef: {

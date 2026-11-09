@@ -1,4 +1,4 @@
-import type { WorkflowProgressEnvelopeV1, WorkflowUsageV1 } from '@happier-dev/protocol';
+import type { WorkflowProgressEnvelopeV1, WorkflowUsageV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import { formatTokenCountLong, formatUsageCost } from '@/utils/format/usageNumbers';
 import { formatElapsedDuration } from '@/components/machines/durationWords';

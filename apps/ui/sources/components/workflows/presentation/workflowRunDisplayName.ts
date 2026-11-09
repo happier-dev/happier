@@ -1,4 +1,5 @@
-import type { WorkflowOperationErrorCodeV1, WorkflowRunPrivateMetadataV1 } from '@happier-dev/protocol';
+import type { WorkflowOperationErrorCodeV1} from '@happier-dev/protocol/workflows/workflowProgressV1';
+import type { WorkflowRunPrivateMetadataV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { readWorkflowRunDisplayMetadataV1 } from '@happier-dev/protocol/workflows/workflowRunDisplayMetadataV1';
 import { describeWorkflowOperationProblem } from './workflowProblemPresentation';
 

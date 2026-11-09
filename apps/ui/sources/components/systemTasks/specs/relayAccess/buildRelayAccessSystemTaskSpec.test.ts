@@ -10,6 +10,29 @@ import {
 import { buildRelayAccessTailscaleSecureAccessSystemTaskSpec } from './buildRelayAccessTailscaleSecureAccessSystemTaskSpec';
 
 describe('buildRelayAccessSystemTaskSpec', () => {
+    it('keeps the exact reviewed selection without a competing outer provider id', () => {
+        const config = {
+            provider: { kind: 'builtin' as const, id: 'cloudflareNamed' },
+            config: { hostname: 'relay.example.test' },
+            credentialRefs: [{ purpose: 'tunnel.manage', credentialRef: {
+                kind: 'connectedAccount' as const,
+                account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'work' },
+            } }],
+        };
+        const input = { config };
+        const spec = buildRelayAccessConfigureSystemTaskSpec(input);
+        expect(spec.params).toHaveProperty('config', config);
+        expect(spec.params).not.toHaveProperty('providerId');
+    });
+
+    it('rejects raw credential material before it can become a native task', () => {
+        const input = { config: {
+            provider: { kind: 'builtin' as const, id: 'cloudflareNamed' },
+            config: { hostname: 'relay.example.test', token: 'must-not-enter-task' }, credentialRefs: [],
+        } };
+        expect(() => buildRelayAccessConfigureSystemTaskSpec(input)).toThrow();
+    });
+
     it('builds relay access tasks for an explicit SSH target', () => {
         const target = {
             kind: 'ssh' as const,

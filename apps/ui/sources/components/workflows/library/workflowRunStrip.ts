@@ -1,7 +1,9 @@
 import type { WorkflowRunSourceSummariesResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 
-import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
+import { inboxItemViewV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
+import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
+import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import { t } from '@/text';
 
 /**
@@ -20,10 +22,10 @@ export type WorkflowRunStrip = Readonly<{
 
 type SummaryInput = Pick<WorkflowRunSourceSummariesResultV1['summaries'][number], 'recent' | 'needsYouCount' | 'needsYouRunId'>;
 
-/** Column status and Library view membership classify the same summary facts. */
+/** Running membership reads lifecycle; a concurrent actionable hold retains its separate Needs-you view. */
 export function hasWorkingWorkflowLibraryRun(summary: Pick<SummaryInput, 'recent'> | undefined): boolean {
     return summary?.recent.some((run) => resolveWorkStatusTone({
-        kind: 'workflow_run', facts: { state: run.state, word: '' },
+        kind: 'workflow_run', facts: { state: run.state, workflowCustodyState: run.workflowCustodyState, word: '' },
     }).bucket === 'working') ?? false;
 }
 
@@ -38,10 +40,14 @@ export function projectWorkflowRunStrip(summary: SummaryInput): WorkflowRunStrip
     let failed = 0;
     const runCells = recent.map((run) => {
         if (run.state === 'succeeded') completed += 1;
-        if (run.runId === summary.needsYouRunId) return { kind: 'needsYou' as const, runId: run.runId };
-        if (describeWorkflowRunState(run.state).variant === 'danger') {
-            failed += 1;
+        // Acknowledgement clears emphasis; the accessible history still names the failed outcome.
+        if (describeWorkflowRunState(run.state).variant === 'danger') failed += 1;
+        const status = resolveWorkStatusTone({ kind: 'workflow_run', facts: readWorkflowRunWorkStatusFacts(run) });
+        if (status.tone === 'danger') {
             return { kind: 'failed' as const, runId: run.runId };
+        }
+        if (status.bucket === 'needs_you' && status.attentionType !== null && inboxItemViewV1(status.attentionType) === 'needs_you') {
+            return { kind: 'needsYou' as const, runId: run.runId };
         }
         return { kind: 'ok' as const, runId: run.runId };
     }).reverse();

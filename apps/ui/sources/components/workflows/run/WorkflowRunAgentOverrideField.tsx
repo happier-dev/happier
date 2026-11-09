@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { WorkflowReplayAgentOverrideV1, RoleEngineV1 } from '@happier-dev/protocol';
+import type { WorkflowReplayAgentOverrideV1} from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import type { RoleEngineV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
 import { buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { RoleEngineField } from '@/components/roles/engine/RoleEngineField';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';

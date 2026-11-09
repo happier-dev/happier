@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol';
+import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { projectScheduledWorkflowRows } from './scheduledWorkflowRows';
 
 function set(id: string, nextRunAt: number | null, destination: string, enabled = true) {

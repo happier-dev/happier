@@ -1,6 +1,7 @@
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
+import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 import { useUnistyles } from 'react-native-unistyles';
 import { HappierPressable, HAPPIER_PRESS_FEEDBACK_V1 } from '@happier-dev/plugin-ui/presentation';
 
@@ -26,7 +27,7 @@ import {
 } from '@/components/workflows/presentation/workflowReferenceOptions';
 import { WORKFLOW_BLOCK_KIND_GLYPH } from '@/components/workflows/presentation/workflowBlockKindGlyph';
 import { WorkflowPurposeGlyph } from '@/components/workflows/presentation/WorkflowPurposeGlyph';
-import { WORKFLOW_EDITOR_TOUCH_POINTER, workflowEditorStyles } from './workflowEditorStyles';
+import { workflowEditorStyles } from './workflowEditorStyles';
 
 /** What the Add menu asks its list to insert: a structure or Agent step by kind, or a step-kind seed. */
 export type WorkflowAddBlockRequest =
@@ -60,6 +61,7 @@ export function WorkflowAddBlockMenu(props: Readonly<{
     testID?: string;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
+    const touchPrimaryPointer = useHappierTouchPrimaryPointer(Platform.OS);
     const anchorRef = React.useRef<View>(null);
     const examplesAnchorRef = React.useRef<View>(null);
     const [open, setOpen] = React.useState(false);
@@ -69,7 +71,7 @@ export function WorkflowAddBlockMenu(props: Readonly<{
     if (props.variant === 'inserter') {
         // Under a finger a hidden inserter is inert: its target overlaps its neighbours' edges so the
         // gap stays the document's rhythm (lab P1), and it must never take a tap meant for them.
-        const inert = WORKFLOW_EDITOR_TOUCH_POINTER && !open && props.revealed !== true;
+        const inert = touchPrimaryPointer && !open && props.revealed !== true;
         return (
             <View ref={anchorRef} collapsable={false} style={workflowEditorStyles.inserterSlot}
                 pointerEvents={inert ? 'none' : 'auto'}
@@ -215,13 +217,14 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
             id: optionId(`action:${spec.id}`),
             label: spec.title,
             searchText: spec.id,
-            subtitle: spec.description?.trim() || spec.plugin?.title,
+            subtitle: spec.projectionError ? t('workflows.page.blocks.actionUnavailable', { action: spec.title }) : spec.description?.trim() || spec.plugin?.title,
+            disabled: spec.projectionError !== undefined,
             icon: () => <Icon name={spec.plugin ? resolvePluginContributedActionIconName(spec.plugin.icon) : spec.icon ?? 'lightning'}
                 size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
             rightAccessory: <Text numberOfLines={1} style={{ ...Typography.variant('meta'), color: theme.colors.text.tertiary }}>
                 {spec.plugin?.title ?? spec.sourceLabel ?? t('workflows.actionTitles.host')}
             </Text>,
-            onSelect: add({ kind: 'action', actionId: spec.id }),
+            onSelect: spec.projectionError ? undefined : add({ kind: 'action', actionId: spec.id }),
         });
         const actionsStep: SelectionListStep = {
             id: 'add-action',

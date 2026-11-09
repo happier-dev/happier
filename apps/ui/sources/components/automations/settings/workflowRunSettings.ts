@@ -2,7 +2,7 @@ import { defineSettingsPage } from '@/components/settings/catalog/settingDeclara
 
 /**
  * The searchable settings of Workflows › Run settings (FIN 04 §3.5, 07 S6): a sub-page the Settings
- * home links to, living under the Workflows destination. Offered while Automations is on.
+ * home links to, living under the Workflows destination.
  */
 export const WORKFLOW_RUN_SETTINGS = defineSettingsPage({
     pageId: 'settings',
@@ -10,14 +10,14 @@ export const WORKFLOW_RUN_SETTINGS = defineSettingsPage({
     sections: {
         capacity: {
             titleKey: 'automationPages.settings.capacityTitle',
-            featureId: 'automations',
+            featureId: 'workflows',
             settings: {
                 maxActiveRunsPerMachine: {},
             },
         },
         history: {
             titleKey: 'automationPages.settings.historyTitle',
-            featureId: 'automations',
+            featureId: 'workflows',
             settings: {
                 runRetention: {},
             },

@@ -1,7 +1,7 @@
 import type {
     PluginJsonSchemaV2,
     PluginJsonValueV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 
 export type PluginEventAutomationPayloadScalarKind = 'string' | 'number' | 'boolean' | 'null';
 

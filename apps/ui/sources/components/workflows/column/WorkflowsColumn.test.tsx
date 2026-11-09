@@ -484,6 +484,34 @@ describe('WorkflowsColumn', () => {
         expect(row('paused').detail).toContain('time.daysAgoShort');
         expect(row('never').detail).toBeUndefined();
     });
+    it('mounts only the column rows near its viewport for a large Library, keeping the open row', async () => {
+        const answer = executeMock.getMockImplementation()!;
+        const ids = Array.from({ length: 300 }, (_, index) => `10000000-0000-4000-8000-0000000003${String(index).padStart(2, '0')}`);
+        routeState.pathname = `/workflows/${ids[299]}`;
+        executeMock.mockImplementation((actionId: string, input: Record<string, unknown>) => {
+            if (actionId === 'workflow.definition.list') return Promise.resolve({ ok: true, result: { definitions: ids.map((definitionId, index) => ({
+                kind: 'workflow-definition.v1', definitionId, metadata: { title: `Workflow ${index}` }, updatedAt: 1000 - index,
+                revision: { headerVersion: 1, bodyVersion: 1 }, contentStatus: 'available', stepCount: 1,
+                ownerAccountId: 'account-a', access: 'owner', triggers: [], nextRunAt: null,
+            })) } });
+            if (actionId === 'workflow.run.summaries') return Promise.resolve({ ok: true, result: { remainingSourceArtifactIds: [],
+                summaries: ids.map(sourceArtifactId => ({ sourceArtifactId, lastRun: null, recent: [], needsYouCount: 0, needsYouRunId: null })) } });
+            return answer(actionId, input);
+        });
+        const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
+        const mounted = () => screen.findAll(node => typeof node.type === 'string'
+            && /^workflows-column:library:/.test(String(node.props.testID ?? ''))).map(node => String(node.props.testID));
+        await vi.waitFor(() => expect(mounted().length).toBeGreaterThan(0));
+        await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 50)); });
+        const rows = new Set(mounted());
+        // The whole Library is 300 rows: only those near the viewport are built.
+        expect(rows.size).toBeLessThan(150);
+        expect(rows.has(`workflows-column:library:${ids[0]}`)).toBe(true);
+        // The open row stays mounted (its selected chip) even when it is far below the fold.
+        expect(rows.has(`workflows-column:library:${ids[299]}`)).toBe(true);
+        await screen.unmount();
+    });
+
     it('re-renders only the changed Library row when one saved workflow changes', async () => {
         const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
         const answer = executeMock.getMockImplementation()!;

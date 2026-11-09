@@ -15,8 +15,7 @@ import { useWorkflowsDestinationAccess } from './workflowsDestinationAccess';
  * stable shell; a local-policy disablement names its repair (**Open Settings**); a hard denial says
  * Workflows are unavailable here and offers nothing it cannot deliver.
  *
- * `surface="destination"` is the Workflows home, which also governs triggers, so its local copy
- * speaks of Automations; every other Workflow route says what Workflows need.
+ * `surface="destination"` is the Workflows home, which also governs triggers.
  */
 export function WorkflowsGate(props: Readonly<{
     children: React.ReactNode;
@@ -41,7 +40,7 @@ export function WorkflowsGate(props: Readonly<{
 
     if (access.kind === 'locallyDisabled') {
         const destination = props.surface === 'destination';
-        const settingHref = resolveFeatureToggleHref('automations', experimentsEnabled);
+        const settingHref = resolveFeatureToggleHref('workflows', experimentsEnabled);
         return (
             <SurfaceStateCard
                 testID="workflows-gate-local"
@@ -59,7 +58,7 @@ export function WorkflowsGate(props: Readonly<{
         );
     }
 
-    if (access.kind !== 'workflows' && !(props.surface === 'occurrence' && access.kind === 'triggersOnly')) {
+    if (access.kind !== 'workflows') {
         // An unavailable capability is not a failed read: the canonical Workflow problem mapping
         // owns this state, its copy and the fact that there is no repair to offer here.
         const unavailable = resolveWorkflowsUnavailablePresentation();

@@ -1,6 +1,6 @@
 import { joinHappierFacts, resolveHappierRoleRunsAsPresentation } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import type { RoleRunsAsV1 } from '@happier-dev/protocol';
+import type { RoleRunsAsV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
 import type { RoleCatalogEntry } from '@/sync/domains/roles/roleCatalog';
 import { t } from '@/text';
 import { useRoleEnginePresentation } from './useRoleEnginePresentation';

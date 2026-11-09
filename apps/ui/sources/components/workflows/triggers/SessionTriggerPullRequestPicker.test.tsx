@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ScmPullRequestListResponseSchema } from '@happier-dev/protocol';
+import { ScmPullRequestListResponseSchema } from '@happier-dev/protocol/scm/pullRequests';
 
 import { createSessionFixture, renderScreen } from '@/dev/testkit';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';

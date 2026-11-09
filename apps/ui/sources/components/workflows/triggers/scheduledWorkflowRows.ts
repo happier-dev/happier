@@ -1,4 +1,4 @@
-import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol';
+import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { workflowTriggerSetWritesToSession } from '@/sync/domains/workflows/workflowTriggerSession';
 
 export type ScheduledWorkflowRow = Readonly<{

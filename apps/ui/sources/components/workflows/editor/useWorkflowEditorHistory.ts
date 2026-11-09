@@ -1,31 +1,9 @@
 import * as React from 'react';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
-import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
-import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { sameWorkflowResultFieldOrderV1 } from '@happier-dev/protocol/workflows';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 
 type WorkflowEditorHistorySnapshot = WorkflowEditorDraft | Readonly<{ draft: WorkflowEditorDraft }>;
-
-/** Schema values are already semantically equal; only declaration order remains to compare. */
-function schemaPropertyOrdersEqual(left: PluginJsonSchemaV2, right: PluginJsonSchemaV2): boolean {
-    const pending: Array<readonly [PluginJsonSchemaV2, PluginJsonSchemaV2]> = [[left, right]];
-    while (pending.length > 0) {
-        const [before, after] = pending.pop()!;
-        if (!pluginJsonValuesEqual(Object.keys(before.properties ?? {}), Object.keys(after.properties ?? {}))) return false;
-        for (const key of ['properties', '$defs', 'definitions'] as const) {
-            for (const name of Object.keys(before[key] ?? {})) pending.push([before[key]![name]!, after[key]![name]!]);
-        }
-        for (const key of ['items', 'additionalProperties', 'propertyNames', 'not'] as const) {
-            const child = before[key];
-            const counterpart = after[key];
-            if (typeof child === 'object' && typeof counterpart === 'object') pending.push([child, counterpart]);
-        }
-        for (const key of ['anyOf', 'oneOf', 'allOf'] as const) {
-            before[key]?.forEach((child, index) => pending.push([child, after[key]![index]!]));
-        }
-    }
-    return true;
-}
 
 /** Editor content includes visible result-field order; ordinary JSON and Plan identity do not. */
 export function workflowEditorSnapshotsEqual(
@@ -34,32 +12,48 @@ export function workflowEditorSnapshotsEqual(
 ): boolean {
     if (!pluginJsonValuesEqual(left, right)) return false;
     if (left === null || right === null) return true;
-    const before = walkWorkflowBlocks(('draft' in left ? left.draft : left).blocks);
-    const after = walkWorkflowBlocks(('draft' in right ? right.draft : right).blocks);
-    return before.every((block, index) => {
-        const counterpart = after[index]!;
-        return !('result' in block) || block.result?.kind !== 'json'
-            || ('result' in counterpart && counterpart.result?.kind === 'json'
-                && schemaPropertyOrdersEqual(block.result.schema, counterpart.result.schema));
-    });
+    return sameWorkflowResultFieldOrderV1(
+        ('draft' in left ? left.draft : left).blocks,
+        ('draft' in right ? right.draft : right).blocks,
+    );
 }
 
+/**
+ * Undo and Redo as the controls show them. The labels are read at call time; a control subscribes
+ * to them (`useWorkflowEditorHistoryLabels`), so recording an edit re-renders only Undo and Redo.
+ * A history without `subscribe` never changes.
+ */
 export type WorkflowEditorHistoryControls = Readonly<{
-    undoLabel: string | null;
-    redoLabel: string | null;
+    readonly undoLabel: string | null;
+    readonly redoLabel: string | null;
     undo: () => void;
     redo: () => void;
+    subscribe?: (listener: () => void) => () => void;
 }>;
+
+const NO_HISTORY_CHANGES = () => () => {};
+
+/** The labels Undo and Redo show, re-read only when the history announces a change. */
+export function useWorkflowEditorHistoryLabels(controls: WorkflowEditorHistoryControls | undefined): Readonly<{ undoLabel: string | null; redoLabel: string | null }> {
+    const subscribe = controls?.subscribe ?? NO_HISTORY_CHANGES;
+    const undoLabel = React.useSyncExternalStore(subscribe, () => controls?.undoLabel ?? null, () => controls?.undoLabel ?? null);
+    const redoLabel = React.useSyncExternalStore(subscribe, () => controls?.redoLabel ?? null, () => controls?.redoLabel ?? null);
+    return { undoLabel, redoLabel };
+}
 
 type Change<T> = Readonly<{ before: T; after: T; label: string }>;
 
-/** One source-local history. Native inputs stage a transaction until their commit boundary. */
+/**
+ * One source-local history. Native inputs stage a transaction until their commit boundary.
+ * It holds no React state: an edit notifies the controls that show it, not the editor that owns it.
+ */
 export function useWorkflowEditorHistory<T extends WorkflowEditorHistorySnapshot>(scope: string, restore: (snapshot: T) => void) {
-    const [, refresh] = React.useReducer((value: number) => value + 1, 0);
     const state = React.useRef({ scope, revision: 0, past: [] as Change<T>[], future: [] as Change<T>[], pending: null as Change<T> | null });
     if (state.current.scope !== scope) state.current = { scope, revision: 0, past: [], future: [], pending: null };
     const restoreRef = React.useRef(restore);
     restoreRef.current = restore;
+    const [listeners] = React.useState(() => new Set<() => void>());
+    const notify = React.useCallback(() => { for (const listener of [...listeners]) listener(); }, [listeners]);
     const commit = React.useCallback(() => {
         const current = state.current;
         if (current.pending === null) return;
@@ -68,8 +62,8 @@ export function useWorkflowEditorHistory<T extends WorkflowEditorHistorySnapshot
             current.future = [];
         }
         current.pending = null;
-        refresh();
-    }, []);
+        notify();
+    }, [notify]);
     const record = React.useCallback((before: T, after: T, label: string, committed = true) => {
         if (workflowEditorSnapshotsEqual(before, after)) { if (committed) commit(); return false; }
         if (committed) {
@@ -81,9 +75,9 @@ export function useWorkflowEditorHistory<T extends WorkflowEditorHistorySnapshot
             state.current.future = [];
         }
         state.current.revision += 1;
-        refresh();
+        notify();
         return true;
-    }, [commit]);
+    }, [commit, notify]);
     const undo = React.useCallback(() => {
         commit();
         const change = state.current.past.at(-1);
@@ -93,8 +87,8 @@ export function useWorkflowEditorHistory<T extends WorkflowEditorHistorySnapshot
         state.current.past.pop();
         state.current.future.push(change);
         state.current.revision += 1;
-        refresh();
-    }, [commit]);
+        notify();
+    }, [commit, notify]);
     const redo = React.useCallback(() => {
         commit();
         const change = state.current.future.at(-1);
@@ -103,21 +97,26 @@ export function useWorkflowEditorHistory<T extends WorkflowEditorHistorySnapshot
         state.current.future.pop();
         state.current.past.push(change);
         state.current.revision += 1;
-        refresh();
-    }, [commit]);
+        notify();
+    }, [commit, notify]);
     const reset = React.useCallback(() => {
         const current = state.current;
         current.past = [];
         current.future = [];
         current.pending = null;
         current.revision += 1;
-        refresh();
-    }, []);
-    const controls: WorkflowEditorHistoryControls = {
-        undoLabel: state.current.past.at(-1)?.label ?? null,
-        redoLabel: state.current.future.at(-1)?.label ?? null,
-        undo, redo,
-    };
+        notify();
+    }, [notify]);
+    const subscribe = React.useCallback((listener: () => void) => {
+        listeners.add(listener);
+        return () => { listeners.delete(listener); };
+    }, [listeners]);
+    // One identity for the history's lifetime; the labels are read when shown.
+    const controls = React.useMemo((): WorkflowEditorHistoryControls => ({
+        get undoLabel() { return state.current.past.at(-1)?.label ?? null; },
+        get redoLabel() { return state.current.future.at(-1)?.label ?? null; },
+        undo, redo, subscribe,
+    }), [redo, subscribe, undo]);
     const getRevision = React.useCallback(() => state.current.revision, []);
     return { controls, record, commit, reset, getRevision };
 }

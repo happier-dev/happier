@@ -14,6 +14,7 @@ import { useLocalRuntimeActionExecution } from '@/components/approvals/useLocalR
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { createUiHomeRuntimeActionClient } from '@/sync/ops/actions/homeRuntimeActionClient';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import type { SystemTaskRunState } from './types';
 import { presentActiveCliAcquisition, presentCliAcquisitionEvent } from './cliAcquisitionPresentation';
@@ -243,6 +244,10 @@ export const SystemTaskProgressCard = React.memo(function SystemTaskProgressCard
     const canOpenLogs = showOpenLogs && isDesktopHost();
     const handlePromptAction = React.useCallback(async () => {
         if (!promptAction) {
+            return;
+        }
+        if (/^https?:\/\//i.test(promptAction.url)) {
+            await requestOpenExternalUrl(promptAction.url);
             return;
         }
 

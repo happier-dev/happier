@@ -14,7 +14,12 @@ type GrantedTeam = Readonly<{ id: string; name: string | null; sessionCreationPo
 const EMPTY_TEAMS: readonly GrantedTeam[] = Object.freeze([]);
 
 /** Artifact grants nominate Teams; the existing Team reader decides which are viewable. */
-export function useWorkflowRunVisibility(sourceArtifactId: string | null | undefined) {
+export function useWorkflowRunVisibility(sourceArtifactId: string | null | undefined, custody?: Readonly<{
+    selectedTeamId?: string;
+    onChange?: (teamId: string) => void;
+}>) {
+    const onChangeRef = React.useRef(custody?.onChange);
+    onChangeRef.current = custody?.onChange;
     const activeLifetime = useActiveServerAccountScopeLifetime();
     const addressedLifetime = useWorkflowAccountLifetime();
     const lifetime = addressedLifetime === undefined ? activeLifetime : addressedLifetime;
@@ -83,12 +88,17 @@ export function useWorkflowRunVisibility(sourceArtifactId: string | null | undef
     }, [attempt, identity, lifetime, sourceArtifactId]);
     const onChange = React.useCallback((selectedTeamId: string) => {
         if (!lifetime?.isCurrent()) return;
+        if (onChangeRef.current) {
+            if (state.identity === identity && state.lifetime === lifetime && state.status === 'ready'
+                && state.teams.some(team => team.id === selectedTeamId)) onChangeRef.current(selectedTeamId);
+            return;
+        }
         setState((current) => current.identity === identity && current.lifetime === lifetime && current.status === 'ready'
             && current.teams.some((team) => team.id === selectedTeamId) ? { ...current, selectedTeamId } : current);
-    }, [identity, lifetime]);
+    }, [identity, lifetime, state]);
     const current = state.identity === identity && state.lifetime === lifetime ? state : {
         status: sourceArtifactId ? 'loading' as const : 'ready' as const, teams: EMPTY_TEAMS, shared: false, selectedTeamId: undefined,
     };
-    const resolution = resolveWorkflowRunVisibleTeamV1(current.teams.map((team) => team.id), current.selectedTeamId);
+    const resolution = resolveWorkflowRunVisibleTeamV1(current.teams.map((team) => team.id), custody?.selectedTeamId ?? current.selectedTeamId);
     return { status: current.status, teams: current.teams, shared: current.shared === true, resolution, onChange, retry };
 }

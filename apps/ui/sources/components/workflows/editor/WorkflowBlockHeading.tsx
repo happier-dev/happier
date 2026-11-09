@@ -41,6 +41,8 @@ export function WorkflowBlockHeading(props: Readonly<{
     /** The first issue on this block, when it needs repair. */
     issue?: string | null;
     actions: readonly WorkflowBlockAction[];
+    /** The `⋯` rests as a mark until the row is reached (a summary row, PERF-WF3B). */
+    actionsResting?: boolean;
     /** Contributed Agent brand or the block kind's glyph, never a backing tile. */
     kindMark?: React.ReactNode;
     /** Whether this block is the selected one: its ordinal fills. */
@@ -120,7 +122,7 @@ export function WorkflowBlockHeading(props: Readonly<{
         : <Text testID={`${props.testID}-source`} numberOfLines={1} style={workflowEditorStyles.headingMeta}>{'· '}{props.sourceLabel}</Text>;
     return (
         <View style={workflowEditorStyles.heading}>
-            <View style={workflowEditorStyles.headingLine}>
+            <View style={[workflowEditorStyles.headingLine, workflowEditorStyles.ordinalColumn]}>
                 {numbered ? (
                     <View
                         testID={`${props.testID}-ordinal`}
@@ -155,7 +157,8 @@ export function WorkflowBlockHeading(props: Readonly<{
                     ]}
                 >
                     {nameMark}
-                    {showsName ? <Text numberOfLines={compound ? 1 : 2} style={workflowEditorStyles.headingName}>{props.displayName}</Text> : null}
+                    {showsName ? <Text numberOfLines={compound ? 1 : 2} style={[workflowEditorStyles.headingName,
+                        props.unnamed === 'placeholder' ? workflowEditorStyles.headingNamePlaceholder : null]}>{props.displayName}</Text> : null}
                     {source}
                     {meta}
                 </HappierPressable> : (
@@ -194,6 +197,7 @@ export function WorkflowBlockHeading(props: Readonly<{
                 <WorkflowBlockActionsMenu
                     blockLabel={props.displayName}
                     actions={props.actions}
+                    resting={props.actionsResting}
                     testID={props.actionsTestID}
                 />
             </View>

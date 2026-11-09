@@ -67,10 +67,11 @@ async function renderGate(surface?: 'destination') {
 }
 
 describe('WorkflowsGate', () => {
-    it('keeps a one-shot occurrence readable when only Automations are enabled', async () => {
+    it('refuses an occurrence when Workflows is disabled even if the released alias is enabled', async () => {
         await publishFeatures(false, true);
         const screen = await renderScreen(<WorkflowsGate surface="occurrence"><Allowed /></WorkflowsGate>);
-        expect(screen.findAllByProps({ testID: 'workflows-allowed-child' })).toHaveLength(1);
+        expect(screen.findAllByProps({ testID: 'workflows-allowed-child' })).toHaveLength(0);
+        expect(screen.findByTestId('workflows-gate-disabled')).not.toBeNull();
     });
     it('fails closed while the decisions are unresolved', async () => {
         const response = createDeferred<void>();
@@ -155,7 +156,7 @@ describe('WorkflowsGate', () => {
         expect(unavailable.props.action).toBeUndefined();
     });
 
-    it('leads a local disablement to the Automations switch that repairs it', async () => {
+    it('leads a local disablement to the Workflows switch that repairs it', async () => {
         await publishFeatures(true);
         const { getStorage } = await import('@/sync/domains/state/storage');
         getStorage().setState(state => ({ settings: { ...state.settings, featureToggles: { automations: false } } }));
@@ -168,10 +169,10 @@ describe('WorkflowsGate', () => {
             reason: 'workflows.destination.gate.dependencyBody',
         });
         local.props.action.onPress();
-        expect(routerPush).toHaveBeenCalledWith(expect.stringContaining('/settings/features'));
+        expect(routerPush).toHaveBeenCalledWith('/settings/features?setting=features.workflows');
     });
 
-    it('speaks of Automations on the destination home, which also governs triggers', async () => {
+    it('offers the destination repair on the home that also governs triggers', async () => {
         await publishFeatures(true);
         const { getStorage } = await import('@/sync/domains/state/storage');
         getStorage().setState(state => ({ settings: { ...state.settings, featureToggles: { automations: false } } }));

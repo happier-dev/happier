@@ -20,6 +20,8 @@ export function resolveWorkflowBuiltinInputPresentation(workflowRef: string | nu
             return {
                 engines: { title: t('workflows.builtins.reviewAndConverge.inputs.engines') },
                 reviewSession: { title: t('workflows.builtins.reviewAndConverge.inputs.reviewSession') },
+                useJudge: { title: t('workflows.builtins.reviewAndConverge.inputs.useJudge') },
+                focus: { title: t('workflows.builtins.reviewAndConverge.inputs.focus') },
                 maxRounds: { title: t('workflows.builtins.reviewAndConverge.rounds') },
                 apply: { title: t('workflows.builtins.reviewAndConverge.apply'), optionLabels: {
                     fix: t('workflows.builtins.reviewAndConverge.verifyAndFix'),

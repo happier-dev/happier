@@ -16,6 +16,7 @@ import type {
 } from './types';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, type IconName, type IconWeight } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { HappierStepMarkerView } from '@happier-dev/plugin-ui/presentation';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
@@ -237,6 +238,21 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
     },
+    detailsControl: {
+        position: 'absolute',
+        right: theme.space.s16,
+        top: 0,
+        bottom: 0,
+        justifyContent: 'center',
+    },
+    detailsControlOnboarding: {
+        right: theme.space.s20,
+        paddingTop: theme.space.s20,
+        justifyContent: 'flex-start',
+    },
+    detailsControlCompact: {
+        paddingTop: theme.space.s12,
+    },
     details: {
         borderTopWidth: 1,
         borderTopColor: theme.colors.border.default,
@@ -328,34 +344,31 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
             <Pressable
                 testID={props.testID ? `${props.testID}-details-toggle` : undefined}
                 accessibilityRole="button"
-                onPress={(event) => {
-                    (event as { stopPropagation?: () => void })?.stopPropagation?.();
-                    props.onToggleExpanded();
-                }}
+                accessibilityLabel={t('common.details')}
+                accessibilityState={{ expanded: props.expanded }}
+                onPress={props.onToggleExpanded}
                 style={({ pressed }) => ([
                     styles.detailsToggle,
                     shouldRevealDetailsToggle ? null : styles.detailsToggleHidden,
                     pressed ? { opacity: motionTokens.press.opacity } : null,
                 ])}
             >
-                <Icon
-                    name={props.expanded ? 'caret-up' : 'caret-down'}
-                    size={16}
-                    color={theme.colors.text.secondary}
-                />
+                <DisclosureCaret expanded={props.expanded} size={16} />
             </Pressable>
         </View>
     ) : null;
 
     return (
         <View>
+            <View {...(Platform.OS === 'web' && detailsAvailable ? {
+                onPointerEnter: () => setHovered(true),
+                onPointerLeave: () => setHovered(false),
+            } : {})}>
             <Pressable
                 testID={props.testID}
                 accessibilityRole={rowOnPress ? 'button' : undefined}
                 disabled={!rowOnPress}
                 onPress={rowOnPress}
-                onHoverIn={Platform.OS === 'web' && detailsAvailable ? () => setHovered(true) : undefined}
-                onHoverOut={Platform.OS === 'web' && detailsAvailable ? () => setHovered(false) : undefined}
                 style={({ pressed }) => ([
                     styles.row,
                     usesOnboardingVariant ? styles.rowOnboarding : null,
@@ -449,9 +462,16 @@ export const PlanChecklistRow = React.memo(function PlanChecklistRow(props: Plan
                             )}
                         </View>
                     ) : null}
-                    {detailsToggle}
+                    {detailsAvailable ? <View style={styles.detailsToggleSlot} /> : null}
                 </View>
             </Pressable>
+            {detailsToggle ? (
+                <View style={[styles.detailsControl, usesOnboardingVariant ? styles.detailsControlOnboarding : null,
+                    usesCompactNestedRow ? styles.detailsControlCompact : null]}>
+                    {detailsToggle}
+                </View>
+            ) : null}
+            </View>
 
             {props.expanded ? (
                 <View style={styles.details}>

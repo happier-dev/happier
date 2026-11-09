@@ -1,4 +1,4 @@
-import type { SystemTaskJsonObject } from '@happier-dev/protocol';
+import type { SystemTaskJsonObject } from '@happier-dev/protocol/system/tasks/spec';
 
 import type { SystemTaskPromptEnvelope, SystemTaskRunState } from '../types';
 

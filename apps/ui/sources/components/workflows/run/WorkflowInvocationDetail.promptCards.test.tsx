@@ -68,6 +68,9 @@ const { AppSessionTranscriptSourceProvider } = await import('@/components/sessio
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 const { PermissionPromptCard } = await import('@/components/tools/shell/permissions/PermissionPromptCard');
 const { WorkflowInvocationDetail } = await import('./WorkflowInvocationDetail');
+const { AgentActionButton } = await import('@happier-dev/plugin-ui/components');
+const { AccountNoticeInvestigationBoundary } = await import('@/hooks/inbox/AccountNoticeInvestigationProvider');
+const { InvestigationOutcomeBanner } = await import('@/components/inbox/detail/InvestigationOutcomeBanner');
 const { ModalProvider, useModal } = await import('@/modal');
 const originalState = storage.getState();
 const originalAppliedSnapshot = getAppliedActiveServerSnapshot();
@@ -146,11 +149,11 @@ async function renderDetail(overrides: Partial<WorkflowInvocationDetailProps>) {
         ...overrides,
     };
     const screen = await renderScreen(<WorkflowInvocationDetail {...props} />, {
-        wrapper: ({ children }) => <ModalProvider><ObserveModals /><AppPaneProvider>
+        wrapper: ({ children }) => <ModalProvider><ObserveModals /><AppPaneProvider><AccountNoticeInvestigationBoundary>
             <AppSessionTranscriptSourceProvider sessionId="exec-1" serverId={serverId}>
                 {children}
             </AppSessionTranscriptSourceProvider>
-        </AppPaneProvider></ModalProvider>,
+        </AccountNoticeInvestigationBoundary></AppPaneProvider></ModalProvider>,
     });
     /** A control the case requires; its absence fails the case rather than typing as nullable. */
     const get = (testID: string) => {
@@ -173,6 +176,18 @@ function expectNoSessionTransport() {
 }
 
 describe('WorkflowInvocationDetail canonical request cards', () => {
+    it('offers the shared agent action on a failed Run and presents its configured handoff refusal', async () => {
+        const screen = await renderDetail({ progress: null, lifecycle: 'failed',
+            investigationSubject: { kind: 'workflowRun', serverId, runId: 'failed-run' } });
+        try {
+            const buttons = screen.findAllByType(AgentActionButton);
+            expect(buttons).toHaveLength(1);
+            await act(async () => { buttons[0]!.props.onLaunch('review'); });
+            await vi.waitFor(() => expect(screen.findAllByType(InvestigationOutcomeBanner)[0]?.props.outcome)
+                .toEqual({ kind: 'unavailable', code: 'catalogUnavailable' }));
+            expectNoSessionTransport();
+        } finally { await screen.unmount(); }
+    });
     beforeEach(async () => {
         await homes.reset();
         // The connection fixture restores its credential spy on disposal;

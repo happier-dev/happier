@@ -12,5 +12,8 @@ export function useSessionTriggerLastRuns(automationIds: readonly string[]) {
         if (!read.summaries) return EMPTY_LAST_RUNS;
         return Object.fromEntries([...read.summaries].flatMap(([id, summary]) => summary.lastRun ? [[id, summary.lastRun] as const] : []));
     }, [read.summaries]);
-    return { lastRunsByAutomationId, failed: read.failed, retry: read.retry };
+    const lastRunAtByAutomationId = React.useMemo(() => Object.fromEntries(
+        Object.entries(lastRunsByAutomationId).map(([id, run]) => [id, Date.parse(run.startedAt)]),
+    ), [lastRunsByAutomationId]);
+    return { lastRunsByAutomationId, lastRunAtByAutomationId, failed: read.failed, retry: read.retry };
 }

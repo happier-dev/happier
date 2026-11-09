@@ -100,7 +100,7 @@ describe('AutomationsGate', () => {
         expect(screen.findByTestId('automations-gate-disabled')).toBeNull();
     });
     it('renders a disabled state when automations are unavailable', async () => {
-        featureResponse = createRootLayoutFeaturesResponse({ features: { automations: { enabled: false } } });
+        featureResponse = createRootLayoutFeaturesResponse({ features: { workflows: { enabled: false }, automations: { enabled: true } } });
         primeReady();
         const screen = await renderScreen(allowed());
         expect(screen.findByTestId('automations-allowed-child')).toBeNull();
@@ -114,10 +114,10 @@ describe('AutomationsGate next action', () => {
             featureToggles: { ...storage.getState().settings.featureToggles, automations: false } });
         const screen = await renderScreen(allowed());
         await screen.pressByTestIdAsync('automations-gate-disabled-action');
-        expect(routerPush).toHaveBeenCalledWith('/settings/features?setting=features.automations');
+        expect(routerPush).toHaveBeenCalledWith('/settings/features?setting=features.workflows');
     });
     it('says the Home turned automations off, and offers no link, when the server blocks them', async () => {
-        featureResponse = createRootLayoutFeaturesResponse({ features: { automations: { enabled: false } } });
+        featureResponse = createRootLayoutFeaturesResponse({ features: { workflows: { enabled: false }, automations: { enabled: true } } });
         primeReady();
         const screen = await renderScreen(allowed());
         expect(screen.findByTestId('automations-gate-disabled-action')).toBeNull();

@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
 
-import type { WorkflowRunStateV1 } from '@happier-dev/protocol';
+import type { WorkflowRunStateV1 } from '@happier-dev/protocol/workflows';
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 
 const haptics = vi.hoisted(() => ({ light: vi.fn(async () => {}) }));

@@ -3,7 +3,9 @@ import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
-import type { AutomationTriggerId, WorkflowProjectTargetV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol';
+import type { AutomationTriggerId} from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import type { WorkflowProjectTargetV1} from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
+import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 import {
     addWorkflowTrigger,
@@ -166,7 +168,7 @@ export function useWorkflowTriggerEditing(params: Readonly<{
     const summary = React.useMemo(
         () => {
             const rows = projectWorkflowTriggerRows(set, draft);
-            return rows.length > 0 || status === 'ready' ? formatTriggerSetSummary(rows.map((row) => row.trigger))
+            return rows.length > 0 || status === 'ready' ? formatTriggerSetSummary(rows.map((row) => ({ ...row.trigger, enabled: row.enabled })))
                 : status === 'failed' ? t('workflows.triggers.section.loadFailed') : t('common.loading');
         },
         [draft, set, status],

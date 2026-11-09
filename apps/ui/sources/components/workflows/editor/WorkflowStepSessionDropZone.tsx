@@ -36,6 +36,8 @@ export function WorkflowStepSessionDropZone(props: Readonly<{
     stepId: string;
     label: string;
     sessionDrop?: WorkflowSessionDrop;
+    /** The list's resting summary row (only where the web reads bounds live): measure only during a carry. */
+    restingLayout?: boolean;
     testID: string;
     children: React.ReactNode;
 }>): React.ReactElement {
@@ -58,9 +60,24 @@ export function WorkflowStepSessionDropZone(props: Readonly<{
     const onLayout = React.useCallback(() => {
         void measure().then(() => runtime.refresh());
     }, [measure, runtime]);
-    return <View ref={attach} collapsable={false} testID={props.testID} onLayout={onLayout}>
+    // A resting summary row (web, precise pointer) skips layout observation until a Session is being
+    // carried: the web reads a target's bounds from the live DOM, and observing 500 rows' layout at
+    // rest cost one observer per row (PERF-WF3B). Every other zone keeps measuring on layout.
+    const carrying = useSessionCarryActive(props.restingLayout === true && props.sessionDrop !== undefined);
+    const measureOnLayout = props.restingLayout !== true || carrying;
+    return <View ref={attach} collapsable={false} testID={props.testID} onLayout={measureOnLayout ? onLayout : undefined}>
         {props.children}
         {props.sessionDrop === undefined ? null : <WorkflowStepSessionTarget
             sessionDrop={props.sessionDrop} targetId={targetId} stepId={props.stepId} label={props.label} bounds={bounds} measure={measure} />}
     </View>;
+}
+
+/** Whether a carry is in progress in this realm; one boolean per zone, so pointer frames never re-render rows. */
+function useSessionCarryActive(enabled: boolean): boolean {
+    const runtime = useEntityDragDropRuntime();
+    return React.useSyncExternalStore(runtime.subscribe, () => {
+        if (!enabled) return false;
+        const phase = runtime.getSnapshot().phase;
+        return phase === 'carrying' || phase === 'pending';
+    }, () => false);
 }

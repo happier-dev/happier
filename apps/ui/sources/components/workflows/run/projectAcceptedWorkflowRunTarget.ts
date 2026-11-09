@@ -1,6 +1,6 @@
 import type {
     WorkflowProjectTargetV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 
 /**
  * Projects an immutable accepted descriptor back to the signed host target

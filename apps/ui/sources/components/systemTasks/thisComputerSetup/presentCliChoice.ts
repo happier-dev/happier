@@ -1,4 +1,4 @@
-import type { SetupCliChoice } from '@happier-dev/protocol';
+import type { SetupCliChoice } from '@happier-dev/protocol/system/tasks/promptPayloadContracts';
 
 import { Modal } from '@/modal';
 import { t } from '@/text';

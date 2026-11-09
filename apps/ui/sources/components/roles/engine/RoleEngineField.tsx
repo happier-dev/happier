@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
-import type { RoleEngineV1 } from '@happier-dev/protocol';
+import type { RoleEngineV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
 import { PROVIDER_REASONING_EFFORT_OPTION_ID } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 
 import { resolveRoleEngineTargetKey, useRoleEngineCatalog } from '@/components/roles/catalog/useRoleEnginePresentation';
@@ -11,8 +11,9 @@ import { buildSessionAgentPickerDetailContent } from '@/components/sessions/agen
 import { buildSessionAgentPickerOptions } from '@/components/sessions/agentPicker/buildSessionAgentPickerOptions';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
-import { useActiveServerAccountScope, useAuthoringMemoryField, useSettings } from '@/sync/domains/state/storage';
-import { useAllMachines } from '@/sync/store/hooks';
+import { useAgentUiSettings } from '@/agents/catalog/useAgentUiSettings';
+import { useActiveServerAccountScope, useAuthoringMemoryField } from '@/sync/domains/state/storage';
+import { useActiveMachineFacts } from '@/sync/store/hooks';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 import { resolvePreferredMachineId } from '@/components/settings/pickers/resolvePreferredMachineId';
 import { resolveDefaultDirectoryForMachine } from '@/utils/sessions/machineDefaultDirectory';
@@ -125,14 +126,14 @@ function RoleEnginePopover(props: Readonly<{
     roleSelection?: RolesRailPickerOptionParams;
     onRequestClose: () => void;
 }>) {
-    const settings = useSettings();
     const { entries, ready, scope, snapshot } = useRoleEngineCatalog(props.capabilityServerId || undefined);
-    const machines = useAllMachines();
+    const machines = useActiveMachineFacts();
     const recentMachinePaths = useAuthoringMemoryField('recentMachinePaths');
     const reachabilityRevision = useMachineReachabilityRevision();
     const selectedMachineId = React.useMemo(() => props.machineId !== undefined ? props.machineId : resolvePreferredMachineId({
         machines, scope, recentMachinePaths, onlineOnly: true,
     }), [props.machineId, machines, scope, recentMachinePaths, reachabilityRevision]);
+    const settings = useAgentUiSettings({ agentIds: entries.map(entry => entry.agentId), machineId: selectedMachineId, accountScope: scope, domain: 'runtime' });
     const cwd = React.useMemo(() => props.directory !== undefined ? props.directory : resolveDefaultDirectoryForMachine({
         machineId: selectedMachineId, machines,
         recentPaths: recentMachinePaths.filter(entry => entry.machineId === selectedMachineId).map(entry => entry.path),
@@ -160,6 +161,7 @@ function RoleEnginePopover(props: Readonly<{
                 agentCatalogEntry: entry.agentCatalogEntry,
                 runtimeCarrierAgentId: entry.agentId,
                 selectedMachineId,
+                accountScope: scope,
                 capabilityServerId,
                 cwd,
                 settings,
@@ -181,7 +183,7 @@ function RoleEnginePopover(props: Readonly<{
                 },
             }),
         }),
-    }), [capabilityServerId, cwd, selectedMachineId, engine, engineTargetKey, entries, onChange, props.roleSelection, settings]);
+    }), [capabilityServerId, cwd, selectedMachineId, engine, engineTargetKey, entries, onChange, props.roleSelection, scope, settings]);
 
     if (!ready) {
         const unavailable = scope === null || snapshot?.catalog.status === 'unavailable' || snapshot?.catalog.status === 'partial';

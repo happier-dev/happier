@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { WORKFLOW_STARTER_EXAMPLES_V1 } from '@happier-dev/protocol/workflows/builtins/examples';
+import { WORKFLOW_STARTER_EXAMPLES_V1, workflowStarterRequiresSession } from '@happier-dev/protocol/workflows/builtins/examples';
 
 import { renderScreen } from '@/dev/testkit';
 
@@ -20,7 +20,8 @@ describe('WorkflowExamplesSection inside a Session', () => {
         const order = screen.findAll((node) => typeof node.props?.testID === 'string' && /^workflow-examples:[a-z-]+$/.test(node.props.testID))
             .map((node) => String(node.props.testID).slice('workflow-examples:'.length))
             .filter((key, index, all) => all.indexOf(key) === index);
-        const seeded = WORKFLOW_STARTER_EXAMPLES_V1.filter((example) => example.triggerSeed !== undefined).map((example) => example.key);
+        // Made for a Session: they follow one or run their steps in one. A schedule over Actions alone is general.
+        const seeded = WORKFLOW_STARTER_EXAMPLES_V1.filter(workflowStarterRequiresSession).map((example) => example.key);
         expect(order.slice(0, seeded.length).sort()).toEqual([...seeded].sort());
         expect(order.slice(seeded.length)).toEqual(keys.filter((key) => !seeded.includes(key)));
     });

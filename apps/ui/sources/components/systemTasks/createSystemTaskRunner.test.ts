@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { SystemTaskEvent, SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol';
-import { SystemTaskSpecSchema } from '@happier-dev/protocol';
+import type { SystemTaskEvent, SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
+import { SystemTaskSpecSchema } from '@happier-dev/protocol/system/tasks/spec';
 
 afterEach(() => vi.restoreAllMocks());
 

@@ -16,8 +16,9 @@ import { publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/or
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
-import type { RoleArtifactV1 } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import type { RoleArtifactV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
 import { roleActions } from '@/sync/ops/roles/roleActions';
 import { invalidateRoleCatalog, useRoleCatalog } from './useRoleCatalog';
 

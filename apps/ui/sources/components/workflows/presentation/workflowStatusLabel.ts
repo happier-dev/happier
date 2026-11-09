@@ -3,7 +3,7 @@ import type {
     SessionWorkflowAgentStatusV1,
     SessionWorkflowRunStatusReasonV1,
     SessionWorkflowRunStatusV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 
 /** i18n status label for observed native-agent activity. */
 export function formatWorkflowAgentStatusLabel(status: SessionWorkflowAgentStatusV1): string {

@@ -1,10 +1,12 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-    AutomationOccurrenceKeyV1Schema,
-    AutomationRunCauseSchema,
+    AutomationOccurrenceKeyV1Schema} from '@happier-dev/protocol/automations/automationOccurrenceV1';
+import {
+    AutomationRunCauseSchema} from '@happier-dev/protocol/automations/run-cause';
+import {
     materializeAutomationRunExecutionRecipeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 
 import { renderScreen } from '@/dev/testkit';
 import { setPreferredLanguageFromSettings, t } from '@/text';
@@ -84,6 +86,11 @@ function lifecycleCause(event: 'parentTurnCompleted' | 'sessionStarted' | 'sessi
 }
 
 describe('frozen Run detail presentation', () => {
+    it('identifies a contributed Action target in retained Run detail', () => {
+        expect(presentation.formatRunTarget({ kind: 'contributedAction',
+            action: { pluginId: 'com.example.jobs', localId: 'refresh' }, input: { project: 'demo' } }))
+            .toBe('com.example.jobs/refresh');
+    });
     it('offers authoring from exact retained event evidence without inventing a second activity feed', async () => {
         const { AutomationRunPluginEventTriggerEvidenceV1Schema } = await import('@happier-dev/protocol/automations/automationRunExecutionRecipeV1');
         const evidence = AutomationRunPluginEventTriggerEvidenceV1Schema.parse({

@@ -3,7 +3,7 @@ import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Collection, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
-import { WORKFLOW_STARTER_EXAMPLES_V1, materializeWorkflowStarterExample, type WorkflowStarterExampleSelection, type WorkflowStarterSessionTarget, type WorkflowStarterExampleKeyV1, type WorkflowStarterExampleV1 } from '@happier-dev/protocol/workflows/builtins/examples';
+import { WORKFLOW_STARTER_EXAMPLES_V1, materializeWorkflowStarterExample, workflowStarterRequiresSession, type WorkflowStarterExampleSelection, type WorkflowStarterSessionTarget, type WorkflowStarterExampleKeyV1, type WorkflowStarterExampleV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -27,6 +27,7 @@ import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { storeWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 import { useWorkflowExistingSessionOptions } from '../screens/useWorkflowExistingSessionOptions';
 import { resolveWorkflowSessionChoice, WORKFLOW_SESSION_RETRY_ITEM_ID, workflowSessionMenuState } from '../presentation/workflowSessionChoice';
+import { workflowSessionOptionRow } from '../presentation/workflowSessionOptionRow';
 import { readDeviceTimeZone } from '../triggers/sessionTriggerForm';
 import { WorkflowFlowView } from '../flow/WorkflowFlowView';
 import { projectWorkflowFlow } from '../flow/workflowFlowProjection';
@@ -86,11 +87,12 @@ export function WorkflowExamplesSection(props: Readonly<{
     };
     const session = props.session;
     const examples = props.opensDraft === false
-        ? WORKFLOW_STARTER_EXAMPLES_V1.filter(example => example.triggerSeed === undefined) : WORKFLOW_STARTER_EXAMPLES_V1;
+        ? WORKFLOW_STARTER_EXAMPLES_V1.filter(example => !workflowStarterRequiresSession(example)) : WORKFLOW_STARTER_EXAMPLES_V1;
     const choose = (example: WorkflowStarterExampleV1) => {
         const selection = materializeWorkflowStarterExample(example,
-            session !== undefined ? { session, timezone: readDeviceTimeZone() } : undefined);
-        if (selection.status === 'ready') useExample(selection.example);
+            session !== undefined ? { session, timezone: readDeviceTimeZone() } : { timezone: readDeviceTimeZone() });
+        // Added into a draft, a template brings its steps and leaves that draft's triggers alone.
+        if (selection.status === 'ready') useExample(props.opensDraft === false ? withoutTrigger(selection.example) : selection.example);
         // Only the library asks which Session: inside one, every example is already bound to it.
         else if (session === undefined) setChoice({ key: example.key, lifetime: captureActiveServerAccountScopeLifetime() });
     };
@@ -98,9 +100,9 @@ export function WorkflowExamplesSection(props: Readonly<{
         // A Session's own picker (lab `b-habit T`): the full catalog, one line each, and never a Session chooser.
         // Read as a small configuration page, like the trigger popover beside it: what the picker does sits under
         // its title at the top, and the rows lie on the picker itself. The examples made for a Session (the
-        // ones that seed a trigger) lead; the general templates follow in the catalog's own order.
-        const forSession = [...examples.filter((example) => example.triggerSeed !== undefined),
-            ...examples.filter((example) => example.triggerSeed === undefined)];
+        // ones that follow or run in one) lead; the general templates follow in the catalog's own order.
+        const forSession = [...examples.filter(workflowStarterRequiresSession),
+            ...examples.filter((example) => !workflowStarterRequiresSession(example))];
         return <ListPresentationProvider value="page"><ItemGroup surface="none"
             title={props.hideTitle ? undefined : t('workflows.examples.title')} description={t('workflows.examples.sessionDescription')}
             // The heading sits on the rows' text edge, and a sheet that already names the picker in its own
@@ -169,7 +171,7 @@ function ExampleSessionChooser(props: Readonly<{
     const menu = workflowSessionMenuState(choice, tLoose('workflows.examples.noSessions'));
     return <View style={styles.chooser}>
         <DropdownMenu open onOpenChange={(open) => { if (!open) props.onClose(); }} search searchPlaceholder={t('sessionsList.searchSessionsPlaceholder')}
-            items={[...menu.leadingItems, ...sessions.map(session => ({ id: session.sessionId, title: session.label }))]} selectedId={null}
+            items={[...menu.leadingItems, ...sessions.map(session => ({ id: session.sessionId, title: session.label, ...workflowSessionOptionRow(session) }))]} selectedId={null}
             {...(menu.emptyLabel === undefined ? {} : { emptyLabel: menu.emptyLabel })}
             matchTriggerWidth={false} popoverPhonePresentation="sheet" popoverAccessibilityLabel={t('workflows.conversation.chooseExistingSession')}
             closeOnSelect={false}
@@ -282,3 +284,8 @@ const styles = StyleSheet.create((theme) => ({
     meta: { ...Typography.variant('meta'), flexShrink: 1, color: theme.colors.text.tertiary },
     chooser: { flexShrink: 1, minWidth: 0, alignItems: 'flex-end', gap: theme.space.s4 },
 }));
+
+function withoutTrigger(example: WorkflowStarterExampleSelection): WorkflowStarterExampleSelection {
+    const { trigger: _trigger, triggerSeed: _seed, ...steps } = example;
+    return steps;
+}

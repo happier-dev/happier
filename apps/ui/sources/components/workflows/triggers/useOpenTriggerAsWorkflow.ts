@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { TriggerTargetV1 } from '@happier-dev/protocol';
+import type { TriggerTargetV1 } from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 

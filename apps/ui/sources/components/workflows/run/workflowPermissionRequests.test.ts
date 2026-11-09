@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol';
+import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 
 import {
     hasWorkflowPermissionRequest,

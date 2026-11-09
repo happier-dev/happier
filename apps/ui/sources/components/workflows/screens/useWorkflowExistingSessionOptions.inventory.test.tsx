@@ -315,6 +315,8 @@ it.each([1, 0] as const)('reuses already-admitted plain list continuation facts 
         await waitForHomeGovernance(() => expect(hook.getCurrent().sessionOptionsStatus).toBe('ready'));
         expect(hook.getCurrent().existingSessions).toEqual(records.map((record, index) => ({
             sessionId: record.id, machineId: 'machine-a', label: `Admitted ${index}`,
+            // The Agent a row presents publicly, which a layout-1 owner's execution flavor does not decide.
+            ...(layout === 1 ? { agentId: 'codex', contextLabel: 'Codex · host-a' } : { agentId: 'claude', contextLabel: 'Claude · host-a' }),
         })));
         const rendersBeforePreferences = optionRenders;
         await act(async () => {
@@ -955,7 +957,8 @@ it('offers a layout-1 Session from its admitted owner view without publishing a 
     // The demanded metadata inventory admits its compact identity projection,
     // without hydrating a full Session entity or replacing exact detail admission.
     expect(storage.getState().sessionListRowsByServerId[serverId]?.[c.id]).toMatchObject({ metadata: { machineId: 'machine-a' }, metadataLayoutVersion: 1 });
-    expect(hook.getCurrent().existingSessions).toEqual([{ sessionId: c.id, machineId: 'machine-a', label: c.id }]);
+    expect(hook.getCurrent().existingSessions).toEqual([{ sessionId: c.id, machineId: 'machine-a', label: c.id,
+        agentId: 'claude', contextLabel: 'Claude · host-a' }]);
     expect(storage.getState().sessions[c.id]).toBeUndefined();
     // List display identity is not exact selected-Session authority: selection
     // still reads and admits the private owner/native continuation facts.
@@ -1151,7 +1154,7 @@ it('lists paged compact Sessions without offering hidden, archived, ineligible o
     expect(batch.componentRequests.filter(request => request.path === `/v2/sessions/${hidden.id}`
         || archived.some(row => request.path === `/v2/sessions/${row.id}`))).toHaveLength(archived.length + 1);
     expect(hook.getCurrent().existingSessions).toEqual([
-        { sessionId: c.id, machineId: 'machine-a', label: 'Session C' },
+        { sessionId: c.id, machineId: 'machine-a', label: 'Session C', agentId: 'claude', contextLabel: 'Claude · host-a' },
     ]);
     expect(storage.getState().sessions[c.id]).toBeUndefined();
     await waitForHomeGovernance(() => expect(hook.getCurrent().sessionOptionsStatus).toBe('ready'));
