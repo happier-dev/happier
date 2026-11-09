@@ -47,12 +47,12 @@ export function createConnectedAccountModelObserver(input: Readonly<{
       if (typeof endpoint?.baseUrl !== 'string') return null;
       const origin = new URL(endpoint.baseUrl).origin;
       const use = source.requestAuthUses.find(use => use.purpose === source.family.purpose
-        && use.materialization.kind === 'httpHeaders' && use.materialization.origins.includes(origin));
+        && use.materialization.kind === 'httpHeaders' && use.materialization.origin === origin);
       if (!use) return null;
       const purpose = { consumer: source.provider.identity, purpose: source.family.purpose };
       return input.observe({ machineId, operationId: randomUUID(), consumer: source.provider.identity,
         purpose, binding: source.selection.binding,
-        requestAuthUse: { purpose, materialization: { kind: 'httpHeaders', origins: [origin], headerNames: use.materialization.headerNames } },
+        requestAuthUse: { purpose, materialization: { kind: 'httpHeaders', origin, headerNames: use.materialization.headerNames } },
         provider, trigger: refresh ? 'manual_refresh' : 'picker_open', currentOnly,
         ...(input.resolveContributedCatalogParsers ? {
           resolveContributedCatalogParsers: () => input.resolveContributedCatalogParsers!(declared.provider),

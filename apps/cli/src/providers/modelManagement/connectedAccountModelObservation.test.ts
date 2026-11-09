@@ -1,5 +1,5 @@
 import { expect, it, vi } from 'vitest';
-import { PluginConnectedAccountAuthenticationV2Schema, ProviderContributionV1Schema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol';
+import { PluginConnectedAccountAuthenticationV2Schema, ProviderContributionV1Schema, QualifiedConnectedAccountProfileV4Schema, QualifiedConnectedAccountRequestAuthUseV1Schema } from '@happier-dev/protocol';
 import { createPurposeTargetResolver } from '@happier-dev/cli-common/connectedAccounts';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
@@ -56,7 +56,7 @@ it('observes a declared service with zero Agents through the shared catalog owne
           endpointTemplateIds: gateway.definition.endpointTemplates.map(row => row.id),
           catalogObservation: { provider: identity }, staticModels: [{ id: 'compatibility', name: 'Compatibility' }] }],
         requestAuthUses: [{ purpose: 'service-upstream', materialization: { kind: 'httpHeaders',
-          origins: ['https://models.example.com'], headerNames: ['authorization'] } }],
+          origin: 'https://models.example.com', headerNames: ['authorization'] } }],
       },
     }) }],
     [`${identity.pluginId}/${identity.localId}`, fixture.registry.contributes.providersByContributionKey.get(`${identity.pluginId}/${identity.localId}`)!],
@@ -109,7 +109,10 @@ it('observes a declared service with zero Agents through the shared catalog owne
       acquiredParserFormats = Object.keys(acquired?.parsersByFormat ?? {});
       return acquired ? { ...acquired, pluginId: identity.pluginId } : null;
     },
-    observe: input => observation.observe(input) });
+    observe: input => {
+      expect(QualifiedConnectedAccountRequestAuthUseV1Schema.safeParse(input.requestAuthUse).success).toBe(true);
+      return observation.observe(input);
+    } });
   const read = (currentOnly: boolean, forceRefresh = false) => readConnectedAccountModelCatalog({ registry,
     resolveSelection: purposes.resolveBindingIntentSelection, observeModels,
     request: { machineId: 'machine', connectedAccountTarget: { kind: 'account', account },
