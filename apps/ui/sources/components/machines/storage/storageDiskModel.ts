@@ -194,15 +194,14 @@ export function toStorageDiskCollectRow(node: DiskNodeV1): StorageDiskCollectRow
     TRAILING.has(node.kind) ||
     node.kind === 'cloud-only' ||
     node.size.allocatedBytes === 0;
-  const verdict = node.flags.protection === 'forbidden' ? 'forbidden'
-    : node.flags.protection === 'keep' || node.flags.inUse ? 'keep' : 'safe';
+  const verdict = node.verdict;
   const reason: StorageReasonV1 = node.reason ?? { code: node.flags.inUse ? 'in_use' : verdict === 'safe' ? 'old' : 'facts_unavailable' };
   return {
     itemId: node.nodeId,
     path: node.nodeId,
     title: storageDiskNodeName(node),
     verdict,
-    collectable: !virtual && verdict !== 'forbidden',
+    collectable: !virtual && node.collectable,
     reason,
     ...(node.loses ? { loses: node.loses } : {}),
     ...(node.kind === 'file' ? { file: true as const } : {}),

@@ -178,7 +178,8 @@ function nodeFromNative(node: Extract<NativeDiskScanRecord, { type: 'dir' }>['ch
         size: { allocatedBytes: node.allocatedBytes, freesBytes: 0, sharedBytes: 0,
             sharedExtentsUnmeasured: node.flags.sharedExtentsUnmeasured ?? false, atLeast: node.flags.atLeast },
         logicalBytes: node.logicalBytes, items: node.items, changedAt: Math.max(0, node.mtimeMs),
-        flags: { happier: false, protection: 'none', atLeast: node.flags.atLeast, inUse: false }, childCount: 0 };
+        flags: { happier: false, protection: 'none', atLeast: node.flags.atLeast, inUse: false }, childCount: 0,
+        verdict: 'check', collectable: false };
 }
 function upsert(db: SqliteDatabaseSync, node: DiskNodeV1, visible = 1, nativeKind: string = node.kind) {
     ingestion(db).entry.run(node.nodeId, node.parentId ?? null,

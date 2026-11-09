@@ -26,7 +26,7 @@ const node = (
   logicalBytes: bytes,
   items: 1,
   changedAt: 1,
-  flags: { happier: false, protection: 'none', atLeast: false, inUse: false },
+  verdict: 'safe', collectable: true, flags: { happier: false, protection: 'none', atLeast: false, inUse: false },
   childCount: 0,
   ...over,
 });
@@ -48,13 +48,13 @@ function page(): DiskNodeV1[] {
       childCount: 2,
     }),
     node(`${ROOT}/Development/happier`, `${ROOT}/Development`, 96, {
-      flags: { happier: true, protection: 'none', atLeast: false, inUse: false },
+      verdict: 'safe', collectable: true, flags: { happier: true, protection: 'none', atLeast: false, inUse: false },
     }),
     node(`${ROOT}/Development/website`, `${ROOT}/Development`, 21),
     node(`${ROOT}/Library`, ROOT, 64, { childCount: 1 }),
     node(`${ROOT}/Library/Developer`, `${ROOT}/Library`, 14),
     node(`${ROOT}/Documents`, ROOT, 22, {
-      flags: { happier: false, protection: 'forbidden', atLeast: false, inUse: false },
+      verdict: 'forbidden', collectable: false, flags: { happier: false, protection: 'forbidden', atLeast: false, inUse: false },
     }),
     node(`${ROOT}/Work`, ROOT, 0, { kind: 'mount' }),
     node(`${ROOT}#small`, ROOT, 1, { kind: 'small-items', items: 1204 }),
@@ -62,12 +62,21 @@ function page(): DiskNodeV1[] {
 }
 
 describe('one whole-disk view model for List, Map and Rings (plan 40 §4.11)', () => {
+  it('preserves the daemon verdict and collectability instead of inferring safe from display flags', () => {
+    for (const [verdict, collectable] of [['caution', true], ['check', false]] as const) {
+      const observed = node(`${ROOT}/unclassified`, ROOT, 10, {
+        verdict, collectable, reason: { code: 'facts_unavailable' },
+      });
+      expect(toStorageDiskCollectRow(observed)).toMatchObject({ verdict, collectable, reason: observed.reason });
+    }
+  });
+
   it('confirms Keep rather than blocking it, while Forbidden remains uncollectable', () => {
     const keep = node(`${ROOT}/Downloads`, ROOT, 10, {
-      flags: { happier: false, protection: 'keep', atLeast: false, inUse: false },
+      verdict: 'keep', collectable: true, flags: { happier: false, protection: 'keep', atLeast: false, inUse: false },
     });
     const forbidden = node(`${ROOT}/System`, ROOT, 10, {
-      flags: { happier: false, protection: 'forbidden', atLeast: false, inUse: false },
+      verdict: 'forbidden', collectable: false, flags: { happier: false, protection: 'forbidden', atLeast: false, inUse: false },
     });
     const rows = buildStorageDiskLevel({ nodes: [node(ROOT, '/Users', 20), keep, forbidden], rootId: ROOT, pile: [], sort: { by: 'size', direction: 'desc' } }).rows;
     expect(rows.find(row => row.key === keep.nodeId)?.collect).toBe('confirm');
@@ -75,7 +84,7 @@ describe('one whole-disk view model for List, Map and Rings (plan 40 §4.11)', (
   });
   it('collects a Keep folder with its canonical reason and what is lost, so its confirmation names the loss (R42.1)', () => {
     const projects = node('/Users/l/projects', '/Users/l', 40, {
-      flags: { happier: false, protection: 'keep', atLeast: false, inUse: false },
+      verdict: 'keep', collectable: true, flags: { happier: false, protection: 'keep', atLeast: false, inUse: false },
       reason: { code: 'contains', detail: { what: 'main_checkout', project: 'happier' } },
       loses: [{ code: 'main_checkout', detail: { project: 'happier' } }, { code: 'changed_files', detail: { count: 3 } }],
     });
@@ -83,7 +92,7 @@ describe('one whole-disk view model for List, Map and Rings (plan 40 §4.11)', (
       itemId: '/Users/l/projects', path: '/Users/l/projects', title: 'projects', verdict: 'keep', collectable: true,
       reason: projects.reason, loses: projects.loses,
     });
-    const system = node('/System', '/', 9, { flags: { happier: false, protection: 'forbidden', atLeast: false, inUse: false }, reason: { code: 'system' } });
+    const system = node('/System', '/', 9, { verdict: 'forbidden', collectable: false, flags: { happier: false, protection: 'forbidden', atLeast: false, inUse: false }, reason: { code: 'system' } });
     expect(toStorageDiskCollectRow(system)).toMatchObject({ verdict: 'forbidden', collectable: false, reason: { code: 'system' } });
     // A tile a level deeper carries its node, so pressing it collects through the same row.
     const level = buildStorageDiskLevel({ nodes: [node('/Users/l', '/Users', 50), projects], rootId: null, pile: [], sort: { by: 'size', direction: 'desc' } });
@@ -174,7 +183,7 @@ describe('one whole-disk view model for List, Map and Rings (plan 40 §4.11)', (
       nodes: [
         node(ROOT, '/Users', 4_200),
         node(`${ROOT}/Movies`, ROOT, 3_000),
-        node(`${ROOT}/private`, ROOT, 1_200, { flags: { happier: false, protection: 'none', atLeast: true, inUse: false } }),
+        node(`${ROOT}/private`, ROOT, 1_200, { verdict: 'safe', collectable: true, flags: { happier: false, protection: 'none', atLeast: true, inUse: false } }),
       ],
       rootId: ROOT,
       pile: [],

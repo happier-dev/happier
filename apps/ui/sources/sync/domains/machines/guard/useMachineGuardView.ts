@@ -4,7 +4,7 @@ import type { MachineGuardPolicyV1 } from '@happier-dev/protocol/machines/guard/
 import { useMachineDaemonReadTarget, useMachineDaemonReadTargets, type MachineDaemonReadTargetInput } from '../useMachineDaemonReadTarget';
 import { useMachineResourcesPolicy, type MachineResourcesPolicyState } from '../resources/useMachineResourcesPolicy';
 import type { MachineGuardActivityQuery } from './machineGuardRpc';
-import { machineGuardStore, type MachineGuardActivityState, type MachineGuardViewState } from './machineGuardStore';
+import { machineGuardStore, type MachineGuardActivityKey, type MachineGuardActivityState, type MachineGuardViewState } from './machineGuardStore';
 
 export type MachineGuardViewHookResult = MachineGuardViewState & Readonly<{
     /** Synced configuration and accepted mutation receipts: intent, not execution evidence. */
@@ -68,7 +68,11 @@ export type MachinesGuardActivityEntry = MachineGuardActivityHookResult & Readon
  */
 export function useMachinesGuardActivity(input: Readonly<{ serverId?: string | null; machineIds: readonly string[] } & MachineGuardActivityQuery>): readonly MachinesGuardActivityEntry[] {
     const targets = useMachineDaemonReadTargets({ serverId: input.serverId, machineIds: input.machineIds });
-    const keys = React.useMemo(() => targets.map(target => ({ ...target.key, range: input.range, filter: input.filter })), [input.filter, input.range, targets]);
+    // Keys follow the machines' read identities only. One machine's presence flip republishes `targets`;
+    // it must not re-key, re-subscribe and re-read every other machine of the fleet.
+    const keysId = JSON.stringify(targets.map(target => ({ ...target.key, range: input.range, filter: input.filter })));
+    const keys = React.useMemo(() => JSON.parse(keysId) as MachineGuardActivityKey[], [keysId]);
+    const enabledId = JSON.stringify(targets.map(target => target.enabled));
     const subscribe = React.useCallback((listener: () => void) => {
         const releases = keys.map(key => machineGuardStore.observeActivity(key, listener));
         return () => { for (const release of releases) release(); };
@@ -83,10 +87,18 @@ export function useMachinesGuardActivity(input: Readonly<{ serverId?: string | n
         return next;
     }, [keys]);
     const states = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+    // Demand per machine: a machine that turns unreadable releases only its own read; the others keep theirs.
+    const demands = React.useRef(new Map<string, () => void>());
     React.useEffect(() => {
-        const releases = keys.flatMap((key, index) => (targets[index]?.enabled ? [machineGuardStore.demandActivity(key)] : []));
-        return () => { for (const release of releases) release(); };
-    }, [keys, targets]);
+        const enabled = JSON.parse(enabledId) as boolean[];
+        const wanted = new Map(keys.flatMap((key, index) => (enabled[index] ? [[JSON.stringify(key), key] as const] : [])));
+        for (const [id, release] of demands.current) if (!wanted.has(id)) { release(); demands.current.delete(id); }
+        for (const [id, key] of wanted) if (!demands.current.has(id)) demands.current.set(id, machineGuardStore.demandActivity(key));
+    }, [enabledId, keys]);
+    React.useEffect(() => () => {
+        for (const release of demands.current.values()) release();
+        demands.current.clear();
+    }, []);
     return React.useMemo(() => keys.map((key, index) => ({
         ...(states[index] ?? { status: 'loading' as const, list: null }),
         machineId: key.machineId,

@@ -8,7 +8,7 @@ import {
     type MachineVitalsWatchResultV1,
 } from '@happier-dev/protocol/machines/vitals/machineVitalsRpcV1';
 import { MachineVitalsHistoryV1Schema, type MachineVitalsHistoryV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsHistoryV1';
-import { createRpcCallError, readRpcErrorCode, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpcErrors';
+import { createRpcCallError, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpcErrors';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { MachineVitalsActionId } from '@happier-dev/protocol/actions/specs/machineVitals';
 import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -16,7 +16,7 @@ import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntime
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 import { resolveMachineDaemonReadServerId } from '../useMachineDaemonReadTarget';
-import { isMachineDaemonRpcUnsupportedError } from '../machineDaemonRpcErrors';
+import { projectMachineDaemonRpcFailure, type MachineDaemonRpcFailure } from '../machineDaemonRpcErrors';
 
 export type MachineResourceKey = Readonly<{ machineId: string; serverId?: string | null; expectedAccountId?: string | null; daemonStateVersion?: number | null }>;
 export type MachineVitalsView = 'summary' | 'overview';
@@ -24,7 +24,7 @@ export type MachineVitalsRange = MachineVitalsHistoryV1['range'];
 export type MachineVitalsReadInput = MachineResourceKey & Readonly<{ view: MachineVitalsView; signal?: AbortSignal }>;
 export type MachineVitalsHistoryReadInput = MachineResourceKey & Readonly<{ range: MachineVitalsRange; signal?: AbortSignal }>;
 export type MachineVitalsWatchInput = MachineVitalsReadInput & Readonly<{ sinceSampledAt?: number; onDispatched?: () => void }>;
-export type MachineResourceRpcResult<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; reason: 'older_happier' | 'request_failed' | 'invalid_response'; errorCode?: string }>;
+export type MachineResourceRpcResult<T> = Readonly<{ ok: true; value: T }> | MachineDaemonRpcFailure;
 
 /** One-shot pointer/focus reads capture the same credential-owned key as mounted daemon readers. */
 export async function resolveMachineResourceKey(input: MachineResourceKey): Promise<MachineResourceKey | null> {
@@ -41,7 +41,7 @@ async function execute(input: MachineResourceKey & Readonly<{ signal?: AbortSign
         surface: 'ui', ...(input.serverId ? { serverId: input.serverId } : {}),
         ...(input.expectedAccountId ? { expectedAccountId: input.expectedAccountId } : {}), ...(input.signal ? { signal: input.signal } : {}),
     });
-    if (!outcome.ok) throw createRpcCallError({ error: outcome.error, errorCode: outcome.errorCode });
+    if (!outcome.ok) throw createRpcCallError({ error: outcome.error, errorCode: outcome.errorCode, failureCause: outcome.failureCause });
     return outcome.result;
 }
 
@@ -54,10 +54,7 @@ async function read<T>(input: MachineResourceKey & Readonly<{ signal?: AbortSign
         const parsed = parse(raw);
         return parsed.success ? { ok: true, value: parsed.data } : { ok: false, reason: 'invalid_response' };
     } catch (error) {
-        if (isMachineDaemonRpcUnsupportedError(error)) return { ok: false, reason: 'older_happier' };
-        const errorCode = readRpcErrorCode(error);
-        return { ok: false, reason: errorCode === 'invalid_action_output' ? 'invalid_response' : 'request_failed',
-            ...(errorCode ? { errorCode } : {}) };
+        return projectMachineDaemonRpcFailure(error);
     }
 }
 

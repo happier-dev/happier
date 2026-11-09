@@ -282,7 +282,7 @@ describe('MachineStorageTab', () => {
             if (method === RPC_METHODS.DAEMON_STORAGE_SCAN_GET) return { state: scan, coverage: [], nodes: [{
                 nodeId: '/Users/leeroy/readable', parentId: '/Users/leeroy', name: 'Readable scanned folder', kind: 'folder',
                 size: size(GB), logicalBytes: GB, items: 1, changedAt: 1, childCount: 0,
-                flags: { happier: false, protection: 'none', atLeast: false, inUse: false },
+                verdict: 'safe', collectable: true, flags: { happier: false, protection: 'none', atLeast: false, inUse: false },
             }], incomplete: partial ? [{ categoryId: 'trash', reason: 'permission_denied', remedy: 'grant_admin_access_or_run_as_machine_owner' }] : [] };
             return undefined;
         });
@@ -836,7 +836,7 @@ describe('MachineStorageTab', () => {
             if (method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return { ...SUMMARY, wholeDisk: { enabled: true, scans: [scan] } };
             if (method === RPC_METHODS.DAEMON_STORAGE_SCAN_GET) return { state: scan, nodes: (payload?.view as { olderThanDays?: number } | undefined)?.olderThanDays === 45 ? [{
                 nodeId: '/Users/leeroy/notes', parentId: '/Users/leeroy', name: 'notes', kind: 'file', size: size(20), logicalBytes: 20, items: 1,
-                changedAt: Date.now() - 60 * 86_400_000, childCount: 0, flags: { happier: false, protection: 'none', atLeast: false, inUse: false },
+                changedAt: Date.now() - 60 * 86_400_000, childCount: 0, verdict: 'safe', collectable: true, flags: { happier: false, protection: 'none', atLeast: false, inUse: false },
             }] : [], coverage: [] };
             if (method === RPC_METHODS.DAEMON_STORAGE_PILE_GET) return { revision: 1, items: [], summary: SUMMARY.pile };
             return undefined;
@@ -900,7 +900,7 @@ describe('MachineStorageTab', () => {
         const watches: ReturnType<typeof createDeferred<unknown>>[] = [];
         const pages: ReturnType<typeof createDeferred<unknown>>[] = [];
         const node = { nodeId: `${folder}/file`, parentId: folder, name: 'file', kind: 'file', size: size(131072), logicalBytes: 131072,
-            items: 1, changedAt: 1, flags: { happier: false, protection: 'none', atLeast: false, inUse: false }, childCount: 0 };
+            items: 1, changedAt: 1, verdict: 'safe', collectable: true, flags: { happier: false, protection: 'none', atLeast: false, inUse: false }, childCount: 0 };
         const scanMachine = machine();
         const { screen, serverId } = await mount({ id: 'storage', view: 'disk' }, { metadata: { ...scanMachine.metadata!,
             resourcesPolicyV1: MachineResourcesPolicyV1Schema.parse({ v: 1, storage: { wholeDiskEnabled: true } }) } }, ({ method }) => {
@@ -975,7 +975,7 @@ describe('MachineStorageTab', () => {
         });
         await vi.waitFor(async () => { await act(async () => {}); expect(pages.length).toBeGreaterThan(0); });
         const root = { nodeId: folder, name: '.cache', kind: 'folder', size: size(4096), logicalBytes: 4096, items: 0, changedAt: 1,
-            flags: { happier: false, protection: 'none', atLeast: false, inUse: false }, childCount: 0 };
+            verdict: 'safe', collectable: true, flags: { happier: false, protection: 'none', atLeast: false, inUse: false }, childCount: 0 };
         await act(async () => { pages[0]!.resolve({ state: running, nodes: [], root, coverage: [], indexedAt: 4 }); });
         expect(screen.findByTestId('machine-storage-disk-progress')).not.toBeNull();
         expect(screen.findByTestId('machine-storage-disk-list-scanning')).not.toBeNull();
@@ -1443,7 +1443,7 @@ describe('MachineStorageTab', () => {
     it('lists a scanned folder in the whole-disk table with its honest marks and draws the same level as a Map', async () => {
         const node = (nodeId: string, parentId: string, bytes: number, extra: Record<string, unknown> = {}) => ({ nodeId, parentId, name: nodeId.split('/').pop(),
             kind: 'folder', size: size(bytes), logicalBytes: bytes, items: 12, changedAt: 1, deltaSincePrevious: 0,
-            flags: { happier: false, protection: 'none', atLeast: false, inUse: false }, childCount: 0, ...extra });
+            verdict: 'safe', collectable: true, flags: { happier: false, protection: 'none', atLeast: false, inUse: false }, childCount: 0, ...extra });
         const scan = { scanId: 'scan-1', target: { volumeId: 'mac' }, status: 'complete', progress: { sizedBytes: 582 * GB, usedBytes: 582 * GB, items: 10 },
             startedAt: 1, finishedAt: 2, previousScanAt: Date.UTC(2026, 9, 7), unreadable: { counts: { permission: 0, os_private: 0, timeout: 0, io: 0 }, examples: [] },
             fullDiskAccess: { state: 'granted', binary: { name: 'happier-support', path: '/x' } } };
@@ -1453,7 +1453,7 @@ describe('MachineStorageTab', () => {
             if (rpc.method === RPC_METHODS.DAEMON_STORAGE_PILE_GET) return { revision: 1, items: [], summary: SUMMARY.pile };
             if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SCAN_GET) return { state: scan, coverage: [], nodes: [
                 node('/Users', '/', 318 * GB), node('/Applications', '/', 86 * GB),
-                node('/System', '/', 62 * GB, { flags: { happier: false, protection: 'forbidden', atLeast: false, inUse: false } }),
+                node('/System', '/', 62 * GB, { verdict: 'forbidden', collectable: false, flags: { happier: false, protection: 'forbidden', atLeast: false, inUse: false } }),
                 node('/Volumes/Work', '/', 0, { kind: 'mount' }),
             ] };
             return undefined;
@@ -1506,7 +1506,7 @@ describe('MachineStorageTab', () => {
     it('says a lower bound once on a phone row and gives an unsized folded row no figure', async () => {
         const node = (nodeId: string, bytes: number, extra: Record<string, unknown> = {}) => ({ nodeId, parentId: '/', name: nodeId.split('/').pop(),
             kind: 'folder', size: size(bytes), logicalBytes: bytes, items: 12, changedAt: 1,
-            flags: { happier: false, protection: 'none', atLeast: false, inUse: false }, childCount: 0, ...extra });
+            verdict: 'safe', collectable: true, flags: { happier: false, protection: 'none', atLeast: false, inUse: false }, childCount: 0, ...extra });
         const scan = { scanId: 'scan-2', target: { volumeId: 'mac' }, status: 'complete', progress: { sizedBytes: 5 * GB, usedBytes: 5 * GB, items: 10 },
             startedAt: 1, finishedAt: 2, unreadable: { counts: { permission: 0, os_private: 0, timeout: 0, io: 0 }, examples: [] },
             fullDiskAccess: { state: 'granted', binary: { name: 'happier-support', path: '/x' } } };
@@ -1514,8 +1514,8 @@ describe('MachineStorageTab', () => {
             if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return { ...SUMMARY, wholeDisk: { enabled: true, scans: [scan] } };
             if (rpc.method === RPC_METHODS.DAEMON_STORAGE_PILE_GET) return { revision: 1, items: [], summary: SUMMARY.pile };
             if (rpc.method === RPC_METHODS.DAEMON_STORAGE_SCAN_GET) return { state: scan, coverage: [], nodes: [
-                node('/yarn', 4 * GB, { flags: { happier: false, protection: 'none', atLeast: true, inUse: false } }),
-                node('/small', 0, { kind: 'small-items', items: 3, flags: { happier: false, protection: 'none', atLeast: true, inUse: false } }),
+                node('/yarn', 4 * GB, { verdict: 'safe', collectable: true, flags: { happier: false, protection: 'none', atLeast: true, inUse: false } }),
+                node('/small', 0, { kind: 'small-items', items: 3, verdict: 'safe', collectable: true, flags: { happier: false, protection: 'none', atLeast: true, inUse: false } }),
             ] };
             return undefined;
         };
@@ -1535,7 +1535,7 @@ describe('MachineStorageTab', () => {
 
     it('says "in use" once on a Keep row whose reason is already that it is in use', async () => {
         const node = { nodeId: '/yarn', parentId: '/', name: 'yarn', kind: 'folder', size: size(4 * GB), logicalBytes: 4 * GB, items: 12, changedAt: 1,
-            flags: { happier: false, protection: 'keep', atLeast: false, inUse: true }, reason: { code: 'in_use' }, childCount: 0 };
+            verdict: 'keep', collectable: true, flags: { happier: false, protection: 'keep', atLeast: false, inUse: true }, reason: { code: 'in_use' }, childCount: 0 };
         const scan = { scanId: 'scan-3', target: { volumeId: 'mac' }, status: 'complete', progress: { sizedBytes: 5 * GB, usedBytes: 5 * GB, items: 10 },
             startedAt: 1, finishedAt: 2, unreadable: { counts: { permission: 0, os_private: 0, timeout: 0, io: 0 }, examples: [] },
             fullDiskAccess: { state: 'granted', binary: { name: 'happier-support', path: '/x' } } };
@@ -1621,7 +1621,7 @@ describe('MachineStorageTab', () => {
         const previousVolumeScan = { ...scan, scanId: 'previous-volume-scan', target: { volumeId: 'mac' }, startedAt: 1 };
         const diskNode = (nodeId: string, parentId: string, bytes: number) => ({ nodeId, parentId,
             name: nodeId.split('/').pop()!, kind: 'folder', size: size(bytes), logicalBytes: bytes,
-            items: 2, changedAt: 1, flags: { happier: false, protection: 'none', atLeast: false, inUse: false }, childCount: 1 });
+            items: 2, changedAt: 1, verdict: 'safe', collectable: true, flags: { happier: false, protection: 'none', atLeast: false, inUse: false }, childCount: 1 });
         const { screen } = await mount({ id: 'storage', view: 'disk' }, {}, ({ method, payload }) => {
             if (method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return { ...SUMMARY, wholeDisk: { enabled: true, scans: [
                 previousVolumeScan, scan,
@@ -1649,7 +1649,7 @@ describe('MachineStorageTab', () => {
             startedAt: 1, finishedAt: 2, unreadable: { counts: { permission: 0, os_private: 0, timeout: 0, io: 0 }, examples: [] },
             fullDiskAccess: { state: 'granted', binary: { name: 'happier-support', path: '/x' } } };
         const projects = { nodeId: '/Users/leeroy/projects', parentId: '/', name: 'projects', kind: 'folder', size: size(40 * GB), logicalBytes: 40 * GB,
-            items: 12, changedAt: 1, flags: { happier: false, protection: 'keep', atLeast: false, inUse: false }, childCount: 0,
+            items: 12, changedAt: 1, verdict: 'keep', collectable: true, flags: { happier: false, protection: 'keep', atLeast: false, inUse: false }, childCount: 0,
             reason: { code: 'contains', detail: { what: 'main_checkout' } }, loses: [{ code: 'changed_files', detail: { count: 3 } }] };
         const sets: Rpc[] = [];
         const { screen } = await mount({ id: 'storage', view: 'disk' }, {}, (rpc) => {
@@ -1738,7 +1738,7 @@ describe('MachineStorageTab', () => {
             progress: { sizedBytes: 4096, items: 3 }, unreadable: { counts: { permission: 0, os_private: 0, timeout: 0, io: 0 }, examples: [] },
             fullDiskAccess: { state: 'not_applicable', binary: { name: 'fixture', path: '/fixture' } }, ...extra });
         const folder = (nodeId: string, parentId: string) => ({ nodeId, parentId, name: nodeId.split('/').pop(), kind: 'folder', size: size(4096), logicalBytes: 4096,
-            items: 1, changedAt: 1, deltaSincePrevious: 0, flags: { happier: false, protection: 'none', atLeast: false, inUse: false }, childCount: 0 });
+            items: 1, changedAt: 1, deltaSincePrevious: 0, verdict: 'safe', collectable: true, flags: { happier: false, protection: 'none', atLeast: false, inUse: false }, childCount: 0 });
         /** A daemon holding the scans it started: a read of a node answers only for the scan that has it. */
         function daemon(retained: DiskScanStateV1, nodesByScan: Readonly<Record<string, ReadonlyArray<ReturnType<typeof folder>>>>, refuse = false) {
             const scans = [retained];
@@ -1969,7 +1969,7 @@ describe('MachineStorageTab', () => {
             fullDiskAccess: { state: 'not_applicable', binary: { name: 'happier-support', path: '/x' } } };
         const diskNode = (nodeId: string, parentId: string, bytes: number) => ({ nodeId, parentId, name: nodeId.split('/').pop(),
             kind: 'folder', size: size(bytes), logicalBytes: bytes, items: 1, changedAt: 1,
-            flags: { happier: false, protection: 'none', atLeast: false, inUse: false }, childCount: 1 });
+            verdict: 'safe', collectable: true, flags: { happier: false, protection: 'none', atLeast: false, inUse: false }, childCount: 1 });
         const { screen } = await mount({ id: 'storage', view: 'disk' }, {}, ({ method }) => {
             if (method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return HappierStorageSummaryV1Schema.parse({ ...SUMMARY, wholeDisk: { enabled: true, scans: [scan] } });
             if (method === RPC_METHODS.DAEMON_STORAGE_PILE_GET) return { revision: 1, items: [], summary: SUMMARY.pile };
@@ -1994,7 +1994,7 @@ describe('MachineStorageTab', () => {
     it('copies a scanned item’s exact machine path from its row actions, and offers none for folded space', async () => {
         const node = (nodeId: string, parentId: string, bytes: number, extra: Record<string, unknown> = {}) => ({ nodeId, parentId, name: nodeId.split('/').pop(),
             kind: 'folder', size: size(bytes), logicalBytes: bytes, items: 12, changedAt: 1, deltaSincePrevious: 0,
-            flags: { happier: false, protection: 'none', atLeast: false, inUse: false }, childCount: 0, ...extra });
+            verdict: 'safe', collectable: true, flags: { happier: false, protection: 'none', atLeast: false, inUse: false }, childCount: 0, ...extra });
         const scan = { scanId: 'scan-1', target: { volumeId: 'mac' }, status: 'complete', progress: { sizedBytes: 582 * GB, usedBytes: 582 * GB, items: 10 },
             startedAt: 1, finishedAt: 2, unreadable: { counts: { permission: 0, os_private: 0, timeout: 0, io: 0 }, examples: [] },
             fullDiskAccess: { state: 'granted', binary: { name: 'happier-support', path: '/x' } } };

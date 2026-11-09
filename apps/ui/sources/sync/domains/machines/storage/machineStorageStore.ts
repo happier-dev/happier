@@ -21,8 +21,8 @@ export type MachineStorageCategoryState = Readonly<{ status: MachineStorageState
  * any delta still on its way, which carries only the served reference until the machine answers.
  */
 export type MachineStoragePileView = Omit<MachineStoragePileResultV1, 'items'> & Readonly<{ items: readonly Readonly<StorageItemRefV1>[] }>;
-export type MachineStoragePileState = Readonly<{ status: MachineStorageState['status']; page: MachineStoragePileView | null; pending: boolean }>;
-export type MachineStorageScanState = Readonly<{ status: MachineStorageState['status']; page: MachineStorageScanGetResultV1 | null }>;
+export type MachineStoragePileState = Readonly<{ status: MachineStorageState['status']; page: MachineStoragePileView | null; pending: boolean; failure?: MachineStorageFailure }>;
+export type MachineStorageScanState = Readonly<{ status: MachineStorageState['status']; page: MachineStorageScanGetResultV1 | null; failure?: MachineStorageFailure }>;
 export type MachineStorageRestoreOutcomes = Readonly<Record<string, TrashRestoreResultV1['outcomes'][number]>>;
 const EMPTY_RESTORE_OUTCOMES: MachineStorageRestoreOutcomes = Object.freeze({});
 export type MachineStorageItemsState = Readonly<{ status: MachineStorageState['status']; page: MachineStorageItemsListResultV1 | null; failure?: MachineStorageFailure }>;
@@ -275,7 +275,7 @@ export function createMachineStorageStore(clients: MachineStorageClients) {
             const response = await snapshotClient({ ...input, signal });
             if (signal?.aborted) return state;
             const current = piles.getState(input);
-            if (!response.ok) return retainDeep(current, { ...current, status: failureStatus(response.reason) });
+            if (!response.ok) return retainDeep(current, { ...current, status: failureStatus(response.reason), failure: response });
             const queue = pileWrites.get(machineKey(input));
             if (queue) queue.base = response.value;
             const page = projectPile(input, response.value);
@@ -306,7 +306,7 @@ export function createMachineStorageStore(clients: MachineStorageClients) {
                 && known?.status !== 'running') return current;
             return response.ok ? retainDeep(current, { status: 'ready', page: reconcileScan(current.page,
                 known && known.status !== 'running' ? projectScanPageState(response.value, known) : response.value) })
-                : retainDeep(current, { ...current, status: failureStatus(response.reason) });
+                : retainDeep(current, { ...current, status: failureStatus(response.reason), failure: response });
         },
         failRefresh: state => retainDeep(state, { ...state, status: 'error' }),
         applySnapshot: (state, page) => retainDeep(state, { ...state, page: reconcileScan(state.page, page) }),

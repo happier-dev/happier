@@ -181,6 +181,7 @@ export const DiskNodeV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.enum(['folder', 'file', 'package', 'small-items', 'hidden-space', 'reserved', 'mount', 'cloud-only']),
   size: StorageSizeV1Schema, logicalBytes: bytes(), items: bytes(), changedAt: time(), deltaSincePrevious: z.optional(z.number().check(z.int())),
   flags: z.strictObject({ happier: z.boolean(), protection: z.enum(['forbidden', 'keep', 'none']), atLeast: z.boolean(), inUse: z.boolean() }), childCount: bytes(),
+  verdict: StorageItemV1Schema.shape.verdict, collectable: z.boolean(),
   reason: z.optional(StorageReasonV1Schema), loses: z.optional(z.array(StorageReasonV1Schema)),
 }));
 export type DiskNodeV1 = z.infer<typeof DiskNodeV1Schema>;

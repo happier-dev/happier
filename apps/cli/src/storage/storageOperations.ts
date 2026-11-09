@@ -393,7 +393,8 @@ export function createStorageOperations(input: Readonly<{
                     reason: classification.reason ?? owner?.reason ?? { code: 'not_rebuildable' }, collectable: true, loses: losses }, children);
                 const forbidden = node.flags.protection === 'forbidden' || projected.verdict === 'forbidden';
                 const keep = projected.verdict === 'keep';
-                projectedNodes.set(node, { ...node,
+                projectedNodes.set(node, { ...node, verdict: forbidden ? 'forbidden' : projected.verdict,
+                    collectable: !forbidden && projected.collectable,
                     ...(classification.reason || owner || children.length ? { reason: projected.reason } : {}),
                     ...(projected.loses?.length ? { loses: projected.loses } : {}), flags: { ...node.flags,
                     happier: dataRoots.hasAncestor(path) || catalogPaths.overlaps(path),

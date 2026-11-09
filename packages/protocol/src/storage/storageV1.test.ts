@@ -52,7 +52,7 @@ describe('storage V1 contract', () => {
   it('serves the selected folder root independently of its paged children', () => {
     const root = { nodeId: '/data/archive', parentId: '/data', name: 'archive', kind: 'folder', size,
       logicalBytes: 4096, items: 4, changedAt: 1, childCount: 4,
-      flags: { happier: false, protection: 'none', atLeast: false, inUse: false } };
+      verdict: 'safe', collectable: true, flags: { happier: false, protection: 'none', atLeast: false, inUse: false } };
     const page = { state: null, nodes: [], coverage: [], root };
     expect(storage.MachineStorageScanGetResultV1Schema.parse(page)).toEqual(page);
     expect(storage.MachineStorageScanGetResultV1Schema.parse({ state: null, nodes: [], coverage: [] })).not.toHaveProperty('root');
@@ -89,7 +89,7 @@ describe('storage V1 contract', () => {
   });
   it('preserves explicit Forbidden and Keep disk tiers and canonical holder loss facts', () => {
     const node = { nodeId: '/data', name: 'data', kind: 'folder', size, logicalBytes: 4096, items: 1,
-      changedAt: 1, childCount: 1, flags: { happier: false, protection: 'keep', atLeast: false, inUse: true },
+      changedAt: 1, childCount: 1, verdict: 'keep', collectable: true, flags: { happier: false, protection: 'keep', atLeast: false, inUse: true },
       reason: { code: 'in_use', detail: { sessionId: 'session' } }, loses: [{ code: 'in_use', detail: { sessionId: 'session' } }] };
     expect(storage.DiskNodeV1Schema.parse(node)).toEqual(node);
     expect(storage.DiskNodeV1Schema.parse({ ...node, flags: { ...node.flags, protection: 'forbidden' } }).flags.protection).toBe('forbidden');

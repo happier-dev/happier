@@ -92,6 +92,16 @@ at these paths. No released compatibility direction or adapter is inferred.
 
 ## Browser view discovery push (unreleased 0.3)
 
+Browser parity inputs add optional `engineOverride: 'embedded' | 'managed'` to workspace
+and view open/retarget, and optional `navigationIntent: 'address' | 'target'` to navigation.
+Saved-profile management Actions and `files.save`'s closed `browserDownload` source are
+also development-only additions. The latter names a Machine, BrowserSession, view and
+download, never a host path. Matching Protocol, SDK, daemon and UI must reload together:
+older strict readers reject these additions; absent optional fields retain their prior
+meaning. The existing Details Browser resource retains the optional engine choice,
+and old resources remain readable. No wire epoch, profile storage migration or released
+compatibility adapter is introduced by this direct development cut.
+
 Persistent-profile custody uses the same product-side profile predicate for every
 Browser command and view list/watch. A requester without Manage access receives
 `profile_policy_denied` for commands targeting a persistent profile, and discovery
@@ -1934,6 +1944,15 @@ The development V3 definition-list response optionally includes
 carry list-safe trigger summaries and the earliest enabled scheduled time for
 the actor's authorized Team Run audience; the Account-owned definition/details
 list is unchanged. The shared-library owner merges these facts for every client.
+Schedule summaries additionally carry optional nullable `nextRunAt` from that
+trigger's scheduler cursor, normalized to null when the trigger or its set is
+disabled. Exact-trigger History uses only this occurrence; Event triggers and
+older summaries without the field show no next occurrence. The workflow-wide
+minimum remains the library and Board summary. Matching development Protocol,
+Home and client readers reload together because older strict summary readers
+reject the added field. No persisted format, epoch or adapter changes. The
+inspected `../0.2` frontier at `7b37d65ca75e58560f8f3ca850958ac5407d2e75`
+has no Workflow trigger summary contract or scoped local changes at that path.
 Each trigger summary also carries its Automation and trigger ids for the saved
 Workflow's History entry. Account and Team readers use the same Run history
 component and the optional `workflow.run.list.triggerId` predicate; the predicate

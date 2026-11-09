@@ -17,6 +17,37 @@ function answer(at = 1000): MachineProcessesAnswerV1 {
 }
 async function settle() { for (let i = 0; i < 10; i++) await Promise.resolve(); }
 describe('machine process subscription and cleanup selection', () => {
+    it('retains unchanged All-process groups and members through one changed group and reordering', async () => {
+        let value: MachineProcessesAnswerV1 = { ...answer(), notHappier: [
+            { appGroup: 'first', members: [{ name: 'first', appGroup: 'first', pid: 30, ref: 'first-30', memoryBytes: 10 }] },
+            { appGroup: 'second', members: [{ name: 'second', appGroup: 'second', pid: 40, ref: 'second-40', memoryBytes: 20 },
+                { name: 'second-child', appGroup: 'second', pid: 41, ref: 'second-41', memoryBytes: 30 }] },
+        ] };
+        const store = createMachineProcessesStore({ snapshotClient: async () => ({ ok: true, value: structuredClone(value) }),
+            watchClient: () => new Promise(() => {}) });
+        const all = { ...key, scope: 'all' as const };
+        try {
+            await store.read(all);
+            const held = store.getState(all).answer!;
+            let publications = 0;
+            const stop = store.observe(all, () => { publications++; });
+            for (let index = 0; index < 3; index++) await store.read(all);
+            expect(publications).toBe(0);
+            value = structuredClone(value);
+            value.capturedAtMs++;
+            value.notHappier![1].members[0].memoryBytes = 25;
+            value.notHappier!.reverse();
+            await store.read(all);
+            const next = store.getState(all).answer!;
+            expect(publications).toBe(1);
+            expect(next.notHappier![1]).toBe(held.notHappier![0]);
+            expect(next.notHappier![0].members[1]).toBe(held.notHappier![1].members[1]);
+            expect(next.notHappier![0].members[0].memoryBytes).toBe(25);
+            expect(next.capturedAtMs).toBe(value.capturedAtMs);
+            stop();
+        } finally { store.reset(); }
+    });
+
     it('retains failed-watch freshness after the initial snapshot instead of overwriting it with a redundant read', async () => {
         const pending: Array<ReturnType<typeof createDeferred<MachineProcessesRpcResult<MachineProcessesAnswerV1>>>> = [];
         const store = createMachineProcessesStore({
@@ -51,13 +82,15 @@ describe('machine process subscription and cleanup selection', () => {
             await settle();
             expect(store.getState(key)).toMatchObject({ status: 'loading', answer: null });
             // The transport owns expiry; the store neither adds a timer nor retries it silently.
-            pending.resolve({ ok: false, reason: 'request_failed' });
+            const failure = { ok: false as const, reason: 'request_failed' as const, errorCode: 'permission_denied' };
+            pending.resolve(failure);
             await settle();
-            expect(store.getState(key)).toMatchObject({ status: 'error', reason: 'request_failed', answer: null });
+            expect(store.getState(key)).toMatchObject({ status: 'error', reason: 'request_failed', answer: null, failure });
             retry = true;
             store.retry(key);
             await settle();
             expect(store.getState(key)).toMatchObject({ status: 'ready', answer: { state: 'live' } });
+            expect(store.getState(key)).not.toHaveProperty('failure');
         } finally { release(); store.reset(); }
     });
     it('shares reads and long polls, preserves unchanged owner/row references and retains last good rows after failure and release', async () => {

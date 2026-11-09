@@ -1,19 +1,19 @@
 import { MACHINE_PROCESS_HISTORY_WINDOW_MS, type MachineProcessesAnswerV1, type MachineProcessesWatchResultV1, type OwnerRowV1, type ProcessRowV1 } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
 import { createSharedSubscriptionStore, type SharedSubscriptionStore } from '@/sync/runtime/subscriptions/sharedSubscriptionStore';
 import type { MachineProcessesKey, MachineProcessesReadInput, MachineProcessesWatchInput, MachineProcessesRpcResult } from './machineProcessesRpc';
+import { retainDeep, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
+import type { MachineDaemonRpcFailure } from '../machineDaemonRpcErrors';
 
 export type MachineProcessesState = Readonly<{ status: 'loading' | 'ready' | 'error' | 'not_supported' | 'unavailable';
-    answer: MachineProcessesAnswerV1 | null; reason?: MachineProcessesAnswerV1['reason'] | 'older_happier' | 'request_failed' | 'invalid_response' }>;
+    answer: MachineProcessesAnswerV1 | null; reason?: MachineProcessesAnswerV1['reason'] | MachineDaemonRpcFailure['reason']; failure?: MachineDaemonRpcFailure }>;
 export type MachineProcessesClients = Readonly<{
     snapshotClient(input: MachineProcessesReadInput): Promise<MachineProcessesRpcResult<MachineProcessesAnswerV1>>;
     watchClient(input: MachineProcessesWatchInput): Promise<MachineProcessesRpcResult<MachineProcessesWatchResultV1>>;
 }>;
 export const EMPTY_MACHINE_PROCESSES_STATE: MachineProcessesState = { status: 'loading', answer: null };
-type ProcessUpdate = Readonly<{ kind: 'answer'; answer: MachineProcessesAnswerV1 }> | Readonly<{ kind: 'failure'; reason: 'older_happier' | 'request_failed' | 'invalid_response' }>;
-function retain<T>(old: T, next: T): T { return JSON.stringify(old) === JSON.stringify(next) ? old : next; }
-function retainRows<T extends ProcessRowV1>(old: T[], next: T[]): T[] {
-    const byRef = new Map(old.map(row => [row.ref, row]));
-    return retain(old, next.map(row => { const existing = byRef.get(row.ref); return existing ? retain(existing, row) : row; }));
+type ProcessUpdate = Readonly<{ kind: 'answer'; answer: MachineProcessesAnswerV1 }> | Readonly<{ kind: 'failure'; failure: MachineDaemonRpcFailure }>;
+function retainRows<T extends Pick<ProcessRowV1, 'ref'>>(old: T[], next: T[]): T[] {
+    return retainKeyedRows(old, next, row => row.ref, { freeze: false }) as T[];
 }
 type ProcessHistory = NonNullable<MachineProcessesAnswerV1['history']>;
 /** The newest sample the client holds across every series: the cursor the daemon answers a delta against. */
@@ -53,25 +53,33 @@ function reconcile(previous: MachineProcessesAnswerV1 | null, answer: MachinePro
     const byId = new Map(previous.owners.map(owner => [owner.rowId, owner]));
     const owners = answer.owners.map(owner => {
         const old = byId.get(owner.rowId);
-        return old ? retain(old, { ...owner, members: retainRows(old.members, owner.members), totals: retain(old.totals, owner.totals) } satisfies OwnerRowV1) : owner;
+        return old ? retainDeep(old, { ...owner, members: retainRows(old.members, owner.members), totals: retainDeep(old.totals, owner.totals) } satisfies OwnerRowV1) : owner;
     });
-    const settled = retain(previousBare, { ...bare, owners: retain(previous.owners, owners), leftBehind: retainRows(previous.leftBehind, answer.leftBehind),
-        totals: retain(previous.totals, answer.totals),
-        ...(answer.notHappier ? { notHappier: retain(previous.notHappier, answer.notHappier) } : {}) });
+    const byApp = new Map(previous.notHappier?.map(group => [group.appGroup, group]));
+    const notHappier = answer.notHappier?.map(group => {
+        const old = byApp.get(group.appGroup);
+        return old ? retainDeep(old, { ...group, members: retainRows(old.members, group.members) }) : group;
+    });
+    const settled = retainDeep(previousBare, { ...bare, owners: retainDeep(previous.owners, owners), leftBehind: retainRows(previous.leftBehind, answer.leftBehind),
+        totals: retainDeep(previous.totals, answer.totals),
+        ...(notHappier ? { notHappier: retainDeep(previous.notHappier, notHappier) } : {}) });
     return settled === previousBare && history === previousHistory ? previous : { ...settled, ...(history ? { history } : {}) };
 }
 function settle(state: MachineProcessesState, next: MachineProcessesState): MachineProcessesState {
-    return state.status === next.status && state.reason === next.reason && state.answer === next.answer ? state : next;
+    const failure = retainDeep(state.failure, next.failure);
+    return state.status === next.status && state.reason === next.reason && state.answer === next.answer && state.failure === failure
+        ? state : { ...next, ...(failure ? { failure } : {}) };
 }
 function adopt(state: MachineProcessesState, answer: MachineProcessesAnswerV1): MachineProcessesState {
     if (state.answer && state.answer.capturedAtMs > answer.capturedAtMs) return state;
     if (answer.state === 'unavailable') return settle(state, { status: 'unavailable', reason: answer.reason,
-        answer: state.answer?.state === 'live' ? state.answer : retain(state.answer, answer) });
+        answer: state.answer?.state === 'live' ? state.answer : retainDeep(state.answer, answer) });
     return settle(state, { status: 'ready', answer: reconcile(state.answer, answer) });
 }
 function apply(state: MachineProcessesState, update: ProcessUpdate): MachineProcessesState {
     return update.kind === 'answer' ? adopt(state, update.answer)
-        : settle(state, { ...state, reason: update.reason, status: update.reason === 'older_happier' ? 'not_supported' : 'error' });
+        : settle(state, { ...state, failure: update.failure, reason: update.failure.reason,
+            status: update.failure.reason === 'older_happier' ? 'not_supported' : 'error' });
 }
 export function createMachineProcessesStore(clients: MachineProcessesClients) {
     const storeKey = (input: MachineProcessesKey) => JSON.stringify([input.serverId ?? null, input.accountId ?? null, input.machineId, input.scope, input.view, input.detailToken ?? null]);
@@ -87,7 +95,7 @@ export function createMachineProcessesStore(clients: MachineProcessesClients) {
             const result = await snapshotClient({ ...input, signal });
             if (signal?.aborted) return state;
             const current = store.getState(input);
-            return result.ok ? adopt(current, result.value) : apply(current, { kind: 'failure', reason: result.reason });
+            return result.ok ? adopt(current, result.value) : apply(current, { kind: 'failure', failure: result });
         },
         failRefresh: state => settle(state, { ...state, status: 'error' }), applySnapshot: apply,
         watch: async ({ input, state, watchClient, signal }) => {
@@ -97,7 +105,7 @@ export function createMachineProcessesStore(clients: MachineProcessesClients) {
                 ...(historySince === undefined ? {} : { historySince }), signal });
             if (signal?.aborted) return { status: 'unavailable' };
             if (!result.ok) {
-                store.publish(input, { kind: 'failure', reason: result.reason });
+                store.publish(input, { kind: 'failure', failure: result });
                 return { status: 'unavailable' };
             }
             if (!result.value.changed) return { status: 'idle' };

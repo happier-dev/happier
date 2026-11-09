@@ -37,16 +37,24 @@ beforeEach(async () => {
 afterEach(async () => { boundary.rpc.mockReset(); await homes.reset(); });
 
 describe('storage Action and Machine RPC boundary', () => {
+    it('preserves typed non-permission failures through Action reads and parked watches', async () => {
+        const failureCause = { phase: 'dispatch' as const, errorClass: 'RpcError', errorCode: RPC_ERROR_CODES.FORBIDDEN, httpStatus: 403 };
+        boundary.rpc.mockRejectedValue(new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN, failureCause));
+        const failure = { ok: false, reason: 'request_failed', errorCode: RPC_ERROR_CODES.FORBIDDEN, failureCause };
+        expect(await fetchMachineStorageSummaryViaAction(key)).toEqual(failure);
+        expect(await watchMachineStorageViaMachineRpc(key)).toEqual(failure);
+    });
+
     it('preserves unavailable policy through Action reads, effects and the parked watch', async () => {
         boundary.rpc.mockRejectedValue(new RpcError('Storage policy is unavailable', 'policy_unavailable'));
-        expect(await fetchMachineStorageSummaryViaAction(key)).toEqual({ ok: false, reason: 'policy_unavailable' });
-        expect(await storageRpc.checkMachineStorageItemsViaAction({ ...key, refs: [] })).toEqual({ ok: false, reason: 'policy_unavailable' });
+        expect(await fetchMachineStorageSummaryViaAction(key)).toMatchObject({ ok: false, reason: 'policy_unavailable' });
+        expect(await storageRpc.checkMachineStorageItemsViaAction({ ...key, refs: [] })).toMatchObject({ ok: false, reason: 'policy_unavailable' });
         expect(await storageRpc.deleteMachineStorageNowViaAction({ ...key, items: [reviewed()], reviewedByPerson: true }))
-            .toEqual({ ok: false, reason: 'policy_unavailable' });
-        expect(await watchMachineStorageViaMachineRpc(key)).toEqual({ ok: false, reason: 'policy_unavailable' });
+            .toMatchObject({ ok: false, reason: 'policy_unavailable' });
+        expect(await watchMachineStorageViaMachineRpc(key)).toMatchObject({ ok: false, reason: 'policy_unavailable' });
         boundary.rpc.mockResolvedValueOnce({ status: 'unavailable', reason: 'policy_unavailable' });
         expect(await storageRpc.addMachineStorageProtectedFolderViaAction({ ...key, path: '/protected' }))
-            .toEqual({ ok: false, reason: 'policy_unavailable' });
+            .toMatchObject({ ok: false, reason: 'policy_unavailable' });
         boundary.rpc.mockResolvedValueOnce({ status: 'unavailable', reason: 'transport_unavailable' });
         expect(await storageRpc.addMachineStorageProtectedFolderViaAction({ ...key, path: '/protected' }))
             .toEqual({ ok: true, value: { status: 'unavailable', reason: 'transport_unavailable' } });
@@ -95,12 +103,10 @@ describe('storage Action and Machine RPC boundary', () => {
 
     it('still asks for an unreviewed permanent delete, and an explicit Ask first goes to approval without a receipt or mutation', async () => {
         const item = reviewed();
-        expect(await storageRpc.deleteMachineStorageNowViaAction({ ...key, items: [item] })).toEqual({ ok: false, reason: 'declined' });
+        expect(await storageRpc.deleteMachineStorageNowViaAction({ ...key, items: [item] })).toMatchObject({ ok: false, reason: 'declined' });
         expect(Modal.confirm).toHaveBeenCalledOnce();
         vi.mocked(Modal.confirm).mockClear();
-        homes.answer(key.serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {
-            actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'machines.storage.deleteNow': { approvalRequiredSurfaces: ['ui'] } } }),
-        } }, version: 1 } });
+        await homes.requireUiApproval(key.serverId, 'machines.storage.deleteNow');
         // An explicit Ask first is the person's own Action policy and the review does not replace it: the request waits
         // for that approval, and nothing reaches the machine until it is given.
         expect(await machineStorageStore.applyPile({ ...key, mode: 'delete', items: [item] })).toEqual({ ok: false, reason: 'approval_requested' });
@@ -111,7 +117,7 @@ describe('storage Action and Machine RPC boundary', () => {
 
     it('lets shared policy decline Empty without changing the machine or producing a receipt', async () => {
         expect(await machineStorageStore.emptyTrash({ ...key, entryIds: ['entry-a'] }))
-            .toEqual({ ok: false, reason: 'declined' });
+            .toMatchObject({ ok: false, reason: 'declined' });
         expect(Modal.confirm).toHaveBeenCalledOnce();
         expect(boundary.rpc).not.toHaveBeenCalled();
         expect(machineStorageStore.getReceipt(key)).toBeNull();
@@ -160,11 +166,11 @@ describe('storage Action and Machine RPC boundary', () => {
     it('fails unavailable scan and protection operations closed without a direct RPC fallback', async () => {
         boundary.rpc.mockRejectedValue(new RpcError('Method not found', RPC_ERROR_CODES.METHOD_NOT_FOUND));
         expect(await storageRpc.fetchMachineStorageScanViaAction({ ...key, view: { tab: 'old', depth: 1, olderThanDays: 1000 } }))
-            .toEqual({ ok: false, reason: 'older_happier' });
+            .toMatchObject({ ok: false, reason: 'older_happier' });
         expect(await storageRpc.startMachineStorageScanViaAction({ ...key, target: { folderPath: '/folder' } }))
-            .toEqual({ ok: false, reason: 'older_happier' });
+            .toMatchObject({ ok: false, reason: 'older_happier' });
         expect(await storageRpc.addMachineStorageProtectedFolderViaAction({ ...key, path: '/folder' }))
-            .toEqual({ ok: false, reason: 'older_happier' });
+            .toMatchObject({ ok: false, reason: 'older_happier' });
         expect(boundary.rpc.mock.calls.map(([input]) => input.method)).toEqual([
             RPC_METHODS.DAEMON_STORAGE_SCAN_GET, RPC_METHODS.DAEMON_STORAGE_SCAN_START, RPC_METHODS.DAEMON_STORAGE_PROTECTED_ADD,
         ]);
@@ -175,9 +181,9 @@ describe('storage Action and Machine RPC boundary', () => {
         for (const code of [RPC_ERROR_CODES.METHOD_NOT_FOUND, RPC_ERROR_CODES.METHOD_NOT_AVAILABLE]) {
             boundary.rpc.mockReset().mockRejectedValue(new RpcError('Unavailable operation', code));
             const reason = code === RPC_ERROR_CODES.METHOD_NOT_FOUND ? 'older_happier' : 'request_failed';
-            expect(await fetchMachineStorageSummaryViaAction(key)).toEqual({ ok: false, reason });
-            expect(await fetchMachineStorageCategoryViaAction({ ...key, categoryId: 'logs', cursor: 'daemon-cursor' })).toEqual({ ok: false, reason });
-            expect(await refreshMachineStorageSizeViaAction({ ...key, categoryId: 'logs' })).toEqual({ ok: false, reason });
+            expect(await fetchMachineStorageSummaryViaAction(key)).toMatchObject({ ok: false, reason });
+            expect(await fetchMachineStorageCategoryViaAction({ ...key, categoryId: 'logs', cursor: 'daemon-cursor' })).toMatchObject({ ok: false, reason });
+            expect(await refreshMachineStorageSizeViaAction({ ...key, categoryId: 'logs' })).toMatchObject({ ok: false, reason });
             expect(boundary.rpc.mock.calls.map(([input]) => input.method)).toEqual([
                 RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET, RPC_METHODS.DAEMON_STORAGE_CATEGORY_LIST, RPC_METHODS.DAEMON_STORAGE_SIZE_REFRESH,
             ]);
@@ -195,11 +201,11 @@ describe('storage Action and Machine RPC boundary', () => {
             payload: { serverId: key.serverId, machineId: key.machineId, sinceRevision: 3 }, signal: controller.signal,
         }));
         boundary.rpc.mockResolvedValueOnce({ changed: true });
-        expect(await watchMachineStorageViaMachineRpc(key)).toEqual({ ok: false, reason: 'invalid_response' });
+        expect(await watchMachineStorageViaMachineRpc(key)).toMatchObject({ ok: false, reason: 'invalid_response' });
         boundary.rpc.mockRejectedValueOnce(new RpcError('Method not found', RPC_ERROR_CODES.METHOD_NOT_FOUND));
-        expect(await watchMachineStorageViaMachineRpc(key)).toEqual({ ok: false, reason: 'older_happier' });
+        expect(await watchMachineStorageViaMachineRpc(key)).toMatchObject({ ok: false, reason: 'older_happier' });
         controller.abort();
-        expect(await watchMachineStorageViaMachineRpc({ ...key, signal: controller.signal })).toEqual({ ok: false, reason: 'request_failed' });
+        expect(await watchMachineStorageViaMachineRpc({ ...key, signal: controller.signal })).toMatchObject({ ok: false, reason: 'request_failed' });
     });
 
     it('uses the scoped Action front door for pile deltas and retains only daemon-validated results', async () => {
@@ -211,21 +217,21 @@ describe('storage Action and Machine RPC boundary', () => {
             payload: { machineId: key.machineId, serverId: HOME, clear: true },
         }));
         boundary.rpc.mockResolvedValueOnce({ ...value, items: [{ path: '/unproven' }] });
-        expect(await storageRpc.setMachineStoragePileViaAction({ ...key, clear: true })).toEqual({ ok: false, reason: 'invalid_response' });
+        expect(await storageRpc.setMachineStoragePileViaAction({ ...key, clear: true })).toMatchObject({ ok: false, reason: 'invalid_response' });
     });
 
     it('refuses a wrong Account, disabled Action and cancelled intent before touching the machine', async () => {
         expect(await storageRpc.setMachineStoragePileViaAction({ ...key, expectedAccountId: 'another-account', clear: true }))
-            .toEqual({ ok: false, reason: 'request_failed' });
+            .toMatchObject({ ok: false, reason: 'request_failed' });
         homes.answer(key.serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {
             actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'machines.storage.pile.set': { enabled: false } } }),
         } }, version: 1 } });
         expect(await storageRpc.setMachineStoragePileViaAction({ ...key, clear: true }))
-            .toEqual({ ok: false, reason: 'request_failed' });
+            .toMatchObject({ ok: false, reason: 'request_failed' });
         const controller = new AbortController();
         controller.abort();
         expect(await storageRpc.setMachineStoragePileViaAction({ ...key, clear: true, signal: controller.signal }))
-            .toEqual({ ok: false, reason: 'request_failed' });
+            .toMatchObject({ ok: false, reason: 'request_failed' });
         expect(boundary.rpc).not.toHaveBeenCalled();
     });
 });

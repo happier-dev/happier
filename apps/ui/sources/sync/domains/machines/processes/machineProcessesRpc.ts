@@ -1,17 +1,17 @@
 import { MachineProcessesAnswerV1Schema, MachineProcessesListInputV1Schema, MachineProcessesWatchInputV1Schema,
     MachineProcessesWatchResultV1Schema, type MachineProcessesAnswerV1, type MachineProcessesWatchResultV1 } from '@happier-dev/protocol/machines/processes/machineProcessesV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { createRpcCallError, readRpcErrorCode, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpcErrors';
+import { createRpcCallError, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpcErrors';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { isMachineDaemonRpcUnsupportedError } from '../machineDaemonRpcErrors';
+import { projectMachineDaemonRpcFailure, type MachineDaemonRpcFailure } from '../machineDaemonRpcErrors';
 
 export type MachineProcessesKey = Readonly<{ serverId?: string | null; machineId: string; scope: 'happier' | 'all'; view: 'tree' | 'owners'; detailToken?: string;
     /** Captured credential/cache scope; never caller authority or an RPC payload field. */
     accountId?: string }>;
 export type MachineProcessesReadInput = MachineProcessesKey & Readonly<{ signal?: AbortSignal }>;
 export type MachineProcessesWatchInput = MachineProcessesReadInput & Readonly<{ since?: number; historySince?: number }>;
-export type MachineProcessesRpcResult<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; reason: 'older_happier' | 'request_failed' | 'invalid_response' }>;
+export type MachineProcessesRpcResult<T> = Readonly<{ ok: true; value: T }> | MachineDaemonRpcFailure;
 
 let actionExecute: FrontDoorActionExecute | undefined;
 async function read<T>(input: MachineProcessesReadInput, request: () => Promise<unknown>,
@@ -24,8 +24,7 @@ async function read<T>(input: MachineProcessesReadInput, request: () => Promise<
         const parsed = parse(raw);
         return parsed.success ? { ok: true, value: parsed.data } : { ok: false, reason: 'invalid_response' };
     } catch (error) {
-        return { ok: false, reason: isMachineDaemonRpcUnsupportedError(error) ? 'older_happier'
-            : readRpcErrorCode(error) === 'invalid_action_output' ? 'invalid_response' : 'request_failed' };
+        return projectMachineDaemonRpcFailure(error);
     }
 }
 export function fetchMachineProcessesViaMachineRpc(input: MachineProcessesReadInput): Promise<MachineProcessesRpcResult<MachineProcessesAnswerV1>> {
@@ -37,7 +36,7 @@ export function fetchMachineProcessesViaMachineRpc(input: MachineProcessesReadIn
             surface: 'ui', ...(input.serverId ? { serverId: input.serverId } : {}),
             ...(input.accountId ? { expectedAccountId: input.accountId } : {}), ...(input.signal ? { signal: input.signal } : {}),
         });
-        if (!outcome.ok) throw createRpcCallError({ error: outcome.error, errorCode: outcome.errorCode });
+        if (!outcome.ok) throw createRpcCallError({ error: outcome.error, errorCode: outcome.errorCode, failureCause: outcome.failureCause });
         return outcome.result;
     }, raw => MachineProcessesAnswerV1Schema.safeParse(raw));
 }

@@ -7,14 +7,14 @@ import {
 import { MachineGuardActivityListV1Schema, type MachineGuardActivityListV1 } from '@happier-dev/protocol/machines/guard/activityV1';
 import type { MachineGuardActionId } from '@happier-dev/protocol/machines/guard/actionIdsV1';
 import { MachineGuardKeepRunningResultV1Schema } from '@happier-dev/protocol/actions/specs/machineGuard';
-import { createRpcCallError, readRpcErrorCode, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpcErrors';
+import { createRpcCallError, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpcErrors';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 
 import type { MachineDaemonReadKey } from '../useMachineDaemonReadTarget';
-import { isMachineDaemonRpcUnsupportedError } from '../machineDaemonRpcErrors';
+import { projectMachineDaemonRpcFailure, type MachineDaemonRpcFailure } from '../machineDaemonRpcErrors';
 
 /**
  * The Guard's reads and its two person-facing writes, through the published Actions (lane 50a's stable
@@ -26,7 +26,7 @@ export type MachineGuardReadInput = MachineDaemonReadKey & Readonly<{ signal?: A
 export type MachineGuardActivityQuery = Readonly<{ range: 'today' | '7d' | '30d'; filter: 'all' | 'stopped' | 'cleaned_up' | 'needs_look' }>;
 /** Guard's preview and the Activity page open on the same history, before the person changes filters. */
 export const DEFAULT_MACHINE_GUARD_ACTIVITY_QUERY = { range: '7d', filter: 'all' } as const satisfies MachineGuardActivityQuery;
-export type MachineGuardResult<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; reason: 'older_happier' | 'request_failed' | 'invalid_response' }>;
+export type MachineGuardResult<T> = Readonly<{ ok: true; value: T }> | MachineDaemonRpcFailure;
 export type MachineGuardClients = Readonly<{
     viewClient: (input: MachineGuardReadInput) => Promise<MachineGuardResult<MachineGuardViewV1>>;
     watchClient: (input: MachineGuardReadInput & Readonly<{ since?: number }>) => Promise<MachineGuardResult<MachineGuardWatchResultV1>>;
@@ -46,8 +46,7 @@ async function result<T>(input: Readonly<{ signal?: AbortSignal }>, request: () 
         const parsed = parse(raw);
         return parsed.success ? { ok: true, value: parsed.data } : { ok: false, reason: 'invalid_response' };
     } catch (error) {
-        return { ok: false, reason: isMachineDaemonRpcUnsupportedError(error) ? 'older_happier'
-            : readRpcErrorCode(error) === 'invalid_action_output' ? 'invalid_response' : 'request_failed' };
+        return projectMachineDaemonRpcFailure(error);
     }
 }
 
@@ -58,7 +57,7 @@ async function execute(input: MachineGuardReadInput, actionId: MachineGuardActio
         machineId: input.machineId, ...(input.serverId ? { serverId: input.serverId } : {}), ...extra,
     }, { surface: 'ui', ...(input.serverId ? { serverId: input.serverId } : {}),
         ...(input.expectedAccountId ? { expectedAccountId: input.expectedAccountId } : {}), ...(input.signal ? { signal: input.signal } : {}) });
-    if (!outcome.ok) throw createRpcCallError({ error: outcome.error, errorCode: outcome.errorCode });
+    if (!outcome.ok) throw createRpcCallError({ error: outcome.error, errorCode: outcome.errorCode, failureCause: outcome.failureCause });
     return outcome.result;
 }
 

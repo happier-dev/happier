@@ -218,11 +218,33 @@ describe('machine storage subscription owner', () => {
         } finally { stopSummary(); stopCategory(); }
     });
 
+    it('retains pile and scan read diagnostics until a successful retry', async () => {
+        const failure = { ok: false as const, reason: 'request_failed' as const, errorCode: RPC_ERROR_CODES.FORBIDDEN };
+        let recovered = false;
+        const store = createMachineStorageStore({ summaryClient: async () => ({ ok: true, value: summary() }),
+            categoryClient: async () => ({ ok: true, value: category() }), refreshClient: async () => ({ ok: true, value: summary() }),
+            watchClient: async () => new Promise(() => {}),
+            scanClient: async () => recovered ? { ok: true, value: MachineStorageScanGetResultV1Schema.parse({ state: null, coverage: [], nodes: [] }) } : failure,
+            pileClient: async () => recovered ? { ok: true, value: { revision: 1, items: [], summary: { count: 0, freesBytes: 0, droppedSinceLastView: [] } } } : failure,
+        });
+        stores.push(store);
+        const input = { ...key, view: { tab: 'folders' as const, depth: 1 as const } };
+        await store.readScan(input); await store.readPile(key);
+        expect(store.getScan(input)).toMatchObject({ status: 'error', failure });
+        expect(store.getPile(key)).toMatchObject({ status: 'error', failure });
+        recovered = true;
+        await store.readScan(input); await store.readPile(key);
+        expect(store.getScan(input)).toMatchObject({ status: 'ready' });
+        expect(store.getPile(key)).toMatchObject({ status: 'ready' });
+        expect(store.getScan(input)).not.toHaveProperty('failure');
+        expect(store.getPile(key)).not.toHaveProperty('failure');
+    });
+
     it('keeps equal scan and pile reads silent and retains unchanged rows through reordered changes', async () => {
         const size = summary().categories[0]!.size;
         let scan = MachineStorageScanGetResultV1Schema.parse({ state: null, coverage: [], nodes: ['first', 'second'].map(nodeId => ({
             nodeId, name: nodeId, kind: 'folder', size, logicalBytes: 20, items: 1, changedAt: 100, childCount: 0,
-            flags: { happier: false, protection: 'none', atLeast: false, inUse: false },
+            verdict: 'safe', collectable: true, flags: { happier: false, protection: 'none', atLeast: false, inUse: false },
         })) });
         let pile = { revision: 1, items: ['first', 'second'].map(itemId => PileItemRefV1Schema.parse({
             itemId, path: `/${itemId}`, identity: { dev: '1', ino: itemId, kind: 'directory' }, collectedAt: 100,
@@ -337,14 +359,15 @@ describe('machine storage subscription owner', () => {
             await h.store.read(key);
             expect(h.store.getState(key).status).toBe('ready');
             boundary.rpc.mockRejectedValue(new RpcError('Storage policy is unavailable', 'policy_unavailable'));
-            expect(await request(), operation).toEqual({ ok: false, reason: 'policy_unavailable' });
+            expect(await request(), operation).toMatchObject({ ok: false, reason: 'policy_unavailable', errorCode: 'policy_unavailable' });
             expect(h.store.getState(key), operation).toEqual({ status: 'policy_unavailable', summary: known });
         }
         boundary.rpc.mockResolvedValue(summary());
         await h.store.read(key);
         expect(h.store.getState(key).status).toBe('ready');
         boundary.rpc.mockRejectedValue(new RpcError('Storage policy is unavailable', 'policy_unavailable'));
-        expect(await h.store.sizeAgain(key)).toEqual({ status: 'policy_unavailable', summary: known });
+        expect(await h.store.sizeAgain(key)).toMatchObject({ status: 'policy_unavailable', summary: known,
+            failure: { ok: false, reason: 'policy_unavailable', errorCode: 'policy_unavailable' } });
         expect(h.store.getState(key).summary).toBe(known);
     });
     it('keeps a refused scan start as page state until the next attempt or success', async () => {
@@ -365,12 +388,12 @@ describe('machine storage subscription owner', () => {
         const notified = vi.fn();
         const stop = h.store.observeScanStartFailure(key, notified);
         expect(h.store.getScanStartFailure(key)).toBeNull();
-        expect(await h.store.startScan({ ...key, target })).toEqual({ ok: false, reason: 'whole_disk_disabled' });
-        expect(h.store.getScanStartFailure(key)).toEqual({ reason: 'whole_disk_disabled', target });
+        expect(await h.store.startScan({ ...key, target })).toEqual({ ok: false, reason: 'whole_disk_disabled', errorCode: 'storage_whole_disk_disabled' });
+        expect(h.store.getScanStartFailure(key)).toEqual({ reason: 'whole_disk_disabled', errorCode: 'storage_whole_disk_disabled', target });
         expect(notified).toHaveBeenCalledTimes(1);
         // An unknown refusal is kept too, as the generic reason the view words plainly.
         expect(await h.store.startScan({ ...key, target })).toMatchObject({ ok: false });
-        expect(h.store.getScanStartFailure(key)).toEqual({ reason: 'request_failed', target });
+        expect(h.store.getScanStartFailure(key)).toEqual({ reason: 'request_failed', errorCode: 'something_new', target });
         expect(await h.store.startScan({ ...key, target })).toMatchObject({ ok: true });
         expect(h.store.getScanStartFailure(key)).toBeNull();
         stop();
@@ -389,7 +412,7 @@ describe('machine storage subscription owner', () => {
         const retry = h.store.startScan({ ...key, target });
         await vi.waitFor(() => expect(h.store.getScanStartFailure(key)).toBeNull());
         second.resolve({ ok: false, errorCode: 'approval_rejected', error: 'Declined' });
-        expect(await retry).toEqual({ ok: false, reason: 'declined' });
+        expect(await retry).toEqual({ ok: false, reason: 'declined', errorCode: 'approval_rejected' });
         expect(h.store.getScanStartFailure(key)).toBeNull();
     });
     it('retains last-known sizes while policy is unavailable and recovers on the daemon policy edge', async () => {
@@ -398,7 +421,8 @@ describe('machine storage subscription owner', () => {
         const known = h.store.getState(key).summary;
         h.responses.summary.mockResolvedValue({ ok: false, errorCode: 'policy_unavailable', error: 'Storage policy is unavailable' });
         await h.store.read(key);
-        expect(h.store.getState(key)).toEqual({ status: 'policy_unavailable', summary: known });
+        expect(h.store.getState(key)).toEqual({ status: 'policy_unavailable', summary: known,
+            failure: { ok: false, reason: 'policy_unavailable', errorCode: 'policy_unavailable' } });
         h.responses.summary.mockResolvedValue(success(summary(2)));
         const release = h.store.demand(key);
         try {
@@ -419,7 +443,7 @@ describe('machine storage subscription owner', () => {
         const page = MachineStorageScanGetResultV1Schema.parse({ state: staleStopped ? { ...running, status: 'cancelled', finishedAt: 150 } : running, nodes: [], coverage: [], indexedAt: 100,
             root: { nodeId: '/cache', name: 'cache', kind: 'folder', logicalBytes: 100, items: 1, changedAt: 100, childCount: 0,
                 size: { allocatedBytes: 100, freesBytes: 0, sharedBytes: 0, sharedExtentsUnmeasured: false, atLeast: true },
-                flags: { happier: false, protection: 'none', atLeast: true, inUse: false } } });
+                verdict: 'safe', collectable: true, flags: { happier: false, protection: 'none', atLeast: true, inUse: false } } });
         const report = { ...summary(), wholeDisk: { enabled: true, scans: [running] } };
         const slow = createDeferred<Awaited<ReturnType<NonNullable<MachineStorageClients['scanClient']>>>>();
         const watches: Array<ReturnType<typeof createDeferred<Awaited<ReturnType<MachineStorageClients['watchClient']>>>>> = [];
@@ -568,7 +592,7 @@ describe('machine storage subscription owner', () => {
         expect(h.store.getState(key).summary?.pile.count).toBe(1);
         await vi.waitFor(() => expect(boundary.reply.mock.calls.some(([action]) => action === 'machines.storage.pile.set')).toBe(true));
         pending.resolve(failed);
-        expect(await writing).toEqual({ ok: false, reason: 'request_failed' });
+        expect(await writing).toEqual({ ok: false, reason: 'request_failed', errorCode: 'request_failed' });
         expect(h.store.getPile(key)).toMatchObject({ page: { items: [], summary: { count: 0 } }, pending: false });
         expect(h.store.getState(key).summary?.pile.count).toBe(0);
     });

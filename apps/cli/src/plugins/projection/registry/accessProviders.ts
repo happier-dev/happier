@@ -2,7 +2,7 @@ import { filterRelayAccessProviderDescriptors, parseRelayAccessConfig, type Buil
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { AccessProviderSelectionV1Schema, type AccessProviderContributionV1,
-    type AccessProviderSelectionV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
+    type AccessProviderSelectionV1, type AccessProviderSelectionErrorCodeV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 import type { ResolvedAccessProviderContribution, ResolvedContributionRegistry } from './types';
@@ -24,7 +24,7 @@ export const accessProvidersProjectionFamily = definePluginProjectionFamilyV2({
 type ResolvedAccessProviderSelectionForHost =
     | Readonly<{ ok: true; kind: 'builtin'; selection: AccessProviderSelectionV1; definition: BuiltinAccessProviderDefinition }>
     | Readonly<{ ok: true; kind: 'plugin'; selection: AccessProviderSelectionV1; definition: AccessProviderContributionV1; contribution: ResolvedAccessProviderContribution }>
-    | Readonly<{ ok: false; errorCode: 'access_provider_unavailable' | 'invalid_access_provider_selection' | 'access_provider_target_unsupported'; error: string }>;
+    | Readonly<{ ok: false; errorCode: AccessProviderSelectionErrorCodeV1; error: string }>;
 
 /** Machine descriptor admission; legacy Home selection codecs are not activated here. */
 export function resolveAccessProviderSelectionForHost(params: Readonly<{

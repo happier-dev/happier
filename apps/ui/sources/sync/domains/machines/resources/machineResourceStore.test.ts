@@ -13,6 +13,7 @@ import {
   MachineResourceSummaryV1Schema,
   projectMachineResourceSummaryV1,
 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
+import { MachineVitalsSampleV1Schema } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
 import type {
   MachineResourceRpcResult,
   MachineVitalsWatchInput,
@@ -141,6 +142,158 @@ describe('machine resources subscription owner', () => {
     } finally { for (const release of releases) release(); h.store.reset(); }
   });
 
+  it('shares one active transport per Machine across summary and Overview without restarting another Machine', async () => {
+    const h = harness();
+    const overview = { ...key, view: 'overview' as const };
+    const other = { ...key, machineId: 'machine-b' };
+    const summaryOff = h.store.demand(key);
+    const overviewOff = h.store.demand(overview);
+    const otherOff = h.store.demand(other);
+    const active = (machineId: string) => h.watches.filter(watch => watch.input.machineId === machineId && !watch.input.signal?.aborted);
+    try {
+      await Promise.all([h.store.read(key), h.store.read(overview), h.store.read(other)]);
+      await settle();
+      expect(active('machine-a')).toHaveLength(1);
+      expect(active('machine-a')[0]!.input.view).toBe('overview');
+      expect(active('machine-b')).toHaveLength(1);
+      const otherWatch = active('machine-b')[0];
+      overviewOff(); await settle();
+      expect(active('machine-a')).toHaveLength(1);
+      expect(active('machine-a')[0]!.input.view).toBe('summary');
+      expect(active('machine-b')).toEqual([otherWatch]);
+      summaryOff(); await settle();
+      expect(active('machine-a')).toEqual([]);
+      expect(active('machine-b')).toEqual([otherWatch]);
+    } finally { overviewOff(); summaryOff(); otherOff(); h.store.reset(); }
+  });
+
+  it('adopts delivered samples and a later snapshot when the Machine wall clock steps backwards', async () => {
+    const h = harness();
+    const overview = { ...key, view: 'overview' as const };
+    const stop = h.store.demand(overview);
+    try {
+      await h.store.read(overview);
+      await settle();
+      expect(h.watches).toHaveLength(1);
+      h.watches[0]!.answer.resolve({ ok: true, value: { changed: true, samples: [
+        { ...sample(45_000), cpu: { reported: true, busyPct: 45 } },
+        { ...sample(30_000), cpu: { reported: true, busyPct: 70 } },
+      ] } });
+      await settle();
+      expect(h.store.getState(overview).snapshot?.sample).toMatchObject({ sampledAt: 30_000, cpu: { busyPct: 70 } });
+      expect(h.store.getState(overview).samples.map(point => point.sampledAt)).toEqual([60_000, 45_000, 30_000]);
+      expect(h.watches.at(-1)!.input.sinceSampledAt).toBe(30_000);
+      h.snapshotClient.mockResolvedValue({ ok: true, value: { ...snapshot(15_000),
+        sample: { ...sample(15_000), cpu: { reported: true, busyPct: 80 } } } });
+      await h.store.read(overview);
+      expect(h.store.getState(overview).snapshot?.sample).toMatchObject({ sampledAt: 15_000, cpu: { busyPct: 80 } });
+    } finally { stop(); h.store.reset(); }
+  });
+
+  it('projects equivalent snapshot and streamed samples across a missing minute with the same gaps and availability', async () => {
+    const h = harness(() => 180_000);
+    const stop = h.store.demand(key);
+    try {
+      await h.store.read(key);
+      await settle();
+      const incoming = sample(180_000);
+      incoming.memory = { reported: false, reason: 'unavailable' };
+      h.watches[0]!.answer.resolve({ ok: true, value: { changed: true, samples: [incoming] } });
+      await settle();
+      const complete: MachineVitalsSnapshotV1 = {
+        state: 'reporting', sample: incoming,
+        series5m: {
+          cpu: [{ t: 60_000, y: 20 }, { t: 75_000, y: null }, { t: 180_000, y: 20 }],
+          memory: [{ t: 60_000, y: 80 }, { t: 75_000, y: null }, { t: 180_000, y: null }],
+          networkRx: [{ t: 60_000, y: 12 }, { t: 75_000, y: null }, { t: 180_000, y: 12 }],
+          networkTx: [{ t: 60_000, y: 3 }, { t: 75_000, y: null }, { t: 180_000, y: 3 }],
+        },
+      };
+      // Compare the public projection as well as a reopened client: the daemon
+      // snapshot and the streaming consumer must not define competing slots.
+      expect(h.store.getState(key).summary).toEqual(projectMachineResourceSummaryV1(complete));
+      expect(h.store.getState(key).summary?.cpu.series.slice(1, -1).every(point => point.y === null)).toBe(true);
+      expect(h.store.getState(key).summary?.memory.availableBytes).toBeNull();
+      const reopened = harness(() => 180_000);
+      reopened.snapshotClient.mockResolvedValueOnce({ ok: true, value: complete });
+      await reopened.store.read(key);
+      expect(reopened.store.getState(key).summary).toEqual(h.store.getState(key).summary);
+      reopened.store.reset();
+    } finally { stop(); h.store.reset(); }
+  });
+
+  it('does not let a parked snapshot overwrite a delivered backward-clock observation', async () => {
+    const h = harness();
+    const stop = h.store.demand(key);
+    try {
+      await h.store.read(key);
+      await settle();
+      const parked = createDeferred<MachineResourceRpcResult<MachineVitalsSnapshotV1>>();
+      h.snapshotClient.mockReturnValueOnce(parked.promise);
+      const read = h.store.read(key);
+      h.watches[0]!.answer.resolve({ ok: true, value: { changed: true, samples: [
+        { ...sample(30_000), cpu: { reported: true, busyPct: 70 } },
+      ] } });
+      await settle();
+      parked.resolve({ ok: true, value: snapshot() });
+      await read;
+      expect(h.store.getState(key).snapshot?.sample).toMatchObject({ sampledAt: 30_000, cpu: { busyPct: 70 } });
+    } finally { stop(); h.store.reset(); }
+  });
+
+  it('adopts both delivered observations when a clock step repeats a wall label in a summary batch', async () => {
+    const h = harness();
+    const stop = h.store.demand(key);
+    try {
+      await h.store.read(key);
+      await settle();
+      h.watches[0]!.answer.resolve({ ok: true, value: { changed: true, samples: [
+        { ...sample(45_000), cpu: { reported: true, busyPct: 45 } },
+        { ...sample(45_000), cpu: { reported: true, busyPct: 70 } },
+      ] } });
+      await settle();
+      expect(h.store.getState(key).summary?.cpu.busyPct).toBe(70);
+      expect(h.store.getState(key).samples.map(point => point.cpu.reported ? point.cpu.busyPct : null)).toEqual([20, 45, 70]);
+      expect(h.store.getState(key).snapshot?.series5m.cpu).toEqual([{ t: 45_000, y: 45 }]);
+    } finally { stop(); h.store.reset(); }
+  });
+
+  it('retains the CPU summary identity across sub-display load changes and delivers a readable change', async () => {
+    const h = harness();
+    const response = (load1: number): MachineVitalsSnapshotV1 => ({
+      ...snapshot(),
+      sample: MachineVitalsSampleV1Schema.parse({ ...sample(60_000),
+        cpu: { reported: true, busyPct: 20, load1 } }),
+    });
+    h.snapshotClient.mockResolvedValue({ ok: true, value: response(2.314) });
+    await h.store.read(key);
+    h.store.setPublishedHost(key, { logicalCores: 8, effectiveCores: 0.5, memoryTotalBytes: 100, bootedAt: 0 });
+    const cpu = h.store.getState(key).summary?.cpu;
+    expect(cpu).toMatchObject({ load1: 2.31, logicalCores: 8, effectiveCores: 0.5 });
+    let publications = 0;
+    const stop = h.store.observe(key, () => { publications++; });
+    try {
+      for (let refresh = 0; refresh < 12; refresh++) {
+        h.store.setPublishedHost(key, { logicalCores: 8, effectiveCores: 0.5, memoryTotalBytes: 100, bootedAt: 0 });
+      }
+      expect(publications).toBe(0);
+      for (let sample = 0; sample < 12; sample++) {
+        h.snapshotClient.mockResolvedValue({ ok: true, value: response(2.3101 + sample * 0.0001) });
+        await h.store.read(key);
+        expect(h.store.getState(key).summary?.cpu).toBe(cpu);
+      }
+      h.snapshotClient.mockResolvedValue({ ok: true, value: response(2.326) });
+      await h.store.read(key);
+      expect(h.store.getState(key).summary?.cpu).not.toBe(cpu);
+      expect(h.store.getState(key).summary?.cpu).toMatchObject({ load1: 2.33 });
+      h.store.setPublishedHost(key, { logicalCores: 8, effectiveCores: 0.25, memoryTotalBytes: 100, bootedAt: 0 });
+      expect(h.store.getState(key).summary?.cpu).toMatchObject({ load1: 2.33, effectiveCores: 0.25 });
+      expect(publications).toBeGreaterThan(0);
+      await h.store.read({ ...key, view: 'overview' });
+      expect(h.store.getState({ ...key, view: 'overview' }).summary?.cpu)
+        .toMatchObject({ load1: 2.33, logicalCores: 8, effectiveCores: 0.25 });
+    } finally { stop(); h.store.reset(); }
+  });
 
   it('reads a fresh sample on its Home reconnect without waiting for the held watch or looping on request success', async () => {
     const h = harness(() => 75_000);
@@ -875,12 +1028,14 @@ describe('machine resources subscription owner', () => {
 
   it('remembers method-not-found across views and retry until daemon state changes', async () => {
     const h = harness();
-    h.snapshotClient.mockResolvedValueOnce({
+    const failure = {
       ok: false,
       reason: 'older_happier',
-    });
+      errorCode: 'METHOD_NOT_FOUND',
+    } as const;
+    h.snapshotClient.mockResolvedValueOnce(failure);
     await h.store.read(key);
-    expect(h.store.getState(key).status).toBe('not_reported');
+    expect(h.store.getState(key)).toMatchObject({ status: 'not_reported', failure });
     const release = h.store.demand({ ...key, view: 'overview' });
     h.store.retry(key);
     await settle();
@@ -889,6 +1044,18 @@ describe('machine resources subscription owner', () => {
     h.store.daemonStateChanged(key, 2);
     await settle();
     expect(h.store.getState({ ...key, view: 'overview' }).status).toBe('ready');
+    release();
+    h.store.reset();
+  });
+
+  it('retains the unsupported watch diagnostics while hiding the unavailable samples', async () => {
+    const h = harness();
+    const release = h.store.demand(key);
+    await settle();
+    const failure = { ok: false, reason: 'older_happier', errorCode: 'METHOD_NOT_FOUND' } as const;
+    h.watches[0]!.answer.resolve(failure);
+    await settle();
+    expect(h.store.getState(key)).toMatchObject({ status: 'not_reported', snapshot: null, failure });
     release();
     h.store.reset();
   });
@@ -922,7 +1089,7 @@ describe('machine resources subscription owner', () => {
   });
 
   it.each(['summary', 'overview'] as const)(
-    'fresh %s answers replace sibling memory as a whole, retaining only independent extras',
+    'fresh %s answers keep one coherent memory observation and only retain extras outside the selected view',
     async (view) => {
       let now = 60_000;
       const h = harness(() => now);
@@ -949,16 +1116,22 @@ describe('machine resources subscription owner', () => {
         },
       };
       h.snapshotClient.mockResolvedValueOnce({ ok: true, value: held });
-      await h.store.read(sibling);
+      await h.store.read({ ...key, view: 'overview' });
+      const { thermal: _thermal, ...summarySample } = held.sample;
       h.snapshotClient.mockResolvedValueOnce({
         ok: true,
         value: {
           ...held,
-          sample: { ...held.sample, thermal: { state: 'fair' as const } },
+          // Mirror the real daemon's summary projection: it omits independent
+          // Overview extras instead of supplying an alternate thermal reading.
+          sample: view === 'summary' ? summarySample : { ...held.sample, thermal: { state: 'fair' as const } },
         },
       });
       const release = h.store.demand(source);
       await settle();
+      expect(h.store.getState(source).snapshot?.sample?.thermal).toEqual(
+        view === 'summary' ? held.sample.thermal : { state: 'fair' },
+      );
       now = 120_000;
       expect(isMachineResourceStateStale(h.store.getState(sibling), now)).toBe(
         true,
@@ -973,12 +1146,10 @@ describe('machine resources subscription owner', () => {
       await settle();
       const fresh = h.store.getState(sibling);
       expect(fresh.snapshot?.sample?.sampledAt).toBe(now);
-      expect(fresh.snapshot?.sample?.thermal).toEqual(held.sample.thermal);
+      expect(fresh.snapshot?.sample?.thermal).toEqual(view === 'summary' ? held.sample.thermal : undefined);
       expect(fresh.snapshot?.sample?.memory).toEqual(incoming.memory);
       expect(fresh.snapshot?.sample?.memory).not.toHaveProperty('composition');
-      expect(
-        h.store.getState(source).snapshot?.sample?.thermal,
-      ).toBeUndefined();
+      expect(h.store.getState(source)).toBe(fresh);
       expect(fresh.status).toBe('ready');
       expect(isMachineResourceStateStale(fresh, now)).toBe(false);
       expect(h.store.getState(sibling)).toBe(fresh);
@@ -992,7 +1163,7 @@ describe('machine resources subscription owner', () => {
       await h.store.read(source);
       expect(h.store.getState(sibling).snapshot?.sample?.sampledAt).toBe(now);
       expect(h.store.getState(sibling).snapshot?.sample?.thermal).toEqual(
-        held.sample.thermal,
+        view === 'summary' ? held.sample.thermal : undefined,
       );
       release();
       h.store.reset();
@@ -1007,7 +1178,12 @@ describe('machine resources subscription owner', () => {
     await settle();
     h.snapshotClient.mockResolvedValueOnce({
       ok: true,
-      value: snapshot(75_000),
+      value: { ...snapshot(75_000), series5m: {
+        cpu: [...snapshot().series5m.cpu, ...snapshot(75_000).series5m.cpu],
+        memory: [...snapshot().series5m.memory, ...snapshot(75_000).series5m.memory],
+        networkRx: [...snapshot().series5m.networkRx, ...snapshot(75_000).series5m.networkRx],
+        networkTx: [...snapshot().series5m.networkTx, ...snapshot(75_000).series5m.networkTx],
+      } },
     });
     await h.store.read(key);
     const detailed = sample(75_000);
@@ -1161,7 +1337,7 @@ describe('machine resources subscription owner', () => {
     h.store.reset();
   });
 
-  it('recovers a failed sibling from an authorized answer at the same sample frontier without duplicating chart points', async () => {
+  it('recovers the shared observation at an equal frontier or after a clock step without duplicating chart points', async () => {
     const h = harness();
     const overview = { ...key, view: 'overview' as const };
     await h.store.read(overview);
@@ -1189,7 +1365,10 @@ describe('machine resources subscription owner', () => {
       value: snapshot(59_000),
     });
     await h.store.read(key);
-    expect(h.store.getState(overview).status).toBe('error');
+    // A lower wall label alone is not proof of an old answer. The separate
+    // in-flight-read tests retain the real superseding-observation contract.
+    expect(h.store.getState(overview)).toMatchObject({ status: 'ready', snapshot: { sample: { sampledAt: 59_000 } } });
+    expect(h.store.getState(overview)).toBe(h.store.getState(key));
     h.store.reset();
   });
 

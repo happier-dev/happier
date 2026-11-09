@@ -16,12 +16,12 @@ import {
 } from '@happier-dev/protocol/storage/storageV1';
 import { MachineResourcesPolicyMutationResultV1Schema } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
 import type { MachineStorageActionId } from '@happier-dev/protocol/actions/specs/storage';
-import { createRpcCallError, isRpcError, readRpcErrorCode, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpcErrors';
-import { ActionApprovalRequestCreatedResultSchema, isActionApprovalDeclinedErrorCode, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { createRpcCallError, isRpcMethodNotFoundResult } from '@happier-dev/protocol/rpcErrors';
+import { ActionApprovalRequestCreatedResultSchema, isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { isMachineDaemonRpcUnsupportedError } from '../machineDaemonRpcErrors';
+import { projectMachineDaemonRpcFailure, type MachineDaemonRpcFailure } from '../machineDaemonRpcErrors';
 
 export type MachineStorageKey = Readonly<{ machineId: string; serverId?: string | null; expectedAccountId?: string | null; daemonStateVersion?: number | null }>;
 export type MachineStorageReadInput = MachineStorageKey & Readonly<{
@@ -55,8 +55,8 @@ export type MachineStorageTrashRestoreInput = ScopedInput<MachineStorageTrashRes
 export type MachineStorageFailure = Readonly<{
     ok: false;
     reason: 'older_happier' | 'policy_unavailable' | 'whole_disk_disabled' | 'permission_denied' | 'request_failed' | 'invalid_response' | 'approval_requested' | 'declined';
-    errorCode?: string;
-    failureCause?: ActionFailureCauseV1;
+    errorCode?: MachineDaemonRpcFailure['errorCode'];
+    failureCause?: MachineDaemonRpcFailure['failureCause'];
     error?: string;
 }>;
 export type MachineStorageResult<T> = Readonly<{ ok: true; value: T }> | MachineStorageFailure;
@@ -94,29 +94,26 @@ async function result<T>(input: MachineStorageReadInput, request: () => Promise<
         const parsed = parse(raw);
         return parsed.success ? { ok: true, value: parsed.data } : { ok: false, reason: 'invalid_response' };
     } catch (error) {
-        const errorCode = readRpcErrorCode(error);
-        const failureCause = isRpcError(error) ? error.failureCause : undefined;
+        const failure = projectMachineDaemonRpcFailure(error);
+        const { errorCode, failureCause } = failure;
         // Loaded 0.2.10 daemons report native permission errors as action_failed.
         // Translate their typed cause here until those Machines are updated;
         // never inspect the raw error message, which can contain a private path.
         const legacyPermissionDenied = errorCode === 'action_failed'
             && (failureCause?.errorCode === 'EACCES' || failureCause?.errorCode === 'EPERM');
-        const reason = isMachineDaemonRpcUnsupportedError(error) ? 'older_happier'
+        const reason = failure.reason === 'older_happier' ? 'older_happier'
             : errorCode === 'policy_unavailable' ? 'policy_unavailable'
             : errorCode === 'storage_whole_disk_disabled' ? 'whole_disk_disabled'
             : errorCode === 'storage_permission_denied' || legacyPermissionDenied ? 'permission_denied'
             : isActionApprovalDeclinedErrorCode(errorCode) ? 'declined'
-            : errorCode === 'invalid_action_output' ? 'invalid_response' : 'request_failed';
+            : failure.reason;
         // Old daemons can return only { error }. The Action then has only its
         // wrapper cause: keep that projected reason without inferring a native code.
         const legacyError = reason === 'request_failed' && errorCode === 'action_failed'
             && (!failureCause || failureCause.errorClass === 'RpcError' && failureCause.errorCode === errorCode)
             && error instanceof Error ? error.message : undefined;
         // Typed permission failures keep their safe explanation and diagnostics.
-        return { ok: false, reason, ...(reason === 'permission_denied' ? {
-            ...(errorCode ? { errorCode } : {}),
-            ...(failureCause ? { failureCause } : {}),
-        } : {}), ...(legacyError ? { error: legacyError } : {}) };
+        return { ...failure, reason, ...(legacyError ? { error: legacyError } : {}) };
     }
 }
 

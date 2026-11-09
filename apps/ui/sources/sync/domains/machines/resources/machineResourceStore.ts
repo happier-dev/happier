@@ -1,28 +1,36 @@
+import { getDemoMachineRead } from '@/demoMode/runtime/demoMachineReadProjection';
 import type { MachineVitalsSnapshotV1, MachineVitalsWatchResultV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsRpcV1';
 import type { MachineVitalsHistoryV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsHistoryV1';
-import type { MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
-import { projectMachineResourceSummaryV1, type MachineResourceSummaryV1, type MachineResourceAttentionV1 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
+import type { MachineVitalsHostFactsV1, MachineVitalsSampleV1 } from '@happier-dev/protocol/machines/vitals/machineVitalsSampleV1';
+import { appendMachineVitalsSeriesV1, projectMachineVitalsSeriesV1, projectMachineResourceSummaryV1, type MachineResourceSummaryV1, type MachineResourceAttentionV1 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE } from '@happier-dev/protocol/rpcErrors';
+import { projectMachineDaemonRpcFailure, type MachineDaemonRpcFailure } from '../machineDaemonRpcErrors';
 
 import { createSharedSubscriptionStore, type SharedSubscriptionWatchOutcome } from '@/sync/runtime/subscriptions/sharedSubscriptionStore';
 import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery';
+import { isMachineResourceStateStale } from './machineResourceAvailability';
+export { isMachineResourceStateStale } from './machineResourceAvailability';
 import type {
     MachineResourceKey, MachineVitalsView, MachineVitalsRange, MachineResourceRpcResult,
     MachineVitalsReadInput, MachineVitalsHistoryReadInput, MachineVitalsWatchInput,
 } from './machineRpc';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 
 export type MachineResourceState = Readonly<{
     status: 'loading' | 'ready' | 'slow' | 'error' | 'not_reported';
     snapshot: MachineVitalsSnapshotV1 | null;
     summary: MachineResourceSummaryV1 | null;
+    /** Already-published static facts, scoped like the held samples; never a second read. */
+    host?: MachineVitalsHostFactsV1;
     /** Cadence-derived freshness last observed at a read/watch answer; no client clock loop. */
     stale: boolean;
     samples: readonly MachineVitalsSampleV1[];
     /** The admitted Action/RPC refusal, retained without replacing its stable state category. */
     errorCode?: string;
+    failure?: MachineDaemonRpcFailure;
 }>;
 export type MachineResourceStoreInput = MachineResourceKey & Readonly<{ view: MachineVitalsView }>;
-export type MachineResourceHistoryState = Readonly<{ status: MachineResourceState['status']; history: MachineVitalsHistoryV1 | null; errorCode?: string }>;
+export type MachineResourceHistoryState = Readonly<{ status: MachineResourceState['status']; history: MachineVitalsHistoryV1 | null; errorCode?: string; failure?: MachineDaemonRpcFailure }>;
 export type MachineResourceClients = Readonly<{
     snapshotClient: (input: MachineVitalsReadInput) => Promise<MachineResourceRpcResult<MachineVitalsSnapshotV1>>;
     watchClient: (input: MachineVitalsWatchInput) => Promise<MachineResourceRpcResult<MachineVitalsWatchResultV1>>;
@@ -38,34 +46,12 @@ type ResourceUpdate =
     | Readonly<{ kind: 'snapshot'; snapshot: MachineVitalsSnapshotV1 }>
     | Readonly<{ kind: 'samples'; samples: readonly MachineVitalsSampleV1[]; retainDetails?: boolean }>
     | Readonly<{ kind: 'published_attention'; attention: MachineResourceAttentionV1 }>
+    | Readonly<{ kind: 'published_host'; host: MachineVitalsHostFactsV1 | undefined }>
     | Readonly<{ kind: 'freshness' }>
-    | Readonly<{ kind: 'slow' | 'error' | 'not_reported'; errorCode?: string }>;
+    | Readonly<{ kind: 'slow' | 'error' | 'not_reported'; errorCode?: string; failure?: MachineDaemonRpcFailure }>;
 type HistoryInput = MachineResourceKey & Readonly<{ range: MachineVitalsRange }>;
 
 function machineKey(input: MachineResourceKey): string { return JSON.stringify([input.serverId ?? null, input.expectedAccountId ?? null, input.machineId]); }
-/** Reconcile admitted resource data, stopping at shared branches rather than serializing them. */
-function retain<T>(previous: T, next: T): T {
-    if (previous === next) return previous;
-    if (previous === null || next === null || typeof previous !== 'object' || typeof next !== 'object') return next;
-    if (Array.isArray(previous) || Array.isArray(next)) {
-        if (!Array.isArray(previous) || !Array.isArray(next)) return next;
-        const retained = next.map((value: unknown, index: number) => retain(previous[index], value));
-        return previous.length === retained.length && retained.every((value, index) => value === previous[index])
-            ? previous : retained as T;
-    }
-    const old = previous as Record<string, unknown>;
-    const incoming = next as Record<string, unknown>;
-    // Optional undefined fields and omitted fields carry the same admitted resource fact.
-    const keys = Object.keys(incoming).filter(key => incoming[key] !== undefined);
-    const retained: Record<string, unknown> = { ...incoming };
-    let unchanged = keys.length === Object.keys(old).filter(key => old[key] !== undefined).length;
-    for (const key of keys) {
-        retained[key] = retain(old[key], incoming[key]);
-        if (retained[key] !== old[key]) unchanged = false;
-    }
-    return unchanged ? previous : retained as T;
-}
-
 /** Children have already been reconciled; a changed live tail must never be deep-walked here. */
 function retainState<T extends object>(previous: T, next: T): T {
     const keys = Object.keys(next) as (keyof T)[];
@@ -73,174 +59,155 @@ function retainState<T extends object>(previous: T, next: T): T {
         && (Object.keys(previous) as (keyof T)[]).every(key => previous[key] === next[key]) ? previous : next;
 }
 
-function retainSample(previous: MachineVitalsSampleV1 | null, next: MachineVitalsSampleV1): MachineVitalsSampleV1 {
+function retainSample(previous: MachineVitalsSampleV1 | null, next: MachineVitalsSampleV1, retainDetails = false): MachineVitalsSampleV1 {
     if (!previous) return next;
-    return retain(previous, {
+    if (retainDetails) next = {
+        ...previous, ...next,
+        ...(previous.limits?.inotify && !next.limits?.inotify
+            ? { limits: { ...next.limits, inotify: previous.limits.inotify } } : {}),
+    };
+    return retainDeep(previous, {
         ...next,
-        cpu: retain(previous.cpu, next.cpu),
-        memory: retain(previous.memory, next.memory),
-        disk: retain(previous.disk, next.disk),
-        network: retain(previous.network, next.network),
+        cpu: retainDeep(previous.cpu, next.cpu),
+        memory: retainDeep(previous.memory, next.memory),
+        disk: retainDeep(previous.disk, next.disk),
+        network: retainDeep(previous.network, next.network),
     });
 }
 
-/** The machine's always-on history resolution (VIT-1/VIT-4): one record stands for one minute. */
-const MINUTE_RECORD_MS = 60_000;
-
 function retainSeries(previous: MachineVitalsSnapshotV1['series5m'] | undefined, next: MachineVitalsSnapshotV1['series5m'], sampledAt: number): MachineVitalsSnapshotV1['series5m'] {
-    // R7's five-minute view has twenty slots, independent of the Overview's live cadence.
-    const stepMs: MachineResourceSummaryV1['stepMs'] = 15_000;
-    const end = Math.floor(sampledAt / stepMs) * stepMs;
-    const start = end - 300_000 + stepMs;
+    const projected = projectMachineVitalsSeriesV1(next, sampledAt);
     const points = (old: typeof next.cpu, incoming: typeof next.cpu) => {
         const byTime = new Map(old.map(point => [point.t, point]));
-        const byStep = new Map<number, typeof incoming[number]>();
-        for (const point of incoming) {
-            if (point.t < start || point.t > sampledAt) continue;
-            const at = Math.floor(point.t / stepMs) * stepMs;
-            // Keep the first observation in a slot: live ticks cannot redraw an unchanged line.
-            if (!byStep.has(at)) byStep.set(at, point);
-        }
-        const retained: typeof next.cpu = [];
-        const first = byStep.size > 0 ? Math.min(...byStep.keys()) : end + stepMs;
-        let covering: typeof incoming[number] | undefined;
-        for (let at = first; at <= end; at += stepMs) {
-            // A minute record stands for its whole minute, so it fills the slots up to the next observation: the
-            // machine declares a missed minute or a stalled ring as an explicit null (VIT-4), and only that is a
-            // gap. Past a minute with nothing observed the slot is a gap too; nothing is interpolated.
-            const observed = byStep.get(at);
-            if (observed) covering = observed;
-            const measured = covering && covering.y !== null && at < covering.t + MINUTE_RECORD_MS ? covering : null;
-            const point = measured ?? { t: at, y: null };
+        return retainDeep(old, incoming.map(point => {
             const existing = byTime.get(point.t);
-            retained.push(existing && existing.y === point.y ? existing : point);
-        }
-        return retain(old, retained);
+            return existing && existing.y === point.y ? existing : point;
+        }));
     };
     const series = {
-        cpu: points(previous?.cpu ?? [], next.cpu), memory: points(previous?.memory ?? [], next.memory),
-        networkRx: points(previous?.networkRx ?? [], next.networkRx), networkTx: points(previous?.networkTx ?? [], next.networkTx),
+        cpu: points(previous?.cpu ?? [], projected.cpu), memory: points(previous?.memory ?? [], projected.memory),
+        networkRx: points(previous?.networkRx ?? [], projected.networkRx), networkTx: points(previous?.networkTx ?? [], projected.networkTx),
     };
-    return previous ? retain(previous, series) : series;
+    return previous ? retainDeep(previous, series) : series;
 }
 
 function appendSamples(previous: readonly MachineVitalsSampleV1[], incoming: readonly MachineVitalsSampleV1[]): readonly MachineVitalsSampleV1[] {
     let result = previous;
     for (const sample of incoming) {
-        if (sample.sampledAt <= (result.at(-1)?.sampledAt ?? -1)) continue;
+        if (sample === result.at(-1)) continue;
         // The Overview's longest live range is one hour; older data comes from range reads.
         result = [...result.filter(point => point.sampledAt >= sample.sampledAt - 3_600_000), sample];
     }
     return result;
 }
 
-function applySnapshot(state: MachineResourceState, incoming: MachineVitalsSnapshotV1, now: number): MachineResourceState {
+function applySnapshot(state: MachineResourceState, incoming: MachineVitalsSnapshotV1, now: number, retainDetails = false): MachineResourceState {
     const previous = state.snapshot;
     if (incoming.state === 'unavailable' && !incoming.sample && previous?.sample) {
         incoming = { ...incoming, sample: previous.sample, series5m: previous.series5m,
             ...(previous.attention && !incoming.attention ? { attention: previous.attention } : {}) };
     }
-    const sample = incoming.sample ? retainSample(previous?.sample ?? null, incoming.sample) : null;
+    const sample = incoming.sample ? retainSample(previous?.sample ?? null, incoming.sample, retainDetails) : null;
     const series5m = sample ? retainSeries(previous?.series5m, incoming.series5m, sample.sampledAt) : incoming.series5m;
-    const snapshot = previous ? retain(previous, {
+    const snapshot = previous ? retainState(previous, {
         ...incoming, sample,
         series5m,
-        ...(incoming.attention ? { attention: retain(previous.attention, incoming.attention) } : {}),
+        ...(incoming.attention ? { attention: retainDeep(previous.attention, incoming.attention) } : {}),
     }) : { ...incoming, sample, series5m };
-    const projected = projectMachineResourceSummaryV1(snapshot);
-    const summary = state.summary && projected ? retain(state.summary, {
+    const projected = projectMachineResourceSummaryV1(snapshot, state.host);
+    const summary = state.summary && projected ? retainDeep(state.summary, {
         ...projected,
         // Missing samples stay gaps in history; the figure keeps the last measurement.
-        cpu: retain(state.summary.cpu, { ...projected.cpu, busyPct: projected.cpu.busyPct ?? state.summary.cpu.busyPct }),
-        memory: retain(state.summary.memory, { ...projected.memory, series: retain(state.summary.memory.series, projected.memory.series) }),
-        disk: retain(state.summary.disk, projected.disk), network: retain(state.summary.network, projected.network),
+        cpu: retainDeep(state.summary.cpu, { ...projected.cpu, busyPct: projected.cpu.busyPct ?? state.summary.cpu.busyPct }),
+        memory: retainDeep(state.summary.memory, { ...projected.memory, series: retainDeep(state.summary.memory.series, projected.memory.series) }),
+        disk: retainDeep(state.summary.disk, projected.disk), network: retainDeep(state.summary.network, projected.network),
     }) : projected;
-    const next: MachineResourceState = { status: 'ready', snapshot, summary, stale: false, samples: sample ? appendSamples(state.samples, [sample]) : state.samples };
+    const next: MachineResourceState = { status: 'ready', snapshot, summary, host: state.host, stale: false, samples: sample ? appendSamples(state.samples, [sample]) : state.samples };
     return retainState(state, { ...next, stale: isMachineResourceStateStale(next, now) });
 }
 
 function applyUpdate(state: MachineResourceState, update: ResourceUpdate, now: number): MachineResourceState {
     if (update.kind === 'snapshot') return applySnapshot(state, update.snapshot, now);
+    if (update.kind === 'published_host') {
+        const host = retainDeep(state.host, update.host);
+        if (host === state.host) return state;
+        const withHost = { ...state, host };
+        if (!state.snapshot) return withHost;
+        const reprojected = applySnapshot(withHost, state.snapshot, now);
+        return { ...reprojected, status: state.status, ...(state.errorCode ? { errorCode: state.errorCode } : {}), ...(state.failure ? { failure: state.failure } : {}) };
+    }
     if (update.kind === 'freshness') {
         const stale = isMachineResourceStateStale(state, now);
         if (state.status === 'slow' || state.status === 'error') {
-            const { errorCode: _previousErrorCode, ...retained } = state;
+            const { errorCode: _previousErrorCode, failure: _previousFailure, ...retained } = state;
             return { ...retained, status: 'ready', stale };
         }
         return state.stale === stale ? state : { ...state, stale };
     }
     if (update.kind === 'published_attention') {
         if (!state.snapshot) return state;
-        const attention = retain(state.snapshot.attention, update.attention);
+        const attention = retainDeep(state.snapshot.attention, update.attention);
         if (attention === state.snapshot.attention) return state;
         const reprojected = applySnapshot(state, { ...state.snapshot, attention }, now);
-        return { ...reprojected, status: state.status, ...(state.errorCode ? { errorCode: state.errorCode } : {}) };
+        return { ...reprojected, status: state.status, ...(state.errorCode ? { errorCode: state.errorCode } : {}), ...(state.failure ? { failure: state.failure } : {}) };
     }
     if (update.kind !== 'samples') {
-        const { errorCode: _previousErrorCode, ...retained } = state;
-        return retainState(state, { ...retained, status: update.kind, stale: isMachineResourceStateStale(state, now),
-            ...(update.errorCode ? { errorCode: update.errorCode } : {}) });
+        const { errorCode: _previousErrorCode, failure: _previousFailure, ...retained } = state;
+        return retainState(state, { ...(update.kind === 'not_reported' ? NOT_REPORTED_STATE : retained), status: update.kind,
+            stale: update.kind === 'not_reported' ? false : isMachineResourceStateStale(state, now),
+            ...(update.errorCode ? { errorCode: update.errorCode } : {}), ...(update.failure ? { failure: retainDeep(state.failure, update.failure) } : {}) });
     }
     if (!state.snapshot) return state;
     let result = state;
     for (const incoming of update.samples) {
         const previous = result.snapshot!;
-        if (incoming.sampledAt < (previous.sample?.sampledAt ?? -1)) continue;
-        if (incoming.sampledAt === previous.sample?.sampledAt && update.retainDetails) {
-            // A successful sibling answer also recovers a failed read at the same sampler frontier.
-            // It is not a new chart point, and must not discard this view's retained details.
-            if (result.status !== 'ready' || previous.state !== 'reporting') {
-                result = applySnapshot(result, { ...previous, state: 'reporting', reason: undefined }, now);
-            }
-            continue;
-        }
         // Memory is one reader-owned observation, including its optional composition.
         // Only independent extras can outlive another view's newer sample.
-        const sample = retainSample(previous.sample, update.retainDetails ? {
-            ...previous.sample, ...incoming,
-            ...(previous.sample?.limits?.inotify && !incoming.limits?.inotify
-                ? { limits: { ...incoming.limits, inotify: previous.sample.limits.inotify } } : {}),
-        } : incoming);
+        const sample = retainSample(previous.sample, incoming, update.retainDetails);
         if (sample.sampledAt === previous.sample?.sampledAt) {
             result = applySnapshot(result, { ...previous, state: 'reporting', reason: undefined, sample }, now);
             continue;
         }
-        const last = previous.sample;
-        // A live ring that skipped samples says so with one null, as the machine's own five-minute series does. A
-        // cadence change (the minute tick speeding up when a list opens, the Overview's 2 s tick ending) is not a skip:
-        // the slower of the two intervals sets what counts as one.
-        const missed = last && sample.sampledAt - last.sampledAt > 2 * Math.max(last.intervalMs, sample.intervalMs)
-            ? last.sampledAt + last.intervalMs : null;
-        const point = (old: typeof previous.series5m.cpu, y: number | null) => [
-            ...old,
-            ...(missed !== null ? [{ t: missed, y: null }] : []),
-            { t: sample.sampledAt, y },
-        ];
         result = applySnapshot(result, {
             ...previous, state: 'reporting', reason: undefined, sample,
-            series5m: {
-                cpu: point(previous.series5m.cpu, sample.cpu.reported ? sample.cpu.busyPct : null),
-                memory: point(previous.series5m.memory, sample.memory.reported ? sample.memory.availableBytes : null),
-                networkRx: point(previous.series5m.networkRx, sample.network.reported ? sample.network.rxBps : null),
-                networkTx: point(previous.series5m.networkTx, sample.network.reported ? sample.network.txBps : null),
-            },
+            series5m: appendMachineVitalsSeriesV1(previous.series5m, previous.sample, [sample]),
         }, now);
     }
     return result;
 }
 
-export function isMachineResourceStateStale(state: MachineResourceState, now: number): boolean {
-    const sample = state.snapshot?.sample;
-    return sample !== null && sample !== undefined && now - sample.sampledAt >= sample.intervalMs * 2;
-}
-
 export function createMachineResourceStore(clients: MachineResourceClients, nowMs: () => number = Date.now) {
     const unsupported = new Set<string>();
     const daemonVersions = new Map<string, number | null | undefined>();
-    const markUnsupported = (input: MachineResourceKey) => {
+    // One static publication per Machine, including before observation begins.
+    const publishedHosts = new Map<string, MachineVitalsHostFactsV1>();
+    // These are live consumer/read demands, never retained snapshots or a second transport owner.
+    const views = new Map<string, { summary: number; overview: number }>();
+    const strongestView = (counts: { overview: number }): MachineVitalsView => counts.overview > 0 ? 'overview' : 'summary';
+    function acquireView(input: MachineResourceStoreInput): () => void {
+        const key = machineKey(input);
+        const previous = views.get(key);
+        const counts = previous ?? { summary: 0, overview: 0 };
+        const before = previous ? strongestView(previous) : undefined;
+        counts[input.view]++;
+        views.set(key, counts);
+        const selected = strongestView(counts);
+        if (before !== selected) store.reconfigure({ ...input, view: selected });
+        let released = false;
+        return () => {
+            if (released) return;
+            released = true;
+            if (views.get(key) !== counts) return;
+            const before = strongestView(counts);
+            counts[input.view]--;
+            if (counts.summary === 0 && counts.overview === 0) { views.delete(key); return; }
+            const selected = strongestView(counts);
+            if (before !== selected) store.reconfigure({ ...input, view: selected });
+        };
+    }
+    const markUnsupported = (input: MachineResourceKey, failure: MachineDaemonRpcFailure) => {
         unsupported.add(machineKey(input));
-        store.publish({ ...input, view: 'summary' }, { kind: 'not_reported' });
-        store.publish({ ...input, view: 'overview' }, { kind: 'not_reported' });
+        store.publish({ ...input, view: 'summary' }, { kind: 'not_reported', failure, errorCode: failure.errorCode });
     };
     const store = createSharedSubscriptionStore<
         MachineResourceStoreInput, MachineResourceState, ResourceUpdate,
@@ -248,7 +215,7 @@ export function createMachineResourceStore(clients: MachineResourceClients, nowM
     >({
         emptyState: EMPTY_MACHINE_RESOURCE_STATE, createState: () => EMPTY_MACHINE_RESOURCE_STATE,
         normalizeInput: input => ({ ...input, serverId: input.serverId ?? null }),
-        storeKey: input => JSON.stringify([machineKey(input), input.view]),
+        storeKey: machineKey,
         defaultSnapshotClient: clients.snapshotClient, defaultWatchClient: clients.watchClient,
         retainState: true, watchAfterRefresh: true,
         subscribeRecovery: subscribeMachineRpcRecovery,
@@ -256,28 +223,26 @@ export function createMachineResourceStore(clients: MachineResourceClients, nowM
             || (state.status === 'error' && state.errorCode === MACHINE_RPC_TIMEOUT_ERROR_CODE)) && state.snapshot?.state === 'reporting',
         refresh: async ({ input, state, snapshotClient, signal }): Promise<MachineResourceState> => {
             if (unsupported.has(machineKey(input))) return retainState(state, { ...state, status: 'not_reported' });
-            if (!daemonVersions.has(machineKey(input))) daemonVersions.set(machineKey(input), input.daemonStateVersion);
+            if (!daemonVersions.has(machineKey(input)) && input.daemonStateVersion !== undefined) daemonVersions.set(machineKey(input), input.daemonStateVersion);
             const result = await snapshotClient({ ...input, signal });
             if (signal?.aborted) return state;
-            const current = getHeldState(input);
+            const held = getHeldState(input);
+            const host = publishedHosts.get(machineKey(input));
+            const current = held.host === host ? held : { ...held, host };
             if (result.ok) {
-                if (result.value.sample && current.snapshot?.sample && result.value.sample.sampledAt < current.snapshot.sample.sampledAt) return current;
-                if (result.value.state === 'reporting' && result.value.sample) {
-                    store.publish({ ...input, view: input.view === 'overview' ? 'summary' : 'overview' },
-                        { kind: 'samples', samples: [result.value.sample], retainDetails: true });
-                }
-                return applySnapshot(current, result.value, nowMs());
+                // A push accepted while this read was in flight owns the newer
+                // observation. Wall timestamps cannot order replies after a clock step.
+                if (current.snapshot?.sample !== state.snapshot?.sample) return current;
+                return applySnapshot(current, result.value, nowMs(), input.view === 'summary');
             }
-            if (result.reason === 'older_happier') markUnsupported(input);
+            if (result.reason === 'older_happier') markUnsupported(input, result);
             return applyUpdate(current, { kind: result.reason === 'older_happier' ? 'not_reported' : 'error',
-                ...(result.errorCode ? { errorCode: result.errorCode } : {}) }, nowMs());
+                failure: result, ...(result.errorCode ? { errorCode: result.errorCode } : {}) }, nowMs());
         },
         failRefresh: (_state, input) => applyUpdate(getHeldState(input), { kind: 'error' }, nowMs()),
         applySnapshot: (state, update) => applyUpdate(state, update, nowMs()),
         onWatchSnapshot: (input, update, previous) => {
             if (update.kind !== 'samples') return;
-            store.publish({ ...input, view: input.view === 'overview' ? 'summary' : 'overview' },
-                { ...update, retainDetails: true });
             const previousAt = previous.snapshot?.sample?.sampledAt ?? 0;
             const newestAt = update.samples.reduce((latest, sample) => Math.max(latest, sample.sampledAt), previousAt);
             if (input.view === 'overview' && Math.floor(newestAt / 60_000) > Math.floor(previousAt / 60_000)) {
@@ -292,23 +257,23 @@ export function createMachineResourceStore(clients: MachineResourceClients, nowM
                 if (unsupported.has(machineKey(input))) return { status: 'unavailable' };
                 const result = await watchClient({ ...input,
                     ...(state.snapshot?.sample ? { sinceSampledAt: state.snapshot.sample.sampledAt } : {}), signal, onDispatched: markDispatched })
-                    .catch(() => ({ ok: false, reason: 'request_failed' } as const));
+                    .catch(projectMachineDaemonRpcFailure);
                 if (signal?.aborted) return { status: 'unavailable' };
                 if (!result.ok) {
                     if (result.reason === 'older_happier') {
-                        markUnsupported(input);
+                        markUnsupported(input, result);
                         return { status: 'unavailable' };
                     }
                     const current = getHeldState(input);
                     const kind = current.status === 'slow' || current.status === 'error' ? 'error' : 'slow';
-                    const update: ResourceUpdate = { kind, ...('errorCode' in result && result.errorCode ? { errorCode: result.errorCode } : {}) };
+                    const update: ResourceUpdate = { kind, failure: result, ...('errorCode' in result && result.errorCode ? { errorCode: result.errorCode } : {}) };
                     // The state predicate owns re-arming: deadlines keep their existing
                     // transport cadence, other failures await recovery or explicit Retry.
                     // A failed reply is not a successful publication/recovery wake.
                     return { status: 'changed', snapshot: update };
                 }
                 return { status: 'changed', snapshot: result.value.changed
-                    ? { kind: 'samples', samples: result.value.samples } : { kind: 'freshness' } };
+                    ? { kind: 'samples', samples: result.value.samples, retainDetails: input.view === 'summary' } : { kind: 'freshness' } };
             })();
             // Failure/cancellation before dispatch must also release publication; the existing
             // transport deadline and demand lifecycle remain the recovery boundaries.
@@ -322,71 +287,83 @@ export function createMachineResourceStore(clients: MachineResourceClients, nowM
         storeKey: input => JSON.stringify([machineKey(input), input.range]),
         defaultSnapshotClient: clients.historyClient, retainState: true,
         refresh: async ({ input, state, snapshotClient, signal }) => {
-            if (unsupported.has(machineKey(input))) return NOT_REPORTED_HISTORY_STATE;
-            if (!daemonVersions.has(machineKey(input))) daemonVersions.set(machineKey(input), input.daemonStateVersion);
+            if (unsupported.has(machineKey(input))) return state.status === 'not_reported' ? state : NOT_REPORTED_HISTORY_STATE;
+            if (!daemonVersions.has(machineKey(input)) && input.daemonStateVersion !== undefined) daemonVersions.set(machineKey(input), input.daemonStateVersion);
             const result = await snapshotClient({ ...input, signal });
             if (signal?.aborted) return state;
-            if (result.ok) return retainState(state, { status: 'ready', history: retain(state.history, result.value) });
-            if (result.reason === 'older_happier') markUnsupported(input);
-            const { errorCode: _previousErrorCode, ...retained } = state;
-            return retainState(state, { ...retained, status: result.reason === 'older_happier' ? 'not_reported' : 'error',
-                ...(result.errorCode ? { errorCode: result.errorCode } : {}) });
+            if (result.ok) return retainState(state, { status: 'ready', history: retainDeep(state.history, result.value) });
+            if (result.reason === 'older_happier') markUnsupported(input, result);
+            const { errorCode: _previousErrorCode, failure: _previousFailure, ...retained } = state;
+            return retainState(state, { ...(result.reason === 'older_happier' ? NOT_REPORTED_HISTORY_STATE : retained), status: result.reason === 'older_happier' ? 'not_reported' : 'error',
+                failure: retainDeep(state.failure, result), ...(result.errorCode ? { errorCode: result.errorCode } : {}) });
         },
         failRefresh: state => {
-            const { errorCode: _previousErrorCode, ...retained } = state;
+            const { errorCode: _previousErrorCode, failure: _previousFailure, ...retained } = state;
             return retainState(state, { ...retained, status: 'error' });
         },
-        applySnapshot: (state, history) => retainState(state, { status: 'ready', history: retain(state.history, history) }),
+        applySnapshot: (state, history) => retainState(state, { status: 'ready', history: retainDeep(state.history, history) }),
     });
     function getHeldState(input: MachineResourceStoreInput): MachineResourceState {
-        if (unsupported.has(machineKey(input))) return NOT_REPORTED_STATE;
-        const state = store.getState(input);
-        if (state.snapshot?.sample) return state;
-        // Views demand different detail, but the same machine's held base sample is still valid
-        // when an offline Overview has never opened. Reads retain it on failure as well.
-        const held = store.getState({ ...input, view: input.view === 'overview' ? 'summary' : 'overview' });
-        return held.snapshot?.sample ? held : state;
+        const demo = getDemoMachineRead(input);
+        if (demo) return demo.resources;
+        return store.getState(input);
+    }
+    async function readForView(input: MachineResourceStoreInput, retry = false): Promise<void> {
+        const release = acquireView(input);
+        try {
+            if (retry) store.invalidate(input);
+            await store.read(input, { nowMs });
+        } finally { release(); }
     }
     return {
         getState: getHeldState,
         isRefreshing: store.isRefreshing,
         observeRefreshing: store.observeRefreshing,
-        observe(input: MachineResourceStoreInput, listener: () => void) {
-            const release = store.observe(input, listener);
-            const releaseHeld = store.observe({ ...input, view: input.view === 'overview' ? 'summary' : 'overview' }, listener);
-            return () => { release(); releaseHeld(); };
-        },
+        observe: store.observe,
         setPublishedAttention(input: MachineResourceKey, attention: MachineResourceAttentionV1) {
-            for (const view of ['summary', 'overview'] as const) store.publish({ ...input, view }, { kind: 'published_attention', attention });
+            store.publish({ ...input, view: 'summary' }, { kind: 'published_attention', attention });
+        },
+        setPublishedHost(input: MachineResourceKey, host: MachineVitalsHostFactsV1 | undefined) {
+            const key = machineKey(input);
+            const previous = publishedHosts.get(key);
+            const next = retainDeep(previous, host);
+            if (next === previous) return;
+            if (next) publishedHosts.set(key, next);
+            else publishedHosts.delete(key);
+            store.publish({ ...input, view: 'summary' }, { kind: 'published_host', host: next });
         },
         demand(input: MachineResourceStoreInput, listener: () => void = () => {}) {
-            return store.subscribe(input, listener, { nowMs });
+            const releaseView = acquireView(input);
+            const release = store.subscribe(input, listener, { nowMs });
+            return () => { release(); releaseView(); };
         },
-        read(input: MachineResourceStoreInput) { return store.read(input, { nowMs }); },
-        retry(input: MachineResourceStoreInput) { store.invalidate(input); return store.read(input, { nowMs }); },
+        read(input: MachineResourceStoreInput) { return readForView(input); },
+        retry(input: MachineResourceStoreInput) { return readForView(input, true); },
         getHistory(input: HistoryInput): MachineResourceHistoryState {
-            return unsupported.has(machineKey(input)) ? NOT_REPORTED_HISTORY_STATE : histories.getState(input);
+            const state = histories.getState(input);
+            return unsupported.has(machineKey(input)) && state.status !== 'not_reported' ? NOT_REPORTED_HISTORY_STATE : state;
         },
         observeHistory: histories.observe,
         demandHistory(input: HistoryInput, listener: () => void = () => {}) { return histories.subscribe(input, listener, { nowMs }); },
         readHistory(input: HistoryInput) { return histories.read(input, { nowMs }); },
         retryHistory(input: HistoryInput) { histories.invalidate(input); return histories.read(input, { nowMs }); },
         daemonStateChanged(input: MachineResourceKey, version: number | null | undefined) {
+            // A reader that does not know the daemon version (a meter's demand keyed by Machine alone) reports
+            // nothing: an absent version is not a change, so it never makes the next real report look like one.
+            if (version === undefined) return;
             const key = machineKey(input);
             if (daemonVersions.has(key) && daemonVersions.get(key) === version) return;
             daemonVersions.set(key, version);
             const wasUnsupported = unsupported.delete(key);
-            for (const view of ['summary', 'overview'] as const) {
-                const state = store.getState({ ...input, view });
-                if (wasUnsupported || state.status === 'error' || state.stale || state.snapshot?.state === 'unavailable') {
-                    store.invalidate({ ...input, view });
-                }
+            const state = store.getState({ ...input, view: 'summary' });
+            if (wasUnsupported || state.status === 'error' || state.stale || state.snapshot?.state === 'unavailable') {
+                store.invalidate({ ...input, view: 'summary' });
             }
             if (wasUnsupported) {
                 for (const range of ['1h', '24h', '7d'] as const) histories.invalidate({ ...input, range });
             }
         },
-        reset() { store.reset(); histories.reset(); unsupported.clear(); daemonVersions.clear(); },
+        reset() { store.reset(); histories.reset(); unsupported.clear(); daemonVersions.clear(); publishedHosts.clear(); views.clear(); },
     };
 }
 

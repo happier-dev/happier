@@ -26,7 +26,7 @@ installHomeGovernanceBoundaries(home);
 // Scoped HTTP transports must bind after their genuine Home boundaries are installed.
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { machineGuardStore } = await import('./machineGuardStore');
-const { useMachineGuardView, useMachineGuardActivity } = await import('./useMachineGuardView');
+const { useMachineGuardView, useMachineGuardActivity, useMachinesGuardActivity } = await import('./useMachineGuardView');
 const guardRpc = await import('./machineGuardRpc');
 const before = storage.getState();
 beforeEach(async () => { await home.reset(); });
@@ -45,7 +45,7 @@ it('decodes the registered Guard Action answer without admitting an unknown resu
     });
     expect(await guardRpc.fetchMachineGuardViewViaAction(input)).toEqual({ ok: true, value: view });
     network.rpc.mockResolvedValue({ ...view, policyRevision: 'unproven' });
-    expect(await guardRpc.fetchMachineGuardViewViaAction(input)).toEqual({ ok: false, reason: 'invalid_response' });
+    expect(await guardRpc.fetchMachineGuardViewViaAction(input)).toMatchObject({ ok: false, reason: 'invalid_response' });
 });
 
 it('streams Activity receipts through the consumed hook without acquiring a Guard view', async () => {
@@ -85,18 +85,20 @@ it('distinguishes unavailable transport from missing Guard operations across rea
     for (const errorCode of [RPC_ERROR_CODES.METHOD_NOT_FOUND, RPC_ERROR_CODES.METHOD_NOT_AVAILABLE]) {
         network.rpc.mockRejectedValue(new RpcError('Unavailable operation', errorCode));
         const reason = errorCode === RPC_ERROR_CODES.METHOD_NOT_FOUND ? 'older_happier' : 'request_failed';
-        expect(await guardRpc.fetchMachineGuardViewViaAction(input)).toEqual({ ok: false, reason });
+        expect(await guardRpc.fetchMachineGuardViewViaAction(input)).toMatchObject({ ok: false, reason });
         expect(await guardRpc.fetchMachineGuardActivityViaAction({ ...input, range: 'today', filter: 'all' }))
-            .toEqual({ ok: false, reason });
-        expect(await guardRpc.watchMachineGuardViaMachineRpc(input)).toEqual({ ok: false, reason });
+            .toMatchObject({ ok: false, reason });
+        expect(await guardRpc.watchMachineGuardViaMachineRpc(input)).toMatchObject({ ok: false, reason });
         expect(await guardRpc.watchMachineGuardActivityViaMachineRpc({ ...input, range: '7d', filter: 'all' }))
-            .toEqual({ ok: false, reason });
+            .toMatchObject({ ok: false, reason });
         expect(await guardRpc.keepMachineGuardWorkRunningViaAction({ ...input, terminalKey: 'terminal' }))
-            .toEqual({ ok: false, reason });
+            .toMatchObject({ ok: false, reason });
     }
-    network.rpc.mockRejectedValue(new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN));
-    expect(await guardRpc.fetchMachineGuardViewViaAction(input)).toEqual({ ok: false, reason: 'request_failed' });
-    expect(await guardRpc.watchMachineGuardViaMachineRpc(input)).toEqual({ ok: false, reason: 'request_failed' });
+    const failureCause = { phase: 'dispatch' as const, errorClass: 'RpcError', errorCode: RPC_ERROR_CODES.FORBIDDEN, httpStatus: 403 };
+    network.rpc.mockRejectedValue(new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN, failureCause));
+    const failure = { ok: false, reason: 'request_failed', errorCode: RPC_ERROR_CODES.FORBIDDEN, failureCause };
+    expect(await guardRpc.fetchMachineGuardViewViaAction(input)).toEqual(failure);
+    expect(await guardRpc.watchMachineGuardViaMachineRpc(input)).toEqual(failure);
 });
 
 it('distinguishes an empty or held pending read, failure and offline without losing the last good answer', async () => {
@@ -130,7 +132,7 @@ it('distinguishes an empty or held pending read, failure and offline without los
     expect(hook.getCurrent()).toMatchObject({ on: false, settings: { revision: 2, policy: { guard: { memoryGuard: { enabled: true } } } } });
     await act(async () => { last.retry(); });
     await act(async () => { await vi.waitFor(() => expect(replies).toHaveLength(2)); });
-    expect(hook.getCurrent()).toMatchObject({ status: 'loading', pending: true, on: false, receivedAtMs: last.receivedAtMs });
+    expect(hook.getCurrent()).toMatchObject({ status: 'ready', pending: true, on: false, receivedAtMs: last.receivedAtMs });
     expect(hook.getCurrent().view).toBe(last.view);
     await act(async () => { replies[1]!.reject(new Error('Machine unavailable')); });
     await act(async () => { await vi.waitFor(() => expect(hook.getCurrent().status).toBe('error')); });
@@ -161,5 +163,33 @@ it('keeps a failed initial daemon view unknown even when the synced rule is enab
     await act(async () => { await vi.waitFor(() => expect(hook.getCurrent().status).toBe('error')); });
     expect(hook.getCurrent()).toMatchObject({ view: null, on: null, pending: false, receivedAtMs: null,
         settings: { policy: { guard: { memoryGuard: { enabled: true } } } } });
+    await hook.unmount();
+});
+
+it('keeps every other machine\'s Activity read and watch when one machine of the fleet goes offline', async () => {
+    const serverId = await home.addHome({ name: 'Activity fleet', serverUrl: 'https://activity-fleet.test',
+        serverIdentityId: 'srv_activity_fleet', accountId: 'owner', currentAccount: true });
+    home.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {} }, version: 1 } });
+    const machine = (id: string) => createMachineFixture({ id, activeAt: Date.now(), storageMode: 'plain', isShared: false,
+        metadata: { host: id, platform: 'linux', happyCliVersion: '0.3.0', happyHomeDir: '/home/test/.happier', homeDir: '/home/test' },
+        access: { role: 'manage', custodian: { accountId: 'owner', displayName: 'Owner' }, resourceMode: 'plain', accessState: 'ready' } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, ['a', 'b', 'c'].map(machine));
+    const list = { entries: [], counts: { stopped: 0, cleanedUp: 0, needsLook: 0, others: 0 }, asOf: 1000 };
+    const reads: string[] = [];
+    network.rpc.mockImplementation(async ({ method, machineId }: { method: string; machineId?: string }) => {
+        if (method === RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST) { reads.push(String(machineId)); return list; }
+        if (method === RPC_METHODS.DAEMON_GUARD_ACTIVITY_WATCH) return new Promise(() => {});
+        throw new Error(`unexpected ${method}`);
+    });
+    const hook = await renderHook(() => useMachinesGuardActivity({ serverId, machineIds: ['a', 'b', 'c'], range: '7d', filter: 'all' }));
+    await act(async () => { await vi.waitFor(() => expect(hook.getCurrent().map(entry => entry.status)).toEqual(['ready', 'ready', 'ready'])); });
+    const settled = hook.getCurrent();
+    reads.length = 0;
+    // Presence of one machine flips (a flapping or sleeping Machine). Its own read stops; a and b are untouched.
+    await act(async () => { await publishMachineInventoryForTest({ serverId, accountId: 'owner' },
+        [machine('a'), machine('b'), { ...machine('c'), active: false, activeAt: 1 }]); });
+    await act(async () => { await vi.waitFor(() => expect(hook.getCurrent()[2]!.offline).toBe(true)); });
+    expect({ reads, statuses: hook.getCurrent().map(entry => entry.status) }).toEqual({ reads: [], statuses: ['ready', 'ready', 'ready'] });
+    expect(hook.getCurrent()[0]!.list).toBe(settled[0]!.list);
     await hook.unmount();
 });

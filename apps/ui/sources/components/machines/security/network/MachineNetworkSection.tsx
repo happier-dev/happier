@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierRadioMark } from '@happier-dev/plugin-ui/presentation';
-import { accessProviderRefsEqualV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
+import { accessProviderRefsEqualV1, isAccessProviderSelectionErrorCodeV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import {
   type AccessProviderRefV1,
   type AccessProviderSelectionV1,
@@ -1051,7 +1051,7 @@ function NetworkReviewFoot(
     const rolledBack = details.success && 'status' in details.data && details.data.status === 'rolledBack'
       && details.data.restoration?.status === 'verified';
     // The provider resolver refused the chosen default before any effect; another choice is the way on.
-    const providerRefused = PROVIDER_REFUSAL_CODES.has(review.failure.errorCode);
+    const providerRefused = isAccessProviderSelectionErrorCodeV1(review.failure.errorCode);
     return (
       <ItemGroup surface="none">
         <SurfaceStateCard
@@ -1366,10 +1366,6 @@ function postureEquals(
 
 /** Every address on the internet, IPv4 and IPv6. */
 const ANYWHERE_CIDRS = new Set(['0.0.0.0/0', '::/0']);
-/** The access-provider resolver's typed refusals for a chosen default (no effect attempted). */
-const PROVIDER_REFUSAL_CODES: ReadonlySet<string> = new Set([
-  'invalid_access_provider_selection', 'access_provider_unavailable', 'access_provider_target_unsupported',
-]);
 const DAEMON_STATE_KEYS = {
   ready: 'machineDetailPage.network.daemonReady',
   unavailable: 'machineDetailPage.network.daemonUnavailable',

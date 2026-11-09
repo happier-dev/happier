@@ -9,6 +9,105 @@ async function settle() { for (let i = 0; i < 20; i++) await Promise.resolve(); 
 const idleActivityWatch: MachineGuardClients['activityWatchClient'] = async () => new Promise(() => {});
 
 describe('Guard last-good freshness', () => {
+    it('retains typed read failures for Guard and Activity and clears them on recovery', async () => {
+        const failure = { ok: false as const, reason: 'request_failed' as const, errorCode: 'permission_denied' };
+        let recovered = false;
+        const store = createMachineGuardStore({
+            viewClient: async () => recovered ? { ok: true, value: createMachineGuardViewFixture() } : failure,
+            watchClient: async () => new Promise(() => {}),
+            activityClient: async () => recovered ? { ok: true, value: { entries: [], counts: { stopped: 0, cleanedUp: 0, needsLook: 0, others: 0 }, asOf: 1 } } : failure,
+            activityWatchClient: idleActivityWatch,
+        });
+        const key = { machineId: 'machine', serverId: 'home', expectedAccountId: 'owner', range: '7d' as const, filter: 'all' as const };
+        const releases = [store.demandView(key), store.demandActivity(key)];
+        try {
+            await settle();
+            expect(store.getView(key)).toMatchObject({ status: 'error', failure });
+            expect(store.getActivity(key)).toMatchObject({ status: 'error', failure });
+            recovered = true;
+            store.retryView(key); store.retryActivity(key);
+            await settle();
+            expect(store.getView(key)).toMatchObject({ status: 'ready' });
+            expect(store.getActivity(key)).toMatchObject({ status: 'ready' });
+            expect(store.getView(key)).not.toHaveProperty('failure');
+            expect(store.getActivity(key)).not.toHaveProperty('failure');
+        } finally { releases.forEach(release => release()); store.reset(); }
+    });
+
+    it('retains unchanged Guard rows by identity while a real changed fact advances the view', async () => {
+        const watches: Array<ReturnType<typeof createDeferred<MachineGuardResult<MachineGuardWatchResultV1>>>> = [];
+        const view = createMachineGuardViewFixture({ idle: ['first', 'second'].map(sessionRef => ({
+            sessionRef, title: sessionRef, agentId: 'codex', status: 'not_yet', idleMs: 1000,
+        })) });
+        const store = createMachineGuardStore({
+            viewClient: async () => ({ ok: true, value: structuredClone(view) }),
+            watchClient: () => {
+                const reply = createDeferred<MachineGuardResult<MachineGuardWatchResultV1>>();
+                watches.push(reply); return reply.promise;
+            },
+            activityClient: async () => ({ ok: false, reason: 'request_failed' }), activityWatchClient: idleActivityWatch,
+        });
+        const key = { machineId: 'machine', serverId: 'home', expectedAccountId: 'owner' };
+        const release = store.demandView(key);
+        try {
+            await settle();
+            const held = store.getView(key).view!;
+            const changed = structuredClone(view);
+            changed.idle[0] = { ...changed.idle[0]!, status: 'stops_at', stopAt: 3000 };
+            changed.idle.reverse();
+            watches[0]!.resolve({ ok: true, value: { changed: true, since: 2, view: changed } });
+            await settle();
+            const current = store.getView(key).view!;
+            expect(current.idle[0]).toBe(held.idle[1]);
+            expect(current.idle[1]).toMatchObject({ sessionRef: 'first', status: 'stops_at', stopAt: 3000 });
+            expect(current.policy).toBe(held.policy);
+            expect(current.ladder).toBe(held.ladder);
+        } finally { release(); store.reset(); }
+    });
+
+    it('retains equal Activity publications and preserves rows by id through a changed watch answer', async () => {
+        const watches: Array<ReturnType<typeof createDeferred<MachineGuardResult<MachineGuardActivityWatchResultV1>>>> = [];
+        const entries: ReturnType<typeof createMachineGuardViewFixture>['recentActivity'] = ['first', 'second'].map(id => ({
+            v: 1, id, at: 1, kind: 'closed_browser', rule: 'memory_guard', outcome: 'done', attribution: { kind: 'unknown' },
+        }));
+        const list = { entries, counts: { stopped: 2, cleanedUp: 0, needsLook: 0, others: 0 }, asOf: 1234 };
+        const store = createMachineGuardStore({
+            viewClient: async () => ({ ok: true, value: createMachineGuardViewFixture() }),
+            watchClient: async () => new Promise(() => {}),
+            activityClient: async () => ({ ok: true, value: structuredClone(list) }),
+            activityWatchClient: () => {
+                const reply = createDeferred<MachineGuardResult<MachineGuardActivityWatchResultV1>>();
+                watches.push(reply); return reply.promise;
+            },
+        });
+        const key = { machineId: 'machine', serverId: 'home', expectedAccountId: 'owner', range: '7d' as const, filter: 'all' as const };
+        const release = store.demandActivity(key);
+        let stop = () => {};
+        try {
+            await settle();
+            // Establish the daemon cursor before measuring content publications.
+            watches.at(-1)!.resolve({ ok: true, value: { changed: true, since: 1, list: structuredClone(list) } });
+            await settle();
+            const held = store.getActivity(key);
+            const publications = vi.fn();
+            stop = store.observeActivity(key, publications);
+            for (let index = 0; index < 3; index++) {
+                watches.at(-1)!.resolve({ ok: true, value: { changed: true, since: 1, list: structuredClone(list) } });
+                await settle();
+            }
+            expect(publications).not.toHaveBeenCalled();
+            expect(store.getActivity(key)).toBe(held);
+            const changed = structuredClone(list);
+            changed.entries[0] = { ...changed.entries[0]!, undoneAt: 2000 };
+            changed.entries.reverse();
+            watches.at(-1)!.resolve({ ok: true, value: { changed: true, since: 2, list: changed } });
+            await settle();
+            expect(publications).toHaveBeenCalledTimes(1);
+            expect(store.getActivity(key).list?.entries[0]).toBe(held.list?.entries[1]);
+            expect(store.getActivity(key).list?.entries[1]).toMatchObject({ id: 'first', undoneAt: 2000 });
+        } finally { stop(); release(); store.reset(); }
+    });
+
     it('keeps Activity-only demand fresh without any Guard read or watch', async () => {
         const viewClient = vi.fn(async () => ({ ok: true as const, value: createMachineGuardViewFixture() }));
         const watchClient = vi.fn(async () => new Promise<MachineGuardResult<MachineGuardWatchResultV1>>(() => {}));
@@ -191,7 +290,7 @@ describe('Guard last-good freshness', () => {
         } finally { release(); store.reset(); }
     });
 
-    it('marks a held refresh as loading without renewing or discarding its last good view', async () => {
+    it('retains a ready view during a held refresh without renewing its freshness', async () => {
         const replies: Array<ReturnType<typeof createDeferred<MachineGuardResult<ReturnType<typeof createMachineGuardViewFixture>>>>> = [];
         const watches: Array<ReturnType<typeof createDeferred<MachineGuardResult<MachineGuardWatchResultV1>>>> = [];
         const store = createMachineGuardStore({
@@ -215,7 +314,7 @@ describe('Guard last-good freshness', () => {
             await settle();
             const last = store.getView(key);
             store.retryView(key);
-            expect(store.getView(key)).toMatchObject({ status: 'loading', pending: true, view: last.view, receivedAtMs: last.receivedAtMs });
+            expect(store.getView(key)).toMatchObject({ status: 'ready', pending: true, view: last.view, receivedAtMs: last.receivedAtMs });
             watches[0]!.resolve({ ok: true, value: { changed: true, since: 2, view: createMachineGuardViewFixture({ policyRevision: 2 }) } });
             await settle();
             expect(store.getView(key)).toMatchObject({ pending: true, view: { policyRevision: 2 } });

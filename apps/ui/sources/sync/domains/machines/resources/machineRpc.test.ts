@@ -18,6 +18,8 @@ const { machineRpcWithPeerMediationRoute } = await import('@/sync/domains/machin
 const { fetchMachineVitalsHistoryViaMachineRpc, fetchMachineVitalsViaMachineRpc, watchMachineVitalsViaMachineRpc } = await import('./machineRpc');
 
 const key = { serverId: 'home', machineId: 'machine', view: 'summary' as const };
+// Load the real Sync/Action graph during collection, outside each test's setup deadline.
+await loadSyncSingletonForTests();
 beforeEach(async () => {
     await homes.reset(); await loadSyncSingletonForTests(); network.execute.mockReset();
     key.serverId = await homes.addHome({ name: 'Vitals', serverUrl: 'https://vitals-read.test', accountId: 'owner', currentAccount: true });
@@ -43,7 +45,8 @@ it.each([true, false])('recovers demanded Vitals after consecutive transport dea
         return new Promise<unknown>((resolve, reject) => {
             request.signal?.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
             pending.push({ payload: request.payload, signal: request.signal, reply: resolve,
-                fail: () => reject(new RpcError('Transport deadline elapsed', MACHINE_RPC_TIMEOUT_ERROR_CODE)) });
+                fail: () => reject(new RpcError('Transport deadline elapsed', MACHINE_RPC_TIMEOUT_ERROR_CODE,
+                    { phase: 'dispatch', errorClass: 'RpcError', errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE, httpStatus: null })) });
             request.onDispatched?.();
         });
     });
@@ -61,7 +64,8 @@ it.each([true, false])('recovers demanded Vitals after consecutive transport dea
             pending[attempt]!.fail();
             await vi.waitFor(() => expect(pending).toHaveLength(attempt + 2));
             expect(store.getState(input)).toMatchObject({ status: attempt === 0 ? 'slow' : 'error',
-                errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE, stale: true, snapshot: held.snapshot, summary: held.summary });
+                errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE, stale: true, snapshot: held.snapshot, summary: held.summary,
+                failure: { errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE, failureCause: { phase: 'dispatch' } } });
             expect(pending.at(-1)?.payload).toMatchObject({ sinceSampledAt: 60_000 });
             expect(vi.getTimerCount()).toBe(0); // One outstanding request, no client polling/deadline timer.
         }
@@ -89,21 +93,21 @@ it('distinguishes unavailable transport from missing predecessor vitals operatio
     for (const code of [RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, RPC_ERROR_CODES.METHOD_NOT_FOUND]) {
         network.execute.mockRejectedValue(new RpcError('Unavailable operation', code));
         const expected = code === RPC_ERROR_CODES.METHOD_NOT_FOUND
-            ? { ok: false, reason: 'older_happier' }
+            ? { ok: false, reason: 'older_happier', errorCode: code }
             : { ok: false, reason: 'request_failed', errorCode: code };
-        expect.soft(await fetchMachineVitalsViaMachineRpc(key)).toEqual(expected);
-        expect.soft(await fetchMachineVitalsHistoryViaMachineRpc({ ...key, range: '1h' })).toEqual(expected);
-        expect.soft(await watchMachineVitalsViaMachineRpc(key)).toEqual(expected);
+        expect.soft(await fetchMachineVitalsViaMachineRpc(key)).toMatchObject(expected);
+        expect.soft(await fetchMachineVitalsHistoryViaMachineRpc({ ...key, range: '1h' })).toMatchObject(expected);
+        expect.soft(await watchMachineVitalsViaMachineRpc(key)).toMatchObject(expected);
     }
 });
 
 it('keeps denied access, transport failure, and invalid payloads distinct from older Happier', async () => {
     network.execute.mockRejectedValue(new RpcError('Forbidden', RPC_ERROR_CODES.FORBIDDEN));
-    expect(await fetchMachineVitalsViaMachineRpc(key)).toEqual({ ok: false, reason: 'request_failed', errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    expect(await fetchMachineVitalsViaMachineRpc(key)).toMatchObject({ ok: false, reason: 'request_failed', errorCode: RPC_ERROR_CODES.FORBIDDEN });
     network.execute.mockRejectedValue(new Error('Socket not connected'));
-    expect(await fetchMachineVitalsViaMachineRpc(key)).toEqual({ ok: false, reason: 'request_failed', errorCode: 'action_failed' });
+    expect(await fetchMachineVitalsViaMachineRpc(key)).toMatchObject({ ok: false, reason: 'request_failed', errorCode: 'action_failed' });
     network.execute.mockResolvedValue({ state: 'reporting' });
-    expect(await fetchMachineVitalsViaMachineRpc(key)).toEqual({ ok: false, reason: 'invalid_response', errorCode: 'invalid_action_output' });
+    expect(await fetchMachineVitalsViaMachineRpc(key)).toMatchObject({ ok: false, reason: 'invalid_response', errorCode: 'invalid_action_output' });
 });
 
 it('preserves the direct handler failure as a typed uncertain outcome through the Vitals Action', async () => {
@@ -131,7 +135,8 @@ it('preserves the direct handler failure as a typed uncertain outcome through th
                 receipt: 'peer.rpc.fell_back_to_server' as const, requestId: 'request_1', method,
                 reasonCode: 'handler_unavailable' as const }), serverFallback }));
     expect(await fetchMachineVitalsViaMachineRpc(key))
-        .toEqual({ ok: false, reason: 'request_failed', errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN });
+        .toMatchObject({ ok: false, reason: 'request_failed', errorCode: 'outcome_unknown',
+            failureCause: { errorCode: RPC_ERROR_CODES.OUTCOME_UNKNOWN } });
     expect(serverFallback).not.toHaveBeenCalled();
 });
 

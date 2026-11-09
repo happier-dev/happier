@@ -157,7 +157,7 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
                 complete: true, materialized: true, summarized: true, scannedAt: 1,
                 node: { nodeId: ref.itemId, name: 'selected', kind: ref.path === ordinary ? 'file' : 'folder',
                     size: { allocatedBytes: 1, freesBytes: 1, sharedBytes: 0, sharedExtentsUnmeasured: false, atLeast: false },
-                    logicalBytes: 1, items: 1, changedAt: 1, flags: { happier: false, protection: 'none', atLeast: false, inUse: false }, childCount: 0 } }) });
+                    logicalBytes: 1, items: 1, changedAt: 1, verdict: 'safe', collectable: true, flags: { happier: false, protection: 'none', atLeast: false, inUse: false }, childCount: 0 } }) });
         try {
             expect(await realpath(alias)).toBe(release);
             expect((await lstat(alias)).isSymbolicLink()).toBe(true);
@@ -243,7 +243,7 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
         registerDaemonStorageRpcHandlers({ registerHandler(method, handler) { handlers.set(method, handler); } }, routes);
         const context: RpcHandlerContext = { signal: new AbortController().signal,
             machineAdmission: { ...identity, actorAccountId: actor.accountId, role: 'manage', encryptionMode: 'plain' },
-            verifyMachineAdmissionCurrent: async () => true, verifyMachineAuthorityCurrent: async () => true };
+            verifyMachineAdmissionCurrent: async () => true };
         const invoke = (method: string, input: object = {}) => handlers.get(method)!({ machineId: 'machine', ...input }, context);
         const getPile = async () => MachineStoragePileResultV1Schema.parse(await invoke(RPC_METHODS.DAEMON_STORAGE_PILE_GET));
         const getSummary = async () => HappierStorageSummaryV1Schema.parse(await invoke(RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET));
@@ -647,7 +647,7 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
         registerDaemonStorageRpcHandlers({ registerHandler(method, handler) { handlers.set(method, handler); } }, routes);
         const context: RpcHandlerContext = { signal: new AbortController().signal,
             machineAdmission: { ...identity, actorAccountId: 'owner', role: 'manage', encryptionMode: 'plain' },
-            verifyMachineAdmissionCurrent: async () => true, verifyMachineAuthorityCurrent: async () => true };
+            verifyMachineAdmissionCurrent: async () => true };
         const enumerations = () => vi.mocked(filesystem.readdir).mock.calls.filter(([path]) => path === '/proc').length;
         const diskWalks = () => vi.mocked(childProcess.spawn).mock.calls.filter(([, args]) =>
             Array.isArray(args) && args.includes('disk-measure')).length;
@@ -1196,6 +1196,7 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')('
             const large = await service.scanGet({ machineId: 'machine', scanId: state.scanId,
                 view: { tab: 'large' as const, depth: 1 as const, minBytes: 0 } }, { actor });
             expect(MachineStorageScanGetResultV1Schema.parse(large)).toEqual(large);
+            expect(large.nodes.find(node => node.name === 'large.bin')).toMatchObject({ verdict: 'caution', collectable: true });
             // Reopen the daemon's real database independently of the resident service.
             // A wrong service→index path binding must lose both admission and file facts.
             const persisted = createStorageScanIndex({ activeServerDir: home });
