@@ -1,7 +1,7 @@
 import { z } from "zod/mini";
 import * as zMini from "zod/mini";
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { SessionPermissionAnsweringClientCategoryV1Schema } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import { SessionPermissionAnsweringClientCategoryV1Schema, NativePermissionChoicesV1Schema, NativePermissionChoiceAnswerV1Schema } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { SessionQuestionContextV1Schema, SessionQuestionHandlerV1Schema } from '@happier-dev/protocol/sessions/permissions/v1';
 import { ResolvedMcpToolIdentityV1Schema } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { CURRENT_SESSION_PRESENTATION_AGENT_STATE_KEY, CurrentSessionPresentationStateV1Schema } from '@happier-dev/protocol/sessions/presentation/currentSessionPresentationV1';
@@ -21,6 +21,7 @@ const AgentStateObjectSchema = z.looseObject({
         canDetach: z.nullish(z.boolean()),
     })),
     requests: z.nullish(z.record(z.string(), z.object({
+        nativeChoices: z.optional(NativePermissionChoicesV1Schema),
         tool: z.string(),
         kind: z.optional(z.string()),
         source: z.optional(z.string()),
@@ -40,6 +41,8 @@ const AgentStateObjectSchema = z.looseObject({
         mcpTool: zMini.catch(zMini.optional(ResolvedMcpToolIdentityV1Schema), undefined),
     }))),
     completedRequests: z.nullish(z.record(z.string(), z.looseObject({
+        nativeChoices: z.optional(NativePermissionChoicesV1Schema),
+        nativeChoice: z.optional(NativePermissionChoiceAnswerV1Schema),
         tool: z.string(),
         kind: z.optional(z.string()),
         source: z.optional(z.string()),

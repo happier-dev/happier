@@ -18,6 +18,8 @@ export type ReducerStoredPermission = {
     // Backward-compatible field name used by some clients/agents.
     allowTools?: string[];
     suggestions?: unknown;
+    nativeChoices?: NonNullable<ToolCall['permission']>['nativeChoices'];
+    nativeChoice?: NonNullable<ToolCall['permission']>['nativeChoice'];
     mcpTool?: NonNullable<ToolCall['permission']>['mcpTool'];
     decision?: 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
     decisionActor?: NonNullable<ToolCall['permission']>['decisionActor'];
@@ -43,6 +45,8 @@ export function buildToolPermissionFromStored(
         allowedTools: resolveStoredPermissionAllowedTools(permission),
         decision: permission.decision,
         suggestions: permission.suggestions,
+        ...(permission.nativeChoices ? { nativeChoices: permission.nativeChoices } : {}),
+        ...(permission.nativeChoice ? { nativeChoice: permission.nativeChoice } : {}),
         ...(permission.mcpTool ? { mcpTool: permission.mcpTool } : {}),
         ...(permission.decisionActor ? { decisionActor: permission.decisionActor } : {}),
         ...(permission.answeredBy ? { answeredBy: permission.answeredBy } : {}),
@@ -104,6 +108,8 @@ export function buildReducerStoredPermissionFromCompletedRequest(completed: Read
     permissionDecisionClaimV1?: unknown;
     answeredBy?: unknown;
     mcpTool?: unknown;
+    nativeChoices?: ReducerStoredPermission['nativeChoices'];
+    nativeChoice?: ReducerStoredPermission['nativeChoice'];
 }>): ReducerStoredPermission {
     const actor = SessionPermissionDecisionActorV1Schema.safeParse(completed.permissionDecisionActorV1);
     const answeredBy = SessionQuestionHandlerV1Schema.safeParse(completed.answeredBy);
@@ -125,6 +131,8 @@ export function buildReducerStoredPermissionFromCompletedRequest(completed: Read
         mode: completed.mode || undefined,
         allowedTools: getCompletedAllowedTools(completed),
         decision: completed.decision || undefined,
+        ...(completed.nativeChoices ? { nativeChoices: completed.nativeChoices } : {}),
+        ...(completed.nativeChoice ? { nativeChoice: completed.nativeChoice } : {}),
         ...(mcpTool.success ? { mcpTool: mcpTool.data } : {}),
         ...(decisionActor ? { decisionActor } : {}),
         ...(answeredBy.success ? { answeredBy: answeredBy.data } : {}),

@@ -1,6 +1,6 @@
 import {
     isAgentStateRequestCoveredByCompletedRequests,
-    resolveAgentStateRequestCoverageOptions,
+    type AgentStateRequestCoverageOptions,
 } from '@happier-dev/agents/runtime/agent-state-request-coverage';
 import { compareToolCalls } from "../../tools/toolComparison.js";
 import type { AgentState } from '../../state/index.js';
@@ -16,10 +16,6 @@ import {
     buildToolPermissionFromStored,
     getCompletedAllowedTools,
 } from "../helpers/toolCallProjection.js";
-
-const PENDING_REQUEST_COVERAGE_OPTIONS = resolveAgentStateRequestCoverageOptions({
-    kind: 'localPermissionBridge',
-});
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -83,6 +79,7 @@ function shouldRestorePendingPermissionFromAgentState(message: Readonly<{ tool?:
 export function runAgentStatePermissionsPhase(params: Readonly<{
     state: ReducerState;
     agentState?: AgentState | null;
+    requestCoverage?: AgentStateRequestCoverageOptions;
     incomingToolIds: Set<string>;
     incomingToolResultIds?: ReadonlySet<string>;
     completedRequestHistoryStartAt?: number | null;
@@ -117,7 +114,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                         requestId: permId,
                         request,
                         completedRequests: agentState.completedRequests as Record<string, unknown>,
-                        options: PENDING_REQUEST_COVERAGE_OPTIONS,
+                        options: params.requestCoverage,
                     });
                     if (isCoveredByCompletedRequest) {
                         continue;
@@ -170,6 +167,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                                 kind: typeof request.kind === 'string' ? request.kind : undefined,
                                 suggestions: request.permissionSuggestions,
                                 mcpTool: request.mcpTool,
+                                nativeChoices: request.nativeChoices,
                             };
                             hasChanged = true;
                         }
@@ -212,6 +210,10 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                             message.tool.permission.mcpTool = request.mcpTool;
                             hasChanged = true;
                         }
+                        if (message.tool.permission && !sameStrictJsonValue(message.tool.permission.nativeChoices ?? null, request.nativeChoices ?? null)) {
+                            message.tool.permission.nativeChoices = request.nativeChoices;
+                            hasChanged = true;
+                        }
                         if (message.tool.permission && request.permissionSuggestions !== undefined && message.tool.permission.suggestions !== request.permissionSuggestions) {
                             message.tool.permission.suggestions = request.permissionSuggestions;
                             hasChanged = true;
@@ -245,6 +247,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                             kind: typeof request.kind === 'string' ? request.kind : undefined,
                             suggestions: request.permissionSuggestions,
                             mcpTool: request.mcpTool,
+                            nativeChoices: request.nativeChoices,
                         }
                     };
 
@@ -284,6 +287,7 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                     kind: typeof request.kind === 'string' ? request.kind : undefined,
                     suggestions: request.permissionSuggestions,
                     mcpTool: request.mcpTool,
+                    nativeChoices: request.nativeChoices,
                 });
             }
         }
@@ -321,6 +325,18 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                             message.tool.permission.decisionActor = storedPermission.decisionActor;
                             const previous = state.permissions.get(permId);
                             state.permissions.set(permId, { ...(previous ?? storedPermission), decisionActor: storedPermission.decisionActor });
+                            changed.add(messageId);
+                        }
+                        // The host's selected native answer can arrive after execution starts.
+                        if (storedPermission.nativeChoice && message.tool.permission
+                            && !sameStrictJsonValue(message.tool.permission.nativeChoice ?? null, storedPermission.nativeChoice)) {
+                            message.tool.permission.nativeChoice = storedPermission.nativeChoice;
+                            if (storedPermission.nativeChoices) message.tool.permission.nativeChoices = storedPermission.nativeChoices;
+                            const previous = state.permissions.get(permId);
+                            state.permissions.set(permId, { ...(previous ?? storedPermission),
+                                nativeChoice: storedPermission.nativeChoice,
+                                ...(storedPermission.nativeChoices ? { nativeChoices: storedPermission.nativeChoices } : {}),
+                            });
                             changed.add(messageId);
                         }
                         // Skip if tool has already started actual execution with approval
@@ -364,6 +380,8 @@ export function runAgentStatePermissionsPhase(params: Readonly<{
                                 reason: completed.reason || undefined,
                                 ...(storedPermission.decisionActor ? { decisionActor: storedPermission.decisionActor } : {}),
                                 ...(storedPermission.answeredBy ? { answeredBy: storedPermission.answeredBy } : {}),
+                                ...(storedPermission.nativeChoices ? { nativeChoices: storedPermission.nativeChoices } : {}),
+                                ...(storedPermission.nativeChoice ? { nativeChoice: storedPermission.nativeChoice } : {}),
                             };
                             hasChanged = true;
                         } else {

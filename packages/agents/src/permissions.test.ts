@@ -1,32 +1,22 @@
 import { describe, expect, it } from 'vitest';
 
-import { getAgentSessionModeDescriptor } from './sessionModes.js';
+import { getAgentSessionModeDescriptor, type AgentSessionModeDescriptor } from './sessionModes.js';
+import { resolvePermissionPrivilegeOrdinal } from './permissions/privilege.js';
 import {
-  normalizePermissionModeForGroup,
+  normalizePermissionModeForSessionDescriptor,
   parsePermissionIntentAlias,
-  resolvePermissionModeGroupForAgent,
+  normalizePermissionModeForAgent,
   resolveProviderNativePermissionModeForAgent,
 } from './permissions/index.js';
 
 describe('permissions', () => {
-  it('derives permission mode groups from shared session-mode descriptor metadata', async () => {
-    const permissions = await import('./permissions/index.js');
-    const helper = (permissions as Record<string, unknown>).resolvePermissionModeGroupForSessionModeDescriptor;
-
-    expect(typeof helper).toBe('function');
-
-    const resolvePermissionModeGroupForSessionModeDescriptor = helper as (
-      descriptor: ReturnType<typeof getAgentSessionModeDescriptor>,
-    ) => string;
-
-    expect(resolvePermissionModeGroupForSessionModeDescriptor(getAgentSessionModeDescriptor('claude'))).toBe('claude');
-    expect(resolvePermissionModeGroupForSessionModeDescriptor(getAgentSessionModeDescriptor('codex'))).toBe('codexLike');
-    expect(resolvePermissionModeGroupForAgent('claude')).toBe(
-      resolvePermissionModeGroupForSessionModeDescriptor(getAgentSessionModeDescriptor('claude')),
-    );
-    expect(resolvePermissionModeGroupForAgent('codex')).toBe(
-      resolvePermissionModeGroupForSessionModeDescriptor(getAgentSessionModeDescriptor('codex')),
-    );
+  it('preserves planning behavior only for a resolved Agent-mode descriptor (01C)', () => {
+    const dynamicDescriptor = { source: 'acp', semantics: 'agent-modes', runtimeSwitch: 'acp-setSessionMode' } as const satisfies AgentSessionModeDescriptor;
+    expect(normalizePermissionModeForSessionDescriptor({ mode: 'plan', descriptor: dynamicDescriptor })).toBe('plan');
+    expect(resolvePermissionPrivilegeOrdinal(normalizePermissionModeForSessionDescriptor({ mode: 'plan', descriptor: dynamicDescriptor }))).toBe(0);
+    expect(normalizePermissionModeForAgent({ agentId: 'claude', mode: 'plan' })).toBe('plan');
+    expect(normalizePermissionModeForSessionDescriptor({ mode: 'plan', descriptor: getAgentSessionModeDescriptor('codex') })).toBe('read-only');
+    expect(normalizePermissionModeForAgent({ agentId: 'acme.agent', mode: 'plan' })).toBe('read-only');
   });
 
   it('maps canonical permission modes to Claude provider-native labels', () => {
@@ -39,15 +29,13 @@ describe('permissions', () => {
   });
 
   it('normalizes provider-agnostic permission intent before provider-native adaptation', () => {
-    expect(normalizePermissionModeForGroup('plan', 'codexLike')).toBe('read-only');
-    expect(normalizePermissionModeForGroup('plan', 'claude')).toBe('read-only');
-
-    expect(normalizePermissionModeForGroup('read-only', 'claude')).toBe('read-only');
-    expect(normalizePermissionModeForGroup('safe-yolo', 'claude')).toBe('safe-yolo');
-    expect(normalizePermissionModeForGroup('yolo', 'claude')).toBe('yolo');
-
-    expect(normalizePermissionModeForGroup('acceptEdits', 'claude')).toBe('safe-yolo');
-    expect(normalizePermissionModeForGroup('bypassPermissions', 'claude')).toBe('yolo');
+    const normalize = (mode: Parameters<typeof normalizePermissionModeForSessionDescriptor>[0]['mode']) =>
+      normalizePermissionModeForSessionDescriptor({ mode, descriptor: getAgentSessionModeDescriptor('claude') });
+    expect(normalize('read-only')).toBe('read-only');
+    expect(normalize('safe-yolo')).toBe('safe-yolo');
+    expect(normalize('yolo')).toBe('yolo');
+    expect(normalize('acceptEdits')).toBe('safe-yolo');
+    expect(normalize('bypassPermissions')).toBe('yolo');
   });
 
   it.each([

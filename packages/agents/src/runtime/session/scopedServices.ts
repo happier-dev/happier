@@ -26,6 +26,9 @@ import type {
 } from '@happier-dev/protocol';
 
 import type { SessionStateFieldWriteValue } from '../../session/state/_types.js';
+import type { NativePermissionChoicesV1, NativePermissionChoiceAnswerV1, SessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import type { StructuredQuestionAnswerDetailsV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
+export type { NativePermissionChoicesV1, NativePermissionChoiceAnswerV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 
 export type SessionRuntimeAuthRefreshRequestV1 = Readonly<{
   agentId: string;
@@ -281,12 +284,21 @@ export type SessionSystemRecordReadResultV1 = Readonly<{
 export type SessionPermissionModeV1 = string;
 
 export type SessionPermissionDecisionRequestV1 = Readonly<{
+  nativeChoices?: NativePermissionChoicesV1;
   provider?: string;
   /**
    * Runtime-owned provenance for the published request. This is carried separately from tool
    * input so provider-authored arguments cannot impersonate a host/runtime-owned request kind.
    */
   source?: string;
+  /** Producer-sanitized trace facts; request contents are never a trace fallback. */
+  traceSummary?: Readonly<{
+    kind?: string;
+    id?: string;
+    mode?: string;
+    itemCount?: number;
+    optionCount?: number;
+  }>;
   requestId?: string;
   toolCallId?: string;
   toolName?: string;
@@ -319,6 +331,10 @@ export type SessionPermissionFollowUpPromptIntentV1 = Readonly<{
 }>;
 
 export type SessionPermissionDecisionResultV1 = Readonly<{
+  nativeChoice?: NativePermissionChoiceAnswerV1;
+  mode?: SessionPermissionRespondRpcParamsV1['mode'];
+  allowedTools?: readonly string[];
+  execPolicyAmendment?: SessionPermissionRespondRpcParamsV1['execPolicyAmendment'];
   decision: SessionPermissionDecisionV1;
   rationale?: string;
   /**
@@ -327,6 +343,7 @@ export type SessionPermissionDecisionResultV1 = Readonly<{
    * Claude AskUserQuestion uses this to answer the native tool call without a follow-up text turn.
    */
   answers?: StructuredQuestionAnswersV1;
+  answerDetails?: StructuredQuestionAnswerDetailsV1;
   /**
    * Optional typed prompt the host/runtime should deliver as a later user turn after this
    * permission decision settles. This reserves follow-up/next-turn intent explicitly instead
@@ -359,6 +376,7 @@ export interface SessionPermissionsServiceV1 {
     source: string;
     decision: 'approved' | 'denied' | 'abort';
     answers?: StructuredQuestionAnswersV1;
+    answerDetails?: StructuredQuestionAnswerDetailsV1;
   }>): Promise<boolean>;
   requestDecision(
     request: SessionPermissionDecisionRequestV1,

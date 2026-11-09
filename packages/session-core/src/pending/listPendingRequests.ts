@@ -1,19 +1,24 @@
 import type { Message } from "../messages/messageTypes.js";
 import type { AgentState } from "../state/agentState.js";
 import { isRequestInterruptedPlaceholder } from "./requestInterruptedPlaceholder.js";
-import { isAgentStateRequestCoveredByCompletedRequests, resolveAgentStateRequestCoverageOptions } from '@happier-dev/agents/runtime/agent-state-request-coverage';
+import { isAgentStateRequestCoveredByCompletedRequests, type AgentStateRequestCoverageOptions } from '@happier-dev/agents/runtime/agent-state-request-coverage';
 import { SessionPublicCompletedRequestV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { isSessionActionConfirmationRequest } from '@happier-dev/protocol/sessions/metadata/sessionActionConfirmationsV1';
 import { resolvePendingRequestAttentionReasonV1 } from '@happier-dev/protocol/sessions/personal/attention';
 import { resolveAgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
-import type { AgentRequestKind, SessionActionConfirmationsV1 } from '@happier-dev/protocol';
+import type { AgentRequestKind, SessionActionConfirmationsV1, SessionStatusResult } from '@happier-dev/protocol';
 import { ResolvedMcpToolIdentityV1Schema, type ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { SessionQuestionContextV1Schema, SessionQuestionHandlerV1Schema, type SessionQuestionContextV1, type SessionQuestionHandlerV1 } from '@happier-dev/protocol/sessions/permissions/v1';
+import type { NativePermissionChoicesV1, NativePermissionChoiceAvailabilityV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import { evaluatePermissionResponseAuthorityV1 } from '@happier-dev/agents/permissions';
 
 export type PendingRequestFacts = Readonly<{
     sessionId: string;
     active: boolean;
     agentState: AgentState | null;
+    permissionRelationship?: 'owner' | 'sharedApprover' | null;
+    permissionOwnerLabel?: string;
+    requestCoverage?: AgentStateRequestCoverageOptions;
     actionConfirmations: SessionActionConfirmationsV1 | null;
     presentationCompletedRequests: Readonly<Record<string, unknown>> | null;
     projected: Readonly<{
@@ -26,6 +31,9 @@ export type PendingRequestFacts = Readonly<{
 }>;
 
 export type SessionPendingRequest = Readonly<{
+    nativeChoices?: NativePermissionChoicesV1;
+    nativeChoiceAvailability?: readonly NativePermissionChoiceAvailabilityV1[];
+    permissionOwnerLabel?: string;
     id: string;
     turnId?: string;
     source?: string;
@@ -39,6 +47,34 @@ export type SessionPendingRequest = Readonly<{
     permissionSuggestions?: unknown;
     mcpTool?: ResolvedMcpToolIdentityV1;
 }>;
+
+/** Public status carries the offered decision facts, never private tool arguments. */
+export function projectSessionStatusPendingRequestsV1(
+    requests: readonly SessionPendingRequest[],
+): NonNullable<SessionStatusResult['pendingRequests']> {
+    return requests.map(request => ({
+        requestId: request.id,
+        ...(request.turnId ? { turnId: request.turnId } : {}),
+        kind: request.kind,
+        tool: request.tool,
+        ...(request.nativeChoices ? { nativeChoices: {
+            ...request.nativeChoices,
+            choices: request.nativeChoices.choices.map(choice => ({ ...choice, response: { ...choice.response } })),
+        } } : {}),
+        ...(request.nativeChoiceAvailability ? { nativeChoiceAvailability: [...request.nativeChoiceAvailability] } : {}),
+        ...(request.permissionOwnerLabel ? { permissionOwnerLabel: request.permissionOwnerLabel } : {}),
+    }));
+}
+
+function projectNativeChoiceAvailability(request: SessionPendingRequest, facts: PendingRequestFacts): SessionPendingRequest {
+    if (!request.nativeChoices) return request;
+    return { ...request, ...(facts.permissionOwnerLabel ? { permissionOwnerLabel: facts.permissionOwnerLabel } : {}),
+        nativeChoiceAvailability: request.nativeChoices.choices.map(choice => ({
+        choiceId: choice.id,
+        ...evaluatePermissionResponseAuthorityV1({ response: choice.response, nativeScope: choice.scope,
+            relationship: facts.permissionRelationship }),
+    })) };
+}
 
 /** Request age never falls back to session activity; unknown dates follow known dates. */
 export function comparePendingRequestsByAge(
@@ -72,10 +108,6 @@ export type SessionPendingRequestLists = Readonly<{
     permissionRequests: readonly SessionPendingRequest[];
     userActionRequests: readonly SessionPendingRequest[];
 }>;
-
-const PENDING_REQUEST_COVERAGE_OPTIONS = resolveAgentStateRequestCoverageOptions({
-    kind: 'localPermissionBridge',
-});
 
 export type TranscriptRequestState =
     | Readonly<{
@@ -139,6 +171,8 @@ function mergePendingRequestMetadata(
 ): SessionPendingRequest {
     return {
         ...preferred,
+        ...(secondary.nativeChoices ?? preferred.nativeChoices ? { nativeChoices: secondary.nativeChoices ?? preferred.nativeChoices } : {}),
+        ...(secondary.nativeChoiceAvailability ?? preferred.nativeChoiceAvailability ? { nativeChoiceAvailability: secondary.nativeChoiceAvailability ?? preferred.nativeChoiceAvailability } : {}),
         ...(preferred.questionV1 ?? secondary.questionV1 ? { questionV1: preferred.questionV1 ?? secondary.questionV1 } : {}),
         // AgentState is the current-handler authority, even beside a retained transcript row.
         ...(secondary.currentHandler ?? preferred.currentHandler ? { currentHandler: secondary.currentHandler ?? preferred.currentHandler } : {}),
@@ -171,12 +205,13 @@ function isPendingRequestCoveredByCompleted(
     requestId: string,
     createdAt: number | null,
     request?: unknown,
+    requestCoverage?: AgentStateRequestCoverageOptions,
 ): boolean {
     if (isAgentStateRequestCoveredByCompletedRequests({
         requestId,
         request: request ?? { createdAt: createdAt ?? 0 },
         completedRequests,
-        options: PENDING_REQUEST_COVERAGE_OPTIONS,
+        options: requestCoverage,
     })) {
         return true;
     }
@@ -248,6 +283,7 @@ export function collectTranscriptRequestStates(
     messages: ReadonlyArray<Message> | null | undefined,
     completedRequests: Record<string, unknown> | null | undefined,
     states: Map<string, TranscriptRequestState>,
+    requestCoverage?: AgentStateRequestCoverageOptions,
 ): void {
     if (!Array.isArray(messages) || messages.length === 0) return;
 
@@ -270,10 +306,11 @@ export function collectTranscriptRequestStates(
                 && !isPendingRequestCoveredByCompleted(completedRequests, requestId, createdAt, {
                     tool: toolName,
                     turnId: permission.turnId,
+                    source: permission.source,
                     kind: permission.kind,
                     arguments: message.tool?.input,
                     createdAt,
-                })
+                }, requestCoverage)
             ) {
                 updateTranscriptRequestState(states, requestId, {
                     status: 'pending',
@@ -282,6 +319,7 @@ export function collectTranscriptRequestStates(
                         id: requestId,
                         ...(permission.turnId !== undefined ? { turnId: permission.turnId } : {}),
                         ...(permission.source !== undefined ? { source: permission.source } : {}),
+                        ...(permission.nativeChoices ? { nativeChoices: permission.nativeChoices } : {}),
                         tool: toolName,
                         kind: resolveAgentRequestKind({ toolName, requestKind: permission.kind }),
                         arguments: message.tool?.input,
@@ -306,7 +344,7 @@ export function collectTranscriptRequestStates(
             }
         }
 
-        collectTranscriptRequestStates(message.children ?? [], completedRequests, states);
+        collectTranscriptRequestStates(message.children ?? [], completedRequests, states, requestCoverage);
     }
 }
 
@@ -324,6 +362,7 @@ function getTranscriptRequestStates(
         transcriptMessages,
         facts.presentationCompletedRequests,
         states,
+        facts.requestCoverage,
     );
     if (statesCache) {
         statesCache.states = states;
@@ -336,17 +375,20 @@ export function listPendingTranscriptRequests(
     messages?: ReadonlyArray<Message>,
 ): SessionPendingRequest[] {
     return Array.from(getTranscriptRequestStates(facts, messages).values())
-        .flatMap((state) => (state.status === 'pending' ? [state.request] : []));
+        .flatMap((state) => (state.status === 'pending' ? [projectNativeChoiceAvailability(state.request, facts)] : []));
 }
 
 type PendingAgentStateRequestFacts = Readonly<{
     requests?: Readonly<Record<string, Pick<NonNullable<AgentState['requests']>[string],
         'tool' | 'kind' | 'source' | 'arguments' | 'createdAt' | 'turnId' | 'sidechainId'
-        | 'questionV1' | 'currentHandler' | 'permissionSuggestions' | 'mcpTool'>>> | null;
+        | 'questionV1' | 'currentHandler' | 'permissionSuggestions' | 'mcpTool' | 'nativeChoices'>>> | null;
     completedRequests?: AgentState['completedRequests'];
 }>;
 
-function listPendingAgentStateRequests(agentState: PendingAgentStateRequestFacts | SessionActionConfirmationsV1 | null | undefined): SessionPendingRequest[] {
+function listPendingAgentStateRequests(
+    agentState: PendingAgentStateRequestFacts | SessionActionConfirmationsV1 | null | undefined,
+    requestCoverage?: AgentStateRequestCoverageOptions,
+): SessionPendingRequest[] {
     const requests = agentState?.requests;
     if (!requests) return [];
     const completed = agentState?.completedRequests ?? null;
@@ -356,7 +398,7 @@ function listPendingAgentStateRequests(agentState: PendingAgentStateRequestFacts
         const toolName = typeof request.tool === 'string' ? request.tool.trim() : '';
         if (!toolName) return [];
         const createdAt = typeof request.createdAt === 'number' ? request.createdAt : null;
-        if (isPendingRequestCoveredByCompleted(completed as Record<string, unknown> | null | undefined, id, createdAt, request)) return [];
+        if (isPendingRequestCoveredByCompleted(completed as Record<string, unknown> | null | undefined, id, createdAt, request, requestCoverage)) return [];
         const mcpTool = ResolvedMcpToolIdentityV1Schema.safeParse('mcpTool' in request ? request.mcpTool : undefined);
         const question = SessionQuestionContextV1Schema.safeParse('questionV1' in request ? request.questionV1 : undefined);
         const handler = SessionQuestionHandlerV1Schema.safeParse('currentHandler' in request ? request.currentHandler : undefined);
@@ -380,14 +422,18 @@ function listPendingAgentStateRequests(agentState: PendingAgentStateRequestFacts
             ...(mcpTool.success ? { mcpTool: mcpTool.data } : {}),
             ...(question.success ? { questionV1: question.data } : {}),
             ...(handler.success ? { currentHandler: handler.data } : {}),
+            ...('nativeChoices' in request && request.nativeChoices ? { nativeChoices: request.nativeChoices } : {}),
             createdAt,
             ...(getRequestPermissionSuggestions(request) ? { permissionSuggestions: getRequestPermissionSuggestions(request) } : {}),
         }];
     });
 }
 
-export function derivePendingRequestFlagsFromAgentState(agentState: PendingAgentStateRequestFacts | SessionActionConfirmationsV1 | null | undefined): PendingRequestFlags {
-    const requests = listPendingAgentStateRequests(agentState);
+export function derivePendingRequestFlagsFromAgentState(
+    agentState: PendingAgentStateRequestFacts | SessionActionConfirmationsV1 | null | undefined,
+    requestCoverage?: AgentStateRequestCoverageOptions,
+): PendingRequestFlags {
+    const requests = listPendingAgentStateRequests(agentState, requestCoverage);
     if (requests.length === 0) {
         return EMPTY_PENDING_REQUEST_FLAGS;
     }
@@ -435,7 +481,7 @@ function hasProjectedPendingRequestCounts(facts: PendingRequestFacts): boolean {
 }
 
 function hasPendingAgentRequests(facts: PendingRequestFacts): boolean {
-    return listPendingAgentStateRequests(facts.agentState).length > 0
+    return listPendingAgentStateRequests(facts.agentState, facts.requestCoverage).length > 0
         || listPendingAgentStateRequests(facts.actionConfirmations).length > 0;
 }
 
@@ -505,12 +551,13 @@ export function listPendingRequests(
 ): SessionPendingRequest[] {
     const sharedActionState = facts.actionConfirmations;
     const pendingAgentStateRequests = [
-        ...listPendingAgentStateRequests(facts.agentState),
+        ...listPendingAgentStateRequests(facts.agentState, facts.requestCoverage),
         ...listPendingAgentStateRequests(sharedActionState),
     ];
 
     if (facts.active !== true) {
-        return pendingAgentStateRequests.filter((request) => request.kind === 'user_action');
+        return pendingAgentStateRequests.filter((request) => request.kind === 'user_action')
+            .map(request => projectNativeChoiceAvailability(request, facts));
     }
 
     // A pre-filled states cache stands in for the transcript, so the
@@ -557,7 +604,7 @@ export function listPendingRequests(
         }
     }
 
-    return Array.from(pending.values());
+    return Array.from(pending.values(), request => projectNativeChoiceAvailability(request, facts));
 }
 
 function isPendingRequestCurrent(facts: PendingRequestFacts, request: SessionPendingRequest, state: TranscriptRequestState | undefined): boolean {
@@ -570,7 +617,7 @@ function isPendingRequestCurrent(facts: PendingRequestFacts, request: SessionPen
 
 /** An unstamped summary cannot retire a native request; a newer stamped observation or exact completion can. */
 function hasUnprojectedAgentPermissionRequest(facts: PendingRequestFacts, transcriptStates: Map<string, TranscriptRequestState>): boolean {
-    return listPendingAgentStateRequests(facts.agentState).some(request =>
+    return listPendingAgentStateRequests(facts.agentState, facts.requestCoverage).some(request =>
         resolvePendingRequestAttentionReasonV1(request) === 'permission_required'
         && isPendingRequestCurrent(facts, request, transcriptStates.get(request.id)));
 }
@@ -608,7 +655,7 @@ export function deriveLatestPendingRequestObservedAt(
 ): number | null {
     if (facts.active !== true) {
         return latestPendingRequestCreatedAt(
-            listPendingAgentStateRequests(facts.agentState).filter((request) => request.kind === 'user_action'),
+            listPendingAgentStateRequests(facts.agentState, facts.requestCoverage).filter((request) => request.kind === 'user_action'),
         );
     }
 
@@ -654,7 +701,7 @@ export function derivePendingRequestFlags(
     statesCache?: TranscriptRequestStatesCache,
 ): PendingRequestFlags {
     if (facts.active !== true) {
-        const agentStateFlags = derivePendingRequestFlagsFromAgentState(facts.agentState);
+        const agentStateFlags = derivePendingRequestFlagsFromAgentState(facts.agentState, facts.requestCoverage);
         return {
             hasPendingPermissionRequests: false,
             hasPendingUserActionRequests: agentStateFlags.hasPendingUserActionRequests,
@@ -670,12 +717,12 @@ export function derivePendingRequestFlags(
         const agentPermissionRequired = hasUnprojectedAgentPermissionRequest(facts, transcriptStates);
         if (shouldUseProjectedPendingRequestCounts(facts, transcriptStates)) {
             const projectedFlags = readProjectedPendingRequestFlags(facts);
-            const agentStateFlags = derivePendingRequestFlagsFromAgentState(facts.agentState);
+            const agentStateFlags = derivePendingRequestFlagsFromAgentState(facts.agentState, facts.requestCoverage);
             return {
                 hasPendingPermissionRequests:
                     projectedFlags.hasPendingPermissionRequests
                     || agentPermissionRequired
-                    || listPendingAgentStateRequests(facts.agentState).some(isSessionActionConfirmationRequest)
+                    || listPendingAgentStateRequests(facts.agentState, facts.requestCoverage).some(isSessionActionConfirmationRequest)
                     || actionFlags.hasPendingPermissionRequests,
                 hasPendingUserActionRequests:
                     projectedFlags.hasPendingUserActionRequests

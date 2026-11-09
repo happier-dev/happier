@@ -4,6 +4,7 @@ import { getAgentSessionModeDescriptor, type AgentSessionModeDescriptor } from '
 import { BUNDLED_AGENT_DEFINITIONS_BY_ID } from '../generated/bundledAgentDefinitions.js';
 import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import { parseSessionPermissionModeAlias } from '@happier-dev/protocol/sessions/metadata/permission-modes';
+import type { NativePermissionChoicesV1, SessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 
 export { PERMISSION_MODES };
 export { getAgentSessionModesKind } from '../sessionModes.js';
@@ -17,35 +18,22 @@ export function isPermissionIntent(value: unknown): value is PermissionIntent {
     return typeof value === 'string' && (PERMISSION_INTENTS as readonly string[]).includes(value);
 }
 
-export type PermissionModeGroupId = 'claude' | 'codexLike';
-
-export function normalizePermissionModeForGroup(mode: PermissionMode, _group: PermissionModeGroupId): PermissionMode {
-    const normalized = parsePermissionIntentAlias(mode) ?? 'default';
-
-    // `plan` is an agent behavior mode, not permission strictness. Fail it closed at this layer.
-    if (normalized === 'plan') return 'read-only';
-
-    return normalized;
-}
-
-export function resolvePermissionModeGroupForSessionModeDescriptor(
-    descriptor: AgentSessionModeDescriptor,
-): PermissionModeGroupId {
-    return descriptor.source === 'provider-native' ? 'claude' : 'codexLike';
-}
-
-export function resolvePermissionModeGroupForAgent(agentId: AgentId): PermissionModeGroupId {
-    const descriptor = getAgentSessionModeDescriptor(agentId);
-    // A non-bundled Agent contributes no bundled session-mode descriptor. The generic
-    // group is the correct reading of "not provider-native"; it is not a substitution
-    // of another Agent's facts.
-    return descriptor == null
-        ? 'codexLike'
-        : resolvePermissionModeGroupForSessionModeDescriptor(descriptor);
+export function normalizePermissionModeForSessionDescriptor(params: {
+    mode: PermissionMode;
+    descriptor: AgentSessionModeDescriptor | null | undefined;
+}): PermissionMode {
+    const normalized = parsePermissionIntentAlias(params.mode) ?? 'default';
+    // Planning is a restrictive behavior selection only when the Agent declares it.
+    return normalized === 'plan' && params.descriptor?.semantics !== 'agent-modes'
+        ? 'read-only'
+        : normalized;
 }
 
 export function normalizePermissionModeForAgent(params: { agentId: AgentId; mode: PermissionMode }): PermissionMode {
-    return normalizePermissionModeForGroup(params.mode, resolvePermissionModeGroupForAgent(params.agentId));
+    return normalizePermissionModeForSessionDescriptor({
+        mode: params.mode,
+        descriptor: getAgentSessionModeDescriptor(params.agentId),
+    });
 }
 
 export type ProviderNativePermissionMode = string;
@@ -82,8 +70,8 @@ export function parsePermissionModeAlias(raw: string): PermissionMode | null {
  *
  * The return value is always an intent suitable for persistence.
  */
-export function parsePermissionIntentAlias(raw: string): PermissionIntent | null {
-    return parseAgentPermissionIntentV1Alias(raw);
+export function parsePermissionIntentAlias(raw: unknown): PermissionIntent | null {
+    return typeof raw === 'string' ? parseAgentPermissionIntentV1Alias(raw) : null;
 }
 
 export type PermissionIntentCandidate = Readonly<{
@@ -126,4 +114,25 @@ export function resolveLatestPermissionIntent(
     }
 
     return best;
+}
+
+/** One durable-grant authority decision shared by response admission and pending presentation. */
+export function evaluatePermissionResponseAuthorityV1(input: Readonly<{
+    response: Readonly<Pick<SessionPermissionRespondRpcParamsV1,
+        'execPolicyAmendment' | 'updatedPermissions' | 'allowedTools' | 'mode'> & {
+        /** Released CLI response alias. */
+        allowTools?: readonly string[];
+    }>;
+    nativeScope?: NativePermissionChoicesV1['choices'][number]['scope'];
+    relationship?: 'owner' | 'sharedApprover' | null;
+}>): Readonly<{ allowed: true } | { allowed: false; reason: 'owner_required' }> {
+    const durable = input.nativeScope === 'localPersistent'
+        || input.response.execPolicyAmendment !== undefined
+        || input.response.updatedPermissions !== undefined
+        || input.response.allowedTools !== undefined
+        || input.response.allowTools !== undefined
+        || input.response.mode !== undefined;
+    return durable && input.relationship !== 'owner'
+        ? { allowed: false, reason: 'owner_required' }
+        : { allowed: true };
 }

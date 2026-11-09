@@ -1028,6 +1028,9 @@ export type ActionExecutorContext = Readonly<{
    */
   sessionCreationDirectoryApproval?: SessionCreationDirectoryApprovalV1 | null;
 
+  /** Target-owner preparation retained only within this spawn execution; never approval/RPC input. */
+  sessionCreationPreparedTarget?: Extract<import('../../sessions/creation/sessionCreationTargetPreparationV1.js').SessionCreationTargetPreparationResultV1, { ok: true }>;
+
   /** Exact host-only non-empty handoff target proof recovered from approval. */
   handoffTargetReplacementApproval?: HandoffTargetReplacementApprovalV1 | null;
 
@@ -1977,10 +1980,11 @@ export type ActionExecutorDeps = Readonly<{
     context?: ActionExecutorContext;
     signal?: AbortSignal;
   }>) => Promise<
-    | Readonly<{ type: 'not_required' }>
+    | Readonly<{ type: 'not_required'; preparedTarget?: ActionExecutorContext['sessionCreationPreparedTarget'] }>
     | Readonly<{
         type: 'approval_required';
         approval: SessionCreationDirectoryApprovalV1;
+        preparedTarget?: ActionExecutorContext['sessionCreationPreparedTarget'];
       }>
     | Readonly<{
         type: 'error';
@@ -2557,10 +2561,12 @@ export type ActionExecutorDeps = Readonly<{
   sessionPermissionRespond?: (args: Readonly<{
     sessionId: string;
     context?: ActionExecutorContext;
-    decision: SessionPermissionRespondActionDecisionV1;
+    decision?: SessionPermissionRespondActionDecisionV1;
+    nativeChoice?: SessionPermissionRespondRpcParamsV1['nativeChoice'];
     mode?: SessionPermissionRespondRpcParamsV1['mode'];
     reason?: string;
     answers?: SessionPermissionRespondRpcParamsV1['answers'];
+    answerDetails?: SessionPermissionRespondRpcParamsV1['answerDetails'];
     requestId?: string | null;
     turnId?: string | null;
     allowedTools?: readonly string[];
@@ -2582,7 +2588,7 @@ export type ActionExecutorDeps = Readonly<{
     context?: ActionExecutorContext;
     requestId?: string | null;
     disposition?: 'pass_up';
-    answers: readonly Readonly<{ question: string; values: readonly string[] }>[];
+    answers: readonly Readonly<{ question: string; values: readonly string[]; freeText?: string; note?: string }>[];
     decision?: 'approve' | 'reject' | 'request_changes';
     reason?: string;
     updatedPermissions?: unknown;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveAgentStateRequestCoverageOptions } from '@happier-dev/agents';
+import type { AgentStateRequestCoverageOptions } from '@happier-dev/agents';
 import type { Message } from "../messages/messageTypes.js";
 import { readSharedMetadataActionConfirmationState } from "./readSharedMetadataPendingRequestFacts.js";
 import {
@@ -7,6 +7,7 @@ import {
     deriveLatestPendingRequestObservedAt,
     derivePendingRequestFlags,
     listPendingRequests,
+    projectSessionStatusPendingRequestsV1,
     comparePendingRequestsByAge,
     selectOldestPendingRequest,
     shouldReadTranscriptForPendingRequests,
@@ -20,9 +21,13 @@ function createPendingFacts(overrides: Partial<PendingRequestFacts> = {}): Pendi
     return { sessionId: 'session-1', active: false, agentState: null, actionConfirmations: null, presentationCompletedRequests: null, projected: null, ...overrides };
 }
 
-const localPermissionBridgeCoverageOptions = resolveAgentStateRequestCoverageOptions({ kind: 'localPermissionBridge' });
-const LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE = localPermissionBridgeCoverageOptions.equivalentSources?.[0] ?? '';
-const LOCAL_PERMISSION_BRIDGE_STOPPED_REASON = localPermissionBridgeCoverageOptions.equivalentCompletedReasons?.[0] ?? '';
+const localPermissionBridgeCoverageOptions = {
+    equivalentSources: ['test_local_bridge'],
+    equivalentCompletedStatuses: ['canceled'],
+    equivalentCompletedReasons: ['Test bridge stopped'],
+} satisfies AgentStateRequestCoverageOptions;
+const LOCAL_PERMISSION_BRIDGE_REQUEST_SOURCE = localPermissionBridgeCoverageOptions?.equivalentSources?.[0] ?? '';
+const LOCAL_PERMISSION_BRIDGE_STOPPED_REASON = localPermissionBridgeCoverageOptions?.equivalentCompletedReasons?.[0] ?? '';
 
 const SHARED_ACTION_REQUEST = {
     tool: 'Happier Action confirmation' as const,
@@ -47,7 +52,83 @@ const SHARED_ACTION_REQUEST = {
     },
 };
 
+describe('public status pending request projection', () => {
+    it('carries the authorized owner label with a disabled native choice through public status', () => {
+        const nativeChoices = { requirementId: 'owner-label', source: 'native', choices: [
+            { id: 'remember', label: 'Remember', decision: 'approved' as const, scope: 'localPersistent' as const,
+                response: { approved: true } },
+        ] };
+        const facts = { ...createPendingFacts({ active: true, permissionRelationship: 'sharedApprover',
+            agentState: { requests: { request: { tool: 'Shell', arguments: {}, nativeChoices } } } }),
+            permissionOwnerLabel: 'Ada Lovelace' };
+        expect(projectSessionStatusPendingRequestsV1(listPendingRequests(facts, []))).toEqual([
+            expect.objectContaining({ permissionOwnerLabel: 'Ada Lovelace', nativeChoiceAvailability: [
+                { choiceId: 'remember', allowed: false, reason: 'owner_required' },
+            ] }),
+        ]);
+    });
+    it('preserves offered choices and owner-projected refusals while excluding private arguments', () => {
+        const nativeChoices = { requirementId: 'requirement', source: 'native-agent', choices: [
+            { id: 'persistent-choice', label: 'Remember for this Machine', decision: 'approved' as const,
+                scope: 'localPersistent' as const, response: { approved: true as const, decision: 'approved' as const } },
+        ] };
+        const nativeChoiceAvailability = [{ choiceId: 'persistent-choice', allowed: false, reason: 'owner_required' as const }];
+        expect(projectSessionStatusPendingRequestsV1([{ id: 'request', turnId: 'turn', tool: 'native-tool', kind: 'permission',
+            createdAt: 1, arguments: { secret: 'private-argument' }, nativeChoices, nativeChoiceAvailability }]))
+            .toEqual([{ requestId: 'request', turnId: 'turn', kind: 'permission', tool: 'native-tool', nativeChoices, nativeChoiceAvailability }]);
+        expect(projectSessionStatusPendingRequestsV1([])).toEqual([]);
+    });
+});
+
 describe('oldest pending request', () => {
+    it.each([true, false])('uses selected custom coverage for equivalent cancellations without applying it to other agents (active %s)', active => {
+        const requestCoverage = {
+            equivalentSources: ['custom_bridge'],
+            equivalentCompletedStatuses: ['canceled'],
+            equivalentCompletedReasons: ['Custom bridge stopped'],
+        };
+        const request = { tool: 'Shell', kind: 'user_action' as const, arguments: { command: 'pwd' }, createdAt: 10_500, source: 'custom_bridge' };
+        const facts = {
+            ...createPendingFacts({ active, agentState: {
+                requests: { pending: request },
+                completedRequests: { pending: { ...request, createdAt: 1_000, completedAt: 10_000,
+                    status: 'canceled' as const, reason: 'Custom bridge stopped' } },
+            } }),
+            requestCoverage,
+        };
+        expect(listPendingRequests(facts, [])).toEqual([]);
+        expect(deriveLatestPendingRequestObservedAt(facts, [])).toBeNull();
+        expect(listPendingRequests({ ...facts, requestCoverage: undefined }, []).map(request => request.id)).toEqual(['pending']);
+    });
+
+    it('preserves native choice identity and child origin from the stored occurrence', () => {
+        const nativeChoices = {
+            requirementId: 'requirement-2', source: 'native', origin: { sessionId: 'parent', subagentId: 'child', subagentLabel: 'Review the API' },
+            choices: [{ id: 'custom-allow', label: 'Allow this command', decision: 'approved' as const, scope: 'once' as const, response: { approved: true as const } }],
+        };
+        const pending = listPendingRequests(createPendingFacts({ active: true, agentState: {
+            requests: { request: { tool: 'Shell', arguments: {}, createdAt: 1, nativeChoices } },
+        } }), []);
+        expect(pending[0]?.nativeChoices).toEqual(nativeChoices);
+    });
+
+    it('projects native choice availability from trusted relationship without changing the offer', () => {
+        const nativeChoices = { requirementId: 'native', source: 'native', choices: [
+            { id: 'once', label: 'Once', decision: 'approved' as const, scope: 'once' as const, response: { approved: true as const } },
+            { id: 'remember', label: 'Remember', decision: 'approved' as const, scope: 'localPersistent' as const, response: { approved: true as const } },
+            { id: 'mode', label: 'Mode', decision: 'approved' as const, scope: 'session' as const, response: { approved: true as const, mode: 'acceptEdits' } },
+        ] };
+        const facts = createPendingFacts({ active: true, agentState: { requests: { request: { tool: 'Shell', arguments: {}, nativeChoices } } } });
+        expect(listPendingRequests(facts, [])[0]?.nativeChoiceAvailability).toEqual([
+            { choiceId: 'once', allowed: true },
+            { choiceId: 'remember', allowed: false, reason: 'owner_required' },
+            { choiceId: 'mode', allowed: false, reason: 'owner_required' },
+        ]);
+        expect(listPendingRequests({ ...facts, permissionRelationship: 'owner' }, [])[0]?.nativeChoiceAvailability)
+            .toEqual(nativeChoices.choices.map(choice => ({ choiceId: choice.id, allowed: true })));
+        expect(listPendingRequests(facts, [])[0]?.nativeChoices).toEqual(nativeChoices);
+    });
+
     it('orders questions and permissions by creation time, with unknown last and stable identity ties', () => {
         const requests = listPendingRequests(createPendingFacts({ active: true, agentState: {
             requests: {
@@ -360,6 +441,7 @@ describe('derivePendingRequestFlags', () => {
     it('does not surface a generated local-bridge request covered by a recent canonical cancellation', () => {
         const question = { questions: [{ question: 'How should I proceed?', options: [{ label: 'Continue' }] }] };
         const session = createPendingFacts({
+            requestCoverage: localPermissionBridgeCoverageOptions,
             active: true,
             agentState: {
                 requests: {

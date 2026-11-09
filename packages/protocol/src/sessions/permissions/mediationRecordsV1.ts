@@ -6,6 +6,7 @@ import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDig
 import { PluginIdSchema } from '../../plugins/pluginId.js';
 import { SessionPermissionSourceAuthorityV1Schema } from '../messages/sessionInputAdmission.js';
 import { SessionIdSchema, TurnIdSchema } from '../idsV1.js';
+import { NativePermissionChoiceAnswerV1Schema } from './respondRpcParamsV1.js';
 import {
   SessionPermissionExternalHumanDecisionActorV1Schema,
   SessionPermissionGrantIdV1Schema,
@@ -121,6 +122,7 @@ const SessionPermissionRemoteMediationRecordBaseV1Schema = (
   sourceAuthority: SessionPermissionSourceAuthorityV1Schema,
   actor: SessionPermissionExternalHumanDecisionActorV1Schema,
   decision: z.enum(['allow', 'deny']),
+  nativeChoice: z.optional(NativePermissionChoiceAnswerV1Schema),
   requestedScope: z.enum(['request', 'session']),
   effect: SessionPermissionRemoteMediationEffectV1Schema,
   createdAtMs: z.number().check(z.int(), z.nonnegative()),

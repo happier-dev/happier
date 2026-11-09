@@ -85,6 +85,18 @@ const canonicalSessionSpawnInput = {
 } as const;
 
 describe('createActionExecutor (session control)', () => {
+  it('delivers an opaque native permission answer through the public Action without a fabricated decision', async () => {
+    const received: unknown[] = [];
+    const executor = createExecutor({ sessionPermissionRespond: async request => {
+      received.push(request);
+      return { ok: true };
+    } });
+    const nativeChoice = { requirementId: 'native-requirement', choiceId: 'custom-permit' };
+    const result = await executor.execute('session.permission.respond', { sessionId: 's1', requestId: 'permission', nativeChoice }, { surface: 'ui' });
+    expect(result).toMatchObject({ ok: true });
+    expect(received).toEqual([expect.objectContaining({ sessionId: 's1', requestId: 'permission', nativeChoice })]);
+    expect(received[0]).not.toHaveProperty('decision');
+  });
   it('discovers a safe Account face Action on every public surface without overloading the Bot marker', () => {
     const spec = getActionSpec(ActionIdSchema.parse('session.bot.face.set'));
     const face = { style: 'dither', body: 'hopper', palette: 'lagoon', seed: 'preview-seed' };

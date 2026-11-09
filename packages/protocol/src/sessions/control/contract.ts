@@ -29,6 +29,8 @@ import {
 import { ExecutionRunTerminalStatusSchema } from '../../execution/runs/waitForTerminal.js';
 import { TurnIdSchema } from '../idsV1.js';
 import { SessionPermissionRequestIdV1Schema } from '../permissions/v1.js';
+import { AgentSessionCompactionAvailabilityV1Schema } from './sessionCompactionAvailabilityV1.js';
+import { NativePermissionChoicesV1Schema, NativePermissionChoiceAvailabilityV1Schema } from '../permissions/respondRpcParamsV1.js';
 import { PendingLocalIdSchema } from '../pending/pendingLocalId.js';
 import { SessionOrganizationPlacementV1Schema } from '../creation/sessionSpawnNewResultV1.js';
 import { ExternalSessionStorageStateV1Schema } from '../external/operationV1.js';
@@ -598,6 +600,7 @@ export type V2SessionMessageResponse = z.infer<typeof V2SessionMessageResponseSc
 
 export const SessionStatusResultSchema = lazyZodSchema(() => z.looseObject({
   session: SessionSummarySchema,
+  compaction: z.optional(AgentSessionCompactionAvailabilityV1Schema),
   acceptedWorkspace: z.optional(SessionAcceptedWorkspaceV1Schema),
   agentTarget: z.optional(AgentExecutionTargetV1Schema),
   // Content-free Session selection; omitted when its owner metadata cannot be opened.
@@ -610,6 +613,9 @@ export const SessionStatusResultSchema = lazyZodSchema(() => z.looseObject({
     turnId: z.optional(TurnIdSchema),
     kind: z.enum(['permission', 'user_action']),
     tool: z.string(),
+    nativeChoices: z.optional(NativePermissionChoicesV1Schema),
+    nativeChoiceAvailability: z.optional(z.array(NativePermissionChoiceAvailabilityV1Schema)),
+    permissionOwnerLabel: z.optional(z.string()),
   }))),
   agentState: z.nullish(z.looseObject({
     controlledByUser: z.optional(z.boolean()),

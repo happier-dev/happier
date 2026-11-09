@@ -5,6 +5,7 @@ import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdent
 import { PluginIdSchema } from '../../plugins/pluginId.js';
 import { AgentPermissionIntentV1Schema } from '../../runtime/permissionIntentV1.js';
 import { SessionIdSchema, TurnIdSchema } from '../idsV1.js';
+import { NativePermissionChoiceAnswerV1Schema, NativePermissionChoicesV1Schema, NativePermissionChoiceAvailabilityV1Schema } from './respondRpcParamsV1.js';
 import { asProtocolZod } from "../../plugins/actions/internalProtocolZodAdapter.js";
 
 const UTF8_ENCODER = new TextEncoder();
@@ -172,6 +173,9 @@ export type SessionPermissionRemotePendingListInputV1 = z.infer<typeof SessionPe
 
 const SessionPermissionRemotePendingPermissionRequestV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('permission'),
+  nativeChoices: z.optional(NativePermissionChoicesV1Schema),
+  nativeChoiceAvailability: z.optional(z.array(NativePermissionChoiceAvailabilityV1Schema)),
+  permissionOwnerLabel: z.optional(z.string()),
   requestId: SessionPermissionRequestIdV1Schema,
   /**
    * Host-stamped turn custody. Remote mediators correlate a pending
@@ -221,9 +225,10 @@ export const SessionPermissionRemoteRespondInputV1Schema = lazyZodSchema(() => z
   sourceRevisionOrEpoch: SessionPermissionSourceRevisionOrEpochV1Schema,
   idempotencyKey: SessionPermissionIdempotencyKeyV1Schema,
   actor: SessionPermissionRemoteActorInputV1Schema,
-  decision: z.enum(['allow', 'deny']),
-  scope: z.enum(['request', 'session']),
-}));
+  decision: z.optional(z.enum(['allow', 'deny'])),
+  scope: z.optional(z.enum(['request', 'session'])),
+  nativeChoice: z.optional(NativePermissionChoiceAnswerV1Schema),
+}).check(z.refine((value) => value.nativeChoice !== undefined || value.decision !== undefined && value.scope !== undefined, 'A permission answer is required')));
 export type SessionPermissionRemoteRespondInputV1 = z.infer<typeof SessionPermissionRemoteRespondInputV1Schema>;
 
 const SessionUserActionRemoteAnswerValueV1Schema = boundedNfcText(

@@ -10,8 +10,8 @@ import { isPermissionModeGrantedV1 } from '../../../auth/apiTokenGrant.js';
 import { resolveSessionAttentionStandingRequest, SessionAttentionSetResultV1Schema } from '../../../sessions/organization/attentionAction.js';
 import { readActionFailureEnvelope } from '../actionFailureEnvelope.js';
 import { readRecord, hasOwn } from '../../../inputs/inputRecords.js';
-import { SessionPermissionRespondActionDecisionV1Schema, SessionPermissionRespondRpcParamsV1Schema } from '../../../sessions/permissions/respondRpcParamsV1.js';
-import { StructuredQuestionAnswersV1Schema } from '../../../tools/structuredQuestionAnswersV1.js';
+import { NativePermissionChoiceAnswerV1Schema, SessionPermissionRespondActionDecisionV1Schema, SessionPermissionRespondPayloadV1Schema } from '../../../sessions/permissions/respondRpcParamsV1.js';
+import { StructuredQuestionAnswerDetailsV1Schema, StructuredQuestionAnswersV1Schema } from '../../../tools/structuredQuestionAnswersV1.js';
 import { normalizeResolvedOptions } from '../../../inputs/inputOptions.js';
 import { resolveRequestedSessionModeId } from '../../sessionModeIds.js';
 import type { SessionConnectedServiceAuthSwitchRpcParams } from '../../../connect/sessionConnectedServiceAuthSwitch.js';
@@ -244,19 +244,21 @@ export async function dispatchSessionControls2(inv: Pick<CoreInvocation, 'action
           }
           const serverId = resolveServerIdForSession(deps, ctx, sessionId);
           const decision = readPermissionResponseDecision(data.decision);
-          if (!decision) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+          if (!decision && !data.nativeChoice) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
           const res = await deps.sessionPermissionRespond({
             sessionId,
             context: ctx,
-            decision,
+            ...(decision ? { decision } : {}),
+            ...(data.nativeChoice === undefined ? {} : { nativeChoice: NativePermissionChoiceAnswerV1Schema.parse(data.nativeChoice) }),
             requestId: hasOwn(data, 'requestId') ? readNullableString(data.requestId) : null,
             turnId: hasOwn(data, 'turnId') ? readNullableString(data.turnId) : null,
-            ...(data.mode === undefined ? {} : { mode: SessionPermissionRespondRpcParamsV1Schema._zod.def.options[0].shape.mode.parse(data.mode) }),
+            ...(data.mode === undefined ? {} : { mode: SessionPermissionRespondPayloadV1Schema.shape.mode.parse(data.mode) }),
             ...(typeof data.reason === 'string' ? { reason: data.reason } : {}),
             ...(data.answers === undefined ? {} : { answers: StructuredQuestionAnswersV1Schema.parse(data.answers) }),
+            ...(data.answerDetails === undefined ? {} : { answerDetails: StructuredQuestionAnswerDetailsV1Schema.parse(data.answerDetails) }),
             ...(Array.isArray(data.allowedTools) ? { allowedTools: data.allowedTools } : {}),
             ...(hasOwn(data, 'updatedPermissions') ? { updatedPermissions: data.updatedPermissions } : {}),
-            ...(hasOwn(data, 'execPolicyAmendment') ? { execPolicyAmendment: SessionPermissionRespondRpcParamsV1Schema._zod.def.options[0].shape.execPolicyAmendment.parse(data.execPolicyAmendment) } : {}),
+            ...(hasOwn(data, 'execPolicyAmendment') ? { execPolicyAmendment: SessionPermissionRespondPayloadV1Schema.shape.execPolicyAmendment.parse(data.execPolicyAmendment) } : {}),
             ...(serverId ? { serverId } : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });
@@ -288,6 +290,8 @@ export async function dispatchSessionControls2(inv: Pick<CoreInvocation, 'action
               const answer = readRecord(entry);
               return {
                 question: String(answer.question ?? ''),
+                ...(typeof answer.freeText === 'string' ? { freeText: answer.freeText } : {}),
+                ...(typeof answer.note === 'string' ? { note: answer.note } : {}),
                 values: Array.isArray(answer.values)
                   ? answer.values.map((value) => String(value))
                   : typeof answer.answer === 'string'

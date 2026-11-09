@@ -5,8 +5,10 @@ import { z } from 'zod/mini';
 import { SessionIdentityAdditionsV1Schema } from '../../sessions/identity/sessionBotV1.js';
 import { SessionPromptStackV1Schema } from '../../sessions/context/sessionContextV1.js';
 import { AgentExecutionTargetV1Schema } from '../../agents/executionTargetV1.js';
+import { AgentSessionCompactionAvailabilityV1Schema } from '../../sessions/control/sessionCompactionAvailabilityV1.js';
 import { ActionSessionAddressV1Schema } from '../../actions/sessionTargetV1.js';
 import { SessionIdSchema } from '../../sessions/idsV1.js';
+import { NativePermissionChoicesV1Schema, NativePermissionChoiceAnswerV1Schema, NativePermissionChoiceAvailabilityV1Schema } from '../../sessions/permissions/respondRpcParamsV1.js';
 import { PendingLocalIdSchema } from '../../sessions/pending/pendingLocalId.js';
 import { SessionDirectoryIntentV1Schema } from '../../sessions/creation/sessionDirectoryIntentV1.js';
 
@@ -290,6 +292,9 @@ export const PluginUiSessionPendingPermissionV1Schema = lazyZodSchema(() => z.st
   command: z.optional(z.string().check(z.minLength(1))),
   createdAtMs: z.optional(z.number().check(z.int(), z.nonnegative())),
   answers: z.array(PluginUiSessionPermissionAnswerV1Schema),
+  nativeChoices: z.optional(NativePermissionChoicesV1Schema),
+  nativeChoiceAvailability: z.optional(z.array(NativePermissionChoiceAvailabilityV1Schema)),
+  permissionOwnerLabel: z.optional(z.string()),
 }));
 export type PluginUiSessionPendingPermissionV1 =
   z.infer<typeof PluginUiSessionPendingPermissionV1Schema>;
@@ -306,6 +311,7 @@ export const PluginUiSessionStateV1Schema = lazyZodSchema(() => z.strictObject({
   serverId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   /** Canonical Session selection, independent of catalog presentation and installed availability. */
   agentTarget: z.optional(AgentExecutionTargetV1Schema),
+  compaction: z.optional(AgentSessionCompactionAvailabilityV1Schema),
   /** Private accepted checkout facts; unknown or ambiguous correspondence remains absent. */
   acceptedWorkspace: z.optional(SessionAcceptedWorkspaceV1Schema),
   title: z.optional(z.string().check(z.minLength(1))),
@@ -372,8 +378,9 @@ export type PluginUiWatchSessionRequestV1 = z.infer<typeof PluginUiWatchSessionR
 export const PluginUiRespondToSessionPermissionRequestV1Schema = lazyZodSchema(() => z.strictObject({
   sessionId: z.string().check(z.trim(), z.minLength(1)),
   requestId: z.string().check(z.trim(), z.minLength(1)),
-  answer: PluginUiSessionPermissionAnswerV1Schema,
-}));
+  answer: z.optional(PluginUiSessionPermissionAnswerV1Schema),
+  nativeChoice: z.optional(NativePermissionChoiceAnswerV1Schema),
+}).check(z.refine((value) => value.answer !== undefined || value.nativeChoice !== undefined, 'A permission answer is required')));
 export type PluginUiRespondToSessionPermissionRequestV1 =
   z.infer<typeof PluginUiRespondToSessionPermissionRequestV1Schema>;
 

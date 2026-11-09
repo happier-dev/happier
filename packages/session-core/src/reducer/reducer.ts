@@ -120,6 +120,7 @@ import { createTracer, traceMessages, TracerState } from "./reducerTracer.js";
 import { AgentState } from '../state/index.js';
 import { MessageMeta } from "../messages/messageMetaTypes.js";
 import type { TranscriptPeerSenderV1 } from '@happier-dev/protocol';
+import type { AgentStateRequestCoverageOptions } from '@happier-dev/agents/runtime/agent-state-request-coverage';
 import { compareToolCalls } from "../tools/toolComparison.js";
 import { runMessageToEventConversion } from "./phases/messageToEventConversion.js";
 import { runAgentStatePermissionsPhase } from "./phases/agentStatePermissions.js";
@@ -354,6 +355,7 @@ export type ReducerResult = {
     };
     hasReadyEvent?: boolean;
     latestReadyEventSeq?: number;
+    latestNonRenderableMessageSeq?: number;
     latestReadyEventAt?: number;
     reducerStateChanged?: boolean;
 };
@@ -406,6 +408,7 @@ function collectMetadataUpdatedMessages(state: ReducerState, changed: Set<string
 
 export type ReducerSessionContext = Readonly<{
     mainHistoryStartLoaded?: boolean;
+    requestCoverage?: AgentStateRequestCoverageOptions;
 }>;
 
 export function reducer(
@@ -530,6 +533,18 @@ export function reducer(
 
     // First, trace all messages to identify sidechains
     const tracedMessages = traceMessages(state.tracerState, messagesForLivePhases);
+    // Read acknowledgement follows activity actually applied by this owner, including
+    // worker rows omitted from the main timeline and terminal markers without ready.
+    let latestNonRenderableMessageSeq: number | undefined;
+    for (const message of tracedMessages) {
+        if (isRecoveredHistoryTranscriptObservation(message)) continue;
+        if (!message.sidechainId && !message.isSidechain
+            && !(message.role === 'event' && message.content.type === 'task-lifecycle'
+                && message.content.event !== 'task_started')) continue;
+        const seq = normalizeTranscriptSeq(message.seq);
+        if (seq !== null) latestNonRenderableMessageSeq = Math.max(latestNonRenderableMessageSeq ?? 0, seq);
+    }
+
 
     // Separate sidechain and non-sidechain messages.
     // Important: sidechain messages must never appear in the main transcript, even if sidechainId
@@ -587,6 +602,7 @@ export function reducer(
 	        incomingToolResultIds: conversion.incomingToolResultIds,
 	        completedRequestHistoryStartAt,
 	        mainHistoryStartLoaded: context?.mainHistoryStartLoaded,
+	        requestCoverage: context?.requestCoverage,
 	        changed,
 	        allocateId,
 	        enableLogging: ENABLE_LOGGING,
@@ -717,6 +733,7 @@ export function reducer(
         } : undefined,
         hasReadyEvent: hasReadyEvent || undefined,
         latestReadyEventSeq: latestReadyEventSeq ?? undefined,
+        latestNonRenderableMessageSeq,
         latestReadyEventAt: latestReadyEventAt ?? undefined,
         reducerStateChanged: sidechainStateChanged || undefined,
     };

@@ -119,7 +119,6 @@ export {
   readAgentStateRequestCompletedAt,
   resolveAgentStateRequestCoverageOptions,
   type AgentStateRequestCoverageOptions,
-  type AgentStateRequestCoverageOptionsKind,
   type AgentStateRequestCoverageRecord,
 } from './runtime/agentStateRequestCoverage.js';
 export type {
@@ -261,13 +260,10 @@ export {
 export {
     isPermissionIntent,
     isPermissionMode,
-    type PermissionModeGroupId,
     parsePermissionIntentAlias,
     parsePermissionModeAlias,
-    resolvePermissionModeGroupForAgent,
-    resolvePermissionModeGroupForSessionModeDescriptor,
     normalizePermissionModeForAgent,
-    normalizePermissionModeForGroup,
+    normalizePermissionModeForSessionDescriptor,
     resolveProviderNativePermissionModeForAgent,
     resolveLatestPermissionIntent,
     type ProviderNativePermissionMode,
@@ -358,6 +354,7 @@ export {
   UNSUPPORTED_AGENT_SESSION_CAPABILITIES,
   evaluateAgentSessionCapabilitySupport,
   evaluateAgentSessionCompactionCapability,
+  evaluateAgentSessionCompactionAvailability,
   readEffectiveAgentSessionCompactionCapability,
   getAgentSessionCapabilities,
   getAgentSessionCapability,
@@ -402,9 +399,7 @@ export {
   resolveAgentRuntimeControlSurfaceForSession,
 } from './session/controls/runtimeControlSurface.js';
 export {
-  RUNTIME_CHECKPOINT_TOOL_PROTOCOLS_V1,
-  resolveRuntimeCheckpointToolProtocol,
-  type RuntimeCheckpointToolProtocolV1,
+  type RuntimeCheckpointToolSourceV1,
 } from './session/controls/checkpoints.js';
 export {
   LEGACY_ACP_CONFIG_OPTIONS_STATE_KEY,
@@ -583,6 +578,8 @@ export type {
   SessionMcpElicitRequestV1,
   SessionMcpElicitResultV1,
   SessionMcpServiceV1,
+  NativePermissionChoicesV1,
+  NativePermissionChoiceAnswerV1,
   SessionPermissionDecisionRequestV1,
   SessionPermissionDecisionResultV1,
   SessionPermissionDecisionV1,

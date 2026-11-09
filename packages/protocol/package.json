@@ -3880,6 +3880,11 @@
       "types": "./dist/browser/policy/v1.d.ts",
       "default": "./dist/browser/policy/v1.js"
     },
+    "./browser/profile/extensionSourceV1": {
+      "happier-source": "./src/browser/profile/extensionSourceV1.ts",
+      "types": "./dist/browser/profile/extensionSourceV1.d.ts",
+      "default": "./dist/browser/profile/extensionSourceV1.js"
+    },
     "./browser/profile/extensionsV1": {
       "happier-source": "./src/browser/profile/extensionsV1.ts",
       "types": "./dist/browser/profile/extensionsV1.d.ts",
@@ -4080,15 +4085,15 @@
       "types": "./dist/capabilities/index.d.ts",
       "default": "./dist/capabilities/index.js"
     },
+    "./capabilities/agentPassiveRealtimeSetup": {
+      "happier-source": "./src/capabilities/agentPassiveRealtimeSetup.ts",
+      "types": "./dist/capabilities/agentPassiveRealtimeSetup.d.ts",
+      "default": "./dist/capabilities/agentPassiveRealtimeSetup.js"
+    },
     "./capabilities/agentProbeObservation": {
       "happier-source": "./src/capabilities/agentProbeObservation.ts",
       "types": "./dist/capabilities/agentProbeObservation.d.ts",
       "default": "./dist/capabilities/agentProbeObservation.js"
-    },
-    "./capabilities/codexPassiveRealtimeSetup": {
-      "happier-source": "./src/capabilities/codexPassiveRealtimeSetup.ts",
-      "types": "./dist/capabilities/codexPassiveRealtimeSetup.d.ts",
-      "default": "./dist/capabilities/codexPassiveRealtimeSetup.js"
     },
     "./capabilities/estimateTokensV1": {
       "happier-source": "./src/capabilities/estimateTokensV1.ts",
@@ -4349,6 +4354,11 @@
       "happier-source": "./src/connect/connectedServiceSchemas.ts",
       "types": "./dist/connect/connectedServiceSchemas.d.ts",
       "default": "./dist/connect/connectedServiceSchemas.js"
+    },
+    "./connect/connectedAccountAccessModeV1": {
+      "happier-source": "./src/connect/connectedAccountAccessModeV1.ts",
+      "types": "./dist/connect/connectedAccountAccessModeV1.d.ts",
+      "default": "./dist/connect/connectedAccountAccessModeV1.js"
     },
     "./connect/connectedAccountCatalogSchemasV1": {
       "happier-source": "./src/connect/connectedAccountCatalogSchemasV1.ts",
@@ -6220,11 +6230,6 @@
       "types": "./dist/installables/index.d.ts",
       "default": "./dist/installables/index.js"
     },
-    "./installables/codexAcp": {
-      "happier-source": "./src/installables/codexAcp.ts",
-      "types": "./dist/installables/codexAcp.d.ts",
-      "default": "./dist/installables/codexAcp.js"
-    },
     "./installables/definitions/az": {
       "happier-source": "./src/installables/definitions/az.ts",
       "types": "./dist/installables/definitions/az.d.ts",
@@ -6269,6 +6274,11 @@
       "happier-source": "./src/installables/index.ts",
       "types": "./dist/installables/index.d.ts",
       "default": "./dist/installables/index.js"
+    },
+    "./installables/keys": {
+      "happier-source": "./src/installables/keys.ts",
+      "types": "./dist/installables/keys.d.ts",
+      "default": "./dist/installables/keys.js"
     },
     "./installables/policy": {
       "happier-source": "./src/installables/policy.ts",
@@ -8580,6 +8590,11 @@
       "types": "./dist/plugins/interactions/transientV1.d.ts",
       "default": "./dist/plugins/interactions/transientV1.js"
     },
+    "./plugins/interactions/transientV1Limits": {
+      "happier-source": "./src/plugins/interactions/transientV1Limits.ts",
+      "types": "./dist/plugins/interactions/transientV1Limits.d.ts",
+      "default": "./dist/plugins/interactions/transientV1Limits.js"
+    },
     "./plugins/invocationScopeV1": {
       "happier-source": "./src/plugins/invocationScopeV1.ts",
       "types": "./dist/plugins/invocationScopeV1.d.ts",
@@ -9094,6 +9109,11 @@
       "happier-source": "./src/profiles/transferLegacyProfilesV1.ts",
       "types": "./dist/profiles/transferLegacyProfilesV1.d.ts",
       "default": "./dist/profiles/transferLegacyProfilesV1.js"
+    },
+    "./profiles/v2/authoringPreferences": {
+      "happier-source": "./src/profiles/v2/authoringPreferences.ts",
+      "types": "./dist/profiles/v2/authoringPreferences.d.ts",
+      "default": "./dist/profiles/v2/authoringPreferences.js"
     },
     "./profiles/v2/profileId": {
       "happier-source": "./src/profiles/v2/profileId.ts",
@@ -9829,6 +9849,11 @@
       "happier-source": "./src/providers/index.ts",
       "types": "./dist/providers/index.d.ts",
       "default": "./dist/providers/index.js"
+    },
+    "./providers/managedPurposeOperationRestrictionV1": {
+      "happier-source": "./src/providers/managedPurposeOperationRestrictionV1.ts",
+      "types": "./dist/providers/managedPurposeOperationRestrictionV1.d.ts",
+      "default": "./dist/providers/managedPurposeOperationRestrictionV1.js"
     },
     "./providers/manualModelInput": {
       "happier-source": "./src/providers/manualModelInput.ts",
@@ -11465,6 +11490,11 @@
       "types": "./dist/sessions/control/runtimeIssueV1.d.ts",
       "default": "./dist/sessions/control/runtimeIssueV1.js"
     },
+    "./sessions/control/sessionCompactionAvailabilityV1": {
+      "happier-source": "./src/sessions/control/sessionCompactionAvailabilityV1.ts",
+      "types": "./dist/sessions/control/sessionCompactionAvailabilityV1.d.ts",
+      "default": "./dist/sessions/control/sessionCompactionAvailabilityV1.js"
+    },
     "./sessions/control/sessionProviderCliAttachPrepareV1": {
       "happier-source": "./src/sessions/control/sessionProviderCliAttachPrepareV1.ts",
       "types": "./dist/sessions/control/sessionProviderCliAttachPrepareV1.d.ts",
@@ -12529,6 +12559,11 @@
       "happier-source": "./src/sessions/permissions/mediationRecordsV1.ts",
       "types": "./dist/sessions/permissions/mediationRecordsV1.d.ts",
       "default": "./dist/sessions/permissions/mediationRecordsV1.js"
+    },
+    "./sessions/permissions/nativeChoicesV1": {
+      "happier-source": "./src/sessions/permissions/nativeChoicesV1.ts",
+      "types": "./dist/sessions/permissions/nativeChoicesV1.d.ts",
+      "default": "./dist/sessions/permissions/nativeChoicesV1.js"
     },
     "./sessions/permissions/permissionSystemRecordKinds": {
       "happier-source": "./src/sessions/permissions/permissionSystemRecordKinds.ts",

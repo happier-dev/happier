@@ -25,7 +25,8 @@ import { AcpConfigOptionOverridesV1Schema } from '../../sessions/metadata/metada
 import { SecretReferenceOverlayV1Schema } from '../../profiles/secretReferenceOverlayV1.js';
 import { SpawnConfigOptionValueSchema } from '../sessionSpawnConfigOptions.js';
 import { ExecutionRunActionPermissionModeSchema } from '../executionRunActionPermissionMode.js';
-import { StructuredQuestionAnswersV1Schema } from '../../tools/structuredQuestionAnswersV1.js';
+import { StructuredQuestionAnswerDetailsV1Schema, StructuredQuestionAnswersV1Schema } from '../../tools/structuredQuestionAnswersV1.js';
+import { NativePermissionChoiceAnswerV1Schema } from '../../sessions/permissions/respondRpcParamsV1.js';
 import { TeamCredentialProviderModelSelectionV1Schema } from '../../teams/credentials/resourceV1.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { resolveExecutionRunMachineRuntimeDemand } from '../executor/sessionScope.js';
@@ -274,8 +275,9 @@ export const ExecutionRunActionInputSchema = lazyZodSchema(() => (<T extends z.Z
 })));
 
 export const ExecutionRunPermissionRespondInputSchema = lazyZodSchema(() => z.union([
+  z.strictObject({ runId: z.string().check(z.trim(), z.minLength(1)), requestId: z.string().check(z.trim(), z.minLength(1)), nativeChoice: NativePermissionChoiceAnswerV1Schema }),
   z.strictObject({ runId: z.string().check(z.trim(), z.minLength(1)), requestId: z.string().check(z.trim(), z.minLength(1)), approved: z.boolean() }),
-  z.strictObject({ runId: z.string().check(z.trim(), z.minLength(1)), requestId: z.string().check(z.trim(), z.minLength(1)), answers: StructuredQuestionAnswersV1Schema }),
+  z.strictObject({ runId: z.string().check(z.trim(), z.minLength(1)), requestId: z.string().check(z.trim(), z.minLength(1)), answers: StructuredQuestionAnswersV1Schema, answerDetails: z.optional(StructuredQuestionAnswerDetailsV1Schema) }),
 ]));
 
 export type ExecutionRunPermissionRespondActionInput = z.input<typeof ExecutionRunPermissionRespondInputSchema>;
@@ -795,6 +797,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
       { path: 'requestId', title: 'Request id', widget: 'text', required: true },
       { path: 'approved', title: 'Approve permission', widget: 'boolean' },
       { path: 'answers', title: 'Question answers (JSON)', widget: 'textarea' },
+      { path: 'nativeChoice', title: 'Offered native choice (JSON)', widget: 'json' },
     ] },
     inputSchema: ExecutionRunPermissionRespondInputSchema,
     outputSchema: lazyZodSchema(() => z.strictObject({ ok: z.literal(true) })),

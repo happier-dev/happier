@@ -5,12 +5,12 @@ import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { SessionTargetV1Schema } from '../../sessionTargetV1.js';
 import { SessionNeedsYouRaiseInputV1Schema, SessionNeedsYouRaiseOutputV1Schema } from '../../../sessions/permissions/questionV1.js';
 import { z } from 'zod/mini';
-import { SessionPermissionRespondActionDecisionV1Schema, SessionPermissionRespondRpcParamsV1Schema } from '../../../sessions/permissions/respondRpcParamsV1.js';
+import { NativePermissionChoiceAnswerV1Schema, SessionPermissionRespondActionDecisionV1Schema, SessionPermissionRespondPayloadV1Schema } from '../../../sessions/permissions/respondRpcParamsV1.js';
 import { SessionConnectedServiceAuthSwitchRpcParamsSchema } from '../../../connect/sessionConnectedServiceAuthSwitch.js';
 import { SessionPermissionRemoteGrantRevokeInputV1Schema, SessionPermissionRemoteGrantRevokeOutputV1Schema, SessionPermissionRemoteGrantsListInputV1Schema, SessionPermissionRemoteGrantsListOutputV1Schema, SessionPermissionRemotePendingListInputV1Schema, SessionPermissionRemotePendingListOutputV1Schema, SessionPermissionRemoteRespondInputV1Schema, SessionPermissionRemoteRespondOutputV1Schema, SessionUserActionRemoteAnswerInputV1Schema, SessionUserActionRemoteAnswerOutputV1Schema } from '../../../sessions/permissions/v1.js';
 import { VoiceTrackedTargetsActionResultV1Schema } from '../../../sessions/follow/voiceTrackedTargetsCompatibilityV1.js';
 import { VoiceTrackedSessionAddressV1Schema } from '../../../sessions/follow/voiceTrackedSessionAddressV1.js';
-import { StructuredQuestionAnswersV1Schema } from '../../../tools/structuredQuestionAnswersV1.js';
+import { StructuredQuestionAnswerDetailsV1Schema, StructuredQuestionAnswersV1Schema } from '../../../tools/structuredQuestionAnswersV1.js';
 import { SESSION_ATTENTION_STANDING_HTTP_PATH_V1, SessionAttentionSetInputV1Schema, SessionAttentionSetResultV1Schema } from '../../../sessions/organization/attentionAction.js';
 import { StrictJsonValueSchema } from '../../../json/strictJsonValue.js';
 import { NonBlankOpaqueIdentifierSchema } from '../../../strings/opaqueIdentifier.js';
@@ -18,24 +18,28 @@ import { NonBlankOpaqueIdentifierSchema } from '../../../strings/opaqueIdentifie
 
 export const SessionPermissionRespondInputSchema = lazyZodSchema(() => z.looseObject({
   sessionId: z.optional(z.string().check(z.minLength(1))),
-  decision: SessionPermissionRespondActionDecisionV1Schema,
+  decision: z.optional(SessionPermissionRespondActionDecisionV1Schema),
   requestId: z.optional(z.string().check(z.minLength(1))),
   // Optional only at the released action compatibility boundary. Current UI
   // producers stamp it and current host requests require an exact match.
   turnId: z.optional(z.string().check(z.trim(), z.minLength(1))),
-  reason: SessionPermissionRespondRpcParamsV1Schema._zod.def.options[0].shape.reason,
-  mode: SessionPermissionRespondRpcParamsV1Schema._zod.def.options[0].shape.mode,
-  allowedTools: SessionPermissionRespondRpcParamsV1Schema._zod.def.options[0].shape.allowedTools,
-  execPolicyAmendment: SessionPermissionRespondRpcParamsV1Schema._zod.def.options[0].shape.execPolicyAmendment,
-  updatedPermissions: SessionPermissionRespondRpcParamsV1Schema._zod.def.options[0].shape.updatedPermissions,
-  answers: SessionPermissionRespondRpcParamsV1Schema._zod.def.options[0].shape.answers,
-}));
+  reason: SessionPermissionRespondPayloadV1Schema.shape.reason,
+  mode: SessionPermissionRespondPayloadV1Schema.shape.mode,
+  allowedTools: SessionPermissionRespondPayloadV1Schema.shape.allowedTools,
+  execPolicyAmendment: SessionPermissionRespondPayloadV1Schema.shape.execPolicyAmendment,
+  updatedPermissions: SessionPermissionRespondPayloadV1Schema.shape.updatedPermissions,
+  answers: z.optional(StructuredQuestionAnswersV1Schema),
+  answerDetails: z.optional(StructuredQuestionAnswerDetailsV1Schema),
+  nativeChoice: z.optional(NativePermissionChoiceAnswerV1Schema),
+}).check(z.refine((value) => value.decision !== undefined || value.nativeChoice !== undefined, 'A permission answer is required')));
 
 export const SessionUserActionAnswerItemSchema = lazyZodSchema(() => z.strictObject({
   question: z.string().check(z.minLength(1), z.refine((value) => value.trim().length > 0, {
     message: 'question must not be blank',
   })),
-  values: z.optional(z.array(z.string()).check(z.minLength(1))),
+  values: z.optional(z.array(z.string())),
+  freeText: z.optional(z.string()),
+  note: z.optional(z.string()),
   // Compatibility for clients through the released 0.2.2 preview. Remove `answer`
   // after that preview leaves the supported mixed-version window.
   answer: z.optional(z.string().check(z.minLength(1))),
@@ -43,7 +47,7 @@ export const SessionUserActionAnswerItemSchema = lazyZodSchema(() => z.strictObj
   if (value.answer !== undefined && value.values !== undefined) {
     ctx.addIssue({ code: "custom", message: 'answer and values cannot both be provided' });
   }
-  if (value.answer === undefined && value.values === undefined) {
+  if (value.answer === undefined && value.values === undefined && value.freeText === undefined && value.note === undefined) {
     ctx.addIssue({ code: "custom", message: 'answer or values is required' });
   }
 })));
@@ -58,6 +62,8 @@ export function validateSessionUserActionAnswer(
       question: string;
       values?: readonly string[];
       answer?: string;
+      freeText?: string;
+      note?: string;
     }>[];
   }>,
   ctx: z.core.$RefinementCtx,
@@ -80,7 +86,7 @@ export function validateSessionUserActionAnswer(
       });
       continue;
     }
-    structuredAnswers[entry.question] = entry.values ?? [entry.answer!];
+    structuredAnswers[entry.question] = entry.values ?? (entry.answer === undefined ? [] : [entry.answer]);
   }
   if (hasAnswers && !StructuredQuestionAnswersV1Schema.safeParse(structuredAnswers).success) {
     ctx.addIssue({
@@ -88,6 +94,15 @@ export function validateSessionUserActionAnswer(
       message: 'invalid structured answers',
       path: ['answers'],
     });
+  }
+  const details = Object.fromEntries((value.answers ?? []).flatMap(entry => (
+    entry.freeText === undefined && entry.note === undefined ? [] : [[entry.question, {
+      ...(entry.freeText === undefined ? {} : { freeText: entry.freeText }),
+      ...(entry.note === undefined ? {} : { note: entry.note }),
+    }]]
+  )));
+  if (!StructuredQuestionAnswerDetailsV1Schema.safeParse(details).success) {
+    ctx.addIssue({ code: 'custom', message: 'invalid structured answer details', path: ['answers'] });
   }
   if (!hasAnswers && value.decision === undefined) {
     ctx.addIssue({
@@ -220,7 +235,6 @@ function createSessionInteractionActionSpecs() {
           path: 'decision',
           title: 'Decision',
           widget: 'select',
-          required: true,
           options: [
             { value: 'allow', label: 'Allow' },
             { value: 'deny', label: 'Deny' },
@@ -228,6 +242,7 @@ function createSessionInteractionActionSpecs() {
         },
         { path: 'requestId', title: 'Request id', widget: 'text' },
         { path: 'turnId', title: 'Turn id', widget: 'text' },
+        { path: 'nativeChoice', title: 'Offered native choice (JSON)', widget: 'json' },
       ],
     },
     outputSchema: SessionInteractionResponseSuccessSchema,
