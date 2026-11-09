@@ -33,6 +33,7 @@ export type ActionOperationActivityButtonViewProps = Readonly<{
     tintColor?: string;
     buttonSize?: number;
     iconSize?: number;
+    /** The gap this control's row leaves to its neighbour: its hit area reaches half of it sideways. */
     interactiveTargetGapPx?: number;
     testID?: string;
 }>;
@@ -51,6 +52,7 @@ type ActionOperationActivityButtonChromeProps = Readonly<{
     activeCount: number;
     hasAttention: boolean;
     renderDetails: (placement: ActionOperationActivityPopoverPlacement) => React.ReactNode;
+    onOpen: () => void;
     tintColor?: string;
     buttonSize?: number;
     iconSize?: number;
@@ -105,6 +107,7 @@ const ActionOperationActivityButtonChrome = React.memo(function ActionOperationA
                             });
                         }
                     }
+                    if (!open) props.onOpen();
                     setOpen((current) => !current);
                 }}
                 icon={(
@@ -141,16 +144,12 @@ type ActionOperationActivityDetailsViewProps = Pick<
     | 'onOpenOperation'
     | 'onCancelOperation'
     | 'onDismissOperation'
-    | 'onMarkVisibleTerminalSeen'
     | 'onClearRecent'
 > & ActionOperationActivityPopoverPlacement;
 
 const ActionOperationActivityDetailsView = React.memo(function ActionOperationActivityDetailsView(
     props: ActionOperationActivityDetailsViewProps,
 ) {
-    React.useEffect(() => {
-        props.onMarkVisibleTerminalSeen();
-    }, [props.onMarkVisibleTerminalSeen, props.operations]);
     const handleOpenOperation = React.useCallback((operation: ActionOperationProjection) => {
         props.onRequestClose();
         props.onOpenOperation(operation);
@@ -216,6 +215,7 @@ export const ActionOperationActivityButtonView = React.memo(function ActionOpera
             activeCount={activeCount}
             hasAttention={props.hasAttention}
             renderDetails={renderDetails}
+            onOpen={props.onMarkVisibleTerminalSeen}
             tintColor={props.tintColor}
             buttonSize={props.buttonSize}
             iconSize={props.iconSize}
@@ -229,9 +229,6 @@ const ActionOperationActivityDetails = React.memo(function ActionOperationActivi
     props: ActionOperationActivityPopoverPlacement & Readonly<{ preferredSessionAddress?: SessionAddress | null }>,
 ) {
     const operations = useAllActionOperations();
-    const markVisibleTerminalSeen = React.useCallback(() => {
-        actionOperationStore.markAllTerminalSeen();
-    }, []);
     const stopOperation = React.useCallback(async (operation: ActionOperationProjection, context?: ActionOperationStopContext) => {
         return await requestAcceptedActionOperationStop(operation, context);
     }, []);
@@ -242,10 +239,9 @@ const ActionOperationActivityDetails = React.memo(function ActionOperationActivi
             preferredSessionAddress={props.preferredSessionAddress}
             onOpenOperation={openActionOperation}
             onCancelOperation={stopOperation}
-            onDismissOperation={(operation) => actionOperationStore.dismissUnavailable(
+            onDismissOperation={(operation) => actionOperationStore.dismissOperation(
                 actionOperationAddress(operation.serverId, operation.snapshot.operationId),
             )}
-            onMarkVisibleTerminalSeen={markVisibleTerminalSeen}
             onClearRecent={actionOperationStore.dismissRecentSucceeded}
         />
     );
@@ -260,6 +256,7 @@ export const ActionOperationActivityButton = React.memo(function ActionOperation
     testID?: string;
 }>) {
     const summary = useActionOperationActivitySummary();
+    const markVisibleTerminalSeen = React.useCallback(() => { actionOperationStore.markAllTerminalSeen(); }, []);
     const renderDetails = React.useCallback((placement: ActionOperationActivityPopoverPlacement) => (
         <ActionOperationActivityDetails
             {...placement}
@@ -270,6 +267,7 @@ export const ActionOperationActivityButton = React.memo(function ActionOperation
         <ActionOperationActivityButtonChrome
             {...summary}
             renderDetails={renderDetails}
+            onOpen={markVisibleTerminalSeen}
             tintColor={props.tintColor}
             buttonSize={props.buttonSize}
             iconSize={props.iconSize}

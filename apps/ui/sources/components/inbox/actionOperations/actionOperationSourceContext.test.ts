@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
+import { storage } from '@/sync/domains/state/storageStore';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 
 import { createSessionListRenderableSessionFixture } from '@/dev/testkit';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
@@ -54,6 +56,18 @@ function project(params: Readonly<{
 }
 
 describe('projectActionOperationSourceContext home observation', () => {
+    afterEach(() => setScreenSharingPrivacyActive(false));
+    it('withholds a hidden source title and path while keeping the operation address', () => {
+        const original = storage.getState();
+        try {
+            storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { 'home-b': ['private'] } });
+            storage.getState().setSessionTagAssignmentsOptimistic('home-b', 'session-1', ['private']);
+            setScreenSharingPrivacyActive(true);
+            const context = project({ homeObservation: null });
+            expect(context.contextLine).not.toContain('~/project');
+            expect(context.address).toEqual({ serverId: 'home-b', sessionId: 'session-1' });
+        } finally { storage.setState(original, true); }
+    });
     it('shows the exact Home and its offline freshness for a retained secondary-Home operation', () => {
         const context = project({ homeObservation: { phase: 'offline', lastSuccessAt: 1_000 } });
 

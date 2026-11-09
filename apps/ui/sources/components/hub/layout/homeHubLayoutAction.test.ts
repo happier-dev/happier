@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { readHomeReachNudge, recordFailedHomeReach } from '@/sync/runtime/connectivity/homeReachFailures';
 

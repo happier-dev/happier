@@ -2,19 +2,13 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMachineFixture, createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
-import type { Artifact, ArtifactHeader, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { useArtifacts } from '@/sync/domains/state/storage';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { fetchAndApplyArtifactsList } from '@/sync/engine/artifacts/syncArtifacts';
-import { isOpenApprovalInboxArtifact } from '@/sync/domains/artifacts/approvalArtifacts';
-import { storage } from '@/sync/domains/state/storageStore';
-import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import { removeServerProfile, setServerProfileIdentityForUrl, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import type { ArtifactHeader, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { installApprovalCommonModuleMocks } from '../../approvals/approvalsTestHelpers';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
 import { preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text/i18n';
+import { readOpenApprovalInboxEntry } from '@/sync/domains/artifacts/approvalArtifactAdmission';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -31,6 +25,15 @@ function createApprovalArtifact(): Extract<DecryptedArtifact, { isDecrypted: tru
 
 installApprovalCommonModuleMocks({ text: () => vi.importActual('@/text') });
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+
+// Install the real translation boundary before the store and approval runtime capture it.
+const { storage } = await import('@/sync/domains/state/storageStore');
+const { buildSessionListRenderableFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
+const { removeServerProfile, setServerProfileIdentityForUrl, upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
+const { buildDiscussionRequesterApprovalArtifact } = await import('@/sync/domains/artifacts/approvalArtifacts.discussionRequester.testkit');
+const { readApprovalQuickActions } = await import('@/components/approvals/approvalQuickActions');
+const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+const { createAccountTokenForTests, waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
 
 const initialState = storage.getState();
 let serverIdB = '';
@@ -60,24 +63,6 @@ afterEach(async () => {
 });
 
 describe('ApprovalInboxCard', () => {
-  it('says where a request comes from on its one line under the title, never above it', async () => {
-    const { ApprovalInboxCard } = await import('./ApprovalInboxCard');
-    const machine = createMachineFixture({ id: 'origin-machine', metadata: { ...createMachineFixture().metadata!, displayName: 'Build Mac', host: 'build.test' } });
-    storage.setState({ machineListByServerId: { [serverIdB]: [machine] } });
-    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
-      createdBy: { surface: 'system', pluginId: 'example.observer', contributionLocalId: 'observer' },
-      actionId: 'automation.event.sources.list', actionArgs: { transport: { kind: 'checkpointedPull' } }, summary: 'Read sources',
-      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'plugin', serverId: serverIdB,
-        serverIdentityId: 'srv_approval_home_b', machineId: machine.id, actionId: 'automation.event.sources.list', requestId: 'request',
-        caller: { kind: 'plugin', pluginId: 'example.observer', contributionLocalId: 'observer',
-          sourceCustody: { kind: 'development', registeredRootId: 'observer-root' } } } });
-    const artifact = { ...createApprovalArtifact(), header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
-    const screen = await renderScreen(<ApprovalInboxCard artifact={artifact} onPress={() => {}} />);
-    expect(screen.findByTestId(`inbox.approval.${artifact.id}.summary:source`)).toBeNull();
-    expect(screen.findByTestId(`inbox.approval.${artifact.id}.summary:facts`)).not.toBeNull();
-    expect(screen.getTextContent()).toContain('Build Mac');
-  });
-
   it('names the origin Machine of a sessionless daemon approval from its exact Home', async () => {
     const { ApprovalInboxCard } = await import('./ApprovalInboxCard');
     const machine = createMachineFixture({ id: 'daemon-machine', metadata: {
@@ -99,51 +84,55 @@ describe('ApprovalInboxCard', () => {
     expect(String(screen.findByTestId('inbox.approval.artifact-1')?.props.accessibilityLabel)).toContain('Build Mac');
   });
 
-  it('mounts unclassified and stale-kind approvals while inventory sync repairs only their kind metadata', async () => {
+  it('says where a request comes from on its one line under the title, never above it', async () => {
     const { ApprovalInboxCard } = await import('./ApprovalInboxCard');
-    const approval = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
-      createdBy: { surface: 'cli' }, actionId: 'session.list', actionArgs: {}, summary: 'List sessions',
-      executionOriginV1: { v: 1, authority: 'account_automation', caller: { kind: 'host' }, requestId: 'read-only-approval',
-        surface: 'cli', serverId: serverIdB, actionId: 'session.list' } });
-    const rows: Artifact[] = [undefined, 'prompt' as const].map((kind, index) => ({
-      id: `11111111-1111-4111-8111-11111111111${index}`, ownerAccountId: 'owner', access: 'owner',
-      encryptionMode: 'plain', kind, dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
-      header: encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(approval)),
-      body: encodePlainArtifactStoredContent({ body: JSON.stringify(approval) }),
-      publicAudience: 'none', headerVersion: 1, bodyVersion: 1, seq: index, createdAt: 1, updatedAt: 1,
-    }));
-    const requests: Array<{ path: string; method: string; body?: unknown }> = [];
-    // Only the Home HTTP boundary is replaced; sync, codecs, store and mounted cards stay real.
-    const request = async (path: string, init?: RequestInit) => {
-      requests.push({ path, method: init?.method ?? 'GET',
-        ...(typeof init?.body === 'string' ? { body: JSON.parse(init.body) } : {}) });
-      if (path.startsWith('/v1/artifacts?')) return Response.json(rows.map(({ body: _body, ...head }) => head));
-      if (path === '/v1/artifacts/read') return Response.json({ items: rows.map(artifact => ({
-        artifactId: artifact.id, ok: true, artifact, recipientCensus: null,
-      })) });
-      return Response.json({ success: true });
-    };
-    function ApprovalRead() {
-      return <>{useArtifacts().filter(isOpenApprovalInboxArtifact).map(artifact =>
-        <ApprovalInboxCard key={artifact.id} artifact={artifact} onPress={() => {}} />)}</>;
-    }
-    storage.setState({ artifacts: {} });
-    const screen = await renderScreen(<ApprovalRead />);
-    await act(async () => {
-      await fetchAndApplyArtifactsList({ credentials: { token: 'fixture' }, encryption: null,
-        artifactDataKeys: new Map(), request, applyArtifacts: artifacts => storage.getState().applyArtifacts(artifacts) });
-    });
-    for (const row of rows) {
-      expect(screen.findByTestId(`inbox.approval.${row.id}`)).not.toBeNull();
-      expect(storage.getState().artifacts[row.id]).toMatchObject({ kind: row.kind, body: JSON.stringify(approval), isDecrypted: true });
-    }
-    const writes = requests.filter(({ path, method }) => method !== 'GET' && path !== '/v1/artifacts/read');
-    expect(writes).toEqual(rows.map(row => ({ path: `/v1/artifacts/${row.id}`, method: 'POST',
-      body: { kind: 'other', expectedHeaderVersion: 1 } })));
-    // Mounting or rerendering a card itself remains observational.
-    await act(async () => { screen.tree.update(<ApprovalRead />); });
-    expect(requests.filter(({ path, method }) => method !== 'GET' && path !== '/v1/artifacts/read')).toEqual(writes);
+    const machine = createMachineFixture({ id: 'origin-machine', metadata: { ...createMachineFixture().metadata!, displayName: 'Build Mac', host: 'build.test' } });
+    storage.setState({ machineListByServerId: { [serverIdB]: [machine] } });
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'system', pluginId: 'example.observer', contributionLocalId: 'observer' },
+      actionId: 'automation.event.sources.list', actionArgs: { transport: { kind: 'checkpointedPull' } }, summary: 'Read sources',
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'plugin', serverId: serverIdB,
+        serverIdentityId: 'srv_approval_home_b', machineId: machine.id, actionId: 'automation.event.sources.list', requestId: 'request',
+        caller: { kind: 'plugin', pluginId: 'example.observer', contributionLocalId: 'observer',
+          sourceCustody: { kind: 'development', registeredRootId: 'observer-root' } } } });
+    const artifact = { ...createApprovalArtifact(), header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
+    const screen = await renderScreen(<ApprovalInboxCard artifact={artifact} onPress={() => {}} />);
+    expect(screen.findByTestId(`inbox.approval.${artifact.id}.summary:source`)).toBeNull();
+    expect(screen.findByTestId(`inbox.approval.${artifact.id}.summary:facts`)).not.toBeNull();
+    expect(screen.getTextContent()).toContain('Build Mac');
   });
+
+  it('does not redraw a sessionless approval when its origin Machine only reports presence', async () => {
+    const { ApprovalInboxCard } = await import('./ApprovalInboxCard');
+    const machine = createMachineFixture({ id: 'daemon-machine', active: false, activeAt: 1, metadata: {
+      ...createMachineFixture().metadata!, displayName: 'Build Mac', host: 'build.test',
+    } });
+    storage.setState({ machineListByServerId: { [serverIdB]: [machine] } });
+    const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+      createdBy: { surface: 'system', pluginId: 'example.observer', contributionLocalId: 'observer' },
+      actionId: 'automation.event.sources.list', actionArgs: { transport: { kind: 'checkpointedPull' } }, summary: 'Read sources',
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'plugin', serverId: serverIdB,
+        serverIdentityId: 'srv_approval_home_b', machineId: machine.id, actionId: 'automation.event.sources.list', requestId: 'request',
+        caller: { kind: 'plugin', pluginId: 'example.observer', contributionLocalId: 'observer',
+          sourceCustody: { kind: 'development', registeredRootId: 'observer-root' } } } });
+    const artifact = { ...createApprovalArtifact(), header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
+    let commits = 0;
+    const screen = await renderScreen(
+      <React.Profiler id="card" onRender={() => { commits += 1; }}>
+        <ApprovalInboxCard artifact={artifact} onPress={() => {}} />
+      </React.Profiler>,
+    );
+    const settled = commits;
+    // Heartbeats replace the Machine record without changing anything the card names.
+    for (const activeAt of [2, 3, 4]) {
+      await act(async () => {
+        storage.setState({ machineListByServerId: { [serverIdB]: [{ ...machine, active: true, activeAt }] } });
+      });
+    }
+    expect(commits).toBe(settled);
+    expect(screen.getTextContent()).toContain('Build Mac');
+  });
+
   it('localizes the first-party title in French and resolves its document through the shared reference reader', async () => {
     const { ApprovalInboxCard } = await import('./ApprovalInboxCard');
     await preloadTranslations('fr');
@@ -217,9 +206,9 @@ describe('ApprovalInboxCard', () => {
     );
     expect(screen.getTextContent()).toContain(t('inbox.work.rows.approvalNeeded'));
     expect(
-      screen.findByTestId(`inbox.approval.${artifact.id}`)?.props,
+      screen.findHostByTestId(`inbox.approval.${artifact.id}`)?.props,
     ).toMatchObject({
-      accessibilityRole: 'button',
+      role: 'button',
     });
     expect(
       String(
@@ -326,6 +315,52 @@ describe('ApprovalInboxCard', () => {
     const other = await renderScreen(<ApprovalInboxCard artifact={unreviewed} inlineActionLabel="Review" onPress={() => {}} />);
     expect(other.findHostByTestId(`inbox.approval.${simple.id}.allow_once`)).toBeFalsy();
     expect(other.findHostByTestId(`inbox.approval.${simple.id}.review`)).toBeTruthy();
+  });
+  it('withholds requester-bound quick decisions from the Bot owner', async () => {
+    const { ApprovalInboxCard } = await import('./ApprovalInboxCard');
+    storage.setState({ profileScope: { serverId: serverIdB, accountId: 'alice' } });
+    const artifact = buildDiscussionRequesterApprovalArtifact({
+      id: 'artifact-1', serverId: serverIdB, serverIdentityId: 'srv_approval_home_b',
+      botSessionId: 'session-1', executionAccountId: 'alice', requesterAccountId: 'bob',
+      summary: 'Update document',
+    });
+
+    const screen = await renderScreen(<ApprovalInboxCard artifact={artifact} inlineActionLabel="Review" onPress={() => {}} />);
+
+    expect(screen.findHostByTestId(`inbox.approval.${artifact.id}.allow_once`)).toBeFalsy();
+    expect(screen.findHostByTestId(`inbox.approval.${artifact.id}.deny`)).toBeFalsy();
+    expect(screen.findHostByTestId(`inbox.approval.${artifact.id}.review`)).toBeTruthy();
+    expect(readApprovalQuickActions(readOpenApprovalInboxEntry(artifact), serverIdB, true)).toMatchObject({
+      artifactId: artifact.id, actionId: 'approval.request.decide', decisions: ['reject', 'approve'],
+    });
+  });
+  it('offers requester-bound quick decisions after the requester restores the Home under another local profile id', async () => {
+    const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } =
+      await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const previousApplied = getAppliedActiveServerSnapshot();
+    const previousAvailable = isAppliedActiveServerRuntimeAvailable();
+    publishAppliedActiveServerSnapshot({ serverId: serverIdB, serverUrl: 'https://home-b.example.test', generation: 1 }, true);
+    storage.setState({ profileScope: { serverId: serverIdB, accountId: 'bob' } });
+    await TokenStorage.setCredentialsForServerUrl('https://home-b.example.test', { serverId: serverIdB }, {
+      token: createAccountTokenForTests('bob', { currentAccount: true }),
+    });
+    const artifact = buildDiscussionRequesterApprovalArtifact({
+      id: 'artifact-1', serverId: 'creator-local-home-profile', serverIdentityId: 'srv_approval_home_b',
+      botSessionId: 'session-1', executionAccountId: 'alice', requesterAccountId: 'bob', summary: 'Update document',
+    });
+    try {
+      const { ApprovalInboxCard } = await import('./ApprovalInboxCard');
+      const screen = await renderScreen(<ApprovalInboxCard artifact={artifact} inlineActionLabel="Review" onPress={() => {}} />);
+
+      await waitForHomeGovernance(() => {
+        expect(screen.findHostByTestId(`inbox.approval.${artifact.id}.allow_once`)).toBeTruthy();
+        expect(screen.findHostByTestId(`inbox.approval.${artifact.id}.deny`)).toBeTruthy();
+        expect(screen.findHostByTestId(`inbox.approval.${artifact.id}.review`)).toBeFalsy();
+      });
+    } finally {
+      await TokenStorage.removeCredentialsForServerUrl('https://home-b.example.test', { serverId: serverIdB });
+      publishAppliedActiveServerSnapshot(previousApplied, previousAvailable);
+    }
   });
   it('keeps an agent\'s request to remember a Project setup behind Review and says so on its row', async () => {
     const { ApprovalInboxCard } = await import('./ApprovalInboxCard');

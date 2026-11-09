@@ -1,11 +1,10 @@
 import {
-    SessionHandoffPrepareTargetResumeResponseSchema,
     SessionHandoffStatusSchema,
+    type SessionHandoffPrepareTargetResumeResponse,
 } from '@happier-dev/protocol/sessions/control/handoff/handoffSchemas';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { randomUUID } from '@/platform/randomUUID';
-import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 
 export type ResumeActionOperationHandoffResult =
     | Readonly<{ kind: 'requested' }>
@@ -33,15 +32,17 @@ export async function resumeActionOperationHandoff(params: Readonly<{
     signal?: AbortSignal;
 }>): Promise<ResumeActionOperationHandoffResult> {
     if (!params.serverId?.trim() || !params.targetMachineId.trim()) return { kind: 'not_available' };
+    const executor = createDefaultActionExecutor();
+    // These are private lifecycle continuations, intentionally absent from external UI discovery.
+    const context = { surface: 'rpc' as const, authority: 'present_user' as const,
+        serverId: params.serverId, defaultSessionId: params.sessionId,
+        externalActionTarget: { kind: 'machine' as const, machineId: params.targetMachineId },
+        ...(params.signal ? { signal: params.signal } : {}) };
     let statusEnvelope: Readonly<Record<string, unknown>> | null;
     try {
-        statusEnvelope = readRecord(await machineRpcWithServerScope<unknown, { handoffId: string }>({
-            machineId: params.targetMachineId,
-            serverId: params.serverId,
-            method: RPC_METHODS.DAEMON_SESSION_HANDOFF_STATUS_GET_V3,
-            payload: { handoffId: params.handoffId },
-            ...(params.signal ? { signal: params.signal } : {}),
-        }));
+        const result = await executor.execute('session.handoff.status.get', { handoffId: params.handoffId }, context);
+        if (!result.ok) return { kind: 'failed', message: failureMessage(result.error) };
+        statusEnvelope = readRecord(result.result);
     } catch (error) {
         return { kind: 'failed', message: failureMessage(error instanceof Error ? error.message : error) };
     }
@@ -60,32 +61,23 @@ export async function resumeActionOperationHandoff(params: Readonly<{
         return { kind: 'not_available' };
     }
 
-    let resumeResult: unknown;
+    let resumeResult: SessionHandoffPrepareTargetResumeResponse;
     try {
         params.signal?.throwIfAborted();
-        resumeResult = await machineRpcWithServerScope<unknown, {
-            handoffId: string;
-            jobId: string;
-            expectedRevision: number;
-            attemptId: string;
-        }>({
-            machineId: params.targetMachineId,
-            serverId: params.serverId,
-            method: RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_RESUME_V3,
-            ...(params.signal ? { signal: params.signal } : {}),
-            payload: {
+        const result = await executor.execute('session.handoff.prepare_target.resume', {
             handoffId: params.handoffId,
             jobId: status.data.jobId,
             expectedRevision: transitionRevision,
             attemptId: (params.createAttemptId ?? randomUUID)(),
-            },
-        });
+        }, context);
+        if (!result.ok) return { kind: 'failed', message: result.errorCode === 'invalid_action_output'
+            ? 'session_handoff_resume_invalid_response' : failureMessage(result.error) };
+        // The Action executor validates this private Action's canonical output schema.
+        resumeResult = result.result as SessionHandoffPrepareTargetResumeResponse;
     } catch (error) {
         return { kind: 'failed', message: failureMessage(error instanceof Error ? error.message : error) };
     }
 
-    const parsed = SessionHandoffPrepareTargetResumeResponseSchema.safeParse(resumeResult);
-    if (!parsed.success) return { kind: 'failed', message: 'session_handoff_resume_invalid_response' };
-    if (!parsed.data.ok) return { kind: 'failed', message: parsed.data.error.message };
+    if (!resumeResult.ok) return { kind: 'failed', message: resumeResult.error.message };
     return { kind: 'requested' };
 }

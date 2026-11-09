@@ -19,13 +19,17 @@ export function DiscussionMessageContent(props: Readonly<{
     resolveAccountLabel?: (accountId: string) => string | null;
     resolveSessionLabel?: (sessionId: string) => string | null;
     textStyle?: StyleProp<TextStyle>;
+    /** A thread page renders bodies as a Session transcript does; a compact card keeps the default step. */
+    profile?: 'transcript';
+    /** The row draws the message's files below the body, so they are not repeated as trailing chips. */
+    attachmentsBelow?: boolean;
 }>) {
     const { theme } = useUnistyles();
     const router = useRouter();
     const projection = React.useMemo(() => props.message.content
         ? projectDiscussionMessageReferences(props.message.content, {
             account: props.resolveAccountLabel, session: props.resolveSessionLabel,
-        }) : null, [props.message.content, props.resolveAccountLabel, props.resolveSessionLabel]);
+        }, undefined, props.attachmentsBelow ? 'omit' : 'append') : null, [props.attachmentsBelow, props.message.content, props.resolveAccountLabel, props.resolveSessionLabel]);
     const ink = theme.colors.text.primary;
     const inlineReferences = React.useMemo<MarkdownInlineReferences | undefined>(() => {
         if (!projection?.inline.size) return undefined;
@@ -51,5 +55,5 @@ export function DiscussionMessageContent(props: Readonly<{
         {t('session.collaboration.discussion.contentUnavailable')}
     </Text>;
     return <MarkdownView testID={testID} markdown={projection.text} textStyle={props.textStyle}
-        selectable inlineReferences={inlineReferences} />;
+        selectable inlineReferences={inlineReferences} {...(props.profile ? { profile: props.profile } : {})} />;
 }

@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import type { ActionOperationAddress } from '@/sync/domains/actionOperations/qualifiedActionOperation';
@@ -25,4 +26,5 @@ export function openActionOperationDetail(address: ActionOperationAddress): void
         closeOnBackdrop: true,
         accessibilityLabel: t('inbox.actionOperations.detailAccessibilityLabel'),
     });
+    actionOperationStore.markTerminalSeen(address);
 }

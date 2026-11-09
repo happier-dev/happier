@@ -22,6 +22,34 @@ afterEach(() => {
 afterAll(() => network.dispose());
 
 describe('Your Home machine reachability', () => {
+    it('keeps live Home rows quiet and omits last-seen time after a failed request', async () => {
+        const home = await network.addHome('https://your-home-activity.test', 'account-home');
+        setActiveServerId(home.id);
+        const machine = createMachineFixture({ id: 'studio', activeAt: Date.now() });
+        const retainedActiveAt = machine.activeAt;
+        const scope = { serverId: home.id, accountId: 'account-home' };
+        storage.setState(state => ({ profileScope: scope, profile: { ...state.profile, id: scope.accountId },
+            machines: { [machine.id]: machine }, machineListByServerId: { [home.id]: [machine] } }));
+        const hook = await renderHook(() => useYourHomeModel());
+        const online = hook.getCurrent();
+        const root = storage.getState();
+        await act(async () => storage.getState().applyMachineActivityUpdates([
+            { id: machine.id, active: true, activeAt: machine.activeAt + 1 },
+        ], { sourceServerId: home.id }));
+        expect(hook.getCurrent()).toBe(online);
+        expect(storage.getState()).toBe(root);
+        await act(async () => recordMachineRequestFailed({ ...scope, machineId: machine.id }));
+        expect(hook.getCurrent().machines[0]).toMatchObject({ online: false, lastSeenAt: null });
+        await act(async () => storage.getState().applyMachineActivityUpdates([
+            { id: machine.id, active: true, activeAt: machine.activeAt + 2 },
+        ], { sourceServerId: home.id }));
+        expect(hook.getCurrent().machines[0]).toMatchObject({ online: false, lastSeenAt: null });
+        expect(storage.getState()).toBe(root);
+        expect(machine.activeAt).toBe(retainedActiveAt);
+        expect(network.requests).toEqual([]);
+        await hook.unmount();
+    });
+
     it('keeps withdrawn Machine presence unknown and restores only its exact Home and Account', async () => {
         const home = await network.addHome('https://your-home-withdrawal.test', 'account-home');
         setActiveServerId(home.id);

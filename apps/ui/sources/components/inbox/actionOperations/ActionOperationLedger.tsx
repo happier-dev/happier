@@ -21,7 +21,7 @@ import {
 } from '@/sync/domains/state/storage';
 import { useSessionListHomeObservations } from '@/sync/store/hooks';
 import { useAllActionOperations } from '@/sync/domains/actionOperations/useActionOperations';
-import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import { actionOperationStore, isActionOperationReviewHeld, canDismissActionOperation } from '@/sync/domains/actionOperations/actionOperationStore';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import {
     actionOperationAddress,
@@ -45,6 +45,7 @@ import {
 import { requestAcceptedActionOperationStop, type ActionOperationStopResponse, type ActionOperationStopContext, type ActionOperationStopTarget } from './requestActionOperationStop';
 import { useActionOperationStopControl } from './useActionOperationStopControl';
 import { projectActionOperationSourceContext } from './actionOperationSourceContext';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { readActionOperationOutputAttachment } from './actionOperationDetailPresentation';
 import { useManagedMachineName } from '@/components/approvals/approvalReferenceReading';
 
@@ -68,6 +69,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
     showDivider?: boolean;
 }>) {
     const { theme } = useUnistyles();
+    const isRecordingVisible = useSessionRecordingVisibility();
     const { snapshot, observation } = props.operation;
     const sessionId = snapshot.scope.sessionId ?? null;
     const serverId = props.operation.serverId;
@@ -82,6 +84,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
     const status = resolveActionOperationStatus(snapshot, observation);
     const statusLabel = describeActionOperationStatusLabel(status.label);
     const sourceContext = projectActionOperationSourceContext({
+        isRecordingVisible,
         serverId,
         snapshot,
         session,
@@ -111,8 +114,9 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
             sourceContext.contextLine,
         ]));
     const active = snapshot.state === 'accepted' || snapshot.state === 'running';
-    const canDismiss = Boolean(props.onDismissOperation)
-        && (inboxPresentation || (active && props.operation.isUnavailableProjection));
+    const canDismiss = Boolean(props.onDismissOperation) && canDismissActionOperation(
+        snapshot, props.operation.isUnavailableProjection, Boolean(props.operation.followUpAttention),
+    );
     const canStop = Boolean(serverId)
         && !inboxPresentation
         && !canDismiss
@@ -143,7 +147,7 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
         <Icon name="x" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
     </TactilePressable> : undefined;
     const workStatus = resolveWorkStatusTone({ kind: 'action_operation', facts: { state: snapshot.state, observation,
-        setupReview: snapshot.setupReview, word: props.operation.followUpAttention ?? statusLabel } });
+        setupReview: snapshot.setupReview, reviewRequired: isActionOperationReviewHeld(snapshot), word: props.operation.followUpAttention ?? statusLabel } });
 
     if (inboxPresentation) return <InboxWorkRow
         testID={`inbox.action-operation.${snapshot.operationId}`} title={snapshot.title}
@@ -348,7 +352,7 @@ export const ActionOperationLedger = React.memo(function ActionOperationLedger(p
             preferredSessionAddress={props.preferredSessionAddress}
             onOpenOperation={openActionOperation}
             onCancelOperation={stopOperation}
-            onDismissOperation={(operation) => actionOperationStore.dismissUnavailable(
+            onDismissOperation={(operation) => actionOperationStore.dismissOperation(
                 actionOperationAddress(operation.serverId, operation.snapshot.operationId),
             )}
             onClearRecent={actionOperationStore.dismissRecentSucceeded}

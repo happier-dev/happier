@@ -51,4 +51,27 @@ describe('HubComposerSuggestions', () => {
         expect(onFill).toHaveBeenLastCalledWith({ prompt: 'homeComposer.starter.explain', placement: null });
         await screen.unmount();
     });
+
+    it('keeps atmosphere links and pills on one row: only the suggestions that fit the column stay', async () => {
+        storage.setState({ isDataReady: true, sessionListRowsByServerId: {} });
+        for (const presentation of ['links', 'pills'] as const) {
+            const screen = await renderScreen(<HubComposerSuggestions onFill={vi.fn()} presentation={presentation} />);
+            const shown = () => new Set(screen.tree.root.findAll((node) => typeof node.props.testID === 'string'
+                && node.props.testID.startsWith('hub-composer.suggestion.') && typeof node.props.onPress === 'function')
+                .map((node) => node.props.testID as string)).size;
+            const all = shown();
+            expect(all).toBeGreaterThanOrEqual(2);
+            const row = screen.findByTestId('hub-composer.suggestions')!;
+            expect(row.props.style).toEqual(expect.arrayContaining([expect.objectContaining({ flexWrap: 'nowrap' })]));
+            await act(async () => {
+                row.props.onLayout({ nativeEvent: { layout: { width: 200, height: 30, x: 0, y: 0 } } });
+            });
+            expect(shown()).toBe(1);
+            await act(async () => {
+                screen.findByTestId('hub-composer.suggestions')!.props.onLayout({ nativeEvent: { layout: { width: 900, height: 30, x: 0, y: 0 } } });
+            });
+            expect(shown()).toBe(all);
+            await screen.unmount();
+        }
+    });
 });

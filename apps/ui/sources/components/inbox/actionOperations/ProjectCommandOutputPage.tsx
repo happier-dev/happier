@@ -10,7 +10,8 @@ import {
   RunClock,
   RunGlyph,
 } from '@/components/projects/projectSetup/ProjectRunMarks';
-import { presentProjectRun } from '@/components/projects/projectSetup/projectScriptPresentation';
+import { presentProjectRun, projectRunStatusTone } from '@/components/projects/projectSetup/projectScriptPresentation';
+import { rowStatusToneColors } from '@/components/ui/status/RowStatusLine';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
@@ -98,12 +99,9 @@ export const ProjectCommandOutputPage = React.memo(
 
     const stopping = stop.pending || stop.stopRequested;
     const status = stopping ? t('projects.scripts.run.stopping') : presentation.text;
-    const statusColor =
-      presentation.tone === 'danger'
-        ? theme.colors.status.error
-        : presentation.tone === 'attention'
-          ? theme.colors.state.attention.foreground
-          : theme.colors.text.primary;
+    // The page's own status line reads larger than a row's, but its trouble inks are the row status line's.
+    const statusTone = projectRunStatusTone(presentation.tone);
+    const statusColor = statusTone === 'quiet' ? theme.colors.text.primary : rowStatusToneColors(theme)[statusTone];
     const canStop =
       presentation.live && operation?.snapshot.cancellation === 'supported';
     const onOutputLayout = React.useCallback((event: LayoutChangeEvent) => {

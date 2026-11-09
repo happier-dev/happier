@@ -19,12 +19,17 @@ import {
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
+import { PLUGIN_COMPOSER_PROJECTION_SECTIONS, readPluginComposerProjectionDemandTargets,
+    usePluginExecutionOriginProjectionDemand } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
+import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 
 type DiscussionComposer = Extract<ComposerRefV1, { kind: 'discussion' }>;
 type Slots = Readonly<{
     extraActionChips: readonly AgentInputExtraActionChip[];
     beforeComposer: React.ReactNode;
     afterComposer: React.ReactNode;
+    statusRegions: ComposerScopePluginPresentation['statusRegions'];
     suggestReferences(query: string, signal: AbortSignal): Promise<AutocompleteSuggestion[]>;
 }>;
 type Contributor = Readonly<{ id: string; pluginId: string }>;
@@ -50,6 +55,11 @@ export function DiscussionComposerPluginContributions(props: SharedProps & Reado
     const shell = useAppShellPluginUiProjection();
     const active = useLayoutPresentationActive();
     const projection = shell.pluginUiProjection;
+    const presented = props.enabled && active && props.lifetime.isCurrent();
+    const availability = usePluginAccountAvailabilityReader(props.lifetime.scope, undefined, { enabled: presented });
+    const installed = availability?.readInstalledPlugins() ?? null;
+    const declarationTargets = React.useMemo(() => presented
+        ? readPluginComposerProjectionDemandTargets(installed, 'discussion') : [], [installed, presented]);
     // Lift only rendered slot values. Declaration, origin, document and
     // transaction decisions remain with their incumbent owners below.
     const [slots, setSlots] = React.useState<ReadonlyMap<string, PresentationSlots>>(() => new Map());
@@ -101,16 +111,31 @@ export function DiscussionComposerPluginContributions(props: SharedProps & Reado
                 .map(entry => <React.Fragment key={entry.contribution.id}>{entry.render()}</React.Fragment>),
             afterComposer: regions.filter(entry => entry.contribution.definition.placement === 'afterComposer')
                 .map(entry => <React.Fragment key={entry.contribution.id}>{entry.render()}</React.Fragment>),
+            statusRegions: regions.filter(entry => entry.contribution.definition.placement === 'statusStrip')
+                .map(entry => ({ emphasis: entry.contribution.definition.emphasis,
+                    node: <React.Fragment key={entry.contribution.id}>{entry.render()}</React.Fragment> })),
             suggestReferences,
         });
     };
     return <>
+        {declarationTargets.map(target => <DiscussionComposerDeclarationDemand key={JSON.stringify([target.serverIdentityId, target.machineId])}
+            target={target} lifetime={props.lifetime} />)}
         {projection ? contributors.map(contributor => <ContributorSlots key={contributor.pluginId}
             composer={props.composer} lifetime={props.lifetime} enabled={props.enabled && active}
             projection={projection} contributor={contributor} onPresentation={publish} />) : null}
         {render()}
     </>;
 }
+
+/** The presented Composer requests discovery before executable supplies exist. */
+const DiscussionComposerDeclarationDemand = React.memo(function DiscussionComposerDeclarationDemand(props: Readonly<{
+    target: MachineAdministrationTargetV1;
+    lifetime: ServerAccountScopeLifetime;
+}>): null {
+    usePluginExecutionOriginProjectionDemand(props.target, { accountLifetime: props.lifetime,
+        sections: PLUGIN_COMPOSER_PROJECTION_SECTIONS, observe: false });
+    return null;
+});
 
 /**
  * Stable sibling leaves preserve each plugin's UI across unrelated catalog
@@ -130,14 +155,16 @@ const ContributorSlots = React.memo(function ContributorSlots(props: SharedProps
     const supply = origin.selectedSupply;
     const enabled = props.enabled && props.lifetime.isCurrent() && origin.selection.canExecute;
     const daemon = useDaemonMergedProjectionInputs({ machineId: supply?.machineId ?? null,
-        serverId: supply?.serverId, enabled, load: enabled && Boolean(presentationEntry) });
+        serverId: supply?.serverId, accountLifetime: props.lifetime,
+        sections: PLUGIN_COMPOSER_PROJECTION_SECTIONS, enabled, load: enabled && Boolean(presentationEntry) });
     const suggestReferences = React.useCallback<Slots['suggestReferences']>(async (query, signal) => {
         const current = () => enabled && props.lifetime.isCurrent() && origin.isExecutionOriginCurrent() && !signal.aborted;
         if (!current() || !supply?.machineId) return [];
         // The cache's existing acquisition owner shares in-flight work with
         // rendered controls; reference-only plugins stay cold until this query.
         const loaded = await loadDaemonMergedProjectionCacheEntry({ machineId: supply.machineId,
-            serverId: supply.serverId, accountLifetime: props.lifetime, reuseFreshReady: true, signal });
+            serverId: supply.serverId, accountLifetime: props.lifetime,
+            sections: PLUGIN_COMPOSER_PROJECTION_SECTIONS, reuseFreshReady: true, signal });
         if (!current() || loaded?.kind !== 'ready' || !loaded.inputs.pluginProjectionV2
             || loaded.inputs.pluginProjectionById[contributor.pluginId]?.occurrenceId !== supply.occurrenceId) return [];
         return getSuggestions(null, query, { kinds: ['composerReference'], signal, composerReferenceHost: {

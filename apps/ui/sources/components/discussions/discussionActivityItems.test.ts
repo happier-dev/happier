@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { DiscussionOpenedSummaryV1 } from '@happier-dev/protocol';
+import type { DiscussionOpenedSummaryV1 } from '@happier-dev/protocol/discussions/actions';
 
 import {
   buildDiscussionActivityItems,
@@ -141,7 +141,7 @@ describe('buildDiscussionColumnItems', () => {
     };
   };
 
-  it('puts unread mentions first, then groups by last activity, keeping the repository order inside each group', () => {
+  it('keeps unread mentions in recency groups, preserving the repository order inside each group', () => {
     const today = new Date(2026, 9, 19, 9, 0, 0).getTime();
     const thisWeek = new Date(2026, 9, 14, 12, 0, 0).getTime();
     const earlier = new Date(2026, 9, 12, 23, 0, 0).getTime();
@@ -163,10 +163,23 @@ describe('buildDiscussionColumnItems', () => {
             ? item.discussion.id
             : item.kind,
       ),
-    ).toEqual(['needs_you', 'b', 'today', 'a', 'd', 'earlier', 'c']);
+    ).toEqual(['today', 'a', 'd', 'this_week', 'b', 'earlier', 'c']);
     expect(new Set(items.map(discussionActivityItemKey)).size).toBe(
       items.length,
     );
+  });
+
+  it('keeps an admitted mention out of Needs you while an approval remains actionable', () => {
+    const today = new Date(2026, 9, 19, 9, 0, 0).getTime();
+    const items = buildDiscussionColumnItems({
+      discussions: [at('mention', today, true), at('approval', today)],
+      humanListPending: false,
+      now,
+      attention: new Map([['mention', { attentionType: 'mention' as const }], ['approval', { attentionType: 'approval' as const }]]),
+    });
+    expect(items.map(item => item.kind === 'recency_group' ? item.group
+      : item.kind === 'human_discussion' ? item.discussion.id : item.kind))
+      .toEqual(['needs_you', 'approval', 'today', 'mention']);
   });
 
   it("leads with a Discussion waiting on the viewer's approval or draft even without an unread mention", () => {
@@ -176,9 +189,9 @@ describe('buildDiscussionColumnItems', () => {
       humanListPending: false,
       now,
       attention: new Map([
-        ['b', 'approval_pending'],
-        ['c', 'draft_waiting'],
-        ['a', null],
+        ['b', { attentionType: 'approval' as const }],
+        ['c', { attentionType: 'approval' as const }],
+        ['a', { attentionType: null }],
       ]),
     });
     expect(

@@ -7,6 +7,9 @@ import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdF
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { submitPendingActivationRequest } from '@/components/sessions/pending/pendingActivationRequest';
+import { sendPendingMessageWithIntent } from '@/components/sessions/pending/pendingMessageSendActions';
+import { canUseDirectPendingDeliveryActions, getPendingDeliveryBlockedReasonPresentation,
+    resolvePendingMessagesPresentation } from '@/components/sessions/pending/pendingMessageVisualState';
 import { useManagedPendingWakeObservation } from '@/components/sessions/pending/useManagedPendingWakeObservation';
 import { describeManagedWakeLabel } from '@/components/sessions/pending/ManagedWakePopover';
 import { useManagedWakeRecovery } from '@/components/sessions/pending/useManagedWakeRecovery';
@@ -17,7 +20,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Modal } from '@/modal';
 import { readManagedWakeAuthorization } from '@/sync/domains/pending/managedWakeProjection';
 import { areServerProfileIdentifiersEquivalent, getServerProfileById } from '@/sync/domains/server/serverProfiles';
-import type { SessionPresentationRecord } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
+import { readSessionPresentationControl, type SessionPresentationRecord } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { useMachineListStatusForServer, useServerScopedMachine, useSocketStatus } from '@/sync/domains/state/storage';
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
@@ -29,16 +32,17 @@ import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 
-/** A failed wake or its subsequent continuation refusal uses the shared Session recovery presenter. */
-export function hasFailedManagedWake(session: SessionPresentationRecord): boolean {
-    return readManagedWakeAuthorization(session)?.status === 'failed'
+/** Failed pending input, wake and continuation use the shared Session recovery presenters. */
+export function hasInboxSessionRecovery(session: SessionPresentationRecord): boolean {
+    return (session.pendingBlockedCount ?? 0) > 0
+        || readManagedWakeAuthorization(session)?.status === 'failed'
         || session.active === false && presentSessionContinuationFailure(session.lastRuntimeIssue) !== null;
 }
 
 type RowRender = (wake: Readonly<{ sentence: string | null; retry: React.ReactNode }>) => React.ReactElement;
 
 /**
- * A failed wake's row, lab `b-inbox` I/Ip: the shared owner's reason replaces the context line. Failed wakes
+ * A failed input's row, lab `b-inbox` I/Ip: the shared owner's reason replaces the context line. Retained input and failed wakes
  * offer Retry; an unavailable continuation offers Open for the composer's new-Session recovery. Mounted only on its
  * own Home, so the reads below (pending input, managed observation) run only while the row is drawn.
  */
@@ -71,23 +75,29 @@ function ActiveHomeManagedWakeRow(props: Readonly<{ session: SessionPresentation
     const metadata = readSessionOwnerMetadataView(session);
     const agentId = resolveAgentIdFromSessionMetadata(metadata);
     const agentCore = agentId ? getAgentCore(agentId) : null;
+    const canWrite = session.access?.capabilities.submitAgentInput === true;
     const { presentation, deliveryFailure, managedWakeProjection } = useSessionPendingActivationPresentation({
         sessionId: session.id, session, ownerMetadata: metadata,
         machineReachable: reachability.machineReachability === 'unknown' ? null : reachability.machineReachable,
-        canWrite: session.access?.capabilities.submitAgentInput === true,
+        canWrite,
         pendingMessages: pending.messages, pendingLoaded: pending.isLoaded, pendingReadState: pending.readState,
         managed: observation.machine, managedReadState: observation.kind,
         machineInventoryState: inventory === 'loading' ? 'loading' : 'read',
     });
-    const sentence = deliveryFailure?.message ?? (managedWakeProjection ? describeManagedWakeLabel(managedWakeProjection, {
+    const blockedMessage = resolvePendingMessagesPresentation(pending.messages, { session }).blockedMessage;
+    const blockedReason = blockedMessage ? getPendingDeliveryBlockedReasonPresentation(blockedMessage, false, session) : null;
+    const sentence = deliveryFailure?.message ?? (blockedReason ? blockedReason.message ?? t(blockedReason.labelKey) : null)
+        ?? (managedWakeProjection ? describeManagedWakeLabel(managedWakeProjection, {
         controllerName: controllerName ?? t('common.machine'),
         machineName: observation.machine?.launch.name ?? t('common.machine'),
         homeName: resolveHomeDisplayLabel(getServerProfileById(serverId), serverId),
         agentName: agentCore ? t(agentCore.displayNameKey) : formatAgentLikeIdForDisplay(agentId),
     }) : null);
-    // The banner owner's primary action is the one Retry: re-arm the held input, or retry/resume the runtime.
+    // Both routes consume the retained-input owners: confirmed direct delivery or the wake banner's recovery.
     const retry = presentation?.primaryAction === 'process_when_online' ? 'rearm' as const
-        : presentation?.primaryAction === 'retry' || presentation?.primaryAction === 'resume' ? presentation.primaryAction : null;
+        : presentation?.primaryAction === 'retry' || presentation?.primaryAction === 'resume' ? presentation.primaryAction
+        : !deliveryFailure && blockedMessage && canWrite
+            && canUseDirectPendingDeliveryActions(blockedMessage, undefined, session) ? 'send' as const : null;
     const actionExecutor = React.useMemo(() => createDefaultActionExecutor(), []);
     const approval = useActionApprovalContinuation({ scopeKey: `inbox-wake:${serverId}:${session.id}`, serverId, onExecuted: noop });
     const [busy, setBusy] = React.useState(false);
@@ -107,6 +117,12 @@ function ActiveHomeManagedWakeRow(props: Readonly<{ session: SessionPresentation
     }, [actionExecutor, lifetime, serverId, session.id]);
     const recover = useManagedWakeRecovery({ accountLifetime: lifetime, authorization, presentation,
         actionExecutor, busy, setBusy, requestApproval: approval.requestApproval, onResume: resume, onWithdraw: noopWithdraw });
+    const resend = React.useCallback(async () => {
+        if (!lifetime?.isCurrent() || !blockedMessage) return;
+        await sendPendingMessageWithIntent({ sessionId: session.id, serverId, expectedAccountId: lifetime.scope.accountId,
+            executor: actionExecutor, isCurrent: () => lifetime.isCurrent(), session: readSessionPresentationControl(session),
+            message: blockedMessage, deliveryIntent: 'interrupt_and_send' });
+    }, [actionExecutor, blockedMessage, lifetime, serverId, session]);
     const rearm = React.useCallback(async () => {
         const row = presentation?.row;
         if (!lifetime?.isCurrent() || !row?.localId || busy) return;
@@ -134,7 +150,7 @@ function ActiveHomeManagedWakeRow(props: Readonly<{ session: SessionPresentation
             <View style={styles.actions}>
                 <RoundButton testID={`inbox.session.${session.id}.wake_retry`} size="small" display="secondary"
                     title={t('common.retry')} disabled={busy}
-                    action={retry === 'rearm' ? rearm : () => recover(retry)} />
+                    action={retry === 'send' ? resend : retry === 'rearm' ? rearm : () => recover(retry)} />
             </View>
         ),
     });

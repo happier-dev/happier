@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { resolveMachineKindGlyph } from '@/components/machines/machineKindGlyph';
 import { StyleSheet as RNStyleSheet, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
@@ -46,6 +47,7 @@ import {
 } from '@/components/atmosphere/orbit/homeOrbitScene';
 import { HomeOrbitMap } from '@/components/atmosphere/orbit/HomeOrbitMap';
 import { useYourHomeModel } from './useYourHomeModel';
+import { StatusDot } from '@/components/ui/status/StatusDot';
 
 /**
  * The "Your Home" widget's body (atmosphere lab `at-widget.js`): the planet is the Home, its machines
@@ -109,8 +111,11 @@ function useActiveHomeName(): string | null {
   return resolveHomeDisplayName(getServerProfileById(active.serverId));
 }
 
-/** The lab's composition per size (`yourHome()`), in the body box the frame measured. */
-function YourHomeComposition(
+/**
+ * The lab's composition per size (`yourHome()`), in the body box the frame measured. Memoized: a machine
+ * heartbeat re-renders the widget, and the retained model keeps the map as it is.
+ */
+const YourHomeComposition = React.memo(function YourHomeComposition(
   props: Readonly<{
     size: YourHomeLayout;
     width: number;
@@ -181,7 +186,7 @@ function YourHomeComposition(
       <Legend machines={machines} height={bodyH} testID={props.testID} />
     </View>
   );
-}
+});
 
 /** A small card names no machine, so its orbit draws the lab's three bodies, one per orbit. */
 const SMALL_ORBITS = 3;
@@ -285,7 +290,7 @@ function LegendRow(
       ]}
     >
       <Icon
-        name={machine.isThisComputer ? 'laptop' : 'desktop'}
+        name={resolveMachineKindGlyph({ isThisComputer: machine.isThisComputer })}
         size={ICON_SIZE.sm}
         color={theme.colors.text.secondary}
       />
@@ -321,12 +326,7 @@ function NeedsYou(props: Readonly<{ label: string }>) {
   const { theme } = useUnistyles();
   return (
     <View style={styles.need}>
-      <View
-        style={[
-          styles.needDot,
-          { backgroundColor: workStatusGlyphColor(theme.colors, 'attention') },
-        ]}
-      />
+      <StatusDot color={workStatusGlyphColor(theme.colors, 'attention')} size={6} />
       <Text style={[workStatusWordStyle('attention'), styles.needText]}>
         {props.label}
       </Text>
@@ -460,7 +460,6 @@ const styles = StyleSheet.create((theme) => ({
     opacity: 0.6,
   },
   need: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4 },
-  needDot: { width: 6, height: 6, borderRadius: 3 },
   needText: {
     ...happierPageTextMetrics('meta'),
     fontVariant: ['tabular-nums'],

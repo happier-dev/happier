@@ -36,13 +36,14 @@ export const InboxWorkRow = React.memo(function InboxWorkRow(props: Readonly<{
     const density = useHappierPageSection() ? 'page' : 'pane';
     const label = props.accessibilityLabel ?? joinHappierFacts(props.title, props.status?.word,
         ...(props.facts ?? []).filter((fact): fact is string => typeof fact === 'string'));
-    const facts = props.narrow && props.time ? [...(props.facts ?? []), <React.Fragment key="age">{props.time}</React.Fragment>] : props.facts ?? [];
+    // A narrow row's age is the line's tail: a long fact truncates before the age does.
+    const facts = props.facts ?? [];
     return <HappierWorkRowShell testID={props.testID} accessibilityLabel={label} selected={props.selected}
         onPress={props.onPress} trailingAccessory={props.trailingAccessory} trailingMeta={density === 'page' && !props.narrow ? props.time : undefined}
         belowAccessory={props.belowAccessory} accessibilityActions={props.accessibilityActions}
         onAccessibilityAction={props.onAccessibilityAction} density={density} showDivider={props.showDivider} theme={theme} host={WORK_HOST}>
         <HappierWorkSummary testID={`${props.testID}.summary`} title={props.title} phase={props.phase ?? 'attention'}
-            mark={props.mark} facts={facts} byline={props.byline} trailingState={props.narrow ? null : props.status} trailingTime={density === 'pane' && !props.narrow ? props.time : undefined}
+            mark={props.mark} facts={facts} factsTail={props.narrow ? props.time : undefined} byline={props.byline} trailingState={props.narrow ? null : props.status} trailingTime={density === 'pane' && !props.narrow ? props.time : undefined}
             accessibilityLabel={label} accessibilityLiveRegion={props.accessibilityLiveRegion} density={density} attentionMark={false}
             titleLines={props.narrow && density === 'page' ? 2 : 1} theme={theme} host={WORK_HOST} />
     </HappierWorkRowShell>;

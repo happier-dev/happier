@@ -20,6 +20,7 @@ import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 
 import { InboxRelativeTime } from '../InboxRelativeTime';
 import { InboxWorkRow } from '../InboxWorkRow';
+import { machineDiskName } from '@/components/machines/storage/storageViewModel';
 
 /** The machine notice an open notice Artifact carries, when it is one (the same private notice union as usage). */
 export function readMachineVitalsNotice(
@@ -85,7 +86,7 @@ export function describeMachineVitalsNotice(
       }),
     };
   }
-  const volume = notice.volumeLabel ?? notice.volumeId;
+  const volume = notice.volumeLabel ? machineDiskName({ label: notice.volumeLabel }) : notice.volumeId;
   const { freeBytes, totalBytes } = notice.evidence;
   if (notice.phase === 'recovered') {
     return {

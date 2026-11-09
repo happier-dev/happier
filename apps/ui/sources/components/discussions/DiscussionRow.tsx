@@ -3,14 +3,20 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
 
-import type { DiscussionOpenedSummaryV1 } from '@happier-dev/protocol';
-import { readDiscussionMessagePreview } from './discussionTimelineProjection';
+import type { DiscussionOpenedSummaryV1 } from '@happier-dev/protocol/discussions/actions';
+import { readDiscussionMessagePreview, resolveDiscussionMessageSpeakerLabel } from './discussionTimelineProjection';
+import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import type { DiscussionListAttention } from '@/activity/attention/buildDiscussionListAttention';
+import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
+import { resolveWorkStatusRowMark } from '@/components/work/status/workStatusRowMark';
+import { workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
+import { CollectionRequestPeek } from '@/components/ui/lists/collection/CollectionRequestPeek';
+import type { CollectionRequestRef } from '@/components/ui/lists/collection/collectionRequestRef';
 
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { AvatarStack } from '@/components/ui/avatar/AvatarStack';
-import { Item } from '@/components/ui/lists/Item';
 import { classifyAccountActorLabelV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
+import { Item } from '@/components/ui/lists/Item';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { collectionListStyles } from '@/components/ui/lists/collection/CollectionList';
 import { resolveHappierCollectionListRowPadding } from '@happier-dev/plugin-ui/presentation';
@@ -19,7 +25,7 @@ import { ITEM_SUBTITLE_TEXT_METRICS, ITEM_TITLE_TEXT_METRICS } from '@/component
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
+import { resolveAccountActorName } from '@/sync/domains/account/accountActorPresentation';
 import { t } from '@/text';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 
@@ -38,8 +44,6 @@ const styles = StyleSheet.create((theme) => ({
         ...ITEM_SUBTITLE_TEXT_METRICS.compact,
         color: theme.colors.text.secondary,
     },
-    // What needs the viewer, in the attention tone (lab T2-A "needs approval" line).
-    subtitleAttention: { color: theme.colors.state.warning.foreground },
     trailing: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, flexShrink: 0 },
     badge: { position: 'relative', top: 0, right: 0 },
     time: {
@@ -56,7 +60,34 @@ type RowLabels = Readonly<{
     messages: (count: number) => string;
     unread: (count: number) => string;
     mentions: (count: number) => string;
+    onDoc: string;
+    openComments: (count: number) => string;
+    freshOpinions: (count: number) => string;
+    freshOpinionsSynthesis: (count: number) => string;
+    answerReviewSettled: string;
 }>;
+
+/**
+ * What the Discussion is, as the server's content-free summary facts say it (lab T2-L): a settled or
+ * answered round, or how many comments a Doc conversation holds. Null when no fact applies, so the row
+ * keeps the conversation itself; a pending round (no answers yet), an unknown fact and a Doc with nothing
+ * open are not summaries.
+ */
+export function resolveDiscussionRowSummary(
+    discussion: Pick<DiscussionOpenedSummaryV1, 'anchor' | 'roundOutcomeV1' | 'openCommentCount'>,
+    labels: Pick<RowLabels, 'onDoc' | 'openComments' | 'freshOpinions' | 'freshOpinionsSynthesis' | 'answerReviewSettled'>,
+): string | null {
+    const outcome = discussion.roundOutcomeV1;
+    if (outcome?.pattern === 'fresh_opinions' && outcome.answerCount > 0) {
+        return outcome.synthesized ? labels.freshOpinionsSynthesis(outcome.answerCount) : labels.freshOpinions(outcome.answerCount);
+    }
+    if (outcome?.pattern === 'answer_and_review' && outcome.settled) return labels.answerReviewSettled;
+    const open = discussion.openCommentCount;
+    if (discussion.anchor?.kind === 'doc' && typeof open === 'number' && open > 0) {
+        return `${labels.onDoc} · ${labels.openComments(open)}`;
+    }
+    return null;
+}
 
 /**
  * The row's second line: who wrote last, then how long the conversation is. Unread and mention
@@ -95,11 +126,11 @@ export function buildDiscussionRowAccessibilityLabel(input: Readonly<{
     return `${input.title}. ${facts.join(', ')}`;
 }
 
-function readLatestAuthorName(discussion: DiscussionOpenedSummaryV1): string | null {
-    const actor = discussion.latestMessage.accountActor;
-    if (!actor) return null;
-    if (actor.profile === null) return t('message.accountActorFormerMember');
-    return formatAccountDisplayName(actor.profile) ?? t('message.accountActorUnnamedMember');
+function readLatestSpeakerName(discussion: DiscussionOpenedSummaryV1): string {
+    return resolveDiscussionMessageSpeakerLabel(discussion.latestMessage, {
+        session: () => null,
+        workflowRun: () => null,
+    });
 }
 
 export function readDiscussionRowAccountAvatar(
@@ -126,23 +157,15 @@ function readLatestPreview(discussion: DiscussionOpenedSummaryV1, viewerAccountI
     const accountName = (accountId: string) => {
         const actor = discussion.participantAccounts?.find(candidate => candidate.accountId === accountId)
             ?? (discussion.latestMessage.accountActor?.accountId === accountId ? discussion.latestMessage.accountActor : null);
-        return actor?.profile ? formatAccountDisplayName(actor.profile) : null;
+        return actor ? resolveAccountActorName(actor, actor.accountId === viewerAccountId) : null;
     };
     const text = readDiscussionMessagePreview(content, { account: accountName });
     if (text === null) return null;
-    const author = discussion.latestMessage.authorAccountId === viewerAccountId
+    const author = discussion.latestMessage.producerV1 === null
+        && discussion.latestMessage.authorAccountId === viewerAccountId
         ? rowLabels.you
-        : readLatestAuthorName(discussion);
+        : readLatestSpeakerName(discussion);
     return author ? `${author}: ${text}` : text;
-}
-
-function attentionLabel(reason: DiscussionListAttention['attentionReason']): string | null {
-    switch (reason) {
-        case 'draft_waiting': return t('session.collaboration.discussion.home.draftWaiting');
-        case 'approval_pending': return t('session.collaboration.discussion.home.approvalPending');
-        case 'mentioned': return t('session.collaboration.discussion.mentioned');
-        default: return null;
-    }
 }
 
 /**
@@ -167,6 +190,11 @@ const rowLabels: RowLabels = {
     messages: (count) => t('session.collaboration.discussion.messageCount', { count }),
     unread: (count) => t('session.collaboration.discussion.unreadCount', { count }),
     mentions: (count) => t('session.collaboration.discussion.unreadMentionCount', { count }),
+    get onDoc() { return t('session.collaboration.discussion.rowOnDoc'); },
+    openComments: (count) => t('session.collaboration.discussion.rowOpenComments', { count }),
+    freshOpinions: (count) => t('session.collaboration.discussion.rowFreshOpinions', { count }),
+    freshOpinionsSynthesis: (count) => t('session.collaboration.discussion.rowFreshOpinionsSynthesis', { count }),
+    get answerReviewSettled() { return t('session.collaboration.discussion.rowAnswerReviewSettled'); },
 };
 
 /**
@@ -178,22 +206,34 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
     discussion: DiscussionOpenedSummaryV1;
     /** The viewing Account, so its own last message reads "You". */
     viewerAccountId: string;
-    onPress: () => void;
+    onOpenDiscussion: (discussionId: string, title?: string | null) => void;
     selected?: boolean;
     /** `column`: a row of the Discussions column, on the list anatomy's gutter and selected chip. */
     geometry?: 'pane' | 'column';
     /** What needs the viewer here, from the list's attention projection. */
-    attentionReason?: DiscussionListAttention['attentionReason'];
+    attentionReason: DiscussionListAttention['attentionReason'];
+    attentionType: DiscussionListAttention['attentionType'];
+    agentName?: string | null;
+    /** Qualified by the list's existing scoped approval join; the row never loads an inventory. */
+    serverId?: string;
+    approvalArtifactId?: string;
+    statusWords?: boolean;
+    presented?: boolean;
 }>): React.ReactElement {
     const { discussion } = props;
+    const workStatus = resolveWorkStatusTone({ kind: 'discussion', facts: props });
     const { theme } = useUnistyles();
+    const requestRef = React.useMemo<CollectionRequestRef | null>(() => props.serverId && props.approvalArtifactId
+        ? { kind: 'approval', serverId: props.serverId, artifactId: props.approvalArtifactId } : null,
+    [props.approvalArtifactId, props.serverId]);
     const title = discussion.title ?? t('session.collaboration.discussion.encryptedTitle');
     const unread = discussion.unreadCount > 0;
     const mentioned = unread && discussion.unreadMentionCount > 0;
     const relativeTime = formatShortRelativeTime(discussion.latestMessage.createdAt);
     const subtitle = buildDiscussionRowSubtitle({
-        latestAuthor: readLatestAuthorName(discussion),
-        latestIsViewer: discussion.latestMessage.authorAccountId === props.viewerAccountId,
+        latestAuthor: readLatestSpeakerName(discussion),
+        latestIsViewer: discussion.latestMessage.producerV1 === null
+            && discussion.latestMessage.authorAccountId === props.viewerAccountId,
         producedByAgent: discussion.latestMessage.producerV1?.kind === 'agent',
         messageCount: discussion.messageSeq,
         labels: rowLabels,
@@ -218,25 +258,48 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
         props.viewerAccountId,
     );
     const selected = props.selected ?? false;
-    // In the column, what needs you replaces the second line (lab T2-A); the pane keeps its dot badge.
-    const attentionLine = column
-        ? attentionLabel(props.attentionReason !== undefined ? props.attentionReason : mentioned ? 'mentioned' : null)
-        : null;
-    const preview = column && !attentionLine ? readLatestPreview(discussion, props.viewerAccountId) : null;
+    // In the column the second line is the conversation itself (its latest message); what needs the viewer
+    // is the row's calm status mark at its end (ruling 2026-11-01: approval and draft the amber dot, a mention the
+    // ink dot); unread news is the bold title alone.
+    const preview = column ? readLatestPreview(discussion, props.viewerAccountId) : null;
+    const statusGlyph = (column || requestRef !== null) && resolveWorkStatusRowMark(workStatus) !== 'none'
+        && workStatus.state !== 'unread' ? workStatus : null;
+    // What needs the viewer is the column row's second line, in the attention ink (lab T2-L), in place of the
+    // conversation; the glyph stays at the end as the request's peek, without repeating the word.
+    const attentionLine = column && statusGlyph?.tone === 'attention' && statusGlyph.word ? statusGlyph.word : null;
+    // Then what the Discussion is, from the list's summary facts (round outcome, open comments); a Doc
+    // conversation without one says so before its latest message (lab T2-L "On a doc").
+    const summaryLine = column ? resolveDiscussionRowSummary(discussion, rowLabels) : null;
+    const conversation = preview ?? subtitle.join(' · ');
+    const secondLine = attentionLine ?? summaryLine ?? (column && discussion.anchor?.kind === 'doc'
+        ? [rowLabels.onDoc, conversation].filter(Boolean).join(' · ')
+        : conversation);
+    const statusContent = statusGlyph ? <View style={styles.trailing}>
+        {props.statusWords && statusGlyph.word && !attentionLine ? <Text testID={`session-discussion-row-status-word-${discussion.id}`}
+            variant="meta" numberOfLines={1} style={workStatusWordStyle(statusGlyph.tone)}>{statusGlyph.word}</Text> : null}
+        <WorkStatusRowMark status={statusGlyph} testIDSuffix={`discussion-${discussion.id}`} animationEnabled={props.presented !== false} />
+    </View> : null;
+    const statusControl = statusContent && requestRef ? <CollectionRequestPeek request={requestRef}
+        description={title} presented={props.presented} testID={`discussion-request-peek:${discussion.id}`}>
+        {statusContent}
+    </CollectionRequestPeek> : statusContent;
     return (
         <Item
+            rowRole="item"
             testID={`session-discussion-row-${discussion.id}`}
             accessibilityRole="button"
             accessibilityLabel={buildDiscussionRowAccessibilityLabel({
                 title,
-                subtitle,
+                // The glyph's state is spoken first, as its word.
+                subtitle: [...(statusGlyph?.word ? [statusGlyph.word] : []), ...(summaryLine ? [summaryLine] : []), ...subtitle],
                 unreadCount: discussion.unreadCount,
                 unreadMentionCount: mentioned ? discussion.unreadMentionCount : 0,
                 relativeTime,
                 labels: rowLabels,
             })}
             selected={selected}
-            onPress={props.onPress}
+            rightElementOutsidePressable={requestRef !== null}
+            onPress={() => props.onOpenDiscussion(discussion.id, discussion.title)}
             {...(column ? {
                 pressableStyle: selected ? [collectionListStyles.row, collectionListStyles.rowSelectedOnPlane] : collectionListStyles.row,
                 style: resolveHappierCollectionListRowPadding(0),
@@ -274,17 +337,17 @@ export const DiscussionRow = React.memo(function DiscussionRow(props: Readonly<{
                 >
                     {title}
                 </Text>}
-            subtitle={attentionLine
-                ? <Text style={[styles.subtitle, styles.subtitleAttention]} numberOfLines={1}>{attentionLine}</Text>
-                : <Text style={styles.subtitle} numberOfLines={1}>{preview ?? subtitle.join(' · ')}</Text>}
-            rightElement={<View style={styles.trailing} accessible={false} importantForAccessibility="no-hide-descendants">
+            subtitle={<Text testID={`session-discussion-row-subtitle-${discussion.id}`} style={[styles.subtitle, attentionLine ? workStatusWordStyle('attention') : null]} numberOfLines={1}>{secondLine}</Text>}
+            rightElement={<View style={styles.trailing} accessible={false} importantForAccessibility={requestRef ? 'auto' : 'no-hide-descendants'}>
                 {mentioned && !column ? (
-                    <TabBadge testID={`session-discussion-row-mention-${discussion.id}`} variant="dot" tone="attention" style={styles.badge} />
+                    <TabBadge testID={`session-discussion-row-mention-${discussion.id}`} variant="dot" tone={workStatus.tone === 'neutral' ? 'neutral' : 'attention'} style={styles.badge} />
                 ) : null}
                 {unread ? (
                     <TabBadge testID={`session-discussion-row-unread-${discussion.id}`} variant="count" value={discussion.unreadCount} tone="neutral" style={styles.badge} />
                 ) : null}
-                {relativeTime ? <Text style={styles.time}>{relativeTime}</Text> : null}
+                {/* One status slot: the state's glyph, or how long ago it last spoke. */}
+                {statusControl ? statusControl
+                    : relativeTime ? <Text style={styles.time}>{relativeTime}</Text> : null}
             </View>}
         />
     );
@@ -303,6 +366,7 @@ export function DiscussionRowSkeleton(props: Readonly<{ index: number; column?: 
     return (
         <View testID={props.testID} aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
             <Item
+                rowRole="item"
                 mode="info" density="compact" showChevron={false} showDivider={false}
                 {...(props.column ? { pressableStyle: collectionListStyles.row, style: resolveHappierCollectionListRowPadding(0), leftElement: <AvatarStack size={AUTHOR_AVATAR_PX} slot entries={[{
                     key: 'author', avatar: false,

@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { HomeHubLayoutIntent } from '@happier-dev/protocol/home';
+import type { UiSurfaceNetworkRequestV1 } from '@happier-dev/protocol/plugins/contributions/ui/hostedHtmlCapabilitiesV1';
 import { isSameWidgetDefinitionV1, widgetCandidateDefinitionV1, flattenWidgetLayoutWidgetsV1, type WidgetLayoutItemV1, type WidgetLayoutGroupV1, type WidgetInstanceV1, type WidgetInputBindingsV1, type WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { applyHomeHubLayoutIntent, resolveHomeHubLayout, listHiddenHomeSetupSteps, HOME_HUB_BUILTIN_DEFINITIONS, type HomeHubSection } from './homeHubLayout';
@@ -41,6 +42,8 @@ export type HomeHubLayout = Readonly<{
     rename: (instanceId: string, displayName?: string) => Promise<void>;
     setInputs: (instanceId: string, bindings: WidgetInputBindingsV1) => Promise<void>;
     setSize: (instanceId: string, size: WidgetSizeV1) => Promise<void>;
+    /** An HTML copy's network access, through the universal `widgets.item.network.set`. */
+    setNetwork: (instanceId: string, network: UiSurfaceNetworkRequestV1) => Promise<void>;
     createGroup: (groupId: string, instanceIds: readonly string[]) => Promise<void>;
     ungroup: (instanceId: string) => Promise<void>;
     setGroup: (instanceId: string, options: Pick<Partial<WidgetLayoutGroupV1>, 'width' | 'dividers'>) => Promise<void>;
@@ -106,6 +109,7 @@ export function useHomeHubLayout(): HomeHubLayout {
         rename: (instanceId, displayName) => dispatch({ kind: 'rename', instanceId, displayName: displayName ?? null }),
         setInputs: (instanceId, bindings) => dispatch({ kind: 'widget_inputs', instanceId, bindings }),
         setSize: (instanceId, size) => dispatch({ kind: 'widget_size', instanceId, size }),
+        setNetwork: (instanceId, network) => dispatch({ kind: 'network', instanceId, network }),
         createGroup: (groupId, instanceIds) => dispatch({ kind: 'group_create', groupId, instanceIds: [...instanceIds] }),
         ungroup: instanceId => dispatch({ kind: 'group_ungroup', instanceId }),
         setGroup: (instanceId, options) => dispatch({ kind: 'group_set', instanceId, ...options }),

@@ -22,6 +22,8 @@ const NO_MACHINES: never[] = [];
  */
 export function useDiscussionWorkflowProject(
   accountLifetime: ServerAccountScopeLifetime,
+  enabled = true,
+  initialTarget?: WorkflowProjectTargetV1,
 ): Readonly<{
   target: WorkflowAuthoringTarget | null;
   project: WorkflowProjectTargetV1 | null;
@@ -30,11 +32,11 @@ export function useDiscussionWorkflowProject(
   choose: (target: WorkflowAuthoringTarget) => void;
 }> {
   const machines =
-    useMachineListForServer(accountLifetime.scope.serverId) ?? NO_MACHINES;
+    useMachineListForServer(accountLifetime.scope.serverId, enabled) ?? NO_MACHINES;
   const { recentMachinePaths } =
-    useWorkflowEditorAccountMemory(accountLifetime, { workspaceRefs: false });
+    useWorkflowEditorAccountMemory(enabled ? accountLifetime : null, { workspaceRefs: false });
   const [chosen, setChosen] = React.useState<WorkflowAuthoringTarget | null>(
-    null,
+    initialTarget ?? null,
   );
   const resolved = React.useMemo(
     () =>

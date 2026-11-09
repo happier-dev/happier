@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createHomeHubAccountStore } from './homeHubAccountStore';
-import { HOME_HUB_DEFAULT_LAYOUT, createHomeHubArtifactPortV1, type HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
+import { getHomeHubDefaultLayoutV1, createHomeHubArtifactPortV1, type HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
 import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoardArtifactBoundary';
 
 function fixture() {
@@ -135,7 +135,7 @@ describe('mounted Home Account Artifact projection', () => {
         await store.refresh();
         const intent = { kind: 'setup_visibility' as const, stepId: 'addPhone', hidden: true };
         await store.dispatch(intent);
-        expect(store.getSnapshot()).toMatchObject({ status: 'error', errorCode: 'server_unreachable', failedIntent: intent, layout: HOME_HUB_DEFAULT_LAYOUT });
+        expect(store.getSnapshot()).toMatchObject({ status: 'error', errorCode: 'server_unreachable', failedIntent: intent, layout: getHomeHubDefaultLayoutV1() });
         await store.refresh();
         expect(store.getSnapshot()).toMatchObject({ status: 'error', errorCode: 'server_unreachable', failedIntent: intent });
         fail = false;

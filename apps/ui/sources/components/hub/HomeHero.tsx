@@ -14,15 +14,21 @@ import {
   useAtmosphereStage,
   type AtmosphereStageGeometry,
 } from '@/components/atmosphere/atmosphereStage';
+import type { AtmosphereBackdrop } from '@/components/atmosphere/atmosphereBandBoundary';
 import type { HomePlanetHero } from '@/components/atmosphere/HomePlanet';
+import type { HomeOrbitRect } from '@/components/atmosphere/orbit/homeOrbitScene';
+import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
+import { useHeaderHeight } from '@/utils/platform/responsive';
 import {
   HOME_HERO_COMPOSER_GAP_PX,
+  HOME_HERO_FOOT_PX,
   HOME_HERO_SIDE_PX,
   HOME_PHONE_HERO_COMPOSER_GAP_PX,
+  HOME_PHONE_HERO_FOOT_PX,
   HOME_PHONE_HERO_SIDE_PX,
-  homeAtmosphereSeam,
   homeHeroTop,
   homeHorizonBand,
+  homeRiseFoot,
   type HomePane,
 } from '@/components/atmosphere/homePlanetPlacement';
 import { PAGE_COLUMN_MAX_WIDTH_PX } from '@/components/ui/layout/contentWidthMode';
@@ -32,7 +38,7 @@ import { Typography } from '@/constants/Typography';
 import { HubComposerSection } from './composer/HubComposerSection';
 import { AtmosphereBandBoundary } from '@/components/atmosphere/atmosphereBandBoundary';
 
-type Measured = Readonly<{ y: number; height: number }>;
+type Measured = Readonly<{ x: number; y: number; width: number; height: number }>;
 type Frame = Readonly<{
   rect: AtmosphereStageGeometry['rect'];
   headline: Measured | null;
@@ -68,7 +74,7 @@ function measureInWindow(
  * what the shell's picture is cut to; while Home is on screen it holds the atmosphere stage.
  */
 export function useHomeHeroFrame(
-  input: Readonly<{ active: boolean; focused: boolean; phone: boolean }>,
+  input: Readonly<{ active: boolean; focused: boolean; phone: boolean; backdrop?: AtmosphereBackdrop | null }>,
 ) {
   const paneRef = React.useRef<View>(null);
   const headlineRef = React.useRef<View>(null);
@@ -94,10 +100,10 @@ export function useHomeHeroFrame(
       if (current !== generation.current || !paneBox) return;
       // Page coordinates: where each thing sits in the scrolled content, independent of the scroll.
       const page = (
-        box: { y: number; height: number } | null,
+        box: { x: number; y: number; width: number; height: number } | null,
       ): Measured | null =>
         box
-          ? { y: box.y - paneBox.y + scrollY.current, height: box.height }
+          ? { x: box.x - paneBox.x, y: box.y - paneBox.y + scrollY.current, width: box.width, height: box.height }
           : null;
       setPane((previous) =>
         previous.width === paneBox.width && previous.height === paneBox.height
@@ -127,8 +133,8 @@ export function useHomeHeroFrame(
     if (!frame) return null;
     const band = homeHorizonBand({
       headlineTop: frame.headline?.y ?? 0,
-      composerBottom: frame.composer ? frame.composer.y + frame.composer.height : null,
-      seam: homeAtmosphereSeam(frame.rect.height, input.phone),
+      headlineBottom: frame.headline ? bottomOf(frame.headline) : 0,
+      composerBottom: frame.composer ? bottomOf(frame.composer) : null,
       phone: input.phone,
     });
     const centre = frame.composer ?? frame.headline;
@@ -145,7 +151,7 @@ export function useHomeHeroFrame(
   const visible = useDestinationVisibility();
   const destinationKey = useDestinationInstanceKey();
   const holdsStage = destinationKey !== null ? visible : input.focused;
-  const stageId = useAtmosphereStage(holdsStage ? 'home' : null, holdsStage ? geometry : null, input.focused, input.active);
+  const stageId = useAtmosphereStage(holdsStage ? 'home' : null, holdsStage ? geometry : null, input.focused, input.active, input.backdrop);
   const hero = React.useMemo<HomePlanetHero | null>(
     () =>
       frame?.headline
@@ -157,6 +163,16 @@ export function useHomeHeroFrame(
         : null,
     [frame],
   );
+  // What takes the pointer over the moons, in page coordinates: the hero's content, and on a phone the
+  // transparent route header Home sits under (rootStackRouteOptions 'home'). A moon under them could be
+  // seen but not pressed.
+  const headerHeight = useHeaderHeight();
+  const headerTop = useChromeSafeAreaInsets().top;
+  const keepOut = React.useMemo<readonly HomeOrbitRect[]>(() => {
+    if (!frame) return [];
+    const content = [frame.headline, frame.composer, frame.suggestions].filter((box): box is Measured => box !== null);
+    return input.phone ? [{ x: 0, y: 0, width: frame.rect.width, height: headerTop + headerHeight }, ...content] : content;
+  }, [frame, headerHeight, headerTop, input.phone]);
   const onScroll = React.useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       scrollY.current = event.nativeEvent.contentOffset.y;
@@ -183,6 +199,7 @@ export function useHomeHeroFrame(
     nextRef,
     pane,
     hero,
+    keepOut,
     measure,
     onScroll,
   };
@@ -202,7 +219,8 @@ export function HomeHero(
     paneHeight: number;
     /** Rise keeps the widgets clear of the planet's body. */
     rise: boolean;
-    suggestions: 'links' | 'pills';
+    /** `none` while no machine exists (58d AF1). */
+    suggestions: 'links' | 'pills' | 'none';
     showComposer: boolean;
     frame: ReturnType<typeof useHomeHeroFrame>;
   }>,
@@ -211,7 +229,13 @@ export function HomeHero(
   const { frame } = props;
   // Padding-only changes do not resize web's observed content box. Measure the committed layout
   // when these choices move the headline or the next section, including entering/leaving Rise.
-  React.useLayoutEffect(() => { frame.measure(); }, [frame.measure, props.rise, top]);
+  // Rise's foot ends where the lab keeps the first section, just above the fold; a hero without its
+  // composer (and any phone hero) ends one foot under its last line, where its band ends too.
+  const aboveBottom = frame.hero?.aboveBottom ?? null;
+  const foot = props.rise
+    ? homeRiseFoot({ paneHeight: props.paneHeight, aboveBottom: aboveBottom ?? 0 })
+    : props.phone ? HOME_PHONE_HERO_FOOT_PX : props.showComposer ? HERO_COMPOSER_FOOT_PX : HOME_HERO_FOOT_PX;
+  React.useLayoutEffect(() => { frame.measure(); }, [frame.measure, props.rise, top, foot]);
   const atmosphereBoundary = React.useMemo(() => ({
     // Home measures its existing composer wrapper; only focus crosses this boundary here.
     ref: undefined,
@@ -227,11 +251,13 @@ export function HomeHero(
     [frame.composerRef, frame.measure, frame.suggestionsRef],
   );
   return (
+    // Home's Bot moons stand under the hero: its empty space passes presses through to them.
     <View
       testID="home-hero"
-      style={[styles.hero, { paddingTop: top }, props.rise && styles.riseFoot]}
+      pointerEvents="box-none"
+      style={{ paddingTop: top, paddingBottom: foot }}
     >
-      <View style={[styles.column, props.phone && styles.phoneColumn]}>
+      <View pointerEvents="box-none" style={[styles.column, props.phone && styles.phoneColumn]}>
         <View ref={frame.headlineRef} onLayout={frame.measure} style={props.titleAccessory ? styles.headlineRow : null}>
           <Text accessibilityRole="header" style={styles.headline}>
             {props.title}
@@ -250,10 +276,13 @@ export function HomeHero(
   );
 }
 
+/**
+ * Under the composer's suggestions a desktop hero keeps the lab's 52 px before the page continues; a
+ * phone hero ends at its foot like the lab's phone, where the first card follows the composer closely.
+ */
+const HERO_COMPOSER_FOOT_PX = 52;
+
 const styles = StyleSheet.create((theme) => ({
-  hero: { paddingBottom: 52 },
-  // Lab Rise: the widgets start 200 px lower, after the planet's ordered foot fade.
-  riseFoot: { paddingBottom: 252 },
   // The page's reading column, so a change to it moves the composer with the rest of the app.
   column: {
     width: '100%',

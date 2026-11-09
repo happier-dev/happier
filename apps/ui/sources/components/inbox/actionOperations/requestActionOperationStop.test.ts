@@ -46,6 +46,7 @@ await loadSyncSingletonForTests();
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
 const { requestActionOperationStop, requestAcceptedActionOperationStop } = await import('./requestActionOperationStop');
 const { useActionOperationStopControl } = await import('./useActionOperationStopControl');
+const { submitActionOperationSudoPassword } = await import('./useActionOperationSudoPassword');
 const { ActionOperationLedgerView } = await import('./ActionOperationLedger');
 const { ActionOperationDetailControls } = await import('./ActionOperationDetailControls');
 const { projectActionOperationDetail } = await import('./actionOperationDetailPresentation');
@@ -114,6 +115,30 @@ describe('requestActionOperationStop', () => {
         standardCleanup();
         await connection?.dispose(); connection = null;
         installHomeGovernanceBoundaries(harness);
+    });
+
+    it('answers only the current operation task through its original Home and never replays a cleared question', async () => {
+        const serverId = await addOriginHome({ name: 'Origin', serverUrl: 'https://origin.test', accountId: 'alice' });
+        const snapshot = { ...operation(serverId).snapshot, actionId: 'machines.setup.adminAccess.set', state: 'running' as const,
+            domainRef: { kind: 'machineSetup' as const, serverId, machineId: 'machine-1', setupTask: {
+                id: 'actual-task', taskKind: 'machine.setup.apply.v1' as const,
+                prompt: { kind: 'sudo.password' as const, adminUsername: 'ops.admin' },
+            } } };
+        const held = { serverId, snapshot };
+        actionOperationStore.mergeSnapshots({ serverId, snapshots: [snapshot] });
+        await harness.addHome({ name: 'Ambient', serverUrl: 'https://ambient.test', accountId: 'alice' });
+        rpc.machine.mockResolvedValue({ ok: true, result: { ok: true } });
+        await expect(submitActionOperationSudoPassword(held, 'one-use-password')).resolves.toEqual({ ok: true });
+        expect(rpc.machine).toHaveBeenCalledTimes(1);
+        expect(rpc.machine.mock.calls[0]?.[0]).toMatchObject({ serverId, accountId: 'alice', machineId: 'machine-1',
+            payload: { id: 'tool.systemTasks', method: 'respond', params: {
+                taskId: 'actual-task', expectedPromptKind: 'sudo.password', answer: { password: 'one-use-password' },
+            } } });
+        expect(rpc.machine.mock.calls[0]?.[0].payload.params).not.toHaveProperty('responseAuthorization');
+        actionOperationStore.mergeSnapshots({ serverId, snapshots: [{ ...snapshot, revision: snapshot.revision + 1,
+            domainRef: { ...snapshot.domainRef, setupTask: { id: 'actual-task', taskKind: 'machine.setup.apply.v1' } } }] });
+        await expect(submitActionOperationSudoPassword(held, 'another-password')).resolves.toEqual({ ok: false, errorCode: 'action_operation_unavailable' });
+        expect(rpc.machine).toHaveBeenCalledTimes(1);
     });
 
     it('routes through the operation transport Home rather than ambient focus', async () => {

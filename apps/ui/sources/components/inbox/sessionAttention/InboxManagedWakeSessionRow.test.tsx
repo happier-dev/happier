@@ -21,7 +21,7 @@ vi.mock('@/components/sessions/model/useSessionMachineReachability', () => ({
 }));
 
 const { storage } = await import('@/sync/domains/state/storage');
-const { InboxManagedWakeSessionRow, hasFailedManagedWake } = await import('./InboxManagedWakeSessionRow');
+const { InboxManagedWakeSessionRow, hasInboxSessionRecovery } = await import('./InboxManagedWakeSessionRow');
 
 const scope = { serverId: 'home-a', accountId: 'account-b' };
 const controller = { machineId: 'controller', installationId: 'controller-installation' };
@@ -46,7 +46,7 @@ const session = createSessionFixture({ id: 's1', serverId: 'home-a', active: fal
 let disposeScope: (() => void) | null = null;
 afterEach(() => { disposeScope?.(); disposeScope = null; execute.mockReset(); standardCleanup(); });
 
-async function renderRow(resumingAt: number | null, continuationRefused = false) {
+async function renderRow(resumingAt: number | null, continuationRefused = false, targetUnavailable = false) {
     disposeScope = (await activateStorageAccountScope(scope)).dispose;
     storage.setState(state => ({
         sessions: { ...state.sessions, s1: { ...session, resumingAt, ...(continuationRefused ? {
@@ -54,9 +54,11 @@ async function renderRow(resumingAt: number | null, continuationRefused = false)
             lastRuntimeIssue: { v: 1, scope: 'primary_session', status: 'failed', source: 'agent_session_error',
                 code: 'codex_continuation_unreachable', occurredAt: 400,
                 failureCause: { phase: 'thread_open', failureReason: 'unclassified_provider_error', retryable: false } },
-        } : {}) } },
+        } : {}), ...(targetUnavailable ? { pendingActivationAuthorization: null, pendingBlockedCount: 1 } : {}) } },
         sessionPending: { ...state.sessionPending, s1: { messages: [continuationRefused ? { ...queued,
-            pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'provider_rejected_before_acceptance' } : queued], discarded: [], isLoaded: true } },
+            pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'provider_rejected_before_acceptance' } : targetUnavailable ? {
+            ...queued, pendingDeliveryStatus: 'blocked', pendingDeliveryBlockedReason: 'session_input_target_unavailable',
+        } : queued], discarded: [], isLoaded: true } },
         // The Machine inventory has been read for this Home.
         machineListStatusByServerId: { ...state.machineListStatusByServerId, 'home-a': 'idle' },
     }) as never);
@@ -65,14 +67,32 @@ async function renderRow(resumingAt: number | null, continuationRefused = false)
     const render = vi.fn((wake: Readonly<{ sentence: string | null; retry: React.ReactNode }>) =>
         <>{wake.sentence}{wake.retry}</>);
     const screen = await renderScreen(<InboxManagedWakeSessionRow session={storage.getState().sessions.s1!} serverId="home-a" render={render} />);
-    if (!continuationRefused) await vi.waitFor(() => expect(execute).toHaveBeenCalledWith('machines.managed.get', expect.anything(), expect.anything()));
+    if (!continuationRefused && !targetUnavailable) await vi.waitFor(() => expect(execute).toHaveBeenCalledWith('machines.managed.get', expect.anything(), expect.anything()));
     return screen;
 }
 
 describe('Inbox row for a failed managed wake', () => {
+    it('shows a cold blocked input cause and retries that exact retained input through the existing send confirmation', async () => {
+        const screen = await renderRow(null, false, true);
+        expect(hasInboxSessionRecovery(storage.getState().sessions.s1!)).toBe(true);
+        expect(screen.getTextContent()).toContain('The selected agent conversation is no longer available. Nothing was sent.');
+        const button = screen.tree.root.findAll(node => node.props.testID === 'inbox.session.s1.wake_retry'
+            && typeof node.props.action === 'function')[0]!;
+        expect(button).toBeTruthy();
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
+        await act(async () => { await button.props.action(); });
+        expect(execute.mock.calls.filter(([actionId]) => actionId === 'session.pending.sendNow')).toHaveLength(0);
+        vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
+        await act(async () => { await button.props.action(); });
+        const sends = execute.mock.calls.filter(([actionId]) => actionId === 'session.pending.sendNow');
+        expect(sends).toHaveLength(1);
+        expect(sends[0]![1]).toEqual({ sessionId: 's1', serverId: 'home-a', localId: 'wake-message', deliveryIntent: 'interrupt_and_send' });
+        expect(execute.mock.calls.filter(([actionId]) => actionId === 'machines.managed.get' || actionId === 'session.open')).toHaveLength(0);
+    });
     it('admits a successful wake followed by continuation refusal and offers Open without resuming or retrying it', async () => {
         const screen = await renderRow(null, true);
-        expect(hasFailedManagedWake(storage.getState().sessions.s1!)).toBe(true);
+        expect(hasInboxSessionRecovery(storage.getState().sessions.s1!)).toBe(true);
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('That conversation cannot be continued.'));
         expect(screen.findHostByTestId('inbox.session.s1.wake_retry')).toBeFalsy();
         const button = screen.tree.root.findAll(node => node.props.testID === 'inbox.session.s1.wake_open'

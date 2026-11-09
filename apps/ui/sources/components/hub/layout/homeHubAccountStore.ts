@@ -1,5 +1,7 @@
-import { HOME_HUB_DEFAULT_LAYOUT, HomeHubMutationErrorV1, createHomeHubArtifactPortV1, type HomeHubArtifactTransportV1,
-    type HomeHubLayoutIntent, type HomeHubLayoutValue } from '@happier-dev/protocol/home';
+import { getHomeHubDefaultLayoutV1, HomeHubMutationErrorV1, createHomeHubArtifactPortV1, type HomeHubArtifactTransportV1,
+    type HomeHubLayoutIntent, type HomeHubLayoutValue, applyHomeHubLayoutIntent, HOME_HUB_BUILTIN_DEFINITIONS,
+    buildHomeHubArtifactIdV1, HOME_HUB_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/home';
+import { getDemoModeServerId, isSeededDemoHome } from '@/demoMode/runtime/enterExitDemoMode';
 
 export type HomeHubReadState = Readonly<{
     layout: HomeHubLayoutValue;
@@ -29,7 +31,7 @@ export function createHomeHubAccountStore(input: Readonly<{
     isCurrent(): boolean;
     execute(intent: HomeHubLayoutIntent): Promise<HomeHubLayoutValue>;
 }>) {
-    let state: HomeHubReadState = { layout: HOME_HUB_DEFAULT_LAYOUT, status: 'loading', hasSnapshot: false, isWriting: false, pendingIntents: [] };
+    let state: HomeHubReadState = { layout: getHomeHubDefaultLayoutV1(), status: 'loading', hasSnapshot: false, isWriting: false, pendingIntents: [] };
     let writes = 0;
     let refreshing: Promise<void> | null = null;
     let tail: Promise<void> = Promise.resolve();
@@ -107,4 +109,31 @@ export function createHomeHubAccountStore(input: Readonly<{
                 isWriting: state.isWriting, pendingIntents: state.pendingIntents });
         },
     };
+}
+
+let demoProjection: ReturnType<typeof createHomeHubAccountStore> | null = null;
+
+/** The same Artifact projection, hydrated without credentials for the seeded Home only. */
+export function getDemoHomeHubAccountProjection(serverId: string) {
+    return isSeededDemoHome(serverId) ? demoProjection : null;
+}
+
+export async function setDemoHomeHubAccountProjection(serverId: string | null): Promise<void> {
+    demoProjection?.retire();
+    demoProjection = null;
+    if (!serverId) return;
+    if (getDemoModeServerId() !== serverId) throw new Error('Demo Home layout requires an active seeded Home');
+    const refuse = async (): Promise<never> => { throw new Error('Demo Home layout is read only'); };
+    const layout = applyHomeHubLayoutIntent(getHomeHubDefaultLayoutV1(), HOME_HUB_BUILTIN_DEFINITIONS, [],
+        { kind: 'visibility', sectionId: 'setup', hidden: true });
+    const projection: ReturnType<typeof createHomeHubAccountStore> = createHomeHubAccountStore({
+        accountId: 'demo-home',
+        transport: { read: async () => ({ artifactId: buildHomeHubArtifactIdV1('demo-home'), ownerAccountId: 'demo-home',
+            header: { kind: HOME_HUB_ARTIFACT_KIND_V1, v: 1 }, body: JSON.stringify(layout),
+            revision: { headerVersion: 1, bodyVersion: 1 } }), create: refuse, update: refuse },
+        isCurrent: () => getDemoModeServerId() === serverId && demoProjection === projection,
+        execute: refuse,
+    });
+    demoProjection = projection;
+    await projection.refresh();
 }

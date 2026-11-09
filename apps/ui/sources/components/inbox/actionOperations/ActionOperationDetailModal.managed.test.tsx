@@ -10,7 +10,7 @@ import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 
 // The managed Home's HTTP answers are the external boundary; the operation store, naming owner and modal are real.
 installApprovalCommonModuleMocks();
@@ -105,7 +105,7 @@ async function seedManagedPowerOperation(
       },
     ],
   });
-  return home;
+  return { home, machine };
 }
 
 describe('Action details for a managed power operation', () => {
@@ -120,7 +120,7 @@ describe('Action details for a managed power operation', () => {
   });
 
   it('shares one demanded managed-resource read across operation rows, details and a Home refresh', async () => {
-    const home = await seedManagedPowerOperation({});
+    const { home, machine } = await seedManagedPowerOperation({});
     const prototype = actionOperationStore.getSnapshot();
     const { actionOperationSelectors } = await import('@/sync/domains/actionOperations/actionOperationSelectors');
     const snapshot = actionOperationSelectors.selectAll(prototype)[0]!.snapshot;
@@ -142,9 +142,18 @@ describe('Action details for a managed power operation', () => {
     await screen.update(<>{detail}</>);
     await flushHookEffects({ cycles: 25 });
     expect(readCount()).toBe(1);
+    harness.answer(home, 'POST /v1/machines/managed/actions/get', {
+      body: { ...machine, enrolledMachineId: undefined, intentRevision: 3,
+        launch: { ...machine.launch, name: 'Renamed managed guest' } },
+    });
     await act(async () => publishHomeAccountChange(home));
-    await flushHookEffects({ cycles: 25 });
-    expect(screen.getTextContent()).toContain('lima-happier-studio');
+    // Observe the consumer after the complete Action/transport refresh, rather
+    // than assuming a fixed microtask count reaches the HTTP boundary.
+    await vi.waitFor(async () => {
+      await flushHookEffects();
+      expect(screen.getTextContent()).toContain('Renamed managed guest');
+    });
+    expect(screen.getTextContent()).not.toContain('lima-happier-studio');
     expect(readCount()).toBe(2);
     await screen.unmount();
     await act(async () => publishHomeAccountChange(home));
@@ -153,7 +162,7 @@ describe('Action details for a managed power operation', () => {
   });
 
   it('names the managed guest rather than the controller it runs on', async () => {
-    const home = await seedManagedPowerOperation({});
+    const { home } = await seedManagedPowerOperation({});
     const screen = await renderScreen(
       <ActionOperationDetailModal
         serverId={home}
@@ -170,7 +179,7 @@ describe('Action details for a managed power operation', () => {
   });
 
   it('reads an unconfirmed outcome as neither running nor failed, and keeps a failure as failed', async () => {
-    const home = await seedManagedPowerOperation({
+    const { home } = await seedManagedPowerOperation({
       observation: {
         kind: 'outcome_uncertain',
         code: 'action_outcome_unknown',
@@ -239,11 +248,11 @@ describe('Action details for a managed power operation', () => {
 
   it.each([
     ['database_transaction_conflict_exhausted', 'database_transaction_conflict_exhausted', 'approvals.transientFailure'],
-    ['database_connection_unavailable', 'database_connection_unavailable', 'approvals.transientFailure'],
+    ['database_connection_unavailable', 'database_connection_unavailable', 'errors.scmOutcomeUnknown'],
     ['managed_power_refused', 'The guest could not be reached over SSH.', 'The guest could not be reached over SSH.'],
     ['managed_power_refused', 'managed_power_refused', 'inbox.actionOperations.failureGeneric'],
   ])('presents the failure %s as readable words once, with the code behind Technical details', async (errorCode, error, reason) => {
-    const home = await seedManagedPowerOperation({
+    const { home } = await seedManagedPowerOperation({
       state: 'failed',
       settledAt: 2_000,
       error: { errorCode, error },

@@ -30,6 +30,24 @@ function operation(overrides: Partial<ActionOperationSnapshot> = {}): ActionOper
 }
 
 describe('action operation inbox presentation', () => {
+    it('presents Keep idle-wait as settled waiting rather than producer activity', () => {
+        const waiting = operation({ actionId: 'machines.managed.power.set', progress: {
+            kind: 'phase', phase: 'managed.intent.waiting-idle', label: 'Waiting for unused machine',
+        } });
+        expect(resolveActionOperationStatus(waiting, 'available')).toEqual({ tone: 'muted', label: { kind: 'host', value: 'waiting_idle' } });
+        expect(resolveActionOperationStatus({ ...waiting, state: 'failed' }, 'available').tone).toBe('danger');
+    });
+    it('classifies a current transient sudo question as attention rather than ordinary running work', () => {
+        const held = operation({ actionId: 'machines.setup.adminAccess.set', domainRef: {
+            kind: 'machineSetup', serverId: 'home', machineId: 'machine-1', setupTask: {
+                id: 'task', taskKind: 'machine.setup.apply.v1', prompt: { kind: 'sudo.password', adminUsername: 'ops.admin' },
+            },
+        } });
+        expect(classifyActionOperationSection(held, 'available')).toBe('needsAttention');
+        expect(resolveActionOperationStatus(held, 'available')).toMatchObject({ label: { kind: 'host', value: 'needs_review' } });
+        expect(classifyActionOperationSection({ ...held, state: 'succeeded', settledAt: 2_000 }, 'available')).toBe('recent');
+    });
+
     it('permits another supported Stop only while active and reachable or explicitly unconfirmed', () => {
         const active = operation({ cancellation: 'supported' });
         expect(canRequestActionOperationStop(active, 'available')).toBe(true);
@@ -50,6 +68,24 @@ describe('action operation inbox presentation', () => {
             });
             expect(snapshot.state).toBe('running');
         }
+    });
+
+    it('reads a held Agent isolation review as needing the person, not as an unavailable status', () => {
+        const held = operation({
+            actionId: 'machines.agentIsolation.set',
+            observation: {
+                kind: 'review_required', code: 'agent_isolation_effect_changed', machineId: 'machine-1', enabled: true,
+                current: {
+                    kind: 'ready', plan: { roots: [], ancestorAcls: [], sessionsToReplace: 0, requiresAdmin: false, planDigest: 'digest' },
+                    policy: { enabled: false }, metadataVersion: 1, status: { kind: 'disabled' },
+                },
+            },
+        });
+        expect(classifyActionOperationSection(held, 'available')).toBe('needsAttention');
+        expect(resolveActionOperationStatus(held, 'available')).toEqual({ tone: 'muted', label: { kind: 'host', value: 'needs_review' } });
+        // The owner's unconfirmed outcome stays an uncertainty, never a review.
+        expect(resolveActionOperationStatus(operation({ observation: { kind: 'outcome_uncertain', code: 'indeterminate' } }), 'available').label)
+            .toEqual({ kind: 'host', value: 'outcome_uncertain' });
     });
 
     it('groups active, attention, and recent operations without treating reconnecting as failure', () => {
@@ -159,7 +195,7 @@ describe('action operation inbox presentation', () => {
                 disposition: 'created',
                 sessionId: 'spawned-session',
                 executionTarget: { serverId: 'server-b', machineId: 'machine-1' },
-                organizationPlacement: { folderId: null, tagIds: [] },
+                organizationPlacement: { sectionId: null, tagIds: [] },
                 initialInput: { status: 'accepted', localId: 'local-first-turn' },
             },
         });

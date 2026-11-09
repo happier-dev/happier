@@ -1,6 +1,8 @@
+import { isAccountCurrentnessEntityIdV1 } from '@happier-dev/protocol/changes';
 import * as React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { buildHomeHubArtifactIdV1, type HomeHubArtifactTransportV1 } from '@happier-dev/protocol/home';
+import { flattenWidgetLayoutWidgetsV1 } from '@happier-dev/protocol/widgets';
 import { useOptionalAuth } from '@/auth/context/AuthContext';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
@@ -11,7 +13,7 @@ import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccoun
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { InvalidateSync } from '@/utils/sessions/sync';
 import { parseToken } from '@/utils/auth/parseToken';
-import { createHomeHubAccountStore } from './homeHubAccountStore';
+import { createHomeHubAccountStore, getDemoHomeHubAccountProjection } from './homeHubAccountStore';
 import { executeHomeHubLayoutIntent } from './homeHubActionWriter';
 import { createActionApprovalContinuationObserver } from '@/components/approvals/actionApprovalContinuation';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
@@ -21,6 +23,7 @@ import { router } from 'expo-router';
 import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
 import { publishPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { t } from '@/text';
+import { getDemoModeServerId } from '@/demoMode/runtime/enterExitDemoMode';
 
 type Store = ReturnType<typeof createHomeHubAccountStore> & { retain(): () => void; isCurrent(): boolean };
 const stores = new WeakMap<ActiveServerAccountScopeLifetime, WeakMap<AuthCredentials, Store>>();
@@ -31,8 +34,8 @@ function useHomeHubAccountStore() {
     const credentials = useOptionalAuth()?.credentials ?? null;
     const lifetime = useActiveServerAccountScopeLifetime();
     const scope = lifetime?.scope ?? null;
-    const server = useActiveServerSnapshot(credentials !== null);
-    let store: Store | typeof unavailable = unavailable;
+    const server = useActiveServerSnapshot(credentials !== null || getDemoModeServerId() !== null);
+    let store: Store | typeof unavailable = credentials ? unavailable : getDemoHomeHubAccountProjection(server.serverId) ?? unavailable;
     let accountId: string | null = null;
     try { if (credentials) accountId = parseToken(credentials.token); } catch { /* Authentication has not established an Account. */ }
     if (credentials && scope && lifetime && accountId === scope.accountId && scope.serverId === server.serverId && server.serverUrl) {
@@ -95,8 +98,8 @@ function useHomeHubAccountStore() {
             const wakeApproval = subscribeHomeAccountChange(event => {
                 const artifactId = approval.getSnapshot().approval?.artifactId;
                 if (artifactId && areServerProfileIdentifiersEquivalent(event.serverId, scope.serverId)
-                    && (event.entityIds === undefined || event.entityIds.includes(artifactId) || event.entityIds.includes('self'))) approvalRead.invalidate();
-            });
+                    && (event.entityIds === undefined || event.entityIds.includes(artifactId) || event.entityIds.some(isAccountCurrentnessEntityIdV1))) approvalRead.invalidate();
+            }, { reconnect: { readNotCurrent: () => Boolean(approval.getSnapshot().approval) } });
             const domain = createHomeHubAccountStore({ accountId: scope.accountId, transport, isCurrent, execute: async intent => {
                 if (!isCurrent()) throw new Error('Home Account scope retired');
                 const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
@@ -110,7 +113,7 @@ function useHomeHubAccountStore() {
                 if (++references === 1) {
                     const invalidation = new InvalidateSync(async () => { if (isCurrent()) await domain.refresh(); });
                     const invalidate = () => { if (isCurrent()) invalidation.invalidate(); };
-                    const unsubscribe = storage.subscribe((state, previous) => { if (state.artifacts[artifactId] !== previous.artifacts[artifactId]) invalidate(); });
+                    const unsubscribe = storage.subscribe(invalidate, { artifacts: [artifactId] });
                     const reconnect = apiSocket.onReconnected(invalidate);
                     detach = () => { invalidation.stop(); unsubscribe(); reconnect(); };
                     invalidate();
@@ -142,6 +145,25 @@ export function useHomeHubArtifactLayout() {
     const getSnapshot = React.useCallback(() => select(store.getSnapshot()), [select, store]);
     const snapshot = React.useSyncExternalStore(store.subscribe, getSnapshot, getSnapshot);
     return React.useMemo(() => ({ ...snapshot, dispatch: store.dispatch, retry: store.retry, cancelFailedIntent: store.cancelFailedIntent }), [snapshot, store]);
+}
+
+/**
+ * Whether Home shows a built-in widget (placed and not hidden), as Home's own Account layout says. A
+ * section whose step a widget's empty state already carries reads this one fact (58d AF1: Get set up keeps
+ * only what no widget covers); it re-renders only when the answer changes.
+ */
+export function useHomeHubBuiltinWidgetShown(id: string): boolean {
+    const store = useHomeHubAccountStore();
+    const getSnapshot = React.useCallback(() => {
+        // Until the Account's own layout has been read, whether a widget shows is not known: say no, so a
+        // section never drops a step on the strength of the default layout alone.
+        const { layout, hasSnapshot } = store.getSnapshot();
+        if (!hasSnapshot) return false;
+        const hidden = new Set(layout.hidden);
+        return flattenWidgetLayoutWidgetsV1(layout.items).some(({ instance }) =>
+            instance.definition.kind === 'builtin' && instance.definition.id === id && !hidden.has(instance.id));
+    }, [id, store]);
+    return React.useSyncExternalStore(store.subscribe, getSnapshot, getSnapshot);
 }
 
 /** Only write feedback surfaces subscribe to the same Account queue's pending fact. */

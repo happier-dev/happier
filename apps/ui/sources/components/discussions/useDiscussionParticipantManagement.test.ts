@@ -18,11 +18,26 @@ installDisconnectedServerSocketBoundary();
 const { createDiscussionClient } = await import('@/sync/api/discussions/discussionActions');
 const { createDiscussionRepository } = await import('@/sync/ops/discussions/discussionRepository');
 const { useServerCredentialAccountScopeBindings } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
-const { useDiscussionParticipantManagement } = await import('./useDiscussionParticipantManagement');
+const { reconcileDiscussionParticipantRoster, useDiscussionParticipantManagement } = await import('./useDiscussionParticipantManagement');
 const { getStorage } = await import('@/sync/domains/state/storage');
 const initial = getStorage().getState();
 beforeEach(async () => { await homes.reset(); });
 afterEach(() => { getStorage().setState(initial, true); standardCleanup(); });
+
+it('publishes an Account accessibility change when the participant and grant rows are otherwise unchanged', () => {
+    const current = DiscussionParticipantsListResponseV1Schema.parse({ discussionId: 'discussion', ownerAccountId: 'alice',
+        access: 'owner', grants: [{ principal: { kind: 'account', accountId: 'bob' }, accessLevel: 'edit',
+            createdByAccountId: 'alice', createdAt: 1, display: { name: 'Retained Bob' } }], participants: [],
+        accountActors: [{ v: 1, accountId: 'alice', accessibility: 'current', profile: null },
+            { v: 1, accountId: 'bob', accessibility: 'current', profile: { name: 'Retained Bob', firstName: 'Retained',
+                lastName: 'Bob', username: 'bob', avatarUrl: 'https://management.test/bob.png' } }],
+    });
+    const former = DiscussionParticipantsListResponseV1Schema.parse({ ...current, accountActors: current.accountActors?.map(actor =>
+        actor.accountId === 'bob' ? { ...actor, accessibility: 'former' as const } : actor) });
+
+    expect(reconcileDiscussionParticipantRoster(current, former).accountActors?.find(actor => actor.accountId === 'bob')?.accessibility)
+        .toBe('former');
+});
 
 async function fixture() {
     const serverId = await homes.addHome({ name: 'Review', serverUrl: 'https://management.test', accountId: 'alice', currentAccount: true });
@@ -118,6 +133,23 @@ it('re-admits equal rosters without loading or publishing unchanged participants
         await act(async () => invalidate(11));
         await vi.waitFor(() => expect(f.hook.getCurrent().status).toBe('error'));
         expect(f.hook.getCurrent().roster).toBeNull();
+    } finally {
+        unsubscribe();
+        await f.hook.unmount();
+    }
+});
+
+it('does not publish Machine inventory updates to a roster that names no model participant', async () => {
+    const f = await fixture();
+    let publications = 0;
+    const unsubscribe = f.hook.subscribe(() => { publications += 1; });
+    try {
+        const machine = createMachineFixture({ id: 'inventory-machine' });
+        await act(async () => { getStorage().setState({ machineListByServerId: { [f.serverId]: [machine] } }); });
+        await act(async () => { getStorage().setState({ machineListByServerId: { [f.serverId]: [{ ...machine,
+            metadataVersion: machine.metadataVersion + 1, metadata: { ...machine.metadata!, displayName: 'Renamed' } }] } }); });
+        expect(f.hook.getCurrent().modelParticipants).toEqual([]);
+        expect(publications).toBe(0);
     } finally {
         unsubscribe();
         await f.hook.unmount();
@@ -310,7 +342,7 @@ it('offers owner resolution and never leaves after an unknown transfer until its
     } });
     await act(async () => { await f.hook.getCurrent().requestLeave(); });
     expect(f.hook.getCurrent().ownerLeave).toMatchObject({ kind: 'transfer_or_archive', canArchive: true,
-        transferCandidates: [{ accountId: 'bob', name: 'Bob' }] });
+        transferCandidates: [{ accountId: 'bob' }] });
     expect(writes).toEqual([]);
     await act(async () => { expect(f.hook.getCurrent().cancelLeave()).toBe(true); });
     expect(f.hook.getCurrent().ownerLeave.kind).toBe('closed');

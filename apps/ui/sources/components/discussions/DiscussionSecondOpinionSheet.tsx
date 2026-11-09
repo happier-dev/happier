@@ -1,26 +1,28 @@
 import * as React from 'react';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
-import type {
-  DiscussionSecondOpinionSourceV1,
-  DiscussionSecondOpinionPreviewV1,
+import { HAPPIER_MENU_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
+import {
+  isDiscussionSecondOpinionSourceGrantRepairableV1 as isRepairableSourceGap,
+  resolveDiscussionSecondOpinionSourceGrantsV1,
+  type DiscussionSecondOpinionSourceV1,
+  type DiscussionSecondOpinionPreviewV1,
 } from '@happier-dev/protocol/discussions/secondOpinion';
 import type { ExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { FieldItem } from '@/components/ui/forms/FieldItem';
-import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
-import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { Item } from '@/components/ui/lists/Item';
+import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { StatusPill } from '@/components/ui/status/StatusPill';
 import { ReplyQuote } from '@/components/ui/text/ReplyQuote';
+import { stripMarkdown } from '@/utils/sessions/messageUtils';
+import { DetailsTabHeader } from '@/components/appShell/panes/details/header/DetailsTabHeader';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { useSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
-import { Modal, type CustomModalInjectedProps } from '@/modal';
+import { useSessionCollaborationAvailabilityState } from '@/hooks/session/useSessionCollaborationAvailability';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { t } from '@/text';
@@ -29,15 +31,24 @@ import {
   createDiscussionSecondOpinionController,
   type DiscussionSecondOpinionSnapshot,
 } from './discussionSecondOpinionController';
-import { executableParticipantOptionId, useExecutableParticipantSections } from './useExecutableParticipantSections';
-import { useDiscussionWorkflowProject } from './useDiscussionWorkflowProject';
-import { WorkflowProjectTargetControl } from '@/components/workflows/editor/WorkflowProjectTargetControl';
+import { ContextualStartComposerBody, useContextualStartComposer, useContextualStartParticipantSource, type ContextualStartAdmissibleSet } from '@/components/sessions/authoring/ContextualStartComposer';
+import { presentSharePrincipal } from '@/components/sharing/sharePrincipalPresentation';
+import { executableParticipantOptionId } from './useExecutableParticipantSections';
 import { useExecutableParticipantLabel } from '@/components/sessions/authoring/useExecutableParticipantLabel';
 import { useOpenDiscussion } from './useOpenDiscussion';
+import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
+import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
+import { buildApprovalHref } from '@/components/approvals/approvalNavigation';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { PhoneDetailsStartContext } from '@/components/appShell/panes/details/PhoneDetailsStartSheet';
 
 export type DiscussionSecondOpinionIntent = 'second_opinion' | 'discuss';
+const OPINION_ADMISSIBLE: ContextualStartAdmissibleSet = {
+  who: ['newAgent', 'session', 'bot', 'person'], machine: 'select', folder: 'select',
+};
 
 type SheetProps = Readonly<{
+  active?: boolean;
   source: Extract<DiscussionSecondOpinionSourceV1, { kind: 'session' }>;
   intent: DiscussionSecondOpinionIntent;
   /** The committed answer as the person read it; the quote leads the sheet before any preview. */
@@ -46,52 +57,27 @@ type SheetProps = Readonly<{
   /** Opens the Fresh opinions Run through the host's navigation owner. */
   onNavigate: (href: string) => void;
   sourcePaneScopeId?: string;
+  /** Lab T3: beside the transcript the form is a Details pane; a phone (or a host without one) gets the sheet. */
+  presentation?: 'dialog' | 'pane';
+  /** A pane keeps its controller while its tab is open, so switching tabs keeps the draft and an Ask in flight. */
+  retained?: { controller?: unknown };
+  /** A pane turns into the Discussion it started, in place; the dialog opens it beside the source instead. */
+  onOpenDiscussion?: (discussionId: string, title: string, messageId: string) => void;
 }>;
 
-const NO_SERVER_IDS: readonly string[] = [];
+/** What an entry point hands over: everything but where it is presented and how it closes. */
+export type DiscussionSecondOpinionRequest = Omit<SheetProps, 'active' | 'onClose' | 'sourcePaneScopeId' | 'presentation' | 'retained' | 'onOpenDiscussion'>;
 
-/**
- * L7: Get a second opinion / Discuss… on one committed answer. A dialog on wide screens and the
- * phone sheet on a phone (the shared modal chrome). The controller owns every effect; this view only
- * asks it for a read-only preview, shows who can read what, and asks only on the person's explicit
- * press. Returns a function that closes it.
- */
-export function presentDiscussionSecondOpinion(
-  props: Omit<SheetProps, 'onClose'>,
-): () => void {
-  let closed = false;
-  const modalId = Modal.show({
-    component: DiscussionSecondOpinionModal,
-    props,
-    chrome: {
-      kind: 'card',
-      header: 'none',
-      title: sheetTitle(props.intent),
-      phonePresentation: 'sheet',
-      // The dialog keeps inside the window like the other share sheets: the reviewer list scrolls and the
-      // footer's Ask stays in reach however many Sessions there are.
-      scrollHost: 'bounded',
-      bodyScroll: 'none',
-      dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.default, maxHeightRatio: 0.92, size: 'md' },
-    },
-  });
-  return () => {
-    if (!closed) {
-      closed = true;
-      Modal.hide(modalId);
-    }
-  };
-}
-
-function DiscussionSecondOpinionModal(
-  props: Omit<SheetProps, 'onClose'> & CustomModalInjectedProps,
-) {
+/** The pane form of the same sheet (lab T3-A), rendered by the Session's Details pane. */
+export function DiscussionSecondOpinionPane(props: Omit<SheetProps, 'presentation'>) {
   return (
-    <View style={styles.modalBody}>
-      <DiscussionSecondOpinionForm {...props} onClose={props.onClose} />
+    <View style={styles.paneBody}>
+      <DiscussionSecondOpinionForm {...props} presentation="pane" />
     </View>
   );
 }
+
+const NO_SERVER_IDS: readonly string[] = [];
 
 function sheetTitle(intent: DiscussionSecondOpinionIntent): string {
   return intent === 'discuss'
@@ -106,9 +92,14 @@ function DiscussionSecondOpinionForm(props: SheetProps) {
     serverId ? serverIds : NO_SERVER_IDS,
   );
   const binding = [...bindings.values()][0] ?? null;
-  if (!binding) {
+  // Renewal withdraws execution authority without replacing the editable form. A different
+  // Account gets its own form/controller below; a retained binding is display identity only.
+  const [retainedBinding, setRetainedBinding] = React.useState(binding);
+  if (binding && binding !== retainedBinding) setRetainedBinding(binding);
+  const displayBinding = binding ?? retainedBinding;
+  if (!displayBinding) {
     return (
-      <SheetFrame intent={props.intent} subtitle={null} onClose={props.onClose}>
+      <SheetFrame intent={props.intent} subtitle={null} onClose={props.onClose} presentation={props.presentation}>
         <SurfaceStateCard
           size="line"
           kind="unavailable"
@@ -117,22 +108,23 @@ function DiscussionSecondOpinionForm(props: SheetProps) {
       </SheetFrame>
     );
   }
-  return <BoundForm {...props} binding={binding} />;
+  return <BoundForm key={JSON.stringify(displayBinding.scope)} {...props} binding={displayBinding}
+    credentialsAvailable={binding?.isCurrent() === true} />;
 }
 
 function BoundForm(
   props: SheetProps &
-    Readonly<{ binding: ServerCredentialAccountScopeBinding }>,
+    Readonly<{ binding: ServerCredentialAccountScopeBinding; credentialsAvailable: boolean }>,
 ) {
   const { theme } = useUnistyles();
   const { binding } = props;
-  const availability = useSessionCollaborationAvailability(
+  const credentialsAvailable = props.credentialsAvailable && binding.isCurrent();
+  const featureAvailability = useSessionCollaborationAvailabilityState(
     binding.scope.serverId,
   );
-  const availabilityRef = React.useRef(availability);
-  React.useLayoutEffect(() => {
-    availabilityRef.current = availability;
-  }, [availability]);
+  const availabilityState = credentialsAvailable ? featureAvailability : 'unavailable';
+  // The controller issues actions, so its boundary intentionally fails closed while the sheet presents loading.
+  const availability = availabilityState === 'available' ? 'available' : 'unavailable';
   const sourceSession = props.source.message.session;
   const anchor = React.useMemo(() => ({ kind: 'session' as const, sessionId: sourceSession.sessionId,
     messageId: props.source.message.messageId }), [props.source.message.messageId, sourceSession.sessionId]);
@@ -142,71 +134,99 @@ function BoundForm(
     React.useMemo(() => [sourceSession], [sourceSession]),
   );
   const discuss = props.intent === 'discuss';
-  const [controller] = React.useState(() =>
-    createDiscussionSecondOpinionController({
+  const [controller] = React.useState(() => {
+    const retained = props.retained?.controller as ReturnType<typeof createDiscussionSecondOpinionController> | undefined;
+    if (retained?.scope.serverId === binding.scope.serverId && retained.scope.accountId === binding.scope.accountId) return retained;
+    const created = createDiscussionSecondOpinionController({
       scope: binding.scope,
-      // The retained client reads the current decision without replacing draft/retry custody.
-      get availability() { return availabilityRef.current; },
+      availability,
       source: props.source,
       draft: {
         title: discuss
           ? t(
               'session.collaboration.discussion.secondOpinion.discussDiscussionTitle',
             )
-          : t('session.collaboration.discussion.secondOpinion.discussionTitle'),
+          // Named by its subject, so the Discussions list says what it is a second opinion on (lab T2-L).
+          : sourceTitle
+            ? t('session.collaboration.discussion.secondOpinion.discussionTitleOn', { session: sourceTitle })
+            : t('session.collaboration.discussion.secondOpinion.discussionTitle'),
         question: discuss
           ? ''
           : t('session.collaboration.discussion.secondOpinion.defaultQuestion'),
         reviewers: [],
       },
-    }),
-  );
+    });
+    if (props.retained) props.retained.controller = created;
+    return created;
+  });
+  React.useLayoutEffect(() => {
+    controller.setAvailability(binding.isCurrent() ? availability : 'unavailable');
+    const retirement = binding.onRetire(() => controller.setAvailability('unavailable'));
+    return () => { retirement.dispose(); controller.setAvailability('unavailable'); };
+  }, [availability, binding, controller]);
   const snapshot = React.useSyncExternalStore(
     controller.subscribe,
     controller.getSnapshot,
     controller.getSnapshot,
   );
-  const [question, setQuestion] = React.useState(snapshot.draft.question);
-  const [readinessSessionId, setReadinessSessionId] = React.useState<string | null>(null);
+  const { requestApproval } = useActionApprovalContinuation({
+    scopeKey: JSON.stringify(binding.scope), serverId: binding.scope.serverId, onExecuted: () => {},
+  });
+  React.useEffect(() => {
+    if (snapshot.approval) requestApproval(snapshot.approval);
+  }, [requestApproval, snapshot.approval]);
+  const active = props.active !== false;
+  const done = snapshot.discussionMessage !== null;
+  React.useEffect(() => {
+    const message = snapshot.discussionMessage;
+    if (!message) return;
+    if (props.onOpenDiscussion) props.onOpenDiscussion(message.discussion.discussionId, snapshot.draft.title, message.messageId);
+    else { openDiscussion(message.discussion.discussionId, snapshot.draft.title, message.messageId); props.onClose(); }
+  }, [snapshot.discussionMessage, snapshot.draft.title, props.onOpenDiscussion, openDiscussion, props.onClose]);
+  const detailEnabled = active && credentialsAvailable && !done;
+  const question = snapshot.draft.question;
+  const setQuestion = React.useCallback((question: string) => {
+    controller.updateDraft({ ...controller.getSnapshot().draft, question });
+  }, [controller]);
   // Asking several starts Fresh opinions, a Workflow that runs where the Discussion's Workflows run.
   const [project, setProject] = React.useState<WorkflowProjectTargetV1 | null>(null);
   const toggleReviewer = React.useCallback((selection: ExecutableParticipantSelectionV1) => {
+    const question = controller.getSnapshot().draft.question || t('session.collaboration.discussion.secondOpinion.defaultQuestion');
     if (controller.toggleReviewer(selection, question) && controller.getSnapshot().draft.reviewers.length > 0) {
       void controller.preview();
     }
-  }, [controller, question]);
-  const candidateSource = useExecutableParticipantSections({
-    accountLifetime: binding,
-    enabled: !discuss,
-    busy: snapshot.working || snapshot.submitted,
-    readinessSessionId,
-    onReadinessSessionChange: setReadinessSessionId,
-    sessionsContext: t('session.collaboration.discussion.secondOpinion.yourSession'),
-    onChoose: toggleReviewer,
-  });
-  const reviewers = React.useMemo(
-    () => candidateSource.sections.flatMap(section => section.options)
-      .filter(option => option.id !== `session:${sourceSession.sessionId}`),
-    [candidateSource.sections, sourceSession.sessionId],
-  );
-  const selectedKeys = React.useMemo(
-    () =>
-      new Set(
-        snapshot.draft.reviewers.map((reviewer) =>
-          executableParticipantOptionId(reviewer.selection),
-        ),
-      ),
-    [snapshot.draft.reviewers],
-  );
-  const reviewerLabel = useExecutableParticipantLabel(
-    snapshot.draft.reviewers.length === 1 ? snapshot.draft.reviewers[0]!.selection : undefined,
-    binding.scope.serverId,
-  ) ?? null;
+  }, [controller]);
+  const togglePerson = React.useCallback((participant: Readonly<{ kind: 'account'; accountId: string }>) => {
+    const current = controller.getSnapshot();
+    if (current.working || current.submitted) return;
+    const chosen = current.draft.participants ?? [];
+    const participants = chosen.some(person => person.accountId === participant.accountId)
+      ? chosen.filter(person => person.accountId !== participant.accountId) : [...chosen, participant];
+    if (controller.updateDraft({ ...current.draft, participants })) void controller.preview();
+  }, [controller]);
+  const people = React.useMemo(() => ({ includeModels: true,
+    title: t('session.collaboration.discussion.participants.peopleGroup'), onChoose: togglePerson,
+    chosen: (snapshot.draft.participants ?? []).map(ref => presentSharePrincipal({ ref, viewerAccountId: binding.scope.accountId })),
+  }), [binding.scope.accountId, snapshot.draft.participants, togglePerson]);
+  const replaceReviewer = React.useCallback((previous: ExecutableParticipantSelectionV1, next: ExecutableParticipantSelectionV1) => {
+    const current = controller.getSnapshot();
+    if (current.working || current.submitted) return;
+    if (controller.updateDraft({ ...current.draft, reviewers: current.draft.reviewers.map(reviewer =>
+      reviewer.selection === previous ? { ...reviewer, selection: next } : reviewer) })) void controller.preview();
+  }, [controller]);
+  const selectedReviewers = React.useMemo(() => snapshot.draft.reviewers.map(reviewer => reviewer.selection), [snapshot.draft.reviewers]);
+  const composerSource = useContextualStartParticipantSource({ accountLifetime: binding, enabled: detailEnabled,
+    busy: snapshot.working || snapshot.submitted, sessionsContext: t('session.collaboration.discussion.secondOpinion.yourSession'),
+    excludeSessionId: sourceSession.sessionId, onChoose: toggleReviewer, people,
+    selected: selectedReviewers, onReplace: replaceReviewer,
+    question, onQuestionChange: setQuestion, showWhere: snapshot.draft.reviewers.length > 1, onProject: setProject });
+  const composer = useContextualStartComposer(composerSource, OPINION_ADMISSIBLE);
 
   // Discuss… previews at once; a selected second opinion also recovers when this Home becomes available.
   React.useEffect(() => {
+    if (!detailEnabled) return;
     const current = controller.getSnapshot();
-    if (current.submitted || (!discuss && (availability !== 'available' || current.draft.reviewers.length === 0))) return;
+    if (current.submitted || (!discuss && (availability !== 'available' || current.draft.reviewers.length === 0 && !current.draft.participants?.length))) return;
     if (!current.working) {
       void controller.preview();
       return;
@@ -219,45 +239,34 @@ function BoundForm(
       if (!next.submitted) void controller.preview();
     });
     return unsubscribe;
-  }, [controller, discuss, availability]);
+  }, [controller, detailEnabled, discuss, availability, binding]);
   const ask = async (sourceAccess?: 'quote_only') => {
     const draft = snapshot.draft;
     const reviewersFor = sourceAccess
       ? draft.reviewers.map((reviewer) => ({ ...reviewer, sourceAccess }))
       : draft.reviewers;
     if (question !== draft.question || sourceAccess) {
-      const shown = snapshot.preview?.preview
-        ? JSON.stringify(snapshot.preview.preview)
-        : null;
       controller.updateDraft({ ...draft, question, reviewers: reviewersFor });
-      await controller.preview();
-      const next = controller.getSnapshot().preview?.preview;
-      // A quote-only ask changes what is shared, so it is the person's explicit choice; any
-      // other preview change stops here and is shown before anything is asked.
-      if (!sourceAccess && (!next || JSON.stringify(next) !== shown)) return;
+      if (sourceAccess) await controller.preview();
     }
     await controller.ask({ project });
   };
 
-  const done = snapshot.discussionMessage !== null;
   const several = snapshot.draft.reviewers.length > 1;
   const preview = snapshot.preview?.preview ?? null;
-  const reviewerPreviews = preview?.reviewers ?? [];
-  const needsGrant = reviewerPreviews.some(needsSourceGrant);
+  const sourceGrants = preview ? resolveDiscussionSecondOpinionSourceGrantsV1(preview) : null;
+  const needsGrant = sourceGrants?.ok === true && sourceGrants.accountIds.length > 0;
   // A reviewer outside the answer's audience is a gap the person can close by sharing the source
-  // (the Ask grants, then rechecks before anything is disclosed); any other refusal stays one.
-  const blocked =
-    reviewerPreviews.some((reviewer) =>
-      (!reviewer.disclosure.ok && !isRepairableSourceGap(reviewer)) ||
-      (needsSourceGrant(reviewer) && !reviewer.canGrantSource)) ||
-    (preview !== null && !preview.discussionDisclosure.ok);
+  // (the Ask admits its recipients before granting); any other refusal stays one.
+  const blocked = sourceGrants?.ok === false;
   const canAsk =
+    active && credentialsAvailable &&
     !snapshot.working &&
     !done &&
     !blocked &&
     preview !== null &&
-    (discuss ||
-      (snapshot.draft.reviewers.length > 0 &&
+    ((discuss && snapshot.draft.reviewers.length === 0) ||
+      ((snapshot.draft.reviewers.length > 0 || (snapshot.draft.participants?.length ?? 0) > 0) &&
         question.trim().length > 0 &&
         (!several || project !== null)));
 
@@ -266,40 +275,34 @@ function BoundForm(
         session: sourceTitle,
       })
     : t('session.collaboration.discussion.secondOpinion.subtitleUntitled');
-  const footer = done ? (
+  // Lab flows `pending`: while the Ask waits on approval the choices are locked and Review is the only action.
+  const outcome = snapshot.working ? null : snapshot.result?.outcome ?? null;
+  const approval = outcome?.kind === 'approval_request_created' ? outcome : null;
+  const phoneSheet = React.useContext(PhoneDetailsStartContext) !== null;
+  const router = useRouter();
+  // The quote reads as the answer did on screen (lab `quote`): words, not the Markdown source the reviewer receives.
+  const quoteText = React.useMemo(() => stripMarkdown(props.sourceText), [props.sourceText]);
+  if (availabilityState === 'loading') {
+    return <SheetFrame intent={props.intent} subtitle={subtitle} onClose={props.onClose} presentation={props.presentation}>
+      <SurfaceStateCard testID="second-opinion-loading" kind="loading" title={t('common.loading')} />
+    </SheetFrame>;
+  }
+  // Wide: Cancel quietly at the start, the one primary at the end. Phone (one large sheet): the close
+  // and the drag dismiss it, so the primary takes the full width above the home indicator.
+  const footer = done || approval ? null : (
     <>
-      <View style={styles.footerSpacer} />
-      <RoundButton
-        size="small"
-        display="inverted"
-        title={t('common.close')}
-        onPress={props.onClose}
-      />
-      <RoundButton
-        testID="second-opinion.open"
-        size="small"
-        title={t('session.collaboration.discussion.secondOpinion.open')}
-        onPress={() => {
-          const message = snapshot.discussionMessage!;
-          openDiscussion(message.discussion.discussionId, snapshot.draft.title, message.messageId);
-          props.onClose();
-        }}
-      />
-    </>
-  ) : (
-    <>
-      <RoundButton
+      {phoneSheet ? null : <RoundButton
         testID="second-opinion.cancel"
         size="small"
         display="inverted"
         title={t('common.cancel')}
         onPress={props.onClose}
-      />
-      <View style={styles.footerSpacer} />
+      />}
+      {phoneSheet ? null : <View style={styles.footerSpacer} />}
       {needsGrant && !blocked && !discuss ? (
         <RoundButton
           testID="second-opinion.quote-only"
-          size="small"
+          size={phoneSheet ? 'normal' : 'small'}
           display="inverted"
           title={t(
             'session.collaboration.discussion.secondOpinion.askQuoteOnly',
@@ -310,7 +313,8 @@ function BoundForm(
       ) : null}
       <RoundButton
         testID="second-opinion.ask"
-        size="small"
+        size={phoneSheet ? 'normal' : 'small'}
+        style={phoneSheet ? styles.footerPrimaryWide : undefined}
         disabled={!canAsk}
         loading={snapshot.working && snapshot.submitted}
         title={
@@ -325,7 +329,7 @@ function BoundForm(
                 : t('session.collaboration.discussion.secondOpinion.ask')
         }
         action={() =>
-          discuss ? controller.discuss().then(() => undefined) : ask()
+          snapshot.draft.reviewers.length === 0 ? controller.discuss().then(() => undefined) : ask()
         }
       />
     </>
@@ -337,117 +341,42 @@ function BoundForm(
       subtitle={subtitle}
       onClose={props.onClose}
       footer={footer}
+      presentation={props.presentation}
+      phoneSheet={phoneSheet}
     >
+      {approval ? (
+        <ActionApprovalPendingNotice
+          presentation="banner"
+          testID="second-opinion.approval-pending"
+          message={t('approvals.waitingForYou')}
+          description={t('session.collaboration.discussion.secondOpinion.approvalPendingBody')}
+          onOpenApproval={() => router.pushRetainingCurrent(buildApprovalHref(approval.artifactId, binding.scope.serverId))}
+        />
+      ) : null}
       <ReplyQuote
         testID="second-opinion.quote"
         kind="message"
+        form="passage"
         source={{
           state: 'available',
           label:
             sourceTitle ??
             t('session.collaboration.discussion.secondOpinion.answer'),
-          text: props.sourceText,
+          text: quoteText,
         }}
       />
-      {done ? (
-        <DoneLine
-          snapshot={snapshot}
-          discuss={discuss}
-          reviewerLabel={reviewerLabel}
-          onOpenRun={(href) => {
-            props.onNavigate(href);
-            props.onClose();
-          }}
+      {done ? null : approval ? (
+        <LockedChoices
+          reviewers={selectedReviewers}
+          people={people.chosen.map(principal => principal.displayName)}
+          question={question}
+          serverId={binding.scope.serverId}
         />
-      ) : null}
-      {/* The question sits with the answer it is about; on a real Account the list of Sessions to ask runs
-          long, and the question must not fall below it. */}
-      {!discuss && !done ? (
-        <FieldItem
-          label={t('session.collaboration.discussion.secondOpinion.question')}
-        >
-          <FieldTextInput
-            testID="second-opinion.question"
-            accessibilityLabel={t(
-              'session.collaboration.discussion.secondOpinion.question',
-            )}
-            value={question}
-            onChangeText={setQuestion}
-          />
-        </FieldItem>
-      ) : null}
-      {!discuss && !done ? (
-        <View>
-          <View style={styles.groupRow}>
-            <CollectionListGroupLabel
-              title={t(
-                'session.collaboration.discussion.secondOpinion.askGroup',
-              )}
-              presentation="menu"
-            />
-            <Text style={styles.groupNote} numberOfLines={1}>
-              {t(
-                'session.collaboration.discussion.secondOpinion.freshOpinionsHint',
-              )}
-            </Text>
-          </View>
-          {reviewers.length === 0 ? (
-            <SurfaceStateCard
-              size="line"
-              kind="empty"
-              title={t('session.collaboration.discussion.secondOpinion.noReviewers')}
-            />
-          ) : (
-            reviewers.map((candidate) => {
-              const isSelected = selectedKeys.has(candidate.id);
-              const isSessionChoice = candidate.id.startsWith('session:');
-              return (
-                <Item
-                  key={candidate.id}
-                  testID={candidate.id.startsWith('session:')
-                    ? `second-opinion.reviewer:${candidate.id.slice('session:'.length)}` : candidate.testID}
-                  density="compact"
-                  showChevron={false}
-                  showDivider={false}
-                  selected={isSelected}
-                  accessibilityRole={isSessionChoice ? 'checkbox' : 'button'}
-                  accessibilityChecked={isSessionChoice ? isSelected : undefined}
-                  accessibilityLabel={candidate.accessibilityLabel}
-                  disabled={candidate.disabled}
-                  leftElement={typeof candidate.icon === 'function' ? candidate.icon() : candidate.icon}
-                  title={candidate.label}
-                  subtitle={candidate.subtitle}
-                  rightElement={
-                    isSelected ? (
-                      <Icon
-                        name="check"
-                        size={ICON_SIZE.sm}
-                        color={theme.colors.text.primary}
-                      />
-                    ) : null
-                  }
-                  onHoverIn={candidate.onHighlight}
-                  onFocus={candidate.onHighlight}
-                  onPressIn={candidate.onPressIn}
-                  onPress={candidate.onSelect}
-                />
-              );
-            })
-          )}
-          {snapshot.draft.reviewers.map(reviewer => reviewer.selection.kind === 'model' ? (
-            <SelectedModelReviewer key={reviewer.participantSlotId} selection={reviewer.selection}
-              disabled={snapshot.working || snapshot.submitted} onRemove={() => toggleReviewer(reviewer.selection)} />
-          ) : null)}
-        </View>
-      ) : null}
-      {several && !discuss && !done ? (
-        <FreshOpinionsWhere
-          accountLifetime={binding}
-          disabled={snapshot.working || snapshot.submitted}
-          onProject={setProject}
-        />
-      ) : null}
-      {!done && preview ? (
+      ) : (
+        <ContextualStartComposerBody model={composer}
+          whoHint={several ? null : t('session.collaboration.discussion.secondOpinion.freshOpinionsHint')} />
+      )}
+      {active && !done && preview ? (
         <ReadsSheet
           preview={preview}
           discuss={discuss}
@@ -456,25 +385,9 @@ function BoundForm(
           sourceTitle={sourceTitle}
         />
       ) : null}
-      <ResultLine snapshot={snapshot} onRetry={() => void controller.retry()} />
+      <ResultLine snapshot={snapshot} serverId={binding.scope.serverId} onRetry={() => void controller.retry()} />
     </SheetFrame>
   );
-}
-
-/** A chosen recipe is not an allocated Session; this is the retained selection, not another inventory. */
-function SelectedModelReviewer(props: Readonly<{
-  selection: Extract<ExecutableParticipantSelectionV1, { kind: 'model' }>;
-  disabled: boolean;
-  onRemove: () => void;
-}>) {
-  const { theme } = useUnistyles();
-  const label = useExecutableParticipantLabel(props.selection, props.selection.launch.executionTarget.serverId);
-  return <Item testID="second-opinion.selected-model" density="compact" showChevron={false} showDivider={false}
-    selected accessibilityRole="checkbox" accessibilityChecked disabled={props.disabled}
-    leftElement={<Icon name="sparkle" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
-    title={label ?? t('session.collaboration.discussion.heldParticipant')}
-    rightElement={<Icon name="check" size={ICON_SIZE.sm} color={theme.colors.text.primary} />}
-    onPress={props.onRemove} />;
 }
 
 function SheetFrame(
@@ -484,11 +397,20 @@ function SheetFrame(
     onClose: () => void;
     footer?: React.ReactNode;
     children: React.ReactNode;
+    presentation?: 'dialog' | 'pane';
+    phoneSheet?: boolean;
   }>,
 ) {
+  const pane = props.presentation === 'pane';
   return (
-    <View style={styles.form} testID="second-opinion.sheet">
-      <View style={styles.header}>
+    <View style={pane ? styles.paneForm : styles.form} testID="second-opinion.sheet">
+      {pane ? (
+        <DetailsTabHeader
+          testID="second-opinion.header"
+          title={sheetTitle(props.intent)}
+          meta={props.subtitle ? [{ key: 'source', text: props.subtitle }] : undefined}
+        />
+      ) : <View style={styles.header}>
         <View style={styles.headerText}>
           <Text style={styles.heading} accessibilityRole="header">
             {sheetTitle(props.intent)}
@@ -499,57 +421,62 @@ function SheetFrame(
             </Text>
           ) : null}
         </View>
-      </View>
+      </View>}
       <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.body}
+        style={pane ? styles.paneScroll : styles.scroll}
+        contentContainerStyle={pane ? [styles.body, styles.paneContent] : styles.body}
         keyboardShouldPersistTaps="handled"
       >
         {props.children}
       </ScrollView>
-      {props.footer ? <View style={styles.footer}>{props.footer}</View> : null}
+      {props.footer ? <View style={[pane ? styles.paneFooter : styles.footer, props.phoneSheet ? styles.phoneFooter : null]}>{props.footer}</View> : null}
     </View>
   );
 }
 
-type ReviewerPreview = DiscussionSecondOpinionPreviewV1['reviewers'][number];
-type ReadRowModel = Readonly<{ icon: IconName; title: string; body: string; warning?: boolean }>;
-
-/** The reviewer would read the answer's session but isn't in its audience yet. */
-function needsSourceGrant(reviewer: ReviewerPreview): boolean {
-  return reviewer.sourceAccess === 'read' && reviewer.missingSourceAccountIds.length > 0;
-}
-
-/**
- * Where Fresh opinions runs: the same Where owner and contextual default as the Discussion composer's
- * Run…. Mounted only while two or more are picked, so a one-reviewer ask reads no Workflow memory.
- */
-function FreshOpinionsWhere(props: Readonly<{
-  accountLifetime: ServerCredentialAccountScopeBinding;
-  disabled: boolean;
-  onProject: (project: WorkflowProjectTargetV1 | null) => void;
+/** The chosen reviewers and the question as they were asked; nothing here changes while approval waits. */
+function LockedChoices(props: Readonly<{
+  reviewers: readonly ExecutableParticipantSelectionV1[];
+  people: readonly string[];
+  question: string;
+  serverId: string;
 }>) {
-  const { target, project, machines, machineName, choose } = useDiscussionWorkflowProject(props.accountLifetime);
-  const { onProject } = props;
-  React.useEffect(() => {
-    onProject(project);
-    return () => onProject(null);
-  }, [onProject, project]);
   return (
-    <WorkflowProjectTargetControl
-      presentation="field"
-      purpose="workflow"
-      accountLifetime={props.accountLifetime}
-      title={t('workflows.page.sections.whereTitle')}
-      subtitle={t('session.collaboration.discussion.secondOpinion.whereBody')}
-      target={target}
-      machines={props.disabled ? undefined : machines}
-      onChange={props.disabled ? undefined : choose}
-      machineName={machineName}
-      testIDPrefix="second-opinion"
-    />
+    <>
+      <View>
+        <View style={styles.hang}>
+          <CollectionListGroupLabel title={t('agentStart.chips.engineTitle')} presentation="menu" />
+        </View>
+        <View testID="second-opinion.locked-choices" style={styles.locked}>
+          {props.reviewers.map((selection, index) => (
+            <LockedChoice key={`r${index}`} selection={selection} serverId={props.serverId} />
+          ))}
+          {props.people.map((name, index) => <LockedChoiceRow key={`p${index}`} title={name} />)}
+        </View>
+      </View>
+      <View>
+        <View style={styles.hang}>
+          <CollectionListGroupLabel title={t('session.collaboration.discussion.secondOpinion.question')} presentation="menu" />
+        </View>
+        <Text style={styles.question}>{props.question}</Text>
+      </View>
+    </>
   );
 }
+
+function LockedChoice(props: Readonly<{ selection: ExecutableParticipantSelectionV1; serverId: string }>) {
+  const label = useExecutableParticipantLabel(props.selection, props.serverId);
+  return <LockedChoiceRow title={label ?? t('session.collaboration.discussion.heldParticipant')} />;
+}
+
+function LockedChoiceRow(props: Readonly<{ title: string }>) {
+  const { theme } = useUnistyles();
+  return <Item density="compact" showChevron={false} showDivider={false} title={props.title}
+    rightElement={<Icon name="check" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />} />;
+}
+
+type ReviewerPreview = DiscussionSecondOpinionPreviewV1['reviewers'][number];
+type ReadRowModel = Readonly<{ icon: IconName; title: string; body: string; warning?: boolean }>;
 
 /** "What they can read": one line per party, saying what each will be able to open. */
 function ReadsSheet(
@@ -582,10 +509,12 @@ function ReadsSheet(
   const reviewers = props.discuss ? [] : props.preview.reviewers;
   return (
     <View>
-      <CollectionListGroupLabel
-        title={t('session.collaboration.discussion.secondOpinion.readsGroup')}
-        presentation="menu"
-      />
+      <View style={styles.hang}>
+        <CollectionListGroupLabel
+          title={t('session.collaboration.discussion.secondOpinion.readsGroup')}
+          presentation="menu"
+        />
+      </View>
       <View style={styles.reads}>
         {reviewers.map((reviewer, index) => (
           <ReviewerReadRow
@@ -674,20 +603,6 @@ function ReadRow(props: Readonly<{ row: ReadRowModel; divider: boolean }>) {
   );
 }
 
-/** The reviewer can't read the answer yet, and sharing the source with them is allowed. */
-export function isRepairableSourceGap(
-  reviewer: Readonly<{
-    disclosure: Readonly<{ ok: true }> | Readonly<{ ok: false; reason: string }>;
-    sourceAccess: string;
-    missingSourceAccountIds: readonly string[];
-    canGrantSource: boolean;
-  }> | null,
-): boolean {
-  if (!reviewer || reviewer.sourceAccess !== 'read') return false;
-  if (reviewer.missingSourceAccountIds.length === 0 || !reviewer.canGrantSource) return false;
-  return reviewer.disclosure.ok || reviewer.disclosure.reason === 'destination_audience_broader';
-}
-
 function disclosureReason(reason: string): string {
   switch (reason) {
     case 'same_session':
@@ -714,66 +629,17 @@ function disclosureReason(reason: string): string {
   }
 }
 
-function DoneLine(
-  props: Readonly<{
-    snapshot: DiscussionSecondOpinionSnapshot;
-    discuss: boolean;
-    reviewerLabel: string | null;
-    onOpenRun: (href: string) => void;
-  }>,
-) {
-  const outcome = props.snapshot.result?.outcome;
-  const asked = outcome?.kind === 'succeeded' && 'status' in outcome.value && outcome.value.status === 'asked'
-    ? outcome.value : null;
-  const runHref = props.snapshot.runHref;
-  if (asked?.mode === 'fresh_opinions') {
-    return (
-      <SurfaceStateCard
-        size="line"
-        kind="success"
-        testID="second-opinion.done"
-        title={t('session.collaboration.discussion.secondOpinion.freshStarted', {
-          count: props.snapshot.draft.reviewers.length,
-        })}
-        reason={t('session.collaboration.discussion.secondOpinion.freshStartedBody')}
-        action={runHref ? {
-          label: t('session.collaboration.discussion.secondOpinion.openRun'),
-          onPress: () => props.onOpenRun(runHref),
-        } : undefined}
-      />
-    );
-  }
-  return (
-    <SurfaceStateCard
-      size="line"
-      kind="success"
-      testID="second-opinion.done"
-      title={
-        props.discuss
-          ? t('session.collaboration.discussion.secondOpinion.discussDone')
-          : t('session.collaboration.discussion.secondOpinion.asked', {
-              name:
-                props.reviewerLabel ??
-                t('session.collaboration.discussion.heldParticipant'),
-            })
-      }
-      reason={
-        props.discuss
-          ? undefined
-          : t('session.collaboration.discussion.secondOpinion.askedBody')
-      }
-    />
-  );
-}
-
 function ResultLine(
   props: Readonly<{
     snapshot: DiscussionSecondOpinionSnapshot;
+    serverId: string;
     onRetry: () => void;
   }>,
 ) {
   const outcome = props.snapshot.result?.outcome;
   if (!outcome || props.snapshot.working) return null;
+  // Waiting on approval is the form's own state: its banner leads the sheet (see BoundForm).
+  if (outcome.kind === 'approval_request_created') return null;
   if (outcome.kind !== 'succeeded') {
     return (
       <SurfaceStateCard
@@ -781,7 +647,7 @@ function ResultLine(
         kind="error"
         testID="second-opinion.failed"
         title={t('session.collaboration.discussion.secondOpinion.failed')}
-        diagnosticCode={outcome.kind === 'failed' ? outcome.errorCode : outcome.kind}
+        diagnosticCode={outcome.errorCode}
         action={
           props.snapshot.submitted
             ? {
@@ -838,8 +704,9 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.space.s16,
   },
   headerText: { flex: 1, minWidth: 0 },
+  // The sheet's one anchor, as the Discussion's other sheets title themselves (lab T3-Ap).
   heading: {
-    ...Typography.variant('label', 'semiBold'),
+    ...Typography.variant('heading', 'semiBold'),
     color: theme.colors.text.primary,
   },
   meta: { ...Typography.variant('meta'), color: theme.colors.text.secondary },
@@ -850,7 +717,11 @@ const styles = StyleSheet.create((theme) => ({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: theme.space.s8,
+    paddingRight: HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx,
   },
+  // Lab T3-A: every heading, the quote, the fields and the row marks share the form's one edge, so menu rows
+  // and their group labels hang their own inset into the gutter and a chosen row's tint reaches past it.
+  hang: { marginHorizontal: -HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx },
   groupNote: {
     ...Typography.variant('meta'),
     color: theme.colors.text.tertiary,
@@ -872,8 +743,9 @@ const styles = StyleSheet.create((theme) => ({
     borderTopColor: theme.colors.border.default,
   },
   readText: { flex: 1, minWidth: 0, gap: theme.space.s2 },
+  // Read like the reviewer rows above (lab T3-A): the title in the rows' weight, the consequence beneath.
   readTitle: {
-    ...Typography.variant('body', 'semiBold'),
+    ...Typography.variant('body'),
     color: theme.colors.text.primary,
   },
   footer: {
@@ -884,8 +756,31 @@ const styles = StyleSheet.create((theme) => ({
     paddingTop: theme.space.s4,
   },
   footerSpacer: { flex: 1 },
+  footerPrimaryWide: { flex: 1 },
+  phoneFooter: { paddingTop: theme.space.s8 },
+  locked: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: theme.colors.border.default,
+    borderRadius: theme.borderRadius.md,
+    overflow: 'hidden',
+  },
+  question: { ...Typography.variant('body'), color: theme.colors.text.primary },
   modalBody: {
     width: '100%',
     flexShrink: 1,
+  },
+  paneBody: { flex: 1, minHeight: 0 },
+  // The pane keeps its height while reviewers change; its footer stays pinned to the bottom edge.
+  paneForm: { flex: 1, minHeight: 0 },
+  paneScroll: { flex: 1 },
+  paneContent: { paddingVertical: theme.space.s12 },
+  paneFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s8,
+    paddingHorizontal: theme.space.s16,
+    paddingVertical: theme.space.s12,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: theme.colors.border.default,
   },
 }));

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { qualifyActionOperationSnapshot } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 
 import { createActionOperationPresentationCoordinator } from './actionOperationPresentationCoordinator';

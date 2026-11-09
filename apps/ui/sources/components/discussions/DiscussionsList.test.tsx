@@ -1,11 +1,13 @@
 import * as React from 'react';
+import type { PressableProps, View as NativeView } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { tryWriteServerEnabledBitInPlace, type DiscussionOpenedSummaryV1 } from '@happier-dev/protocol';
+import { tryWriteServerEnabledBitInPlace} from '@happier-dev/protocol/features/serverEnabledBit';
+import { type DiscussionOpenedSummaryV1 } from '@happier-dev/protocol/discussions/actions';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { DiscussionsList } from '@/components/discussions/DiscussionsList';
 import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
@@ -18,22 +20,43 @@ import type { DiscussionActivityItem } from '@/components/discussions/discussion
 import { SessionConversationsBody } from '@/components/sessions/conversations/SessionConversationsBody';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
+import { createRenderCommitCounter } from '@/dev/testkit/performance/counts';
+import { readRegisteredDiscussionRepository } from '@/sync/ops/discussions/discussionRepositoryRegistry';
 
 const credentials = vi.hoisted(() => ({ serverId: '', accountId: 'conversations-account' }));
 const discussionApi = vi.hoisted(() => ({ list: vi.fn() }));
-const navigation = vi.hoisted(() => ({ push: vi.fn() }));
+const navigation = vi.hoisted(() => ({ push: vi.fn(), pathname: '/discussions', params: {} as Record<string, string> }));
+const rowCounters = vi.hoisted(() => new Map<string, ReturnType<typeof createRenderCommitCounter>>());
+const listViewport = vi.hoisted(() => ({ renderItemLimit: undefined as number | undefined }));
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ router: { push: navigation.push } }).module;
+    return createExpoRouterMock({ router: { push: navigation.push }, pathname: () => navigation.pathname, params: () => navigation.params }).module;
 });
 
 vi.mock('react-native', async () => {
+    const React = await import('react');
+    const { createRenderCommitCounter, useRenderCommitCounter } = await import('@/dev/testkit/performance/counts');
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     const { createCapturingFlatListMock } = await import('@/dev/testkit/mocks/virtualizedList');
+    const native = await createReactNativeWebMock();
+    // Count the real row at its native presentation boundary; no row or domain logic is mocked.
+    const Pressable = React.forwardRef<NativeView, PressableProps>((props, ref) => {
+        const id = props.testID ?? '';
+        const counter = React.useMemo(() => {
+            const existing = rowCounters.get(id);
+            if (existing) return existing;
+            const counter = createRenderCommitCounter();
+            if (/^session-discussion-row-(?:active|archived)-\d+$/.test(id)) rowCounters.set(id, counter);
+            return counter;
+        }, [id]);
+        useRenderCommitCounter(counter);
+        return React.createElement(native.Pressable, { ...props, ref });
+    });
     return createReactNativeWebMock({
+        Pressable,
         useWindowDimensions: () => ({ width: 1440, height: 900, scale: 1, fontScale: 1 }),
-        ...createCapturingFlatListMock({ renderItems: true }).module,
+        ...createCapturingFlatListMock(listViewport).module,
     });
 });
 
@@ -75,6 +98,10 @@ afterEach(() => {
     resetServerFeaturesClientForTests();
     vi.clearAllMocks();
     vi.restoreAllMocks();
+    rowCounters.clear();
+    listViewport.renderItemLimit = undefined;
+    navigation.pathname = '/discussions';
+    navigation.params = {};
 });
 
 async function renderConversations(options: Readonly<{
@@ -106,13 +133,12 @@ async function renderConversations(options: Readonly<{
     storage.setState(() => ({ profileScope: settingsScope, settingsScope, settingsVersion: 1 }));
     if (options.savedFilter) {
         const { CollectionSpacesV1Schema } = await import('@happier-dev/protocol/collections/spaces/collectionSpacesV1');
-        const { writeCollectionSpaceSelectionV1 } = await import('@/sync/domains/session/listing/sessionListSpaces');
+        const { selectCollectionSpace } = await import('@/sync/domains/session/listing/sessionListSpaces');
         storage.setState(current => ({ settings: { ...current.settings,
             collectionSpacesV1: CollectionSpacesV1Schema.parse({ v: 1, spaces: [{ entityKind: 'discussion', id: 'review', name: 'Review',
                 icon: { kind: 'icon', name: 'list' }, filter: options.savedFilter, includeNeedsYouEverywhere: false }] }),
         } }));
-        expect(await writeCollectionSpaceSelectionV1({ scope: settingsScope, entityKind: 'discussion', spaceId: 'review',
-            isCurrent: () => true, readSettings: () => storage.getState().settings })).toEqual({ ok: true });
+        expect(await selectCollectionSpace(settingsScope, 'discussion', 'review')).toBeUndefined();
     }
 
     const screen = await renderScreen(
@@ -201,6 +227,92 @@ function readListItems(screen: Awaited<ReturnType<typeof renderConversations>>['
 }
 
 describe('DiscussionsList and its Session anchor consumer', () => {
+    it.each(['active', 'archived'] as const)('renders only the changed %s Discussion among hundreds of retained summaries', async state => {
+        listViewport.renderItemLimit = 8;
+        let rows = Array.from({ length: 256 }, (_, index) => summary(`${state}-${index}`, {
+            title: `Review ${index}`, anchorSessionId: null, archivedAt: state === 'archived' ? 1 : null,
+        }));
+        discussionApi.list.mockImplementation((input: { state: string }) => succeededList(input.state === state ? rows : [], null));
+        const { profile, screen } = await renderConversations({ homeList: true, column: true,
+            ...(state === 'archived' ? { savedFilter: { state: 'archived', attention: 'any', unreadOnly: false } satisfies DiscussionListFilterV1 } : {}) });
+        await vi.waitFor(() => expect(rowCounters.size).toBeGreaterThan(1));
+        const repository = readRegisteredDiscussionRepository({ serverId: profile.id, accountId: credentials.accountId }, { serverId: profile.id });
+        if (!repository) throw new Error('Expected mounted canonical Discussion repository');
+        expect(repository.getListSnapshot().lists[state].items).toHaveLength(256);
+        await flushHookEffects();
+        const mounted = [...rowCounters.entries()];
+        expect(mounted.length).toBeLessThanOrEqual(8);
+        const changedId = mounted[0]![0];
+        const discussionId = changedId.slice('session-discussion-row-'.length);
+        for (const [, counter] of mounted) counter.reset();
+        rows = rows.map(row => row.id === discussionId ? { ...row, title: 'Updated review', messageSeq: 2,
+            latestMessage: { ...row.latestMessage, id: `${row.id}-message-2`, seq: 2, createdAt: 2 } } : row);
+        await act(async () => { await repository.refreshList(state); });
+        const counts = Object.fromEntries(mounted.map(([id, counter]) => [id, counter.read()]));
+        console.info('Discussion list changed-summary cost', { state, retained: rows.length, mounted: mounted.length, counts });
+        expect(screen.findHostByTestId(`session-discussion-row-title-${discussionId}`)?.findAll(node => node.children.includes('Updated review')).length).toBeGreaterThan(0);
+        expect(counts[changedId]!.renders).toBeGreaterThan(0);
+        expect(mounted.filter(([id]) => id !== changedId).map(([, counter]) => counter.read()))
+            .toEqual(mounted.filter(([id]) => id !== changedId).map(() => ({ renders: 0, commits: 0 })));
+        await screen.pressByTestIdAsync(changedId);
+        expect(navigation.push).toHaveBeenLastCalledWith(expect.stringContaining(`/discussions/${discussionId}?`));
+        for (const [, counter] of mounted) counter.reset();
+        // An equal refresh publishes nothing. Route selection must be driven by
+        // the router's notification boundary, just as a real navigation is.
+        await act(async () => {
+            navigation.pathname = `/discussions/${discussionId}`;
+            navigation.params = { serverId: profile.id, discussionId };
+            const { router } = await import('expo-router');
+            router.setParams(navigation.params);
+        });
+        const selectionCounts = Object.fromEntries(mounted.map(([id, counter]) => [id, counter.read()]));
+        console.info('Discussion list selection cost', { state, retained: rows.length, mounted: mounted.length, counts: selectionCounts });
+        expect(selectionCounts[changedId]!.renders).toBeGreaterThan(0);
+        expect(mounted.filter(([id]) => id !== changedId).map(([, counter]) => counter.read()))
+            .toEqual(mounted.filter(([id]) => id !== changedId).map(() => ({ renders: 0, commits: 0 })));
+        const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
+        const { buildApprovalRequestArtifactHeaderV1 } = await import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1');
+        const { buildApprovalExecutionOriginV1 } = await import('@happier-dev/protocol/actions/actionExecutor');
+        const actionArgs = { discussionId, localId: 'row-cost-draft', content: { v: 1 as const,
+            parts: [{ t: 'text' as const, text: 'A private answer' }] }, replyTarget: { kind: 'message' as const, messageId: `${discussionId}-message-2` } };
+        const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'agent', sessionId: 'reviewer' }, requestedSurface: 'agent', actionId: 'discussion.reply',
+            actionArgs, discussionDraftReview: true, summary: 'Review the answer',
+            executionOriginV1: buildApprovalExecutionOriginV1({ actionId: 'discussion.reply', input: actionArgs,
+                targetSessionId: null, context: { surface: 'agent', authority: 'account_automation',
+                    serverId: profile.id, serverIdentityId: profile.id, runtimeAccountId: credentials.accountId,
+                    actionCaller: { kind: 'host' }, defaultSessionId: 'reviewer', defaultSessionMachineId: 'machine',
+                    actionRequestId: actionArgs.localId,
+                    discussionReplyReturn: { serverId: profile.id, requestLocalId: 'original-input', acceptedTurnId: 'turn' } } }) });
+        const approval = { id: 'row-cost-approval', title: request.summary ?? null,
+            header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request), isDecrypted: true as const,
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        for (const [phase, artifact] of [
+            ['unrelated', { ...approval, id: 'row-cost-note', header: { kind: 'memory_doc.v1', title: 'Unrelated note' }, body: 'Unrelated note' }],
+            ['draft-arrival', approval],
+            ['draft-settlement', { ...approval, headerVersion: 2, bodyVersion: 2, seq: 2, updatedAt: 2,
+                header: buildApprovalRequestArtifactHeaderV1(ApprovalRequestV2Schema.parse({ ...request, status: 'rejected', updatedAtMs: 2,
+                    decision: { kind: 'reject', decidedAtMs: 2 } })),
+                body: JSON.stringify({ ...request, status: 'rejected', updatedAtMs: 2, decision: { kind: 'reject', decidedAtMs: 2 } }) }],
+        ] as const) {
+            for (const [, counter] of mounted) counter.reset();
+            // An added/removed group label changes the viewport. Count retained
+            // rows separately from rows that become newly visible and must mount.
+            const retained = mounted.filter(([id]) => screen.findHostByTestId(id) !== null);
+            await act(async () => { storage.getState().applyArtifacts([artifact]); });
+            await flushHookEffects();
+            const phaseCounts = Object.fromEntries(retained.map(([id, counter]) => [id, counter.read()]));
+            const newlyVisible = mounted.filter(([id]) => !retained.some(([retainedId]) => retainedId === id)
+                && screen.findHostByTestId(id) !== null).map(([id]) => id);
+            console.info('Discussion list approval cost', { state, phase, retained: rows.length, mounted: retained.length, newlyVisible, counts: phaseCounts });
+            expect(retained.filter(([id]) => phase === 'unrelated' || id !== changedId).map(([, counter]) => counter.read()))
+                .toEqual(retained.filter(([id]) => phase === 'unrelated' || id !== changedId).map(() => ({ renders: 0, commits: 0 })));
+            if (phase !== 'unrelated') {
+                expect(phaseCounts[changedId]!.renders).toBeGreaterThan(0);
+                expect(screen.findHostByTestId(`discussion-request-peek:${discussionId}`) !== null).toBe(phase === 'draft-arrival');
+            }
+        }
+    });
     it('updates mounted column Status words from the Account scalar without hiding its spoken state', async () => {
         const discussion = { ...summary('mentioned', { title: 'Review the release' }), unreadCount: 1, unreadMentionCount: 1 };
         discussionApi.list.mockImplementation(() => succeededList([discussion], null));
@@ -314,7 +426,7 @@ describe('DiscussionsList and its Session anchor consumer', () => {
         expect(screen.findByTestId('session-discussion-row-unread')).not.toBeNull();
         expect(discussionApi.list.mock.calls.length).toBe(readCount);
     });
-    it('titles the column with its saved space and shows a narrowing as a token that returns to the space (R9)', async () => {
+    it('titles the column with its saved space, says a narrowing as a token, and offers it in the title menu (R9)', async () => {
         discussionApi.list.mockImplementation(() => succeededList([
             summary('read', { title: 'Read', anchorSessionId: null }),
             { ...summary('unread', { title: 'Unread', anchorSessionId: null }), unreadCount: 2 },
@@ -333,8 +445,14 @@ describe('DiscussionsList and its Session anchor consumer', () => {
                 filters: { state: 'active', attention: 'any', unreadOnly: true } }, context);
         });
         expect(screen.findByTestId('session-discussion-row-read')).toBeNull();
+        // The narrowing is said once, as a token on the line under the strip; no chip stands there at rest.
         expect(screen.findByTestId('discussions-column-space-filter-token:unreadOnly')).not.toBeNull();
-        await screen.pressByTestIdAsync('discussions-column-space-filter-token:unreadOnly');
+        expect(screen.findByTestId('discussions-column-space-quick-filter:unreadOnly:true')).toBeNull();
+        // The title menu offers it in place, checked, and one press there returns to the space.
+        const menu = () => screen.find(node => Array.isArray(node.props.items) && typeof node.props.onSelect === 'function'
+            && node.props.items.some((item: { testID?: string }) => item.testID === 'discussions-column-space-menu-facet:unreadOnly:true'));
+        expect(menu().props.items.find((item: { testID?: string }) => item.testID === 'discussions-column-space-menu-facet:unreadOnly:true').checked).toBe(true);
+        await act(async () => { menu().props.onSelect('facet:unreadOnly:true'); });
         expect(screen.findByTestId('session-discussion-row-read')).not.toBeNull();
         expect(screen.findByTestId('discussions-column-space-filter-token:unreadOnly')).toBeNull();
     });
@@ -587,7 +705,7 @@ describe('DiscussionsList and its Session anchor consumer', () => {
         expect(navigation.push).toHaveBeenLastCalledWith(expect.stringContaining(`serverId=${encodeURIComponent(credentials.serverId)}`));
     });
 
-    it('renders the bounded recent-author projection as a compact accessible avatar stack', async () => {
+    it('leads a pane row with its latest author only, so its title keeps the pane text edge', async () => {
         const discussion = summary('discussion-authors', {
             title: 'Review authors',
             recentAuthorAccountIds: [credentials.accountId, 'account-b', 'account-c'],
@@ -599,8 +717,8 @@ describe('DiscussionsList and its Session anchor consumer', () => {
         // The row's one accessible name carries the facts; the avatars are decoration.
         expect(screen.findByTestId('session-discussion-row-discussion-authors')?.props.accessibilityLabel).toContain('Review authors');
         expect(screen.findByTestId(`session-discussion-row-recent-author-discussion-authors-${credentials.accountId}`)).not.toBeNull();
-        expect(screen.findByTestId('session-discussion-row-recent-author-discussion-authors-account-b')).not.toBeNull();
-        expect(screen.findByTestId('session-discussion-row-recent-author-discussion-authors-account-c')).not.toBeNull();
+        expect(screen.findByTestId('session-discussion-row-recent-author-discussion-authors-account-b')).toBeNull();
+        expect(screen.findByTestId('session-discussion-row-recent-author-discussion-authors-account-c')).toBeNull();
     });
 
 

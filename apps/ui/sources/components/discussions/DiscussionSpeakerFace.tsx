@@ -21,7 +21,7 @@ export type DiscussionSpeakerKind =
 
 /** Who speaks a Discussion message: a person, an Agent (by its Session), a Workflow Run, or an outside channel sender. */
 export function resolveDiscussionSpeakerKind(
-  message: DiscussionOpenedMessageV1,
+  message: Pick<DiscussionOpenedMessageV1, 'producerV1' | 'content'>,
 ): DiscussionSpeakerKind {
   if (message.producerV1?.kind === 'agent') return 'agent';
   if (resolveDiscussionWorkflowAttribution(message)) return 'workflow';
@@ -35,7 +35,7 @@ export function resolveDiscussionSpeakerKind(
  */
 export const DiscussionSpeakerFace = React.memo(function DiscussionSpeakerFace(
   props: Readonly<{
-    message: DiscussionOpenedMessageV1;
+    message: Pick<DiscussionOpenedMessageV1, 'producerV1' | 'content' | 'accountActor' | 'authorAccountId'>;
     serverId: string;
     viewerAccountId: string;
     /** The speaking Session's Agent, when the caller's Session projection can see it. */

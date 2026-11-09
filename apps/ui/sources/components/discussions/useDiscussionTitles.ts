@@ -30,6 +30,7 @@ export function useDiscussionTitles(input: Readonly<{
     const requestedServerIds = React.useMemo(() => wanted ? [serverId] : NO_SERVER_IDS, [serverId, wanted]);
     const bindings = useServerCredentialAccountScopeBindings(requestedServerIds);
     const binding = React.useMemo(() => [...bindings.values()][0] ?? null, [bindings]);
+    // Supplementary title acquisition is data admission, not presentation; do not start it until support is settled.
     const availability = useSessionCollaborationAvailability(serverId);
     const enabled = useFeatureEnabled('sessions.conversations', { scopeKind: 'spawn', serverId });
     const address = input.address;

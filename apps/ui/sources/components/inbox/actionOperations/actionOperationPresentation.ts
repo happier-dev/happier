@@ -1,11 +1,11 @@
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import {
-    SessionSpawnNewResultV1Schema,
+    SessionSpawnNewActionResultV1Schema,
     type SessionSpawnNewInitialInputDispositionV1,
 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
-import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
-import { isActionOperationTerminal, resolveActionOperationObservation, type ActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationStore';
+import { readActionOperationSudoPrompt, type ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import { isActionOperationReviewHeld, isActionOperationTerminal, resolveActionOperationObservation, type ActionOperationObservation } from '@/sync/domains/actionOperations/actionOperationStore';
 import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
 import { t } from '@/text';
 
@@ -15,7 +15,7 @@ export type ActionOperationSection = 'inProgress' | 'needsAttention' | 'recent';
 export type ActionOperationStatusTone = 'active' | 'success' | 'danger' | 'muted';
 export type ActionOperationStatusLabel =
     | Readonly<{ kind: 'producer'; value: string }>
-    | Readonly<{ kind: 'host'; value: 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'reconnecting' | 'unavailable' | 'needs_review' | 'outcome_uncertain' }>;
+    | Readonly<{ kind: 'host'; value: 'accepted' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'reconnecting' | 'unavailable' | 'needs_review' | 'outcome_uncertain' | 'waiting_idle' }>;
 
 /** One label owner for operation detail, Activity and Session Work. */
 export function describeActionOperationStatusLabel(label: ActionOperationStatusLabel): string {
@@ -30,6 +30,7 @@ export function describeActionOperationStatusLabel(label: ActionOperationStatusL
         case 'unavailable': return t('inbox.actionOperations.observation.unavailable');
         case 'needs_review': return t('inbox.needsYou');
         case 'outcome_uncertain': return t('inbox.actionOperations.status.outcomeUncertain');
+        case 'waiting_idle': return t('managedRetention.waitingForIdle');
     }
 }
 
@@ -55,7 +56,8 @@ export function classifyActionOperationSection(
     snapshot: ActionOperationSnapshot,
     observation: ActionOperationObservation = 'available',
 ): ActionOperationSection {
-    if (!isActionOperationTerminal(snapshot.state) && snapshot.setupReview) return 'needsAttention';
+    if (!isActionOperationTerminal(snapshot.state) && (snapshot.setupReview || isActionOperationReviewHeld(snapshot)
+        || readActionOperationSudoPrompt(snapshot))) return 'needsAttention';
     if (!isActionOperationTerminal(snapshot.state) && resolveActionOperationObservation(snapshot, observation) === 'unavailable') return 'needsAttention';
     if (snapshot.actionId.startsWith('sessions.external.') && snapshot.progress?.kind === 'phase'
         && ['awaiting_user_resume', 'failed', 'reconciliation_required'].includes(snapshot.progress.phase)) return 'needsAttention';
@@ -71,12 +73,16 @@ export function resolveActionOperationStatus(
     if (snapshot.state === 'failed') return { tone: 'danger', label: { kind: 'host', value: 'failed' } };
     if (snapshot.state === 'cancelled') return { tone: 'muted', label: { kind: 'host', value: 'cancelled' } };
     if (snapshot.state === 'succeeded') return { tone: 'success', label: { kind: 'host', value: 'succeeded' } };
-    if (snapshot.setupReview) return { tone: 'muted', label: { kind: 'host', value: 'needs_review' } };
+    if (snapshot.setupReview || isActionOperationReviewHeld(snapshot) || readActionOperationSudoPrompt(snapshot)) return { tone: 'muted', label: { kind: 'host', value: 'needs_review' } };
     // The owner submitted the work and lost its acknowledgement: neither running nor failed, and never a guess.
     if (snapshot.observation?.kind === 'outcome_uncertain') return { tone: 'muted', label: { kind: 'host', value: 'outcome_uncertain' } };
     observation = resolveActionOperationObservation(snapshot, observation);
     if (observation === 'reconnecting') return { tone: 'muted', label: { kind: 'host', value: 'reconnecting' } };
     if (observation === 'unavailable') return { tone: 'muted', label: { kind: 'host', value: 'unavailable' } };
+    if (snapshot.actionId === 'machines.managed.power.set' && snapshot.progress?.kind === 'phase'
+        && snapshot.progress.phase === 'managed.intent.waiting-idle') {
+        return { tone: 'muted', label: { kind: 'host', value: 'waiting_idle' } };
+    }
     if (snapshot.progress?.label) return { tone: 'active', label: { kind: 'producer', value: snapshot.progress.label } };
     return { tone: 'active', label: { kind: 'host', value: snapshot.state } };
 }
@@ -120,7 +126,7 @@ export function readActionOperationSessionSpawnNewInitialInput(
     snapshot: ActionOperationSnapshot,
 ): SessionSpawnNewInitialInputDispositionV1 | null {
     if (snapshot.state !== 'succeeded' || snapshot.actionId !== 'session.spawn_new') return null;
-    const result = SessionSpawnNewResultV1Schema.safeParse(snapshot.result);
+    const result = SessionSpawnNewActionResultV1Schema.safeParse(snapshot.result);
     return result.success && result.data.type === 'success'
         ? result.data.initialInput
         : null;

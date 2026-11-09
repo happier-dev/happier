@@ -28,6 +28,7 @@ import { t } from '@/text';
 
 import type { HubSectionProps } from './hubSectionProps';
 import { useHomeSetupDismissals } from './layout/useHomeSetupDismissals';
+import { useHomeHubBuiltinWidgetShown } from './layout/useHomeHubArtifactLayout';
 import { homeHasMachine } from '@/components/machines/add/machineAddPaths';
 import { AddMachinePanel } from './setup/AddMachinePanel';
 import { useSetupDevice } from './setup/useSetupDevice';
@@ -37,6 +38,8 @@ import { useAskHappierSetupItem } from '@/components/sessions/bots/useAskHappier
 import { ConnectComputerPanel } from './setup/ConnectComputerPanel';
 import { SetupBlockGrid, type SetupBlockItem } from '@/components/ui/setupBlocks/SetupBlockGrid';
 import { SetupBlockTile } from '@/components/ui/setupBlocks/SetupBlockTile';
+
+const selectHomeHasMachine = (machines: Parameters<typeof homeHasMachine>[0]) => homeHasMachine(machines) === true;
 
 /** What a button does. */
 type SetupActionId = 'recoveryKey' | 'addMachine' | 'showAddPhonePage' | 'scanTerminal' | 'enterTerminalUrl' | 'browsePlugins';
@@ -109,9 +112,13 @@ function useSetupEntries(presentation: SetupPresentation) {
     const suggestPlugins = plugins.known && plugins.userInstalled === 0;
     const recoveryKey = useRecoveryKeyReminder({ surface: 'hubTile' });
     // "The Home has a machine" is the add-machine owner's one rule (revoked machines don't count).
-    const hasMachine = homeHasMachine(useAllMachines()) === true;
+    // One boolean from the list, so Machine publications do not redraw the Home tile.
+    const hasMachine = useAllMachines(selectHomeHasMachine);
     const machineListSettled = useIsActiveMachineListSettled();
     const tiles = presentation === 'tiles';
+    // Get set up keeps only what no widget covers (owner 10-31; 58d AF1): while Home shows the Machines
+    // widget, its empty state is the ways to add a machine, so Home's tiles drop their machine steps.
+    const machinesWidgetCarriesSetup = useHomeHubBuiltinWidgetShown('machine_fleet') && tiles && !hasMachine;
 
     const steps: SetupStep[] = [
         ...(isComputer && auth.isAuthenticated ? [{ id: 'addPhone' as const, done: hidden.has('addPhone') }] : []),
@@ -122,7 +129,7 @@ function useSetupEntries(presentation: SetupPresentation) {
 
     // The first-machine step leaves both surfaces once the canonical machine list confirms it.
     // Home keeps the affordance while that list is still unknown, without claiming completion.
-    const addMachine: SetupEntry | null = (tiles && !machineListSettled) || open.has('addMachine') ? {
+    const addMachine: SetupEntry | null = !machinesWidgetCarriesSetup && ((tiles && !machineListSettled) || open.has('addMachine')) ? {
         id: 'addMachine',
         testID: 'hub-setup.addMachine',
         icon: 'hard-drives',
@@ -166,7 +173,7 @@ function useSetupEntries(presentation: SetupPresentation) {
         }] : []),
         // Connecting a computer from a phone is one step with two ways to do it: scan the code its
         // terminal shows, or paste its link. On Home the scan opens the camera in place.
-        ...(isPhone ? [{
+        ...(isPhone && !machinesWidgetCarriesSetup ? [{
             id: 'connectComputer' as const,
             testID: 'hub-setup.connectComputer',
             icon: 'laptop' as const,
@@ -236,9 +243,28 @@ function useSetupEntries(presentation: SetupPresentation) {
     return { entries, steps, open, runAction, tileLayout, hidden, dismiss };
 }
 
+/**
+ * One identity per key whose body is the latest closure. A tile's handler then keeps its identity while
+ * the host's hooks settle (so the memoized tile is not re-rendered for a closure it would call the same way).
+ */
+function useKeyedLatestCallbacks(): (key: string, run: () => void) => () => void {
+    const slots = React.useRef(new Map<string, { run: () => void; call: () => void }>());
+    return React.useCallback((key, run) => {
+        let slot = slots.current.get(key);
+        if (!slot) {
+            const created = { run, call: () => created.run() };
+            slots.current.set(key, created);
+            slot = created;
+        }
+        slot.run = run;
+        return slot.call;
+    }, []);
+}
+
 /** Home's Get set up: tiles on a computer, rows on a phone; each grows in place when it can. */
 function HubSetupTiles(props: HubSectionProps) {
     const { entries, runAction, tileLayout, hidden, dismiss } = useSetupEntries('tiles');
+    const stable = useKeyedLatestCallbacks();
     const phone = tileLayout === 'row';
     // The Homes journeys' steps lead the row (lab order: J6 laptop nudge, J2 reconcile, K1 "Already
     // use Happier?"); they share this row's morph and its dismissed-steps store.
@@ -246,6 +272,8 @@ function HubSetupTiles(props: HubSectionProps) {
     // Connecting Claude or ChatGPT (lab csvc H2): the connected-services owner decides what is offered
     // and grows its setup panel through this row; it is null when nothing is left to offer.
     const servicesItem = useConnectServicesSetupItem({ layout: tileLayout });
+    // Capacity's empty state carries the sign-in while Home shows it (58d AF1), so the block steps aside.
+    const capacityWidgetShown = useHomeHubBuiltinWidgetShown('usage_capacity');
     // A composer machine with no agent yet (lab agent-setup H1): the agents owner decides; it leads the row.
     const firstAgentItem = useFirstAgentSetupItem({ phone });
     // "Set up voice" (lab voice-moments SA): the Voice setup owner decides; null once Voice is set up.
@@ -273,12 +301,12 @@ function HubSetupTiles(props: HubSectionProps) {
                 action={{
                     label: entry.action.label,
                     testID: entry.action.testID,
-                    onPress: entry.panel ? open : () => { void runAction(entry.action.id); },
+                    onPress: stable(`action:${entry.id}`, entry.panel ? open : () => { void runAction(entry.action.id); }),
                 }}
                 dismiss={{
                     label: t('homeSetup.dismiss', { title: entry.title }),
                     tooltip: t('homeSetup.dismissTooltip'),
-                    onPress: () => dismiss(entry.id),
+                    onPress: stable(`dismiss:${entry.id}`, () => dismiss(entry.id)),
                 }}
             />
         ),
@@ -293,7 +321,7 @@ function HubSetupTiles(props: HubSectionProps) {
         ...(voiceItem ? [voiceItem] : []),
         ...items,
         ...(personalizeItem && !phone ? [personalizeItem] : []),
-        ...(servicesItem ? [servicesItem] : []),
+        ...(servicesItem && !capacityWidgetShown ? [servicesItem] : []),
         ...(askHappierItem ? [askHappierItem] : []),
     ];
     if (allItems.length === 0) return null;

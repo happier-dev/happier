@@ -5,7 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createMachineFixture, createSessionFixture, createRootLayoutFeaturesResponse, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { act } from 'react-test-renderer';
-import { FeaturesResponseSchema, PluginProjectionV2Schema, QualifiedConnectedAccountProfileV4Schema, type MachineAgentInventoryItem } from '@happier-dev/protocol';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { QualifiedConnectedAccountProfileV4Schema} from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { type MachineAgentInventoryItem } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { installConnectedAccountDescriptorProjection } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { advanceConnectedAccountDescriptorProjectionState, createConnectedAccountDescriptorProjectionLoadingState } from '@/sync/domains/connectedServices/connectedAccountDescriptorProjection';
@@ -191,7 +194,7 @@ async function renderSection(Section: React.ComponentType = HubAttentionSection)
         createConnectedAccountDescriptorProjectionLoadingState(JSON.stringify([scope.serverId, scope.accountId])),
         { kind: 'ready', descriptors: [SERVICE_DESCRIPTOR], conflicts: [] },
     ), lifetime);
-    await loadDaemonMergedProjectionInputs({ machineId: machine.id, serverId: home.id, accountLifetime: lifetime });
+    await loadDaemonMergedProjectionInputs({ sections: 'complete', machineId: machine.id, serverId: home.id, accountLifetime: lifetime });
     const revision = getMachineContributionRegistryProjectionRevision({ machineId: machine.id, serverId: home.id });
     // These are the prior Agents/Plugins page observations beneath their real codec/cache owners.
     await prefetchMachineCapabilities({ machineId: machine.id, serverId: lifetime.scope.serverId, accountLifetime: lifetime,

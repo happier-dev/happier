@@ -94,16 +94,16 @@ export function prepareDiscussionSelectionHandoff(params: Readonly<{
         if (message.messageRef.discussion.serverId !== params.serverId
             || message.messageRef.discussion.discussionId !== params.discussionId
             || message.discussionId !== params.discussionId) return null;
-        const accountLabel = params.resolveAccountLabel(message.authorAccountId)?.trim();
         const text = renderDiscussionContent(message, params.resolveAccountLabel, params.resolveSessionLabel);
-        if ((message.producerV1 === null && !accountLabel) || text === null) return null;
+        if (text === null) return null;
         const speaker = resolveDiscussionMessageSpeakerLabel(message, {
+            account: (accountId) => params.resolveAccountLabel(accountId)?.trim() || null,
             session: (sessionId) => params.resolveSessionLabel?.(sessionId) ?? null,
             workflowRun: () => null,
         });
         const label = message.producerV1?.kind === 'agent'
             ? `${speaker} · ${params.agentAttributionLabel}`
-            : message.producerV1?.kind === 'workflow' ? speaker : accountLabel!;
+            : speaker;
         entries.push({ id: message.id, seq: message.seq, role: 'user', label, text });
     }
     entries.sort((left, right) => left.seq - right.seq || left.id.localeCompare(right.id));

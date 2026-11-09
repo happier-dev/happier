@@ -11,30 +11,24 @@ import type { SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/cre
 import { useMachineListForServer } from '@/sync/domains/state/storage';
 import { resolveExecutableModelParticipantDisplay } from '@/components/sessions/authoring/useExecutableParticipantLabel';
 import { watchMountedDiscussions } from '@/sync/domains/discussions/discussionChangeWatch';
-import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 
 type Participant = DiscussionParticipantsListResponseV1['participants'][number];
-function retainRosterRows<T>(previous: T[], incoming: T[], key: (row: T) => string): T[] {
-    const byKey = new Map(previous.map(row => [key(row), row]));
-    const rows = incoming.map(row => {
-        const known = byKey.get(key(row));
-        return known !== undefined && sameStrictJsonValue(known, row) ? known : row;
-    });
-    return rows.length === previous.length && rows.every((row, index) => row === previous[index]) ? previous : rows;
-}
-
 /** Admitted roster rows keep their identity across fresh reads and membership reordering. */
-function reconcileRoster(previous: DiscussionParticipantsListResponseV1, incoming: DiscussionParticipantsListResponseV1): DiscussionParticipantsListResponseV1 {
-    const participants = retainRosterRows(previous.participants, incoming.participants, row => row.participant.kind === 'session'
+export function reconcileDiscussionParticipantRoster(previous: DiscussionParticipantsListResponseV1, incoming: DiscussionParticipantsListResponseV1): DiscussionParticipantsListResponseV1 {
+    const participants = retainKeyedRows(previous.participants, incoming.participants, row => row.participant.kind === 'session'
         ? `session:${row.participant.sessionId}` : `model:${row.participant.participantSlotId}`);
-    const grants = retainRosterRows(previous.grants, incoming.grants, row => {
+    const grants = retainKeyedRows(previous.grants, incoming.grants, row => {
         const principal = row.principal;
         return JSON.stringify(principal.kind === 'account' ? [principal.kind, principal.accountId]
             : principal.kind === 'team' ? [principal.kind, principal.teamId] : [principal.kind, principal.teamId, principal.groupId]);
     });
-    return participants === previous.participants && grants === previous.grants
+    const accountActors = incoming.accountActors === undefined ? undefined
+        : retainKeyedRows(previous.accountActors ?? [], incoming.accountActors, actor => actor.accountId);
+    return participants === previous.participants && grants === previous.grants && accountActors === previous.accountActors
         && previous.ownerAccountId === incoming.ownerAccountId && previous.access === incoming.access
-        && previous.discussionId === incoming.discussionId ? previous : { ...incoming, participants, grants };
+        && previous.discussionId === incoming.discussionId ? previous : { ...incoming, participants, grants,
+            ...(accountActors === undefined ? {} : { accountActors }) };
 }
 type PolicyParticipant = Parameters<DiscussionRepository['setParticipantPolicy']>[0]['participant'];
 type RemovedParticipant = Parameters<DiscussionRepository['removeParticipant']>[0]['participant'];
@@ -115,7 +109,7 @@ export function useDiscussionParticipantManagement(input: Readonly<{
             if (outcome.kind === 'succeeded') {
                 setProjection(previous => {
                     const sameDiscussion = previous?.accountLifetime === accountLifetime && previous.discussionId === discussionId;
-                    const roster = sameDiscussion ? reconcileRoster(previous.roster, outcome.value) : outcome.value;
+                    const roster = sameDiscussion ? reconcileDiscussionParticipantRoster(previous.roster, outcome.value) : outcome.value;
                     return sameDiscussion && roster === previous.roster ? previous : { accountLifetime, discussionId, roster };
                 });
                 setLoad(previous => previous?.accountLifetime === accountLifetime && previous.discussionId === discussionId
@@ -244,7 +238,7 @@ export function useDiscussionParticipantManagement(input: Readonly<{
             // These are existing invitees to choose from, not a second eligibility policy.
             // The transfer Action rechecks active membership, mode and recipient-key readiness.
             transferCandidates: roster.grants.flatMap(grant => grant.principal.kind === 'account'
-                && grant.principal.accountId !== roster.ownerAccountId ? [{ accountId: grant.principal.accountId, name: grant.display.name }] : []),
+                && grant.principal.accountId !== roster.ownerAccountId ? [{ accountId: grant.principal.accountId }] : []),
             canArchive: input.summary?.capabilities.archive === true,
             canCancel: !unresolvedOwnerEffect,
         } : { kind: 'closed' as const }, [accountLifetime, discussionId, input.summary?.capabilities.archive, leaveResolution, live, roster, unresolvedOwnerEffect]);
@@ -276,7 +270,9 @@ export function useDiscussionParticipantManagement(input: Readonly<{
             : 'sessionId' in participant ? participant.sessionId : null;
         return sessionId ? { serverId: accountLifetime.scope.serverId, sessionId } : null;
     }, [accountLifetime]);
-    const machines = useMachineListForServer(accountLifetime?.scope.serverId ?? '');
+    // Only a model participant's label reads Machine names; a roster without one demands no Machine inventory.
+    const namesModel = roster?.participants.some(participant => participant.participant.kind === 'model') === true;
+    const machines = useMachineListForServer(accountLifetime?.scope.serverId ?? '', namesModel);
     const modelParticipants = React.useMemo<readonly DiscussionModelParticipantViewModel[]>(() => {
         if (!roster || !accountLifetime?.isCurrent()) return [];
         const unsettled = operation.kind === 'working' || operation.kind === 'approval_pending';

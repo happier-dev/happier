@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { InboxModelBoundary, useInboxModel } from '@/hooks/inbox/useInboxModel';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -10,6 +10,7 @@ import { InboxContentList } from './InboxContent';
 import type { FloatingOverlayScrollProps } from '@/components/ui/overlays/FloatingOverlay';
 import { countInbox } from './inboxCounts';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * The Inbox as the rail's popover (lab `inbox-I2`): it names itself and its count, "Open Inbox" is its
@@ -39,18 +40,18 @@ const OpenInboxPopoverContent = React.memo(function OpenInboxPopoverContent(prop
     const { close, onOpenInbox } = props;
     const openInbox = React.useCallback(() => { close(); onOpenInbox(); }, [close, onOpenInbox]);
     // The number the rail badge that opened this shows: everything in the Inbox.
-    const inboxCount = countInbox(model);
+    const inboxCount = model.artifactSource.phase === 'current' ? countInbox(model) : null;
     return (
         <InboxContentList model={model} onBeforeNavigate={close} onOpenInbox={openInbox} presentation="popover"
             testID="inbox.popover.list" scrollProps={props.scrollProps} header={
             <View style={styles.header}>
                 <Text accessibilityRole="header" style={styles.title}>{t('tabs.inbox')}</Text>
-                {inboxCount > 0 ? <Text testID="inbox.popover.count" style={styles.count}>{String(inboxCount)}</Text> : null}
+                {inboxCount !== null && inboxCount > 0 ? <Text testID="inbox.popover.count" style={styles.count}>{String(inboxCount)}</Text> : null}
                 <View style={styles.grow} />
-                <Pressable testID="inbox.popover.open" accessibilityRole="button" accessibilityLabel={t('inbox.openInbox')} onPress={openInbox} hitSlop={8} style={({ pressed }) => [styles.openAction, pressed ? styles.openActionPressed : null]}>
+                <HappierPressable testID="inbox.popover.open" accessibilityRole="button" accessibilityLabel={t('inbox.openInbox')} onPress={openInbox} style={({ pressed }) => [styles.openAction, pressed ? styles.openActionPressed : null]}>
                     <Text style={styles.openLabel}>{t('inbox.openInbox')}</Text>
                     <Icon name="caret-right" size={14} color={theme.colors.text.tertiary} />
-                </Pressable>
+                </HappierPressable>
             </View>
         } />
     );

@@ -8,6 +8,7 @@ import { buildInboxWorkGroups, type InboxWorkItem } from '@/activity/presentatio
 import { en } from '@/text/translations/en';
 import { buildInboxItems } from '../inboxItems';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
+import { installSignedOutAuthForTest } from '@/dev/testkit/fixtures/signedOutAuth';
 import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
 import { resolveWorkStatusRowMark } from '@/components/work/status/workStatusRowMark';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -36,12 +37,13 @@ vi.mock('@/text', async () => {
     setPreferredLanguageFromSettings('en');
     return createTextModuleMock({ translate: (key, options) => key === 'workflows.run.attentionWaitRow' ? `${options?.step} is waiting for you`
         : key === 'workflows.run.attentionWaitRowMore' ? `${options?.step} and ${options?.count} more wait for you`
+        : key === 'workflows.run.attentionApprovalRow' ? `Approve ${options?.step}`
         : key.startsWith('files.') ? tLoose(key) : key });
 });
 const { InboxWorkItemRow } = await import('./InboxWorkItemRow');
 
 describe('Inbox Work row stability', () => {
-    it('presents an interrupted run without a hold as a neutral Update through the same Inbox mapping', async () => {
+    it('presents an interrupted run without a hold as an Update through the shared Work mapping', async () => {
         const row = workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: 'interrupted', state: 'interrupted' }), null);
         const groups = buildInboxWorkGroups({ sessionEntries: [], workflowRuns: [row], automationRuns: [], automationServerId: null,
             openApprovals: [], stalledSessions: [], landings: [], snoozed: [], resolveSession: () => null, resolveOriginRunId: () => null });
@@ -53,8 +55,10 @@ describe('Inbox Work row stability', () => {
         const screen = await renderScreen(<InboxWorkItemRow item={item} spansHomes={false} workflowServerId="home" identityDisplay="none"
             presentation="screen" navigate={vi.fn()} settle={vi.fn(async () => {})} setReminder={vi.fn(async () => {})} />);
         const rendered = screen.tree.root.findAll(node => node.props.testID === 'inbox.run.interrupted' && node.props.status !== undefined)[0];
-        expect(rendered?.props.status).toMatchObject({ tone: 'neutral', bucket: 'idle' });
-        expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: { state: 'interrupted', word: 'Interrupted' } }).tone).toBe('attention');
+        expect(rendered?.props.status).toMatchObject(resolveWorkStatusTone({ kind: 'workflow_run', facts: {
+            state: 'interrupted', word: rendered?.props.status.word, failureUnseen: false, invocationAttentionRequired: false,
+            inAttentionWindow: false,
+        } }));
     });
     it('marks a failed unseen Run with the calm rose dot from the work-status row mark, never a warning icon', async () => {
         const row = workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: 'failed', state: 'failed', failureUnseen: true }), null);
@@ -72,6 +76,10 @@ describe('Inbox Work row stability', () => {
         await screen.unmount();
     });
     it('opens the canonical PR URL as the Landing primary action even in a list-detail Inbox', async () => {
+        const restoreAuth = installSignedOutAuthForTest();
+        // URL opening is a local Action; keep its real policy/executor and mock only native Linking.
+        await import('@/sync/ops/actions/defaultActionExecutor');
+        openUrl.mockClear();
         const session = createSessionFixture({ id: 'landing', serverId: 'home' });
         const navigate = vi.fn();
         const onSelectItem = vi.fn();
@@ -81,10 +89,12 @@ describe('Inbox Work row stability', () => {
             presentation="screen" navigate={navigate} onSelectItem={onSelectItem} settle={vi.fn(async () => {})} setReminder={vi.fn(async () => {})} />);
         expect(JSON.stringify(screen.tree.toJSON())).toContain(en.files.sourceControlOperations.update.pullRequests.states.open);
         expect(JSON.stringify(screen.tree.toJSON())).not.toContain('files.sourceControl.pullRequests.states.open');
-        await act(async () => { screen.findHostByTestId('inbox.landing.landing')!.props.onPress(); });
-        expect(openUrl).toHaveBeenCalledWith(item.link.url);
-        expect(navigate).not.toHaveBeenCalled();
-        expect(onSelectItem).not.toHaveBeenCalled();
+        try {
+            await act(async () => { screen.findHostByTestId('inbox.landing.landing')!.props.onPress(); });
+            await vi.waitFor(() => expect(openUrl).toHaveBeenCalledWith(item.link.url));
+            expect(navigate).not.toHaveBeenCalled();
+            expect(onSelectItem).not.toHaveBeenCalled();
+        } finally { await screen.unmount(); restoreAuth(); }
     });
     it('renders the held-step names from the Run summary through the real Inbox projection and row', async () => {
         const row = workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: 'held', state: 'waiting_for_review', attentionRequired: true,
@@ -109,6 +119,34 @@ describe('Inbox Work row stability', () => {
         const screen = await renderScreen(<InboxWorkItemRow item={item} spansHomes={false} workflowServerId="home" identityDisplay="none"
             presentation="screen" navigate={vi.fn()} settle={vi.fn(async () => {})} setReminder={vi.fn(async () => {})} />);
         expect(JSON.stringify(screen.tree.toJSON())).toContain('Review the changelog draft and 4 more wait for you');
+    });
+    it('tells two approval-held Runs apart by the step each one waits on, from the Run summary alone', async () => {
+        const approvalRun = (id: string, stepName: string, title: string) => workflowRunRowFromSummary(createWorkflowRunSummaryFixture({
+            id, state: 'paused', attentionRequired: true, invocationAttentionRequired: true,
+            stepProgress: { completed: 0, total: 2, destinations: [
+                { sourceKey: '$root', blockId: `${id}-block`, ordinal: 1, name: stepName, sessionIds: [],
+                    observation: { recordId: `${id}-record`, sequence: '1', attempt: '0', contentRevision: '4',
+                        lifecycle: 'waiting_for_approval', blockKind: 'action' } },
+            ] } }), { kind: 'available', value: { title } });
+        const rows = [approvalRun('digest', 'Send the weekly digest', 'Weekly digest'), approvalRun('notes', 'Publish the release notes', 'Release notes')];
+        const groups = buildInboxWorkGroups({ sessionEntries: [], workflowRuns: rows, automationRuns: [], automationServerId: null,
+            openApprovals: [], stalledSessions: [], landings: [], snoozed: [], resolveSession: () => null, resolveOriginRunId: () => null });
+        const items = groups.flatMap(group => group.items);
+        expect(items).toHaveLength(2);
+        const lines: string[] = [];
+        for (const item of items) {
+            const screen = await renderScreen(<InboxWorkItemRow item={item} spansHomes={false} workflowServerId="home" identityDisplay="none"
+                presentation="screen" navigate={vi.fn()} settle={vi.fn(async () => {})} setReminder={vi.fn(async () => {})} />);
+            lines.push(JSON.stringify(screen.tree.toJSON()));
+            await screen.unmount();
+        }
+        // The need leads, so a narrow row that truncates the line trims the step name, never the need.
+        expect(lines[0]).toContain('Approve Send the weekly digest');
+        expect(lines[1]).toContain('Approve Publish the release notes');
+        expect(lines[0]).not.toContain('Publish the release notes');
+        // The Run's own name titles the row when the summary's metadata carries it.
+        expect(lines[0]).toContain('Weekly digest');
+        expect(lines[1]).toContain('Release notes');
     });
     it('does not repaint an unchanged real row when another Inbox run updates', async () => {
         const run = (id: string, updatedAt: string) => workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id, state: 'interrupted', updatedAt }), null);

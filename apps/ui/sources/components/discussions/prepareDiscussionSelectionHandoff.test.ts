@@ -28,6 +28,21 @@ const message = (input: Readonly<{
 };
 
 describe('prepareDiscussionSelectionHandoff', () => {
+    it.each(['Connection custodian', null])('keeps an external sender as the selected speaker (Account label=%s)', accountLabel => {
+        const selected = message({ id: 'email', seq: 1, authorAccountId: 'alice', content: {
+            v: 1, parts: [{ t: 'text', text: 'Please check the invoice' }],
+            externalSource: { kind: 'channel', providerPluginId: 'happier.channel.email',
+                conversationDisplayName: 'Billing', senderDisplayName: 'Jordan from Acme' },
+        } });
+        const result = prepareDiscussionSelectionHandoff({
+            serverId: 'home-a', discussionId: 'discussion-a', selectedMessageIds: [selected.id], messages: [selected],
+            resolveAccountLabel: () => accountLabel, format: 'markdown_labeled',
+            roleLabels: { user: 'User', assistant: 'Assistant' }, agentAttributionLabel: 'Via Agent',
+        });
+        expect(result).toMatchObject({ text: '**Jordan from Acme:**\n\nPlease check the invoice',
+            source: { messageIds: ['email'] } });
+    });
+
     it('copies an attachment summary with committed provenance without leaking a private locator', () => {
         const attachment = { kind: 'folder' as const, id: '63d77628-40c9-48c5-93f6-d197c2783ad5',
             name: 'Empty designs', entries: [], directories: ['drafts'] };
@@ -121,7 +136,7 @@ describe('prepareDiscussionSelectionHandoff', () => {
         expect(result?.source).not.toHaveProperty('draftCorrelationId');
     });
 
-    it('returns null instead of leaking Account ids when an author or mention label is unresolved', () => {
+    it('uses the canonical unknown speaker without leaking Account ids, and refuses unresolved mentions', () => {
         const base = {
             serverId: 'home-a',
             discussionId: 'discussion-a',
@@ -130,11 +145,17 @@ describe('prepareDiscussionSelectionHandoff', () => {
             roleLabels: { user: 'User', assistant: 'Assistant' },
             agentAttributionLabel: 'Via Agent',
         };
-        expect(prepareDiscussionSelectionHandoff({
+        // FIN-REVIEW-1107A row 6: the speaker owner supplies its safe fallback;
+        // absence of a custodian label is not a second selection decision.
+        const unknownSpeaker = prepareDiscussionSelectionHandoff({
             ...base,
+            format: 'markdown_labeled',
             messages: [message({ id: 'm1', seq: 1, authorAccountId: 'alice' })],
             resolveAccountLabel: () => null,
-        })).toBeNull();
+        });
+        expect(unknownSpeaker).toMatchObject({ source: { messageIds: ['m1'] } });
+        expect(unknownSpeaker?.text).toContain('m1');
+        expect(unknownSpeaker?.text).not.toContain('alice');
         expect(prepareDiscussionSelectionHandoff({
             ...base,
             messages: [message({ id: 'm1', seq: 1, authorAccountId: 'alice', content: { v: 1, parts: [{ t: 'mention', participant: { kind: 'account', accountId: 'bob' } }] } })],

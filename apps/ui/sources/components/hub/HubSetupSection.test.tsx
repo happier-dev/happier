@@ -13,9 +13,11 @@ import { ListPresentationProvider } from '@/components/ui/lists/listPresentation
 import { discardMachineAddFlowDraft } from '@/components/machines/add/machineAddFlowStore';
 import { getActiveServerId, removeServerProfile, resolveServerProfileScopeIdForIdentifier, setActiveServerId, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import type { HomeHubLayoutValue } from './layout/homeHubLayout';
+import { getHomeHubDefaultLayoutV1 } from '@happier-dev/protocol/home';
 import type { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { storage } from '@/sync/domains/state/storage';
+import { personalizeProgressState } from '@/sync/domains/state/onboardingUiState';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -23,9 +25,9 @@ import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/act
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
-import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
+import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
-import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { WorkspaceNavigationProvider, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { useHomeSetupDismissals, type HomeSetupDismissals } from './layout/useHomeSetupDismissals';
@@ -50,6 +52,8 @@ const state = vi.hoisted(() => ({
     profileName: 'Alex Morgan' as undefined | string | null,
     featureSnapshot: vi.fn<typeof getServerFeaturesSnapshot>(async () => ({ status: 'error', reason: 'network' })),
     request: vi.fn<(path: string, init?: RequestInit) => Promise<Response>>(),
+    /** Whether the connected-services owner offers its "Connect Claude or ChatGPT" block. */
+    servicesOffered: false,
 }));
 // The section's static graph reaches the transport owner, so the Socket.IO boundary is hoisted above it.
 vi.mock('socket.io-client', async (importOriginal) => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -117,7 +121,9 @@ vi.mock('@/components/homes/journeys/useHomesJourneySetupItems', () => ({
 }));
 // Connected services own their block (its suite is theirs); this suite covers Get set up's own items.
 vi.mock('@/components/settings/connectedServices/home/useConnectServicesSetupItem', () => ({
-    useConnectServicesSetupItem: () => null,
+    useConnectServicesSetupItem: () => state.servicesOffered
+        ? { id: 'connectServices', renderTile: () => 'tile:connectServices' }
+        : null,
 }));
 vi.mock('@/hooks/session/useConnectTerminal', () => ({
     useConnectTerminal: () => ({ connectTerminal: vi.fn(), isLoading: false }),
@@ -149,6 +155,7 @@ afterEach(async () => {
     state.push = null;
     state.params = {};
     state.layout = { order: [], hidden: [] };
+    state.servicesOffered = false;
     state.featureSnapshot.mockReset();
     state.featureSnapshot.mockResolvedValue({ status: 'error', reason: 'network' });
     state.request.mockReset();
@@ -208,7 +215,7 @@ function AccountShell({ children }: React.PropsWithChildren) {
         <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,
             phase: 'current', interactionEnabled: true, machineId: null, serverId: resolveServerProfileScopeIdForIdentifier(connection!.home.id), platform: 'web',
             accountLifetime: captureActiveServerAccountScopeLifetime(), clientExecutableActivation: { status: 'ready' }, reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
-            <WorkspaceNavigationContext.Provider value={workspace}>{children}</WorkspaceNavigationContext.Provider>
+            <WorkspaceNavigationProvider value={workspace}>{children}</WorkspaceNavigationProvider>
         </AppShellPluginUiProjectionValueProvider>
     </InjectedAuthProvider>;
 }
@@ -293,7 +300,7 @@ describe('HubSetupSection on Home (tiles)', () => {
     it.each(['tiles', 'checklist'] as const)('completes phone setup only after successful pairing from %s and keeps completion in the existing synced layout', async (presentation) => {
         vi.useFakeTimers();
         const profiles = await import('@/sync/domains/server/serverProfiles');
-        const { computeHomeQrBindingProofV2, FeaturesResponseSchema } = await import('@happier-dev/protocol');
+        const [{ computeHomeQrBindingProofV2}, { FeaturesResponseSchema}] = await Promise.all([import('@happier-dev/protocol/crypto/qrProvisioningV2'), import('@happier-dev/protocol/features/payload/featuresResponseSchema')]);
         const { parseHomeQrInviteDeepLink } = await import('@/auth/pairing/pairingUrl');
         const { decodeBase64, encodeBase64 } = await import('@/encryption/base64');
         const previousServerId = getActiveServerId();
@@ -388,6 +395,32 @@ describe('HubSetupSection on Home (tiles)', () => {
         state.machineListSettled = false;
         const unknown = await renderSection();
         expect(unknown.findByTestId('hub-setup.addMachine')).toBeTruthy();
+    });
+
+    it('drops its machine and agent sign-in items while Home places the Machines and Capacity widgets (58d AF1)', async () => {
+        state.dismissed = true;
+        state.servicesOffered = true;
+        // The first-run showcase places Capacity and Machines: their empty states carry these steps.
+        const { order, hidden, items } = getHomeHubDefaultLayoutV1();
+        state.layout = { order, hidden, items };
+        const computer = await renderSection();
+        expect(computer.findByTestId('hub-setup.addMachine')).toBeNull();
+        expect(computer.getTextContent()).not.toContain('tile:connectServices');
+        expect(computer.findByTestId('settings-add-your-phone-shortcut')).toBeTruthy();
+        standardCleanup();
+        phoneWindow();
+        const phone = await renderSection();
+        expect(phone.findByTestId('hub-setup.connectComputer')).toBeNull();
+        expect(phone.findByTestId('hub-setup.addMachine')).toBeNull();
+    });
+
+    it('brings its machine and agent sign-in items back once those widgets are removed from Home', async () => {
+        state.dismissed = true;
+        state.servicesOffered = true;
+        // Get set up keeps only what no widget covers.
+        const removed = await renderSection();
+        expect(removed.findByTestId('hub-setup.addMachine')).toBeTruthy();
+        expect(removed.getTextContent()).toContain('tile:connectServices');
     });
 
     it('"Show QR code" grows the pairing panel in place instead of leaving Home', async () => {
@@ -510,7 +543,7 @@ describe('HubSetupSection on Home (tiles)', () => {
             .filter((id, index, ids) => ids.indexOf(id) === index);
 
         afterEach(() => {
-            storage.getState().applyLocalSettings({ personalizeProgressV1: { savedSteps: [], resumeAt: null } });
+            personalizeProgressState.set('progress', { savedSteps: [], resumeAt: null });
         });
 
         it('comes after the phone and machine steps on a computer and opens step 1 in place', async () => {
@@ -547,7 +580,7 @@ describe('HubSetupSection on Home (tiles)', () => {
             state.dismissed = true;
             const pushed: unknown[] = [];
             state.push = (href) => { pushed.push(href); };
-            storage.getState().applyLocalSettings({ personalizeProgressV1: { savedSteps: ['look', 'conversation', 'tools'], resumeAt: 'work' } });
+            personalizeProgressState.set('progress', { savedSteps: ['look', 'conversation', 'tools'], resumeAt: 'work' });
             const screen = await renderSection();
 
             // "3 of 6 choices saved. Pick up at Find your work." and Continue.

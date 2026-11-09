@@ -33,6 +33,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resumeSession } from '@/sync/ops/sessions';
 import type { SessionListIdentityDisplay } from '@/components/sessions/shell/SessionListIdentity';
 import { AppSessionTranscriptSourceProvider } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 
 export const InboxSessionAttentionGroupCard = React.memo(function InboxSessionAttentionGroupCard(props: Readonly<{
     session: SessionPresentationRecord;
@@ -45,6 +46,10 @@ export const InboxSessionAttentionGroupCard = React.memo(function InboxSessionAt
     userActionRequests: readonly PendingPermissionRequest[];
     showDivider?: boolean;
     onBeforeNavigate?: () => void;
+    /** The item open beside the list: its row is drawn selected. */
+    selected?: boolean;
+    /** Beside the Inbox's detail pane the header selects the Session there instead of leaving the Inbox. */
+    onSelect?: () => void;
     /** State, age and menu of the row this card draws; the same ones the session row beside it shows. */
     row?: React.ComponentProps<typeof InboxSessionAttentionHeader>['row'];
 }>) {
@@ -57,7 +62,9 @@ export const InboxSessionAttentionGroupCard = React.memo(function InboxSessionAt
     React.useEffect(() => () => resumeAbort.current?.abort(), [props.serverId, session.id]);
     // On the Inbox page the card is one of the sheet's rows: it draws the sheet's own full-width hairline.
     const pageSection = useHappierPageSection();
-    const statusOnly = isInboxSessionStatusOnly(session);
+    const isRecordingVisible = useSessionRecordingVisibility();
+    const recordingVisible = isRecordingVisible({ sessionId: session.id, serverId: props.serverId });
+    const statusOnly = !recordingVisible || isInboxSessionStatusOnly(session, props.serverId);
     const ownerMetadata = statusOnly ? null : readSessionOwnerMetadataView(session);
     const machineId = statusOnly ? '' : readDisplayMachineIdForSession({
         // Qualified cards already carry their exact Home metadata. A bare-id store lookup
@@ -147,8 +154,9 @@ export const InboxSessionAttentionGroupCard = React.memo(function InboxSessionAt
                 connected={props.connected}
                 sessionTitle={readInboxSessionTitle(session, props.serverId)}
                 machineLabel={statusOnly ? null : getMachineDisplayName(machine)}
-                pathLabel={props.contextLine ?? null}
-                onOpenSession={openSession}
+                pathLabel={recordingVisible ? props.contextLine ?? null : null}
+                onOpenSession={props.onSelect ?? openSession}
+                selected={props.selected}
                 row={props.row}
             />
 

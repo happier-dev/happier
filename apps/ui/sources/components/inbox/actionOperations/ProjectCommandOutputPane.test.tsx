@@ -1,3 +1,5 @@
+import { replacePersistentUiStateForTest, PersistedPaneScopesSchema } from '@/dev/testkit/harness/persistentUiState';
+import { paneUiState } from '@/sync/domains/state/filePaneUiState';
 import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
@@ -67,17 +69,19 @@ beforeEach(async () => {
     if (method === ACTION_OPERATION_RPC_METHODS_V2.list) return { items: [], nextCursor: null };
     throw new Error(`unexpected_rpc:${method}`);
   });
-  storage.getState().applyLocalSettings({ appPaneScopesV1: {} });
+  (replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({})), storage.getState().applyLocalSettings({ }));
 });
 
 describe('terminal-less Project command output', () => {
-  it.each(['projectCommand', 'machineEnvironment'] as const)('shows canonical terminal-less $0 review, uncertainty and settled states', async (kind) => {
+  it.each(['projectCommand', 'machineSetup', 'directMachineSetup'] as const)('shows canonical terminal-less $0 review, uncertainty and settled states', async (variant) => {
+    const kind = variant === 'directMachineSetup' ? 'machineSetup' : variant;
     const { ProjectCommandOutputPane } = await import('./ProjectCommandOutputPane');
     const base: ActionOperationProjection = {
       serverId: 'home', observation: 'available', isUnavailableProjection: false,
-      snapshot: { version: 1, operationId: 'op', revision: 1, actionId: 'projects.prepare', state: 'accepted',
+      snapshot: { version: 1, operationId: 'op', revision: 1, actionId: kind === 'machineSetup' ? 'machines.setup.apply' : 'projects.prepare', state: 'accepted',
         scope: { accountId: 'account', machineId: 'machine' }, title: 'Setup', createdAt: 1, cancellation: 'supported',
-        domainRef: kind === 'machineEnvironment' ? { kind, serverId: 'home', machineId: 'machine', preset: { id: 'preset', revision: 4 } }
+        domainRef: kind === 'machineSetup' ? { kind, serverId: 'home', machineId: 'machine',
+            ...(variant === 'machineSetup' ? { preset: { id: 'preset', revision: 4 } } : {}) }
             : { kind, purpose: 'setup', serverId: 'home', machineId: 'machine', workspaceRefId: 'workspace', cwd: '/repo' } },
     };
     for (const snapshot of [
@@ -220,14 +224,15 @@ describe('Project command output with a docked terminal', () => {
     await screen.unmount();
   });
 
-  it('restores inline output when the retained bottom pane is hidden and docks it again when reopened', async () => {
+  it.each(['bottom', 'right'] as const)('restores inline output when the retained %s pane is hidden and docks it again when reopened', async pane => {
     const { screen, scopeId, dispatch, openOutput } = await render();
     await openOutput();
+    if (pane === 'right') await dispatch({ type: 'openRight', scopeId, tabId: 'terminal' });
     expectDocked(screen);
-    await dispatch({ type: 'closeBottom', scopeId });
+    await dispatch({ type: pane === 'bottom' ? 'closeBottom' : 'closeRight', scopeId });
     expect(readSessionTerminalWorkspaceForScope(scopeId)?.tabs).toHaveLength(1);
     expectInline(screen);
-    await dispatch({ type: 'openBottom', scopeId, tabId: 'terminal' });
+    await dispatch({ type: pane === 'bottom' ? 'openBottom' : 'openRight', scopeId, tabId: 'terminal' });
     expectDocked(screen);
     await screen.unmount();
   });

@@ -1,4 +1,4 @@
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
@@ -15,6 +15,8 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { resolveHomeDisplayName } from '@/components/settings/server/homeDisplayName';
+import { readSessionRecordingVisibility } from '@/sync/store/sessionRecordingVisibility';
+import type { SessionRecordingVisibility } from '@/sync/domains/session/listing/recordingPrivacy';
 
 export type ActionOperationSourceContext = Readonly<{
     address: SessionAddress | null;
@@ -51,6 +53,7 @@ export function projectActionOperationSourceContext(params: Readonly<{
      */
     homeObservation?: SessionListHomeObservation | null;
     nowMs?: number;
+    isRecordingVisible?: SessionRecordingVisibility;
 }>): ActionOperationSourceContext {
     const address = normalizeSessionAddress(params.serverId, params.snapshot.scope.sessionId);
     if (!params.serverId) {
@@ -75,7 +78,7 @@ export function projectActionOperationSourceContext(params: Readonly<{
         };
     }
 
-    const session = params.session;
+    const session = (params.isRecordingVisible ?? readSessionRecordingVisibility())(address) ? params.session : null;
     const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
     const nowMs = params.nowMs ?? Date.now();
     const context = projectSessionContextPresentation(buildSessionContextFacts({

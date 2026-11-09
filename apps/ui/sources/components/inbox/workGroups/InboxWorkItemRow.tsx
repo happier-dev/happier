@@ -8,7 +8,7 @@ import type { InboxSessionAttentionEntry } from '@/activity/presentation/buildIn
 import type { InboxWorkItem } from '@/activity/presentation/buildInboxWorkGroups';
 import { createActivitySurfaceSessionRoute } from '@/activity/actions/activitySurfaceTargets';
 import { InboxSessionAttentionGroupCard } from '@/components/inbox/sessionAttention/InboxSessionAttentionGroupCard';
-import { InboxManagedWakeSessionRow, hasFailedManagedWake } from '@/components/inbox/sessionAttention/InboxManagedWakeSessionRow';
+import { InboxManagedWakeSessionRow, hasInboxSessionRecovery } from '@/components/inbox/sessionAttention/InboxManagedWakeSessionRow';
 import {
     SessionListIdentity,
     type SessionListIdentityDisplay,
@@ -319,7 +319,7 @@ export const InboxWorkItemRow = React.memo(function InboxWorkItemRow(props: RowP
                     onPress={() => openItem(sessionFocus(candidate.sessionId, serverId), candidate.route ?? null)}
                 />
             );
-            return serverId && hasFailedManagedWake(candidate.session)
+            return serverId && hasInboxSessionRecovery(candidate.session)
                 ? <InboxManagedWakeSessionRow session={candidate.session} serverId={serverId} render={renderRow} />
                 : renderRow(NO_WAKE);
         }

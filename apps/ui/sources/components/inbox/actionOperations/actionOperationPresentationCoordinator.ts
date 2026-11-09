@@ -1,4 +1,4 @@
-import type { ActionOperationDeclarationV1, ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionOperationDeclarationV1, ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import {
     actionOperationAddress,
     actionOperationAddressKey,

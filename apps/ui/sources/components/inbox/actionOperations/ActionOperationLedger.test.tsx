@@ -33,6 +33,21 @@ afterEach(async () => {
 });
 
 describe('ActionOperationLedgerView', () => {
+    it('offers explicit dismissal for terminal failures in Activity as well as Inbox', async () => {
+        const onDismiss = vi.fn();
+        const failed = ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'failed', revision: 1,
+            actionId: 'session.spawn_new', state: 'failed', scope: { accountId: 'account', machineId: 'machine' },
+            title: 'Create session', createdAt: 1, startedAt: 1, settledAt: 2, cancellation: 'unsupported',
+            error: { errorCode: 'internal_error', error: 'Failed' } });
+        const screen = await renderScreen(<ActionOperationRows operations={[{
+            serverId: homeA, snapshot: failed, observation: 'available', isUnavailableProjection: false,
+        }]} onOpenOperation={() => {}} onDismissOperation={onDismiss} />);
+        expect(screen.findByTestId('action-operation-dismiss.failed')).not.toBeNull();
+        await screen.pressByTestIdAsync('action-operation-dismiss.failed');
+        expect(onDismiss.mock.calls[0]?.[0].snapshot).toEqual(failed);
+    });
+
+
     it('names the execution worker when operation custody stays on the Source Machine', async () => {
         const machines = [
             createMachineFixture({ id: 'source', metadata: { ...createMachineFixture().metadata!, host: 'Source computer' } }),

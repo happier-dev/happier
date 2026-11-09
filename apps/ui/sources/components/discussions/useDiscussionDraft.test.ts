@@ -38,6 +38,27 @@ afterEach(() => {
 });
 
 describe('useDiscussionDraft', () => {
+    it('preserves reply and passage context authored after a retained question opened for review', async () => {
+        const passage = { ref: { kind: 'doc' as const, artifactId: 'next-source', serverId: scope.serverId },
+            revision: { headerVersion: 1, bodyVersion: 1 }, range: { start: 0, end: 6 }, quote: 'source' };
+        writeDiscussionSessionDraft({ scope, address: existingAddress, patch: { text: 'Retained question' } });
+        const hook = await renderHook(() => useDiscussionDraft({ scope, address: existingAddress }));
+        const retained = hook.getCurrent().captureSubmittedCurrentness();
+        act(() => {
+            hook.getCurrent().setReplyTarget({ kind: 'message', messageId: 'next-reply' });
+            hook.getCurrent().setPassage(passage);
+        });
+        let submitted: DiscussionDraftSubmission;
+        act(() => { submitted = hook.getCurrent().captureSubmittedCurrentness({ kind: 'post', discussionId: existingAddress.discussionId,
+            localId: 'reviewed-question' }, { content: buildDiscussionContent('Retained question', []), retainedCurrentness: retained.currentness }); });
+        await act(async () => { await hook.getCurrent().clearAfterObservedSuccess(submitted!); });
+        expect(hook.getCurrent().text).toBe('');
+        expect(hook.getCurrent().replyTarget).toEqual({ kind: 'message', messageId: 'next-reply' });
+        expect(hook.getCurrent().passage).toEqual(passage);
+        expect(hook.getCurrent().submitted).toBeNull();
+        expect(hook.getCurrent().pendingMutationAttempt).toBeNull();
+        await hook.unmount();
+    });
     it('clears the submitted passage, reply and invitees independently of newer text after acceptance', async () => {
         const passage = { ref: { kind: 'doc' as const, artifactId: 'notes', serverId: scope.serverId },
             revision: { headerVersion: 1, bodyVersion: 1 }, range: { start: 0, end: 6 }, quote: 'source' };

@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
+import { UserProfileSchema } from '@happier-dev/protocol/social/friends';
 import { SessionMessageAccountActorV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
 import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
 import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
-import { serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { serveAccountHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { getStorage } from '@/sync/domains/state/storage';
 import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
 import { t } from '@/text';
@@ -14,6 +15,13 @@ import { TokenStorage, type HomeCredentialWriteRollback } from '@/auth/storage/t
 import { useDiscussionParticipantProfiles } from './useDiscussionParticipantProfiles';
 
 afterEach(standardCleanup);
+
+function requestedPeople(request: ServedHomeRequest): string[] {
+    const body = request.body;
+    if (!body || typeof body !== 'object' || !('ids' in body) || !Array.isArray(body.ids)
+        || !body.ids.every((id): id is string => typeof id === 'string')) throw new Error('invalid_people_batch');
+    return body.ids;
+}
 
 function usePeople(input: Omit<Parameters<typeof useDiscussionParticipantProfiles>[0], 'accountLifetime'>) {
     const bindings = useServerCredentialAccountScopeBindings([input.scope.serverId]);
@@ -29,13 +37,38 @@ function roster(ownerAccountId: string) {
 }
 
 describe('useDiscussionParticipantProfiles', () => {
+    it('lets the explicit roster relationship override a retained summary profile and removes the former avatar', async () => {
+        const home = await serveAccountHomes({ homes: [{ key: 'captured', serverUrl: 'https://discussion-former-people.test', accountId: 'viewer' }],
+            route: () => undefined });
+        try {
+            const scope = { serverId: home.homes.captured!.id, accountId: 'viewer' };
+            const retainedProfile = { name: 'Retained Person', firstName: 'Retained', lastName: 'Person',
+                username: 'retained', avatarUrl: 'https://discussion-former-people.test/retained.png' };
+            const people = DiscussionParticipantsListResponseV1Schema.parse({ ...roster('owner'), accountActors: [
+                { v: 1, accountId: 'owner', accessibility: 'current', profile: null },
+                { v: 1, accountId: 'collaborator', accessibility: 'former', profile: retainedProfile },
+            ] });
+            const participantAccounts = [SessionMessageAccountActorV1Schema.parse({ v: 1, accountId: 'collaborator',
+                accessibility: 'current', profile: retainedProfile })];
+            const hook = await renderHook(() => usePeople({ scope, roster: people, participantAccounts, enabled: true }));
+
+            const actor = hook.getCurrent().accounts.get('collaborator');
+            expect(actor?.accessibility).toBe('former');
+            expect(resolveAccountActorPresentation(actor!, scope)).toMatchObject({
+                name: t('message.accountActorFormerMember'), avatar: { imageUrl: null },
+            });
+            expect(home.requests.filter(request => request.path.startsWith('/v1/user/'))).toHaveLength(0);
+            await hook.unmount();
+        } finally { await home.dispose(); }
+    });
+
     it('uses the complete profiles already admitted by the Discussion summary without per-person HTTP reads', async () => {
         const home = await serveAccountHomes({ homes: [{ key: 'captured', serverUrl: 'https://discussion-admitted-people.test', accountId: 'viewer' }],
-            route: request => request.path.startsWith('/v1/user/') ? Response.json({ user: {
-                id: request.path.split('/').at(-1), firstName: 'Scoped', lastName: request.path.split('/').at(-1),
+            route: request => request.path === '/v1/user/profiles' ? Response.json({ users: requestedPeople(request).map(id => ({
+                id: id, firstName: 'Scoped', lastName: id,
                 username: 'person', avatar: { path: '/face.png', url: 'https://discussion-admitted-people.test/face.png' },
                 bio: null, status: 'none', publicKey: null,
-            } }) : undefined });
+            })) }) : undefined });
         try {
             const scope = { serverId: home.homes.captured!.id, accountId: 'viewer' };
             const people = DiscussionParticipantsListResponseV1Schema.parse({ ...roster('owner'),
@@ -53,6 +86,7 @@ describe('useDiscussionParticipantProfiles', () => {
             await vi.waitFor(() => expect(hook.getCurrent().accounts.size).toBe(5));
             expect(hook.getCurrent().owner?.profile?.avatarUrl).toBe('https://discussion-admitted-people.test/face.png');
             const reads = home.requests.filter(request => request.path.startsWith('/v1/user/'));
+            console.info('Discussion admitted-profile HTTP cost', reads.length);
             expect(reads.length).toBe(0);
             await hook.rerender({ participantAccounts: participantAccounts.map(actor => actor.accountId === 'owner'
                 ? { ...actor, profile: null } : actor) });
@@ -66,17 +100,19 @@ describe('useDiscussionParticipantProfiles', () => {
         const home = await serveAccountHomes({
             homes: [{ key: 'captured', serverUrl: 'https://discussion-people.test', accountId: 'viewer' },
                 { key: 'focused', serverUrl: 'https://discussion-other-people.test', accountId: 'owner' }],
-            route: request => request.path.startsWith('/v1/user/') ? Response.json({ user: {
-                id: request.path.split('/').at(-1), firstName: 'Captured', lastName: 'Person', username: 'person',
+            route: request => request.path === '/v1/user/profiles' ? Response.json({ users: requestedPeople(request).map(id => ({
+                id: id, firstName: 'Captured', lastName: 'Person', username: 'person',
                 avatar: { path: '/face.png', url: 'https://discussion-people.test/face.png' },
                 bio: null, status: 'none', publicKey: null,
-            } }) : undefined,
+            })) }) : undefined,
         });
         try {
             const scope = { serverId: home.homes.captured!.id, accountId: 'viewer' };
             const wrongScope = { serverId: home.homes.focused!.id, accountId: 'owner' };
             getStorage().setState({ profileScope: wrongScope,
                 profile: AccountProfileSchema.parse({ id: 'owner', firstName: 'Wrong', lastName: 'Home' }) });
+            getStorage().getState().applyUsers({ owner: UserProfileSchema.parse({ id: 'owner', name: 'Wrong Home Cache',
+                firstName: '', lastName: null, username: '', avatar: null, bio: null, status: 'none', publicKey: null }) });
             const people = roster('owner');
             const hook = await renderHook(() => usePeople({ scope, roster: people, enabled: true }));
             await vi.waitFor(() => expect(hook.getCurrent().owner?.profile?.name).toBe('Captured Person'));
@@ -84,16 +120,31 @@ describe('useDiscussionParticipantProfiles', () => {
                 profile: { name: 'Captured Person', avatarUrl: 'https://discussion-people.test/face.png' } });
             expect(hook.getCurrent().accounts.get('collaborator')?.profile?.avatarUrl).toBe('https://discussion-people.test/face.png');
             expect(resolveAccountActorPresentation(hook.getCurrent().owner!, wrongScope)).toMatchObject({ isSelf: false, name: 'Captured Person' });
-            expect(home.requests.filter(request => request.path.startsWith('/v1/user/')).map(request => request.home)).toEqual(['captured', 'captured']);
+            expect(home.requests.filter(request => request.path.startsWith('/v1/user/')).map(request => request.home)).toEqual(['captured']);
+            await hook.unmount();
+        } finally { await home.dispose(); }
+    });
+
+    it('reuses only the exact Home Account cache without a People request', async () => {
+        const home = await serveAccountHomes({ homes: [{ key: 'captured', serverUrl: 'https://discussion-cached-people.test', accountId: 'viewer' }],
+            route: () => undefined });
+        try {
+            const scope = { serverId: home.homes.captured!.id, accountId: 'viewer' };
+            getStorage().getState().applyUsers({ colleague: UserProfileSchema.parse({ id: 'colleague', name: 'Cached Colleague',
+                firstName: '', lastName: null, username: '', avatar: null, bio: null, status: 'none', publicKey: null }) });
+            const hook = await renderHook(() => usePeople({ scope, roster: null, accountIds: ['colleague'], enabled: true }));
+            await vi.waitFor(() => expect(hook.getCurrent().status).toBe('ready'));
+            expect(hook.getCurrent().accounts.get('colleague')?.profile?.name).toBe('Cached Colleague');
+            expect(home.requests.filter(request => request.path.startsWith('/v1/user/'))).toHaveLength(0);
             await hook.unmount();
         } finally { await home.dispose(); }
     });
 
     it('keeps missing owner profiles distinct from unnamed members and overlays only the exact viewer profile', async () => {
         const home = await serveAccountHomes({ homes: [{ key: 'captured', serverUrl: 'https://discussion-viewer-profile.test', accountId: 'viewer' }],
-            route: request => request.path === '/v1/user/missing' ? Response.json({ error: 'not_found' }, { status: 404 })
-                : request.path.startsWith('/v1/user/') ? Response.json({ user: { id: request.path.split('/').at(-1),
-                    firstName: '', lastName: null, username: '', avatar: null, bio: null, status: 'none', publicKey: null } }) : undefined });
+            route: request => request.path === '/v1/user/profiles'
+                ? Response.json({ users: requestedPeople(request).filter(id => id !== 'missing').map(id => ({ id,
+                    firstName: '', lastName: null, username: '', avatar: null, bio: null, status: 'none', publicKey: null })) }) : undefined });
         try {
             const scope = { serverId: home.homes.captured!.id, accountId: 'viewer' };
             const hook = await renderHook(({ owner }) => usePeople({ scope, roster: roster(owner), enabled: true }),
@@ -122,14 +173,14 @@ describe('useDiscussionParticipantProfiles', () => {
             { key: 'captured', serverUrl: 'https://discussion-profile-renewal.test', accountId: 'viewer' },
             { key: 'focused', serverUrl: 'https://discussion-profile-renewal-other.test', accountId: 'other' },
         ], route: request => {
-            if (!request.path.startsWith('/v1/user/')) return undefined;
-            const id = request.path.split('/').at(-1)!;
-            if (id === 'owner' && ++ownerReads === 2) {
+            if (request.path !== '/v1/user/profiles') return undefined;
+            const ids = requestedPeople(request);
+            if (ids.includes('owner') && ++ownerReads === 2) {
                 retiredSignal = request.signal;
                 return new Promise<Response>(resolve => { releaseRetired = resolve; });
             }
-            return Response.json({ user: { id, firstName: ownerReads >= 3 ? 'Fresh' : 'Old', lastName: 'Owner', username: 'owner',
-                avatar: null, bio: null, status: 'none', publicKey: null } });
+            return Response.json({ users: ids.map(id => ({ id, firstName: ownerReads >= 3 ? 'Fresh' : 'Old', lastName: 'Owner', username: 'owner',
+                avatar: null, bio: null, status: 'none', publicKey: null })) });
         } });
         const rollbacks: HomeCredentialWriteRollback[] = [];
         try {
@@ -152,8 +203,8 @@ describe('useDiscussionParticipantProfiles', () => {
             await rotate('renewal-two');
             await vi.waitFor(() => expect(hook.getCurrent().owner?.profile?.name).toBe('Fresh Owner'));
             expect(retiredSignal?.aborted).toBe(true);
-            await act(async () => { releaseRetired!(Response.json({ user: { id: 'owner', firstName: 'Retired', lastName: 'Owner',
-                username: 'owner', avatar: null, bio: null, status: 'none', publicKey: null } })); });
+            await act(async () => { releaseRetired!(Response.json({ users: [{ id: 'owner', firstName: 'Retired', lastName: 'Owner',
+                username: 'owner', avatar: null, bio: null, status: 'none', publicKey: null }] })); });
             expect(hook.getCurrent().owner?.profile?.name).toBe('Fresh Owner');
             await hook.unmount();
         } finally {

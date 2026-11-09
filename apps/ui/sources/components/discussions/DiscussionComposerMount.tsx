@@ -45,6 +45,8 @@ export function DiscussionComposerMount(props: Readonly<{
             revision: document.revision, ref: props.composer, text: document.text,
             references: [...composerReferencesFromStructuredMentions({ text: document.text, mentions: document.mentions })],
             attachments: [], layout: layout.current,
+            // This bit admits structured plugin attachment transactions. The ordinary file
+            // tray is separate; this adapter cannot yet commit plugin attachment records.
             capabilities: { text: true, references: true, attachments: false, submit: true },
             state: { focused: focused.current, editable: !props.disabled && lock?.mode !== 'editAndSubmit',
                 submittable: !props.disabled && document.text.trim().length > 0 && lock === null,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { createActionExecutor, normalizeActionsSettingsV1 } from '@happier-dev/protocol';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { createHomeHubArtifactPortV1 } from '@happier-dev/protocol/home';
 import { createWidgetActionInputResolverV1 } from '@happier-dev/protocol/widgets';
 import { createWorkBoardArtifactBoundary } from '@/dev/testkit/harness/workBoardArtifactBoundary';
@@ -82,6 +83,29 @@ describe('Home mounted size Action adapter', () => {
         expect(requests).toEqual(['widgets.item.size.set', 'widgets.item.size.set']);
         expect(store.getSnapshot()).toMatchObject({ status: 'ready', layout: { items: expect.arrayContaining([{ kind: 'widget', instance: expect.objectContaining({ id: 'checks' }), size: 'tall' }]) } });
         expect(store.getSnapshot().failedIntent).toBeUndefined();
+        expect(store.getSnapshot().layout).toEqual(await owner.read());
+    });
+    it('changes a Home copy\u2019s network access through the universal network Action, not a Home layout update', async () => {
+        const boundary = createWorkBoardArtifactBoundary({ v: 1, boards: [] });
+        const scope = { serverId: 'home', accountId: 'one' };
+        const transport = boundary.forAccount(scope.accountId);
+        const owner = createHomeHubArtifactPortV1(transport, { accountId: scope.accountId });
+        await owner.apply({ kind: 'widget_add', instance: { v: 1, id: 'status', definition: { kind: 'artifact', artifactId: 'status-page' }, bindings: {} } });
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ homeHubArtifacts: owner, widgetAccountScope: () => scope }));
+        const requests: string[] = [];
+        const settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'widgets.item.network.set': ['ui'] } });
+        const execute: typeof executor.execute = (id, args, context) => {
+            requests.push(id);
+            return executor.execute(id, args, { ...context, actionsSettings: settings });
+        };
+        const store = createHomeHubAccountStore({ accountId: scope.accountId, transport, isCurrent: () => true,
+            execute: intent => executeHomeHubLayoutIntent({ intent, scope, transport, execute,
+                onApprovalPending: createActionApprovalContinuationObserver({ onExecuted: () => {} }).requestApproval }) });
+        await store.refresh();
+        await store.dispatch({ kind: 'network', instanceId: 'status', network: { networkOrigins: ['https://status.example.com'] } }, { rethrow: true });
+        expect(requests).toEqual(['widgets.item.network.set']);
+        const status = (await owner.read()).items.find(item => item.kind === 'widget' && item.instance.id === 'status');
+        expect(status?.kind === 'widget' ? status.instance.networkOverride : null).toEqual({ networkOrigins: ['https://status.example.com'] });
         expect(store.getSnapshot().layout).toEqual(await owner.read());
     });
 });

@@ -16,6 +16,8 @@ function readyCandidate() {
   const session = createSessionFixture({
     id: 'ready',
     serverId: 'home-a',
+    active: true,
+    activeAt: 1000,
     latestTurnStatus: 'completed',
     metadata: {
       path: '/home/alice/repo',
@@ -131,5 +133,14 @@ describe('Inbox session row line', () => {
       expect(line).not.toContain(offlineWords);
       expect(line).toContain('0.3');
     }
+  });
+
+  it('says whom a worker reports to and its latest update instead of the place every report shares (lab inbox-I1)', () => {
+    const candidate = readyCandidate();
+    const line = buildInboxSessionContextLine(candidate, { showHome: true, showNeed: false,
+      worker: { leadTitle: 'Payments v2 rollout', headline: 'Runbook drafted' } }) ?? '';
+    expect(line).toBe(`Runbook drafted · ${t('inbox.work.rows.reportsTo', { lead: 'Payments v2 rollout' })}`);
+    // An unreadable lead has no title to show: the row keeps saying where it runs.
+    expect(buildInboxSessionContextLine(candidate, { showHome: false, showNeed: false, worker: { leadTitle: null } })).toContain('0.3');
   });
 });

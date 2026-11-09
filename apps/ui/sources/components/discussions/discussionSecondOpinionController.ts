@@ -9,7 +9,7 @@ import type { DiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/m
 import type { ExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
-import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 
 type Draft = Pick<DiscussionSecondOpinionStartInputV1, 'title' | 'question' | 'reviewers' | 'participants'>;
 type Preview = Extract<DiscussionSecondOpinionStartResultV1, { status: 'preview' }>;
@@ -24,8 +24,7 @@ export type DiscussionSecondOpinionSnapshot = Readonly<{
     working: boolean;
     submitted: boolean;
     discussionMessage: DiscussionMessageRefV1 | null;
-    /** Asking several starts Fresh opinions; this is that Run. */
-    runHref: string | null;
+    approval: ActionApprovalContinuation | null;
 }>;
 
 /** L7's retained draft only; every effect stays at the captured-Home Action owner. */
@@ -35,11 +34,12 @@ export function createDiscussionSecondOpinionController(options: Readonly<{
     source: DiscussionSecondOpinionStartInputV1['source'];
     draft: Draft;
 }>) {
-    const client = createDiscussionClient(options);
+    let availability = options.availability;
+    const client = createDiscussionClient({ scope: options.scope, get availability() { return availability; } });
     let snapshot: DiscussionSecondOpinionSnapshot = {
         source: options.source, draft: options.draft,
         retry: { creationLocalId: randomUUID(), quoteLocalId: randomUUID(), questionLocalId: randomUUID() },
-        preview: null, result: null, working: false, submitted: false, discussionMessage: null, runHref: null,
+        preview: null, result: null, working: false, submitted: false, discussionMessage: null, approval: null,
     };
     const listeners = new Set<() => void>();
     const publish = (patch: Partial<DiscussionSecondOpinionSnapshot>) => {
@@ -48,34 +48,50 @@ export function createDiscussionSecondOpinionController(options: Readonly<{
     };
     let retainedAsk: DiscussionSecondOpinionStartInputV1 | null = null;
     let retainedDiscuss: Parameters<typeof client.create>[0] | null = null;
+    const settleApproval = (outcome: DiscussionClientOutcome<unknown>) => {
+        if (outcome.kind === 'approval_request_created') return {};
+        const rejected = outcome.kind === 'failed' && (outcome.errorCode === 'approval_rejected' || outcome.errorCode === 'approval_canceled');
+        if (rejected) { retainedAsk = null; retainedDiscuss = null; }
+        return { approval: null, ...(rejected ? { submitted: false } : {}) };
+    };
     const applyAsk = (outcome: DiscussionClientOutcome<DiscussionSecondOpinionStartResultV1>) => {
         const value = outcome.kind === 'succeeded' ? outcome.value : null;
-        publish({ working: false, result: { operation: 'second_opinion', outcome },
+        publish({ ...settleApproval(outcome), working: false, result: { operation: 'second_opinion', outcome },
             ...(value?.status === 'preview' ? { preview: value } : {}),
             ...(value?.status === 'preview_changed' && snapshot.preview
                 ? { preview: { ...snapshot.preview, preview: value.preview } } : {}),
-            ...(value?.status === 'asked' ? { discussionMessage: value.messageRef,
-                runHref: value.runId ? createWorkflowRunRoute(value.runId, value.discussion.serverId) : null } : {}),
+            ...(value?.status === 'asked' ? { discussionMessage: value.messageRef } : {}),
         });
         return outcome;
     };
     const runAsk = async (input: DiscussionSecondOpinionStartInputV1, signal?: AbortSignal) => {
         publish({ working: true });
-        return applyAsk(await client.secondOpinion(input, signal));
+        return applyAsk(await client.secondOpinion(input, signal, {
+            onPending: approval => publish({ approval }), onSettled: applyAsk,
+        }));
     };
-    const runDiscuss = async (input: Parameters<typeof client.create>[0], signal?: AbortSignal) => {
-        publish({ working: true });
-        const outcome = await client.create(input, signal);
-        publish({ working: false, result: { operation: 'discuss', outcome },
+    const applyDiscuss = (outcome: DiscussionClientOutcome<DiscussionCreateResultV1>) => {
+        publish({ ...settleApproval(outcome), working: false, result: { operation: 'discuss', outcome },
             ...(outcome.kind === 'succeeded' ? { discussionMessage: outcome.value.firstMessage.messageRef } : {}) });
         return outcome;
     };
+    const runDiscuss = async (input: Parameters<typeof client.create>[0], signal?: AbortSignal) => {
+        publish({ working: true });
+        return applyDiscuss(await client.create(input, signal, {
+            onPending: approval => publish({ approval }), onSettled: applyDiscuss,
+        }));
+    };
     return {
+        scope: options.scope,
+        setAvailability(value: SessionCollaborationAvailability) { availability = value; },
         getSnapshot: () => snapshot,
         subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
         updateDraft(draft: Draft): boolean {
             if (snapshot.submitted) return false;
-            publish({ draft, preview: null, result: null });
+            if (sameStrictJsonValue(snapshot.draft, draft)) return true;
+            const preview = sameStrictJsonValue(snapshot.draft.reviewers, draft.reviewers)
+                && sameStrictJsonValue(snapshot.draft.participants ?? null, draft.participants ?? null) ? snapshot.preview : null;
+            publish({ draft, preview, result: null });
             return true;
         },
         toggleReviewer(selection: ExecutableParticipantSelectionV1, question: string): boolean {
@@ -89,10 +105,12 @@ export function createDiscussionSecondOpinionController(options: Readonly<{
             return true;
         },
         async preview(signal?: AbortSignal) {
-            if (snapshot.working || snapshot.submitted) return;
+            if (snapshot.working || snapshot.submitted || snapshot.approval) return;
             const draft = snapshot.draft;
             publish({ working: true });
-            const outcome = await client.secondOpinion({ ...draft, source: snapshot.source, retry: snapshot.retry, intent: 'preview' }, signal);
+            const outcome = await client.secondOpinion({ ...draft, source: snapshot.source, retry: snapshot.retry, intent: 'preview' }, signal, {
+                onPending: approval => publish({ approval }), onSettled: applyAsk,
+            });
             if (snapshot.draft !== draft) { publish({ working: false }); return outcome; }
             return applyAsk(outcome);
         },
@@ -110,9 +128,16 @@ export function createDiscussionSecondOpinionController(options: Readonly<{
             const prepared = prepareAnchoredDiscussionCreateV1({ source: snapshot.source, title: snapshot.draft.title,
                 quote: snapshot.preview.sourceText, creationLocalId: snapshot.retry.creationLocalId,
                 quoteLocalId: snapshot.retry.quoteLocalId, participants: snapshot.draft.participants });
-            // Machine-local attachment sources belong to Agent posts; this composer stages uploads itself.
-            const { firstMessage, attachmentSources: _machineSources, ...creation } = prepared;
-            retainedDiscuss = { ...creation, messageLocalId: snapshot.retry.quoteLocalId, content: firstMessage.content,
+            const { firstMessage, ...creation } = prepared;
+            const question = snapshot.draft.question.trim();
+            const content = firstMessage.content;
+            const authored = !question ? content : 'parts' in content
+                ? { ...content, parts: [...content.parts, { t: 'text' as const, text: question }] }
+                : content.kind === 'doc_passage_comment'
+                    ? { ...content, content: { ...content.content, parts: [...content.content.parts, { t: 'text' as const, text: question }] } }
+                    : content;
+            retainedDiscuss = { ...creation, messageLocalId: snapshot.retry.quoteLocalId,
+                content: authored,
                 replyTarget: prepared.firstMessage.replyTarget };
             publish({ submitted: true });
             return runDiscuss(retainedDiscuss, signal);

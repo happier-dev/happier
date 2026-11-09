@@ -172,23 +172,25 @@ export const DiscussionSourceMarkers = React.memo(
 );
 
 const styles = StyleSheet.create((theme) => ({
-  // The answer's saved-to-library line shape, so a Discussion on an answer reads as the same family of fact.
+  // Lab flows `asked`/`backP`: the one way back from an answer to what was started on it, a full-width
+  // line under the answer (mark, what it is, Open), so it reads as the answer's own result, not a chip.
   marker: {
     flexDirection: 'row',
     alignItems: 'center',
-    alignSelf: 'flex-start',
-    gap: theme.space.s4,
+    alignSelf: 'stretch',
+    gap: theme.space.s8,
     minHeight: 28,
-    paddingHorizontal: theme.space.s8,
-    marginTop: theme.space.s4,
+    paddingHorizontal: theme.space.s12,
+    paddingVertical: theme.space.s8,
+    marginTop: theme.space.s8,
     borderRadius: theme.borderRadius.md,
-    maxWidth: '100%',
     ...resolveThemeHairlineBorderStyle(theme.colors.border.surface),
   },
   markerActive: { backgroundColor: theme.colors.surface.pressed },
   title: {
     ...Typography.variant('meta', 'medium'),
     color: theme.colors.text.primary,
-    flexShrink: 1,
+    flex: 1,
+    minWidth: 0,
   },
 }));

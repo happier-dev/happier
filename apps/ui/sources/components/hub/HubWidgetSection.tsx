@@ -3,16 +3,16 @@ import { View, type LayoutChangeEvent } from 'react-native';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { useLayoutPresentationActive, usePresentedValue } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiProjection, useAppShellPluginUiProjectionCurrentness } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { WidgetSurface, type WidgetSurfaceProps } from '@/components/widgets/surface/WidgetSurface';
-import { getWidgetSizeFootprintV1, resolveWidgetRowOwnerSizeV1, type WidgetInputBindingsV1, type WidgetSizeV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
+import { getWidgetSizeFootprintV1, resolveWidgetRowOfThreeSizeV1, resolveWidgetRowOwnerSizeV1, type WidgetInputBindingsV1, type WidgetSizeV1, type WidgetInstanceV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import {
     useMeasuredNearViewport,
     type NearViewportTracker,
 } from '@/components/widgets/nearViewport';
-import { isBuiltinWidgetSwitchedOff, readWidgetSourcePluginName, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
+import { isBuiltinWidgetSwitchedOff, readWidgetSourcePluginName, widgetCandidateHoldsHtml, type WidgetCandidate } from '@/components/widgets/widgetCatalog';
 import { useAtmosphereMoments } from '@/components/atmosphere/atmosphereMoments';
 import { t } from '@/text';
 
@@ -21,7 +21,7 @@ import { WidgetFrame, type WidgetFrameFooter, type WidgetFrameStyle } from '@/co
 import { useWidgetFrameTitle } from '@/components/widgets/frame/widgetFrameTitle';
 import { useWidgetInstanceBindingLabel } from '@/components/widgets/surface/useWidgetInstanceBindingLabel';
 import { useWidgetCarriedIdentity } from '@/components/widgets/surface/widgetCarriedIdentity';
-import { WidgetFrameBodyCaptionContext, WidgetFrameBodyMetaContext } from '@/components/widgets/frame/widgetFrameBodyCaption';
+import { WidgetFrameBodyCaptionContext, WidgetFrameBodyIdentityContext, WidgetFrameBodyMetaContext, type WidgetFrameBodyIdentity } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { widgetGroupFollowSource } from '@/components/widgets/group/widgetGroupInputs';
 import { useIsTablet } from '@/utils/platform/responsive';
 import { EntityDropSettledFeedback, type EntityDropSettledMatch } from '@/components/ui/treeDragDrop/ui/EntityDropSettledFeedback';
@@ -34,9 +34,10 @@ import { useSessionSurfaceEntityDrag, useSessionSurfaceCarriedStyle, SessionSurf
  * has one page to open. The plugin's body draws its own rows and states (loading, empty, error,
  * stale); the frame keeps their room.
  *
- * Its body is built only while Home is visible and the section is near the viewport;
+ * Its body is built while Home is visible and the section is near the viewport;
  * otherwise it keeps its place (the height it last had) and holds no plugin execution, Host API
- * binding or subscription. The widget's data lives inside that body, so a change there re-renders
+ * binding or subscription. A hidden retained Home keeps the body it last presented, without live demand.
+ * The widget's data lives inside that body, so a change there re-renders
  * this section alone — never the hub or its sibling sections.
  */
 export const HubWidgetSection = React.memo(function HubWidgetSection(props: Readonly<{
@@ -45,6 +46,10 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
     size?: WidgetSizeV1;
     /** Alone in its row of a two-up grid: it presents at its full-row size (same height), the saved size untouched. */
     ownsRow?: boolean;
+    /** In Home's row of three smalls: it presents at its column's regular height, the saved size untouched. */
+    inRowOfThree?: boolean;
+    /** Leads Home's cards on its own row (58d AF1): full width at its content's height, the saved size untouched. */
+    leads?: boolean;
     menu: React.ReactNode;
     /** Card or plain: this section's override, else Home's Appearance default (resolved by the slot). */
     frameStyle: WidgetFrameStyle;
@@ -75,8 +80,9 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
     const presented = useLayoutPresentationActive();
     const phone = !useIsTablet();
     const descriptor = props.widget ?? null;
-    const appRuntime = useAppShellPluginUiProjection();
-    const pluginName = readWidgetSourcePluginName(appRuntime.pluginUiProjection, descriptor) ?? t('sessionBoard.item.pluginUnavailable.title');
+    // Only the plugin's name: the projection's other facts never redraw this card.
+    const pluginName = useAppShellPluginUiProjection(value => readWidgetSourcePluginName(value.pluginUiProjection, descriptor))
+        ?? t('sessionBoard.item.pluginUnavailable.title');
     const { title: frameTitle, onDefinitionRead } = useWidgetFrameTitle(props.instance, descriptor);
     // Copies are named by what they are bound to, in the source slot (lab dbind H, N1).
     const bindingLabel = useWidgetInstanceBindingLabel(props.instance, descriptor);
@@ -84,6 +90,9 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
     const [bodyCaption, setBodyCaption] = React.useState<string | null>(null);
     // …and may say its one live fact in the header's meta slot ("1 needs you").
     const [bodyMeta, setBodyMeta] = React.useState<React.ReactNode>(null);
+    // …and, when nobody named the widget, its name and mark ("CPU", not the generic "Metric").
+    const [bodyIdentity, setBodyIdentity] = React.useState<WidgetFrameBodyIdentity | null>(null);
+    const lentIdentity = props.instance.displayName == null ? bodyIdentity : null;
     // A built-in withdrawn by its own switch (Your Home's atmosphere moment) keeps its place in the layout, undrawn.
     const switchedOff = isBuiltinWidgetSwitchedOff(props.instance.definition, useAtmosphereMoments());
     const source = props.followSource
@@ -102,9 +111,13 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
     const sectionRef = React.useRef<View>(null);
     const { near, measure } = useMeasuredNearViewport(props.tracker, sectionRef, presented, props.instance.id);
     const [bodyHeight, setBodyHeight] = React.useState(0);
-    // A retained hidden Home keeps its body; live demand still withdraws with presentation.
+    // A hidden retained tab keeps the body it last showed (its demand withdraws with presentation), so
+    // showing the tab again rebuilds nothing.
     const active = usePresentedValue(presented && near);
-    const size = props.ownsRow ? resolveWidgetRowOwnerSizeV1('home', savedSize, descriptor?.sizeDeclaration) : savedSize;
+    const size = props.leads
+        ? resolveWidgetRowOwnerSizeV1('home', resolveWidgetRowOfThreeSizeV1('home', savedSize, descriptor?.sizeDeclaration), descriptor?.sizeDeclaration)
+        : props.ownsRow ? resolveWidgetRowOwnerSizeV1('home', savedSize, descriptor?.sizeDeclaration)
+        : props.inRowOfThree ? resolveWidgetRowOfThreeSizeV1('home', savedSize, descriptor?.sizeDeclaration) : savedSize;
     const widgetPresentation = React.useMemo(() => ({ size, footprint: getWidgetSizeFootprintV1('home', size)! }), [size]);
 
     const onBodyLayout = React.useCallback((event: LayoutChangeEvent) => {
@@ -136,7 +149,9 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
             <View testID={`${props.testID}.body`} onLayout={onBodyLayout} style={{ flexGrow: 1 }}>
                 <WidgetFrameBodyCaptionContext.Provider value={setBodyCaption}>
                 <WidgetFrameBodyMetaContext.Provider value={setBodyMeta}>
+                <WidgetFrameBodyIdentityContext.Provider value={setBodyIdentity}>
                     <HubWidgetBody widget={descriptor ?? undefined} instance={props.instance} groupBindings={props.groupBindings} size={size} onRepairInputs={props.onRepairInputs} onDefinitionRead={onDefinitionRead} testID={`${props.testID}.widget`} />
+                </WidgetFrameBodyIdentityContext.Provider>
                 </WidgetFrameBodyMetaContext.Provider>
                 </WidgetFrameBodyCaptionContext.Provider>
             </View>
@@ -160,16 +175,18 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
                 placement="home"
                 widgetPresentation={widgetPresentation}
                 {...(props.sectionHost ? { title: null } : {
-                    mark: descriptor?.icon ?? 'squares-four',
-                    title: props.titleEditor ?? frameTitle,
+                    mark: lentIdentity?.mark ?? descriptor?.icon ?? 'squares-four',
+                    title: props.titleEditor ?? lentIdentity?.title ?? frameTitle,
                     source,
                     meta: bodyMeta,
                 })}
                 grouped={props.grouped === true || props.sectionHost === true}
                 fill
-                {...(props.sectionHost ? { bodyHeight: 'content' as const } : {})}
+                // A lead card has its row to itself (no partner to match), so it takes its content's height.
+                {...(props.sectionHost || props.leads ? { bodyHeight: 'content' as const } : {})}
                 {...(props.entityDrag && props.showGrip ? { leading: <SessionSurfaceEntityDragHandle drag={drag} title={props.entityDrag.title} testID={`${props.testID}.move`} /> } : {})}
                 menu={props.menu}
+                livePicture={widgetCandidateHoldsHtml(descriptor)}
                 body={body}
                 footer={props.sectionHost ? null : footer}
             />
@@ -181,7 +198,7 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
 
 /** The mounted body: the one installed-widget arm, against the app shell's plugin projection. */
 function HubWidgetBody(props: Readonly<{ widget?: WidgetCandidate; instance: WidgetInstanceV1; groupBindings?: WidgetInputBindingsV1; size: WidgetSizeV1; onRepairInputs?: (() => void) | undefined; onDefinitionRead?: WidgetSurfaceProps['onDefinitionRead']; testID: string }>) {
-    const runtime = useAppShellPluginUiProjection();
+    const runtime = useAppShellPluginUiProjectionCurrentness();
     const accountScope = useActiveServerAccountScope();
     const scope = React.useMemo<WidgetSurfaceRefV1 | null>(() => accountScope
         ? { ...accountScope, owner: { kind: 'home' } } : null, [accountScope]);

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Platform, View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 
 import { WorkspaceEmbeddedTerminalPane } from '@/components/projects/panes/details/views/WorkspaceEmbeddedTerminalPane';
@@ -40,7 +40,6 @@ export const ProjectCommandOutputPane = React.memo(
       onOpenInTerminal?: () => void;
     }>,
   ) {
-    const { theme } = useUnistyles();
     const execute = React.useMemo(() => createFrontDoorActionExecute(), []);
     const [copying, setCopying] = React.useState(false);
     const copy = async () => {
@@ -118,10 +117,9 @@ export const ProjectCommandOutputPane = React.memo(
         style={[
           styles.pane,
           hugsOutput
-            ? { maxHeight: props.height, backgroundColor: theme.colors.surface.base }
+            ? { maxHeight: props.height }
             : {
                 height: props.height ?? 240,
-                backgroundColor: theme.colors.surface.base,
               },
         ]}
       >

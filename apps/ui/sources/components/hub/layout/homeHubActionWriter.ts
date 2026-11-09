@@ -1,4 +1,4 @@
-import type { createActionExecutor } from '@happier-dev/protocol';
+import type { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createHomeHubArtifactPortV1, HomeHubLayoutV1Schema, type HomeHubArtifactTransportV1, type HomeHubLayoutIntent } from '@happier-dev/protocol/home';
 import { classifyWidgetDefinitionCommandResult } from '@/components/widgets/definitions/widgetDefinitionCommands';
 import { resumeActionExecutionResult, type ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
@@ -18,18 +18,20 @@ export async function executeHomeHubLayoutIntent(input: Readonly<{
         serverId: input.scope.serverId, expectedAccountId: input.scope.accountId,
         signal: input.signal,
     } as const;
-    const actionId = input.intent.kind === 'widget_size' ? 'widgets.item.size.set'
-        : input.intent.kind === 'remove' ? 'widgets.item.remove' : 'home.hub.layout.update';
-    const actionInput = input.intent.kind === 'widget_size' ? { ref: {
-            surface: { ...input.scope, owner: { kind: 'home' } }, instanceId: input.intent.instanceId,
-        }, size: input.intent.size } : input.intent.kind === 'remove' ? { ref: {
-            surface: { ...input.scope, owner: { kind: 'home' } }, instanceId: input.intent.instanceId,
-        } } : { intent: input.intent };
+    // A copy's size, removal and network access are its universal widget Actions (with their own policy); the rest is Home's layout.
+    const intent = input.intent;
+    const actionId = intent.kind === 'widget_size' ? 'widgets.item.size.set'
+        : intent.kind === 'remove' ? 'widgets.item.remove'
+        : intent.kind === 'network' ? 'widgets.item.network.set' : 'home.hub.layout.update';
+    const ref = (instanceId: string) => ({ surface: { ...input.scope, owner: { kind: 'home' } }, instanceId });
+    const actionInput = intent.kind === 'widget_size' ? { ref: ref(intent.instanceId), size: intent.size }
+        : intent.kind === 'remove' ? { ref: ref(intent.instanceId) }
+        : intent.kind === 'network' ? { ref: ref(intent.instanceId), network: intent.network } : { intent };
     const result = await resumeActionExecutionResult({
         result: await input.execute(actionId, actionInput, context), actionId, actionInput,
         scope: input.scope, signal: input.signal, onApprovalPending: input.onApprovalPending,
     });
-    if (actionId === 'widgets.item.size.set' || actionId === 'widgets.item.remove') {
+    if (actionId !== 'home.hub.layout.update') {
         const outcome = classifyWidgetDefinitionCommandResult(actionId, result);
         if (outcome.kind === 'refused') throw Object.assign(new Error(outcome.errorCode), { code: outcome.errorCode });
         // Universal mutation acknowledgement does not fabricate a native layout revision.

@@ -4,8 +4,8 @@ import { useUnistyles } from 'react-native-unistyles';
 
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import { useServerScopedMachine, useSession } from '@/sync/domains/state/storage';
-import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { readOpenApprovalInboxEntry } from '@/sync/domains/artifacts/approvalArtifactAdmission';
+import { useOpenApprovalArtifactBodyDemand, useServerScopedMachineLabel, useSession } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { resolveApprovalHomeServerId } from '@/components/approvals/approvalHomeServerId';
@@ -15,25 +15,33 @@ import { describeResourceProposalInboxFacts } from '@/components/approvals/resou
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import {
   describeUnnamedApprovalRequester,
+  isHappierGuardApproval,
   readApprovalRequesterSurface,
   resolveApprovalHomeName,
   resolveApprovalHomeSentenceName,
 } from '@/components/approvals/approvalRequesterLabels';
 import { readApprovalSessionName, useApprovalSessionReading } from '@/components/approvals/useApprovalSessionReading';
-import { readApprovalOriginMachineId, readApprovalSessionEndpointLabels } from '@/components/approvals/approvalEndpointLabels';
+import { readApprovalOriginMachineId } from '@/components/approvals/approvalEndpointLabels';
 import { InboxWorkRow } from '../InboxWorkRow';
 import { InboxRelativeTime } from '../InboxRelativeTime';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { readApprovalQuickActions } from '@/components/approvals/approvalQuickActions';
-import { readActionApprovalReview } from '@/components/approvals/actionApprovalReview';
+import { readActionApprovalReview, type ActionApprovalReview } from '@/components/approvals/actionApprovalReview';
 import { readProjectCommandApproval } from '@/components/approvals/ProjectCommandApprovalFacts';
 import { ApprovalDecisionBar } from '@/components/approvals/ApprovalDecisionBar';
 import {
   alertApprovalFailure,
   useApprovalDecisionHandler,
 } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
-import type { ApprovalRequest } from '@happier-dev/protocol';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { useApprovalRequesterViewer } from '@/components/approvals/ApprovalRequesterConfirmationSection';
+
+/**
+ * The row is itself a target: its answer pills keep to their own gaps and never reach up or down into the
+ * row's text (touch-target doctrine: a control nested in a tappable row keeps its drawn size).
+ */
+const ROW_BUTTON_REACH = { top: 0, bottom: 0 } as const;
 
 /**
  * A simple approval's one-shot answer from its row (lab coordination P4): a quiet Deny and a bordered
@@ -44,10 +52,12 @@ function ApprovalInboxDecision(
   props: Readonly<{
     artifact: DecryptedArtifact;
     approval: ApprovalRequest;
+    /** The verb and irreversibility the approval page and the transcript card read from the same owner. */
+    review: Pick<ActionApprovalReview, 'approveVerb' | 'irreversible'>;
     sessionId: string;
     serverId: string;
   }>,
-): React.ReactElement {
+): React.ReactElement | null {
   const decide = useApprovalDecisionHandler(
     props.artifact,
     props.approval,
@@ -57,16 +67,14 @@ function ApprovalInboxDecision(
   const [deciding, setDeciding] = React.useState<'approve' | 'reject' | null>(
     null,
   );
-  // The verb and irreversibility the approval page and the transcript card read from the same owner.
-  const { approveVerb, irreversible } = React.useMemo(
-    () => readActionApprovalReview(props.approval),
-    [props.approval],
-  );
+  const [recorded, setRecorded] = React.useState(false);
+  const { approveVerb, irreversible } = props.review;
   const run = (decision: 'approve' | 'reject') => {
     if (deciding) return;
     setDeciding(decision);
     fireAndForget(
-      decide(decision)
+      decide(decision, { onExecution: () => setRecorded(true) })
+        .then((accepted) => { if (accepted) setRecorded(true); })
         .catch((error: unknown) => {
           alertApprovalFailure(error);
         })
@@ -74,8 +82,9 @@ function ApprovalInboxDecision(
       { tag: `ApprovalInboxCard.${decision}` },
     );
   };
+  if (recorded) return null;
   return (
-    <ApprovalDecisionBar size="small" quiet disabled={deciding !== null} irreversible={irreversible} hideIrreversibleNote
+    <ApprovalDecisionBar size="small" quiet hitReach={ROW_BUTTON_REACH} disabled={deciding !== null} irreversible={irreversible} hideIrreversibleNote
       approve={{ testID: `inbox.approval.${props.artifact.id}.allow_once`,
         label: approveVerb ?? t('inbox.work.quickDecision.allowOnce'), busy: deciding === 'approve',
         onPress: () => run('approve') }}
@@ -114,6 +123,8 @@ export const ApprovalInboxCard = React.memo(
     }>,
   ): React.ReactElement => {
     const { theme } = useUnistyles();
+    // The list knows this row from its header; the mounted row reads its own body for its decision facts.
+    useOpenApprovalArtifactBodyDemand(props.artifact);
 
     const sessionId =
       typeof props.artifact.header?.sessionId === 'string'
@@ -143,8 +154,22 @@ export const ApprovalInboxCard = React.memo(
         ),
       [props.artifact],
     );
-    const originMachine = useServerScopedMachine(serverId || null, sessionId ? '' : readApprovalOriginMachineId(parsedApproval));
-    const originMachineLabel = readApprovalSessionEndpointLabels({ session: null, machine: originMachine }).machineLabel;
+    // The shared review owner, read once per approval version: list re-renders never re-derive it.
+    const review = React.useMemo(
+      () => parsedApproval?.family === 'built_in' ? readActionApprovalReview(parsedApproval.request) : null,
+      [parsedApproval],
+    );
+    const requesterConfirmation = parsedApproval?.family === 'target_action'
+      ? parsedApproval.request.requesterConfirmation
+      : parsedApproval?.family === 'built_in' && parsedApproval.request.v === 2
+        ? parsedApproval.request.requesterConfirmation
+        : undefined;
+    const requesterMayDecide = useApprovalRequesterViewer(requesterConfirmation, serverId || null);
+    // The card names the Machine; it subscribes to that name, not to the record its presence heartbeats replace.
+    const originMachineLabel = useServerScopedMachineLabel(
+      serverId || null,
+      sessionId ? '' : readApprovalOriginMachineId(parsedApproval),
+    );
 
     // The one title rule shared with the approval page and its tab.
     const { title, actionTitle } = useApprovalRequestTitle(
@@ -152,7 +177,7 @@ export const ApprovalInboxCard = React.memo(
       serverId || null,
     );
 
-    const sessionTitle = session ? (serverId ? readApprovalSessionName(session, serverId, nowMs) : getSessionName(session)) : null;
+    const sessionTitle = session ? readApprovalSessionName(session, serverId || null, nowMs) : null;
     // What tells this request from its siblings, on one line like every other Inbox row: where it comes
     // from, the Action's name when the title does not already say it, the session that asked (by name,
     // or by where it lives when this device does not have it; never its id, its Home's address or its folder path),
@@ -163,11 +188,13 @@ export const ApprovalInboxCard = React.memo(
       typeof value === 'string' && value.trim().length > 0;
     const homeName = resolveApprovalHomeName(serverId);
     // While the Home's list is still being read, no claim is made about where the session lives.
-    const askingSession =
-      sessionTitle ??
+    const builtIn = parsedApproval?.family === 'built_in';
+    const askingSession = isHappierGuardApproval(parsedApproval?.request ?? null, builtIn)
+      ? t('detailPages.approval.requesterGuard')
+      : sessionTitle ??
       (sessionId && !(serverId && scopedReading.status === 'resolving')
         ? describeUnnamedApprovalRequester(
-            readApprovalRequesterSurface(parsedApproval?.request ?? null, parsedApproval?.family === 'built_in'),
+            readApprovalRequesterSurface(parsedApproval?.request ?? null, builtIn),
             resolveApprovalHomeSentenceName(serverId),
           )
         : null);
@@ -190,7 +217,7 @@ export const ApprovalInboxCard = React.memo(
     const distinguishingFacts = [
       // The row has no room under its buttons: it says once, calmly, what its destructive verb means.
       // It leads the line so a narrow row truncates where the request comes from, never the consequence.
-      parsedApproval?.family === 'built_in' && readActionApprovalReview(parsedApproval.request).irreversible
+      review?.irreversible
         ? t('approvals.irreversibleFact')
         : null,
       source,
@@ -204,19 +231,20 @@ export const ApprovalInboxCard = React.memo(
     const quickActions = React.useMemo(
       () =>
         serverId && (props.inlineActionLabel || props.decideBelow)
-          ? readApprovalQuickActions(props.artifact, serverId)
+          ? readApprovalQuickActions(readOpenApprovalInboxEntry(props.artifact), serverId, requesterMayDecide)
           : null,
-      [props.artifact, props.inlineActionLabel, props.decideBelow, serverId],
+      [props.artifact, props.inlineActionLabel, props.decideBelow, requesterMayDecide, serverId],
     );
     const quickApproval =
       quickActions && parsedApproval?.family === 'built_in'
         ? parsedApproval.request
         : null;
     const quickDecision =
-      quickApproval && serverId ? (
+      quickApproval && review && serverId ? (
         <ApprovalInboxDecision
           artifact={props.artifact}
           approval={quickApproval}
+          review={review}
           sessionId={sessionId}
           serverId={serverId}
         />
@@ -258,6 +286,7 @@ export const ApprovalInboxCard = React.memo(
               testID={`inbox.approval.${props.artifact.id}.review`}
               size="small"
               display="secondary"
+              hitReach={ROW_BUTTON_REACH}
               title={props.inlineActionLabel}
               onPress={props.onPress}
             />

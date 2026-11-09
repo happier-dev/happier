@@ -1,5 +1,6 @@
-import type { DiscussionOpenedSummaryV1 } from '@happier-dev/protocol';
+import type { DiscussionOpenedSummaryV1 } from '@happier-dev/protocol/discussions/actions';
 import type { DiscussionListAttention } from '@/activity/attention/buildDiscussionListAttention';
+import { resolveInboxItemAttentionV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 
 /**
  * One row of the Conversations list in the Collaboration pane (Lane 05 canonical owner).
@@ -20,7 +21,7 @@ export type DiscussionActivityItem =
     /** A recency group in the Discussions column: what needs you first, then by last activity. */
     | Readonly<{ kind: 'recency_group'; group: DiscussionRecencyGroup }>;
 
-/** The Discussions column's groups, in order. "Needs you" holds unread mentions of the viewer. */
+/** C1-admitted requests lead the column; mention news retains its recency group. */
 export type DiscussionRecencyGroup = 'needs_you' | 'today' | 'this_week' | 'earlier';
 
 /** Stable per-item list identity. */
@@ -69,15 +70,15 @@ export function buildDiscussionActivityItems(input: Readonly<{
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-/** Which recency group a Discussion belongs to: an unread mention needs you; otherwise its last activity. */
+/** C1 decides request admission; Discussion owns the remaining activity order. */
 export function resolveDiscussionRecencyGroup(
     discussion: DiscussionOpenedSummaryV1,
     now: Date,
     /** The list's attention projection (approval, private draft, mention), when it is loaded. */
-    attentionReason?: DiscussionListAttention['attentionReason'],
+    attention?: Pick<DiscussionListAttention, 'attentionType'>,
 ): DiscussionRecencyGroup {
-    if (attentionReason) return 'needs_you';
-    if (discussion.unreadCount > 0 && discussion.unreadMentionCount > 0) return 'needs_you';
+    const attentionType = attention?.attentionType;
+    if (attentionType && resolveInboxItemAttentionV1(attentionType).interrupt) return 'needs_you';
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
     const at = discussion.latestMessage.createdAt;
     if (at >= startOfToday) return 'today';
@@ -93,7 +94,7 @@ export function buildDiscussionColumnItems(input: Readonly<{
     discussions: readonly DiscussionOpenedSummaryV1[];
     humanListPending: boolean;
     now: Date;
-    attention?: ReadonlyMap<string, DiscussionListAttention['attentionReason']>;
+    attention?: ReadonlyMap<string, Pick<DiscussionListAttention, 'attentionType'>>;
 }>): readonly DiscussionActivityItem[] {
     if (input.discussions.length === 0) return [{ kind: input.humanListPending ? 'human_pending' : 'human_empty' }];
     const groups: Record<DiscussionRecencyGroup, DiscussionOpenedSummaryV1[]> = { needs_you: [], today: [], this_week: [], earlier: [] };

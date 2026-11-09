@@ -5,7 +5,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSessionFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
-import { createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1, SessionCurrentProjectionRecordV1Schema, SessionListQueryResponseV1Schema, SessionOwnerMetadataV1Schema } from '@happier-dev/protocol';
+import { createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1, SessionOwnerMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { SessionCurrentProjectionRecordV1Schema} from '@happier-dev/protocol/sessions/listing/response';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
 import { createHomeHubArtifactHttpBoundary, createLayoutArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
@@ -13,7 +14,7 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 
 installSettingsViewCommonModuleMocks({ storage: 'real' });
 installDisconnectedServerSocketBoundary();
@@ -201,7 +202,7 @@ describe('Home Customize entity reorder binding', () => {
             expect(alert).not.toHaveBeenCalled();
             return;
         }
-        expect(alert).toHaveBeenCalledWith(t('common.error'), t('settingsPlugins.targetSelection.unreachableThisHome'));
+        await vi.waitFor(() => expect(alert).toHaveBeenCalledWith(t('common.error'), t('settingsPlugins.targetSelection.unreachableThisHome')));
         expect(artifact.writes).toHaveLength(0);
         expect(screen.findByTestId('frame-title-input')!.props.value).toBe('Unsaved checks');
         expect(screen.findByTestId('frame-title-input')!.props.editable).toBe(true);
@@ -404,13 +405,13 @@ describe('Home Customize entity reorder binding', () => {
         await flushHookEffects({ cycles: 3 });
         await act(async () => { screen.findByTestId('group-name')!.props.onChangeText('Release room'); });
         await act(async () => { screen.findByTestId('group-name')!.props.onSubmitEditing(); });
-        expect(artifact.layout().items).toMatchObject([{ kind: 'group', id: 'g', title: 'Release room' }]);
+        await vi.waitFor(() => expect(artifact.layout().items).toMatchObject([{ kind: 'group', id: 'g', title: 'Release room' }]));
         await act(async () => { await layout!.retry(); });
         expect(layout!.items).toMatchObject([{ kind: 'group', id: 'g', title: 'Release room' }]);
         failWrite = true;
         await act(async () => { screen.findByTestId('group-name')!.props.onChangeText('Unsaved room'); });
         await act(async () => { screen.findByTestId('group-name')!.props.onSubmitEditing(); });
-        expect(screen.findByTestId('home-layout.save-error')).not.toBeNull();
+        await vi.waitFor(() => expect(screen.findByTestId('home-layout.save-error')).not.toBeNull());
         expect(layout!.status).toBe('error');
         expect(artifact.layout().items).toMatchObject([{ kind: 'group', id: 'g', title: 'Release room' }]);
         expect(screen.findByTestId('group-name')!.props.value).toBe('Unsaved room');
@@ -441,7 +442,7 @@ describe('Home Customize entity reorder binding', () => {
             requestedPaths.push(path);
             // The native Session input admits both exact-record access and membership
             // in the real Sessions options source before the Artifact write.
-            if (path === '/v2/sessions/query') return Response.json(SessionListQueryResponseV1Schema.parse({
+            if (path === '/v2/sessions/query') return Response.json(createSessionListSourceFixture({
                 sessions: [...wireSessions.values()].map(session => ({ ...session, viewer: {
                     latestFailureSeq: null,
                     readState: { state: 'not_started' }, relevance: { relevant: true, reasons: ['owned_by_me'] },
@@ -537,7 +538,7 @@ describe('Home Customize entity reorder binding', () => {
         expect(artifact.writes).toHaveLength(0);
         failWrite = false;
         await screen.pressByTestIdAsync(`home-layout.${recovery}`);
-        expect(projection).toMatchObject({ status: 'ready' });
+        await vi.waitFor(() => expect(projection).toMatchObject({ status: 'ready' }));
         expect(projection!.failedIntent).toBeUndefined();
         if (recovery === 'retry') {
             expect(list().props.binding.items[0].id).toBe('setup');

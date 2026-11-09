@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
@@ -69,6 +69,19 @@ describe('ActionOperationActivityButtonView', () => {
         );
 
         expect(screen.findByTestId('action-operation-activity-button')).toBeNull();
+    });
+
+    it('acknowledges only the explicit opening rather than later rows arriving in an open popover', async () => {
+        const { ActionOperationActivityButtonView } = await import('./ActionOperationActivityButton');
+        const markSeen = vi.fn();
+        const props = { operations: [operation({ state: 'failed', settledAt: 200 })], hasAttention: true,
+            onOpenOperation: () => {}, onMarkVisibleTerminalSeen: markSeen };
+        const screen = await renderScreen(<ActionOperationActivityButtonView {...props} />);
+        await screen.pressByTestIdAsync('action-operation-activity-button');
+        expect(markSeen).toHaveBeenCalledTimes(1);
+        await act(async () => screen.tree.update(<ActionOperationActivityButtonView {...props} operations={[...props.operations,
+            operation({ operationId: 'later', state: 'failed', settledAt: 300 })]} />));
+        expect(markSeen).toHaveBeenCalledTimes(1);
     });
 
     it('opens the shared responsive ledger and preserves its portal contract', async () => {

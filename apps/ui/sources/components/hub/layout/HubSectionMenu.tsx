@@ -47,6 +47,8 @@ export function HubSectionMenu(props: Readonly<{
     anchorRef?: React.RefObject<View | null>;
     /** Renames this copy in place (lab dbind E): optional, its binding already names it. */
     onRename?: () => void;
+    /** An HTML copy's Network access… (the Board's panel). */
+    onNetwork?: () => void;
     /** About this widget, for a copy of one of the Account's own widgets (lab dagent G2). */
     onAbout?: () => void;
     onAddTo?: () => void;
@@ -103,7 +105,7 @@ export function HubSectionMenu(props: Readonly<{
                 onOverflowTriggerKeyDown={key => stepWidgetSizeControl(sizeControl, key)}
                 renderOverflowSection={({ id }) => renderWidgetSizeMenuSection(sizeControl, id, `home-hub.${section.id}.size`)}
                 actions={orderWidgetMenu({
-                    instance: buildWidgetInstanceActions({ editInputs: props.editInputs, onRename: props.onRename }),
+                    instance: buildWidgetInstanceActions({ editInputs: props.editInputs, onRename: props.onRename, onNetwork: props.onNetwork }),
                     size: buildWidgetSizeActions(sizeControl),
                     frame: frameActions,
                     move: [

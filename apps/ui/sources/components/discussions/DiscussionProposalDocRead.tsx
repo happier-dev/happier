@@ -2,8 +2,7 @@ import * as React from 'react';
 
 import type { AdmittedDocRead } from '@/components/artifacts/ArtifactEditProposal';
 import type { ArtifactActionsClient } from '@/components/artifacts/artifactActionsClient';
-import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
-import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { getStorage } from '@/sync/domains/state/storage';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
@@ -21,7 +20,7 @@ export function DiscussionProposalDocRead(
   props: Readonly<{
     artifactId: string;
     client: ArtifactActionsClient;
-    accountLifetime: ServerCredentialAccountScopeBinding;
+    accountLifetime: ServerAccountScopeLifetime;
     onRead: ReportProposalDocRead;
   }>,
 ) {
@@ -54,7 +53,7 @@ export function DiscussionProposalDocRead(
         )
           return;
         setWake(event);
-      }),
+      }, { reconnect: 'refresh' }),
     [artifactId, client],
   );
   React.useEffect(() => {

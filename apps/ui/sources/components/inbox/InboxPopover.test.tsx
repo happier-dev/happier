@@ -8,7 +8,6 @@ import { seedAdmittedArtifactRows } from '@/dev/testkit/harness/artifactStoreBou
 import { storage } from '@/sync/domains/state/storageStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { InboxSummaryProvider, useSharedInboxSummary } from '@/hooks/inbox/useInboxSummary';
-
 import { createInboxApprovalArtifactFixture } from '@/dev/testkit/fixtures/inboxFixtures';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { removeServerProfile, setActiveServerId } from '@/sync/domains/server/serverProfiles';
@@ -69,10 +68,14 @@ describe('InboxPopoverContent (lab inbox-I2)', () => {
     it('shows the same real Account-notice count as the rail summary that opened it', async () => {
         const notices = Array.from({ length: 4 }, (_, index) => createUsageNoticeArtifactFixture({ id: `notice-${index}` }));
         seedAdmittedArtifactRows(notices, storage);
+        storage.setState({ isDataReady: false });
         const { InboxPopoverContent } = await import('./InboxPopover');
         const screen = await renderScreen(<InboxSummaryProvider><SummaryProbe />
             <InboxPopoverContent close={() => {}} onOpenInbox={() => {}} />
         </InboxSummaryProvider>);
+        expect(summaryCount).toBeNull();
+        expect(screen.findByTestId('inbox.popover.count')).toBeNull();
+        await act(async () => storage.setState({ isDataReady: true }));
         expect(summaryCount).toBe(4);
         expect(screen.findByTestId('inbox.popover.count')?.props.children).toBe(String(summaryCount));
         await act(async () => seedAdmittedArtifactRows([], storage));

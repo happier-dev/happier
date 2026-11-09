@@ -47,7 +47,8 @@ describe('openActionOperationDetail', () => {
         const screen = await renderScreen(React.createElement(ModalProvider, null, React.createElement(ObserveModals)));
         await act(async () => {
             expect(openActionOperationDetail({ serverId: 'home-a', operationId: 'operation-1' })).toBeUndefined();
-                await vi.dynamicImportSettled();
+            expect(actionOperationStore.getSnapshot().seenAtByOperationKey.has(JSON.stringify(['home-a', 'operation-1']))).toBe(true);
+            await vi.dynamicImportSettled();
         });
 
         expect(entries).toHaveLength(1);
@@ -58,6 +59,8 @@ describe('openActionOperationDetail', () => {
             closeOnBackdrop: true,
             accessibilityLabel: 'inbox.actionOperations.detailAccessibilityLabel',
         });
+        expect(actionOperationStore.getSnapshot().seenAtByOperationKey.has(JSON.stringify(['home-a', 'operation-1']))).toBe(true);
+        expect(actionOperationStore.getSnapshot().seenAtByOperationKey.has(JSON.stringify(['home-b', 'operation-1']))).toBe(false);
         expect(screen.getTextContent()).toContain('Alpha destination');
         expect(screen.getTextContent()).not.toContain('Beta destination');
         vi.useFakeTimers();

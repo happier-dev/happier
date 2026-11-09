@@ -1,8 +1,7 @@
 import * as React from 'react';
 import type {
-    SessionDraftAddressV2,
-    StrictJsonValue,
-} from '@happier-dev/protocol';
+    SessionDraftAddressV2} from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import type { JsonValue as StrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { canonicalSessionDraftAddressV2, DiscussionDraftDocumentV2Schema, type DiscussionDraftSubmittedContentV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import type { DocPassageRefV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationV1';
 import type { DiscussionMessageContentV1 } from '@happier-dev/protocol/discussions/content';
@@ -10,6 +9,7 @@ import type { DiscussionParticipantRefV1 } from '@happier-dev/protocol/discussio
 import type { DiscussionReplyTargetV1 } from '@happier-dev/protocol/discussions/replyTargets';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import {
     captureSessionDraftCurrentness,
     clearSessionDraftCurrentnessLocal,
@@ -46,7 +46,6 @@ export type DiscussionDraftAddress = Extract<
 
 export type DiscussionDraftContentOptions = Readonly<{
     replyTarget?: DiscussionReplyTargetV1;
-    passage?: DocPassageRefV1 | null;
     /** The selection owner admits persisted defaults against the current roster. */
     recipients?: readonly DiscussionParticipantRefV1[];
 }>;
@@ -77,7 +76,8 @@ export type DiscussionDraft = Readonly<{
     }>): void;
     pendingMutationAttempt: SessionDiscussionDraftMutationAttempt | null;
     captureSubmittedCurrentness(attempt?: SessionDiscussionDraftMutationAttemptInput,
-        submitted?: Readonly<{ content: DiscussionMessageContentV1; title?: string }>): DiscussionDraftSubmission;
+        submitted?: Readonly<{ content: DiscussionMessageContentV1; title?: string;
+            retainedCurrentness?: DiscussionDraftSubmission['currentness'] }>): DiscussionDraftSubmission;
     clearAfterObservedSuccess(submission: DiscussionDraftSubmission): Promise<boolean>;
     /**
      * Forgets a refused retry identity without touching the drafted fields, so
@@ -92,15 +92,22 @@ const COMPOSER_FIELD_IDS = ['composer.text', 'composer.mentions'] as const;
 const SUBMITTED_FIELD_IDS = [...COMPOSER_FIELD_IDS, 'passage', 'submission', 'replyTarget'] as const;
 const NEW_DISCUSSION_FIELD_IDS = [...SUBMITTED_FIELD_IDS, 'title', 'participants'] as const;
 const NO_RECIPIENTS: readonly DiscussionParticipantRefV1[] = Object.freeze([]);
+const NO_DISCUSSION_COMPOSER_VALUE: Pick<DiscussionDraft, 'text' | 'mentions'> = Object.freeze({ text: '', mentions: Object.freeze([]) });
 
 function readDiscussionComposerSnapshot(scope: ServerAccountScope, address: DiscussionDraftAddress) {
     const snapshot = getSessionComposerDraftSnapshot(scope, address);
     return snapshot?.targetKind === address.kind ? snapshot : null;
 }
 
+function readDiscussionComposerValue(snapshot: ReturnType<typeof readDiscussionComposerSnapshot>) {
+    const text = typeof snapshot?.composer.text.value === 'string' ? snapshot.composer.text.value : '';
+    return { text, mentions: parseComposerStructuredInputMentionsForText(snapshot?.composer.mentions.value, text).mentions };
+}
+
 function readDiscussionDraftFields(
     scope: ServerAccountScope,
     address: DiscussionDraftAddress,
+    composer?: Pick<DiscussionDraft, 'text' | 'mentions'>,
 ): Readonly<{
     title: string;
     text: string;
@@ -117,9 +124,6 @@ function readDiscussionDraftFields(
     const snapshot = readDiscussionComposerSnapshot(scope, address);
     const parsedDocument = DiscussionDraftDocumentV2Schema.safeParse(getSessionDraftSnapshot(scope, address)?.document);
     const document = parsedDocument.success ? parsedDocument.data : null;
-    const text = typeof snapshot?.composer.text.value === 'string'
-        ? snapshot.composer.text.value
-        : '';
     return {
         title: address.kind === 'newDiscussion'
             && document?.target.kind === 'newDiscussion'
@@ -127,8 +131,7 @@ function readDiscussionDraftFields(
             && typeof document.title.value === 'string'
             ? document.title.value
             : '',
-        text,
-        mentions: parseComposerStructuredInputMentionsForText(snapshot?.composer.mentions.value, text).mentions,
+        ...(composer ?? readDiscussionComposerValue(snapshot)),
         recipients: document?.recipients?.value ?? NO_RECIPIENTS,
         recipientsMutationId: document?.recipients?.mutationId,
         replyTarget: document?.replyTarget?.value ?? null,
@@ -140,8 +143,37 @@ function readDiscussionDraftFields(
     };
 }
 
+type DiscussionDraftView = Readonly<{
+    status: SessionDraftStatus;
+    conflict: SessionDraftConflict | null;
+    attempt: SessionDiscussionDraftMutationAttempt | null;
+    fields: ReturnType<typeof readDiscussionDraftFields>;
+}>;
+
+function readDiscussionDraftView(
+    scope: ServerAccountScope,
+    address: DiscussionDraftAddress,
+    snapshot: ReturnType<typeof readDiscussionComposerSnapshot>,
+    includeComposer: boolean,
+): DiscussionDraftView {
+    return {
+        status: snapshot?.status ?? 'clean',
+        conflict: snapshot?.conflict ?? null,
+        attempt: snapshot?.localSupplement.discussionMutationAttempt ?? null,
+        fields: readDiscussionDraftFields(scope, address, includeComposer ? undefined : NO_DISCUSSION_COMPOSER_VALUE),
+    };
+}
+
 function mentionValues(mentions: readonly ComposerStructuredInputMention[]): readonly StrictJsonValue[] {
     return mentions.map(mention => StrictJsonValueSchema.parse(mention));
+}
+
+/** Admit an edited text/mention pair once, before it enters synchronized draft custody. */
+function discussionComposerDraftPatch(value: Pick<DiscussionDraft, 'text' | 'mentions'>) {
+    return {
+        text: value.text,
+        mentions: mentionValues(parseComposerStructuredInputMentionsForText(value.mentions, value.text).mentions),
+    };
 }
 
 function sameAddress(left: DiscussionDraftAddress, right: DiscussionDraftAddress): boolean {
@@ -155,7 +187,8 @@ function sameScope(left: ServerAccountScope, right: ServerAccountScope): boolean
 /**
  * An explicit "Ask <someone>" from elsewhere in the app: fills an empty draft with an addressed request
  * the person still reads and sends — a new Discussion (with its title), or a reply in an existing one.
- * Words already in that draft are never replaced.
+ * Words already in that draft are never replaced. An explicit message reply replaces the old
+ * passage/reply context in the same patch, even when those words are retained.
  */
 export function seedDiscussionDraft(input: Readonly<{
     scope: ServerAccountScope;
@@ -163,17 +196,24 @@ export function seedDiscussionDraft(input: Readonly<{
     title?: string;
     text: string;
     mentions: readonly ComposerStructuredInputMention[];
+    replyTarget?: Extract<DiscussionReplyTargetV1, { kind: 'message' }>;
 }>): boolean {
     const address: DiscussionDraftAddress = input.address ?? { kind: 'newDiscussion' };
     const current = readDiscussionDraftFields(input.scope, address);
-    if (current.text.trim() || current.title.trim()) return false;
+    const seedComposer = !current.text.trim() && !current.title.trim();
+    if (!seedComposer && !input.replyTarget) return false;
     writeDiscussionSessionDraft({
         scope: input.scope,
         address,
-        patch: { ...(address.kind === 'newDiscussion' && input.title !== undefined ? { title: input.title } : {}),
-            text: input.text, mentions: mentionValues(parseComposerStructuredInputMentionsForText(input.mentions, input.text).mentions) },
+        patch: {
+            ...(seedComposer ? {
+                ...(address.kind === 'newDiscussion' && input.title !== undefined ? { title: input.title } : {}),
+                ...discussionComposerDraftPatch(input),
+            } : {}),
+            ...(input.replyTarget ? { replyTarget: input.replyTarget, passage: null } : {}),
+        },
     });
-    return true;
+    return seedComposer;
 }
 
 /**
@@ -184,6 +224,12 @@ export function seedDiscussionDraft(input: Readonly<{
 export function useDiscussionDraft(params: Readonly<{
     scope: ServerAccountScope;
     address: DiscussionDraftAddress;
+    /**
+     * `false` for a page that hosts the composer but never reads its text: a keystroke then renders only
+     * the composer, and `text`/`mentions` read empty here. Send-time reads (`captureSubmittedCurrentness`,
+     * `prepareContent`) always read the current document.
+     */
+    composer?: boolean;
 }>): DiscussionDraft {
     const scope = React.useMemo<ServerAccountScope>(() => ({
         serverId: params.scope.serverId,
@@ -195,17 +241,24 @@ export function useDiscussionDraft(params: Readonly<{
         (listener: () => void) => subscribeSessionDraft(scope, address, listener),
         [address, scope],
     );
-    const readSnapshot = React.useCallback(
-        () => readDiscussionComposerSnapshot(scope, address),
-        [address, scope],
-    );
-    const snapshot = React.useSyncExternalStore(subscribe, readSnapshot, readSnapshot);
-    const fields = React.useMemo(() => readDiscussionDraftFields(scope, address), [snapshot, scope, address]);
+    const includeComposer = params.composer ?? true;
+    // One retained view of what this hook reads; a write that changes none of it (a page's view of a
+    // keystroke, a revision or timestamp) keeps the view and renders nothing.
+    const readView = React.useMemo(() => {
+        let source: ReturnType<typeof readDiscussionComposerSnapshot> | undefined;
+        let view: DiscussionDraftView | undefined;
+        return () => {
+            const next = readDiscussionComposerSnapshot(scope, address);
+            if (view !== undefined && next === source) return view;
+            source = next;
+            view = retainDeep(view, readDiscussionDraftView(scope, address, next, includeComposer));
+            return view;
+        };
+    }, [address, includeComposer, scope]);
+    const view = React.useSyncExternalStore(subscribe, readView, readView);
+    const fields = view.fields;
     const text = fields.text;
-    const mentions = React.useMemo(
-        () => parseComposerStructuredInputMentionsForText(snapshot?.composer.mentions.value, text).mentions,
-        [snapshot?.composer.mentions.value, text],
-    );
+    const mentions = fields.mentions;
     const title = fields.title;
     const passage = fields.passage;
     const replyTarget = React.useMemo(() => fields.replyTarget, [fields.replyTargetMutationId, scope, address]);
@@ -213,7 +266,7 @@ export function useDiscussionDraft(params: Readonly<{
     // clone the private document but must not rebuild the recipient picker.
     const recipients = React.useMemo(() => fields.recipients, [fields.recipientsMutationId, scope, address]);
     const participants = React.useMemo(() => fields.participants, [fields.participantsMutationId, scope, address]);
-    const attempt = snapshot?.localSupplement.discussionMutationAttempt;
+    const attempt = view.attempt;
     const attemptLocalId = attempt?.kind === 'create' ? attempt.creationLocalId : attempt?.localId;
     const submitted = attemptLocalId && fields.submitted?.attemptLocalId === attemptLocalId ? fields.submitted : null;
     const setPassage = React.useCallback((value: DocPassageRefV1 | null) => {
@@ -236,21 +289,14 @@ export function useDiscussionDraft(params: Readonly<{
         const basis = readDiscussionDraftFields(scope, address);
         return prepareDiscussionContentForPassage({ content: prepareDiscussionContentForRecipients({
             content, recipients: options?.recipients ?? basis.recipients, replyTarget: options?.replyTarget ?? basis.replyTarget ?? undefined,
-        }), passage: basis.passage ?? options?.passage });
+        }), passage: basis.passage });
     }, [address, scope]);
 
     const setComposer = React.useCallback((value: Readonly<{
         text: string;
         mentions: readonly ComposerStructuredInputMention[];
     }>) => {
-        writeDiscussionSessionDraft({
-            scope,
-            address,
-            patch: {
-                text: value.text,
-                mentions: mentionValues(parseComposerStructuredInputMentionsForText(value.mentions, value.text).mentions),
-            },
-        });
+        writeDiscussionSessionDraft({ scope, address, patch: discussionComposerDraftPatch(value) });
     }, [address, scope]);
 
     const setText = React.useCallback((nextText: string) => {
@@ -270,12 +316,9 @@ export function useDiscussionDraft(params: Readonly<{
     }, [address, scope]);
 
     const setMentions = React.useCallback((nextMentions: readonly ComposerStructuredInputMention[]) => {
-        const currentText = readDiscussionDraftFields(scope, address).text;
-        writeDiscussionSessionDraft({
-            scope,
-            address,
-            patch: { mentions: mentionValues(parseComposerStructuredInputMentionsForText(nextMentions, currentText).mentions) },
-        });
+        const currentText = readDiscussionComposerSnapshot(scope, address)?.composer.text.value ?? '';
+        writeDiscussionSessionDraft({ scope, address,
+            patch: { mentions: discussionComposerDraftPatch({ text: currentText, mentions: nextMentions }).mentions } });
     }, [address, scope]);
 
     const setTitle = React.useCallback((nextTitle: string) => {
@@ -285,8 +328,7 @@ export function useDiscussionDraft(params: Readonly<{
         writeDiscussionSessionDraft({ scope, address, patch: { title: nextTitle } });
     }, [address, scope]);
 
-    const captureSubmittedCurrentness = React.useCallback((attempt?: SessionDiscussionDraftMutationAttemptInput,
-        submitted?: Readonly<{ content: DiscussionMessageContentV1; title?: string }>): DiscussionDraftSubmission => {
+    const captureSubmittedCurrentness = React.useCallback<DiscussionDraft['captureSubmittedCurrentness']>((attempt, submitted) => {
         if (attempt) {
             const current = readDiscussionDraftFields(scope, address);
             const content = submitted?.content ?? prepareDiscussionContentForPassage({ content: prepareDiscussionContentForRecipients({
@@ -299,13 +341,26 @@ export function useDiscussionDraft(params: Readonly<{
                 content, ...(title === undefined ? {} : { title }),
             } } });
         }
-        const currentness = captureSessionDraftCurrentness({
+        const captured = captureSessionDraftCurrentness({
             scope,
             address,
             fieldIds: address.kind === 'newDiscussion'
                 ? [...NEW_DISCUSSION_FIELD_IDS]
                 : [...SUBMITTED_FIELD_IDS],
         });
+        // A mounted review can submit its earlier question while the thread
+        // already holds the next one. Clear only the drafted fields it took;
+        // the submission just written above belongs to this fresh attempt.
+        const mutationIds = { ...captured.mutationIds };
+        if (submitted?.retainedCurrentness) {
+            for (const field of address.kind === 'newDiscussion' ? NEW_DISCUSSION_FIELD_IDS : SUBMITTED_FIELD_IDS) {
+                if (field === 'submission') continue;
+                delete mutationIds[field];
+                const retained = submitted.retainedCurrentness.mutationIds[field];
+                if (retained !== undefined) mutationIds[field] = retained;
+            }
+        }
+        const currentness = { ...captured, mutationIds };
         if (attempt) {
             writeSessionDraftLocalSupplement({
                 scope,
@@ -379,9 +434,9 @@ export function useDiscussionDraft(params: Readonly<{
         submitted,
         setPassage,
         prepareContent,
-        pendingMutationAttempt: snapshot?.localSupplement.discussionMutationAttempt ?? null,
-        status: snapshot?.status ?? 'clean',
-        conflict: snapshot?.conflict ?? null,
+        pendingMutationAttempt: view.attempt,
+        status: view.status,
+        conflict: view.conflict,
         setTitle,
         setText,
         setMentions,
@@ -408,13 +463,13 @@ export function useDiscussionDraft(params: Readonly<{
         submitted,
         setPassage,
         prepareContent,
-        snapshot?.localSupplement.discussionMutationAttempt,
+        view.attempt,
         setComposer,
         setMentions,
         setText,
         setTitle,
-        snapshot?.conflict,
-        snapshot?.status,
+        view.conflict,
+        view.status,
         text,
         title,
     ]);

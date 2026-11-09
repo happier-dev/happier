@@ -159,15 +159,23 @@ export const HubComposerSuggestionList = React.memo(function HubComposerSuggesti
     );
 });
 
-/** The suggestions as one centred, wrapping line of words: the detail line stays the tooltip's, not the page's. */
+/**
+ * The suggestions as one centred line of words: the detail line stays the tooltip's, not the page's. The
+ * line never wraps (lab `at-links`): it keeps as many suggestions as the column holds at a readable width,
+ * and those share the row, each ending in an ellipsis when it must.
+ */
 function SuggestionLinks(props: Readonly<{ tiles: readonly SelectionTile<string>[]; pills: boolean; onPress: (id: string) => void }>) {
     const { theme } = useUnistyles();
+    const [width, setWidth] = React.useState<number | null>(null);
+    const onLayout = React.useCallback((event: LayoutChangeEvent) => setWidth(event.nativeEvent.layout.width), []);
+    const fits = width === null ? props.tiles.length : Math.max(1, Math.floor(width / SUGGESTION_LINK_MIN_WIDTH_PX));
     return (
-        <View testID="hub-composer.suggestions" accessibilityLabel={t('homeComposer.suggestionsLabel')} style={[linkStyles.row, props.pills && linkStyles.pillRow]}>
-            {props.tiles.map(tile => (
+        <View testID="hub-composer.suggestions" accessibilityLabel={t('homeComposer.suggestionsLabel')} onLayout={onLayout}
+            style={[linkStyles.row, props.pills && linkStyles.pillRow]}>
+            {props.tiles.slice(0, fits).map(tile => (
                 <HappierPressable key={tile.id} testID={tile.testID} accessibilityRole="button" accessibilityLabel={tile.title}
                     accessibilityHint={tile.subtitle} disabled={tile.disabled} onPress={() => props.onPress(tile.id)}
-                    hitReach={props.pills ? PILL_HIT_REACH : LINK_HIT_REACH}>
+                    hitReach={props.pills ? PILL_HIT_REACH : LINK_HIT_REACH} style={linkStyles.item}>
                     {({ hovered }) => {
                         const label = (
                             <View style={[linkStyles.link, props.pills && linkStyles.pill]}>
@@ -189,13 +197,16 @@ function SuggestionLinks(props: Readonly<{ tiles: readonly SelectionTile<string>
     );
 }
 
+/** The narrowest a suggestion keeps its words readable: a 390 px phone column holds two. */
+const SUGGESTION_LINK_MIN_WIDTH_PX = 160;
 /** Half of each row's gaps (`linkStyles`): neighbouring suggestions' hit areas meet, never overlap. */
 const PILL_HIT_REACH = 4;
 const LINK_HIT_REACH = { left: 10, right: 10, top: 2, bottom: 2 } as const;
 
 const linkStyles = StyleSheet.create((theme) => ({
-    row: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', columnGap: theme.space.s20, rowGap: theme.space.s4 },
-    pillRow: { columnGap: theme.space.s8, rowGap: theme.space.s8 },
+    row: { flexDirection: 'row', flexWrap: 'nowrap', justifyContent: 'center', columnGap: theme.space.s20 },
+    item: { flexShrink: 1, minWidth: 0 },
+    pillRow: { columnGap: theme.space.s8 },
     link: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6, height: 30, maxWidth: 330, paddingHorizontal: theme.space.s2 },
     pill: { paddingLeft: theme.space.s10, paddingRight: theme.space.s12 },
     pillSurface: { borderRadius: 15, overflow: 'hidden' },
