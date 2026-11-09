@@ -304,7 +304,7 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
         patchSnapshot((current) => {
             const isCurrentListeningOwner =
                 current.controlSessionId === controlSessionId
-                && (current.state === 'acquiring_mic' || current.state === 'listening');
+                && (current.state === 'acquiring_mic' || current.state === 'connected' || current.state === 'listening');
             if (!isCurrentListeningOwner) {
                 return current;
             }
@@ -320,7 +320,8 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
     /**
      * Write a `mic_error` for a rearm failure only when this attempt still owns
      * the snapshot: the attempt token is current AND the snapshot is still the
-     * `acquiring_mic` state for the same control session. A slow start that
+     * initial `acquiring_mic` or established `connected` state for the same
+     * control session. A slow start that
      * resolves/rejects after the user disconnected, switched sessions, or began a
      * newer rearm must not stomp `mic_error` onto the live snapshot.
      */
@@ -335,7 +336,7 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
         patchSnapshot((current) => {
             const isCurrentRearmOwner =
                 current.controlSessionId === controlSessionId
-                && current.state === 'acquiring_mic';
+                && (current.state === 'acquiring_mic' || current.state === 'connected');
             if (!isCurrentRearmOwner) {
                 return current;
             }
@@ -350,9 +351,14 @@ export function createVoiceConversationRuntimeMachine(): VoiceConversationRuntim
 
     const rearmListening = async ({ controlSessionId, startListening }: RearmListeningArgs): Promise<void> => {
         const token = listeningAttemptGuard.next();
+        const current = getVoiceConversationRuntimeSnapshot();
+        const isConnected = current.controlSessionId === controlSessionId
+            && deriveLocalVoiceRuntimeProjection(current).sessionStatus === 'connected';
         applyStateTransition({
             controlSessionId,
-            toState: 'acquiring_mic',
+            // Rearming capture does not reconnect an established call. Keep
+            // input unavailable until its producer confirms readiness below.
+            toState: isConnected ? 'connected' : 'acquiring_mic',
             clearError: true,
         });
 

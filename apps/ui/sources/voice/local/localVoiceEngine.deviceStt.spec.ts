@@ -33,7 +33,7 @@ import {
     waitForLocalVoiceState,
 } from './localVoiceEngine.testHarness';
 
-async function configureDuplexDeviceSpeech(handsFree: boolean) {
+async function configureDuplexDeviceSpeech(handsFree: boolean, endpointing = { silenceMs: 0, minSpeechMs: 0 }) {
     speechRecStart.mockImplementation(() => {
         emitSpeechRecEvent('start');
         emitSpeechRecEvent('audiostart');
@@ -50,7 +50,7 @@ async function configureDuplexDeviceSpeech(handsFree: boolean) {
                 local_direct: { schemaVersion: 1, config: {
                     ...config,
                     handsFree: { ...config.handsFree, enabled: handsFree,
-                        endpointing: { silenceMs: 0, minSpeechMs: 0 } },
+                        endpointing },
                     stt: { ...config.stt, provider: 'device' },
                     tts: { ...config.tts, provider: 'device', autoSpeakReplies: true, bargeInEnabled: true },
                 } },
@@ -105,6 +105,66 @@ describe('local voice engine device STT (experimental)', () => {
             expect(expoSpeechSpeak).not.toHaveBeenCalled();
         } finally {
             await engine.stopLocalVoiceSession();
+        }
+    }, 180_000);
+
+    it('keeps three spoken turns connected and retains capture across natural playback completion', async () => {
+        await configureDuplexDeviceSpeech(true, readLocalDirectVoiceSettings({ providers: {} }).handsFree.endpointing);
+        speechRecStop.mockImplementation(() => emitSpeechRecEvent('end'));
+        const playbackCompletions: Array<() => void> = [];
+        expoSpeechSpeak.mockImplementation((_text, options) => {
+            playbackCompletions.push(() => options.onDone?.());
+            options.onStart?.();
+        });
+        let reply = 0;
+        localVoicePendingEnqueue.mockImplementation(async request => {
+            await publishLocalVoiceSubmittedUserMessage(request);
+            await publishLocalVoiceAssistantMessage({ sessionId: 's1', id: `reply-${++reply}`, text: 'Here is the requested answer.' });
+            return acknowledgeLocalVoicePendingEnqueue(request);
+        });
+        const engine = await loadLocalVoiceEngineWithCompatState();
+        const [{ renderHook }, { useSessionRealtimeTranscriptConsumer }, { createLocalDirectVoiceAdapter }] = await Promise.all([
+            import('@/dev/testkit/hooks/renderHook'),
+            import('@/hooks/session/useSessionRealtimeTranscriptConsumer'),
+            import('@/voice/adapters/localDirect/localDirectAdapter'),
+        ]);
+        const transcriptDetail = await renderHook(() => useSessionRealtimeTranscriptConsumer('s1', localVoiceHomeId));
+        const adapter = createLocalDirectVoiceAdapter();
+        const statuses: string[] = [];
+        let unsubscribe = () => {};
+        try {
+            await engine.toggleLocalVoiceTurn('s1');
+            expect(adapter.getSnapshot()).toMatchObject({ status: 'connected', mode: 'listening' });
+            unsubscribe = adapter.subscribe(() => statuses.push(adapter.getSnapshot().status));
+            const utterances = ['explain the forecast', 'describe the wind speed', 'tell me about the rainfall'];
+            emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: utterances[0], confidence: 0.9 }] });
+            for (let turn = 0; turn < utterances.length; turn++) {
+                await waitForLocalVoiceBoundaryEvent('speech', turn + 1);
+                await waitForLocalVoiceState(state => state.status === 'speaking');
+                const captureStarts = speechRecStart.mock.calls.length;
+                const captureStops = speechRecStop.mock.calls.length;
+                // The next utterance begins before playback ends. Finishing TTS
+                // must retain this recognizer, including its in-flight audio.
+                const nextUtterance = utterances[turn + 1] ?? 'thank you for the explanation';
+                emitSpeechRecEvent('result', { isFinal: false, results: [{ transcript: nextUtterance, confidence: 0.9 }] });
+                playbackCompletions[turn]!();
+                await waitForTestEvent(adapter.subscribe, adapter.getSnapshot,
+                    snapshot => snapshot.mode === 'listening' && snapshot.canCommitInput === true);
+                expect(speechRecStart).toHaveBeenCalledTimes(captureStarts);
+                expect(speechRecStop).toHaveBeenCalledTimes(captureStops);
+                if (turn + 1 < utterances.length) {
+                    emitSpeechRecEvent('result', { isFinal: true, results: [{ transcript: nextUtterance, confidence: 0.9 }] });
+                }
+            }
+            expect(localVoicePendingEnqueue.mock.calls.map(([request]) => request.body.content)).toEqual(
+                utterances.map(text => ({ t: 'plain', v: expect.objectContaining({ role: 'user', content: { type: 'text', text } }) })),
+            );
+            expect(statuses).not.toContain('connecting');
+            expect(adapter.getSnapshot()).toMatchObject({ status: 'connected', mode: 'listening', canCommitInput: true });
+        } finally {
+            unsubscribe();
+            await engine.stopLocalVoiceSession();
+            await transcriptDetail.unmount();
         }
     }, 180_000);
 

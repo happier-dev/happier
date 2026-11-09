@@ -50,12 +50,13 @@ describe('VoiceConversationRuntimeMachine', () => {
         expect(machine.getSnapshot().inUseVoice).toBeUndefined();
     });
 
-    it('keeps missing installed word segmentation visible through listening startup', async () => {
+    it.each([false, true])('keeps missing installed word segmentation visible through listening startup (connected: %s)', async (connected) => {
         const unavailableIntl = Object.create(Intl);
         Object.defineProperty(unavailableIntl, 'Segmenter', { value: undefined });
         vi.stubGlobal('Intl', unavailableIntl);
         try {
             const machine = createVoiceConversationRuntimeMachine();
+            if (connected) machine.transitionToSpeaking({ controlSessionId: 's1' });
             await machine.rearmListening({
                 controlSessionId: 's1',
                 startListening: async () => ensureInterruptionWordSegmentationAvailable(),
@@ -70,7 +71,7 @@ describe('VoiceConversationRuntimeMachine', () => {
         }
     });
 
-    it('presents initial connected capture as Listening only after listening start confirmation', async () => {
+    it('keeps an established call connected until listening start confirmation', async () => {
         const deferred = createDeferred<void>();
         const machine = createVoiceConversationRuntimeMachine();
         const readPresentation = () => resolveVoiceSurfaceStatusPresentation(resolveVoiceSurfaceState(
@@ -79,7 +80,7 @@ describe('VoiceConversationRuntimeMachine', () => {
 
         machine.transitionToConnecting({ controlSessionId: 's1' });
         machine.transitionToConnected({ controlSessionId: 's1' });
-        expect(readPresentation().labelKey).toBe('voiceAssistant.label');
+        expect(readPresentation().labelKey).toBe('voiceAssistant.connected');
 
         const rearmPromise = machine.rearmListening({
             controlSessionId: 's1',
@@ -88,9 +89,9 @@ describe('VoiceConversationRuntimeMachine', () => {
 
         expect(machine.getSnapshot()).toMatchObject({
             controlSessionId: 's1',
-            state: 'acquiring_mic',
+            state: 'connected',
         });
-        expect(readPresentation().labelKey).toBe('voiceAssistant.connecting');
+        expect(readPresentation().labelKey).toBe('voiceAssistant.connected');
 
         deferred.resolve();
         await rearmPromise;
@@ -104,6 +105,23 @@ describe('VoiceConversationRuntimeMachine', () => {
         machine.transitionToEnding({ controlSessionId: 's1' });
         machine.transitionToDisconnected({ controlSessionId: 's1' });
         expect(readPresentation().labelKey).toBe('voiceAssistant.label');
+    });
+
+    it('keeps three consecutive turn rearms connected until capture is ready', async () => {
+        const machine = createVoiceConversationRuntimeMachine();
+        machine.transitionToListening({ controlSessionId: 's1' });
+        for (let turn = 0; turn < 3; turn++) {
+            machine.transitionToSpeaking({ controlSessionId: 's1' });
+            const captureReady = createDeferred<void>();
+            const rearming = machine.rearmListening({ controlSessionId: 's1', startListening: () => captureReady.promise });
+            const pendingCapture = deriveLocalVoiceSessionSnapshot('local_conversation', 'local', machine.getSnapshot());
+            expect(pendingCapture.status).toBe('connected');
+            expect(pendingCapture.canCommitInput).not.toBe(true);
+            captureReady.resolve();
+            await rearming;
+            expect(deriveLocalVoiceSessionSnapshot('local_conversation', 'local', machine.getSnapshot()))
+                .toMatchObject({ status: 'connected', mode: 'listening', canCommitInput: true });
+        }
     });
 
     it('keeps a bounded provider-owned start acquiring beyond the former blanket timeout, then listens', async () => {
@@ -497,8 +515,9 @@ describe('VoiceConversationRuntimeMachine', () => {
         });
     });
 
-    it('aborts the in-flight provider start when the owning session disconnects', async () => {
+    it.each([false, true])('aborts the in-flight provider start when the owning session disconnects (connected: %s)', async (connected) => {
         const machine = createVoiceConversationRuntimeMachine();
+        if (connected) machine.transitionToSpeaking({ controlSessionId: 's1' });
         let observedSignal: AbortSignal | undefined;
         const rearmPromise = machine.rearmListening({
             controlSessionId: 's1',
@@ -533,7 +552,7 @@ describe('VoiceConversationRuntimeMachine', () => {
         expect(startListening).toHaveBeenCalledTimes(1);
         expect(machine.getSnapshot()).toMatchObject({
             controlSessionId: 's1',
-            state: 'acquiring_mic',
+            state: 'connected',
             error: null,
         });
 
