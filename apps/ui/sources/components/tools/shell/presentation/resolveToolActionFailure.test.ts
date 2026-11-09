@@ -19,6 +19,14 @@ function actionCall(actionId: string, outcome: unknown): ToolCall {
 }
 
 describe('resolveToolActionFailure', () => {
+    it('explains the Machine admission owner Manage refusal', () => {
+        const tool = actionCall('action.invoke', { ok: false, errorCode: 'credential_scope_denied',
+            error: 'credential_scope_denied', failureCause: { phase: 'execution_authorization',
+                errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null } });
+        expect(resolveToolActionFailure(tool)).toMatchObject({ outcome: 'refused',
+            code: 'credential_scope_denied', summary: 'This Action needs Manage on this Machine.' });
+    });
+
     it('explains a host Run tool-policy refusal without exposing its diagnostic code', () => {
         const tool: ToolCall = { ...actionCall('execution.run.start', {}), name: 'SubAgentRun', state: 'error',
             input: { runId: 'run_1' }, result: { status: 'failed', runId: 'run_1',

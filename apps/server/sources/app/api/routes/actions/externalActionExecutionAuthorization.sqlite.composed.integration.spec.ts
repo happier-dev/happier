@@ -1056,6 +1056,54 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
+    it('refuses contributed Machine Action mint for Can use with its Manage cause before dispatch', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: requester.id, role: 'member' } });
+        const grant = await db.machineTeamGrant.create({ data: { machineId: fixture.machine.id, teamId: fixture.team.id,
+            accessLevel: 'view', createdByAccountId: fixture.account.id } });
+        const token = await auth.createToken(requester.id, undefined, { kind: 'account', authority: 'present_user' });
+        const envelope = { ...fixture.envelope, input: {
+            action: { pluginId: 'happier.machine.crabbox', localId: 'install' }, input: {},
+        } };
+        const { app, dispatchedPrincipals } = await createApp(fixture.team.id);
+        try {
+            const send = (bearer: string) => app.inject({ method: 'POST',
+                url: bindExternalActionExecutionAuthorizationHttpPathV1('action.invoke'),
+                headers: { authorization: `Bearer ${bearer}` },
+                payload: { v: 1, machineId: fixture.machine.id, envelope } });
+            const refused = await send(token);
+            expect(refused.statusCode, refused.body).toBe(403);
+            expect(refused.json()).toMatchObject({ error: 'credential_scope_denied', failureCause: {
+                phase: 'execution_authorization', errorCode: 'machine_manage_required',
+            } });
+            expect(dispatchedPrincipals).toEqual([]);
+            const homeId = await getOrCreateServerIdentityId();
+            const setupRefused = await app.inject({ method: 'POST',
+                url: bindExternalActionExecutionAuthorizationHttpPathV1('session.spawn_new'),
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id,
+                    envelope: { ...fixture.envelope, input: SessionSpawnNewInputV2Schema.parse({
+                        executionTarget: { serverId: homeId, machineId: fixture.machine.id },
+                        directory: { kind: 'path', path: '/workspace/session' },
+                        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+                        machineSetupPlanInput: { homeId, machineId: fixture.machine.id },
+                    }) } } });
+            expect(setupRefused.statusCode, setupRefused.body).toBe(409);
+            expect(setupRefused.json()).toMatchObject({ code: 'target_unavailable', diagnostic: {
+                reason: 'machine_setup_requires_manage', remedy: 'request_machine_manage_access',
+            } });
+            await db.machineTeamGrant.update({ where: { machineId_teamId: {
+                machineId: grant.machineId, teamId: grant.teamId } }, data: { accessLevel: 'admin' } });
+            const ownerToken = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+            for (const bearer of [token, ownerToken]) {
+                const admitted = await send(bearer);
+                expect(admitted.statusCode, admitted.body).toBe(200);
+                expect(ExternalActionExecutionAuthorizationV1Schema.parse(admitted.json()).binding)
+                    .toMatchObject({ admittedMachineRole: 'manage' });
+            }
+        } finally { await app.close(); }
+    });
+
     it('refuses a sealed Manage root at replay after the grantee is downgraded to Use', async () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const requester = await db.account.create({ data: { encryptionMode: 'plain' } });

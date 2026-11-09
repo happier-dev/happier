@@ -2,6 +2,7 @@ import { maybeParseJson } from '../activity/parseJson.js';
 import { resolveToolEnvelopeMeta } from '../tools/v2/meta.js';
 import { isShellToolNameAlias } from '../tools/v2/aliases.js';
 import { SubAgentRunResultV2Schema } from '../tools/v2/schemas.js';
+import { readActionFailureCauseV1 } from './actionExecutionResult.js';
 
 const PREFIXES = ['mcp__happier__', 'happier__', 'happier_'] as const;
 
@@ -149,7 +150,10 @@ export function readHappierActionToolFailure(toolName: string, input: unknown, r
     for (const candidate of readHappierActionToolResultCandidates(result, input)) {
         if (!isRecord(candidate) || candidate.ok === true) continue;
         if (typeof candidate.errorCode === 'string' && candidate.errorCode.trim() && typeof candidate.error === 'string') {
-            return { code: candidate.errorCode.trim(), cause: readFailureCause(candidate.details), message: readFailureMessage(candidate.error) };
+            const failureCause = readActionFailureCauseV1(candidate.failureCause);
+            return { code: candidate.errorCode.trim(),
+                cause: readFailureCause(candidate.details) ?? ('kind' in failureCause ? null : failureCause.errorCode),
+                message: readFailureMessage(candidate.error) };
         }
         if (candidate.type === 'error' && typeof candidate.code === 'string' && candidate.code.trim()) {
             const launch = isRecord(candidate.launchError) && typeof candidate.launchError.code === 'string' && candidate.launchError.code.trim()

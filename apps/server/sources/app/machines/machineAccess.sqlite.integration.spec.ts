@@ -75,7 +75,8 @@ describe('Machine current access (real SQLite)', () => {
             }
             for (const actorAccountId of [viewer.id, foreign.id]) {
                 expect(await access.resolveMachineAdmission({ actorAccountId, machineId: f.machine.id, rpcMethod }), rpcMethod)
-                    .toEqual({ kind: 'denied', code: 'access_denied' });
+                    .toEqual({ kind: 'denied', code: 'access_denied',
+                        ...(actorAccountId === viewer.id ? { requiredRole: 'manage' } : {}) });
             }
         }
         for (const actionId of ['machines.storage.scan.start', 'machines.storage.protected.add', 'machines.storage.docker.prune',
@@ -83,7 +84,7 @@ describe('Machine current access (real SQLite)', () => {
             expect(await access.resolveMachineAdmission({ actorAccountId: manager.id, machineId: f.machine.id, actionId }), actionId)
                 .toMatchObject({ kind: 'admitted', role: 'manage', custodianAccountId: f.owner.id });
             expect(await access.resolveMachineAdmission({ actorAccountId: viewer.id, machineId: f.machine.id, actionId }), actionId)
-                .toEqual({ kind: 'denied', code: 'access_denied' });
+                .toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
         }
     });
 
@@ -133,6 +134,10 @@ describe('Machine current access (real SQLite)', () => {
             authentication: { authenticationAuthority: 'present_user' },
         }))).toMatchObject({ kind: 'admitted', role: 'manage', actorAccountId: requester.id, custodianAccountId: f.owner.id });
         await grant(f.owner.id, f.machine.id, requester.id, 'view');
+        expect(await inTx(tx => resolveExternalActionExecutionMachineAdmissionInTx(tx, {
+            actorAccountId: requester.id, machineId: f.machine.id, actionId: 'action.invoke',
+            authentication: { authenticationAuthority: 'present_user' },
+        }))).toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
         emitWithAck.mockClear();
         expect(await call(requester.id)).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
         expect(emitWithAck).not.toHaveBeenCalled();
@@ -377,7 +382,7 @@ describe('Machine current access (real SQLite)', () => {
         await grant(f.owner.id, f.machine.id, manager.id, 'admin');
         for (const rpcMethod of [RPC_METHODS.DAEMON_COMPUTER_ACTION_EXECUTE, RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START]) {
             expect(await access.resolveMachineAdmission({ actorAccountId: viewer.id, machineId: f.machine.id, rpcMethod }))
-                .toEqual({ kind: 'denied', code: 'access_denied' });
+                .toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
             expect(await access.resolveMachineAdmission({ actorAccountId: manager.id, machineId: f.machine.id, rpcMethod }))
                 .toMatchObject({ kind: 'admitted', role: 'manage', custodianAccountId: f.owner.id });
             expect(await access.resolveMachineAdmission({ actorAccountId: f.owner.id, machineId: f.machine.id, rpcMethod }))
@@ -394,7 +399,7 @@ describe('Machine current access (real SQLite)', () => {
         for (const operation of ['install', 'update', 'enable', 'disable', 'remove']) {
             const actionId = `browser.extensions.${operation}`;
             expect(await access.resolveMachineAdmission({ actorAccountId: viewer.id, machineId: f.machine.id, actionId }))
-                .toEqual({ kind: 'denied', code: 'access_denied' });
+                .toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
             for (const actorAccountId of [f.owner.id, manager.id]) {
                 expect(await access.resolveMachineAdmission({ actorAccountId, machineId: f.machine.id, actionId }))
                     .toMatchObject({ kind: 'admitted', role: 'manage' });
@@ -416,7 +421,7 @@ describe('Machine current access (real SQLite)', () => {
             .filter(actionId => actionId !== 'plugins.npm_registry_profiles.list');
         for (const actionId of [...profileMutations, 'plugins.dev.publication.inspect', 'plugins.dev.publication.prepare', 'plugins.dev.publish', 'plugins.dev.publication.status']) {
             expect(await access.resolveMachineAdmission({ actorAccountId: viewer.id, machineId: f.machine.id,
-                actionId })).toEqual({ kind: 'denied', code: 'access_denied' });
+                actionId })).toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
             for (const actorAccountId of [f.owner.id, manager.id]) {
                 expect(await access.resolveMachineAdmission({ actorAccountId, machineId: f.machine.id,
                     actionId })).toMatchObject({ kind: 'admitted', role: 'manage', custodianAccountId: f.owner.id });
@@ -778,7 +783,7 @@ describe('Machine current access (real SQLite)', () => {
         await grant(f.owner.id, f.machine.id, manager.id, 'admin');
         for (const request of [{ rpcMethod: RPC_METHODS.MACHINES_REACHABILITY_INSPECT }, { actionId: 'machines.reachability.inspect' }]) {
             expect(await access.resolveMachineAdmission({ actorAccountId: user.id, machineId: f.machine.id, ...request }))
-                .toEqual({ kind: 'denied', code: 'access_denied' });
+                .toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
             expect(await access.resolveMachineAdmission({ actorAccountId: manager.id, machineId: f.machine.id, ...request }))
                 .toMatchObject({ kind: 'admitted', role: 'manage', custodianAccountId: f.owner.id });
             expect(await access.resolveMachineAdmission({ actorAccountId: f.owner.id, machineId: f.machine.id, ...request }))
@@ -844,7 +849,7 @@ describe('Machine current access (real SQLite)', () => {
         await grant(f.owner.id, f.machine.id, requester.id);
         for (const rpcMethod of machineMethods) {
             expect(await access.resolveMachineAdmission({ ...actor, rpcMethod }), rpcMethod)
-                .toEqual({ kind: 'denied', code: 'access_denied' });
+                .toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
         }
         for (const actionId of ['projects.script.run', 'projects.compute.exec', 'session.spawn_new', 'session.open']) {
             expect(await access.resolveMachineAdmission({ ...actor, actionId }), actionId).toMatchObject({
@@ -874,10 +879,10 @@ describe('Machine current access (real SQLite)', () => {
         await grant(f.owner.id, f.machine.id, requester.id);
         for (const actionId of ['machines.agents.install', 'machines.agents.uninstall', 'machines.capabilities.install', 'machines.command.run']) {
             expect(await access.resolveMachineAdmission({ ...actor, actionId }), actionId)
-                .toEqual({ kind: 'denied', code: 'access_denied' });
+                .toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
         }
         expect(await access.resolveMachineAdmission({ ...actor, rpcMethod: RPC_METHODS.DAEMON_AGENTS_INSTALL_START }))
-            .toEqual({ kind: 'denied', code: 'access_denied' });
+            .toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
         expect(await access.resolveMachineAdmission({ ...actor, rpcMethod: RPC_METHODS.CAPABILITIES_INVOKE }))
             .toMatchObject({ kind: 'admitted', role: 'use', actorAccountId: requester.id });
         await grant(f.owner.id, f.machine.id, requester.id, 'admin');
@@ -900,7 +905,7 @@ describe('Machine current access (real SQLite)', () => {
         for (const rpcMethod of [RPC_METHODS.MACHINES_SERVICE_WATCH, RPC_METHODS.MACHINES_SERVICE_UNWATCH,
             RPC_METHODS.DAEMON_DEPLOYMENT_CHILD]) {
             expect(await access.resolveMachineAdmission({ ...actor, rpcMethod }), rpcMethod)
-                .toEqual({ kind: 'denied', code: 'access_denied' });
+                .toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
         }
         // The socket owner supplies this form only after the original composite
         // root and exact child have been verified. Raw RPCs take the branch above.
@@ -938,7 +943,7 @@ describe('Machine current access (real SQLite)', () => {
                 .toEqual({ kind: 'denied', code: 'access_denied' });
         }
         expect(await access.resolveMachineAdmission({ ...actor, actionId: 'template.instantiate', requiredRole: 'manage' }))
-            .toEqual({ kind: 'denied', code: 'access_denied' });
+            .toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
         expect(await access.resolveMachineAdmission({ ...actor, actionId: 'plugins.npm_registry_profiles.list' }))
             .toEqual({ kind: 'denied', code: 'custodian_only' });
         await inTx(tx => access.removeMachineAccessGrantInTx(tx, { actorAccountId: f.owner.id, machineId: f.machine.id,
@@ -1188,7 +1193,7 @@ describe('Machine current access (real SQLite)', () => {
         expect(await grant(f.owner.id, f.machine.id, recipient.id)).toMatchObject({ kind: 'saved', readiness: 'ready' });
         expect(await inTx(tx => access.resolveEffectiveMachineRoleInTx(tx, { actorAccountId: recipient.id, machineId: f.machine.id }))).toBe('use');
         expect(await db.machineKeyEnvelope.count({ where: { machineId: f.machine.id } })).toBe(0);
-        expect(await access.resolveMachineAdmission({ actorAccountId: recipient.id, machineId: f.machine.id, requiredRole: 'manage' })).toEqual({ kind: 'denied', code: 'access_denied' });
+        expect(await access.resolveMachineAdmission({ actorAccountId: recipient.id, machineId: f.machine.id, requiredRole: 'manage' })).toEqual({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
         await grant(f.owner.id, f.machine.id, recipient.id, 'admin');
         expect(await access.resolveMachineAdmission({ actorAccountId: recipient.id, machineId: f.machine.id, requiredRole: 'manage' })).toMatchObject({ kind: 'admitted', actorAccountId: recipient.id, custodianAccountId: f.owner.id, installationId: 'install', role: 'manage', encryptionMode: 'plain' });
         expect(await grant(recipient.id, f.machine.id, f.owner.id, 'admin')).toEqual({ kind: 'refused', code: 'custodian_protected' });

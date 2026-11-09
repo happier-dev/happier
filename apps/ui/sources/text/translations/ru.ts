@@ -10097,6 +10097,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
         outsideAgentSessions: "Не сессия этого агента",
         unverifiedAgentAccess: "Не удалось подтвердить доступ этого агента",
         authorizationRefused: "Авторизация отклонена",
+        machineManageRequired: 'Для этого действия нужен доступ «Управление» к этой машине.',
         toolPolicyUnsupportedAuth: "Codex не может применить разрешения инструментов этого запуска с выбранным способом входа.",
       },
     },

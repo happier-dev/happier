@@ -10545,6 +10545,7 @@ localTailscale: {
         outsideAgentSessions: "このエージェントのセッションではありません",
         unverifiedAgentAccess: "このエージェントのアクセスを確認できませんでした",
         authorizationRefused: "認可が拒否されました",
+        machineManageRequired: 'このアクションには、このマシンの管理権限が必要です。',
         toolPolicyUnsupportedAuth: "選択したサインイン方法では、Codex はこの実行のツール権限を適用できません。",
       },
     },

@@ -126,7 +126,9 @@ export type MachineAvailabilityDiagnosticV1 = z.infer<typeof MachineAvailability
 /** Internal result only; no public parser can mint an admission. */
 export type MachineAdmission =
   | Readonly<{ kind: 'admitted'; actorAccountId: string; custodianAccountId: string; machineId: string; installationId: string; role: MachineAccessRoleV1; encryptionMode: 'plain' | 'e2ee' }>
-  | Readonly<{ kind: 'denied'; code: MachineAccessRefusalCode; diagnostic?: MachineAvailabilityDiagnosticV1 }>;
+  | Readonly<{ kind: 'denied'; code: MachineAccessRefusalCode; diagnostic?: MachineAvailabilityDiagnosticV1;
+      /** Internal admission evidence; public transports project it into their existing refusal envelope. */
+      requiredRole?: 'manage' }>;
 
 export const MachineRecipientKeyEnvelopeInputV1Schema = lazyZodSchema(() => z.strictObject({
   recipientAccountId: z.string().check(z.minLength(1)), encryptedDataKey: SessionDataKeyEnvelopeBytesV1Schema,

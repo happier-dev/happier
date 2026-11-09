@@ -185,7 +185,9 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
                 return { ...failure(refusal.data.code), effectAttempted: false,
                     details: 'managedAdmission' in refusal.data ? refusal.data : refusal.data.diagnostic };
             }
-            return failure('code' in refusal.data ? refusal.data.code : refusal.data.error);
+            return { ...failure('code' in refusal.data ? refusal.data.code : refusal.data.error), effectAttempted: false,
+                ...('failureCause' in refusal.data && refusal.data.failureCause !== undefined
+                    ? { failureCause: refusal.data.failureCause } : {}) };
         }
         const authorization = ExternalActionExecutionAuthorizationV1Schema.safeParse(minted);
         if (!authorization.success || binding.target.kind !== 'machine') return failure('admission_unavailable');
@@ -281,7 +283,10 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
         const code = 'code' in refusal.data ? refusal.data.code : refusal.data.error;
         const result = code === 'action_not_admitted' || code === 'action_outcome_unknown'
             ? projectUnexpectedActionFailureV1(code === 'action_not_admitted' ? false : null,
-                'requestId' in refusal.data ? refusal.data.requestId : undefined) : failure(code);
+                'requestId' in refusal.data ? refusal.data.requestId : undefined) : {
+                    ...failure(code), ...('failureCause' in refusal.data && refusal.data.failureCause !== undefined
+                        ? { failureCause: refusal.data.failureCause } : {}),
+                };
         const classified = isActionOutcomeUnknownErrorCodeV1(result.errorCode) ? result : { ...result, effectAttempted: false };
         if (code === 'target_unavailable' && 'diagnostic' in refusal.data && refusal.data.diagnostic !== undefined
             && !('managedAdmission' in refusal.data)

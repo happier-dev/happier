@@ -41,15 +41,23 @@ function normalizeErrorMessage(value: unknown): string | null {
   return raw ? raw : null;
 }
 
+function resolveActionFailureMessage(message: string | undefined, failureCause?: ActionFailureCauseV1): string | undefined {
+  if (failureCause?.errorCode === 'machine_manage_required') {
+    return 'This Action needs Manage on this Machine.';
+  }
+  return message;
+}
+
 export function normalizeActionExecuteResult(result: ActionExecuteResult): NormalizedCliActionExecuteResult {
   if (!result.ok) {
     const goalControlFailure = SessionGoalControlFailureV1Schema.safeParse(result.goalControlFailure);
     const failureCause = ActionFailureCauseV1Schema.safeParse(result.failureCause);
+    const errorMessage = resolveActionFailureMessage(result.error, failureCause.success ? failureCause.data : undefined);
     return {
       ok: false,
       errorCode: result.errorCode,
       ...(result.requestId === undefined ? {} : { requestId: result.requestId }),
-      ...(result.error ? { errorMessage: result.error } : {}),
+      ...(errorMessage ? { errorMessage } : {}),
       ...(result.details !== undefined ? { details: result.details } : {}),
       ...(failureCause.success ? { failureCause: failureCause.data } : {}),
       ...(typeof result.effectAttempted === 'boolean' ? { effectAttempted: result.effectAttempted } : {}),
@@ -61,7 +69,7 @@ export function normalizeActionExecuteResult(result: ActionExecuteResult): Norma
   const dataObj = data && typeof data === 'object' && !Array.isArray(data) ? (data as Record<string, unknown>) : null;
   if (dataObj && dataObj.ok === false) {
     const errorCode = normalizeErrorCode(dataObj.errorCode) ?? normalizeErrorCode(dataObj.code) ?? 'action_failed';
-    const errorMessage = normalizeErrorMessage(dataObj.error)
+    const message = normalizeErrorMessage(dataObj.error)
       ?? normalizeErrorMessage(dataObj.errorMessage)
       ?? normalizeErrorMessage(dataObj.message)
       ?? undefined;
@@ -69,6 +77,7 @@ export function normalizeActionExecuteResult(result: ActionExecuteResult): Norma
     const details = dataObj.details;
     const goalControlFailure = SessionGoalControlFailureV1Schema.safeParse(dataObj.goalControlFailure);
     const failureCause = ActionFailureCauseV1Schema.safeParse(dataObj.failureCause);
+    const errorMessage = resolveActionFailureMessage(message, failureCause.success ? failureCause.data : undefined);
     return {
       ok: false,
       errorCode,
@@ -86,12 +95,13 @@ export function normalizeActionExecuteResult(result: ActionExecuteResult): Norma
 
 /** One output projection for generic and compiled Action commands. */
 export function projectCliActionFailure(failure: CliActionFailure, requestId?: string): Omit<CliActionFailure, 'errorCode' | 'errorMessage'> & Readonly<{ code: string; message?: string }> {
+  const errorMessage = resolveActionFailureMessage(failure.errorMessage, failure.failureCause);
   const projected = projectActionExecuteFailure({ ok: false, ...failure,
-    error: failure.errorMessage ?? failure.errorCode }, requestId);
+    error: errorMessage ?? failure.errorCode }, requestId);
   return {
     code: failure.errorCode,
     ...(projected.requestId === undefined ? {} : { requestId: projected.requestId }),
-    ...(failure.errorMessage ? { message: failure.errorMessage } : {}),
+    ...(errorMessage ? { message: errorMessage } : {}),
     ...(failure.candidates ? { candidates: failure.candidates } : {}),
     ...(failure.details !== undefined ? { details: failure.details } : {}),
     ...(failure.failureCause ? { failureCause: failure.failureCause } : {}),
@@ -104,7 +114,7 @@ export function projectCliActionFailure(failure: CliActionFailure, requestId?: s
 export function normalizeCliActionThrownError(error: unknown): Readonly<{ failure: CliActionFailure; unexpected: boolean }> {
   const failure = normalizeActionExecutorThrownError(error);
   if (failure.errorCode !== 'action_failed' || failure.failureCause.errorCode !== null) {
-    return { failure: { errorCode: failure.errorCode, errorMessage: failure.error,
+    return { failure: { errorCode: failure.errorCode, errorMessage: resolveActionFailureMessage(failure.error, failure.failureCause),
       failureCause: failure.failureCause,
       ...(failure.details === undefined ? {} : { details: failure.details }),
       ...(failure.effectAttempted !== undefined ? { effectAttempted: failure.effectAttempted } : {}) }, unexpected: false };

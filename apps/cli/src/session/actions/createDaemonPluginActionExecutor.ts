@@ -157,7 +157,10 @@ export function createPluginActionExecutor(params: Readonly<{
         actionSpecs: searchActionDefinitionSummaries([...definitions.values()], { query, limit }),
       } } };
     }
-    if (local && 'accountSelectionUnavailable' in local) {
+    // The placement owner already proved this exact declaration is a Machine
+    // Action. A second descriptor Action would disclose the requester before
+    // the intended invocation reaches Home's Manage admission.
+    if (local && 'accountSelectionUnavailable' in local && local.executionPlacement !== 'machine') {
       const reference = readPluginActionExecutionReference(actionId, input);
       if (!reference) return unavailable;
       const id = formatQualifiedPluginActionId(reference);

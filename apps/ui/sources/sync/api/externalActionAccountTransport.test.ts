@@ -170,6 +170,22 @@ describe('captured Account Action response decoding', () => {
         homes.answer(serverId, path, { status: refusal.statusCode, body: refusal.payload });
         expect(await execute()).toMatchObject({ ok: false, errorCode: 'credential_scope_denied', effectAttempted: false });
     });
+    it.each(['mint', 'effect'] as const)('preserves the Machine Manage cause at %s before credential disclosure', async stage => {
+        if (!account) throw new Error('Expected captured Account');
+        const failureCause = { phase: 'execution_authorization', errorClass: 'Error',
+            errorCode: 'machine_manage_required', httpStatus: null } as const;
+        const refusal = projectExternalActionHttpError('credential_scope_denied', undefined, undefined,
+            undefined, undefined, undefined, failureCause);
+        homes.answer(serverId, stage === 'mint' ? `${path}/execution-authorization` : path,
+            { status: refusal.statusCode, body: refusal.payload });
+        const result = await executeOriginalAccountActionTransport({ account, binding, input: {}, authority: 'present_user',
+            ...(stage === 'mint' ? { machineCustody: { accountMode: 'plain' as const,
+                installationId: 'installation-1', custodian: { accountId: 'foreign-owner' },
+                installationPublicKey: nacl.box.keyPair().publicKey } } : {}) });
+        expect(result).toMatchObject({ ok: false, errorCode: 'credential_scope_denied', effectAttempted: false, failureCause });
+        expect(disclosureConsent).not.toHaveBeenCalled();
+        if (stage === 'mint') expect(homes.requestsFor(path)).toHaveLength(0);
+    });
     it('mints retained managed follow-up authorization even for the requester own ordinary Machine', async () => {
         if (!account) throw new Error('Expected captured Account');
         answerOwnedMachine();

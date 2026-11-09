@@ -558,7 +558,7 @@ export async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineF
         if (rpcRole === null) return { kind: 'denied', code: 'custodian_only' };
         requiredRole = rpcRole;
     }
-    if (requiredRole === 'manage' && access.role !== 'manage') return { kind: 'denied', code: 'access_denied',
+    if (requiredRole === 'manage' && access.role !== 'manage') return { kind: 'denied', code: 'access_denied', requiredRole,
         ...(spawnSetup ? { diagnostic: { reason: 'machine_setup_requires_manage',
             requiredFact: 'machine_manage_role', remedy: 'request_machine_manage_access' } } : {}) };
     if (!isMachineOperationSupportedForRequester({ actorAccountId: input.actorAccountId, machine: row,

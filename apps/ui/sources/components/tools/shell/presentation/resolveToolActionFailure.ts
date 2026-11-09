@@ -41,6 +41,7 @@ const SCOPE_CAUSE_KIND: Readonly<Record<ScopeCause, 'outside' | 'unverified'>> =
 
 function resolveCauseSummary(cause: string | null): string | null {
     if (cause === null) return null;
+    if (cause === 'machine_manage_required') return t('toolView.actionOutcome.cause.machineManageRequired');
     if (cause === 'external_authorization_refused') return t('toolView.actionOutcome.cause.authorizationRefused');
     const scope = Object.hasOwn(SCOPE_CAUSE_KIND, cause) ? SCOPE_CAUSE_KIND[cause as ScopeCause] : null;
     if (scope === 'outside') return t('toolView.actionOutcome.cause.outsideAgentSessions');

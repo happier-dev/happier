@@ -327,15 +327,16 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     expect(prepared?.authorization.binding.actionId).toBe('template.updates.apply');
   });
 
-  it('keeps a restricted template PAT root signed after replay without a private HTTP projection', () => {
-    const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['template.updates.apply'] } };
+  it.each(['template.updates.apply', 'action.invoke'] as const)('keeps a restricted %s PAT root signed without private Account custody', actionId => {
+    const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: [actionId] } };
     const root = ExternalActionExecutionAuthorizationV1Schema.parse({ ...authorization, binding: {
-      ...authorization.binding, actionId: 'template.updates.apply', grant,
+      ...authorization.binding, actionId, grant,
     } });
     const context: ActionExecutorContext = { surface: 'rpc', authority: 'account_automation',
       externalActionTarget: target, externalActionExecutionAuthorization: root,
       externalActionCredential: { accountId: 'bob', principalId: 'bob', credentialId: 'bob-service', grant } };
-    const request = { effectActionId: 'template.updates.apply', method: 'GET', path: '/v1/artifacts/template-release',
+    const request = { effectActionId: actionId === 'action.invoke' ? 'machines.presence.read' : actionId,
+      method: 'GET', path: actionId === 'action.invoke' ? `/v1/machines/${target.machineId}/presence` : '/v1/artifacts/template-release',
       daemonToken: 'installed-account-token', serverIdentityId: 'srv_bob_home',
       installationId: 'alice-installation', privateKey: keys.secretKey };
     const signed = executionAuthorizationOwner.resolveExternalActionServerRequestHeaders({ context, ...request });

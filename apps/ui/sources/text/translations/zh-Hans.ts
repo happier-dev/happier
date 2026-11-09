@@ -9900,6 +9900,7 @@ export const zhHans: TranslationStructure = {
         outsideAgentSessions: "不是此智能体的会话",
         unverifiedAgentAccess: "无法确认此智能体的访问权限",
         authorizationRefused: "授权被拒绝",
+        machineManageRequired: '此操作需要这台机器的管理权限。',
         toolPolicyUnsupportedAuth: "Codex 无法通过所选登录方式应用此次运行的工具权限。",
       },
     },

@@ -37,7 +37,7 @@ import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@h
 import { computeExternalActionRequestEnvelopeDigestV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { deriveWorkspaceSyncRelationshipId, projectWorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import { EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationVerifyRequestV1Schema, bindExternalActionExecutionAuthorizationVerifyHttpPathV1, ExternalActionExecutionAuthorizationRequestV1Schema, projectExternalActionDeploymentPreparationEnvelopeAdmissionV1, type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { DeploymentPrepareInputV1Schema, ExternalActionRequestEnvelopeSchema, type ActionExecuteResult, type ActionId } from '@happier-dev/protocol';
+import { ActionIdSchema, DeploymentPrepareInputV1Schema, ExternalActionRequestEnvelopeSchema, type ActionExecuteResult, type ActionId } from '@happier-dev/protocol';
 import { openExternalActionRequesterAccountContextV1, openManagedControllerActionCodecV1, openManagedCreationActionCodecV1, projectRequesterSessionCredentialDisclosure } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -68,6 +68,7 @@ import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import axios from 'axios';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
+import { PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionRequesterHttpAuthorization } from './externalActionExecutionAuthorization';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
@@ -390,6 +391,8 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
   finiteWake?: boolean; accountOwnedFiniteWake?: boolean; finiteAction?: boolean;
   controllerCustodianAccountId?: string; controllerInventoryAbsent?: boolean;
   originalOwnAction?: ActionId; ownExecution?: ActionExecuteResult; onInventoryRead?: () => void; localDaemon?: boolean;
+  contributedInvocationDenied?: boolean;
+  machineRole?: 'use' | 'manage';
   ownHttpResponse?: Readonly<{ status: number; body: string }>;
   localDaemonExecution?: ActionExecuteResult;
   retireOwnAction?: boolean;
@@ -410,24 +413,32 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
   scopedManagedController?: boolean;
   scopedControllerMismatch?: 'parent' | 'installation' | 'resource' | 'account-owned';
   onRequestAuthorization?: (authorization: string | undefined) => void;
+  onRequestPath?: (path: string | undefined) => void;
 } = {}) {
   const seed = new Uint8Array(32).fill(19);
   const publicKey = ed25519.getPublicKey(seed);
   const controllerSeed = new Uint8Array(32).fill(29);
   const controllerPublicKey = ed25519.getPublicKey(controllerSeed);
-  const actionId = options.originalOwnAction ?? (options.finiteWake || options.finiteAction ? 'projects.script.run' : 'machines.work.summary.get');
+  const defaultActionId = options.originalOwnAction ?? (options.finiteWake || options.finiteAction ? 'projects.script.run' : 'machines.work.summary.get');
   let received: unknown;
   const retiredRequests: Array<Readonly<{ path: string; authorization: string | undefined; body?: unknown }>> = [];
   const securityPrincipals: Array<Readonly<{ authority: ReturnType<typeof effectiveCredentialAuthority>; authorization: string | undefined }>> = [];
   const server = createServer(async (request, response) => {
+    const actionId = options.originalOwnAction === 'action.invoke' && request.url?.startsWith('/v1/actions/')
+      ? ActionIdSchema.parse(request.url.split('/')[3]) : defaultActionId;
+    options.onRequestPath?.(request.url);
     options.onRequestAuthorization?.(request.headers.authorization);
     const respond = (value: unknown) => { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify(value)); };
     const machine = { id: 'alice-machine', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
       installationId: 'alice-installation', installationPublicKey: encodeBase64(publicKey), storageMode: 'plain',
-      access: { custodian: { accountId: options.custodianAccountId ?? 'alice', displayName: 'Alice' }, role: 'use', resourceMode: options.custodianAccountId === 'bob' ? mode : 'plain', accessState: 'ready' } };
+      access: { custodian: { accountId: options.custodianAccountId ?? 'alice', displayName: 'Alice' }, role: options.machineRole ?? 'use', resourceMode: options.custodianAccountId === 'bob' ? mode : 'plain', accessState: 'ready' } };
     const controller = { ...machine, id: 'alice-controller', installationId: 'controller-installation',
       installationPublicKey: encodeBase64(controllerPublicKey),
       access: { ...machine.access, custodian: { accountId: options.controllerCustodianAccountId ?? 'alice', displayName: 'Alice' } } };
+    if (request.url === '/v1/features' || request.url === '/v1/features/authenticated') {
+      return respond(FeaturesResponseSchema.parse({ capabilities: { serverIdentity: { serverIdentityId: homeIdentityId } } }));
+    }
+    if (request.url === '/v2/account/settings') return respond({ content: null, version: 0 });
     if (request.url === '/v1/account/encryption') {
       await options.beforeEncryptionRead?.();
       if (options.passiveReadDelayMs) await new Promise(resolve => setTimeout(resolve, options.passiveReadDelayMs));
@@ -483,7 +494,9 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
     }
     let raw = '';
     for await (const chunk of request) raw += String(chunk);
-    const body: unknown = JSON.parse(raw);
+    const body: unknown = raw ? JSON.parse(raw) : {};
+    const availability = readBundledPluginAvailabilityHttpFixture(request.url ?? '', body);
+    if (availability) return respond(availability);
     if (request.url === managedMachineActionEndpointPathV1('machines.managed.get')) {
       if (options.scopedManagedController) events.push('managed-read');
       expect(body).toEqual({ homeId: homeIdentityId, managedId: 'retained-machine' });
@@ -514,6 +527,11 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
     }
     if (request.url?.endsWith('/execution-authorization')) {
       events.push('home-authorized');
+      if (options.contributedInvocationDenied && actionId === 'action.invoke') {
+        response.statusCode = 403;
+        return respond({ error: 'credential_scope_denied', failureCause: {
+          phase: 'execution_authorization', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null } });
+      }
       const prepared = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
       const deploymentPreparationAdmission = projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({ actionId, envelope: prepared.envelope });
       const workspaceSync = prepared.envelope.v === 1 ? projectWorkspaceSyncAdmissionInputV1(actionId, prepared.envelope.input)
@@ -604,6 +622,14 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
     const dispatched = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
     if (!dispatched.success) return respond({ v: 1, actionId, requestId: 'request-1',
       execution: { ok: false, errorCode: 'fixture_receipt', error: 'fixture_receipt' } });
+    const execution: ActionExecuteResult = options.originalOwnAction === 'action.invoke' && actionId === 'action.spec.get'
+      ? { ok: true, result: PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.get'].parse({ actionSpec: {
+          id: 'happier.machine.services/actions/machine-online/setup', title: 'Machine online', description: null,
+          safety: 'safe', executionPlacement: 'machine', placements: [], slash: null, bindings: null, examples: null,
+          surfaces: { cli: true }, inputHints: null, inputSchema: { type: 'object' } } }) }
+      : options.ownExecution ?? (options.originalOwnAction === 'machines.work.summary.get'
+      ? { ok: true, result: ownMachineResult }
+      : { ok: false, errorCode: 'fixture_receipt', error: 'fixture_receipt' });
     const codec = openManagedControllerActionCodecV1({ authorization: dispatched.data.executionAuthorization,
       machineId: machine.id, installationId: machine.installationId, serverIdentityId: homeIdentityId,
       installationPrivateKey: new Uint8Array([...seed, ...publicKey]) });
@@ -612,12 +638,8 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
         actionId, requestId: 'request-1', target: { kind: 'machine', machineId: 'alice-machine' } },
       material: codec ?? { type: 'dataKey', machineKey: deriveAccountMachineKeyFromRecoverySecret(new Uint8Array(32).fill(23)) },
       executedMachineId: 'alice-machine', randomBytes: length => new Uint8Array(length).fill(6),
-      execution: options.ownExecution ?? (options.originalOwnAction === 'machines.work.summary.get'
-        ? { ok: true, result: ownMachineResult }
-        : { ok: false, errorCode: 'fixture_receipt', error: 'fixture_receipt' }) }).response);
-    return respond({ v: 1, actionId, requestId: 'request-1', execution: options.ownExecution ?? (options.originalOwnAction === 'machines.work.summary.get'
-      ? { ok: true, result: ownMachineResult }
-      : { ok: false, errorCode: 'fixture_receipt', error: 'fixture_receipt' }) });
+      execution }).response);
+    return respond({ v: 1, actionId, requestId: 'request-1', execution });
   });
   servers.push(server);
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -1339,6 +1361,54 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     expect(openExternalActionRequesterAccountContextV1(opening)).toEqual(encodeStoredCredentials(credentials));
     expect(openExternalActionRequesterAccountContextV1({ ...opening, purpose: { kind: 'machine_rpc', method: 'other', params: {} } })).toBeNull();
     expect(JSON.stringify(received)).not.toContain(credentials.token);
+  });
+
+  it.each(['plain', 'e2ee'] as const)('asks once before disclosing credentials for one contributed Machine Action invocation (%s)', async mode => {
+    const events: string[] = [];
+    const paths: (string | undefined)[] = [];
+    const target = await home(mode, events, { originalOwnAction: 'action.invoke', machineRole: 'manage',
+      onRequestPath: path => paths.push(path),
+      ownExecution: { ok: true, result: { configured: true } } });
+    const credentials: StoredCredentials = { token: token(), encryption: mode === 'plain' ? null
+      : { type: 'legacy', secret: new Uint8Array(32).fill(23) }, credentialProvenance: 'stored_session' };
+    terminal.interactive = true;
+    terminal.answer = 'y';
+    const output = captureConsoleText();
+    try {
+      await handleActionsCommand(['invoke', 'action.invoke', '--machine-id', 'alice-machine', '--request-id', 'request-1',
+        '--input-json', JSON.stringify({ action: { pluginId: 'happier.machine.services', localId: 'machine-online/setup' },
+          input: { v: 1, serverId: homeIdentityId, machineId: 'alice-machine' } }), '--yes'], {
+        readCredentialsFn: async () => credentials,
+        createExecutorFn: params => createCliActionExecutorFromCredentials({ ...params,
+          serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId,
+          actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) } }),
+      });
+      expect(terminal.prompts, JSON.stringify({ events, paths })).toHaveLength(1);
+      expect(output.text()).toContain('configured');
+    } finally { output.restore(); }
+  });
+
+  it.each(['plain', 'e2ee'] as const)('refuses a Can-use contributed invocation before disclosing credentials (%s)', async mode => {
+    const events: string[] = [];
+    const target = await home(mode, events, { originalOwnAction: 'action.invoke', contributedInvocationDenied: true });
+    const credentials: StoredCredentials = { token: token(), encryption: mode === 'plain' ? null
+      : { type: 'legacy', secret: new Uint8Array(32).fill(23) }, credentialProvenance: 'stored_session' };
+    terminal.interactive = true;
+    terminal.answer = 'y';
+    const output = captureConsoleText();
+    try {
+      await handleActionsCommand(['invoke', 'action.invoke', '--machine-id', 'alice-machine', '--request-id', 'request-1',
+        '--input-json', JSON.stringify({ action: { pluginId: 'happier.machine.services', localId: 'machine-online/setup' },
+          input: { v: 1, serverId: homeIdentityId, machineId: 'alice-machine' } }), '--yes'], {
+        readCredentialsFn: async () => credentials,
+        createExecutorFn: params => createCliActionExecutorFromCredentials({ ...params,
+          serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId,
+          actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) } }),
+      });
+      expect(terminal.prompts, JSON.stringify({ events, output: output.text() })).toHaveLength(0);
+      expect(output.text()).toContain('needs Manage on this Machine');
+      expect(events).not.toContain('dispatch');
+    } finally { output.restore(); }
   });
 
   it('still requires guest disclosure for an Action that carries requester credentials', async () => {

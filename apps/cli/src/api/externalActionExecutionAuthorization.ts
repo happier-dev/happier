@@ -1,4 +1,5 @@
 import type { ExternalActionIssuerRefusal } from './externalActionIssuerRefusal';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { deriveEd25519KeyPair, ED25519_PUBLIC_KEY_BYTES } from '@happier-dev/protocol/crypto/ed25519';
 import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
@@ -1849,6 +1850,17 @@ export function resolveExternalActionServerRequestHeaders(input: Readonly<{
     return { ok: false };
   }
   const binding = authorization.binding;
+  if (binding.actionId === ACTION_INVOKE_ACTION_ID_V1 && input.effectActionId !== binding.actionId
+    && 'authentication' in binding) {
+    // The contributed handler spends the Account custody already disclosed for
+    // this invocation. Its outer Action proof is not a credential for arbitrary
+    // child HTTP purposes, and the installed daemon's Account is not the caller.
+    const requester = readRequesterAccountActionContext(authorization);
+    if (!requester || binding.accountId !== readAccountIdFromToken(requester.credentials.token)
+      || (binding.authentication.kind !== 'account' && binding.authentication.kind !== 'terminal')) return { ok: false };
+    return { ok: true, headers: { Authorization: `Bearer ${requester.credentials.token}`,
+      ...(input.context.authority === 'account_automation' ? { [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' } : {}) } };
+  }
   if (binding.actionId === 'approval.request.create' && binding.actionId !== input.effectActionId
     && 'authentication' in binding) {
     // The proposal proof remains approval provenance, not an effect credential.

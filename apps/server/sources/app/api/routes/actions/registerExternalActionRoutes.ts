@@ -777,6 +777,9 @@ export function registerExternalActionRoutes(
             if (!admission || admission.kind !== 'admitted') {
                 app.log.warn({ event: 'external_action_machine_admission_refused',
                     actionId: actionId.data, reasonCode: admission?.code ?? 'machine_unavailable' });
+                if (admission?.requiredRole === 'manage' && !admission.diagnostic) return sendExternalActionHttpError(reply,
+                    'credential_scope_denied', body.data.envelope.requestId, undefined, undefined, undefined, undefined,
+                    { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null });
                 return sendExternalActionHttpError(reply, 'target_unavailable', body.data.envelope.requestId,
                     undefined, undefined, undefined, admission?.diagnostic);
             }

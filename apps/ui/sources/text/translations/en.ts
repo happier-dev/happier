@@ -11951,6 +11951,7 @@ const enToolView = {
       outsideAgentSessions: 'Not one of this Agent’s sessions',
       unverifiedAgentAccess: 'Couldn’t confirm this Agent’s access',
       authorizationRefused: 'Authorization was refused',
+      machineManageRequired: 'This Action needs Manage on this Machine.',
       toolPolicyUnsupportedAuth: 'Codex cannot apply this run’s tool permissions with the selected sign-in method.',
     },
   },

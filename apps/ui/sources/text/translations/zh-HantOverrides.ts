@@ -8188,6 +8188,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     toolView: {
+        actionOutcome: { cause: { machineManageRequired: '此操作需要這台機器的管理權限。' } },
         open: '開啟詳細資料',
         expand: '展開/摺疊',
         input: '輸入',
