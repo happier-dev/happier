@@ -1,5 +1,5 @@
 // Presented UI needs destinations, their executable Actions, physical renderer facts,
-// Account descriptors, Store registry sources, Voice catalog authority and translation Resource declarations.
+// Account descriptors, Store registry sources, backup destinations, Voice catalog authority and translation Resource declarations.
 // Other catalogues retain separate demand.
 export const CONNECTED_ACCOUNT_PROJECTION_SECTIONS = ['familiesById.connectedAccounts'] as const;
 // A connected-account purpose declaration resolves through its consumer's Actions/Resources,
@@ -8,7 +8,7 @@ export const CONNECTED_ACCOUNT_PURPOSE_DECLARATION_SECTIONS = ['actionsById', 'r
     ...CONNECTED_ACCOUNT_PROJECTION_SECTIONS, 'familiesById.machineProvisioners'] as const;
 export const PLUGIN_UI_SECTIONS = ['actionsById', 'familiesById.pluginUi', 'familiesById.pluginBrowser',
     ...CONNECTED_ACCOUNT_PROJECTION_SECTIONS, 'familiesById.inputTypes', 'familiesById.voiceProviders',
-    'familiesById.storeKinds', 'familiesById.registrySources', 'resourcesById'] as const;
+    'familiesById.storeKinds', 'familiesById.registrySources', 'familiesById.backupDestinations', 'resourcesById'] as const;
 // Administration ranks origin candidates from installed-package facts. `base` and
 // `installedPackagesById` are always loaded, so the candidate question demands no family.
 export const PLUGIN_EXECUTION_ORIGIN_CANDIDATE_SECTIONS = [] as const satisfies readonly string[];

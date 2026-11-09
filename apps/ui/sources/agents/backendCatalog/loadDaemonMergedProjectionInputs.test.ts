@@ -319,6 +319,60 @@ describe('loadDaemonMergedProjectionCacheEntry', () => {
         expect(reads.length - beforeReopen).toBe(0);
     });
 
+    it('hydrates the enabled bundled S3 destination for backup setup from AppShell demand', async () => {
+        // QA-DATA-RESTORE-1109: an admitted/matched eadc source at 0.0.0
+        // coexisted with an empty backupDestinationsById in the live UI.
+        const { PLUGIN_UI_SECTIONS } = await import('@/sync/domains/plugins/ui/projectionSections');
+        const { DEPLOYMENT_BACKUP_TEST_ACTION_ID_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
+        const { normalizePluginUiProjection } = await import('@/sync/domains/plugins/ui/projection');
+        const { loadDaemonMergedProjectionCacheEntry } = await import('./loadDaemonMergedProjectionInputs');
+        const account = createAccountLifetime('account-a');
+        onTestFinished(() => account.retire());
+        const pluginId = 'happier.backup.destinations';
+        const occurrenceId = `${pluginId}:22`;
+        const executionOrigin = { serverIdentityId: 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN',
+            sourceRef: { machineId: 'eadc2422-b42b-478d-97b1-af9b530d5f08', pluginId,
+                sourceCustody: { kind: 'development', registeredRootId: '/qa/packages/plugins/backup-destinations' } } } as const;
+        storage.getState().applyMachines([createMachineFixture({ id: executionOrigin.sourceRef.machineId })],
+            false, { sourceServerId: projectionScope.serverId });
+        const destination = { id: `${pluginId}/s3`, pluginId, pluginVersion: '0.0.0', occurrenceId, executionOrigin,
+            definition: { id: 's3', title: 'S3 object storage', resticTransport: 's3', locality: 'unknown',
+                configSchema: { type: 'object', properties: { endpoint: { type: 'string' }, bucket: { type: 'string' },
+                    prefix: { type: 'string' }, addressing: { type: 'string', enum: ['auto', 'dns', 'path'] } },
+                    required: ['endpoint', 'bucket', 'prefix'], additionalProperties: false },
+                credentialRoles: [{ role: 'repositoryPassword' }, { role: 'accessKeyId' }, { role: 'secretAccessKey' },
+                    { role: 'sessionToken', optional: true }],
+                actions: { test: { kind: 'hostAction', actionId: DEPLOYMENT_BACKUP_TEST_ACTION_ID_V1 },
+                    open: { pluginId, localId: 's3/open' } } } };
+        const snapshot = buildDeferredDaemonProjectionSections(DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+            protocolVersion: 1, projectionDigest: 'a'.repeat(64), projection: { ...daemonProjection(7),
+                installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Backup destinations', version: '0.0.0',
+                    enabled: true, occurrenceId, executionOrigin, source: { kind: 'development', locator: '/qa/backup-destinations' } } },
+                familiesById: { backupDestinations: { family: 'backupDestinations', entriesById: { [destination.id]: destination } } },
+                agentsById: { codex: { id: 'codex', title: 'Codex' } },
+            },
+        }));
+        const reads: string[] = [];
+        network.setRpcAckResponder(async call => {
+            const request = call.payload as Readonly<{ sectionRead?: { digest: string; offset: number; includeDigests?: readonly string[] } }>;
+            const read = request.sectionRead;
+            reads.push(...(read ? [read.digest, ...read.includeDigests ?? []] : ['manifest']));
+            return { ok: true, result: read ? snapshot.read(read.digest, read.offset, read.includeDigests) : snapshot.manifest };
+        });
+        const params = { machineId: executionOrigin.sourceRef.machineId, serverId: projectionScope.serverId,
+            accountLifetime: account.lifetime, sections: PLUGIN_UI_SECTIONS, reuseFreshReady: true };
+        const answer = await loadDaemonMergedProjectionCacheEntry(params);
+        expect(answer).toMatchObject({ kind: 'ready' });
+        if (!answer || answer.kind !== 'ready') throw new Error('UI projection did not settle');
+        const projection = normalizePluginUiProjection(answer.inputs.pluginProjectionV2!);
+        expect(projection.installedPackagesById[pluginId]).toMatchObject({ enabled: true, version: '0.0.0' });
+        expect(projection.backupDestinationsById[destination.id]).toEqual(destination);
+        expect(reads).not.toContain(snapshot.manifest.sections.agentsById);
+        const beforeReopen = reads.length;
+        expect(await loadDaemonMergedProjectionCacheEntry(params)).toBe(answer);
+        expect(reads.length - beforeReopen).toBe(0);
+    });
+
     it('expands exact Search coverage through an unchanged manifest and reuses complete coverage on reopen', async () => {
         const { loadDaemonMergedProjectionCacheEntry, daemonProjectionHasSections } = await import('./loadDaemonMergedProjectionInputs');
         const { PLUGIN_SEARCH_SECTIONS } = await import('@/sync/domains/plugins/ui/projectionSections');
