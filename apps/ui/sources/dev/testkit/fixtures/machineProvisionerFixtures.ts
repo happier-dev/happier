@@ -21,7 +21,9 @@ export function createManagedCpuOptionsFixture(sizes: readonly Readonly<{
     prices?: MachineProvisionerOptionsResultV1['dimensions']['size'][number]['prices'];
 }>[]): MachineProvisionerOptionsResultV1 {
     return createMachineProvisionerOptionsFixture({ base: { launch: {} }, dimensions: {
-        size: sizes.map(({ cpu, ...size }) => ({ ...size, assignments: cpu === undefined ? [] : [{ path: 'cpu', value: cpu }] })),
+        size: sizes.map(({ cpu, ...size }) => ({ ...size,
+            nativeFacts: { size: { id: size.id, title: size.title, ...(cpu === undefined ? {} : { cpuCores: cpu }) } },
+            assignments: cpu === undefined ? [] : [{ path: 'cpu', value: cpu }] })),
         image: [], location: [], network: [], duration: [],
     } });
 }

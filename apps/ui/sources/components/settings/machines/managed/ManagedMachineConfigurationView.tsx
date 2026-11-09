@@ -219,9 +219,9 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
     const reviewed = React.useRef<ManagedConfigurationFactsV1 | null>(null);
     const delegatedProvisioner = React.useMemo(() => delegatedAcquire ? projectManagedPresetProvisioner(preset) : undefined, [preset, delegatedAcquire]);
     const catalogProvisioner = delegatedProvisioner ?? catalog.provisioners.find(row => buildQualifiedPluginContributionKey(row.contribution) === props.provisioner);
-    // Retry refreshes every read behind this form, including a refused schema.
+    // Retry refreshes refused form reads along with native options.
     const retry = () => {
-        bumpReadRevision();
+        if (optionsInput.kind === 'unavailable' || launchFormUnreadable) bumpReadRevision();
         if (catalog.binding && catalog.homeId && catalogProvisioner) refreshManagedProvisionerAvailability(catalog.binding,
             { homeId: catalog.homeId, ...(controller ? { controller } : {}), contribution: catalogProvisioner.contribution });
         readOptions();

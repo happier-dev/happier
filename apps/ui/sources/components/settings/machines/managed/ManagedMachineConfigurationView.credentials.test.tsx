@@ -20,6 +20,11 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 
 const route = vi.hoisted(() => ({ params: {} as Record<string, string | undefined>, replace: vi.fn(), push: vi.fn(), back: vi.fn(), dismissTo: vi.fn() }));
 const nativeBoundary = vi.hoisted(() => ({ rpc: vi.fn() }));
+vi.mock('@/components/widgets/nearViewport', async importOriginal => {
+    const actual = await importOriginal<typeof import('@/components/widgets/nearViewport')>();
+    const { createMeasuredNearViewportModuleMock } = await import('@/dev/testkit/mocks/nearViewport');
+    return createMeasuredNearViewportModuleMock(actual);
+});
 vi.mock('@legendapp/list/react-native', async () => {
     const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
     return createLegendListModuleMock({ renderItems: true });
@@ -195,7 +200,7 @@ async function selectCredentials(screen: Screen) {
     expect(credentialControl(screen, 'cloud-account')).toBeDefined();
     await pressCredentialOption(screen, 'cloud-account', 'Cloud work');
     await pressCredentialOption(screen, 'computer-access', 'Computer access');
-    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.sizes:native')).not.toBeNull());
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.sizes:native'), screen.getTextContent()).not.toBeNull());
     await act(async () => screen.pressByTestId('managed-config.sizes:native'));
 }
 function actionInputs(actionId: string) {

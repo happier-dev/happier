@@ -271,13 +271,16 @@ describe('created machine resource rows (UIR5)', () => {
     expect(screen.findByTestId('managed-machine.installation-error')).not.toBeNull();
     expect(screen.getTextContent()).not.toContain(reason);
     expect(screen.getTextContent()).not.toContain('guest installation failed');
-    await screen.pressByTestIdAsync('managed-machine.installation-error.details');
+    await screen.pressByTestIdAsync('managed-machine.installation-error-details-toggle');
     expect(screen.getTextContent()).toContain(reason);
     if (reason === 'bootstrap.native_command_failed') {
       expect(screen.getTextContent()).toContain('run · exit 1 · guest installation failed');
     }
     await screen.update(<ManagedCreationProgress machine={machine} operation={operation} handlers={{ checkNow: vi.fn() }} checking />);
-    expect(screen.findByTestId('managed-machine.installation-check')?.props.accessibilityState?.busy).toBe(true);
+    // The current observation owns Check now; its diagnostic does not repeat the action.
+    expect(testIds(screen, 'managed-machine.progress:checkNow')).toHaveLength(1);
+    expect(screen.findByTestId('managed-machine.installation-check')).toBeNull();
+    expect(screen.findByTestId('managed-machine.progress:checkNow')?.props.accessibilityState?.busy).toBe(true);
   });
 
   it('keeps native identity out of a healthy created machine and names the row after the machine', async () => {

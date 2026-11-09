@@ -1,21 +1,33 @@
-BLOCKED — AUTO repeatedly refuses memory admission; no test result, compiler verdict or entry-load result yet.
+IMPLEMENTED_NOT_VERIFIED — verified repairs ready for Fork C; seven failures named below; touched-file compiler verdict blocked by dependency TS7056. All AUTO handles are terminal.
 
-| Cluster | Evidence | Disposition |
+Canonical production owner: ManagedMachineConfigurationView Retry/readRevision; reuse its existing schema readers, not a second retry path. Test boundaries reuse LegendList and real near-viewport tracking with native geometry supplied by the testkit.
+| Cluster / exact remaining test | Observed evidence | Disposition / next owner investigation |
 | --- | --- | --- |
-| Fleet admission / synchronization | Repeated `HSTACK_MEMORY_BUSY` on nl3, linux1, windows1-linux and mac3-linux; linux1 also reported a Mutagen staging-permissions error | Observed setup/resource failures; no attribution to product or tests |
-| `ManagedMachineStateRow.test.tsx` | No Vitest terminal result | [blocked] All assertions retained; individual failures cannot be named from an unexecuted suite |
-| `ManagedMachineDetail.test.tsx` | No Vitest terminal result | [blocked] All assertions retained; earlier reported approximately 90 failures are not verified here |
-| `machineShareAdapter.test.tsx` | No Vitest terminal result | [blocked] All assertions retained; Leave/share edits untouched |
+| Native-list harness / credential sizes | Initial size-cell failures; final credentials 27/27 PASS | Canonical LegendList boundary, measured stage/span, CPU nativeFacts fixture; shared geometry helper serves both configurator suites |
+| Superseded diagnostic controls | Initial StateRow/Detail expect former SurfaceStateCard props or duplicate installation Check now | Assert full rendered diagnostics via current disclosure; StateRow 32/32 PASS; shared AttentionBanner (`4be729bb38`) and current observation own their respective controls |
+| Typed credential refusal | Exact alert gained Technical details + OK (`dc7bb88e45`) | Preserve exact refusal, no-acquire/no-default-write assertions; final PASS |
+| Product schema Retry | Two widths initially read schema once after Retry; unconditional refresh then caused 3-vs-1 render commits | One Retry refreshes refused forms; both schema cases and existing render-count contract PASS in reruns 2 and 4 |
+| Async Lima refusal disclosure | Assertion ran before Advanced opened | Wait for the same exact refusal assertion; final PASS |
+| Config: discloses stopped compute billing from real maritime declarations without treating retained storage as compute | No size description at line 424 | [blocked] Root cause unsettled; inspect native size projection/fixture before changing billing assertions |
+| Config: reads as loading, not as a verdict, while a named controller waits for the machine list to sync | Error managed_response_invalid; account catalog requested, no machine inventory HTTP request | [blocked] Trace retained controller/catalog placement. Removed ineffective deferred inventory fixtures; kept loading/eventual-empty/no-dispatch assertions |
+| Config: names the controller it could not read and offers Retry when the catalog read fails, instead of a bare refusal | Raw controllerUnreadable key; en lookup undefined despite current source key | [blocked] Trace loaded locale resolution; no invented copy fallback |
+| Detail: shows the Home retention rule for its exact birth in the Account/Home (unloaded-stop) | New final-run React renderer AggregateError: parentInstance.children.indexOf is not a function | [blocked] Unattributed renderer failure; preceding run passed this case |
+| Detail: keeps one native Check now and same-resource recovery through Ask with enrolled-retention-failure operation history | installation-error absent at line 2720 | [blocked] Compare operation-history/current-observation presentation; do not discard recovery assertion |
+| Detail: reviews power on the same stopped resource with desired start in the saved Home before native dispatch | Expected enabled Stop control absent at line 3417 | [blocked] Reconcile pending desired intent with canonical power presentation; no assertion removed |
+| Detail: reviews fresh Devcontainer effects only on the same reachable controller (offline) | Rebuild enabled at line 3513 after offline inventory/HTTP fixtures were made consistent | [blocked] Trace admitted reachability/effect owner; fixture repair alone did not settle cause |
+| Sharing | machineShareAdapter 31/31 PASS in initial five-suite run | No sharing edits |
 
-Continuation handle: exec session `26271`; original AUTO command runs `pnpm --dir apps/ui exec vitest run` with the three requested paths, JSON reporter and `/tmp/managed-ui-tests-1109-red.json` output on the selected worker.
-Confirmed-absent source check: `managedCreationState` delegates to `managedConfirmedAbsenceState`: retained native `resource` → `absent` (the lifecycle presenter's `managedPower.resourceAbsent`); never-bound request → `notCreated`/`creationCanceled`. Both confirmed-absent StateRow scenarios retain native identity. Rendered truth remains unverified; no assertion was weakened.
-Contract basis inspected: plan 55 §1 SP-R2/SP-R3 and §2; `2864e7dd3f` explicitly supersedes one-press removal with confirmation. No expectation changed on inference alone.
-Touched-path typecheck: attempted with the documented `ui-1104b.locs` baseline; exit 2, `invalid shared typecheck baseline` (compilation did not run).
-Public full UI typecheck fallback: AUTO exec session `40467`, live log `/tmp/managed-ui-tests-1109-typecheck-full.log`; pending admission, no touched-file diagnostics available.
-Entry-loads: AUTO `--script=check:entry-loads`, exec session `49135`, live log `/tmp/managed-ui-tests-1109-entry.log`; pending admission, no 7/7 claim.
-Evidence snapshots: `qa-shots5/gaps/MANAGED-UI-TESTS-1109/{red,entry,typecheck,typecheck-full}.log`; snapshots are nonterminal except the invalid-baseline result.
-Next action (Lane 12 Fork C / execution owner): restore AUTO admission capacity and resume handles `26271`, `40467`, `49135`; do not launch duplicate jobs. Then classify actual test failures and complete fixes/validation.
-Changed production/test paths: none. Only this report and execution-log evidence are committed; no claim that the requested repair is complete.
-Same-shape sweep: execution admission failure — 3 requested suites blocked by the one AUTO execution owner; fixed none / routed Lane 12 Fork C + execution owner. Product sweep awaits a reproduced failure shape.
-Net mechanism delta: production checks/states/error codes/timers/retries/files +0/−0; no runtime change, new harness or bypass.
-Residual risk: all three suites remain unattributed; confirmed-absent rendering, typecheck and entry-load health have not been verified. No live QA or source repair was performed.
+Constructed current-source evidence: initial five-suite AUTO 265 PASS / 49 FAIL (314); final four-suite AUTO 276 PASS / 7 FAIL (283): Config 91/94, Detail 126/130, credentials 27/27, StateRow 32/32. No skipped tests.
+Exact names/diagnostics: qa-shots5/gaps/MANAGED-UI-TESTS-1109/continuation-red.json and continuation-rerun4.log. Prior reruns 1–3 retained; rerun 3 failed collection on shared groupTitleTouch metric; final rerun loaded all four suites.
+Confirmed-absent truth PASS: retained resources render “This machine no longer exists.” through managedPower.resourceAbsent; never-bound requests stay distinct (`ce0e3072ad`, plan 55 SP-R2/SP-R3). No absence product change needed.
+Design basis: plan 55 §1/SP-R2–SP-R3; `2864e7dd3f` requires removal confirmation. Diagnostic migrations preserve complete codes/native evidence and recovery outcomes; no assertion weakened to force GREEN.
+Same-shape sweep: Retry — 2 controls / 1 owner; list geometry — 2 suites / 1 testkit helper; CPU fixture — 4 suite consumers; diagnostics — 2 suites / existing shared owners. No competing product owner added.
+Adjacent CPU-fixture consumers: composer suite PASS; MachinePresetView has 13 named failures (49 PASS / 13 FAIL across 62 tests), unattributed without a before baseline; see continuation-adjacent.log. Do not call them pre-existing.
+Modal timeout assertion failed in rerun 2 but PASS in final run without a Modal fix: timing/current-source variability remains unresolved.
+Entry-loads AUTO exit 0: 13/13 current-source graphs PASS, completed 22:38:28Z; continuation-entry-loads3.log. Latest four-suite handle 3749 exit 1 and entry handle 12745 exit 0 are terminal; no queued work left.
+Public UI typecheck AUTO exit 1: packages/plugins/triage/src/definition.ts:1135:14 TS7056 during declaration preparation; UI partitions never ran. continuation-typecheck.log. Documented ui-1104b.locs baseline is invalid; no zero-delta/touched-file verdict claimed. Fork C owns compiler follow-up after declaration repair.
+Net lane mechanisms: production conditions +1 (refresh only refused schemas; measured render regression), callbacks +0/−1 (one Retry); states/errors/timers/retry budgets/production files +0/−0; testkit files +1 (shared native measurement boundary). Ineffective fixture wait removed.
+Touched: configurator owner + both suites, StateRow suite, CPU fixture, nearViewport testkit helper; earlier Detail/diagnostic repairs co-landed in moving HEAD. Current compatible Fork C/share/split work preserved; shared index untouched.
+No documentation change: restores existing Retry/recovery contracts. No live/browser/platform-runtime claim; this task supplies source-test evidence.
+Commit: private index + commit-tree + CAS; exact id is in the single BOARD RESULT to Lane 12 Fork C.
+Residual risk: seven named failures, adjacent unattributed failures and intermittent Modal/renderer behavior remain; compiler verdict is unavailable. Fork C must settle these before claiming the managed UI corridor green.

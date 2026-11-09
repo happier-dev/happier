@@ -57,9 +57,8 @@ const nativeBoundary = vi.hoisted(() => ({ rpc: vi.fn() }));
 // Collection windowing, supplying only the native layout measurement boundary.
 vi.mock('@/components/widgets/nearViewport', async importOriginal => {
   const actual = await importOriginal<typeof import('@/components/widgets/nearViewport')>();
-  return { ...actual, createScrollViewNearViewportTracker: (...args: Parameters<typeof actual.createScrollViewNearViewportTracker>) => ({
-    ...actual.createScrollViewNearViewportTracker(...args), measureSpan: async () => ({ top: 0 }),
-  }) };
+  const { createMeasuredNearViewportModuleMock } = await import('@/dev/testkit/mocks/nearViewport');
+  return createMeasuredNearViewportModuleMock(actual);
 });
 vi.mock('@legendapp/list/react-native', async () => {
   const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
@@ -773,9 +772,9 @@ describe('mounted managed configurator', () => {
       const refusalCopy = typeof refusal?.status === 'string' ? refusal.status : refusal?.status.fallback;
       await waitForHomeGovernance(() => expect(createReason()).toBe(refusalCopy));
       // A refused field is never hidden in the closed disclosure: it opens on the refusal.
-      expect(fieldOf('vmType')?.description, JSON.stringify({ refusal,
+      await waitForHomeGovernance(() => expect(fieldOf('vmType')?.description, JSON.stringify({ refusal,
         visibleFields: screen.tree.findAllByType(ActionInputFields).flatMap(node =>
-          node.props.fields.map((field: Readonly<{ path: string }>) => field.path)) })).toBe(refusalCopy);
+          node.props.fields.map((field: Readonly<{ path: string }>) => field.path)) })).toBe(refusalCopy));
       await act(async () => screen.changeTextByTestId('managed-config.field:image', 'https://example.test/ubuntu.img'));
       await waitForHomeGovernance(() => expect(createReason()).toBe(refusalCopy));
       expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(true);
@@ -3233,17 +3232,6 @@ describe('mounted managed configurator', () => {
       accountId: 'owner',
       currentAccount: true,
     });
-    // An unanswered fixture is an immediate HTTP 404, not an in-flight inventory read.
-    const inventoryRead = createDeferred<void>();
-    onTestFinished(() => inventoryRead.resolve());
-    harness.answer(serverId, '/v1/machines', { select: async () => {
-      await inventoryRead.promise;
-      return { body: [] };
-    } });
-    harness.answer(serverId, `/v1/machines/${defaultController.machineId}`, { select: async () => {
-      await inventoryRead.promise;
-      return { status: 404, body: { error: 'not_found' } };
-    } });
     const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
     const { ManagedMachineConfigurationView } =
       await import('./ManagedMachineConfigurationView');
@@ -3263,12 +3251,12 @@ describe('mounted managed configurator', () => {
         .map((node) => node.props.kind);
     expect(catalogState(), JSON.stringify(screen.tree
       .findAllByType(SurfaceStateCard)
-      .map(node => ({ kind: node.props.kind, title: node.props.title, diagnosticCode: node.props.diagnosticCode })))).toContain('loading');
+      .map(node => ({ kind: node.props.kind, title: node.props.title, diagnosticCode: node.props.diagnosticCode })))
+      + JSON.stringify(harness.requests.map(request => request.path))).toContain('loading');
     expect(catalogState()).not.toContain('empty');
     // Once the Home's list has really synced without the named controller, the empty verdict is true.
     await act(async () => {
       await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
-      inventoryRead.resolve();
     });
     await flushHookEffects();
     expect(catalogState()).toContain('empty');
