@@ -36,36 +36,18 @@ describe('Connected service setup flow body', () => {
     expect(bar.props.tabs[0].badge).toBeTruthy();
   });
 
-  it('asks for an explicit press before the only sign-in method starts', async () => {
+  it('draws no generic Continue: a selected method without its own step yet waits quietly', async () => {
     const onSelectMethod = vi.fn();
     const screen = await renderScreen(
       <ConnectedServiceSetupFlowBody
         state="ready"
-        methods={[{ id: 'manual', title: 'With a code', recommended: true }]}
-        activeMethodId="manual"
+        methods={[{ id: 'oauth', title: 'Sign in with Acme', recommended: true }]}
+        activeMethodId="oauth"
         onSelectMethod={onSelectMethod}
       />,
     );
-    expect(screen.findHostByTestId('connected-service-setup:preparing')).toBeNull();
-    expect(onSelectMethod).not.toHaveBeenCalled();
-    await screen.pressByTestIdAsync('connected-service-setup:method-continue');
-    expect(onSelectMethod).toHaveBeenCalledWith('manual');
-  });
-
-  it('shows the pressed Continue working while its sign-in starts, not as unavailable', async () => {
-    const onSelectMethod = vi.fn();
-    const screen = await renderScreen(
-      <ConnectedServiceSetupFlowBody
-        state="ready"
-        methods={[{ id: 'manual', title: 'With a code', recommended: true }]}
-        activeMethodId="manual"
-        methodsDisabled
-        onSelectMethod={onSelectMethod}
-      />,
-    );
-    const state = screen.findHostByTestId('connected-service-setup:method-continue')?.props.accessibilityState;
-    expect(state).toMatchObject({ busy: true });
-    await screen.pressByTestIdAsync('connected-service-setup:method-continue').catch(() => {});
+    expect(screen.findHostByTestId('connected-service-setup:method-continue')).toBeNull();
+    expect(screen.findHostByTestId('connected-service-setup:preparing')).not.toBeNull();
     expect(onSelectMethod).not.toHaveBeenCalled();
   });
 

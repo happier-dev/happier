@@ -79,17 +79,9 @@ export function ConnectedServiceSetupFlowBody(props: Readonly<{
                     />
                 </View>
             ) : null}
-            {props.state !== 'preparing' && !props.flow && activeMethodId && props.onSelectMethod ? (
-                // A chosen method waits for the person: nothing signs in until they press (one method or several).
-                <ConnectedServiceSetupFlowActions
-                    primary={{
-                        testID: 'connected-service-setup:method-continue',
-                        label: t('common.continue'),
-                        loading: props.methodsDisabled,
-                        onPress: () => props.onSelectMethod?.(activeMethodId),
-                    }}
-                />
-            ) : props.state === 'preparing' || !props.flow ? (
+            {/* The selected method's own first step is the flow (its form, or its one start action); there is
+                no generic Continue between choosing a way and seeing it. */}
+            {props.state === 'preparing' || !props.flow ? (
                 <SurfaceStateCard
                     testID="connected-service-setup:preparing"
                     size="line"
