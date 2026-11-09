@@ -93,11 +93,12 @@ export function traceExternalActionStage(actionId: unknown, rootRequestId: unkno
   diagnostic?: Pick<ActionStartDiagnosticV1, 'phase' | 'elapsedMs'>): void {
   if (!isTracedRequest(actionId, rootRequestId)) return;
   try {
+    const diagnosticTransportRequestId = transportRequestId?.replace(/^rpc_/u, '');
     logger.warnLocalFile('[external-action-stage]', { actionId, rootRequestId, stage,
       ...(diagnostic ? { phase: diagnostic.phase,
         ...(diagnostic.elapsedMs !== undefined ? { elapsedMs: diagnostic.elapsedMs } : {}) } : {}),
-      ...(isUuidDiagnosticRequestId(transportRequestId)
-        ? { transportRequestId } : {}) });
+      ...(isUuidDiagnosticRequestId(diagnosticTransportRequestId)
+        ? { transportRequestId: diagnosticTransportRequestId } : {}) });
   } catch { /* Diagnostics cannot change the Action outcome. */ }
 }
 

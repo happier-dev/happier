@@ -16,7 +16,7 @@ import { openDaemonActionReadWatch } from './actionReadWatch';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { configuration } from '@/configuration';
-import { runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
+import { runTracedExternalActionStage, traceExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
 import { resolveCliFeatureDecision, type CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
 import type { PluginCatalogEntry } from '@/plugins/projection/catalog/installed';
 import { readCurrentDaemonPluginCatalog } from '@/plugins/daemon/currentCatalog';
@@ -3000,6 +3000,8 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 ok: false, code: 'plugin_action_unavailable',
             });
         }
+        traceExternalActionStage('action.invoke', request.data.requestId, 'contributed.request',
+            context?.localActionContext?.actionRequestId ?? context?.transportRequestId);
         const traceStage = <T>(stage: string, operation: () => T | Promise<T>) => runTracedExternalActionStage(
             'action.invoke', context?.localActionContext?.actionRequestId ?? context?.transportRequestId, stage, operation,
         );

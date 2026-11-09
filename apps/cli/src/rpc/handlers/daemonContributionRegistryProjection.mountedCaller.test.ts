@@ -25,7 +25,7 @@ import { registerDaemonContributionRegistryProjectionHandler } from './daemonCon
 import { createDeferred } from '@/testkit/async/deferred';
 
 describe('mounted caller admission through the real contributed Action RPC', () => {
-    it('refuses unbound raw Machine Actions and still executes a real host-presented composer Action', async () => {
+    it('refuses unbound raw Machine Actions and correlates composer requests without replacing execution identity', async () => {
         const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{
             manifest: createPluginManifestV2Fixture({ id: 'acme.composer', contributes: { actions: [
                 { id: 'install', title: 'Native install', scopes: ['global'], surfaces: ['ui'], dangerLevel: 'safe', placementBindings: [], execution: { target: 'daemon' } },
@@ -36,6 +36,9 @@ describe('mounted caller admission through the real contributed Action RPC', () 
                 api.actions.register('submit', () => ({ effects: ++effects }));
             }` },
         }] });
+        vi.stubEnv('HAPPIER_WEB_LATENCY_TRACE', '1');
+        // The local file sink is the OS boundary; registered ingress and plugin execution stay real.
+        const log = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
         try {
             const handlers = new Map<string, RpcHandler>();
             registerDaemonContributionRegistryProjectionHandler({ registerHandler(method, handler) { handlers.set(method, handler); } }, {
@@ -47,11 +50,40 @@ describe('mounted caller admission through the real contributed Action RPC', () 
             const request = { machineId: 'machine-1', qualifiedActionId: 'acme.composer/install',
                 expectedContributorOccurrenceId: occurrence, executionSurface: 'ui', input: {} };
             expect(await handler(request)).toMatchObject({ ok: false, code: 'plugin_action_unavailable' });
-            expect(await handler({ ...request, qualifiedActionId: 'acme.composer/submit', sessionId: 'requester-session',
+            const submitted = { ...request, qualifiedActionId: 'acme.composer/submit', sessionId: 'requester-session',
                 invocation: { kind: 'hostPresentedComposer', currentComposerIntent: {
                     composer: { kind: 'session', sessionId: 'requester-session' }, revision: 1,
-                } } })).toEqual({ ok: true, result: { effects: 1 } });
-        } finally { await fixture.dispose(); }
+                } } };
+            const uiRequestId = '70cc64d3-0386-4914-b7d8-713b7879e99f';
+            const transportId = 'fd0b0146-17a5-431c-bc69-3a3fa865b1d7';
+            const authorityId = '1137cf2a-27cf-481b-b28f-951fc49f9c65';
+            const cases = [
+                { requestId: uiRequestId, actionRequestId: undefined, root: transportId, paired: true },
+                { requestId: uiRequestId, actionRequestId: authorityId, root: authorityId, paired: true },
+                { requestId: undefined, actionRequestId: undefined, root: transportId, paired: false },
+                { requestId: 'PRIVATE_AUTHORED_REQUEST', actionRequestId: undefined, root: transportId, paired: false },
+            ];
+            let effects = 0;
+            for (const candidate of cases) {
+                log.mockClear();
+                expect(await handler({ ...submitted, input: { marker: 'PRIVATE_ACTION_INPUT' },
+                    ...(candidate.requestId ? { requestId: candidate.requestId } : {}),
+                }, { signal: new AbortController().signal, transportRequestId: `rpc_${transportId}`,
+                    ...(candidate.actionRequestId ? { localActionContext: { actionRequestId: candidate.actionRequestId } } : {}),
+                })).toEqual({ ok: true, result: { effects: ++effects } });
+                const stages = log.mock.calls.filter(([message]) => message === '[external-action-stage]');
+                if (candidate.paired) expect(stages).toContainEqual(['[external-action-stage]', {
+                    actionId: 'action.invoke', rootRequestId: uiRequestId, stage: 'contributed.request', transportRequestId: candidate.root,
+                }]);
+                else expect(stages.some(([, record]) => record && typeof record === 'object'
+                    && 'stage' in record && record.stage === 'contributed.request')).toBe(false);
+                // Approval/execution keep their admitted identity; the diagnostic pair only lets a reader find it.
+                expect(stages).toContainEqual(['[external-action-stage]', expect.objectContaining({
+                    actionId: 'action.invoke', rootRequestId: candidate.root, stage: 'contributed.handler.end',
+                })]);
+                expect(JSON.stringify(log.mock.calls)).not.toContain('PRIVATE_');
+            }
+        } finally { log.mockRestore(); vi.unstubAllEnvs(); await fixture.dispose(); }
     });
 
     it.each(['ui', 'cli', 'page', 'source'] as const)('admits an external Account caller from %s to its declared source surface and refuses changed custody before effects', async callerSurface => {
