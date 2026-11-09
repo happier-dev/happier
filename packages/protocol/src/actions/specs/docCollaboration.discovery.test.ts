@@ -1,17 +1,5 @@
 import { expect, it } from 'vitest';
 import { createActionExecutor } from '../actionExecutor.js';
-import { getActionSpec } from '../actionSpecs.js';
-
-it('distinguishes a requested Doc edit suggestion from a conversational reply draft in agent tool guidance', () => {
-  const proposal = getActionSpec('doc.edit.propose');
-  expect(proposal.description).toMatch(/reply draft/i);
-  // Tool guidance must distinguish an exact mid-clause replacement from a full sentence.
-  expect(proposal.description).toContain('documentPassage.prefix');
-  expect(proposal.description).toContain('documentPassage.suffix');
-  expect(proposal.description).toContain('prefix + after + suffix');
-  expect(proposal.description).toContain('we will keep');
-  expect(getActionSpec('doc.comment.reply').description).toContain('doc.edit.propose');
-});
 
 it.each(['agent', 'mcp'] as const)('discovers Doc suggestions from a passage rewrite request on %s', async surface => {
   const executor = createActionExecutor({});

@@ -3687,8 +3687,10 @@ passage owner: in development source, accepted replacement text stays placed in
 later revisions through the same unambiguous quote relocation as an original
 passage. A later explicit reattachment takes precedence over an older acceptance.
 Otherwise the anchor quote must be unambiguous. Missing or ambiguous passages return `doc_passage_mismatch`; approval
-replay retains the resolved basis. `after` replaces exactly the quoted span and
-preserves surrounding text.
+replay retains the resolved basis. In development source, the passage owner expands
+a thread proposal to the complete paragraph(s) containing the highlight. `after`
+replaces that whole span verbatim. The original comment retains the selected
+quote and offsets; the preview diff shows the words that actually change.
 Explicit passage inputs retain their authored basis, and acceptance still
 verifies the reviewed source.
 

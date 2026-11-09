@@ -15,7 +15,7 @@ import { artifactSupportsProseCollaborationV1 } from '../../artifacts/artifactSh
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 import type { ActionExecuteFailure, ActionExecuteResult } from '../actionExecutionResult.js';
 import { areServerProfileIdentifiersEquivalent } from '../../features/payload/capabilities/serverIdentityCapabilities.js';
-import { locateDocPassageThreadV1, selectDocPassageThreadAnchorMessageV1 } from '../../artifacts/artifactPassageV1.js';
+import { captureDocPassageV1, docPassageEditTargetV1, locateDocPassageThreadV1, selectDocPassageThreadAnchorMessageV1 } from '../../artifacts/artifactPassageV1.js';
 
 type SameHome = (left: string | null | undefined, right: string | null | undefined) => boolean;
 
@@ -156,10 +156,11 @@ export async function prepareDocEditProposalInputV1(input: unknown, context: Act
   if (!read.ok) return read;
   const { artifact } = DocReadResultV1Schema.parse(read.result);
   if (typeof artifact.body !== 'string') return refuse('content_unavailable');
-  const { location, quote } = locateDocPassageThreadV1({ target: passage, source: artifact.body,
+  const { location } = locateDocPassageThreadV1({ target: passage, source: artifact.body,
     revision: artifact.revision, messages });
   if (location.state === 'detached') return refuse('doc_passage_mismatch');
-  const target = { ...passage, ref, revision: artifact.revision, range: location.range, quote };
+  const target = docPassageEditTargetV1(captureDocPassageV1({ ref, revision: artifact.revision,
+    source: artifact.body, range: location.range }));
   return { ok: true, input: { ...request, target,
     baseRevision: target.revision, before: target.quote, reason: request.reason ?? '' } };
 }

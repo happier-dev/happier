@@ -1,4 +1,5 @@
 import { countDocPassageThreadsV1 } from '@happier-dev/protocol/actions/executor/docCollaborationActions';
+import { docPassageEditTargetV1 } from '@happier-dev/protocol/artifacts/artifactPassageV1';
 import { readDiscussionInputMessages, readDiscussionInputQuestion } from '@/discussions/readDiscussionInputMessages';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -215,7 +216,9 @@ export function createDiscussionFollowInputIntake(input: Readonly<{
           ...(attachedPassage.suffix === undefined ? {} : { suffix: attachedPassage.suffix }),
         } } : {}),
         suggestEdit: { actionId: 'doc.edit.propose', discussionRef: doc.threadRef.discussion,
-          replacementScope: 'after replaces only documentPassage.quote. Keep prefix and suffix unchanged; check prefix + after + suffix. These are the attached version, not a claim about current document text. Use doc.read if surrounding context is absent or insufficient.',
+          ...(attachedPassage?.prefix !== undefined && attachedPassage.suffix !== undefined
+            ? { before: docPassageEditTargetV1(attachedPassage).quote } : {}),
+          replacementScope: 'Rewrite the complete paragraph(s) in suggestEdit.before; after replaces that entire text, including unchanged words. documentPassage.quote is the person\'s highlight within it. These are the attached version, not a claim about current document text. If before is absent or the Doc changed, use doc.read and rewrite the complete current paragraph(s) containing the passage.',
         },
       }) });
       // Keep selected identity in the incumbent Pending metadata so dispatch

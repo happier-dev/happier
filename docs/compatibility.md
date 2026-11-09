@@ -7336,6 +7336,17 @@ no persistence format, wire epoch or compatibility adapter changes. The inspecte
 `../0.2` frontier at `0425f64269b607642e7723fb30a83a0b53e17bf4` has neither the
 Doc collaboration schema nor spec, including scoped staged and unstaged changes.
 
+Development paragraph-scoped Doc suggestions reuse the existing optional passage
+`prefix` and `suffix` fields and the unchanged fully bound proposal shape. Capture
+keeps the selected quote and offsets; the thread adapter recaptures paragraph context
+from the current Doc, including for older attachments without those fields. Explicit
+reviewed inputs and stored proposals retain their exact authored basis. No schema,
+wire epoch or persisted-format change is introduced. Protocol and the Session host
+refresh together so tool guidance, generated context and target binding agree.
+The inspected `../0.2` frontier `7b37d65ca75e58560f8f3ca850958ac5407d2e75`
+has no corresponding passage, collaboration schema or Action spec in tracked source
+or scoped staged/unstaged paths; no predecessor adapter is added.
+
 Unreleased 0.3 GitLab native mutation results add optional `failure` diagnostics
 to the existing closed `refused` arm, using the existing closed
 `TriageSourceFailureV1` object. Dispatched provider refusals retain their Code

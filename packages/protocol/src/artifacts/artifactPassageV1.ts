@@ -32,8 +32,26 @@ function contextMatches(source: string, target: DocPassageRefV1, start: number):
 /** Called only with source already opened under current Artifact access and Account mode. */
 export function captureDocPassageV1(input: DocSourceV1 & Readonly<{ range: PassageRangeV1 }>): DocPassageRefV1 {
   if (!input.ref.serverId) refuse('server_target_required');
-  return DocPassageRefV1Schema.parse({ ref: input.ref, revision: input.revision,
+  const passage = DocPassageRefV1Schema.parse({ ref: input.ref, revision: input.revision,
     range: input.range, quote: input.source.slice(input.range.start, input.range.end) });
+  // Markdown paragraphs contain complete prose without guessing at abbreviations
+  // or treating soft-wrapped lines as sentence boundaries. Keep separators outside.
+  let start = 0;
+  let end = input.source.length;
+  for (const separator of input.source.matchAll(/\r?\n(?:[\t ]*\r?\n)+/g)) {
+    const nextStart = separator.index + separator[0].length;
+    if (nextStart <= input.range.start) start = nextStart;
+    if (separator.index >= input.range.end) { end = separator.index; break; }
+  }
+  return { ...passage, prefix: input.source.slice(start, input.range.start), suffix: input.source.slice(input.range.end, end) };
+}
+
+/** Capture retains the highlight; only a suggested edit replaces the containing paragraphs. */
+export function docPassageEditTargetV1(passage: DocPassageRefV1): DocPassageRefV1 {
+  const prefix = passage.prefix ?? '';
+  const suffix = passage.suffix ?? '';
+  return { ...passage, range: { start: passage.range.start - prefix.length, end: passage.range.end + suffix.length },
+    quote: prefix + passage.quote + suffix, prefix: '', suffix: '' };
 }
 
 export type DocPassageLocationV1 = Readonly<{ state: 'exact' | 'relocated'; range: PassageRangeV1 }>

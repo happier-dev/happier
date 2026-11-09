@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { captureDocPassageV1, prepareDocEditBodyV1 } from '../artifacts/artifactPassageV1.js';
 import { createActionExecutor, type ActionExecutorDeps, type ActionExecutorContext } from './actionExecutor.js';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
@@ -84,6 +85,39 @@ function countRoot(discussionId: string) {
     discussion: { ...discussionRef, discussionId } } };
 }
 
+it.each(['captured', 'legacy'] as const)('proposes and applies whole sentences for a mid-clause %s selection', async basis => {
+  const sentence = 'This spring we will keep prices steady for regulars while the new oven pays for itself.';
+  const source = `Earlier plans.\n\n${sentence}\n\nNext steps.`;
+  const selected = 'keep prices steady for regulars';
+  const start = source.indexOf(selected);
+  const captured = captureDocPassageV1({ ref, revision, source, range: { start, end: start + selected.length } });
+  const { prefix: _prefix, suffix: _suffix, ...legacy } = captured;
+  const passage = basis === 'legacy' ? legacy : captured;
+  const after = 'This spring we will keep prices steady for our regulars while the new oven gradually pays for itself.';
+  const executor = createActionExecutor({
+    // Authenticated opened-resource transport is the boundary; all proposal and apply logic is real.
+    artifactAction: async () => ({ artifact: { ...artifact, body: source } }),
+    discussionAction: async ({ actionId, input }) => {
+      if (actionId === 'discussion.list') return { v: 1, serverId: 'home', discussions: [], nextCursor: null };
+      if (actionId === 'discussion.read') return { v: 1, serverId: 'home', discussionId: 'thread', messageSeq: 1,
+        hasMoreOlder: false, incomplete: false, messages: [{ ...rootMessage, content: { ...rootMessage.content, passage } }] };
+      const post = DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.post'].parse(input);
+      return DiscussionPostResultV1Schema.parse({ v: 1, serverId: 'home', messageSeq: 2,
+        message: { ...rootMessage, id: 'candidate', messageRef: proposalRef, seq: 2, localId: post.localId, content: post.content } });
+    },
+  });
+  const result = await executor.execute('doc.edit.propose', { discussionRef, localId: 'whole-sentence', after }, person);
+  expect(result).toMatchObject({ ok: true, result: { message: { content: { kind: 'doc_edit_proposal',
+    proposal: { before: sentence, after, target: { quote: sentence } } } } } });
+  if (!result.ok) throw new Error('Expected a published suggestion');
+  const content = DiscussionPostResultV1Schema.parse(result.result).message.content;
+  if (!content || !('kind' in content) || content.kind !== 'doc_edit_proposal') throw new Error('Expected a Doc suggestion');
+  expect(prepareDocEditBodyV1({ ref, revision, source, proposal: content.proposal })).toBe(`Earlier plans.\n\n${after}\n\nNext steps.`);
+  expect(passage.quote).toBe(selected);
+  expect(() => prepareDocEditBodyV1({ ref, revision: { ...revision, bodyVersion: 99 }, source, proposal: content.proposal })).toThrow('version_mismatch');
+  expect(() => prepareDocEditBodyV1({ ref, revision, source: source.replace('regulars', 'visitors'), proposal: content.proposal })).toThrow('doc_passage_mismatch');
+});
+
 describe('Doc collaboration Actions', () => {
   it.each(['direct', 'explicit-approval'] as const)('resolves a thread-addressed proposal before review and preserves that basis on replay (%s)', async path => {
     let stored: ApprovalRequest | undefined;
@@ -124,15 +158,15 @@ describe('Doc collaboration Actions', () => {
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: path === 'direct'
       ? { kind: 'approval_request_created' } : { artifactId: 'thread-proposal' } });
     expect(stored?.actionArgs).toEqual({ discussionRef, localId: proposal.localId,
-      target: { ...storedTarget, ref }, baseRevision: revision, before: target.quote, after: proposal.after, reason: '' });
+      target: { ...target, ref, range: { start: 9, end: 19 }, quote: 'Read this.', prefix: '', suffix: '' }, baseRevision: revision, before: 'Read this.', after: proposal.after, reason: '' });
     expect(writes).toEqual([]);
     expect(reads).toBe(1);
     const decision = await executor.execute('approval.request.decide', { artifactId: 'thread-proposal', decision: 'approve' },
       { ...person, runtimeAccountId: 'reader', serverIdentityId: 'srv_home', actionCaller: { kind: 'host' } });
     expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
     expect(writes).toEqual([{ discussionId: 'thread', localId: proposal.localId,
-      content: { kind: 'doc_edit_proposal', proposal: { target: { ...storedTarget, ref }, baseRevision: revision,
-        before: target.quote, after: proposal.after, reason: '' } }, replyTarget: rootMessage.replyTarget }]);
+      content: { kind: 'doc_edit_proposal', proposal: { target: { ...target, ref, range: { start: 9, end: 19 }, quote: 'Read this.', prefix: '', suffix: '' }, baseRevision: revision,
+        before: 'Read this.', after: proposal.after, reason: '' } }, replyTarget: rootMessage.replyTarget }]);
     expect(reads).toBe(1);
     expect(stored?.status).toBe('executed');
   });
@@ -152,7 +186,7 @@ describe('Doc collaboration Actions', () => {
           before: target.quote, after: acceptedText, reason: proposal.reason } },
         docEditProposalDispositionV1: { state: 'accepted', acceptedRevision: current,
           decidedBy: { accountId: 'reader', atMs: 2 } } };
-      const messages = [rootMessage, accepted, ...(reattached ? [{ ...rootMessage,
+      const messages = [rootMessage, ...(scenario === 'unchanged-passage' ? [] : [accepted]), ...(reattached ? [{ ...rootMessage,
         id: 'reattached', seq: 2, messageRef: { ...rootMessage.messageRef, messageId: 'reattached' },
         content: { ...rootMessage.content, passage: fresh }, replyTarget: { kind: 'doc_passage', doc: { ref, revision: current } } }] : [])];
       const writes: unknown[] = [];
@@ -183,7 +217,7 @@ describe('Doc collaboration Actions', () => {
         expect(result).toMatchObject({ ok: false, errorCode: 'doc_passage_mismatch' });
         expect(writes).toEqual([]);
       } else {
-        const quote = scenario === 'unchanged-passage' ? target.quote : fresh.quote;
+        const quote = (scenario === 'unchanged-passage' ? target.quote : fresh.quote) + '.';
         expect(result).toMatchObject({ ok: true, result: { message: { content: { kind: 'doc_edit_proposal',
           proposal: { target: { ref, revision: current, quote,
             range: { start: body.indexOf(quote), end: body.indexOf(quote) + quote.length } },

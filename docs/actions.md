@@ -9970,9 +9970,11 @@ comment (including an explicit reattachment), then reads the current Doc through
 on an accepted suggestion's replacement, including unambiguous relocation in later
 revisions using the original quote-placement rule. A later explicit reattachment
 takes precedence over an older acceptance; otherwise the anchor quote is located
-unambiguously. This is development source behavior. The adapter binds the current quote, range and full revision before approval;
-a missing or ambiguous passage returns `doc_passage_mismatch`. `after` replaces
-exactly that quoted span, preserving all surrounding text. Approval replay keeps that reviewed basis
+unambiguously. This is development source behavior. The passage owner expands
+the located highlight to its complete containing paragraph(s), then the adapter
+binds that text, range and full revision before approval. A missing or ambiguous
+passage returns `doc_passage_mismatch`. `after` replaces the entire paragraph span
+verbatim; the original comment keeps its selected quote and offsets. Approval replay keeps that reviewed basis
 without another anchor or Doc read. The explicit `target`, `baseRevision` and
 `before` form remains supported and retains its authored basis. Acceptance still
 checks the exact reviewed revision and quote.
