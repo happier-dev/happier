@@ -1,5 +1,6 @@
 import type { ConnectedAccountRef } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import {
   MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
   TriageGetResultV1Schema,
@@ -1438,7 +1439,14 @@ describe('GitHub Triage source operations', () => {
     )).resolves.toEqual({ kind: 'unavailable', reason: 'scmResolver' });
   });
 
-  it('propagates SCM AbortError from both preparation and final verification', async () => {
+  it.each([
+    ['AbortError', Object.assign(new Error('cancelled'), { name: 'AbortError' })],
+    ['typed host refusal', new PluginError({
+      code: 'credential_scope_denied',
+      details: { requestId: 'review-workspace-host-request', scope: 'scm' },
+      remediation: { kind: 'openSettings', path: 'connected-accounts' },
+    })],
+  ])('propagates SCM %s from both preparation and final verification', async (_kind, failure) => {
     const stub = createStubGithubTransport({
       respond: (request): StubHttpResponse | undefined => request.url.endsWith(
         `/repos/${GITHUB_FIXTURE_OWNER}/${GITHUB_FIXTURE_REPOSITORY}/pulls/1284`,
@@ -1448,9 +1456,8 @@ describe('GitHub Triage source operations', () => {
           body: GITHUB_FORK_PULL_REQUEST_RESPONSE,
         } : undefined,
     });
-    const cancellation = Object.assign(new Error('cancelled'), { name: 'AbortError' });
     const execute = vi.fn(async () => {
-      throw cancellation;
+      throw failure;
     });
     const context = {
       ...stub.context,
@@ -1461,12 +1468,12 @@ describe('GitHub Triage source operations', () => {
       prepareWorkspaceInput({}),
       context,
       { now: fixedClock(1_700_000_000_000) },
-    )).rejects.toBe(cancellation);
+    )).rejects.toBe(failure);
     await expect(verifyGithubTriageReviewWorkspace(
       verifyWorkspaceInput(),
       context,
       { now: fixedClock(1_700_000_000_000) },
-    )).rejects.toBe(cancellation);
+    )).rejects.toBe(failure);
     expect(execute).toHaveBeenCalledTimes(2);
   });
 

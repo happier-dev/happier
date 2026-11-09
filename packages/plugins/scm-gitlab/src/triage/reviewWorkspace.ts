@@ -10,6 +10,7 @@
  */
 
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import type {
   ActionsService,
   PluginActionInputById,
@@ -202,6 +203,7 @@ async function executeGitlabReviewWorkspaceScmAction(input: Readonly<{
   } catch (error) {
     input.signal.throwIfAborted();
     if (error instanceof Error && error.name === 'AbortError') throw error;
+    if (isPluginError(error)) throw error;
     return null;
   }
 }

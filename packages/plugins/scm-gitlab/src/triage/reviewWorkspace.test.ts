@@ -1,4 +1,5 @@
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import {
   TriagePrepareReviewWorkspaceInputV1Schema,
   TriageVerifyReviewWorkspaceInputV1Schema,
@@ -522,17 +523,23 @@ describe('GitLab prepared review workspace', () => {
     )).resolves.toEqual({ kind: 'unavailable', reason: 'scmResolver' });
   });
 
-  it('preserves generic SCM Action cancellation', async () => {
-    const cancellation = Object.assign(new Error('cancelled'), { name: 'AbortError' });
+  it.each([
+    ['cancellation', Object.assign(new Error('cancelled'), { name: 'AbortError' })],
+    ['typed host refusal', new PluginError({
+      code: 'credential_scope_denied',
+      details: { requestId: 'review-workspace-host-request', scope: 'scm' },
+      remediation: { kind: 'openSettings', path: 'connected-accounts' },
+    })],
+  ])('preserves generic SCM Action %s', async (_kind, failure) => {
     const transport = createStubGitlabTransport({
       respond: respondWith({ mergeRequest: mergeRequestBody() }),
     });
-    const execute = vi.fn(async () => { throw cancellation; });
+    const execute = vi.fn(async () => { throw failure; });
 
     await expect(prepareGitlabReviewWorkspaceAction(
       prepareInput(),
       withMaterializer(transport.context, execute),
-    )).rejects.toBe(cancellation);
+    )).rejects.toBe(failure);
   });
 
   it('projects a rejected generic SCM Action as SCM unavailability', async () => {
@@ -689,18 +696,24 @@ describe('GitLab final review-workspace verification', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it('preserves cancellation from canonical local-HEAD verification', async () => {
-    const cancellation = Object.assign(new Error('cancelled'), { name: 'AbortError' });
+  it.each([
+    ['cancellation', Object.assign(new Error('cancelled'), { name: 'AbortError' })],
+    ['typed host refusal', new PluginError({
+      code: 'credential_scope_denied',
+      details: { requestId: 'review-workspace-host-request', scope: 'scm' },
+      remediation: { kind: 'openSettings', path: 'connected-accounts' },
+    })],
+  ])('preserves %s from canonical local-HEAD verification', async (_kind, failure) => {
     const transport = createStubGitlabTransport({
       respond: respondWith({ mergeRequest: mergeRequestBody() }),
     });
     const context = withMaterializer(
       transport.context,
-      vi.fn(async () => { throw cancellation; }),
+      vi.fn(async () => { throw failure; }),
     );
 
     await expect(verifyGitlabReviewWorkspaceAction(verifyInput(), context))
-      .rejects.toBe(cancellation);
+      .rejects.toBe(failure);
   });
 
   it('preserves cancellation during the authoritative provider reread', async () => {

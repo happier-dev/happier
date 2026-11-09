@@ -1,4 +1,5 @@
 import type { ActionsService } from '@happier-dev/plugin-sdk/actions';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import {
   TriagePrepareReviewWorkspaceInputV1Schema,
   TriagePrepareReviewWorkspaceResultV1Schema,
@@ -353,15 +354,21 @@ describe('Bitbucket selected-PR review workspace preparation', () => {
       .resolves.toEqual(expected);
   });
 
-  it('preserves generic Action cancellation rather than converting it to a source result', async () => {
-    const cancellation = Object.assign(new Error('cancelled'), { name: 'AbortError' });
+  it.each([
+    ['cancellation', Object.assign(new Error('cancelled'), { name: 'AbortError' })],
+    ['typed host refusal', new PluginError({
+      code: 'credential_scope_denied',
+      details: { requestId: 'review-workspace-host-request', scope: 'scm' },
+      remediation: { kind: 'openSettings', path: 'connected-accounts' },
+    })],
+  ])('preserves generic Action %s rather than converting it to a source result', async (_kind, failure) => {
     const execute = vi.fn(async () => {
-      throw cancellation;
+      throw failure;
     });
     const seam = workspaceRuntime({ execute, signal: new AbortController().signal });
 
     await expect(prepareBitbucketReviewWorkspace(preparationInput(), seam.runtime))
-      .rejects.toBe(cancellation);
+      .rejects.toBe(failure);
   });
 
   it('projects a non-cancellation preparation dispatch failure through the source contract', async () => {
@@ -559,15 +566,21 @@ describe('Bitbucket final review workspace verification', () => {
       .resolves.toEqual({ kind: 'refused', reason: 'observedHeadMoved' });
   });
 
-  it('preserves cancellation from canonical local verification', async () => {
-    const cancellation = Object.assign(new Error('cancelled'), { name: 'AbortError' });
+  it.each([
+    ['cancellation', Object.assign(new Error('cancelled'), { name: 'AbortError' })],
+    ['typed host refusal', new PluginError({
+      code: 'credential_scope_denied',
+      details: { requestId: 'review-workspace-host-request', scope: 'scm' },
+      remediation: { kind: 'openSettings', path: 'connected-accounts' },
+    })],
+  ])('preserves %s from canonical local verification', async (_kind, failure) => {
     const execute = vi.fn(async () => {
-      throw cancellation;
+      throw failure;
     });
     const seam = workspaceRuntime({ execute, signal: new AbortController().signal });
 
     await expect(verifyBitbucketReviewWorkspace(verificationInput(), seam.runtime))
-      .rejects.toBe(cancellation);
+      .rejects.toBe(failure);
   });
 
   it('preserves cancellation that races the authoritative provider reread', async () => {

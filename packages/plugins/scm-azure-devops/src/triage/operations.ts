@@ -7,6 +7,7 @@ import type {
   ConnectedAccountMetadataList,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import type {
   ActionsService,
   PluginActionInputById,
@@ -1090,8 +1091,8 @@ type AzurePreparedSourceTip = PluginActionInputById[
 
 /**
  * The one failure/cancellation boundary for the generic SCM Action used by both preparation and
- * final verification. A transport rejection is typed source unavailability; cancellation keeps
- * the caller's abort reason and is never converted into a retryable provider result.
+ * final verification. Typed host failures retain their owning diagnostics; unknown transport
+ * rejections become source unavailability. Cancellation keeps the caller's abort reason.
  */
 async function executeAzureReviewWorkspaceScmAction(input: Readonly<{
   actions: Pick<ActionsService, 'execute'>;
@@ -1110,6 +1111,7 @@ async function executeAzureReviewWorkspaceScmAction(input: Readonly<{
   } catch (error) {
     input.signal.throwIfAborted();
     if (error instanceof Error && error.name === 'AbortError') throw error;
+    if (isPluginError(error)) throw error;
     return null;
   }
 }

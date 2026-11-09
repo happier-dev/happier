@@ -1,4 +1,5 @@
 import { createPluginTestkit, createPluginHttpFixture } from '@happier-dev/plugin-sdk/testing';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { AZURE_DEVOPS_PLUGIN } from '../manifest.js';
 import { activate as activateAccount } from '../accountRuntime.js';
 import { AZURE_DEVOPS_TRIAGE_ACTION_IDS } from './actions.js';
@@ -1705,6 +1706,31 @@ describe('Azure DevOps review-workspace preparation', () => {
     );
   });
 
+  it('preserves a typed host refusal from canonical SCM preparation', async () => {
+    const recorder = createRecorder(() => ({
+      body: pullRequest(17, {
+        sourceRepository: {
+          id: REPOSITORY_ID,
+          remoteUrl: 'https://dev.azure.com/acme/Payments/_git/checkout',
+        },
+        lastMergeSourceCommit: { commitId: 'b3f1c0a9d2e4789012345678901234567890abcd' },
+        lastMergeTargetCommit: { commitId: 'a1b2c3d4e5f6789012345678901234567890abcd' },
+      }),
+    }));
+    const refusal = new PluginError({
+      code: 'credential_scope_denied',
+      details: { requestId: 'review-workspace-host-request', scope: 'scm' },
+      remediation: { kind: 'openSettings', path: 'connected-accounts' },
+    });
+    const execute = vi.fn(async () => { throw refusal; });
+
+    await expect(runAzureTriagePrepareReviewWorkspace({
+      services: workspaceServices(recorder, execute),
+      request: input(),
+      signal: new AbortController().signal,
+    })).rejects.toBe(refusal);
+  });
+
   it('fails closed when preparation receives the read-only verification success arm', async () => {
     const recorder = createRecorder((request) => {
       if (!request.url.includes('/pullrequests/')) throw new Error(`unexpected request: ${request.url}`);
@@ -2081,6 +2107,22 @@ describe('Azure DevOps final review-workspace verification', () => {
     })).resolves.toEqual({ kind: 'unavailable', reason: 'scmResolver' });
     expect(execute).toHaveBeenCalledTimes(1);
     expect(recorder.urls.filter((url) => url.includes('/pullrequests/17?'))).toHaveLength(1);
+  });
+
+  it('preserves a typed host refusal from canonical SCM verification', async () => {
+    const recorder = createRecorder(() => ({ body: providerRow() }));
+    const refusal = new PluginError({
+      code: 'credential_scope_denied',
+      details: { requestId: 'review-workspace-host-request', scope: 'scm' },
+      remediation: { kind: 'openSettings', path: 'connected-accounts' },
+    });
+    const execute = vi.fn(async () => { throw refusal; });
+
+    await expect(runAzureTriageVerifyReviewWorkspace({
+      services: { ...recorder.services, actions: { execute } as unknown as ActionsService },
+      request: input(),
+      signal: new AbortController().signal,
+    })).rejects.toBe(refusal);
   });
 
   it('maps a non-cancellation SCM transport rejection to typed unavailability', async () => {

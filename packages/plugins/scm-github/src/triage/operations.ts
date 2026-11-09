@@ -1,4 +1,5 @@
 import type { GithubTriageInvocationContext } from './invocation.js';
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import {
   isExternalActionResultWithinResponseEnvelopeLimitV1,
   isPluginActionApprovalRequestCreated,
@@ -102,10 +103,11 @@ function readScmWorkspaceVerification(value: unknown): Readonly<{
     : null;
 }
 
-/** Preserve cancellation across the SCM process boundary for both workspace roles. */
-function rethrowGithubReviewWorkspaceAbort(error: unknown, signal: AbortSignal): void {
+/** Preserve cancellation and typed host Action failures for both workspace roles. */
+function rethrowGithubReviewWorkspaceActionError(error: unknown, signal: AbortSignal): void {
   signal.throwIfAborted();
   if (error instanceof Error && error.name === 'AbortError') throw error;
+  if (isPluginError(error)) throw error;
 }
 
 
@@ -621,7 +623,7 @@ export async function prepareGithubTriageReviewWorkspace(
       { signal: context.signal },
     );
   } catch (error) {
-    rethrowGithubReviewWorkspaceAbort(error, context.signal);
+    rethrowGithubReviewWorkspaceActionError(error, context.signal);
     return Object.freeze({ kind: 'unavailable' as const, reason: 'scmResolver' as const });
   }
   context.signal.throwIfAborted();
@@ -688,7 +690,7 @@ export async function verifyGithubTriageReviewWorkspace(
       { signal: context.signal },
     );
   } catch (error) {
-    rethrowGithubReviewWorkspaceAbort(error, context.signal);
+    rethrowGithubReviewWorkspaceActionError(error, context.signal);
     return Object.freeze({ kind: 'unavailable' as const, reason: 'scmResolver' as const });
   }
   context.signal.throwIfAborted();

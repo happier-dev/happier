@@ -6,6 +6,7 @@
  */
 
 import type { ActionsService } from '@happier-dev/plugin-sdk/actions';
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import type {
   TriagePrepareReviewWorkspaceInputV1,
@@ -93,6 +94,7 @@ async function executeReviewWorkspaceScmAction(
   } catch (error) {
     throwIfRuntimeAborted(runtime);
     if (error instanceof Error && error.name === 'AbortError') throw error;
+    if (isPluginError(error)) throw error;
     return { kind: 'unavailable' as const };
   }
 }
