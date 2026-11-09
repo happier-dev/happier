@@ -67,7 +67,17 @@ export function buildInboxSessionReasonLine(
   candidate: InboxSessionAttentionEntry['candidate'],
   options: Readonly<{ showNeed?: boolean }> = {},
 ): string | undefined {
-  return joinHappierFacts(options.showNeed === false ? null : readInboxSessionNeed(candidate), readWorkingReports(candidate)) || undefined;
+  const reason = options.showNeed === false ? null : readInboxSessionNeed(candidate) ?? readStatusReason(candidate);
+  return joinHappierFacts(reason, readWorkingReports(candidate)) || undefined;
+}
+
+/**
+ * The row's one status word, for a surface with no status column of its own: a request not yet
+ * hydrated still says why it is here. A failure's word only repeats the section that holds it.
+ */
+function readStatusReason(candidate: InboxSessionAttentionEntry['candidate']): string | null {
+  const { tone, word } = candidate.workStatus;
+  return word && tone !== 'danger' ? word.charAt(0).toLocaleUpperCase() + word.slice(1) : null;
 }
 
 /**

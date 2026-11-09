@@ -497,6 +497,11 @@ describe('mounted Voice Brief request', () => {
             const testID = `voice-brief.item.${sessionAddressKey(address)}`;
             const row = screen.findAllByType(Item).find(item => item.props.testID === testID);
             expect(row?.props.title).toBe(readInboxSessionTitle(session, address.serverId));
+            if (session.viewer?.attention.primary === 'permission_required') {
+                // A request that has not hydrated yet still says why the row is here, in the row's own word.
+                expect(row?.props.subtitle).toBeTruthy();
+                expect(screen.getTextContent()).toContain(row?.props.subtitle);
+            }
             await screen.pressByTestIdAsync(testID);
             expect(opened.mock.lastCall?.[0].destination).toEqual({ kind: 'session', address });
         }
