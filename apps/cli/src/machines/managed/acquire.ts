@@ -78,7 +78,7 @@ export type ManagedMachineExecutionOptions = Readonly<{
     /** The installed Action owner evaluates current policy/Ask at effect time. */
     runPolicyAction?: (machine: ManagedMachineV1, runApproved: (context: ActionExecutorContext) => Promise<ManagedMachineV1>) => Promise<ManagedMachineV1>;
     /** Ordinary fresh Session admission retained only by its initiating host. */
-    runAgentStart?: (input: Readonly<{ machine: ManagedMachineV1; isCurrent(): Promise<boolean> }>) => Promise<void>;
+    runAgentStart?: (input: Readonly<{ machine: ManagedMachineV1 }>) => Promise<void>;
     runEnvironmentSetup?: (input: Readonly<{ machine: ManagedMachineV1; isCurrent(): Promise<boolean> }>) => Promise<ManagedMachineV1>;
     /** Content-free installed Account socket; every wake re-reads the signed row. */
     subscribeEnvironmentSetupChanges?: (callbacks: Readonly<{ onChange(): void; onError(error: unknown): void }>) => Promise<{ dispose(): void | Promise<void> }>;
@@ -745,9 +745,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 client.assertConnection(enrolled);
                 if (enrolled.machineSetup && !['succeeded', 'skipped'].includes(enrolled.machineSetup.state)) {
                     if (!enrolled.enrolledMachineId || !options.runEnvironmentSetup) throw new ManagedMachineControllerError('admission_unavailable');
-                    if (!await client.isCurrent(enrolled)) throw new ManagedMachineControllerError('intent_changed');
                     const joined = enrolled;
-                    try { enrolled = await options.runEnvironmentSetup({ machine: joined, isCurrent: () => client.isCurrent(joined) }); }
+                    try { enrolled = await options.runEnvironmentSetup({ machine: joined, isCurrent: async () => !options.signal?.aborted }); }
                     catch (error) {
                         if (!agentStart || options.signal?.aborted) throw error;
                         const current = await client.readCurrent(joined);
@@ -793,8 +792,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     enrolled = await client.row('current', client.correlation(admission.machine));
                     client.assertConnection(enrolled);
                     if (!enrolled.enrolledMachineId) throw new ManagedMachineControllerError('enrollment_retired');
-                    if (!await client.isCurrent(enrolled)) throw new ManagedMachineControllerError('intent_changed');
-                    await options.runAgentStart({ machine: enrolled, isCurrent: () => client.isCurrent(enrolled) });
+                    await options.runAgentStart({ machine: enrolled });
                 }
                 return accepted;
             }

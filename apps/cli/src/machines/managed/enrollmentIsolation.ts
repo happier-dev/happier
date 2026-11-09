@@ -8,18 +8,17 @@ import { ManagedMachineControllerError } from './controllerErrors';
 
 /** Creation/recovery consumes the same reviewed guest policy owner as manual changes. */
 export async function initializeManagedMachineEnrollmentIsolation(machine: ManagedMachineV1, input: ManagedMachineAcquisitionDriverInput,
-    options: ManagedMachineExecutionOptions, isCurrent: () => Promise<boolean>): Promise<void> {
+    options: ManagedMachineExecutionOptions): Promise<void> {
     const policy = resolveManagedMachineEnrollmentAgentIsolationV1(machine.enrollmentIdentity);
     if (!policy) return;
     options.context?.operationProgress?.update({ phase: 'machines.agentIsolation.preview', label: 'Reviewing Agent isolation' });
     const context = options.context;
-    if (!context || !machine.enrolledMachineId || !await isCurrent()) throw new ManagedMachineControllerError('enrollment_retired');
+    if (!context || !machine.enrolledMachineId) throw new ManagedMachineControllerError('enrollment_retired');
     const target = { serverId: machine.homeId, machineId: machine.enrolledMachineId };
     const continuation = { managedId: machine.id, creationRequestId: options.requestId, expectedIntentRevision: machine.intentRevision };
     const dispatch = async (request: ManagedEnrollmentIsolationRequest) => {
         if (request.actionId === 'machines.agentIsolation.set')
             options.context?.operationProgress?.update({ phase: request.actionId, label: 'Configuring Agent isolation' });
-        if (!await isCurrent()) throw new ManagedMachineControllerError('enrollment_retired');
         const authorization = context.externalActionExecutionAuthorization;
         let execution: ActionExecuteResult;
         if (authorization) {
@@ -41,7 +40,7 @@ export async function initializeManagedMachineEnrollmentIsolation(machine: Manag
             execution = await dispatchLocalManagedMachineAgentIsolation({ ...request, homeId: machine.homeId, context,
                 observeRecordedApprovalExecution: input.observeRecordedApprovalExecution,
                 managedContinuation: continuation, credentials: input.credentials, custodianAccountId: machine.custodianAccountId,
-                serverHttpBaseUrl: input.serverUrl, isCurrent });
+                serverHttpBaseUrl: input.serverUrl, isCurrent: async () => !options.signal?.aborted });
         }
         if (!execution.ok) throw ManagedMachineControllerError.fromActionFailure(execution, request.actionId);
         return execution.result;

@@ -8,9 +8,8 @@ export async function prepareManagedMachineSetupApplyInput(input: Readonly<{
     target: Pick<MachineSetupPlanInputV1, 'homeId' | 'machineId'>;
     creation: Parameters<typeof matchesMachineSetupCreationSourcesV1>[1];
     readPlan: (input: MachineSetupPlanInputV1) => Promise<ActionExecuteResult>;
-    isCurrent: () => Promise<boolean>;
 }>): Promise<MachineSetupApplyInputV1 | Extract<ActionExecuteResult, { ok: false }>> {
-    const fail = (code: 'invalid_action_output' | 'plan_changed' | 'intent_changed') =>
+    const fail = (code: 'invalid_action_output' | 'plan_changed') =>
         ({ ok: false as const, errorCode: code, error: code });
     const planned = await input.readPlan(input.target);
     if (!planned.ok) return planned;
@@ -25,7 +24,6 @@ export async function prepareManagedMachineSetupApplyInput(input: Readonly<{
         return fail('plan_changed');
     const sources = [current.data.sources.find(copy => copy.kind === 'accountPreset') ?? source, direct];
     if (!matchesMachineSetupCreationSourcesV1(sources, input.creation)) return fail('plan_changed');
-    if (!await input.isCurrent()) return fail('intent_changed');
 
     const effects = await input.readPlan({ ...input.target, sources, mode: 'effects' });
     if (!effects.ok) return effects;
@@ -33,7 +31,6 @@ export async function prepareManagedMachineSetupApplyInput(input: Readonly<{
     if (!prepared.success || prepared.data.recipePlans === undefined) return fail('invalid_action_output');
     if (prepared.data.desiredRevision !== current.data.desiredRevision || !sameStrictJsonValue(prepared.data.sources, sources))
         return fail('plan_changed');
-    if (!await input.isCurrent()) return fail('intent_changed');
     return MachineSetupApplyInputV1Schema.parse({
         ...input.target,
         targets: [{ ...input.target, sources: prepared.data.sources,

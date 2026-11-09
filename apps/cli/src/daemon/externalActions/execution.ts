@@ -734,7 +734,6 @@ resolveServerFeaturesSnapshot?: () =>
           reloadController: pluginRuntimeController, isCurrent,
           getAccountEncryptionMode: async options => (await fetchAccountEncryptionCurrentness({ credentials: providerProjectionAccount.operationContext.credentials, token: providerProjectionAccount.operationContext.credentials.token,
             serverBaseUrl: providerProjectionAccount.operationContext.serverHttpBaseUrl, ...(options?.signal ? { signal: options.signal } : {}) })).mode,
-          subscribe: () => ({ dispose() {} }),
           allowNativeAccountCredentials: providerProjectionAccount.operationContext.machineAdmission?.actorAccountId
             === providerProjectionAccount.accountId
             && isCustodianMachineAdmission(providerProjectionAccount.operationContext.machineAdmission),
@@ -747,7 +746,7 @@ resolveServerFeaturesSnapshot?: () =>
           savedSecretOperationContext: providerProjectionAccount.operationContext,
           managedRuntimeAccount: {
             readCredentials: async () => await isCurrent() ? providerProjectionAccount.operationContext.credentials : null,
-            connectedAccountsOwner: purposes,
+            connectedAccountsOwner: purposes.owner,
             operationAuthority: createManagedProviderOperationAuthority({
               materializationBaseDir: join(configuration.happyHomeDir, 'providers', 'managed-operation-auth'),
               purposeBindingOwner: purposes, requestAuthRegistry: connectedAccountRequestAuthRegistry,
@@ -1080,19 +1079,17 @@ resolveServerFeaturesSnapshot?: () =>
                 continuation: { managedId: machine.id, creationRequestId: authorization.binding.requestId, expectedIntentRevision: machine.intentRevision },
                 installationId: externalActionInstallationIdentity.installationId, privateKey: externalActionInstallationIdentity.privateKey,
                 serverHttpBaseUrl: params.serverBaseUrl, ...(encryption ? { material: encryption.material } : {}), ...(context.signal ? { signal: context.signal } : {}) };
-              const input = await prepareManagedMachineSetupApplyInput({ target, creation: { preset, setup }, isCurrent,
+              const input = await prepareManagedMachineSetupApplyInput({ target, creation: { preset, setup },
                 readPlan: input => dispatchManagedMachineSetupPlan({ ...child, input, retainedCreationSetup: { preset, setup } }) });
               if ('ok' in input) return input;
-              if (!await isCurrent()) return { ok: false, errorCode: 'intent_changed', error: 'intent_changed' };
               return dispatchManagedMachineSetup({ ...child, input });
             }
             const local = { context, credentials, custodianAccountId: machine.custodianAccountId, observeRecordedApprovalExecution,
               serverHttpBaseUrl: params.serverBaseUrl, isCurrent: async () => await isCurrent()
                 && await isInstalledManagedAccountCurrent(context, machine) };
-            const input = await prepareManagedMachineSetupApplyInput({ target, creation: { preset, setup }, isCurrent: local.isCurrent,
+            const input = await prepareManagedMachineSetupApplyInput({ target, creation: { preset, setup },
               readPlan: input => dispatchLocalManagedMachineSetupPlan({ ...local, input, retainedCreationSetup: { preset, setup } }) });
             if ('ok' in input) return input;
-            if (!await local.isCurrent()) return { ok: false, errorCode: 'intent_changed', error: 'intent_changed' };
             return dispatchLocalManagedMachineSetup({ ...local, input });
           },
           preflightSessionStart: async (context: RpcActionExecutorContext) => {

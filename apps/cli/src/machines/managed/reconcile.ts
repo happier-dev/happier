@@ -1,5 +1,5 @@
 import { generateKeyPair, randomBytes, randomUUID } from 'node:crypto';
-import { readManagedGuestHomeWarning } from './homeQualification';
+import { readManagedGuestHomeWarning, resolveManagedGuestHome } from './homeQualification';
 import { join } from 'node:path';
 import { reconcileManagedMachine as reconcileManagedMachineShared, reconcileManagedAcquisitionIdentity as reconcileManagedAcquisitionIdentityShared,
     createManagedNativeBootstrapIO, createManagedBootstrapSshCredential, readManagedBootstrapCredential, bindManagedMachineRoleCredentials,
@@ -369,9 +369,14 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
                 if (context?.externalActionCredential && !externalActionContext) throw new ManagedMachineControllerError('admission_unavailable');
                 // Native SDK transports do not spawn through ExecService. Carry the
                 // same task-owned budget to their declared exec role as well.
-                const nativeInput = role === 'exec' && io?.timeoutMs !== undefined
+                let nativeInput = role === 'exec' && io?.timeoutMs !== undefined
                     && typeof body === 'object' && body !== null && !Array.isArray(body)
                     ? { ...body, timeoutMs: io.timeoutMs } : body;
+                if ((role === 'acquire' || role === 'rebuild') && contribution.definition.billing.location === 'local'
+                    && typeof nativeInput === 'object' && nativeInput !== null && !Array.isArray(nativeInput)) {
+                    const guestHome = await resolveManagedGuestHome(target);
+                    if (guestHome) nativeInput = { ...nativeInput, guestHome };
+                }
                 dispatched = true;
                 const attempt = await executeContributedAction({
                     runtimeRegistry: input.runtimeRegistry, actionId,
@@ -426,13 +431,12 @@ export async function reconcileManagedAcquisitionIdentity(params: ManagedMachine
         home: params.client, provisioner: native.contribution.definition }, machine, native.invoke);
 }
 
-async function recordEnrollmentAdministratorAccess(input: ManagedMachineAcquisitionDriverInput, machine: ManagedMachineV1, options: ManagedMachineExecutionOptions,
-    client: ManagedMachineControllerClient): Promise<void> {
+async function recordEnrollmentAdministratorAccess(input: ManagedMachineAcquisitionDriverInput, machine: ManagedMachineV1, options: ManagedMachineExecutionOptions): Promise<void> {
     const policy = resolveManagedMachineEnrollmentAdminAccessV1(machine.enrollmentIdentity);
     if (!policy) return;
     options.context?.operationProgress?.update({ phase: 'machines.setup.adminAccess.set', label: 'Configuring administrator access' });
     const context = options.context;
-    if (!context || !machine.enrolledMachineId || !await client.isCurrent(machine)) throw new ManagedMachineControllerError('enrollment_retired');
+    if (!context || !machine.enrolledMachineId) throw new ManagedMachineControllerError('enrollment_retired');
     // The initial field is None; field comparison may rebase unrelated
     // metadata versions but never replaces an independently changed policy.
     // The continuation retains the original creation even when the public
@@ -462,7 +466,7 @@ async function recordEnrollmentAdministratorAccess(input: ManagedMachineAcquisit
             managedContinuation: { managedId: machine.id, creationRequestId: options.requestId,
                 expectedIntentRevision: machine.intentRevision },
             credentials: input.credentials, custodianAccountId: machine.custodianAccountId, serverHttpBaseUrl: input.serverUrl,
-            isCurrent: () => client.isCurrent(machine) });
+            isCurrent: async () => !options.signal?.aborted });
     }
     if (!execution.ok) throw ManagedMachineControllerError.fromActionFailure(execution, 'machines.setup.adminAccess.set');
     const result = MachineAdminAccessMutationResultV1Schema.safeParse(execution.result);
@@ -515,9 +519,9 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
                 // Only creation or the first enrollment initializes administrator
                 // policy. Recovery of an enrolled guest preserves deliberate edits.
                 if (params.action === 'machines.managed.acquire' || !params.machine.enrolledMachineId) {
-                    await recordEnrollmentAdministratorAccess(params.input, row, params.options, params.client);
+                    await recordEnrollmentAdministratorAccess(params.input, row, params.options);
                 }
-                await initializeManagedMachineEnrollmentIsolation(row, params.input, params.options, () => params.client.isCurrent(row));
+                await initializeManagedMachineEnrollmentIsolation(row, params.input, params.options);
             },
         },
         waitForObservation: createManagedNativeObservationWait(params.options.signal),

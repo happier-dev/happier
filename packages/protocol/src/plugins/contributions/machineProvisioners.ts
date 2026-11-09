@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import { HomeApplicationOriginV1Schema } from '../../auth/accountDirectory.js';
 import { isNormalizedPluginJsonSchema, isRecursivelyClosedPluginJsonSchemaV2 as isClosedSchema } from './jsonSchema.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
@@ -782,19 +783,27 @@ export type MachineProvisionerProcessConfigV1 = Readonly<{
    * with a finite native process model select this host-built alternative. */
   detachedDaemonStartArgv: readonly string[];
 }>;
+/** Controller-resolved application carrier, transient input to local realization. */
+export const MachineProvisionerGuestHomeV1Schema = lazyZodSchema(() => z.strictObject({
+  origin: HomeApplicationOriginV1Schema,
+  addresses: z.array(z.union([z.ipv4(), z.ipv6()])),
+}));
+export type MachineProvisionerGuestHomeV1 = Readonly<z.infer<typeof MachineProvisionerGuestHomeV1Schema>>;
+
 export function defineMachineProvisionerSchemas<TLaunchInput, TLaunch, TResourceInput, TResource>(schemas: Readonly<{
   launch: ProtocolComposableSchema<TLaunchInput, TLaunch>; resource: ProtocolComposableSchema<TResourceInput, TResource>;
   continueAcquire?: true;
 }>) {
   const closed = { policy: 'closed' } as const;
   const guestHostPublicKey = defineProtocolString({ pattern: '^ssh-ed25519 [A-Za-z0-9+/]+={0,2}(?: [^\\r\\n]*)?$' }).optional();
+  const guestHome = projectRoleSchema(MachineProvisionerGuestHomeV1Schema).optional();
   return Object.freeze({
     checkInput: MachineProvisionerCheckInputV1Schema,
     nativeCredentialApplyInput: defineNativeCredentialApplyInput(schemas.resource),
-    acquireInput: defineProtocolObject({ launch: schemas.launch, managedId: defineProtocolString({ minLength: 1 }).optional(), bootstrapPublicKey: defineProtocolString({ minLength: 1 }).optional(), guestHostPublicKey,
+    acquireInput: defineProtocolObject({ launch: schemas.launch, managedId: defineProtocolString({ minLength: 1 }).optional(), bootstrapPublicKey: defineProtocolString({ minLength: 1 }).optional(), guestHostPublicKey, guestHome,
       ...(schemas.continueAcquire ? { resource: schemas.resource.optional() } : {}) }, closed),
     acquireResult: defineAcquireResult(schemas.resource),
-    rebuildInput: defineProtocolObject({ resource: schemas.resource, reviewedEffectDigest: defineProtocolString({ minLength: 1 }) }, closed),
+    rebuildInput: defineProtocolObject({ resource: schemas.resource, reviewedEffectDigest: defineProtocolString({ minLength: 1 }), guestHome }, closed),
     rebuildResult: defineRebuildResult(schemas.resource),
     bootstrapInput: defineProtocolObject({ resource: schemas.resource, credentialRef: projectRoleSchema(SharedSavedSecretRefV1Schema).optional(), bootstrapPublicKey: defineProtocolString({ minLength: 1 }).optional(), guestHostPublicKey }, closed),
     resourceInput: defineProtocolObject({ resource: schemas.resource }, closed),

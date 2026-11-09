@@ -193,18 +193,17 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
         const result = await withBoundDriver(params, signal, async driver => await driver.execute(actionId, input, { requestId, context, signal,
                 ...(params.subscribeEnvironmentSetupChanges ? { subscribeEnvironmentSetupChanges: callbacks => params.subscribeEnvironmentSetupChanges!(context, callbacks) } : {}),
                 ...(params.executeEnvironmentSetup ? { runEnvironmentSetup: async ({ machine, isCurrent }) => {
-                    if (!machine.enrolledMachineId || !machine.preset || !await isCurrent()) throw Object.assign(new Error('intent_changed'), { code: 'intent_changed' });
+                    if (!machine.enrolledMachineId || !machine.preset) throw Object.assign(new Error('intent_changed'), { code: 'intent_changed' });
                     const setup = await params.executeEnvironmentSetup!(machine, context, isCurrent);
                     if (!setup.ok) throw Object.assign(new Error(setup.errorCode), { code: setup.errorCode });
                     const current = await driver.execute('machines.managed.get', { homeId: machine.homeId, managedId: machine.id }, { requestId, context, signal });
                     return ManagedMachineV1Schema.parse(current);
                 } } : {}),
-                ...(agentStart && executeSessionStart ? { runAgentStart: async ({ machine, isCurrent }) => {
+                ...(agentStart && executeSessionStart ? { runAgentStart: async ({ machine }) => {
                     if (signal?.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
-                    if (!machine.enrolledMachineId || !await isCurrent()) {
+                    if (!machine.enrolledMachineId) {
                         throw Object.assign(new Error('intent_changed'), { code: 'intent_changed' });
                     }
-                    if (signal?.aborted) throw Object.assign(new Error('cancelled'), { code: 'cancelled' });
                     const result = await executeSessionStart({ ...agentStart,
                         executionTarget: { serverId: params.serverId, machineId: machine.enrolledMachineId },
                         managedCreation: { homeId: machine.homeId, managedId: machine.id, controller: machine.controller },

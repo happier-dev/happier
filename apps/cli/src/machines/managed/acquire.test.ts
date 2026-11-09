@@ -856,7 +856,7 @@ esac
             subscribeEnvironmentSetupChanges: async callbacks => { wake = callbacks.onChange; return { dispose() { disposed = true; } }; },
             runEnvironmentSetup: async () => { setup++; retained = { ...retained, machineSetup: { ...retained.machineSetup!, state: 'failed' } };
                 throw Object.assign(new Error('setup failed'), { code: 'machine_setup_setup_failed' }); },
-            runAgentStart: async ({ machine: prepared, isCurrent }) => { expect(await isCurrent()).toBe(true);
+            runAgentStart: async ({ machine: prepared }) => {
                 expect(prepared.machineSetup?.state).toBe(state); started++; },
         });
         const observed = execution.then(value => { settled = true; return value; }, error => { settled = true; return error; });
@@ -894,7 +894,45 @@ esac
                 expect(prepared.machineSetup?.state).toBe('succeeded'); sequence.push('message');
             } });
         expect(sequence).toEqual(['setup', 'message']);
+        // MACH-CHALLENGE-MECH M7: each phase consumes one current row;
+        // finite setup and its consumers do not re-admit the same work.
+        expect(writes.filter(path => path.endsWith('/controller/current'))).toHaveLength(2);
         expect(writes.some(path => /\/(submit|report|enrollment-context)$/u.test(path))).toBe(false);
+    });
+    it.each(['home-unavailable', 'delete'] as const)('stops before Agent start when the post-setup phase read reports %s', async outcome => {
+        let retained = ManagedMachineV1Schema.parse({ ...machine, allocation: 'bound', enrolledMachineId: 'guest',
+            preset: { id: 'preset', revision: 4 }, machineSetup: { setup: { scripts: [{ body: 'echo admitted' }] }, state: 'pending' },
+            resource: { contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {} } });
+        let setupFinished = false;
+        let currentReads = 0;
+        vi.spyOn(axios, 'post').mockImplementation(async url => {
+            if (String(url).endsWith('/controller/current')) {
+                currentReads++;
+                if (setupFinished) return outcome === 'home-unavailable'
+                    ? { status: 503, data: { code: 'database_transaction_conflict_exhausted' } }
+                    : { status: 409, data: { code: 'intent_changed' } };
+            }
+            return { status: 200, data: { machine: retained, ...(String(url).endsWith('/admit') ? { replayed: true } : {}) } };
+        });
+        let started = false;
+        const execution = driver().execute('machines.managed.acquire', { ...input, agentStart: {
+            creationKey: 'first-message', directory: { kind: 'managed' },
+            agentTarget: { kind: 'agent', identity: { pluginId: 'fixture.agent', localId: 'agent' } },
+        } }, { requestId: 'create', context: { surface: 'cli', operationAcceptance: { operationId: 'creation', accept() {} } },
+            runEnvironmentSetup: async ({ isCurrent }) => {
+                // Enrollment's Home retry lifetime has ended. Finite work only
+                // consumes its local cancellation signal after this phase read.
+                setupFinished = true;
+                expect(await isCurrent()).toBe(true);
+                retained = { ...retained, machineSetup: { ...retained.machineSetup!, state: 'succeeded' } };
+                return retained;
+            }, runAgentStart: async () => { started = true; } });
+        await expect(execution).rejects.toMatchObject(outcome === 'home-unavailable'
+            ? { code: 'database_transaction_conflict_exhausted', status: 503,
+                details: { kind: 'managedControllerRequest', path: '/v1/machines/managed/controller/current', category: 'status' } }
+            : { code: 'intent_changed', status: 409 });
+        expect(currentReads).toBe(2);
+        expect(started).toBe(false);
     });
 });
 function originAuthorization(homeId: string, requestId = 'original-request') {

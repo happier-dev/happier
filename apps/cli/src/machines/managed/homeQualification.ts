@@ -1,5 +1,23 @@
-import { hasRemoteHomeApplicationCarrier } from '@happier-dev/cli-common/homeEnrollment';
+import { hasRemoteHomeApplicationCarrier, resolveDescriptorApplicationOrigin } from '@happier-dev/cli-common/homeEnrollment';
 import type { ResolvedHomeTarget } from '@happier-dev/cli-common/homeTarget';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
+import type { MachineProvisionerGuestHomeV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+
+/** Resolve the already-selected application carrier on the creating controller. */
+export async function resolveManagedGuestHome(target: ResolvedHomeTarget): Promise<MachineProvisionerGuestHomeV1 | null> {
+    const origin = target.descriptor ? resolveDescriptorApplicationOrigin(target.descriptor) : target.applicationUrl;
+    if (!origin) return null;
+    const hostname = new URL(origin).hostname.replace(/^\[|\]$/gu, '');
+    if (isIP(hostname)) return { origin, addresses: [] };
+    try {
+        return { origin, addresses: (await lookup(hostname, { all: true })).map(result => result.address) };
+    } catch {
+        // A descriptor can also offer Iroh. Actual guest enrollment owns carrier
+        // availability; unresolved HTTPS must not become a new admission refusal.
+        return { origin, addresses: [] };
+    }
+}
 
 /** Bootstrap exec/file protects enrollment material; it does not forward Home traffic. */
 export function readManagedGuestHomeWarning(target: ResolvedHomeTarget) {
