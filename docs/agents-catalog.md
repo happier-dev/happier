@@ -145,6 +145,14 @@ and loaded-runtime acceptance remain part of the 0.3 development UI work.
 - **Checklists**: higher-level groupings of capabilities that the app can render as guided setup steps.
   - Convention: `new-session`, `machine-details`, `resume.<agentId>`.
 
+In 0.3 development, an Agent may declare `sessionModeDescriptor` on its public
+contribution. The daemon carries that declaration into the resolved client
+catalog. Permission intent normalization consumes the resolved descriptor;
+`plan` retains its behavior selection only for declared `agent-modes`, while an
+absent descriptor or other semantics normalize it to `read-only`. Planning
+retains the read-only privilege ceiling. Native permission labels remain owned
+by the Agent's declared native mapping rather than a host Agent-name group.
+
 In 0.3 development, an Agent's manifest `providerRequirements` also supports
 Account-only Provider model browsing. The existing bundled-plugin generator
 publishes those requirements alongside qualified Agent identity and admitted
@@ -2848,4 +2856,3 @@ Root `AGENTS.md` "Agent and Provider architecture" points here.
 Agents are executable coding backends such as Claude Code and Codex. Providers are model sources such as OpenRouter, DeepSeek, Ollama, and LM Studio. Do not use one term for the other. Read `docs/providers.md` when changing these domains.
 
 - Generic host code must not branch on Agent or Provider ids when a typed contribution, catalog hook, registry result, or Agent provider-binding adapter can own the variation.
-
