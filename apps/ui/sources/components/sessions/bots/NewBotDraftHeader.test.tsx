@@ -3,14 +3,41 @@ import type { ReactTestInstance } from 'react-test-renderer';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { renderHook, renderScreen } from '@/dev/testkit';
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-installSettingsViewCommonModuleMocks();
+const keyboardBoundary = vi.hoisted(() => ({
+  onEnd: undefined as undefined | ((event: { height: number; progress: number }) => void),
+  listeners: new Map<string, () => void>(),
+}));
+
+installSettingsViewCommonModuleMocks({
+  reactNative: async () => {
+    const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeNativeMock({ platformOS: 'ios' }, {
+      Keyboard: { addListener: (name: string, listener: () => void) => {
+        keyboardBoundary.listeners.set(name, listener);
+        return { remove: () => keyboardBoundary.listeners.delete(name) };
+      } },
+      useWindowDimensions: () => ({ width: 390, height: 800, scale: 1, fontScale: 1 }),
+    });
+  },
+});
+
+vi.mock('react-native-keyboard-controller', () => ({
+  useKeyboardHandler: (handlers: { onEnd: typeof keyboardBoundary.onEnd }) => { keyboardBoundary.onEnd = handlers.onEnd; },
+  useReanimatedKeyboardAnimation: () => ({ height: { value: 0 }, progress: { value: 0 } }),
+}));
+
+vi.mock('react-native-reanimated', async () => {
+  const React = await import('react');
+  const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
+  return { ...createReanimatedModuleMock(), useSharedValue: <T,>(value: T) => React.useRef({ value }).current };
+});
 
 const { NewBotDraftHeader } = await import('./NewBotDraftHeader');
 const { createComposerTextStore } =
@@ -28,6 +55,26 @@ function texts(root: ReactTestInstance): string[] {
 }
 
 describe('NewBotDraftHeader (b-new, D30)', () => {
+  it('raises the card when its name opens the iOS keyboard after a dismissal, and releases focus on blur', async () => {
+    const { useComposerKeyboardLayout } = await import('@/components/sessions/keyboardAvoidance/useComposerKeyboardLayout.native');
+    const { ComposerKeyboardProvider } = await import('@/components/sessions/keyboardAvoidance/ComposerKeyboardContext');
+    const layout = await renderHook(() => useComposerKeyboardLayout({ layoutBottomInset: 80 }));
+    const nameStore = createComposerTextStore('');
+    const screen = await renderScreen(<ComposerKeyboardProvider layout={layout.getCurrent()}>
+      <NewBotDraftHeader botCreation={{ nameStore, onSessionNameChange: nameStore.setPrompt }} />
+    </ComposerKeyboardProvider>);
+    const field = screen.root.find(node => node.props.testID === 'new-bot-name' && typeof node.props.onChangeText === 'function');
+    act(() => keyboardBoundary.listeners.get('keyboardDidHide')?.());
+    act(() => field.props.onFocus());
+    act(() => keyboardBoundary.onEnd?.({ height: 300, progress: 1 }));
+    expect(layout.getCurrent().bottomInset.value).toBe(220);
+
+    act(() => field.props.onBlur());
+    act(() => keyboardBoundary.listeners.get('keyboardDidHide')?.());
+    act(() => keyboardBoundary.onEnd?.({ height: 300, progress: 1 }));
+    expect(layout.getCurrent().bottomInset.value).toBe(0);
+  });
+
   it('keeps an empty name empty, shows the naming hint while naming, and writes typed names through the draft owner', async () => {
     const nameStore = createComposerTextStore('');
     const written: string[] = [];

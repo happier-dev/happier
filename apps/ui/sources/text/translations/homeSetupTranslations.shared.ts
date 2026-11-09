@@ -26,6 +26,13 @@ export type HomeSetupTranslation = Readonly<{
     pairingComputerStepInstall: string;
     pairingComputerStepOpen: string;
     pairingComputerStepJoin: string;
+    pairingComputerStepInstallTitle: string;
+    pairingComputerStepInstallDetail: string;
+    pairingComputerStepOpenTitle: string;
+    pairingComputerStepJoinTitle: string;
+    pairingScanTitle: string;
+    pairingScanBody: string;
+    shareLink: string;
     appStore: string;
     googlePlay: string;
     getDesktopApp: string;
@@ -82,6 +89,13 @@ export const homeSetupTranslationsEnglish = { en: {
         pairingComputerStepInstall: 'Get the desktop app on the other machine.',
         pairingComputerStepOpen: 'Open the link there, or paste it into Happier when it asks how to connect.',
         pairingComputerStepJoin: 'Keep this open: the machine joins as soon as it opens the link.',
+        pairingComputerStepInstallTitle: 'Install Happier there',
+        pairingComputerStepInstallDetail: 'On the Mac, Windows or Linux computer you want to add.',
+        pairingComputerStepOpenTitle: 'Open this link on it',
+        pairingComputerStepJoinTitle: 'It shows up in Machines',
+        pairingScanTitle: 'Or scan it',
+        pairingScanBody: 'From a phone or tablet with a camera.',
+        shareLink: 'Share',
         appStore: 'App Store',
         googlePlay: 'Google Play',
         getDesktopApp: 'Get the desktop app',

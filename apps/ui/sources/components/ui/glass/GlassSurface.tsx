@@ -212,6 +212,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
             nativeBackdrop = (
                 <GlassView
                     glassEffectStyle={props.glassEffectStyle ?? (material.blur === 'light' ? 'clear' : 'regular')}
+                    colorScheme={theme.dark ? 'dark' : 'light'}
                     style={StyleSheet.absoluteFillObject}
                 />
             );

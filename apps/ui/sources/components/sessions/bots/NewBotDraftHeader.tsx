@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { SessionBotFaceV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { useComposerTextValue } from '@/components/sessions/agentInput/composerTextStore';
+import { useComposerKeyboardLayout } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardContext';
 import type { NewSessionBotCreationModel } from '@/components/sessions/new/hooks/newSessionScreenModelTypes';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import {
@@ -43,6 +44,15 @@ export const NewBotDraftHeader = React.memo(function NewBotDraftHeader(
   const { theme } = useUnistyles();
   const name = useComposerTextValue(props.botCreation.nameStore);
   const [naming, setNaming] = React.useState(false);
+  const setComposerInputFocused = useComposerKeyboardLayout()?.setComposerInputFocused;
+  const handleNameFocus = React.useCallback(() => {
+    setNaming(true);
+    setComposerInputFocused?.(true);
+  }, [setComposerInputFocused]);
+  const handleNameCommit = React.useCallback(() => {
+    setNaming(false);
+    setComposerInputFocused?.(false);
+  }, [setComposerInputFocused]);
   const reducedMotion = useReducedMotionPreference();
   // The sentence the page opens with never animates in; only a swap does.
   const swapped = React.useRef(false);
@@ -55,12 +65,12 @@ export const NewBotDraftHeader = React.memo(function NewBotDraftHeader(
       accessibilityLabel: t('bots.name.label'),
       accessibilityHint: t('bots.name.hint'),
       onChangeText: onSessionNameChange,
-      onFocus: () => setNaming(true),
+      onFocus: handleNameFocus,
       // Enter and blur both end naming; the name is already in the draft.
-      onCommit: () => setNaming(false),
+      onCommit: handleNameCommit,
       testID: 'new-bot-name',
     }),
-    [name, onSessionNameChange],
+    [name, onSessionNameChange, handleNameFocus, handleNameCommit],
   );
   return (
     <View testID="new-bot-draft-header" style={stylesheet.root}>

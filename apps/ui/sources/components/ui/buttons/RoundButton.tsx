@@ -119,7 +119,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         pointerEvents: 'none',
     },
     pill: {
-        flexGrow: 1,
+        // Native Yoga's stretch-flex-basis compatibility otherwise consumes the parent's height.
         justifyContent: 'center',
         borderWidth: 1,
         // A control: the `md` step of the one radius base.
@@ -440,7 +440,7 @@ export const RoundButton = React.memo((props: {
                             borderColor: display.borderColor,
                         },
                         props.capsuleHeight !== undefined
-                            ? { flexGrow: 0, height: props.capsuleHeight, borderRadius: props.capsuleHeight / 2 }
+                            ? { height: props.capsuleHeight, borderRadius: props.capsuleHeight / 2 }
                             : { minHeight: DRAWN_HEIGHT_PX[resolvedSize] },
                         props.joinedEdge === 'end' ? styles.joinedEnd : props.joinedEdge === 'start' ? styles.joinedStart : null,
                         focusRingStyle({ focused: state.focused, color: theme.colors.border.focus }),

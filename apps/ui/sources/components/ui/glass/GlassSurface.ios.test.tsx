@@ -1,7 +1,19 @@
 import * as React from 'react';
 import Color from 'color';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, flattenTestStyle, standardCleanup } from '@/dev/testkit';
+import { installExpoGlassEffectRequireStub } from '@/dev/testkit/mocks/expoGlassEffect';
+import { GlassSurface } from './GlassSurface';
+import { GlassMaterialSettingsProvider } from './useGlassMaterialSettings';
+import { glassPresetMaterials } from './glassMaterial';
+
+const liquid = vi.hoisted(() => ({ available: false }));
+const restoreGlass = installExpoGlassEffectRequireStub({ isAvailable: () => liquid.available });
+afterAll(restoreGlass);
+afterEach(() => {
+  liquid.available = false;
+  standardCleanup();
+});
 
 // iOS's platform renderer and the native material SDKs are the system boundary; material policy stays real.
 vi.mock('react-native', async () => {
@@ -11,9 +23,9 @@ vi.mock('react-native', async () => {
 });
 vi.mock('react-native-unistyles', async () => {
   const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-  return createUnistylesMock();
+  const { darkTheme } = await import('@/theme');
+  return createUnistylesMock({ theme: darkTheme });
 });
-vi.mock('expo-glass-effect', () => ({ isLiquidGlassAvailable: () => false }));
 vi.mock('expo-blur', () => ({
   BlurView: (props: Record<string, unknown>) =>
     React.createElement('BlurView', props),
@@ -29,6 +41,17 @@ vi.mock('expo-linear-gradient', () => ({
 }));
 
 describe('iOS material without blur', () => {
+  it('uses the app appearance for Liquid Glass even when iOS follows another appearance', async () => {
+    liquid.available = true;
+    const screen = await renderScreen(
+      <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('auto') }}>
+        <GlassSurface><></></GlassSurface>
+      </GlassMaterialSettingsProvider>,
+    );
+    // The SDK's absent/auto value follows iOS; its explicit value overrides UIKit appearance.
+    expect(screen.findByType('GlassView').props.colorScheme).toBe('dark');
+  });
+
   it('keeps an authored translucent coat with Blur Off as a tint, while accessibility, an inactive window and Solid stay opaque', async () => {
     const { GlassSurface } = await import('./GlassSurface');
     const { GlassRuntimeEnvironmentProvider } =

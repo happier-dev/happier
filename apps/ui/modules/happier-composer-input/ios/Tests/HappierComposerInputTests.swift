@@ -51,6 +51,41 @@ final class HappierComposerInputTests: XCTestCase {
     return input
   }
 
+  func testPlainEditorKeepsTypedGlyphsVisibleAndReturnsToOneLineAfterClearing() throws {
+    let input = HappierComposerTextView(frame: CGRect(x: 0, y: 0, width: 320, height: 38))
+    input.setTypography(["fontSize": 16.0, "lineHeight": 22.0])
+    input.setTheme(["text": "#f5f5f5", "selection": "#4080ff"])
+    input.setPadding(["top": 8, "bottom": 8])
+    input.minimumHeight = 38
+    input.maximumHeight = 120
+    var measuredHeight: CGFloat?
+    input.onContentHeightChange = { measuredHeight = $0 }
+    input.layoutIfNeeded()
+    let emptyHeight = try XCTUnwrap(measuredHeight)
+    XCTAssertEqual(emptyHeight, input.minimumHeight, accuracy: 1)
+
+    input.insertText("Visible")
+    input.layoutIfNeeded()
+    input.layoutManager.ensureLayout(for: input.textContainer)
+    let glyphs = input.layoutManager.glyphRange(forCharacterRange: NSRange(location: 0, length: input.textStorage.length), actualCharacterRange: nil)
+    let glyphBounds = input.layoutManager.boundingRect(forGlyphRange: glyphs, in: input.textContainer)
+    XCTAssertGreaterThan(glyphBounds.width, 0)
+    XCTAssertGreaterThan(glyphBounds.height, 0)
+    XCTAssertLessThanOrEqual(glyphBounds.maxY + input.textContainerInset.top, input.bounds.height)
+    let ink = try XCTUnwrap(input.textStorage.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? UIColor)
+    var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+    XCTAssertTrue(ink.getRed(&red, green: &green, blue: &blue, alpha: &alpha))
+    XCTAssertEqual(red, 245.0 / 255, accuracy: 0.001)
+    XCTAssertEqual(alpha, 1, accuracy: 0.001)
+
+    input.setControlledDocument(value: String(repeating: "A longer line of text ", count: 20), references: [])
+    input.layoutIfNeeded()
+    XCTAssertGreaterThan(try XCTUnwrap(measuredHeight), emptyHeight)
+    input.setControlledDocument(value: "", references: [])
+    input.layoutIfNeeded()
+    XCTAssertEqual(try XCTUnwrap(measuredHeight), emptyHeight, accuracy: 1)
+  }
+
   func testActualTextViewUsesAnAttachmentAndReportsUTF16SourceSelection() {
     let input = makeInput()
     XCTAssertEqual(input.text, "😀 \u{fffc} done")

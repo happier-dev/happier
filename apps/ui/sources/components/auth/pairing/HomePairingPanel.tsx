@@ -34,6 +34,9 @@ import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
+import { isTextSharingAvailable, shareTextSafe } from '@/utils/ui/shareText';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 
 import { useSetupBlockPanelWidth } from '@/components/ui/setupBlocks/SetupBlockGrid';
 import { SetupSteps, type SetupStep } from '@/components/ui/setupBlocks/SetupSteps';
@@ -198,6 +201,36 @@ export const HomePairingPanel = React.memo(function HomePairingPanel(props: Read
         kind: 'trusted_home_display',
         phase: presentation.phase,
     });
+    const status = (
+        <View testID={`${prefix}-status`} accessibilityLiveRegion="polite" style={styles.stepStatus}>
+            <PairingStatusLine
+                testIDPrefix={prefix}
+                state={state}
+                purpose={props.purpose}
+                homeName={homeName}
+                phaseBodyKey={enrollment.primaryTranslationKey}
+                centred
+                accent={theme.colors.accent.blue}
+                onNewCode={start}
+                starting={isStarting}
+            />
+        </View>
+    );
+
+    if (props.layout === 'section' && !phone) {
+        return (
+            <View testID={`${prefix}-panel`} onLayout={onLayout}>
+                <ComputerPairingSections
+                    testIDPrefix={prefix}
+                    state={state}
+                    homeName={homeName}
+                    link={link}
+                    writeClipboard={writeClipboard}
+                    status={status}
+                />
+            </View>
+        );
+    }
 
     return (
         <View
@@ -416,15 +449,108 @@ function PairingSteps(props: Readonly<{ purpose: HomePairingPurpose }>) {
 }
 
 /**
+ * Another machine joins by its link (lab p5 pair): three worded steps (install there, open this link
+ * on it, it shows up), the link and its handover inside step 2, the live state under step 3, and the
+ * same code in its own section for a device with a camera.
+ */
+function ComputerPairingSections(props: Readonly<{
+    testIDPrefix: string;
+    state: PanelState;
+    homeName: string;
+    link: string | null;
+    writeClipboard: ReturnType<typeof useClipboardWrite>;
+    status: React.ReactNode;
+}>) {
+    const prefix = props.testIDPrefix;
+    const link = props.link;
+    // Asked per render, as the Team link handover does: a Share that does nothing is worse than none.
+    const sharingAvailable = isTextSharingAvailable();
+    const steps: readonly SetupStep[] = [
+        {
+            key: 'install',
+            title: t('homeSetup.pairingComputerStepInstallTitle'),
+            detail: t('homeSetup.pairingComputerStepInstallDetail'),
+            action: (
+                <RoundButton
+                    testID={`${prefix}-desktop-download`}
+                    size="small"
+                    display="secondary"
+                    title={t('homeSetup.getDesktopApp')}
+                    onPress={() => { void requestOpenExternalUrl(HAPPIER_DESKTOP_DOWNLOAD_URL); }}
+                />
+            ),
+        },
+        {
+            key: 'open',
+            title: t('homeSetup.pairingComputerStepOpenTitle'),
+            detail: t('homeSetup.pairingComputerBody', { home: props.homeName }),
+            body: (
+                <View style={styles.handover}>
+                    {link ? (
+                        <View style={styles.linkBox}>
+                            <Text testID={`${prefix}-link`} numberOfLines={1} ellipsizeMode="middle" style={styles.linkText}>{link}</Text>
+                        </View>
+                    ) : null}
+                    <View style={styles.handoverActions}>
+                        <CopyLinkButton testIDPrefix={prefix} link={link} writeClipboard={props.writeClipboard} align="start" />
+                        {sharingAvailable ? (
+                            <RoundButton
+                                testID={`${prefix}-share-link`}
+                                size="small"
+                                display="secondary"
+                                title={t('homeSetup.shareLink')}
+                                disabled={!link}
+                                action={async () => {
+                                    if (link) await shareTextSafe(link);
+                                }}
+                            />
+                        ) : null}
+                    </View>
+                </View>
+            ),
+        },
+        {
+            key: 'join',
+            title: t('homeSetup.pairingComputerStepJoinTitle'),
+            detail: t('homeSetup.pairingComputerStepJoin'),
+            body: props.status,
+        },
+    ];
+    return (
+        <>
+            <ItemGroup testID={`${prefix}-steps`}>
+                <SectionContentRow>
+                    <SetupSteps steps={steps} />
+                </SectionContentRow>
+            </ItemGroup>
+            <ItemGroup testID={`${prefix}-scan`} title={t('homeSetup.pairingScanTitle')} description={t('homeSetup.pairingScanBody')}>
+                <SectionContentRow>
+                    <View style={styles.scanCode}>
+                        <PairingCodeBlock testIDPrefix={prefix} state={props.state} homeName={props.homeName} />
+                    </View>
+                </SectionContentRow>
+            </ItemGroup>
+        </>
+    );
+}
+
+/**
  * Copies the code's link (the same token as the QR, so it expires with it). The link is a secret
  * that adds a device, so copying it says so right there.
  */
-function CopyLinkButton(props: Readonly<{ testIDPrefix: string; link: string | null; writeClipboard: ReturnType<typeof useClipboardWrite> }>) {
+function CopyLinkButton(props: Readonly<{
+    testIDPrefix: string;
+    link: string | null;
+    writeClipboard: ReturnType<typeof useClipboardWrite>;
+    /** `start` inside a step, under its words; the default sits at the end of the panel's action row. */
+    align?: 'start' | 'end';
+}>) {
     const { theme } = useUnistyles();
     const feedback = useHappierCopyFeedback(4000);
     const link = props.link;
+    const start = props.align === 'start';
     return (
-        <View style={styles.copy}>
+        <View style={[styles.copy, start ? styles.copyStart : null]}>
             <RoundButton
                 testID={`${props.testIDPrefix}-copy-link`}
                 size="small"
@@ -444,7 +570,7 @@ function CopyLinkButton(props: Readonly<{ testIDPrefix: string; link: string | n
             />
             <CopiedPill visible={feedback.isCopied()} testID={`${props.testIDPrefix}-copy-link-feedback`} />
             {feedback.isCopied() ? (
-                <Text testID={`${props.testIDPrefix}-copy-link-warning`} style={styles.copyWarning}>
+                <Text testID={`${props.testIDPrefix}-copy-link-warning`} style={[styles.copyWarning, start ? styles.copyWarningStart : null]}>
                     {t('connect.pairingLinkSecurityWarning')}
                 </Text>
             ) : null}
@@ -649,6 +775,8 @@ const styles = StyleSheet.create((theme) => ({
         alignSelf: 'center',
     },
     steps: {
+        // The centred panel must give flex-based step words a width on native.
+        alignSelf: 'stretch',
         marginTop: theme.space.s16,
     },
     stepText: {
@@ -692,6 +820,47 @@ const styles = StyleSheet.create((theme) => ({
     copy: {
         alignItems: 'flex-end',
         gap: theme.space.s6,
+    },
+    copyStart: {
+        alignItems: 'flex-start',
+    },
+    copyWarningStart: {
+        textAlign: 'left',
+    },
+    /** Step 2's handover: the link on its own line, then Copy and Share beneath it. */
+    /** A step's body lays its parts in a wrapping row: the handover takes the whole line. */
+    handover: {
+        width: '100%',
+        minWidth: 0,
+        gap: theme.space.s8,
+    },
+    stepStatus: {
+        width: '100%',
+        minWidth: 0,
+    },
+    linkBox: {
+        alignSelf: 'stretch',
+        overflow: 'hidden',
+        paddingHorizontal: theme.space.s10,
+        paddingVertical: theme.space.s6,
+        borderRadius: theme.borderRadius.md,
+        backgroundColor: theme.colors.surface.inset,
+    },
+    linkText: {
+        ...Typography.mono(),
+        ...happierPageTextMetrics('meta'),
+        color: theme.colors.text.primary,
+    },
+    handoverActions: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'flex-start',
+        gap: theme.space.s8,
+    },
+    /** The code stands centred in its section's sheet. */
+    scanCode: {
+        alignItems: 'center',
+        paddingVertical: theme.space.s8,
     },
     copyWarning: {
         ...Typography.default(),
@@ -741,5 +910,7 @@ const styles = StyleSheet.create((theme) => ({
         ...happierPageTextMetrics('meta'),
         color: theme.colors.text.tertiary,
         fontVariant: ['tabular-nums'],
+        // The countdown is one figure: on a narrow row the sentence beside it wraps, never the time.
+        flexShrink: 0,
     },
 }));
