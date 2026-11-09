@@ -23,6 +23,7 @@ import {
     workflowRunRowFromAutomationRun,
     workflowRunRowFromSummary,
     workflowRunListWindowStoreKey,
+    workflowRunStoreKey,
 } from './workflowRuns';
 
 type State = ReturnType<typeof createWorkflowRunsDomain>;
@@ -204,11 +205,19 @@ describe('workflow run body store', () => {
         scopes.forEach((scope, index) => {
             const run = createWorkflowRunSummaryFixture({ id: 'same-run', revision: index + 1 });
             store.getState().upsertWorkflowRuns([workflowRunRowFromSummary(run)], scope);
-            store.getState().applyWorkflowRunInvocationPage({ runId: run.id, scope, invocations: [createWorkflowInvocationIndexFixture({
-                id: `step-${index}`, runId: run.id,
-            })], nextCursor: null, parentRevision: run.revision, mode: 'replace' });
+            const invocation = createWorkflowInvocationIndexFixture({ id: 'same-step', runId: run.id });
+            store.getState().applyWorkflowRunInvocationPage({ runId: run.id, scope, invocations: [invocation],
+                invocationDetails: [{ index: invocation, parentRevision: run.revision,
+                    progress: { kind: 'happier.workflow-progress.v1', blockKind: 'wait',
+                        invocationPath: { blockId: 'wait', scope: [] }, attempt: invocation.attempt,
+                        logicalInvocationRecordId: invocation.id } }],
+                nextCursor: null, parentRevision: run.revision, mode: 'replace' });
         });
-        scopes.forEach((scope, index) => expect(resolveWorkflowRunRows(store.getState().workflowRunsById, ['same-run'], scope)[0]?.revision).toBe(index + 1));
+        scopes.forEach((scope, index) => {
+            expect(resolveWorkflowRunRows(store.getState().workflowRunsById, ['same-run'], scope)[0]?.revision).toBe(index + 1);
+            expect(store.getState().workflowRunInvocationsByRunId[workflowRunStoreKey('same-run', scope)]?.openedReadMetadataById)
+                .toEqual({ 'same-step': { parentRevision: index + 1 } });
+        });
         store.getState().removeWorkflowRun('same-run', scopes[0]);
         expect(resolveWorkflowRunRows(store.getState().workflowRunsById, ['same-run'], scopes[0])).toEqual([]);
         expect(resolveWorkflowRunRows(store.getState().workflowRunsById, ['same-run'], scopes[1])[0]?.revision).toBe(2);
@@ -333,12 +342,38 @@ describe('workflow run body store', () => {
         expect(publications).toHaveLength(1);
         const published = publications[0]!.workflowRunInvocationsByRunId['run-1']!;
         expect(published.history.invocationIds).toEqual(invocations.map(index => index.id));
-        expect(invocations.map(index => published.factsById[index.id]?.opened)).toEqual(invocationDetails);
+        expect(invocations.map(index => published.factsById[index.id]?.opened)).toEqual(invocationDetails.map(({ parentRevision: _parentRevision, ...content }) => content));
         const current = store.getState();
         store.getState().applyWorkflowRunInvocationPage(structuredClone(page));
         expect(publications).toHaveLength(1);
         expect(store.getState()).toBe(current);
         unsubscribe();
+    });
+
+    it('advances private read admission without republishing unchanged invocation content', () => {
+        const store = createStore<State>((set, get) => createWorkflowRunsDomain({ set, get }));
+        store.getState().upsertWorkflowRuns([workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: 'read-clock' }))], null);
+        const invocations = Array.from({ length: 500 }, (_, ordinal) => createWorkflowInvocationIndexFixture({
+            id: `held-${ordinal}`, sequence: String(ordinal), contentRevision: '1', lifecycle: 'waiting_for_review',
+        }));
+        const page = (parentRevision: number) => ({ runId: 'read-clock', scope: null, invocations,
+            invocationDetails: invocations.map(index => ({ index, parentRevision,
+                progress: { kind: 'happier.workflow-progress.v1' as const, blockKind: 'wait' as const,
+                    invocationPath: { blockId: index.id, scope: [] }, attempt: index.attempt,
+                    logicalInvocationRecordId: index.id } })),
+            nextCursor: null, parentRevision, mode: 'replace' as const });
+        store.getState().applyWorkflowRunInvocationPage(page(1));
+        const before = store.getState().workflowRunInvocationsByRunId['read-clock']!;
+        store.getState().applyWorkflowRunInvocationPage(structuredClone(page(2)));
+        const after = store.getState().workflowRunInvocationsByRunId['read-clock']!;
+        expect(Object.values(after.factsById).filter(fact => fact !== before.factsById[fact.id])).toHaveLength(0);
+        expect(after.openedReadMetadataById).toEqual(Object.fromEntries(invocations.map(row => [row.id, { parentRevision: 2 }])));
+        expect(after.history.parentRevision).toBe(2);
+        const published = store.getState();
+        store.getState().applyWorkflowRunInvocationPage(structuredClone(page(2)));
+        expect(store.getState()).toBe(published);
+        store.getState().removeWorkflowRun('read-clock', null);
+        expect(store.getState().workflowRunInvocationsByRunId['read-clock']).toBeUndefined();
     });
 
     it('keeps fresher invocation content when a page carries stale opened details', () => {
@@ -361,7 +396,7 @@ describe('workflow run body store', () => {
         store.getState().applyWorkflowRunInvocationPage({ runId: 'run-1', invocations: [{ ...index, contentRevision: '9007199254740994' }],
             invocationDetails: [stale], nextCursor: null, parentRevision: 4, mode: 'refresh' });
         const fact = store.getState().workflowRunInvocationsByRunId['run-1']!.factsById[index.id];
-        expect(known?.opened).toEqual(opened);
+        expect(known?.opened).toEqual({ index: opened.index, progress: opened.progress });
         expect(fact?.contentRevision).toBe('9007199254740994');
         expect(fact?.lifecycle).toBe('completed');
         expect(fact?.opened).toBe(known?.opened);
@@ -381,18 +416,18 @@ describe('workflow run body store', () => {
         const page = { runId: 'run-1', invocations: [index], invocationDetails: [contentOnly],
             nextCursor: null, parentRevision: 4, mode: 'replace' as const };
         store.getState().applyWorkflowRunInvocationPage(page);
-        expect(store.getState().workflowRunInvocationsByRunId['run-1']!.factsById[index.id]?.opened?.recoveryAvailability)
+        expect(store.getState().workflowRunInvocationsByRunId['run-1']!.openedReadMetadataById?.[index.id]?.recoveryAvailability)
             .toEqual(recoveryAvailability);
         store.getState().applyWorkflowRunInvocationPage({ ...page, parentRevision: 5,
             invocationDetails: [{ ...contentOnly, parentRevision: 5 }] });
-        expect(store.getState().workflowRunInvocationsByRunId['run-1']!.factsById[index.id]?.opened?.recoveryAvailability)
+        expect(store.getState().workflowRunInvocationsByRunId['run-1']!.openedReadMetadataById?.[index.id]?.recoveryAvailability)
             .toBeUndefined();
         store.getState().upsertWorkflowRunInvocation({ runId: 'run-1',
             invocation: { ...index, opened: { ...contentOnly, parentRevision: 5, recoveryAvailability } }, parentRevision: 5 });
         const nextIndex = { ...index, contentRevision: '5' };
         store.getState().applyWorkflowRunInvocationPage({ ...page, invocations: [nextIndex], parentRevision: 5,
             invocationDetails: [{ ...contentOnly, index: nextIndex, parentRevision: 5 }] });
-        expect(store.getState().workflowRunInvocationsByRunId['run-1']!.factsById[index.id]?.opened?.recoveryAvailability)
+        expect(store.getState().workflowRunInvocationsByRunId['run-1']!.openedReadMetadataById?.[index.id]?.recoveryAvailability)
             .toBeUndefined();
     });
 
@@ -433,7 +468,7 @@ describe('workflow run body store', () => {
             blockKind: 'step' as const, invocationPath: { blockId: 'analyze', scope: [] }, attempt: '0', logicalInvocationRecordId: index.id } };
         harness.get().upsertWorkflowRunInvocation({ runId: 'run-1', invocation: { ...index, opened }, parentRevision: 1 });
         harness.get().applyWorkflowRunInvocationPage({ runId: 'run-1', invocations: [{ ...index }], nextCursor: null, parentRevision: 1, mode: 'replace' });
-        expect(harness.get().workflowRunInvocationsByRunId['run-1']?.factsById[index.id]).toHaveProperty('opened', opened);
+        expect(harness.get().workflowRunInvocationsByRunId['run-1']?.factsById[index.id]).toHaveProperty('opened', { index: opened.index, progress: opened.progress });
     });
 
     it('keeps the newest invocation fact when a delayed page or exact response has the same parent revision', () => {

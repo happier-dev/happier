@@ -879,6 +879,77 @@ describe('sync AccountChange catch-up projection', () => {
         }
     });
 
+    it('removes a resolved Inbox hold through one qualified Account socket wake and durable catch-up', async () => {
+        const runtime = await prepareAccountChangeWakeSchedulingHarness();
+        const { storage } = await import('./domains/state/storageStore');
+        const { captureActiveServerAccountScopeLifetime } = await import('./domains/scope/activeServerAccountScope');
+        const { createWorkflowDefinitionFixture, createWorkflowRunListStorageFixture, createWorkflowRunSummaryFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+        const { workflowRunRowFromSummary, workflowRunStoreKey } = await import('./store/domains/workflowRuns');
+        const { useWorkflowRun } = await import('./store/hooks');
+        const { useWorkflowRunWindow } = await import('@/components/workflows/library/workflowLibraryReads');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected restored Inbox Account lifetime');
+        const held = createWorkflowRunSummaryFixture({ ownerAccountId: ACCOUNT_ID, origin: { kind: 'direct' },
+            state: 'waiting_for_review', revision: 6, attentionRequired: true, invocationAttentionRequired: true });
+        const settled = createWorkflowRunSummaryFixture({ ...held, state: 'succeeded', revision: 11,
+            attentionRequired: false, invocationAttentionRequired: false, workflowCustodyState: 'settled' });
+        const definition = createWorkflowDefinitionFixture({ blocks: [{ kind: 'wait', id: 'confirm',
+            document: { text: 'Continue', references: [], attachments: [] } }] });
+        const heldResponse = await createWorkflowRunListStorageFixture({ runs: [held], definition });
+        const settledResponse = await createWorkflowRunListStorageFixture({ runs: [settled], definition });
+        const emptyResponse = await createWorkflowRunListStorageFixture({ runs: [], definition });
+        let resolved = false;
+        const runReads: unknown[] = [];
+        domainHttp.mockImplementation(async ({ url, init }) => {
+            if (new URL(url).pathname !== '/v3/automations/runs/workflow-storage') return Response.json({}, { status: 404 });
+            const input = JSON.parse(String(init?.body));
+            runReads.push(input);
+            return jsonResponse(!resolved ? heldResponse : input.request?.attention === 'required' ? emptyResponse : settledResponse);
+        });
+        storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(held)], lifetime.scope);
+        // Inbox consumes this same Account-scoped attention window; it has no separate loader.
+        const hook = await renderHook(() => ({ detail: useWorkflowRun(held.id),
+            inbox: useWorkflowRunWindow('attention', { accountLifetime: lifetime }) }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().inbox.runIds).toEqual([held.id]));
+        runReads.length = 0;
+        let summaryPublications = 0;
+        const key = workflowRunStoreKey(held.id, lifetime.scope);
+        const unsubscribe = storage.subscribe((state, previous) => {
+            if (state.workflowRunsById[key] !== previous.workflowRunsById[key]) summaryPublications++;
+        });
+        const gate = createDeferred<void>();
+        changesResponse.mockImplementationOnce(async () => {
+            await gate.promise;
+            return { changes: [{ cursor: 1, changedAt: 1, kind: 'account', entityId: `workflow-run:${held.id}`,
+                hint: { revision: 11 } }], nextCursor: 1 };
+        });
+        const socket = sockets.findLast(candidate => candidate.listenersAny().length > 0);
+        if (!socket) throw new Error('Expected focused Account socket listeners');
+        const wake = { ...accountChangeWake('inbox-review-resolved'), body: {
+            t: 'account-change', changeKinds: ['account'], entityIds: [`workflow-run:${held.id}`],
+        } };
+        try {
+            resolved = true;
+            await act(async () => { for (const listener of socket.listenersAny()) listener('update', wake); });
+            await waitForHomeGovernance(() => expect(changesResponse).toHaveBeenCalledOnce());
+            expect(runReads).toEqual([]);
+            expect(hook.getCurrent().inbox.runIds).toEqual([held.id]);
+            await act(async () => { gate.resolve(); await runtime.resumeInFlight; });
+            await waitForHomeGovernance(() => expect(hook.getCurrent().inbox.runIds).toEqual([]));
+            expect(hook.getCurrent().detail?.summary).toMatchObject({ state: 'succeeded', revision: 11, attentionRequired: false });
+            expect(changesResponse).toHaveBeenCalledOnce();
+            expect(summaryPublications).toBe(1);
+            // One exact summary, one filtered membership check, then the ordered attention window.
+            expect(runReads).toEqual([
+                expect.objectContaining({ request: expect.objectContaining({ runIds: [held.id] }) }),
+                expect.objectContaining({ request: expect.objectContaining({ attention: 'required', runIds: [held.id] }) }),
+                expect.objectContaining({ request: expect.objectContaining({ attention: 'required' }) }),
+            ]);
+        } finally {
+            gate.resolve(); await runtime.resumeInFlight; unsubscribe(); await hook.unmount();
+        }
+    });
+
     it.each([false, true])('reads 400 listed Session changes as one set (connected identity: %s)', async connectedSocket => {
         const ids = Array.from({ length: 400 }, (_, index) => `currentness-pass-${index}`);
         let currentnessReads = 0;
@@ -976,6 +1047,40 @@ describe('sync AccountChange catch-up projection', () => {
             // additional GETs regardless of the number or spacing of read passes.
             expect(currentnessReads - before).toBe(0);
         } finally { clock.mockRestore(); }
+    });
+
+    it('shares one Session-parts read when concurrent list query pages demand the same row', async () => {
+        // P03-RECONNECT-REST: after a return, three list corpora re-read at the catch-up wake and each
+        // fetched the same Session's parts (3 identical concurrent read-batch requests).
+        const id = 'shared-query-row';
+        const row = createPlainSessionCurrentProjectionRecordFixture({ id });
+        const physicalBatches: string[][] = [];
+        await restoreTestAccount({ connectedSocket: true, physicalRequest: (url, init) => {
+            if (new URL(url).pathname === '/v2/sessions/read-batch') {
+                const input = SessionReadBatchRequestV1Schema.parse(JSON.parse(String(init?.body)));
+                if (input.sessionIds.includes(id)) physicalBatches.push(input.sessionIds);
+            }
+            return undefined;
+        }, runtimeRequest: path => path === '/v2/sessions/query'
+            ? jsonResponse({ sessions: [{ ...createCompactSessionListRowFixture(row), viewer: createSessionViewerFixture() }], nextCursor: null, hasNext: false,
+                attentionNextCursor: null, attentionHasNext: false }) : undefined });
+        domainHttp.mockImplementation(async ({ url }) => new URL(url).pathname === `/v2/sessions/${id}`
+            ? jsonResponse({ session: row }) : Response.json({}, { status: 404 }));
+        const { storage } = await import('./domains/state/storage');
+        const { getActiveServerAccountScope } = await import('./domains/scope/activeServerAccountScope');
+        const scope = getActiveServerAccountScope();
+        if (!scope || !syncRuntime) throw new Error('Expected restored Account scope');
+        const runtime = syncRuntime;
+        const page = (attention: 'any' | 'needs_attention') => runtime.fetchSessionListQueryPage(scope.serverId, {
+            source: { kind: 'query', allowV1Fallback: false, body: { v: 1, storage: 'active',
+                includeInactive: false, scope: 'all_accessible', attention } },
+            signal: new AbortController().signal,
+            membership: 'query',
+            hydration: 'required',
+        });
+        await Promise.all([page('any'), page('any'), page('needs_attention')]);
+        expect(physicalBatches).toEqual([[id]]);
+        expect(storage.getState().sessionListRowsByServerId[scope.serverId]?.[id]?.id).toBe(id);
     });
 
     it('shares the set reader and admitted identity when a change page requires list-membership repair', async () => {
@@ -2691,6 +2796,10 @@ describe('sync AccountChange catch-up projection', () => {
             if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
                 return availabilityIntentDiscoveryResponse();
             }
+            if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read']) {
+                // A named Availability change reads only that plugin's intent.
+                return jsonResponse(availabilityIntentValue(AVAILABILITY_PLUGIN_ID));
+            }
             return jsonResponse({});
         });
         changesResponse.mockResolvedValue({
@@ -2867,10 +2976,13 @@ describe('sync AccountChange catch-up projection', () => {
             status: 'ready',
             rows: [{ fields: { title: 'after AccountChange' } }],
         });
-        expect(domainHttp.mock.calls.map(([params]) => new URL(params.url).pathname)).toEqual(expect.arrayContaining([
+        // The named change is read row-level: X's materializations and intent only, no census.
+        const catchUpPaths = domainHttp.mock.calls.map(([params]) => new URL(params.url).pathname);
+        expect(catchUpPaths).toEqual(expect.arrayContaining([
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'],
-            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'],
+            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'],
         ]));
+        expect(catchUpPaths).not.toContain(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']);
 
         accountEncryptionModeInvalidation();
         settingsWatch.dispose();
@@ -2920,6 +3032,9 @@ describe('sync AccountChange catch-up projection', () => {
                 return jsonResponse({ availabilityCursor: 2, pluginIds: [AVAILABILITY_PLUGIN_ID], failedPluginIds: [],
                     intentReads: [{ pluginId: AVAILABILITY_PLUGIN_ID, response: successor }],
                 });
+            }
+            if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read']) {
+                return jsonResponse(successor);
             }
             if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.set']) {
                 return jsonResponse({ intent: successor.intent });
@@ -2988,7 +3103,7 @@ describe('sync AccountChange catch-up projection', () => {
         const cipher = createSessionDraftCipher({ accountMode: 'plain', accountCryptoMaterial: null,
             getSessionContext: () => ({ mode: 'plain' }), randomBytes: length => new Uint8Array(length) });
         const author = drafts.createSessionDraftRepository({ syncEnabled: false, cipher,
-            storage: { getString: key => values.get(key), set: (key, value) => values.set(key, value), delete: key => values.delete(key) } });
+            storage: { getString: key => values.get(key), getAllKeys: () => [...values.keys()], set: (key, value) => values.set(key, value), delete: key => values.delete(key) } });
         records = await Promise.all(Array.from({ length: 188 }, async (_, index) => {
             const address = { kind: 'newSession' as const,
                 draftId: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}` };
@@ -3123,7 +3238,7 @@ describe('sync AccountChange catch-up projection', () => {
             getSessionContext: () => ({ mode: 'e2ee', encryption: sessionEncryption }), randomBytes: length => new Uint8Array(length) });
         const values = new Map<string, string>();
         const author = createSessionDraftRepository({ cipher, syncEnabled: false,
-            storage: { getString: key => values.get(key), set: (key, value) => values.set(key, value), delete: key => values.delete(key) } });
+            storage: { getString: key => values.get(key), getAllKeys: () => [...values.keys()], set: (key, value) => values.set(key, value), delete: key => values.delete(key) } });
         const paths: string[] = [];
         await restoreTestAccount({ credentials: { token: ACCOUNT_TOKEN, secret: encodeBase64(secret, 'base64url') },
             accountMode: 'e2ee', draftsEnabled: true, onRequest: path => paths.push(path) });

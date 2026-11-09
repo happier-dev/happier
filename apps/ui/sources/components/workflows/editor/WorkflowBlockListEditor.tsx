@@ -427,7 +427,8 @@ export function WorkflowBlockListEditor(
           block.kind === 'parallel' ||
           block.kind === 'loop' ||
           block.kind === 'if';
-        return (
+        const leadingGap = index > 0 || (block.runWhen !== undefined && block.runWhen !== 'success');
+        const row = (
           <WorkflowBlockListItem
             key={block.id}
             owner={owner}
@@ -445,6 +446,7 @@ export function WorkflowBlockListEditor(
             actionPresentation={block.kind === 'action' ? nextActionPresentations.get(block.id) : undefined}
             validation={definition === null ? null : validation}
             block={block}
+            leadingGap={leadingGap}
             index={index}
             total={blocks.length}
             previousId={index > 0 ? blocks[index - 1]?.id : undefined}
@@ -485,6 +487,22 @@ export function WorkflowBlockListEditor(
             }
           />
         );
+        // Admit the whole prompt row at the existing visibility boundary, including its rail and
+        // gap. Reached rows stay mounted; selection/editing also admits an offscreen focus target.
+        return block.kind === 'step' || block.kind === 'wait' ? (
+          <LazyMountOnScreen
+            key={block.id}
+            initiallyVisible={summary === null}
+            placeholder={(
+              <>
+                {leadingGap ? <View style={workflowEditorStyles.blockGap} /> : null}
+                <View style={{ minHeight: WORKFLOW_SUMMARY_ROW_ESTIMATE[block.kind] }} />
+              </>
+            )}
+          >
+            {row}
+          </LazyMountOnScreen>
+        ) : row;
       })}
 
       {editable &&
@@ -543,6 +561,7 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
     validation: WorkflowDraftValidation | null;
     actionPresentation?: WorkflowActionRowPresentation;
     block: WorkflowBlock;
+    leadingGap: boolean;
     previousId: string | undefined;
     previousKind: WorkflowBlock['kind'] | undefined;
     index: number;
@@ -801,6 +820,7 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
         : editable
           ? 'endPastInserter'
           : 'end';
+  const SummaryRowFrame = Platform.OS === 'web' ? View : React.Fragment;
 
   return (
     <React.Fragment key={block.id}>
@@ -808,8 +828,7 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
                         non-default run-when caption ("If it fails"), and, editing, the inserter bound to
                         this exact position (lab: one Add, no per-list Add). Neither adds a band of its
                         own (DESIGN-7 M2); the default edge says nothing (lab E1). */}
-      {previous !== undefined ||
-      (block.runWhen !== undefined && block.runWhen !== 'success') ? (
+      {row.leadingGap ? (
         <View
           testID={`${testIDPrefix}-gap-${block.id}`}
           style={workflowEditorStyles.blockGap}
@@ -877,10 +896,8 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
         <View style={workflowEditorStyles.blockColumn}>
           {row.summary !== null &&
           (block.kind === 'step' || block.kind === 'wait') ? (
-            // A document of hundreds of blocks mounts the words of the rows the viewport reaches;
-            // the others hold their place until scrolled near (web; native renders the row at once).
-            <LazyMountOnScreen
-              style={{ minHeight: WORKFLOW_SUMMARY_ROW_ESTIMATE[block.kind] }}
+            <SummaryRowFrame
+              {...(Platform.OS === 'web' ? { style: { minHeight: WORKFLOW_SUMMARY_ROW_ESTIMATE[block.kind] } } : {})}
             >
               <WorkflowBlockSummary
               block={block}
@@ -904,7 +921,7 @@ const WorkflowBlockListItem = React.memo(function WorkflowBlockListItem(
                 : { sessionDrop: row.sessionDrop })}
               testIDPrefix={testIDPrefix}
             />
-            </LazyMountOnScreen>
+            </SummaryRowFrame>
           ) : null}
 
           {block.kind === 'step' && row.summary === null ? (

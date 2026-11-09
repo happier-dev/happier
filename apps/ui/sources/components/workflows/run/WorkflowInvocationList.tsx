@@ -28,6 +28,7 @@ import {
     workflowLifecycleAwaitsDecision,
     type WorkflowInvocationLifecycleContext,
 } from '@/components/workflows/presentation/workflowLifecyclePresentation';
+import { WorkflowActivityInvocation, type WorkflowActivityPresentation } from './WorkflowActivityInvocation';
 
 /**
  * The Run's invocation outline.
@@ -198,13 +199,7 @@ export type WorkflowInvocationListProps = Readonly<{
      */
     loadMoreFailed?: boolean;
     loaded: boolean;
-    resolveInvocationLabel?: (invocation: WorkflowRunInvocationIndexV1) => string | null;
-    /** The shared occurrence projection distinguishes repeated steps without opening their content. */
-    resolveInvocationOccurrenceLabel?: (invocation: WorkflowRunInvocationIndexV1) => string | null;
-    /** The authored block kind for a row, so a held Wait-for-you step reads its own word. */
-    resolveInvocationBlockKind?: (invocation: WorkflowRunInvocationIndexV1) => string | null;
-    /** How long a finished attempt took, when its timing has been read; otherwise the row keeps its time alone. */
-    resolveInvocationElapsedLabel?: (invocation: WorkflowRunInvocationIndexV1) => string | null;
+    presentation: WorkflowActivityPresentation;
     /** Places the glyph on the page's gutter and the name on its text column. */
     rowInsetStyle?: HappierStyleProp;
     /** A phone: the state word moves under the name, which keeps the line. */
@@ -222,28 +217,31 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
     const testIDPrefix = props.testIDPrefix ?? 'workflow-invocations';
     const keyExtractor = React.useCallback((invocation: WorkflowRunInvocationIndexV1) => invocation.id, []);
     const extraData = React.useMemo(() => ({ selectedInvocationId: props.selectedInvocationId,
+        onSelectInvocation: props.onSelectInvocation,
         invocationStatusContext: props.invocationStatusContext,
-        resolveInvocationLabel: props.resolveInvocationLabel,
-        resolveInvocationBlockKind: props.resolveInvocationBlockKind,
-        resolveInvocationOccurrenceLabel: props.resolveInvocationOccurrenceLabel,
-        resolveInvocationElapsedLabel: props.resolveInvocationElapsedLabel,
-        invocations: props.invocations,
-    }), [props.selectedInvocationId, props.invocationStatusContext, props.resolveInvocationLabel,
-        props.resolveInvocationBlockKind, props.resolveInvocationOccurrenceLabel, props.resolveInvocationElapsedLabel, props.invocations]);
+        presentation: props.presentation,
+        itemCount: props.invocations.length,
+        rowInsetStyle: props.rowInsetStyle,
+        compact: props.compact,
+        theme,
+    }), [props.selectedInvocationId, props.onSelectInvocation, props.invocationStatusContext, props.presentation, props.invocations.length,
+        props.rowInsetStyle, props.compact, theme]);
     const renderInvocation = React.useCallback(({ item: invocation, index }: { item: WorkflowRunInvocationIndexV1; index: number }) => {
+        return <WorkflowActivityInvocation invocation={invocation} presentation={props.presentation}>{row => {
+        const invocation = row.invocation;
         const selected = props.selectedInvocationId === invocation.id;
-        const blockKind = props.resolveInvocationBlockKind?.(invocation) ?? null;
+        const blockKind = row.blockKind;
         const presentation = describeWorkflowInvocationLifecycle(invocation.lifecycle, { ...props.invocationStatusContext, blockKind });
         const stateLabel = presentation.label;
         // Finished work is said by its glyph alone; only work that is not finished takes a word.
         const finished = invocation.lifecycle === 'completed';
         const speaks = presentation.variant !== 'neutral';
         const attempt = describeWorkflowInvocationAttempt(invocation.attempt);
-        const displayLabel = props.resolveInvocationLabel?.(invocation) ?? t('workflows.contentUnavailable');
-        const occurrenceLabel = props.resolveInvocationOccurrenceLabel?.(invocation) ?? null;
+        const displayLabel = row.label ?? t('workflows.contentUnavailable');
+        const occurrenceLabel = row.occurrence;
         const recordedAt = Date.parse(invocation.createdAt);
         const recordedTime = formatAsOfTime(recordedAt);
-        const elapsed = props.resolveInvocationElapsedLabel?.(invocation) ?? null;
+        const elapsed = row.elapsed;
         const previous = index > 0 ? props.invocations[index - 1] : undefined;
         const next = props.invocations[index + 1];
         const day = previous !== undefined && sameDay(Date.parse(previous.createdAt), recordedAt) ? null : formatDayLabel(recordedAt);
@@ -308,8 +306,9 @@ export function WorkflowInvocationList(props: WorkflowInvocationListProps): Reac
             </HappierPressable>
             </>
         );
-    }, [props.invocationStatusContext, props.invocations, props.onSelectInvocation, props.resolveInvocationBlockKind, props.resolveInvocationElapsedLabel,
-        props.compact, props.resolveInvocationLabel, props.resolveInvocationOccurrenceLabel, props.rowInsetStyle, props.selectedInvocationId, testIDPrefix, theme]);
+        }}</WorkflowActivityInvocation>;
+    }, [props.invocationStatusContext, props.invocations, props.onSelectInvocation, props.presentation,
+        props.compact, props.rowInsetStyle, props.selectedInvocationId, testIDPrefix, theme]);
 
     const pagingFooter = props.onLoadMore === undefined ? null : (
         <View style={styles.footer}>

@@ -85,8 +85,18 @@ it('retries only the recorded failed reply through the native Action with the cu
     storage.setState({ machineListByServerId: { [serverId]: [createMachineFixture({ id: 'machine-1', activeAt: Date.now(),
         access: { custodian: { accountId: 'alice', displayName: 'Alice' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } })] } });
     storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary({ ...run, revision: 8 })], lifetime.scope);
+    const invocation = failedInvocation();
+    const unavailable = { kind: 'unavailable' as const, reason: 'workspace_unavailable' as const };
+    storage.getState().upsertWorkflowRunInvocation({ runId: run.id, scope: lifetime.scope, parentRevision: 7,
+        invocation: { ...invocation.index, opened: { ...invocation,
+            recoveryAvailability: { ...invocation.recoveryAvailability!, retry: unavailable } } } });
     const screen = await renderScreen(<DiscussionWorkflowInvocationRetry messageId="failed-reply" run={run}
-        invocation={failedInvocation()} canEdit accountLifetime={lifetime} />);
+        invocation={invocation} canEdit accountLifetime={lifetime} />);
+    expect(screen.findHostByTestId('discussion-workflow-retry:failed-reply')).toBeNull();
+    const content = storage.getState().workflowRunInvocationsByRunId[workflowRunStoreKey(run.id, lifetime.scope)]!.factsById[invocation.index.id];
+    await act(async () => { storage.getState().upsertWorkflowRunInvocation({ runId: run.id, scope: lifetime.scope,
+        parentRevision: 7, invocation: { ...invocation.index, opened: invocation } }); });
+    expect(storage.getState().workflowRunInvocationsByRunId[workflowRunStoreKey(run.id, lifetime.scope)]!.factsById[invocation.index.id]).toBe(content);
     await screen.pressByTestIdAsync('discussion-workflow-retry:failed-reply');
     await waitForHomeGovernance(() => expect(received, screen.getTextContent()).toEqual([{ runId: 'debate', expectedRevision: 8,
         invocation: { recordId: 'answer-attempt-2' }, causalInvocationIds: ['answer-attempt-2'],

@@ -33,7 +33,11 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: theme.colors.border.default,
     },
-    /** A held step's region: the value and facts scroll, the decision stays under them, all inside the half. */
+    /** A held result is what the reviewer came to read: above a conversation it may take most of the pane. */
+    reviewAboveConversation: {
+        maxHeight: '72%',
+    },
+    /** A held step's region: the value and facts scroll, the decision stays under them. */
     reviewRegion: {
         paddingHorizontal: theme.space.s16,
         paddingTop: theme.space.s8,

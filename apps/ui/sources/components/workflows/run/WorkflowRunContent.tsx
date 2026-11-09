@@ -98,13 +98,11 @@ import { useWorkflowCardModal } from './useWorkflowCardModal';
 import { WorkflowInvocationList } from './WorkflowInvocationList';
 import { WorkflowRunSteps } from './WorkflowRunSteps';
 import { WorkflowAcceptedRunRoles } from './WorkflowRunRoles';
-import { findWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
-import { resolveWorkflowConditionHeadline } from '../presentation/workflowConditionPresentation';
 import {
     compareWorkflowOccurrences,
     projectWorkflowFlowRunStates,
     formatWorkflowOccurrenceLabel,
-    projectWorkflowInvocationStructure,
+    createWorkflowInvocationStructureProjector,
     type WorkflowInvocationStructureEntry,
     type WorkflowOccurrenceCoordinate,
 } from './workflowInvocationStructure';
@@ -280,6 +278,7 @@ export type WorkflowRunContentProps = Readonly<{
      * second mapping.
      */
     invocationStructure?: ReadonlyMap<string, WorkflowInvocationStructureEntry>;
+    invocationStructureProjector?: ReturnType<typeof createWorkflowInvocationStructureProjector>;
     onOpenSession?: (sessionId: string) => void;
     onOpenExecutionRun?: (runId: string) => void;
     onRespondToRequest?: WorkflowInvocationDetailProps['onRespondToRequest'];
@@ -463,7 +462,7 @@ function WorkflowSelectedDetail(props: Readonly<{
         {reopenReview}
         {/* The held result stays bounded above its own conversation, with the composer at the pane's foot. */}
         {!props.phone && reviewShown ? <View testID={`${props.detail.testIDPrefix}-inspector`} accessibilityLabel={props.title}
-            style={[props.sessionId === null ? styles.scroll : styles.inspectorAboveConversation, styles.reviewRegion]}>
+            style={[props.sessionId === null ? styles.scroll : [styles.inspectorAboveConversation, styles.reviewAboveConversation], styles.reviewRegion]}>
             {card}
         </View> : <ScrollView testID={`${props.detail.testIDPrefix}-inspector`} accessibilityLabel={props.title}
             // The inspector is the body under the step's header: its scroll drives that header's shade.
@@ -629,19 +628,21 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         progress.set(props.selectedInvocationId, props.selectedInvocationProgress);
         return progress;
     }, [props.invocationProgressById, props.selectedInvocationId, props.selectedInvocationProgress]);
+    const structureProjector = React.useMemo(() => props.invocationStructureProjector
+        ?? createWorkflowInvocationStructureProjector({ definition: props.definition,
+            frozenChildren: props.frozenChildren, materializedLeaves: props.materializedLeaves,
+            inputs: props.inputs, serverId: props.serverId }),
+    [props.invocationStructureProjector, props.definition, props.frozenChildren, props.materializedLeaves, props.inputs, props.serverId]);
     const derivedStructure = React.useMemo(
         () => (props.invocationStructure !== undefined
             ? props.invocationStructure
-            : projectWorkflowInvocationStructure({
-                definition: props.definition,
-                frozenChildren: props.frozenChildren,
-                materializedLeaves: props.materializedLeaves,
+            : structureProjector({
                 invocations: props.invocations,
                 ...(structureProgressById === undefined
                     ? {}
                     : { progressByInvocationId: structureProgressById }),
             })),
-        [props.definition, props.frozenChildren, props.materializedLeaves, structureProgressById, props.invocationStructure, props.invocations],
+        [structureProjector, structureProgressById, props.invocationStructure, props.invocations],
     );
     const attentionRows = React.useMemo(
         () => props.invocations.filter((entry) => isWorkflowAttentionInvocation(entry.lifecycle, derivedStructure.get(entry.id)?.coverageKind, props.run.state, props.cancelRequested)),
@@ -684,9 +685,6 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
      * Activity lists the work inside the Run. The Run's own root row repeats what the header and
      * outcome already say, and Map and Steps never show it either.
      */
-    const invocationElapsedLabel = React.useCallback((invocation: WorkflowRunInvocationIndexV1) => (
-        formatWorkflowInvocationElapsedLabel(structureProgressById?.get(invocation.id)?.timing)
-    ), [structureProgressById]);
     const activityInvocations = React.useMemo(
         // The visible window leads with held rows for Needs you; a log reads in the order the work ran.
         () => props.invocations.filter((invocation) => derivedStructure.get(invocation.id)?.blockId !== '$root').sort(compareInvocationOrder),
@@ -715,22 +713,6 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         }
         return entry.blockId === '$root' ? t('workflows.run.untitled') : null;
     }, [derivedStructure, flowProjection]);
-
-    /**
-     * An unnamed If reads as its sentence in the log. Step names already come from the same Run
-     * projection used by Map, Steps and the column's conversation rows.
-     */
-    const activityInvocationLabel = React.useCallback((invocation: WorkflowRunInvocationIndexV1): string | null => {
-        const blockId = derivedStructure.get(invocation.id)?.blockId;
-        const block = blockId == null || blockId === '$root' || props.definition === null ? null : findWorkflowBlock(props.definition, blockId);
-        if (block !== null && !block.name?.trim()) {
-            if (block.kind === 'if') {
-                const headline = resolveWorkflowConditionHeadline(props.definition!, block.when, 'run');
-                return headline.unconditional === true ? headline.sentence : t('workflows.page.inspector.ifSentence', { condition: headline.sentence });
-            }
-        }
-        return invocationLabel(invocation);
-    }, [derivedStructure, invocationLabel, props.definition]);
 
     /**
      * Where one occurrence sits, in words: lane, nested workflow, item or round. The Map already
@@ -884,6 +866,12 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         const nodeId = derivedStructure.get(invocation.id)?.nodeId ?? null;
         return nodeId === null ? null : flowProjection?.nodesById.get(nodeId)?.kind ?? null;
     }, [derivedStructure, flowProjection]);
+    const activityPresentation = React.useMemo(() => ({
+        scope: navigationScope,
+        definition: props.definition,
+        projection: flowProjection,
+        project: structureProjector,
+    }), [navigationScope, props.definition, flowProjection, structureProjector]);
     const attentionWaitsForYou = React.useCallback((invocation: WorkflowRunInvocationIndexV1) => (
         isWorkflowWaitForYouHold(invocation.lifecycle, { blockKind: invocationBlockKind(invocation) })
     ), [invocationBlockKind]);
@@ -1879,10 +1867,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             loaded={props.invocationsLoaded}
             selectedInvocationId={props.selectedInvocationId}
             onSelectInvocation={selectInvocation}
-            resolveInvocationLabel={activityInvocationLabel}
-            resolveInvocationOccurrenceLabel={invocationOccurrenceLabel}
-            resolveInvocationBlockKind={invocationBlockKind}
-            resolveInvocationElapsedLabel={invocationElapsedLabel}
+            presentation={activityPresentation}
             rowInsetStyle={phone ? styles.documentInsetPhone : styles.documentInset}
             compact={phone}
             ListHeaderComponent={header}

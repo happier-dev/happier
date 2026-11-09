@@ -18,7 +18,7 @@ import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { getStorage } from '@/sync/domains/state/storage';
-import { workflowRunRowFromSummary, workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
+import { workflowRunRowFromSummary, workflowRunStoreKey, selectWorkflowInvocationOpened, selectWorkflowInvocationRecoveryAvailability } from '@/sync/store/domains/workflowRuns';
 import { resolveWorkflowProblemPresentation, type WorkflowProblemPresentation } from '../presentation/workflowProblemPresentation';
 
 /** Managed summary and existing controls; native Workflow activity is a distinct producer. */
@@ -138,7 +138,7 @@ export function useWorkflowInlineRunInvocations(params: Readonly<{
     }
     const runIds = previousIds.current;
     const facts = getStorage()(useShallow(state => runIds.map(id =>
-        state.workflowRunInvocationsByRunId[workflowRunStoreKey(id, accountLifetime.scope)]?.factsById)));
+        state.workflowRunInvocationsByRunId[workflowRunStoreKey(id, accountLifetime.scope)])));
     const [errors, setErrors] = React.useState<Readonly<Record<string, WorkflowProblemPresentation>>>({});
     const requestRef = React.useRef<((ids: readonly string[]) => void) | null>(null);
     React.useEffect(() => {
@@ -180,14 +180,17 @@ export function useWorkflowInlineRunInvocations(params: Readonly<{
             const known = state.workflowRunInvocationsByRunId[key];
             return !known?.history.loaded || known.history.nextCursor !== null
                 || known.history.parentRevision !== state.workflowRunsById[key]?.revision
-                || known.history.invocationIds.some(id => known.factsById[id]?.opened?.parentRevision !== known.history.parentRevision);
+                || known.history.invocationIds.some(id => known.openedReadMetadataById?.[id]?.parentRevision !== known.history.parentRevision);
         }));
         const unsubscribe = subscribeVisibleWorkflowRunListInvalidation({ lifetime: accountLifetime, runIds,
             isVisibleWindowLoaded: () => true, invalidate: change => request(change.runIds ?? runIds) });
         return () => { requestRef.current = null; controller.abort(); retirement.dispose(); unsubscribe(); };
     }, [accountLifetime, params.enabled, runIds]);
     const byRunId = React.useMemo(() => new Map(runIds.map((id, index) => [id,
-        facts[index] ? Object.values(facts[index]).flatMap(fact => fact.opened ? [fact.opened] : []) : NO_INLINE_INVOCATIONS])), [facts, runIds]);
+        facts[index] ? Object.values(facts[index].factsById).flatMap(fact => {
+            const opened = selectWorkflowInvocationOpened(facts[index], fact.id);
+            return opened ? [opened] : [];
+        }) : NO_INLINE_INVOCATIONS])), [facts, runIds]);
     const retry = React.useCallback((runId: string) => requestRef.current?.([runId]), []);
     const byInvocationId = React.useMemo(() => new Map([...byRunId].map(([id, invocations]) => [id, new Map(invocations.map(fact => [fact.index.id, fact]))])), [byRunId]);
     return { byRunId, byInvocationId, errors, retry };
@@ -205,8 +208,13 @@ export function useWorkflowInlineInvocationRetry(params: Readonly<{
     const actions = React.useMemo(() => createWorkflowRunDetailActions({ accountLifetime }), [accountLifetime]);
     const opened = getStorage()(state => state.workflowRunInvocationsByRunId[workflowRunStoreKey(run.id, accountLifetime.scope)]
         ?.factsById[invocation.index.id]?.opened ?? invocation);
+    const recoveryAvailability = getStorage()(state => {
+        const observations = state.workflowRunInvocationsByRunId[workflowRunStoreKey(run.id, accountLifetime.scope)];
+        return observations?.factsById[invocation.index.id]?.opened
+            ? selectWorkflowInvocationRecoveryAvailability(observations, invocation.index.id) : invocation.recoveryAvailability;
+    });
     const recovery = projectWorkflowInvocationRecovery({ run, invocation: opened.index, progress: opened.progress,
-        recoveryAvailability: opened.recoveryAvailability, machineHomeDirectory: null });
+        recoveryAvailability, machineHomeDirectory: null });
     const mounted = useMountedRef();
     const pendingRef = React.useRef(false);
     const [pending, setPending] = React.useState(false);
@@ -218,7 +226,7 @@ export function useWorkflowInlineInvocationRetry(params: Readonly<{
         setError(null);
     }, [accountLifetime, invocation.index.id]);
     React.useEffect(() => {
-        if (!contentDemand || !canEdit || opened.recoveryAvailability !== undefined) return;
+        if (!contentDemand || !canEdit || recoveryAvailability !== undefined) return;
         const controller = new AbortController();
         const retirement = accountLifetime.onRetire(() => controller.abort());
         void actions.getInvocation({ runId: run.id, invocationId: invocation.index.id }, controller.signal).then(result => {
@@ -229,7 +237,7 @@ export function useWorkflowInlineInvocationRetry(params: Readonly<{
             if (!controller.signal.aborted && accountLifetime.isCurrent()) setError(resolveWorkflowProblemPresentation(failure, 'run'));
         });
         return () => { controller.abort(); retirement.dispose(); };
-    }, [accountLifetime, actions, canEdit, contentDemand, invocation.index.id, opened.recoveryAvailability, run.id]);
+    }, [accountLifetime, actions, canEdit, contentDemand, invocation.index.id, recoveryAvailability, run.id]);
     const retry = React.useCallback(async () => {
         if (!canEdit || pendingRef.current || !accountLifetime.isCurrent()
             || !recovery.canRetrySameConversation || recovery.requiresUncertaintyAcknowledgement) return;

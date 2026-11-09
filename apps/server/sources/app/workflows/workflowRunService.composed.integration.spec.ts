@@ -49,6 +49,7 @@ import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { readSessionUsageAccountingChangedV1 } from '@happier-dev/protocol/changes';
 import { eventRouter } from "@/app/events/eventRouter";
 import { createFakeSocket } from "@/app/api/testkit/socketHarness";
+import { qualifyCurrentAccountStoredContentSocket } from '@/app/api/testkit/accountStoredContentCompatibility';
 import { createSessionPublisherPresence } from "@/app/presence/sessionPublisherPresence";
 import { readManagedWakeTargets } from "@/app/machines/managed/managedWake";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -1527,8 +1528,17 @@ describe("workflowRunService (integration)", () => {
                 expectedRevision: parent.revision, state: "waiting_for_review",
                 checkpointEnvelope: checkpointEnvelope(seeded.accountId, seeded.runId, seeded.rootId, 2n) });
             const { app, headers } = await createReviewStorageApp(seeded.accountId);
+            const accountUpdates: UpdatePayload[] = [];
+            const socket = createFakeSocket();
+            qualifyCurrentAccountStoredContentSocket(socket);
+            socket.emit.mockImplementation((event, payload: UpdatePayload) => {
+                if (event === 'update' && payload.body.t === 'account-change') accountUpdates.push(payload);
+            });
+            const connection: ClientConnection = { connectionType: 'user-scoped', userId: seeded.accountId, socket: socket as unknown as Socket };
+            eventRouter.addConnection(seeded.accountId, connection);
             try {
                 if (parkFirst) await park();
+                accountUpdates.length = 0;
                 const decision = await app.inject({ method: "POST", url: "/v3/automations/runs/workflow-storage",
                     headers, payload: {
                         operation: "invocations.complete_review", mode, runId: seeded.runId,
@@ -1540,6 +1550,8 @@ describe("workflowRunService (integration)", () => {
                             review: { decision: { kind: mode, requestedFromContentRevision: held.invocation.index.contentRevision } } }),
                     } });
                 expect(decision.statusCode).toBe(200);
+                expect(accountUpdates).toHaveLength(1);
+                expect(accountUpdates[0].body).toMatchObject({ t: 'account-change', changeKinds: ['account'], entityIds: [`workflow-run:${seeded.runId}`] });
                 if (!parkFirst) await expect(park()).rejects.toMatchObject({ code: "currentness_conflict" });
                 const current = await db.automationRun.findUniqueOrThrow({ where: { id: seeded.runId } });
                 expect(current).toMatchObject({ state: parkFirst ? "queued" : "running",
@@ -1551,6 +1563,7 @@ describe("workflowRunService (integration)", () => {
                     contentRevision: "2" });
                 expect(await db.workflowRunInvocation.count({ where: { runId: seeded.runId } })).toBe(2);
             } finally {
+                eventRouter.removeConnection(seeded.accountId, connection);
                 await app.close();
             }
         }

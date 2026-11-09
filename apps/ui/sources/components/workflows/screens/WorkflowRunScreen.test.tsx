@@ -570,7 +570,7 @@ describe('wide Run opening selection', () => {
         await vi.waitFor(() => expect(readContentProps()?.selectedInvocationId).toBe(final.id));
     });
 
-    it.each([false, true])('selects a hold arriving after mount without replacing an explicit choice (%s)', async explicitChoice => {
+    it.each(['follow', 'row', 'closed'] as const)('selects a hold arriving after mount without replacing an explicit choice (%s)', async explicitChoice => {
         Object.assign(platformViewport, { width: 1440, height: 900 });
         const run = createWorkflowRunSummaryFixture({ state: 'running' });
         const root = createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333' });
@@ -589,9 +589,11 @@ describe('wide Run opening selection', () => {
             return screen;
         } });
         await vi.waitFor(() => expect(readContentProps()?.run.id).toBe(run.id));
-        if (explicitChoice) await act(async () => readContentProps()?.onSelectInvocation(root.id));
+        if (explicitChoice === 'row') await act(async () => readContentProps()?.onSelectInvocation(root.id));
+        if (explicitChoice === 'closed') await act(async () => readContentProps()?.onDeselectInvocation?.());
         await act(async () => page.resolve(invocationPage([held])));
-        await vi.waitFor(() => expect(readContentProps()?.selectedInvocationId).toBe(explicitChoice ? root.id : held.id));
+        await vi.waitFor(() => expect(readContentProps()?.selectedInvocationId).toBe(explicitChoice === 'row' ? root.id
+            : explicitChoice === 'closed' ? null : held.id));
         expect(routerSpy.push).not.toHaveBeenCalled();
     });
 
@@ -4342,6 +4344,7 @@ describe('WorkflowRunScreen', () => {
             expect(readContentProps()?.selectedContentUnavailable).toBe(true);
             expect(readContentProps()?.selectedInvocationProgress).not.toBeNull();
             expect(readContentProps()?.run.revision).toBe(1);
+            expect(readContentProps()?.selectedInvocationId).toBe(invocations[1]!.id);
             refreshedRead.resolve(openRequestResponse(invocations[1]!, 1));
             await act(async () => {});
             await vi.waitFor(() => expect(readContentProps()?.selectedContentUnavailable).toBe(false));

@@ -40,6 +40,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { resolveWorkflowFlowScopedNodeId } from '@/components/workflows/flow/workflowFlowProjection';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import { getActiveServerAccountScope, selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import {
   WorkflowMaterializedLeafV1Schema} from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import {
@@ -164,6 +165,7 @@ vi.mock('@legendapp/list/react-native', async (importOriginal) => {
 beforeEach(() => {
   // Route-owned listeners must retain their platform boundary until unmount.
   restorePopoverGlobals = withPopoverWebGlobals();
+  getStorage().setState({ workflowRunInvocationsByRunId: {} });
 });
 
 afterEach(async () => {
@@ -178,6 +180,19 @@ afterEach(async () => {
 });
 
 type ContentProps = React.ComponentProps<typeof WorkflowRunContent>;
+
+function publishInvocationFixture(props: ContentProps) {
+  const scope = selectActiveServerAccountScopeForServer(getActiveServerAccountScope(), props.serverId ?? null);
+  // The real route publishes exact reads before rendering Content. Activity now consumes that
+  // same keyed owner, including opened paths when an invocation's parent page is absent.
+  const invocations = props.invocations.map(index => {
+    const progress = index.id === props.selectedInvocationId && props.selectedInvocationProgress != null
+      ? props.selectedInvocationProgress : props.invocationProgressById?.get(index.id);
+    return progress === undefined ? index : { ...index, opened: { index, progress, parentRevision: props.run.revision } };
+  });
+  getStorage().getState().applyWorkflowRunInvocationPage({ runId: props.run.id, scope,
+    invocations, mode: 'replace', nextCursor: null, parentRevision: props.run.revision });
+}
 
 it('detail-navigation.T1/T2/T6 exposes run pages through the mounted owner without invocation or operation effects', async () => {
   const { readShellColumnActionOwner, invokeScopeAction } = await import('@/sync/ops/actions/scopeActionFamily');
@@ -261,6 +276,7 @@ async function renderContent(overrides: Partial<ContentProps> = {}) {
           }
         : null,
   });
+  publishInvocationFixture(props);
   await screen.update(React.createElement(WorkflowRunContent, props));
   let mounted = true;
   const retire = async () => {
@@ -269,6 +285,10 @@ async function renderContent(overrides: Partial<ContentProps> = {}) {
   retireContents.push(retire);
   return {
     ...screen,
+    update: async (element: React.ReactElement) => {
+      if (element.type === WorkflowRunContent) publishInvocationFixture(element.props as ContentProps);
+      await screen.update(element);
+    },
     contentProps: props,
     visibleModals: () =>
       modals.filter((entry) => 'visible' in entry && entry.visible),

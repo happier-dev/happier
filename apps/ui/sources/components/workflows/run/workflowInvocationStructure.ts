@@ -356,6 +356,14 @@ export function projectUnconfirmedWorkflowWaitReview(params: Readonly<{
  * opened conditional additionally records which branch it selected, so its
  * subtree stops being ambiguous.
  */
+function ownsProgressFrame(progress: WorkflowProgressEnvelopeV1): boolean {
+    return progress.frame?.ownerBlockId === progress.invocationPath.blockId;
+}
+
+function selectedProgressBranch(progress: WorkflowProgressEnvelopeV1, block: WorkflowBlock | undefined): 'then' | 'otherwise' | undefined {
+    return block?.kind === 'if' && progress.container?.kind === 'if' ? progress.container.selected : undefined;
+}
+
 function childContextFromProgress(
     progress: WorkflowProgressEnvelopeV1,
     definition: WorkflowDefinitionV1,
@@ -366,8 +374,7 @@ function childContextFromProgress(
     if (path.blockId === '$root') return { kind: 'list', blocks: definition.blocks, scope: [] };
     const block = blocksById.get(scopedBlockId(path.blockId, path.scope));
     if (block === undefined) return null;
-    if (progress.frame !== undefined && progress.frame.ownerBlockId === path.blockId
-        && (block.kind === 'parallel' || block.kind === 'loop')) {
+    if (ownsProgressFrame(progress) && (block.kind === 'parallel' || block.kind === 'loop')) {
         if (block.kind === 'parallel') {
             const tail = path.scope[path.scope.length - 1];
             const branch = tail !== undefined && tail.kind === 'branch'
@@ -380,8 +387,9 @@ function childContextFromProgress(
         if (block.kind === 'loop') return { kind: 'loopBody', block, scope: path.scope };
         return null;
     }
-    if (block.kind === 'if' && progress.container?.kind === 'if') {
-        const selected = progress.container.selected === 'then' ? block.then : block.otherwise;
+    const selectedBranch = selectedProgressBranch(progress, block);
+    if (block.kind === 'if' && selectedBranch !== undefined) {
+        const selected = selectedBranch === 'then' ? block.then : block.otherwise;
         return { kind: 'list', blocks: selected, scope: path.scope };
     }
     return childContextForBlock(block, path.scope, frozenChildren);
@@ -417,7 +425,7 @@ function describeOccurrence(
     });
 }
 
-export function projectWorkflowInvocationStructure(params: Readonly<{
+export type WorkflowInvocationStructureInputs = Readonly<{
     definition: WorkflowDefinitionV1 | null;
     frozenChildren?: FrozenChildren;
     /** Accepted definitions flatten selection; sidecars retain the original participant binding. */
@@ -428,14 +436,56 @@ export function projectWorkflowInvocationStructure(params: Readonly<{
     /** Exact opened tokens qualify additional private labels; stale retained content cannot disclose them. */
     invocationEvidenceById?: ReadonlyMap<string, Readonly<{ index: WorkflowRunInvocationIndexV1; progress: WorkflowProgressEnvelopeV1 }>>;
     /** Home-qualified Session titles from the canonical display-name projection; no private reads. */
-    sessionDisplayLabelsById?: ReadonlyMap<string, string>;
+    sessionDisplayLabelsById?: Pick<ReadonlyMap<string, string>, 'get'>;
     /** Immutable accepted inputs can name cold occurrences without opening private invocation bodies. */
     inputs?: Readonly<Record<string, JsonValue>>;
     serverId?: string | null;
-}>): ReadonlyMap<string, WorkflowInvocationStructureEntry> {
-    const entries = new Map<string, WorkflowInvocationStructureEntry>();
+}>;
+
+type WorkflowInvocationStructureObservation = Pick<WorkflowInvocationStructureInputs,
+    'invocations' | 'progressByInvocationId' | 'invocationEvidenceById' | 'sessionDisplayLabelsById'>;
+
+type InvocationEvidence = Readonly<{ index: WorkflowRunInvocationIndexV1; progress: WorkflowProgressEnvelopeV1 }>;
+type ItemFrameLabel = Readonly<{ scopeKey: string; label: string }>;
+
+function currentInvocationProgress(invocation: WorkflowRunInvocationIndexV1, opened: InvocationEvidence | undefined) {
+    return opened && opened.index.id === invocation.id && opened.index.runId === invocation.runId
+        && opened.index.attempt === invocation.attempt && opened.index.contentRevision === invocation.contentRevision
+        && opened.progress.attempt === invocation.attempt ? opened.progress : undefined;
+}
+
+/** Physical item-frame evidence is the sole private ancestor input of an opened path. */
+function qualifiedItemFrameLabel(invocation: WorkflowRunInvocationIndexV1, opened: InvocationEvidence | undefined): ItemFrameLabel | undefined {
+    return itemFrameLabelFromProgress(currentInvocationProgress(invocation, opened));
+}
+
+function itemFrameLabelFromProgress(progress: WorkflowProgressEnvelopeV1 | undefined): ItemFrameLabel | undefined {
+    const frame = progress?.frame;
+    if (!progress || progress.blockKind !== 'loop' || frame?.ownerBlockId !== progress.invocationPath.blockId
+        || frame.source.kind !== 'item' || frame.source.displayLabel === undefined) return undefined;
+    const scope = progress.invocationPath.scope;
+    const coordinate = scope[scope.length - 1];
+    if (coordinate?.kind !== 'iteration' || coordinate.blockId !== frame.ownerBlockId
+        || String(coordinate.index) !== frame.source.index) return undefined;
+    return { scopeKey: JSON.stringify(scope), label: frame.source.displayLabel };
+}
+
+type AncestorStructureField = 'blockId' | 'scopeKey' | 'ownsFrame' | 'selectedBranch';
+type StructureInvocation = WorkflowRunInvocationIndexV1 & Readonly<{ opened?: InvocationEvidence }>;
+
+type WorkflowInvocationStructureProjector = ((observation: WorkflowInvocationStructureObservation) => ReadonlyMap<string, WorkflowInvocationStructureEntry>) & Readonly<{
+    /** null: unopened structural ancestry; otherwise only these physical item-label scopes. */
+    ancestorLabelScopes: (opened: InvocationEvidence | undefined) => readonly string[] | null;
+    itemFrameLabel: typeof qualifiedItemFrameLabel;
+    /** Only the private inputs childContextFromProgress consumes; root progress never maps children. */
+    ancestorStructureInput: (invocation: StructureInvocation | undefined, field: AncestorStructureField) => string | boolean | undefined;
+}>;
+
+/** Index the frozen document once; both a complete outline and a mounted row's ancestry use this owner. */
+export function createWorkflowInvocationStructureProjector(context: Omit<WorkflowInvocationStructureInputs,
+    keyof WorkflowInvocationStructureObservation>): WorkflowInvocationStructureProjector {
+    const params = context;
     const definition = params.definition;
-    if (definition === null) return entries;
 
     const blocksById = new Map<string, WorkflowBlock>();
     const frozenChildren = params.frozenChildren ?? {};
@@ -445,27 +495,23 @@ export function projectWorkflowInvocationStructure(params: Readonly<{
         return leaf.kind === 'step' && reference?.kind === 'item' && (reference.path?.length ?? 0) === 0
             ? [JSON.stringify([leaf.sourceKey, leaf.blockId])] : [];
     }));
-    collectWorkflowBlocksById(definition.blocks, blocksById, frozenChildren, [], [], definition.defaults.participant, itemParticipantNodes, acceptedItemParticipants);
+    if (definition !== null) collectWorkflowBlocksById(definition.blocks, blocksById, frozenChildren, [], [], definition.defaults.participant, itemParticipantNodes, acceptedItemParticipants);
     const loopsById = new Map<string, LoopBlock>();
     for (const [key, block] of blocksById) if (block.kind === 'loop') loopsById.set(key, block);
+    const project = (observation: WorkflowInvocationStructureObservation): ReadonlyMap<string, WorkflowInvocationStructureEntry> => {
+    if (definition === null) return new Map();
+    const params = { ...context, ...observation };
+    const entries = new Map<string, WorkflowInvocationStructureEntry>();
     const invocationById = new Map(params.invocations.map(invocation => [invocation.id, invocation]));
     const currentProgressById = new Map<string, WorkflowProgressEnvelopeV1>();
     const itemLabelsById = new Map<string, Readonly<{ scopeKey: string; label: string }>>();
     for (const invocation of params.invocations) {
         const opened = params.invocationEvidenceById?.get(invocation.id);
-        if (!opened || opened.index.id !== invocation.id || opened.index.runId !== invocation.runId
-            || opened.index.attempt !== invocation.attempt || opened.index.contentRevision !== invocation.contentRevision
-            || opened.progress.attempt !== invocation.attempt) continue;
-        const { progress } = opened;
+        const progress = currentInvocationProgress(invocation, opened);
+        if (progress === undefined) continue;
         currentProgressById.set(invocation.id, progress);
-        const frame = progress.frame;
-        if (progress.blockKind !== 'loop' || frame?.ownerBlockId !== progress.invocationPath.blockId
-            || frame.source.kind !== 'item' || frame.source.displayLabel === undefined) continue;
-        const scope = progress.invocationPath.scope;
-        const coordinate = scope[scope.length - 1];
-        if (coordinate?.kind !== 'iteration' || coordinate.blockId !== frame.ownerBlockId
-            || String(coordinate.index) !== frame.source.index) continue;
-        itemLabelsById.set(invocation.id, { scopeKey: JSON.stringify(scope), label: frame.source.displayLabel });
+        const label = itemFrameLabelFromProgress(progress);
+        if (label) itemLabelsById.set(invocation.id, label);
     }
 
     const record = (
@@ -615,6 +661,31 @@ export function projectWorkflowInvocationStructure(params: Readonly<{
     }
 
     return entries;
+    };
+    return Object.assign(project, {
+        itemFrameLabel: qualifiedItemFrameLabel,
+        ancestorStructureInput(invocation: StructureInvocation | undefined, field: AncestorStructureField): string | boolean | undefined {
+            const progress = invocation?.opened?.progress;
+            if (!progress || invocation?.parentRecordId === null) return undefined;
+            switch (field) {
+                case 'blockId': return progress.invocationPath.blockId;
+                case 'scopeKey': return JSON.stringify(progress.invocationPath.scope);
+                case 'ownsFrame': return ownsProgressFrame(progress);
+                case 'selectedBranch': return selectedProgressBranch(progress,
+                    blocksById.get(scopedBlockId(progress.invocationPath.blockId, progress.invocationPath.scope)));
+            }
+        },
+        ancestorLabelScopes(opened: InvocationEvidence | undefined): readonly string[] | null {
+            if (opened === undefined) return null;
+            const { invocationPath, frame } = opened.progress;
+            return describeOccurrence(invocationPath.scope, loopsById, frame).flatMap((coordinate, position) =>
+                coordinate.kind === 'item' ? [JSON.stringify(invocationPath.scope.slice(0, position + 1))] : []);
+        },
+    });
+}
+
+export function projectWorkflowInvocationStructure(params: WorkflowInvocationStructureInputs): ReadonlyMap<string, WorkflowInvocationStructureEntry> {
+    return createWorkflowInvocationStructureProjector(params)(params);
 }
 
 /**

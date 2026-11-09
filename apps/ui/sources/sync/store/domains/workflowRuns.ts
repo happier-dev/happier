@@ -125,14 +125,14 @@ export type WorkflowRunsDomain = {
     upsertWorkflowRunInvocation: (input: Readonly<{
         scope?: ServerAccountScope | null;
         runId: string;
-        invocation: WorkflowRunInvocationFact;
+        invocation: WorkflowRunInvocationObservation;
         parentRevision: number;
     }>) => void;
     /** Record the exact first-failure evidence (`null`: the Run has none). */
     setWorkflowRunFirstFailedInvocation: (input: Readonly<{
         scope?: ServerAccountScope | null;
         runId: string;
-        invocation: WorkflowRunInvocationFact | null;
+        invocation: WorkflowRunInvocationObservation | null;
     }>) => void;
 };
 
@@ -176,6 +176,11 @@ export type WorkflowRunInvocationFact = WorkflowRunInvocationIndexV1 & Readonly<
     /** This exact private display sidecar was opened, including when no condition has evaluated yet. */
     provenanceLoaded?: true;
     /** The private observation retains its own index token; a newer index cannot arm it. */
+    opened?: Omit<WorkflowInvocationGetResultV1['invocation'], 'parentRevision' | 'recoveryAvailability'>;
+}>;
+
+/** Transport read metadata is admitted alongside content, outside the immutable row fact. */
+export type WorkflowRunInvocationObservation = Omit<WorkflowRunInvocationFact, 'opened'> & Readonly<{
     opened?: WorkflowInvocationGetResultV1['invocation'];
 }>;
 
@@ -188,6 +193,8 @@ export type WorkflowRunInvocationWindow = Readonly<{
     loaded: boolean;
 }>;
 
+type WorkflowInvocationReadMetadata = Pick<WorkflowInvocationGetResultV1['invocation'], 'parentRevision' | 'recoveryAvailability'>;
+
 export type WorkflowRunInvocations = Readonly<{
     /**
      * The one row map (03 §6.2). History pages, attention pages, exact reads and
@@ -195,11 +202,24 @@ export type WorkflowRunInvocations = Readonly<{
      * freshness, so no window can hold a second, diverging copy.
      */
     factsById: Readonly<Record<string, WorkflowRunInvocationFact>>;
+    /** Exact parent token and recovery projection of each admitted private read; absent until opened. */
+    openedReadMetadataById?: Readonly<Record<string, WorkflowInvocationReadMetadata>>;
     history: WorkflowRunInvocationWindow;
     attention: WorkflowRunInvocationWindow;
     /** Exact first-failure evidence; `null` when none is known. */
     firstFailedId: string | null;
 }>;
+
+/** Rebuild the Action shape only for consumers that need private read/control evidence. */
+export function selectWorkflowInvocationOpened(invocations: WorkflowRunInvocations | null | undefined, id: string): WorkflowInvocationGetResultV1['invocation'] | undefined {
+    const opened = invocations?.factsById[id]?.opened;
+    const metadata = invocations?.openedReadMetadataById?.[id];
+    return opened && metadata ? { ...opened, ...metadata } : undefined;
+}
+
+export function selectWorkflowInvocationRecoveryAvailability(invocations: WorkflowRunInvocations | null | undefined, id: string): WorkflowInvocationGetResultV1['invocation']['recoveryAvailability'] {
+    return invocations?.openedReadMetadataById?.[id]?.recoveryAvailability;
+}
 
 const EMPTY_INVOCATION_WINDOW: WorkflowRunInvocationWindow = { invocationIds: [], nextCursor: null, parentRevision: null, loaded: false };
 const EMPTY_RUN_INVOCATIONS: WorkflowRunInvocations = {
@@ -207,21 +227,32 @@ const EMPTY_RUN_INVOCATIONS: WorkflowRunInvocations = {
 };
 const EMPTY_INVOCATION_LIST: readonly WorkflowRunInvocationIndexV1[] = [];
 
-/** Merge facts by row token; an older response never replaces a newer fact. Returns the same map when nothing changed. */
+/** Merge facts by row token; an older response never replaces a newer fact. Preserves content and read-metadata identities when their facts are unchanged. */
 function mergeInvocationFacts(
-    factsById: WorkflowRunInvocations['factsById'],
-    incoming: readonly WorkflowRunInvocationFact[],
-): WorkflowRunInvocations['factsById'] {
+    previous: Pick<WorkflowRunInvocations, 'factsById' | 'openedReadMetadataById'>,
+    incoming: readonly (Omit<WorkflowRunInvocationFact, 'opened'> & Readonly<{
+        opened?: WorkflowRunInvocationFact['opened'] & Partial<WorkflowInvocationReadMetadata>;
+    }>)[],
+): Pick<WorkflowRunInvocations, 'factsById' | 'openedReadMetadataById'> {
+    const { factsById } = previous;
+    let openedReadMetadataById: Record<string, WorkflowInvocationReadMetadata> | null = null;
     let next: Record<string, WorkflowRunInvocationFact> | null = null;
     for (const invocation of incoming) {
         const known = (next ?? factsById)[invocation.id];
         if (known === invocation) continue;
         const older = known && isWorkflowInvocationFactOlder(invocation, known);
+        const incomingOpened = invocation.opened;
+        const incomingParentRevision = incomingOpened?.parentRevision;
+        let content: WorkflowRunInvocationFact = invocation;
+        if (incomingOpened && incomingParentRevision !== undefined) {
+            const { parentRevision: _parentRevision, recoveryAvailability: _recoveryAvailability, ...opened } = incomingOpened;
+            content = { ...invocation, opened };
+        }
         // Numbering is immutable in the accepted definition. A late display-only read can
         // fill it while retaining every newer lifecycle/content token and opened observation.
-        let candidate = older && known ? known : known?.opened && !invocation.opened
-            ? { ...invocation, opened: known.opened }
-            : invocation;
+        let candidate = older && known ? known : known?.opened && !content.opened
+            ? { ...content, opened: known.opened }
+            : content;
         if (known?.stepOrdinal && !candidate.stepOrdinal) candidate = { ...candidate, stepOrdinal: known.stepOrdinal };
         if (!candidate.stepOrdinal && invocation.stepOrdinal) candidate = { ...candidate, stepOrdinal: invocation.stepOrdinal };
         // The source row stays immutable; the root's evaluated conditions are monotone
@@ -229,21 +260,30 @@ function mergeInvocationFacts(
         const notificationCondition = mergeWorkflowNotificationConditionV1(known?.notificationCondition, invocation.notificationCondition);
         if (notificationCondition && candidate.notificationCondition !== notificationCondition) candidate = { ...candidate, notificationCondition };
         if ((known?.provenanceLoaded || invocation.provenanceLoaded) && !candidate.provenanceLoaded) candidate = { ...candidate, provenanceLoaded: true };
-        // A content-only page is not a new recovery decision. Keep the exact
-        // read's projection only while both its row and parent tokens match.
-        if (invocation.opened && known?.opened?.recoveryAvailability !== undefined
-            && invocation.opened.recoveryAvailability === undefined
-            && invocation.opened.index.id === known.opened.index.id
-            && invocation.opened.index.contentRevision === known.opened.index.contentRevision
-            && invocation.opened.parentRevision === known.opened.parentRevision) {
-            candidate = { ...candidate, opened: { ...invocation.opened,
-                recoveryAvailability: known.opened.recoveryAvailability } };
+        // A content-only page is not a new recovery decision. Carry its exact
+        // read projection only while both the prior row and parent tokens match.
+        if (!older && incomingOpened && incomingParentRevision !== undefined) {
+            const previousMetadata = (openedReadMetadataById ?? previous.openedReadMetadataById)?.[invocation.id];
+            const recoveryAvailability = incomingOpened.recoveryAvailability ?? (
+                known?.opened?.index.id === incomingOpened.index.id
+                    && known.opened.index.contentRevision === incomingOpened.index.contentRevision
+                    && incomingParentRevision === previousMetadata?.parentRevision
+                    ? previousMetadata.recoveryAvailability : undefined);
+            const metadata: WorkflowInvocationReadMetadata = { parentRevision: incomingParentRevision,
+                ...(recoveryAvailability === undefined ? {} : { recoveryAvailability }) };
+            // Content and read projections partition the admitted value; neither
+            // comparison traverses the other's fields.
+            if (!previousMetadata || !sameStrictJsonValue(previousMetadata, metadata)) {
+                openedReadMetadataById ??= { ...previous.openedReadMetadataById };
+                openedReadMetadataById[invocation.id] = metadata;
+            }
         }
         if (known && sameStrictJsonValue(known, candidate)) continue;
         next ??= { ...factsById };
         next[invocation.id] = candidate;
     }
-    return next ?? factsById;
+    return { factsById: next ?? factsById,
+        openedReadMetadataById: openedReadMetadataById ?? previous.openedReadMetadataById };
 }
 
 function appendUniqueInvocationIds(existing: readonly string[], incoming: readonly string[]): readonly string[] {
@@ -293,12 +333,13 @@ function reconcileInvocationObservations(
         observations.push({ ...known, contentRevision: observation.contentRevision, lifecycle: observation.lifecycle });
     }
     if (observations.length === 0) return previous;
-    const factsById = mergeInvocationFacts(previous.factsById, observations);
+    const merged = mergeInvocationFacts(previous, observations);
+    const { factsById } = merged;
     // A row loaded only through attention remains visible after it settles.
     const historyIds = appendUniqueInvocationIds(previous.history.invocationIds, observations.map((row) => row.id));
     const history = historyIds === previous.history.invocationIds ? previous.history : { ...previous.history,
         invocationIds: factsFor(factsById, historyIds).sort(compareInvocationOrder).map((row) => row.id) };
-    return { ...previous, factsById, history, attention: mergeInvocationAttention(previous.attention, factsById, observations) };
+    return { ...previous, ...merged, history, attention: mergeInvocationAttention(previous.attention, factsById, observations) };
 }
 
 function reconcileRunInvocationObservations(
@@ -914,7 +955,8 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
                 const key = workflowRunStoreKey(runId, scope);
                 const previous = state.workflowRunInvocationsByRunId[key] ?? EMPTY_RUN_INVOCATIONS;
                 const openedFacts = invocationDetails.map(opened => ({ ...opened.index, opened }));
-                const factsById = mergeInvocationFacts(previous.factsById, [...invocations, ...openedFacts]);
+                const merged = mergeInvocationFacts(previous, [...invocations, ...openedFacts]);
+                const { factsById } = merged;
                 const previousWindow = previous[windowId];
                 const pageIds = invocations.map((entry) => entry.id);
                 const byOrder = (ids: Iterable<string>) => [...ids].flatMap((id) => {
@@ -951,12 +993,12 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
                 const attention = mergeInvocationAttention(
                     windowId === 'attention' ? nextWindow : previous.attention, factsById, [...invocations, ...openedFacts],
                 );
-                if (factsById === previous.factsById && history === previous.history && attention === previous.attention) return state;
+                if (merged.openedReadMetadataById === previous.openedReadMetadataById && factsById === previous.factsById && history === previous.history && attention === previous.attention) return state;
                 return {
                     ...state,
                     workflowRunInvocationsByRunId: {
                         ...state.workflowRunInvocationsByRunId,
-                        [key]: reconcileInvocationObservations({ ...previous, factsById, history, attention }, state.workflowRunsById[key]?.summary),
+                        [key]: reconcileInvocationObservations({ ...previous, ...merged, history, attention }, state.workflowRunsById[key]?.summary),
                     },
                 };
             }),
@@ -964,7 +1006,8 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
             set((state) => {
                 const key = workflowRunStoreKey(runId, scope);
                 const previous = state.workflowRunInvocationsByRunId[key] ?? EMPTY_RUN_INVOCATIONS;
-                const factsById = mergeInvocationFacts(previous.factsById, [invocation]);
+                const merged = mergeInvocationFacts(previous, [invocation]);
+                const { factsById } = merged;
                 const candidateHistory: WorkflowRunInvocationWindow = {
                     ...previous.history,
                     invocationIds: appendUniqueInvocationIds(previous.history.invocationIds, [invocation.id]),
@@ -973,12 +1016,12 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
                 const history = sameStrictJsonValue(previous.history, candidateHistory) ? previous.history : candidateHistory;
                 const candidateAttention = mergeInvocationAttention(previous.attention, factsById, [invocation]);
                 const attention = sameStrictJsonValue(previous.attention, candidateAttention) ? previous.attention : candidateAttention;
-                if (factsById === previous.factsById && history === previous.history && attention === previous.attention) return state;
+                if (merged.openedReadMetadataById === previous.openedReadMetadataById && factsById === previous.factsById && history === previous.history && attention === previous.attention) return state;
                 return {
                     ...state,
                     workflowRunInvocationsByRunId: {
                         ...state.workflowRunInvocationsByRunId,
-                        [key]: reconcileInvocationObservations({ ...previous, factsById, history, attention }, state.workflowRunsById[key]?.summary),
+                        [key]: reconcileInvocationObservations({ ...previous, ...merged, history, attention }, state.workflowRunsById[key]?.summary),
                     },
                 };
             }),
@@ -986,14 +1029,15 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
             set((state) => {
                 const key = workflowRunStoreKey(runId, scope);
                 const previous = state.workflowRunInvocationsByRunId[key] ?? EMPTY_RUN_INVOCATIONS;
-                const factsById = invocation === null ? previous.factsById : mergeInvocationFacts(previous.factsById, [invocation]);
+                const merged = invocation === null ? previous : mergeInvocationFacts(previous, [invocation]);
+                const { factsById } = merged;
                 const firstFailedId = invocation?.id ?? null;
-                if (factsById === previous.factsById && firstFailedId === previous.firstFailedId) return state;
+                if (merged.openedReadMetadataById === previous.openedReadMetadataById && factsById === previous.factsById && firstFailedId === previous.firstFailedId) return state;
                 return {
                     ...state,
                     workflowRunInvocationsByRunId: {
                         ...state.workflowRunInvocationsByRunId,
-                        [key]: reconcileInvocationObservations({ ...previous, factsById, firstFailedId }, state.workflowRunsById[key]?.summary),
+                        [key]: reconcileInvocationObservations({ ...previous, ...merged, firstFailedId }, state.workflowRunsById[key]?.summary),
                     },
                 };
             }),

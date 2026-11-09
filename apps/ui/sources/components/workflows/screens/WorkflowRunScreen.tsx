@@ -60,7 +60,7 @@ import {
     workflowRunRowFromSummary,
 } from '@/sync/store/domains/workflowRuns';
 import { createWorkflowRunDetailActions, workflowRunDetailActions } from '@/sync/domains/workflows/workflowRunDetailActions';
-import { workflowRunStoreKey } from '@/sync/store/domains/workflowRuns';
+import { workflowRunStoreKey, selectWorkflowInvocationRecoveryAvailability } from '@/sync/store/domains/workflowRuns';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { publishOpenedWorkflowRunDetail, refreshWorkflowRunById } from '@/sync/engine/workflows/refreshWorkflowRun';
@@ -87,7 +87,7 @@ import {
     type WorkflowRecoveryContinuation,
 } from '../run/workflowRunDetailPresentation';
 import { isTerminalWorkflowRunState, isWorkflowRunStopPending } from '../presentation/workflowLifecyclePresentation';
-import { projectUnconfirmedWorkflowWaitReview, projectWorkflowInvocationStructure, resolveWorkflowInvocationBlockContext } from '../run/workflowInvocationStructure';
+import { createWorkflowInvocationStructureProjector, projectUnconfirmedWorkflowWaitReview, projectWorkflowInvocationStructure, resolveWorkflowInvocationBlockContext } from '../run/workflowInvocationStructure';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { hasWorkflowInvocationRequest } from '../run/workflowPermissionRequests';
 import { useWorkflowRunPublicationRequests } from '../run/useWorkflowRunPublicationRequests';
@@ -433,8 +433,8 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
     const attentionPageCountRef = React.useRef(0);
     // Private content and its row token are one exact observation, never
     // separately refreshed maps that could arm a new row with an old blob.
-    const invocationFacts = getStorage()((state) => activelyViewed && runId
-        ? state.workflowRunInvocationsByRunId[workflowRunStoreKey(runId, activeAccountScope)]?.factsById ?? null : null);
+    const storedInvocations = getStorage()((state) => (activelyViewed && runId ? state.workflowRunInvocationsByRunId[workflowRunStoreKey(runId, activeAccountScope)] ?? null : null));
+    const invocationFacts = storedInvocations?.factsById ?? null;
     const invocationEvidenceById = React.useMemo(() => new Map(Object.entries(invocationFacts ?? {}).flatMap(
         ([id, fact]) => fact.opened ? [[id, fact.opened] as const] : [],
     )), [invocationFacts]);
@@ -443,11 +443,12 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
     ), [invocationEvidenceById]);
     const recoveryAvailabilityByInvocationId = React.useMemo(() => {
         const next = new Map<string, WorkflowInvocationRecoveryAvailabilityV1>();
-        for (const [id, evidence] of invocationEvidenceById) {
-            if (evidence.recoveryAvailability) next.set(id, evidence.recoveryAvailability);
+        for (const id of invocationEvidenceById.keys()) {
+            const availability = selectWorkflowInvocationRecoveryAvailability(storedInvocations, id);
+            if (availability) next.set(id, availability);
         }
         return next;
-    }, [invocationEvidenceById]);
+    }, [invocationEvidenceById, storedInvocations]);
     const [loadState, setLoadState] = React.useState<'loading' | 'ready' | 'failed'>('loading');
     const [loadProblem, setLoadProblem] = React.useState<WorkflowProblemPresentation | null>(null);
     /**
@@ -464,6 +465,14 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
     const [view, setView] = React.useState<WorkflowRunDetailView>('flow');
     // Undefined has not chosen a step yet; null is the person's explicit close.
     const [invocationSelection, setSelectedInvocationId] = React.useState<string | null | undefined>(requestedInvocationId ?? undefined);
+    const followedOpeningIdRef = React.useRef<string | undefined>(undefined);
+    const selectInvocation = React.useCallback((invocationId: string) => {
+        followedOpeningIdRef.current = undefined;
+        setSelectedInvocationId(invocationId);
+        if (!detailsPaneAvailable && requestedInvocationId === null && runId !== null) {
+            router.push(createWorkflowInvocationRoute(runId, invocationId, activeAccountScope?.serverId) as never);
+        }
+    }, [activeAccountScope?.serverId, detailsPaneAvailable, requestedInvocationId, router, runId]);
     const selectedInvocationId = invocationSelection ?? null;
     const [pendingOperation, setPendingOperation] = React.useState<PendingRunOperation | null>(null);
     /**
@@ -590,7 +599,6 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
 
     // The Run's one invocation fact map and the windows over it (03 §6.2); this
     // screen holds no fact copies, only route paging state.
-    const storedInvocations = getStorage()((state) => (activelyViewed && runId ? state.workflowRunInvocationsByRunId[workflowRunStoreKey(runId, activeAccountScope)] ?? null : null));
     const contentBelongsToActiveScope = accountLifetime?.isCurrent() === true && contentScopeKey === contentIdentity;
     const visibleInvocations = contentBelongsToActiveScope ? storedInvocations : null;
     const invocationWindow = visibleInvocations?.history ?? null;
@@ -1031,17 +1039,19 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
         const title = isSessionVisible(address) ? invocationSessionTitles[index] : t('message.sessionReferenceUnavailable');
         return title == null ? [] : [[address.sessionId, title] as const];
     })), [invocationSessionAddresses, invocationSessionTitles, isSessionVisible]);
-    const invocationStructure = React.useMemo(() => projectWorkflowInvocationStructure({
+    const invocationStructureProjector = React.useMemo(() => createWorkflowInvocationStructureProjector({
         definition: visibleDefinition,
         frozenChildren: visibleAcceptedContext?.frozenChildren,
         materializedLeaves: visibleAcceptedContext?.materializedLeaves,
+        inputs: visibleAcceptedContext?.inputs,
+        serverId: activeAccountScope?.serverId,
+    }), [activeAccountScope?.serverId, visibleAcceptedContext?.frozenChildren, visibleAcceptedContext?.inputs, visibleAcceptedContext?.materializedLeaves, visibleDefinition]);
+    const invocationStructure = React.useMemo(() => invocationStructureProjector({
         invocations: allInvocations,
         progressByInvocationId: visibleProgressByInvocationId,
         invocationEvidenceById: contentBelongsToActiveScope ? invocationEvidenceById : undefined,
         sessionDisplayLabelsById,
-        inputs: visibleAcceptedContext?.inputs,
-        serverId: activeAccountScope?.serverId,
-    }), [activeAccountScope?.serverId, allInvocations, contentBelongsToActiveScope, invocationEvidenceById, sessionDisplayLabelsById, visibleAcceptedContext?.frozenChildren, visibleAcceptedContext?.inputs, visibleAcceptedContext?.materializedLeaves, visibleDefinition, visibleProgressByInvocationId]);
+    }), [invocationStructureProjector, allInvocations, contentBelongsToActiveScope, invocationEvidenceById, sessionDisplayLabelsById, visibleProgressByInvocationId]);
     const visibleAttentionInvocations = React.useMemo(() => selectWorkflowRunWindowInvocations(visibleInvocations, 'attention')
         .filter(entry => isWorkflowAttentionInvocation(entry.lifecycle, invocationStructure.get(entry.id)?.coverageKind, summary?.state)),
     [invocationStructure, visibleInvocations, summary?.state]);
@@ -1095,7 +1105,6 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
             ? visibleFinalOutputInvocationId ?? allInvocations.at(-1)?.id ?? null : null);
     // The opening selection follows the Run (a hold, then its final output or last step) until the person
     // picks a row themselves; a deliberate choice, closing the pane included, is never moved.
-    const followedOpeningIdRef = React.useRef<string | null>(null);
     React.useEffect(() => {
         if (!activelyViewed || !detailsPaneAvailable || openingInvocationId === null) return;
         if (invocationSelection !== undefined && invocationSelection !== followedOpeningIdRef.current) return;
@@ -2170,10 +2179,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
                 invocationsLoaded={invocationWindow?.loaded ?? false}
                 invocationHistoryComplete={(invocationWindow?.loaded ?? false) && invocationWindow?.nextCursor == null}
                 selectedInvocationId={selectedInvocationId}
-                onSelectInvocation={(invocationId) => {
-                    setSelectedInvocationId(invocationId);
-                    if (!detailsPaneAvailable && requestedInvocationId === null) router.push(createWorkflowInvocationRoute(runId, invocationId, activeAccountScope?.serverId) as never);
-                }}
+                onSelectInvocation={selectInvocation}
                 onDeselectInvocation={() => {
                     if (requestedInvocationId !== null) props.onCloseInvocation();
                     else setSelectedInvocationId(null);
@@ -2239,6 +2245,7 @@ function WorkflowRunBody(props: Readonly<{ onCloseInvocation: () => void; embedd
                     : recoveryAvailabilityByInvocationId.get(selectedInvocationId) ?? null}
                 invocationProgressById={visibleProgressByInvocationId}
                 invocationStructure={invocationStructure}
+                invocationStructureProjector={invocationStructureProjector}
                 onOpenSession={activeAccountScope === null ? undefined : (sessionId) => router.push(
                     buildScopedSessionRouteHref({ sessionId, serverId: activeAccountScope.serverId }) as never,
                 )}
