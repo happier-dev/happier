@@ -1,4 +1,4 @@
-import type { ProviderBoundModelRef } from '@happier-dev/protocol';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/selection/v1';
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 
 export type SessionModelPickerValue = ProviderBoundModelRef | null;

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import type { SessionDraftDocumentV1 } from '@happier-dev/protocol';
+import type { SessionDraftDocumentV1 } from '@happier-dev/protocol/drafts/sessionDrafts';
 import { createMachineFixture, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -58,7 +58,7 @@ describe('draft identity projection fan-out', () => {
         const credentialReads = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl');
         const owner = await renderHook(() => useServerCredentialAccountScopeBindings([serverId]));
         await waitForHomeGovernance(() => expect(owner.getCurrent().get(serverId)?.isCurrent()).toBe(true));
-        await loadDaemonMergedProjectionCacheEntry({ machineId: machine.id, serverId,
+        await loadDaemonMergedProjectionCacheEntry({ sections: 'complete', machineId: machine.id, serverId,
             accountLifetime: owner.getCurrent().get(serverId) });
         const drafts: NewSessionDraftProjection[] = Array.from({ length: 60 }, (_, index) => {
             const document: SessionDraftDocumentV1 = { v: 1, extensions: {}, composer: {
@@ -100,11 +100,11 @@ describe('draft identity projection fan-out', () => {
         expect(marks().every(mark => mark.props.current === true)).toBe(true);
         // The one cache publication updates the mounted cohort. Revision
         // invalidation withdraws authority while preserving the identity rows.
-        await act(async () => publishMachineContributionRegistryProjectionInvalidation({ machineId: machine.id, serverId }));
+        await act(async () => publishMachineContributionRegistryProjectionInvalidation({ machineId: machine.id, serverId }, 'authority'));
         expect(marks().every(mark => mark.props.current === false)).toBe(true);
         expect(commits).toBe(2);
         await act(async () => {
-            await loadDaemonMergedProjectionCacheEntry({ machineId: machine.id, serverId,
+            await loadDaemonMergedProjectionCacheEntry({ sections: 'complete', machineId: machine.id, serverId,
                 accountLifetime: owner.getCurrent().get(serverId) });
         });
         expect(marks().every(mark => mark.props.current === true)).toBe(true);

@@ -156,7 +156,6 @@ const render = (input: Readonly<{
         }}
         openFullSurface={input.openFullSurface ?? (() => {})}
         paneScopeId={paneScopeId}
-        resolvePrimaryHost={() => 'companion'}
     />,
     );
 };

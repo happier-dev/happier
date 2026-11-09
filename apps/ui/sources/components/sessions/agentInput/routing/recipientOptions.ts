@@ -1,4 +1,4 @@
-import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
+import type { ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 
 import { t } from '@/text';
 import { participantRecipientsMatch } from '@/sync/domains/input/participants/resolveParticipantRoutedSend';

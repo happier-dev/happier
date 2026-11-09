@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndex';
-import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { SESSION_LIST_SUPPORTING_SECTIONS_NODE } from './sessionListVirtualizedNodes';
+import { act } from 'react-test-renderer';
 
 // Genuine third-party render boundary; none of these list tests renders Markdown.
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
@@ -16,37 +17,34 @@ const virtualizationState = vi.hoisted(() => ({
     legendListProps: null as any,
 }));
 
-installSessionShellCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        const { createCapturingFlatListMock } = await import('@/dev/testkit/mocks/virtualizedList');
-        const runtime = await createReactNativeWebMock();
-        const flatListMock = createCapturingFlatListMock({ renderItems: false });
-        const platform = { ...runtime.Platform };
-        Object.defineProperty(platform, 'OS', {
-            get: () => virtualizationState.platformOS,
-        });
-        return {
-            ...runtime,
-            Platform: platform,
-            FlatList: (props: any) => {
-                const element = flatListMock.module.FlatList(props);
-                virtualizationState.flatListProps = flatListMock.state.props;
-                return element;
-            },
-        };
-    },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({
-            translate: (key: string) => key,
-        });
-    },
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    const { createCapturingFlatListMock } = await import('@/dev/testkit/mocks/virtualizedList');
+    const runtime = await createReactNativeWebMock();
+    const flatListMock = createCapturingFlatListMock({ renderItems: false });
+    const platform = { ...runtime.Platform };
+    Object.defineProperty(platform, 'OS', { get: () => virtualizationState.platformOS });
+    return {
+        ...runtime,
+        Platform: platform,
+        FlatList: (props: any) => {
+            const element = flatListMock.module.FlatList(props);
+            virtualizationState.flatListProps = flatListMock.state.props;
+            return element;
+        },
+    };
 });
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
-vi.mock('@legendapp/list/react-native', async () => {
+vi.mock('@legendapp/list/react-native', async (importOriginal) => {
     const ReactModule = await import('react');
     return {
+        ...await importOriginal<typeof import('@legendapp/list/react-native')>(),
         LegendList: ReactModule.forwardRef<any, any>((props, ref) => {
             virtualizationState.legendListProps = props;
             if (typeof ref === 'function') {
@@ -64,20 +62,6 @@ vi.mock('@legendapp/list/react-native', async () => {
         }),
     };
 });
-
-vi.mock('./sessionListChrome', () => ({
-    SessionsListHeader: () => React.createElement('SessionsListHeader'),
-}));
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props, props.title),
-}));
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
-}));
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
-
 function buildNodes(count: number) {
     return Array.from({ length: count }, (_, index) => ({
         ...(index === 0 ? {
@@ -100,9 +84,12 @@ function buildVirtualizedContentProps(props: Partial<React.ComponentProps<any>> 
         nodes: buildNodes(2),
         rowHeight: 48,
         safeAreaBottom: 0,
+        showReminders: false,
+        showDrafts: false,
         renderItem: ({ item }: any) => React.createElement('Row', { testID: `row:${item.id}` }),
         rowExtraData: null,
         onStopScrollEventPropagationOnWeb: vi.fn(),
+
         ...props,
     };
 }
@@ -124,6 +111,23 @@ describe('SessionListVirtualizedContent virtualization', () => {
 
     afterEach(() => {
         standardCleanup();
+    });
+
+    it('registers and retires the measured support cell through the list geometry boundary', async () => {
+        const register = vi.fn();
+        const unregister = vi.fn();
+        const screen = await renderVirtualizedContent({ nodes: [SESSION_LIST_SUPPORTING_SECTIONS_NODE],
+            onRegisterTreeRowBounds: register, onUnregisterTreeRowBounds: unregister });
+        const ref = { measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(0, 40, 320, 96) };
+        const cell = await renderScreen(virtualizationState.legendListProps.renderItem({ item: SESSION_LIST_SUPPORTING_SECTIONS_NODE, index: 0 }),
+            { createNodeMock: () => ref });
+        try {
+            const layout = cell.root.findAll(node => typeof node.type === 'string' && typeof node.props.onLayout === 'function')[0]!;
+            act(() => layout.props.onLayout({ nativeEvent: { layout: { x: 0, y: 40, width: 320, height: 96 } } }));
+            expect(register).toHaveBeenCalledWith(SESSION_LIST_SUPPORTING_SECTIONS_NODE.id, ref);
+            expect(virtualizationState.legendListProps.data).toEqual([SESSION_LIST_SUPPORTING_SECTIONS_NODE]);
+        } finally { await cell.unmount(); await screen.unmount(); }
+        expect(unregister).toHaveBeenCalledWith(SESSION_LIST_SUPPORTING_SECTIONS_NODE.id);
     });
 
     it('gives mixed Run cells a row height class rather than recycling a header cell', async () => {
@@ -217,6 +221,23 @@ describe('SessionListVirtualizedContent virtualization', () => {
         currentCallback(info);
         expect(firstHandler).not.toHaveBeenCalled();
         expect(latestHandler).toHaveBeenCalledWith(info);
+    });
+
+    it('keeps the mounted row renderer stable while displaying the current caller content', async () => {
+        const nodes = buildNodes(2);
+        const render = (label: string) => () => React.createElement('Row', { accessibilityLabel: label });
+        const screen = await renderVirtualizedContent({ nodes, renderItem: render('first') });
+        const mountedRenderer = virtualizationState.legendListProps.renderItem;
+        const cell = await renderScreen(mountedRenderer({ item: nodes[1], index: 1 }));
+        try {
+            expect(cell.root.findByType('Row').props.accessibilityLabel).toBe('first');
+            const { SessionListVirtualizedContent } = await import('./sessionListVirtualizedContent');
+            await screen.update(React.createElement(SessionListVirtualizedContent,
+                buildVirtualizedContentProps({ nodes, renderItem: render('current') })));
+            expect(virtualizationState.legendListProps.renderItem).toBe(mountedRenderer);
+            await cell.update(mountedRenderer({ item: nodes[1], index: 1 }));
+            expect(cell.root.findByType('Row').props.accessibilityLabel).toBe('current');
+        } finally { await cell.unmount(); }
     });
 
     it('hands the same list the same viewability handler and config across row changes', async () => {

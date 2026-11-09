@@ -1,6 +1,8 @@
+import { readSessionRecordingVisibility } from '@/sync/store/sessionRecordingVisibility';
 import { useUnistyles } from 'react-native-unistyles';
 import * as React from 'react';
-import type { ComposerRefV1, ActionId } from '@happier-dev/protocol';
+import type { ComposerRefV1} from '@happier-dev/protocol/plugins/ui/composerRef';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { EntityDragKindV1, EntityDragScopeV1, EntityDropOutcomeV1 } from '@happier-dev/protocol/plugins/ui';
 import { useEntityDragDropRuntime, useEntityDropTarget, useEntityDropTargetState, TreeDropOutline,
     type WindowBounds, type WindowPointer } from '@/components/ui/treeDragDrop';
@@ -133,7 +135,7 @@ export function ComposerEntityDropTarget(props: Readonly<{
                 })(),
                 sessions: item.kind === 'session' ? readComposerSessionSuggestionItems({
                     serverId: props.scope.serverId, currentSessionId: sessionId, candidateSessionId: item.address.sessionId,
-                }) : [],
+                }, readSessionRecordingVisibility()) : [],
                 workspace: props.fileScope ?? (sessionId ? resolveWorkspaceTargetForSession({ serverId: props.scope.serverId, sessionId }) : null),
                 referenceHost: props.referenceHost,
                 platform,

@@ -13,12 +13,14 @@ import type { ModelOption, PreflightModelList } from '@/sync/domains/models/mode
 import { settingsParse } from '@/sync/domains/settings/settings';
 import {
     buildBackendTargetKeyV2,
-    DEFAULT_PROVIDER_SETTINGS_V1,
-    serializeModelVisibilityRefV1,
     type BackendTargetRefV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import {
+    DEFAULT_PROVIDER_SETTINGS_V1} from '@happier-dev/protocol/providers/settings/v1';
+import {
+    serializeModelVisibilityRefV1} from '@happier-dev/protocol/providers/selection/v1';
 import { FavoriteModelSelectionV1Schema } from '@/sync/domains/models/favoriteModelSelections';
-import { createProviderErrorV1 } from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, ProviderConnectionsCatalogV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { createProviderSettingsHarness, createProviderSettingsAccountHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -85,7 +87,7 @@ async function prepareFavoriteMachine() {
             } },
         } }));
     const { loadDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
-    const load = () => loadDaemonMergedProjectionInputs({ machineId: 'machine-1', serverId });
+    const load = () => loadDaemonMergedProjectionInputs({ sections: 'complete', machineId: 'machine-1', serverId });
     return { serverId, load };
 }
 

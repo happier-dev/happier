@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { ScmBranchListEntry } from '@happier-dev/protocol';
+import type { ScmBranchListEntry } from '@happier-dev/protocol/scm/branches';
 
 import { OptionPickerOverlay, type OptionPickerOption } from '@/components/sessions/pickers/OptionPickerOverlay';
 import { repoScmBranchService } from '@/scm/repository/repoScmBranchService';

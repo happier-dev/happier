@@ -3,13 +3,16 @@ import { act } from 'react-test-renderer';
 import type { ReactTestInstance } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type {
-  ComposerAttachmentViewV1,
+  ComposerAttachmentViewV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type {
   PluginProjectedComposerAttachmentEntryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { installAgentInputCommonModuleMocks } from '../agentInputTestHelpers';
 
 import type { AgentInputAttachmentsRowItem } from '../agentInputContracts';
+import { HappierUiPlatformProvider, HAPPIER_ANDROID_MINIMUM_INTERACTIVE_TARGET_SIZE, HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
+import { layoutHitArea, readHitArea } from '@/dev/testkit/harness/hitFrameReach';
 
 const attachmentRowPlatform = vi.hoisted(() => ({
   os: 'web' as 'android' | 'web',
@@ -117,10 +120,10 @@ describe('AgentInputAttachmentsRow', () => {
     attachmentRowFocus.focusedTestIDs.length = 0;
   });
 
-  it('uses disjoint 48dp Android frames for preview and removal instead of overlapping hit slop', async () => {
+  it('keeps Android removal reachable through invisible, neighbour-bounded hit areas', async () => {
     attachmentRowPlatform.os = 'android';
     const screen = await renderScreen(
-      <AgentInputAttachmentsRow
+      <HappierUiPlatformProvider platform={{ platform: 'android', colorScheme: 'light' }}><AgentInputAttachmentsRow
         items={
           [
             {
@@ -154,7 +157,7 @@ describe('AgentInputAttachmentsRow', () => {
             },
           ] satisfies readonly AgentInputAttachmentsRowItem[]
         }
-      />,
+      /></HappierUiPlatformProvider>,
     );
     const pairs = [
       ['android-badge-preview', 'android-badge-remove'],
@@ -175,19 +178,33 @@ describe('AgentInputAttachmentsRow', () => {
       expect(findNearestHostParent(preview)).toBe(
         findNearestHostParent(remove),
       );
-      expect(remove?.props.hitSlop).toBeUndefined();
-      expect(
-        flattenStyle(preview?.props.style).minHeight,
-      ).toBeGreaterThanOrEqual(48);
-      expect(
-        flattenStyle(preview?.props.style).minWidth,
-      ).toBeGreaterThanOrEqual(48);
-      expect(
-        flattenStyle(remove?.props.style).minHeight,
-      ).toBeGreaterThanOrEqual(48);
-      expect(flattenStyle(remove?.props.style).minWidth).toBeGreaterThanOrEqual(
-        48,
-      );
+      const picture = removeTestID === 'agent-input-attachment-remove:screenshot';
+      // Natural icon-only controls measure 16; the picture's corner disc declares 20.
+      const drawn = picture ? readHitArea(remove!).drawn : { width: 16, height: 16 };
+      const area = await layoutHitArea(() => screen.findHostByTestId(removeTestID), drawn);
+      expect(area.width).toBeGreaterThanOrEqual(HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE);
+      expect(area.height).toBeGreaterThanOrEqual(HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE);
+      if (!picture) expect(area.height).toBe(HAPPIER_ANDROID_MINIMUM_INTERACTIVE_TARGET_SIZE);
+      // The compact ink stays compact; 48 is a hit policy, never a drawn minimum.
+      expect(area.drawn).toEqual(drawn);
+      expect(screen.findHostByTestId(removeTestID)?.props.accessibilityRole).toBe('button');
+    }
+  });
+
+  it('lets a finger reach a content surface header control past the card edge (the card body clips, not the header)', async () => {
+    const { hitAreaClippingAncestors } = await import('@/dev/testkit/harness/hitFrameReach');
+    const screen = await renderScreen(
+      <AgentInputAttachmentsRow
+        items={[{
+          kind: 'surface', key: 'summary', label: 'Incident summary', sizing: 'content',
+          renderedContent: <View />, testID: 'clip-surface', onPress: () => {}, onRemove: () => {},
+        }] satisfies readonly AgentInputAttachmentsRowItem[]}
+      />,
+    );
+    const card = screen.findAllByTestId('clip-surface').find((node) => typeof node.type === 'string')!;
+    for (const testID of ['clip-surface-preview', 'clip-surface-remove']) {
+      const control = screen.findAllByTestId(testID).find((node) => typeof node.type === 'string')!;
+      expect(hitAreaClippingAncestors(control, card.parent ?? undefined).map((node) => String(node.props.testID ?? node.type))).toEqual([]);
     }
   });
 
@@ -415,19 +432,15 @@ describe('AgentInputAttachmentsRow', () => {
     const removals = screen.tree.root.findAll(
       (node: any) =>
         typeof node.type === 'string' &&
-        node.props.accessibilityRole === 'button' &&
+        node.props.role === 'button' &&
         removeLabels.includes(node.props.accessibilityLabel),
     );
 
     expect(removals).toHaveLength(2);
-    const { resolveMinimumInteractiveTargetSize } =
-      await import('@/components/ui/interactiveTargetSize');
-    const touchFloor = resolveMinimumInteractiveTargetSize('web');
     for (const remove of removals) {
-      expect(flattenStyle(remove.props.style)).toMatchObject({
-        minHeight: touchFloor,
-        minWidth: touchFloor,
-      });
+      const area = await layoutHitArea(() => remove, { width: 16, height: 16 });
+      expect(area.width).toBeGreaterThanOrEqual(HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE);
+      expect(area.height).toBeGreaterThanOrEqual(HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE);
       act(() => {
         remove.props.onPress?.({} as never);
       });
@@ -671,20 +684,15 @@ describe('AgentInputAttachmentsRow', () => {
       ['row-remove-surface-remove', 'Remove incident summary', removeSurface],
     ] as const;
 
-    const { resolveMinimumInteractiveTargetSize } =
-      await import('@/components/ui/interactiveTargetSize');
-    const touchFloor = resolveMinimumInteractiveTargetSize('web');
     for (const [testID, label, handler] of removals) {
       const remove = screen.findByTestId(testID);
-      expect(remove?.props.accessibilityRole).toBe('button');
+      expect(remove?.props.role).toBe('button');
       expect(remove?.props.accessibilityLabel).toBe(label);
-      const style = flattenStyle(remove?.props.style);
-      expect(
-        Math.max(Number(style.minHeight ?? 0), Number(style.height ?? 0)),
-      ).toBeGreaterThanOrEqual(touchFloor);
-      expect(
-        Math.max(Number(style.minWidth ?? 0), Number(style.width ?? 0)),
-      ).toBeGreaterThanOrEqual(touchFloor);
+      const drawn = testID === 'agent-input-attachment-remove:screenshot'
+        ? readHitArea(screen.findHostByTestId(testID)!).drawn : { width: 16, height: 16 };
+      const area = await layoutHitArea(() => screen.findHostByTestId(testID), drawn);
+      expect(area.width).toBeGreaterThanOrEqual(HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE);
+      expect(area.height).toBeGreaterThanOrEqual(HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE);
       await screen.pressByTestIdAsync(testID);
       expect(handler).toHaveBeenCalledTimes(1);
     }
@@ -785,17 +793,17 @@ describe('AgentInputAttachmentsRow', () => {
     );
 
     expect(
-      screen.findByTestId('previewable-badge')?.props.accessibilityRole,
+      screen.findByTestId('previewable-badge')?.props.role,
     ).not.toBe('button');
     expect(
-      screen.findByTestId('previewable-badge-preview')?.props.accessibilityRole,
+      screen.findByTestId('previewable-badge-preview')?.props.role,
     ).toBe('button');
     expect(
-      screen.findByTestId('previewable-fallback')?.props.accessibilityRole,
+      screen.findByTestId('previewable-fallback')?.props.role,
     ).not.toBe('button');
     expect(
       screen.findByTestId('previewable-fallback-preview')?.props
-        .accessibilityRole,
+        .role,
     ).toBe('button');
     await screen.pressByTestIdAsync('previewable-badge-remove');
     await screen.pressByTestIdAsync('previewable-fallback-remove');

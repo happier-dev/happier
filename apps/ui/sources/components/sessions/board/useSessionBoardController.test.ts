@@ -1805,7 +1805,9 @@ describe('useSessionBoardController', () => {
         }]);
     });
 
-    it('does not publish an invalid removal while the shared layout row is absent', async () => {
+    it('deletes an item by its revision alone while the shared layout row is absent', async () => {
+        // AUDIT-B B-01: a transcript-only visual or a recovered item has a record but no layout. Its Delete
+        // reaches the shared item Action (layout revision optional) instead of silently doing nothing.
         const actions = recordingActions();
         const hook = await mountController({
             snapshot: readySnapshot({
@@ -1818,7 +1820,8 @@ describe('useSessionBoardController', () => {
         expect(hook.getCurrent().recoveredItemIds).toEqual(['orphan-1']);
         await hook.getCurrent().run({ kind: 'item.remove', itemId: 'orphan-1' });
 
-        expect(actions.calls).toEqual([]);
+        expect(actions.calls).toEqual([{ kind: 'remove', input: {
+            sessionId: 'session-1', itemId: 'orphan-1', expectedItemRevision: 'rev-orphan-1' } }]);
     });
 
     // A reorder is a momentary event, not Board state. Writing it into the

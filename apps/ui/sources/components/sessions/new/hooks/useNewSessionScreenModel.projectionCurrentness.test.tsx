@@ -2,7 +2,9 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
-import { buildQualifiedPluginContributionKey, PluginProjectionV2Schema, type MachineAgentInventoryItem } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey} from '@happier-dev/protocol/plugins/contribution-key';
+import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { type MachineAgentInventoryItem } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
@@ -75,8 +77,8 @@ function buildAcmeProjectionInputs(params: Readonly<{
 }>): Record<string, unknown> {
     const projection = PluginProjectionV2Schema.parse({
         v: 2, generation: params.generation,
-        installedPackagesById: {}, actionsById: {}, familiesById: {},
-         resourcesById: {}, settingsById: {}, diagnostics: [],
+        installedPackagesById: {}, actionsById: {}, familiesById: {}, 
+        resourcesById: {}, settingsById: {}, diagnostics: [],
         agentsById: params.hasAgent === false ? {} : { [ACME_AGENT_ID]: {
             id: ACME_AGENT_ID, title: params.title,
             capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
@@ -245,7 +247,6 @@ installNewSessionScreenModelCommonModuleMocks({
             InteractionManager: {
                 runAfterInteractions: () => ({ cancel: () => {} }),
             },
-            useWindowDimensions: () => ({ width: 900, height: 800 }),
         });
     },
     unistyles: async () => {
@@ -625,7 +626,7 @@ describe('useNewSessionScreenModel (Agent projection currentness)', () => {
         getStorage().setState({ machineListByServerId: { [serverState.id]: machineState.value } });
         const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
         for (const machineId of ['machine-1', 'machine-2']) {
-            publishMachineContributionRegistryProjectionInvalidation({ serverId: serverState.id, machineId });
+            publishMachineContributionRegistryProjectionInvalidation({ serverId: serverState.id, machineId }, 'authority');
         }
         enabledAgentIdsState.value = ['claude'];
         routeParamsState.value = { machineId: 'machine-1' };

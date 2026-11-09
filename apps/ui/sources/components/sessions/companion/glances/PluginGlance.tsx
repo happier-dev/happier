@@ -2,12 +2,12 @@ import * as React from 'react';
 import { View } from 'react-native';
 import type { WidgetInstanceV1 } from '@happier-dev/protocol/widgets';
 
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiProjectionCurrentness } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { UnavailableInstalledWidget } from '@/components/widgets/InstalledWidgetSurface';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import { useWidgetInstanceBindingLabel } from '@/components/widgets/surface/useWidgetInstanceBindingLabel';
 import { useWidgetInstanceDescriptor } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
-import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
+import { useSessionHostWidgetDescriptor } from '@/components/widgets/surface/useSessionHostWidgetDescriptor';
 import { WidgetFrame, type WidgetFrameStyle } from '@/components/widgets/frame/WidgetFrame';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -32,10 +32,11 @@ export function PluginGlance(props: Readonly<{
     measurementOnly: boolean;
     testID: string;
 }>) {
-    const runtime = useAppShellPluginUiProjection();
+    const runtime = useAppShellPluginUiProjectionCurrentness();
     const viewerScope = useActiveServerAccountScope();
     const definition = props.instance.definition;
-    const installed = React.useMemo(() => readWidgetDescriptor(runtime.pluginUiProjection, definition), [runtime.pluginUiProjection, definition]);
+    // A Session-target widget is named from the exact Session's projection when the app shell does not publish it.
+    const installed = useSessionHostWidgetDescriptor({ serverId: props.serverId, sessionId: props.sessionId, instance: props.instance });
     const descriptor = useWidgetInstanceDescriptor(viewerScope?.serverId === props.serverId ? viewerScope : null, props.instance, installed);
     // A copy is named by what it is bound to ("Fix settings modal remount"), in the source slot (lab dbind X).
     const bindingLabel = useWidgetInstanceBindingLabel(props.instance, descriptor);

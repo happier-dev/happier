@@ -8,8 +8,9 @@ import { LegendList, type LegendListRef } from '@legendapp/list/react-native';
 
 import { createWebDomScrollObservation } from '@/components/sessions/transcript/viewport/driver/webDomObservation';
 import { resetTranscriptViewportDiagnosticsForTests } from '@/components/sessions/transcript/viewport/driver/transcriptViewportWriteDiagnostics';
-import { resolveMainTranscriptListShellFrame } from '../transcriptListShellCapabilities';
+import { resolveConversationTranscriptListShellFrame, resolveMainTranscriptListShellFrame } from '../transcriptListShellCapabilities';
 import { legendListRenderer } from './legendListRenderer';
+import { LEGEND_HELD_INTENT_SETTLE_MS } from './legend/heldIntent';
 import { resolveReadOnlyTranscriptListShellFrame } from '../transcriptListShellCapabilities';
 import type {
     TranscriptListShellRef,
@@ -364,7 +365,7 @@ describe('Legend installed web-package cleanup', () => {
         vi.useRealTimers();
     });
 
-    it('restores a detached bounded transcript by row across remount, new messages and a resized viewport', async () => {
+    it('restores a detached conversation by row across remount, late hydration and a resized viewport', async () => {
         useMeasuredLegendGeometry = true;
         usePhysicalRowGeometry = true;
         viewportHeight = 464;
@@ -375,7 +376,7 @@ describe('Legend installed web-package cleanup', () => {
         const render = (retention = lifetime, dataKey = 'discussion:home-a:account-a:reader') => <div id="installed-pinned-host">
             <Renderer ref={listRef} data={data} dataKey={dataKey}
                 viewportRetention={retention}
-                frame={resolveReadOnlyTranscriptListShellFrame({ accessKind: 'public', bottomNoticeVisible: false, platformOS: 'web' })}
+                frame={resolveConversationTranscriptListShellFrame({ platformOS: 'web' })}
                 keyExtractor={(item: Row) => item.id} renderItem={renderRow}
                 webDomObservation={createWebDomScrollObservation()} />
         </div>;
@@ -389,16 +390,23 @@ describe('Legend installed web-package cleanup', () => {
         });
         await flushLegendWork();
         expect(scroller.scrollTop).toBe(480);
-        const anchorTestId = 'real-legend-row-discussion-reader-6';
+        // A physical browser scroll precedes its asynchronous scroll event. Navigating
+        // in that interval must capture the visible row, not Legend's previous window.
+        deliverBrowserScrollEventsAsynchronously();
+        await act(async () => {
+            scroller.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: 220 }));
+            scroller.scrollTo({ top: 700 });
+        });
+        const anchorTestId = 'real-legend-row-discussion-reader-9';
         const anchorOffset = (viewport: HTMLElement) => {
             const row = viewport.querySelector(`[data-testid="${anchorTestId}"]`)?.parentElement ?? null;
             expect(row, 'the reader\'s anchored message must remain materialized').not.toBeNull();
             return row!.getBoundingClientRect().top - viewport.getBoundingClientRect().top;
         };
         const readingOffset = anchorOffset(scroller);
-        expect(readingOffset).toBe(-48);
+        expect(readingOffset).toBe(-52);
         await act(async () => root.render(null));
-        data = [...data, { id: 'discussion-reader-new', height: 72 }];
+        data = [...data.map((item, index) => index < 9 ? { ...item, height: 240 } : item), { id: 'discussion-reader-new', height: 72 }];
         viewportHeight = 488;
         await act(async () => root.render(render()));
         await flushLegendWork();
@@ -407,6 +415,30 @@ describe('Legend installed web-package cleanup', () => {
         // placement are the continuity contract, not a distance from an expanded live tail.
         expect(anchorOffset(returned)).toBe(readingOffset);
         expect(distanceFromLiveTail(returned)).toBeGreaterThan(0);
+
+        // Answers, quotes and attachments hydrate while the entry's scheduled settle
+        // frame is still live. It must resolve the same key against the current rows.
+        data = data.map((item, index) => index < 9 ? { ...item, height: 480 } : item);
+        await act(async () => root.render(render()));
+        await flushLegendWork();
+        expect(anchorOffset(returned)).toBe(readingOffset);
+
+        // History reconciliation can insert an earlier committed message during entry settlement.
+        // A keyed restore must retain the same placement when its numeric index changes.
+        data = [data[0], { id: 'discussion-reader-reconciled', height: 77 }, ...data.slice(1)];
+        await act(async () => root.render(render()));
+        await flushLegendWork();
+        expect(anchorOffset(returned)).toBe(readingOffset);
+
+        // Once entry placement settles, library anchoring owns subsequent above-row growth.
+        await act(async () => { await vi.advanceTimersByTimeAsync(LEGEND_HELD_INTENT_SETTLE_MS); });
+        data = data.map((item) => item.id === 'discussion-reader-8' ? { ...item, height: 720 } : item);
+        await act(async () => root.render(render()));
+        await flushLegendWork();
+        expect(anchorOffset(returned)).toBe(readingOffset);
+        const settledWrites = physicalScrollWrites.length;
+        await act(async () => { await vi.advanceTimersByTimeAsync(LEGEND_HELD_INTENT_SETTLE_MS); });
+        expect(physicalScrollWrites).toHaveLength(settledWrites);
 
         // A later reply and composer-height change do not re-acquire detached tail intent.
         data = [...data, { id: 'discussion-reader-later', height: 72 }];

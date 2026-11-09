@@ -17,7 +17,7 @@ export function createActionMenuTriggerChip(params: Readonly<{
     tint: string;
     chipStyle: (pressed: boolean) => any;
     open: boolean;
-    openStyle: import('react-native').ViewProps['style'];
+    openStyle: any;
     onPress: () => void;
 }>): React.ReactNode {
     return (

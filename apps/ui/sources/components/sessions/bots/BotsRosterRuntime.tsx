@@ -4,6 +4,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 /**
  * The one way to open the Bots roster from anywhere (rail, palette, phone launcher). Where the rail
@@ -25,11 +26,11 @@ export function useOptionalBotsRosterRuntime(): BotsRosterRuntime | null {
   return React.useContext(BotsRosterRuntimeContext);
 }
 
-function showBotsRosterSheet(): void {
+function showBotsRosterSheet(Bridge: React.ComponentType<Readonly<{ children: React.ReactNode }>>): void {
   fireAndForget(
     import('./BotsRosterSheet').then(({ BotsRosterSheet }) => {
       Modal.show({
-        component: BotsRosterSheet,
+        component: props => <Bridge><BotsRosterSheet {...props} /></Bridge>,
         chrome: {
           kind: 'card',
           header: 'none',
@@ -50,6 +51,7 @@ function showBotsRosterSheet(): void {
 export function BotsRosterRuntimeProvider(
   props: Readonly<{ children: React.ReactNode }>,
 ) {
+  const Bridge = useCurrentUiContextCommandBridge();
   // The most recently mounted anchor wins; a remount (rail ↔ peek) re-registers.
   const openersRef = React.useRef<Array<() => void>>([]);
   const runtime = React.useMemo<BotsRosterRuntime>(
@@ -57,7 +59,7 @@ export function BotsRosterRuntimeProvider(
       open: () => {
         const anchored = openersRef.current[openersRef.current.length - 1];
         if (anchored) anchored();
-        else showBotsRosterSheet();
+        else showBotsRosterSheet(Bridge);
       },
       registerAnchoredOpener: (open) => {
         openersRef.current = [...openersRef.current, open];
@@ -68,7 +70,7 @@ export function BotsRosterRuntimeProvider(
         };
       },
     }),
-    [],
+    [Bridge],
   );
   return (
     <BotsRosterRuntimeContext.Provider value={runtime}>

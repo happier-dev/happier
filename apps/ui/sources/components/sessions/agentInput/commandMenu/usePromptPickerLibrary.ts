@@ -1,12 +1,12 @@
 import * as React from 'react';
-import { readPromptDocInLibrary, setPromptDocFavorite, type PromptLibraryListItem } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
+import { readPromptDocInLibrary, type PromptLibraryListItem } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import type { PublicActionResultById } from '@happier-dev/protocol/actions/actionSpecs';
 import type { PromptInvocationEntryV1 } from '@happier-dev/protocol/prompts/library/promptInvocationsV1';
-import type { PromptFoldersV1 } from '@happier-dev/protocol';
+import type { PromptFoldersV1 } from '@happier-dev/protocol/prompts/library/promptFoldersV1';
 import { readPromptLibraryCatalogRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createUiPromptLibraryArtifactStore, withUiPromptLibraryArtifactReader } from '@/sync/ops/promptLibrary/promptLibraryArtifactStore';
-import { observePromptLibraryCatalog } from '@/sync/engine/settings/promptLibraryCatalogEngine';
+import { observePromptLibraryCatalog, readPromptLibraryCatalogInCapturedAccount } from '@/sync/engine/settings/promptLibraryCatalogEngine';
 
 type Inventory = Readonly<{
     serverId: string | null;
@@ -49,17 +49,14 @@ export function usePromptPickerLibrary(serverId: string) {
                 controller.abort();
             });
             const { executeDefaultActionInCapturedAccount } = await import('@/sync/ops/actions/defaultActionExecutor');
-            const [library, projection] = await Promise.all([
-                executeDefaultActionInCapturedAccount(captured, 'prompts.library.list', {}, {
-                    surface: 'ui', authority: 'present_user', serverId, expectedAccountId: captured.accountId, signal: controller.signal,
-                }).then((result) => {
-                    if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
-                    return result.result as PublicActionResultById['prompts.library.list'];
-                }),
-                // The existing Account organization port shares the foreground catalog
-                // with the list Action and publishes before optional history cleanup.
-                createUiPromptLibraryArtifactStore(captured.workflowArtifacts, captured).organization!.readCatalog(controller.signal),
-            ]);
+            const result = await executeDefaultActionInCapturedAccount(captured, 'prompts.library.list', {}, {
+                surface: 'ui', authority: 'present_user', serverId, expectedAccountId: captured.accountId, signal: controller.signal,
+            });
+            if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
+            const library = result.result as PublicActionResultById['prompts.library.list'];
+            // The admitted Action already acquired the catalog through this engine.
+            // Consume that projection rather than launching a parallel organization read.
+            const projection = await readPromptLibraryCatalogInCapturedAccount(captured, controller.signal);
             captured.assertCurrent();
             const invocations = readPromptLibraryCatalogRecordV1({ ...projection, key: 'invocations' });
             const folders = readPromptLibraryCatalogRecordV1({ ...projection, key: 'folders' });
@@ -112,7 +109,11 @@ export function usePromptPickerLibrary(serverId: string) {
         if (!current || current.signal.aborted) throw new Error('prompt_picker_closed');
         const account = await current.account;
         account.assertCurrent();
-        await setPromptDocFavorite({ store: createUiPromptLibraryArtifactStore(account.workflowArtifacts), request: { artifactId, favorite }, signal: current.signal });
+        const { executeDefaultActionInCapturedAccount } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const result = await executeDefaultActionInCapturedAccount(account, 'prompt_doc.favorite.set', { artifactId, favorite }, {
+            surface: 'ui', authority: 'present_user', serverId: account.serverId, expectedAccountId: account.accountId, signal: current.signal,
+        });
+        if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode });
         account.assertCurrent();
         if (resource.current === current) {
             setInventory((previous) => ({ ...previous, documents: previous.documents.map((doc) => doc.artifactId === artifactId ? { ...doc, favorite } : doc) }));

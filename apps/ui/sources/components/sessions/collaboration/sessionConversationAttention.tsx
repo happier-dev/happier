@@ -6,6 +6,7 @@ import { readSessionListRowForServerId } from '@/sync/domains/session/listing/se
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { getStorage } from '@/sync/domains/state/storageStore';
+import type { RailBadgeSignalRenderer } from '@/components/navigation/shell/appRail/AppRailBadge';
 
 export type SessionConversationAttentionReason = 'mentioned' | 'unread_discussion';
 
@@ -52,9 +53,11 @@ export const SessionCollaborationRailBadge = React.memo(function SessionCollabor
     /** `inline`: at the end of a row (the phone More sheet) instead of on a rail glyph's corner. */
     placement?: 'glyph' | 'inline';
     testID?: string;
+    renderSignal?: RailBadgeSignalRenderer;
 }>) {
     const { theme } = useUnistyles();
     const mentioned = useSessionConversationMentioned(props.target);
+    if (props.renderSignal) return <>{props.renderSignal(mentioned ? { kind: 'dot', tone: 'accent' } : null)}</>;
     if (!mentioned) return null;
     return (
         <TabBadge

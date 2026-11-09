@@ -9,6 +9,7 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { PromptStackDocumentMenu } from '@/components/settings/prompts/stacks/PromptStackDocumentMenu';
 import { PromptStackEntryRow } from '@/components/settings/prompts/stacks/PromptStackEntryRow';
 import { promptStackEntryHref, promptStackPlacementLabel } from '@/components/settings/prompts/stacks/promptStackEntryPresentation';
+import { isStaleSessionIntent, SessionIntentConflictLine } from '@/components/sessions/work/SessionIntentConflictLine';
 import { WorkSection, WorkSectionDescription, WorkSectionEmptyLine } from '@/components/sessions/work/WorkSection';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
@@ -26,7 +27,13 @@ import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { resolveSessionInstructionsAccess } from '../instructions/SessionInstructionsSection';
-import { useSessionContextLayers, type SessionContextRow } from './useSessionContextLayers';
+import type { SessionContextLayers, SessionContextRow } from './useSessionContextLayers';
+import { SessionContextLayersObservation } from './SessionContextLayersScope';
+
+/** What a row is called: its document's title, else what kind of document it is. */
+function rowTitle(row: SessionContextRow): string {
+    return row.title ?? (row.kind === 'memory' ? t('memoryContext.memory.title') : t('promptLibrary.untitledPrompt'));
+}
 
 /** Session-layer entries that already have their own Work section. */
 const OWN_SECTION_ENTRY_IDS = new Set(['session.instructions', 'session.memory']);
@@ -46,23 +53,25 @@ export const SessionContextSection = React.memo(function SessionContextSection(p
     const access = resolveSessionInstructionsAccess(session);
     const ownerMetadata = React.useMemo(() => readSessionOwnerMetadataView(session), [session]);
     if (access !== 'readable' || !ownerMetadata) return null;
-    return <SessionContextBody key={JSON.stringify([serverId, session.id])} session={session} serverId={serverId} ownerMetadata={ownerMetadata} />;
+    return <SessionContextLayersObservation params={{ sessionId: session.id, serverId, ownerMetadata, metadataVersion: session.metadataVersion }}>
+        {layers => <SessionContextBody key={JSON.stringify([serverId, session.id])} session={session} serverId={serverId} layers={layers} />}
+    </SessionContextLayersObservation>;
 });
 
 const SessionContextBody = React.memo(function SessionContextBody(props: Readonly<{
     session: Session;
     serverId: string;
-    ownerMetadata: unknown;
+    layers: SessionContextLayers;
 }>) {
     const { theme } = useUnistyles();
     const { session, serverId } = props;
     const router = useRouter();
-    const layers = useSessionContextLayers({
-        sessionId: session.id, serverId, ownerMetadata: props.ownerMetadata, metadataVersion: session.metadataVersion,
-    });
+    const { layers } = props;
     const [saving, setSaving] = React.useState(false);
     // A refused change says so in the section until the next attempt.
     const [refused, setRefused] = React.useState(false);
+    // A change the Session was no longer at the revision for is held, not lost: the rows keep their current values.
+    const [held, setHeld] = React.useState<SessionContextIntentV1 | null>(null);
     const [adding, setAdding] = React.useState(false);
     const addAnchorRef = React.useRef<View>(null);
     const target = React.useMemo<MemorySessionTarget>(
@@ -73,13 +82,15 @@ const SessionContextBody = React.memo(function SessionContextBody(props: Readonl
     const update = React.useCallback((intent: SessionContextIntentV1) => {
         setSaving(true);
         setRefused(false);
+        setHeld(null);
         fireAndForget((async () => {
             let result: ActionExecuteResult | null = null;
             try {
                 result = await memoryDocumentActions.updateSessionContext(target, intent);
             } catch { /* reported below */ }
             setSaving(false);
-            if (!result || readMemoryActionOutcome(result) !== 'applied') setRefused(true);
+            if (result && isStaleSessionIntent(result)) setHeld(intent);
+            else if (!result || readMemoryActionOutcome(result) !== 'applied') setRefused(true);
         })(), { tag: 'SessionContextSection.update' });
     }, [target]);
 
@@ -103,6 +114,10 @@ const SessionContextBody = React.memo(function SessionContextBody(props: Readonl
     const layersKnown = layers.accountStatus === 'ready' && layers.profile.status === 'ready'
         && (layers.project.status === 'ready' || layers.project.status === 'none') && layers.sessionStackValid;
     const unavailable = layers.accountStatus === 'unavailable' || layers.profile.status === 'unavailable' || !layers.sessionStackValid;
+    // A held switch change names what that entry is now; any other held change just says the Context moved.
+    const heldEntryId = held && (held.kind === 'inherited_enable' || held.kind === 'set_enabled') ? held.entryId : null;
+    const heldRow = heldEntryId ? groups.flatMap((group) => group.rows).find((row) => row.entry.id === heldEntryId) : undefined;
+    const heldSwitchNow = heldRow ? `${rowTitle(heldRow)} · ${heldRow.on ? t('common.on') : t('common.off')}` : undefined;
     const onCount = visible.reduce((sum, group) => sum + group.rows.filter((row) => row.on).length, 0);
     // Documents already in this Session's own layer are left out of "Add document".
     const attachedRefs = React.useMemo(
@@ -152,7 +167,15 @@ const SessionContextBody = React.memo(function SessionContextBody(props: Readonl
                     busy={!unavailable}
                     reason={t(unavailable ? 'memoryContext.session.layersUnavailable' : 'memoryContext.session.layersLoading')} />
             ) : null}
-            {refused ? (
+            {held ? (
+                <SessionIntentConflictLine
+                    testID="session-work-context.conflict"
+                    subject={t('memoryContext.session.contextTitle')}
+                    current={heldSwitchNow}
+                    onApply={() => update(held)}
+                    onKeep={() => setHeld(null)}
+                />
+            ) : refused ? (
                 <SurfaceFreshnessLine testID="session-work-context.refused" tone="warning" reason={t('memoryContext.session.refused')} />
             ) : null}
             {layers.project.status === 'unavailable' ? (
@@ -175,12 +198,12 @@ const SessionContextBody = React.memo(function SessionContextBody(props: Readonl
                     )}
                 >
                     {group.rows.map((row, index) => {
-                        const title = row.title ?? (row.kind === 'memory' ? t('memoryContext.memory.title') : t('promptLibrary.untitledPrompt'));
+                        const title = rowTitle(row);
                         const label = row.kind === 'memory'
                             ? (row.layer === 'account' ? t('memoryContext.session.yourMemory')
                                 : row.layer === 'project' ? t('memoryContext.session.projectMemory') : title)
                             : title;
-                        const subtitle = row.kind === 'unknown' ? t('common.unavailable') : row.off === 'session' ? t('memoryContext.session.offForSession')
+                        const subtitle = row.presentationStatus === 'unavailable' ? t('common.unavailable') : row.off === 'session' ? t('memoryContext.session.offForSession')
                             : row.off === 'source' ? t('memoryContext.session.offAtSource')
                                 : row.off === 'memory' ? t('memoryContext.session.memoryOff')
                                     : row.kind === 'memory' ? t('memoryContext.memory.title')
@@ -197,10 +220,11 @@ const SessionContextBody = React.memo(function SessionContextBody(props: Readonl
                                 title={label}
                                 note={subtitle}
                                 on={row.on}
-                                unavailable={row.kind === 'unknown'}
+                                loading={row.presentationStatus === 'loading'}
+                                unavailable={row.presentationStatus === 'unavailable'}
                                 disabled={saving}
                                 showDivider={false}
-                                onOpen={row.kind === 'unknown' ? undefined : () => open(row)}
+                                onOpen={row.presentationStatus === 'ready' ? () => open(row) : undefined}
                                 // An inherited entry is edited where it was added: opening it is the row's press.
                                 {...(inherited ? {} : {
                                     onRemove: () => update({ kind: 'detach', entryId: row.entry.id }),
@@ -219,7 +243,8 @@ const SessionContextBody = React.memo(function SessionContextBody(props: Readonl
                                         onChange: (marked: boolean) => update({ kind: 'set_plan', entryId: marked ? row.entry.id : null }),
                                     } } : {}),
                                 })}
-                                switchDisabled={row.kind === 'unknown' || row.off === 'source' || row.off === 'memory'}
+                                switchDisabled={row.presentationStatus === 'unavailable' || row.off === 'source' || row.off === 'memory'
+                                    || row.layer === 'project' && layers.project.refreshing}
                                 onEnabledChange={(enabled) => update(inherited
                                     ? { kind: 'inherited_enable', entryId: row.entry.id, enabled }
                                     : { kind: 'set_enabled', entryId: row.entry.id, enabled })}

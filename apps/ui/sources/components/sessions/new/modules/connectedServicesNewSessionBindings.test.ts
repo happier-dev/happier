@@ -131,6 +131,20 @@ describe('connectedServicesNewSessionBindings', () => {
         expect(JSON.stringify(result)).not.toContain('custodian');
     });
 
+    it('strips applied member evidence from retained group selections before an outward write', () => {
+        const serviceId = 'happier.connect.linear/linear';
+        expect(buildConnectedServicesBindingsPayload({
+            supportedConnectedServiceIds: [], connectedServiceProfileOptionsByServiceId: {},
+            connectedServicesBindingsByServiceId: { [serviceId]: {
+                source: 'connected', selection: 'group', groupId: 'team',
+                profileId: 'fallback', appliedProfileId: 'actual-member',
+            } },
+            defaultProfileByServiceId: {}, emitWhenAllNative: true,
+        })).toEqual({ v: 2, bindingsByServiceId: { [serviceId]: {
+            source: 'connected', selection: 'group', groupId: 'team', profileId: 'fallback',
+        } } });
+    });
+
     it('preserves valid authored qualified bindings that are no longer declared', () => {
         const linearServiceKey = 'happier.connect.linear/linear';
         const result = buildConnectedServicesBindingsPayload({
@@ -347,7 +361,7 @@ describe('connectedServicesNewSessionBindings', () => {
                     activeProfileId: 'primary',
                     memberProfileIds: ['primary', 'backup'],
                     enabledMemberCount: 2,
-                    autoSwitch: false,
+                    autoSwitch: null,
                     status: 'ready',
                 },
             ],
@@ -385,7 +399,7 @@ describe('connectedServicesNewSessionBindings', () => {
                     activeProfileId: 'primary',
                     memberProfileIds: ['primary', 'backup'],
                     enabledMemberCount: 2,
-                    autoSwitch: false,
+                    autoSwitch: null,
                     status: 'exhausted',
                 },
             ],
@@ -434,11 +448,7 @@ describe('connectedServicesNewSessionBindings', () => {
 
 describe('composeConnectedServiceTeamCredentialBindingIntents', () => {
     it('turns the Agent page Team purpose default into the New Session Team slot binding at the current revision', async () => {
-        const {
-            projectAgentConnectedAccountPurposeDefaultsToSessionBindings,
-            resolveAgentConnectedAccountPurposeDefaults,
-            writeAgentConnectedAccountPurposeDefault,
-        } = await import('@happier-dev/protocol');
+        const { projectAgentConnectedAccountPurposeDefaultsToSessionBindings, resolveAgentConnectedAccountPurposeDefaults, writeAgentConnectedAccountPurposeDefault} = await import('@happier-dev/protocol/account/settings/connected-services');
         const { composeConnectedServiceTeamCredentialBindingIntents } = await import('./connectedServicesNewSessionBindings');
         const consumer = { pluginId: 'happier.agent.claude', localId: 'claude' } as const;
         const service = { pluginId: 'happier.agent.claude', localId: 'anthropic' } as const;

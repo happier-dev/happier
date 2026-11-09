@@ -1,3 +1,5 @@
+import { replacePersistentUiStateForTest, PersistedPaneScopesSchema } from '@/dev/testkit/harness/persistentUiState';
+import { paneUiState } from '@/sync/domains/state/filePaneUiState';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -48,7 +50,7 @@ vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
 vi.mock('@/components/appShell/panes/AppPaneScopeHost', () => ({
     AppPaneScopeHost: (props: { main?: React.ReactNode }) => React.createElement('AppPaneScopeHost', props, props.main),
 }));
-vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({ ChatHeaderView: () => null }));
+vi.mock('@/components/sessions/shell/view/SessionPaneHeader', () => ({ SessionPaneHeader: () => null }));
 vi.mock('@/components/sessions/transcript/ChatList', () => ({ ChatList: () => React.createElement('ChatList') }));
 vi.mock('@/components/sessions/agentInput', () => ({ AgentInput: () => null }));
 vi.mock('@/components/sessions/actions/SessionHeaderActionMenu', () => ({ SessionHeaderActionMenu: () => null }));
@@ -109,7 +111,7 @@ describe('SessionView (right pane auto-open)', () => {
             expect(storage.getState().isDataReady).toBe(true);
         });
         storage.getState().applySessions([createSessionFixture({ id: 's1', serverId: account.home.id, active: true })]);
-        storage.getState().applyLocalSettings({ appPaneScopesV1: {}, sessionsRightPaneDefaultOpen: false, uiMultiPanePanelsEnabled: true }, { persist: false });
+        (replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({})), storage.getState().applyLocalSettings({ sessionsRightPaneDefaultOpen: false, uiMultiPanePanelsEnabled: true }, { persist: false }));
         pendingRequests.length = 0;
     });
 

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { SessionTerminalWorkspaceV1 } from '@happier-dev/protocol';
+import type { SessionTerminalWorkspaceV1 } from '@happier-dev/protocol/terminal/workspace';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
@@ -28,9 +28,10 @@ export function useSessionTerminalTabMenu(input: Readonly<{
     run: Run;
 }>) {
     const { scopeId, workspace, tabs, run } = input;
+    const presentationId = React.useId();
     const { theme } = useUnistyles();
     const shortcutLabels = React.useContext(KeyboardShortcutLabelsContext);
-    const leafHandles = React.useMemo(() => createSessionTerminalLeafHandles(scopeId), [scopeId]);
+    const leafHandles = React.useMemo(() => createSessionTerminalLeafHandles(scopeId, presentationId), [scopeId, presentationId]);
     const glyph = React.useCallback((name: IconName) => <Icon name={name} size={TERMINAL_MENU_GLYPH_PX} color={theme.colors.text.secondary} />, [theme.colors.text.secondary]);
 
     const items = React.useCallback((tabId: string) => {
@@ -78,5 +79,5 @@ export function useSessionTerminalTabMenu(input: Readonly<{
         }
     }, [leafHandles, run, tabs, workspace.activeTabId, workspace.tabs]);
 
-    return React.useMemo(() => ({ items, select }), [items, select]);
+    return React.useMemo(() => ({ items, select, presentationId }), [items, select, presentationId]);
 }

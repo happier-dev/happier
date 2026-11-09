@@ -1,7 +1,7 @@
 import type { RunnerActivationProjectionV1 } from '@happier-dev/protocol/ephemeralRunner/projection';
 
 import {
-    buildAttachmentMessageMeta,
+    buildSessionAttachmentIngressMeta,
 } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
 import { mergeMessageMetaOverrides } from '@/components/sessions/agentInput/structuredInputMentions';
 import { buildComposerSnapshotStructuredInputMetaOverrides } from '@/components/sessions/composer/composerScopeAdapters';
@@ -53,7 +53,7 @@ export function buildTemporaryComputerFirstPromptDelivery(input: Readonly<{
     const composer = prepareComposerSubmissionSnapshot(input.composer, input.uploaded.map(attachment => attachment.id));
     const structuredInputMeta = buildComposerSnapshotStructuredInputMetaOverrides(composer);
     const baseMetaOverrides = mergeMessageMetaOverrides(
-        input.uploaded.length > 0 ? buildAttachmentMessageMeta(input.uploaded) : undefined,
+        input.uploaded.length > 0 ? buildSessionAttachmentIngressMeta(input.uploaded) : undefined,
         Object.keys(structuredInputMeta).length > 0 ? structuredInputMeta : undefined,
     );
     if ((input.reviewComments?.length ?? 0) > 0) {

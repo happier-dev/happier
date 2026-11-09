@@ -1,4 +1,4 @@
-import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import type { PrimaryTurnStatusV1, SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 const USAGE_LIMIT_RECOVERY_STALE_ACTIVITY_SKEW_MS = 1_000;
 

@@ -60,6 +60,7 @@ export function createSessionItemRowViewModel(
     const session = input.session as SessionListRenderableSession;
 
     return {
+        appearanceColor: null,
         groupKey: 'group:test',
         sessionKey,
         session,

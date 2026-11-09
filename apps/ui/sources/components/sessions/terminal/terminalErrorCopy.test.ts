@@ -3,6 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { resolveTerminalAdmissionErrorCode, resolveTerminalErrorCopy } from './terminalErrorCopy';
 
 describe('terminal error copy', () => {
+    it('presents an operation-scoped daemon update result through the terminal envelope', () => {
+        const code = resolveTerminalAdmissionErrorCode({
+            errorCode: 'terminal_invalid_request', error: 'cli_update_required',
+        });
+        expect(code).toBe('cli_update_required');
+        expect(resolveTerminalErrorCopy(code)).toEqual({ bodyKey: 'deps.ui.notAvailableUpdateCli' });
+    });
+
     it('carries a recognized Project preparation refusal through the generic terminal envelope', () => {
         const code = resolveTerminalAdmissionErrorCode({
             errorCode: 'terminal_invalid_request',

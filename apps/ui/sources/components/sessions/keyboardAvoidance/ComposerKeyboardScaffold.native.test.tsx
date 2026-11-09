@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, Platform } from 'react-native';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -80,6 +80,19 @@ function resolveStyleBackgroundColor(style: unknown): string | undefined {
 }
 
 describe('ComposerKeyboardScaffold native', () => {
+    it('lets native shell touches pass through the empty scaffold to its page', async () => {
+        const previousOS = Platform.OS;
+        Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
+        try {
+            const { ComposerKeyboardScaffold } = await import('./ComposerKeyboardScaffold.native');
+            const screen = await renderScreen(<ComposerKeyboardScaffold mode="newSession" surface="transparent"
+                testID="dock-scaffold" pointerEvents="box-none" composerPointerEvents="box-none"
+                composer={<View testID="card" />}>{null}</ComposerKeyboardScaffold>);
+            expect(screen.findHostByTestId('dock-scaffold')?.props.pointerEvents).toBe('box-none');
+            await screen.unmount();
+        } finally { Object.defineProperty(Platform, 'OS', { configurable: true, value: previousOS }); }
+    });
+
     it('inherits the containing content plane instead of covering the atmosphere with solid ground', async () => {
         const { ComposerKeyboardScaffold } = await import('./ComposerKeyboardScaffold.native');
         const screen = await renderScreen(<HappierMaterialRoleProvider role="content" resolveMaterialColor={() => 'transparent'}>

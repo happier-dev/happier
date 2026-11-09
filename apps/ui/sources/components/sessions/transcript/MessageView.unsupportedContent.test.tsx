@@ -1,8 +1,9 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { installBrowserClipboardBoundary } from '@/dev/testkit';
 
 import { renderWithSessionTranscriptSource as renderScreen, standardCleanup } from '@/dev/testkit';
-import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
+import { installMessageViewCommonModuleMocks, revealTranscriptMessageActions } from './messageViewTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -94,8 +95,8 @@ vi.mock('@expo/vector-icons', () => ({
 }));
 
 const setClipboardStringSafeMock = vi.fn(async (_text: string) => true);
-vi.mock('@/utils/ui/clipboard', () => ({
-    setClipboardStringSafe: (text: string) => setClipboardStringSafeMock(text),
+vi.mock('expo-clipboard', () => ({
+    setStringAsync: (text: string) => setClipboardStringSafeMock(text),
 }));
 
 await import('./MessageView');
@@ -104,6 +105,7 @@ describe('MessageView unsupported-content rendering', () => {
     beforeEach(() => {
         copyButtonsVisible = false;
         debugState.enabled = true;
+        installBrowserClipboardBoundary(async text => { await setClipboardStringSafeMock(text); });
     });
 
     afterEach(() => {
@@ -159,6 +161,7 @@ describe('MessageView unsupported-content rendering', () => {
                 />,
             );
 
+            await revealTranscriptMessageActions(screen, 'a5');
             await screen.pressByTestIdAsync('transcript-message-copy:a5');
             expect(setClipboardStringSafeMock).toHaveBeenCalledWith('[Unsupported agent output: future-type]');
         });
@@ -240,6 +243,7 @@ describe('MessageView unsupported-content rendering', () => {
                 </TranscriptMessageSelectionProvider>,
             );
 
+            await revealTranscriptMessageActions(screen, 'u2');
             await screen.pressByTestIdAsync('transcript-message-select:u2');
             const selectionPreview = screen.findByTestId('transcript-message-select-checkbox:u2');
             expect(selectionPreview?.props.accessibilityLabel).toContain('transcript.unsupportedContent.unparsedUserMessage');

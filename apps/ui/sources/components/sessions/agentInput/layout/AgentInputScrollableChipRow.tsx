@@ -3,15 +3,18 @@ import { Platform, ScrollView, type LayoutChangeEvent, type NativeScrollEvent, t
 
 import { HAPPIER_FOCUS_RING_V1 } from '@happier-dev/plugin-ui/presentation';
 
-import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
+import { HorizontalScrollEdgeMask } from '@/components/ui/scroll/HorizontalScrollEdgeMask';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
-import { resolveHorizontalScrollEdgeMaskStyle } from '@/components/ui/scroll/resolveScrollEdgeMaskStyle';
+import {
+    resolveHorizontalScrollEdgeMaskRamps,
+    resolveHorizontalScrollEdgeMaskStyle,
+} from '@/components/ui/scroll/resolveScrollEdgeMaskStyle';
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { t } from '@/text';
 
 import { attachActionBarMouseDragScroll } from './attachActionBarMouseDragScroll';
 import { attachChipRailReveal } from './attachChipRailReveal';
-import { resolveChipRailCutEdges, type ChipRailCutEdges } from './resolveChipRailCutEdges';
+import { resolveChipRailCutEdges, resolveChipRailSnapOffsets, type ChipRailCutEdges } from './resolveChipRailCutEdges';
 
 const ACTION_BAR_SCROLL_END_GUTTER_WIDTH = 24;
 /**
@@ -37,22 +40,25 @@ function readKeyboardKey(event: unknown): string | null {
     return typeof key === 'string' ? key : null;
 }
 
-/** The rail's chips: the first level of the scroll content that holds more than one element. */
-function railItemElements(node: any): any[] {
-    let host = node?.firstElementChild;
+/**
+ * The rail's chips: the first level at or below `host` that holds more than one element. Web hands the
+ * scroll node's content; native hands its content view, whose element tree (React Native's DOM node
+ * API) has the same shape.
+ */
+function railItemElements(host: any): any[] {
     while (host && host.children?.length === 1) host = host.firstElementChild;
     if (!host?.children) return [];
     return Array.from(host.children as ArrayLike<any>).filter((item) => item.getBoundingClientRect().width > 0);
 }
 
-function measureChipRailCutEdges(node: any): ChipRailCutEdges {
-    const rail = node.getBoundingClientRect();
+/** Item edges relative to the visible rail: `originLeft` is the rail's left edge in the same space. */
+function measureChipRailCutEdges(input: Readonly<{ itemsHost: any; originLeft: number; viewportWidth: number; scrollLeft: number }>): ChipRailCutEdges {
     return resolveChipRailCutEdges({
-        viewportWidth: node.clientWidth,
-        scrollLeft: node.scrollLeft ?? 0,
-        items: railItemElements(node).map((item) => {
+        viewportWidth: input.viewportWidth,
+        scrollLeft: input.scrollLeft,
+        items: railItemElements(input.itemsHost).map((item) => {
             const rect = item.getBoundingClientRect();
-            return { left: Math.round(rect.left - rail.left), right: Math.round(rect.right - rail.left) };
+            return { left: Math.round(rect.left - input.originLeft), right: Math.round(rect.right - input.originLeft) };
         }),
     });
 }
@@ -69,7 +75,6 @@ function composerRailControls(node: any): any[] {
 
 export type AgentInputScrollableChipRowProps = Readonly<{
     children: React.ReactNode;
-    fadeColor: string;
     indicatorColor: string;
     containerStyle?: any;
     contentStyle?: any;
@@ -85,8 +90,45 @@ export function AgentInputScrollableChipRow(props: AgentInputScrollableChipRowPr
         contentEndInset: ACTION_BAR_SCROLL_END_GUTTER_WIDTH,
     });
     const scrollRef = React.useRef<any>(null);
-    // Web: where each scrolled edge ends between two chips, so a rail shows whole chips (see `webEdgeMask`).
+    // Where each scrolled edge ends between two chips, so a rail shows whole chips (the edge mask).
     const [cutEdges, setCutEdges] = React.useState<ChipRailCutEdges>({});
+    // Native: the content view whose children are the chips, the rail's offset and its visible width.
+    const contentRef = React.useRef<any>(null);
+    const nativeScrollXRef = React.useRef(0);
+    const [nativeViewportWidth, setNativeViewportWidth] = React.useState(0);
+    const nativeViewportWidthRef = React.useRef(0);
+    // Native: where a scroll comes to rest, read from the same chip edges the mask measures.
+    const [snapOffsets, setSnapOffsets] = React.useState<number[] | undefined>(undefined);
+
+    const reportNativeCutEdges = React.useCallback(() => {
+        if (Platform.OS === 'web') return;
+        const content = contentRef.current;
+        if (!content || typeof content.getBoundingClientRect !== 'function') return;
+        // Item rects and the content's own rect move together with the scroll, so their difference is
+        // the content position; the offset turns it into a position in the visible rail.
+        const next = measureChipRailCutEdges({
+            itemsHost: content,
+            originLeft: content.getBoundingClientRect().left + nativeScrollXRef.current,
+            viewportWidth: nativeViewportWidthRef.current,
+            scrollLeft: nativeScrollXRef.current,
+        });
+        setCutEdges((previous) => (sameChipRailCutEdges(previous, next) ? previous : next));
+        const contentRect = content.getBoundingClientRect();
+        const offsets = resolveChipRailSnapOffsets({
+            viewportWidth: nativeViewportWidthRef.current,
+            contentWidth: contentRect.width,
+            items: railItemElements(content).map((item) => {
+                const itemRect = item.getBoundingClientRect();
+                return { left: itemRect.left - contentRect.left, right: itemRect.right - contentRect.left };
+            }),
+        });
+        setSnapOffsets((previous) => {
+            const resolved = offsets.length > 0 ? offsets : undefined;
+            const same = previous === resolved || (previous && resolved && previous.length === resolved.length
+                && previous.every((offset, index) => offset === resolved[index]));
+            return same ? previous : resolved;
+        });
+    }, []);
 
     const getScrollNode = React.useCallback(() => {
         const raw = scrollRef.current;
@@ -131,7 +173,12 @@ export function AgentInputScrollableChipRow(props: AgentInputScrollableChipRowPr
             },
         } as unknown as NativeSyntheticEvent<NativeScrollEvent>;
         fades.onScroll(scrollEvent);
-        const next = measureChipRailCutEdges(node);
+        const next = measureChipRailCutEdges({
+            itemsHost: node.firstElementChild,
+            originLeft: node.getBoundingClientRect().left,
+            viewportWidth: node.clientWidth,
+            scrollLeft: node.scrollLeft ?? 0,
+        });
         setCutEdges((previous) => (sameChipRailCutEdges(previous, next) ? previous : next));
     }, [fades, getScrollNode]);
 
@@ -211,13 +258,30 @@ export function AgentInputScrollableChipRow(props: AgentInputScrollableChipRowPr
     const showFadeLeft = fades.visibility.left;
     const showFadeRight = fades.visibility.right;
     const canScroll = fades.canScrollX || showFadeLeft || showFadeRight;
-    const webEdgeMask = React.useMemo(
-        () => [WEB_RING_ROOM_STYLE, resolveHorizontalScrollEdgeMaskStyle(
-            { top: false, bottom: false, left: showFadeLeft, right: showFadeRight },
-            { fadeSize: 24, ...(cutEdges.start ? { startClip: cutEdges.start } : {}), ...(cutEdges.end ? { endClip: cutEdges.end } : {}) },
-        )],
-        [cutEdges, showFadeLeft, showFadeRight],
+    const edgeMaskOptions = React.useMemo(
+        () => ({ fadeSize: 24, ...(cutEdges.start ? { startClip: cutEdges.start } : {}), ...(cutEdges.end ? { endClip: cutEdges.end } : {}) }),
+        [cutEdges],
     );
+    const edgeVisibility = React.useMemo(
+        () => ({ top: false, bottom: false, left: showFadeLeft, right: showFadeRight }),
+        [showFadeLeft, showFadeRight],
+    );
+    const webEdgeMask = React.useMemo(
+        () => (Platform.OS === 'web' ? [WEB_RING_ROOM_STYLE, resolveHorizontalScrollEdgeMaskStyle(edgeVisibility, edgeMaskOptions)] : undefined),
+        [edgeMaskOptions, edgeVisibility],
+    );
+    const nativeEdgeRamps = React.useMemo(
+        () => (Platform.OS === 'web' ? null : resolveHorizontalScrollEdgeMaskRamps(edgeVisibility, edgeMaskOptions)),
+        [edgeMaskOptions, edgeVisibility],
+    );
+    const handleViewportLayout = React.useCallback((event: LayoutChangeEvent) => {
+        fades.onViewportLayout(event);
+        if (Platform.OS === 'web') return;
+        const width = event.nativeEvent.layout.width;
+        nativeViewportWidthRef.current = width;
+        setNativeViewportWidth(width);
+        reportNativeCutEdges();
+    }, [fades, reportNativeCutEdges]);
 
     const handleKeyDown = React.useCallback((event: unknown) => {
         if (Platform.OS !== 'web') return;
@@ -241,14 +305,13 @@ export function AgentInputScrollableChipRow(props: AgentInputScrollableChipRowPr
         (event as any)?.stopPropagation?.();
     }, [getScrollNode]);
 
-    return (
-        <View style={Platform.OS === 'web' ? [props.containerStyle, WEB_CONTAINER_UNCLIPPED_STYLE] : props.containerStyle}>
+    const rail = (
             <ScrollViewWithWheel
                 ref={scrollRef}
-                // Web: the chips fade out at a scrollable edge through a mask on the rail itself. The
-                // composer's glass surface is translucent, so a painted fade (native below) has no
-                // colour to paint and the last chip was simply cut off.
-                style={Platform.OS === 'web' ? webEdgeMask : undefined}
+                // The chips fade out at a scrollable edge through a mask on the rail itself (web: a CSS
+                // mask; native: `HorizontalScrollEdgeMask` below). The composer's glass surface is
+                // translucent, so a painted fade has no colour to paint and the last chip read as cut off.
+                style={webEdgeMask}
                 horizontal
                 accessibilityRole="toolbar"
                 accessibilityLabel={t('agentInput.chipRail.accessibilityLabel')}
@@ -258,6 +321,7 @@ export function AgentInputScrollableChipRow(props: AgentInputScrollableChipRowPr
                 showsHorizontalScrollIndicator={false}
                 scrollEnabled
                 decelerationRate="fast"
+                snapToOffsets={snapOffsets}
                 alwaysBounceHorizontal={false}
                 directionalLockEnabled
                 keyboardShouldPersistTaps="handled"
@@ -274,29 +338,34 @@ export function AgentInputScrollableChipRow(props: AgentInputScrollableChipRowPr
                     node.scrollLeft = before + delta;
                     reportWebScroll(node);
                 }}
-                onLayout={fades.onViewportLayout}
+                onLayout={handleViewportLayout}
                 onContentSizeChange={(width, height) => {
                     fades.onContentSizeChange(width, height);
                     if (Platform.OS === 'web') reportWebScroll();
+                    else reportNativeCutEdges();
                 }}
                 onScroll={(event: any) => {
                     // Web reports its DOM scroll itself (`attachChipRailReveal`).
                     if (Platform.OS === 'web') return;
                     fades.onScroll(event);
+                    nativeScrollXRef.current = event?.nativeEvent?.contentOffset?.x ?? 0;
+                    reportNativeCutEdges();
                 }}
                 scrollEventThrottle={16}
             >
-                <View style={props.contentStyle}>
+                <View ref={contentRef} style={props.contentStyle}>
                     {props.children}
                 </View>
             </ScrollViewWithWheel>
-            {Platform.OS === 'web' ? null : <ScrollEdgeFades
-                color={props.fadeColor}
-                size={24}
-                edges={{ left: showFadeLeft, right: showFadeRight }}
-                leftStyle={props.fadeLeftStyle}
-                rightStyle={props.fadeRightStyle}
-            />}
+    );
+
+    return (
+        <View style={Platform.OS === 'web' ? [props.containerStyle, WEB_CONTAINER_UNCLIPPED_STYLE] : props.containerStyle}>
+            {/* Only an overflowing rail has an edge to mask. The wrapper changes with overflow alone, never
+                while scrolling, so the rail never remounts mid-gesture. */}
+            {Platform.OS !== 'web' && fades.canScrollX
+                ? <HorizontalScrollEdgeMask ramps={nativeEdgeRamps} width={nativeViewportWidth}>{rail}</HorizontalScrollEdgeMask>
+                : rail}
             <ScrollEdgeIndicators
                 edges={{ left: showFadeLeft, right: showFadeRight }}
                 color={props.indicatorColor}

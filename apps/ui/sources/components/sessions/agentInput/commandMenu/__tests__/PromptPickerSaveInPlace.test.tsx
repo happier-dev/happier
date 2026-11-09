@@ -1,12 +1,13 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PromptLibraryListItem } from '@happier-dev/protocol';
+import type { PromptLibraryListItem } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
+import { flushHookEffects } from '@/dev/testkit';
 import type { UserMessageHistoryEntriesSnapshot } from '@/hooks/session/useUserMessageHistoryEntries';
 
 // Real save owner and Account writer (prompt_doc.create through the artifact boundary); only portal
@@ -44,7 +45,7 @@ const HISTORY_ROW = `history:${JSON.stringify([SENT.serverId, SENT.sessionId, SE
 function history(): UserMessageHistoryEntriesSnapshot {
     return { entries: [SENT], coverage: 'complete', hasMore: false, isLoading: false, error: false,
         progress: { pagesLoaded: 1, sessionsSearched: 1, totalSessions: 1 },
-        loadMore: async () => {}, retry: async () => {}, stop: () => {} };
+        loadMore: async () => history(), retry: async () => history(), stop: () => history() };
 }
 
 /** The picker's open data leaf, reduced to the library snapshot it publishes (adopt included). */
@@ -130,7 +131,12 @@ describe('prompt picker: save what you sent in place (lab R1s)', () => {
         expect(screen.findByTestId('prompt-picker-save-name')?.props.value).toBe('Check the e2e suite still passes');
         expect(harness.artifacts(serverId).list()).toHaveLength(0);
 
-        await act(async () => { await screen.findByTestId('prompt-picker-save-name')!.props.onSubmitEditing(); });
+        await screen.pressByTestIdAsync('prompt-picker-save-confirm');
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(screen.findByTestId(`prompt-picker-save:${HISTORY_ROW}`)).toBeNull();
+            expect(harness.artifacts(serverId).list()).toHaveLength(1);
+        });
 
         expect(harness.artifacts(serverId).list()).toHaveLength(1);
         const [artifactId] = Object.keys(storage.getState().artifacts);

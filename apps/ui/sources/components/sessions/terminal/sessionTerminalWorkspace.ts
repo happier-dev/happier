@@ -4,6 +4,8 @@ import { splitCanvasReduce } from '@/components/appShell/splitCanvas/model/split
 import type { SplitCanvasLeafNode, SplitCanvasNode, SplitCanvasState } from '@/components/appShell/splitCanvas/model/splitCanvasTypes';
 import { collectSplitCanvasLeaves } from '@/components/appShell/splitCanvas/model/splitCanvasTree';
 import type { AppPaneState, PaneScopeState } from '@/components/appShell/panes/model/appPaneReducer';
+import { buildDetailsWorkspaceStateView } from '@/components/appShell/panes/details/workspace/detailsWorkspaceSelectors';
+import { resolveTerminalDetailsInstanceId } from '@/components/terminal/terminalDetailsTabModel';
 
 export type SessionTerminalWorkspaceCommand =
     | { type: 'open'; terminal: SessionTerminalMemberV1 }
@@ -35,6 +37,7 @@ export function readSessionTerminalWorkspace(value: unknown): SessionTerminalWor
     return stored.success ? stored.data : initialWorkspace;
 }
 
+/** Pane visibility and terminal tab selection share the AppPane workspace owner. */
 export function isSessionTerminalWorkspacePane(pane: PaneScopeState['right']): boolean {
     return pane.isOpen && pane.selectedDestination?.kind === 'builtin' && pane.selectedDestination.id === 'terminal';
 }
@@ -44,14 +47,35 @@ export function getVisibleSessionTerminalWorkspacePane(scope: PaneScopeState): '
     return isSessionTerminalWorkspacePane(scope.right) ? 'right' : null;
 }
 
-/** Pane visibility and terminal tab selection share the AppPane workspace owner. */
 export type SessionTerminalWorkspaceHost = 'right' | 'bottom' | 'details' | 'page';
+
+export function selectSessionTerminalWorkspaceHost(state: AppPaneState, scopeId: string, terminalId?: string): SessionTerminalWorkspaceHost | null {
+    const scope = state.scopes[scopeId];
+    if (!scope) return state.activeTerminalPageScopeId === scopeId ? 'page' : null;
+    const pane = getVisibleSessionTerminalWorkspacePane(scope);
+    if (pane && terminalId === undefined) return pane;
+    const workspace = readSessionTerminalWorkspace(scope.bottom.tabState.terminal);
+    const activeTab = workspace.tabs.find(tab => tab.id === workspace.activeTabId);
+    const inActiveTab = terminalId === undefined || activeTab?.terminals.some(member => member.id === terminalId);
+    if (pane && inActiveTab) return pane;
+    if (scope.details.isOpen) {
+        if (terminalId !== undefined || activeTab) {
+            const details = buildDetailsWorkspaceStateView(scope.details);
+            for (const group of details.groups ?? []) {
+                if (details.maximizedGroupId && group.id !== details.maximizedGroupId) continue;
+                const tab = group.tabs.find(candidate => candidate.key === group.activeTabKey);
+                const id = tab ? resolveTerminalDetailsInstanceId({ resource: tab.resource, tabKey: tab.key }) : null;
+                if (id && (terminalId === undefined ? activeTab?.terminals.some(member => member.id === id) : id === terminalId)) return 'details';
+            }
+        }
+    }
+    return inActiveTab && state.activeTerminalPageScopeId === scopeId ? 'page' : null;
+}
 
 export function selectVisibleSessionTerminalTabs(state: AppPaneState, scopeId: string): readonly SessionTerminalTabV1[] {
     const scope = state.scopes[scopeId];
-    const selected = scope?.bottom.selectedDestination;
-    if (state.activeScopeId !== scopeId || !scope?.bottom.isOpen
-        || selected?.kind !== 'builtin' || selected.id !== 'terminal') return [];
+    const host = selectSessionTerminalWorkspaceHost(state, scopeId);
+    if (state.activeScopeId !== scopeId || !scope || !host || host === 'details') return [];
     const workspace = readSessionTerminalWorkspace(scope.bottom.tabState.terminal);
     return workspace.tabs.filter(tab => tab.id === workspace.activeTabId);
 }

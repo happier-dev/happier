@@ -116,10 +116,8 @@ async function renderCard(overrides: Partial<SessionWidgetHostProps> = {}) {
         sessionId: 'session-1',
         item: noteItem(),
         host: 'details',
-        primaryHost: 'details',
         density: 'full',
         canEdit: true,
-        executableCurrentness: 'not_executable',
         width: 'medium',
         heightBounds: { min: 96, max: 520 },
         testID: 'widget',
@@ -428,10 +426,8 @@ describe('SessionWidgetHost chrome', () => {
                 sessionId="session-1"
                 item={noteItem()}
                 host="details"
-                primaryHost="details"
                 density="full"
                 canEdit
-                executableCurrentness="not_executable"
                 width="medium"
                 heightBounds={{ min: 96, max: 520 }}
                 focusHeadingRequestId={1}

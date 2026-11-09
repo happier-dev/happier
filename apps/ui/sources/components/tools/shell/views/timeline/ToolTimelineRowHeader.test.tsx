@@ -126,6 +126,13 @@ describe('ToolTimelineRowHeader', () => {
             />,
         );
 
+        // Closed, the action is there and labelled; its icon mounts with the row's first reveal.
+        expect(screen.findByTestId('tool-timeline-row-open')?.props.accessibilityLabel).toBeTruthy();
+        expect(ioniconPropsState.some((i) => i.name === 'arrow-square-out')).toBe(false);
+        const { TOOL_TIMELINE_ROW_HOVER_HOST_TEST_ID } = await import('./ToolTimelineRowHeader');
+        await act(async () => {
+            screen.findByTestId(TOOL_TIMELINE_ROW_HOVER_HOST_TEST_ID)?.props.onPointerEnter?.();
+        });
         expect(ioniconPropsState.some((i) => i.name === 'arrow-square-out')).toBe(true);
     });
 

@@ -9,6 +9,8 @@ import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGen
 import { createRunnerActivationClient } from '@/sync/api/ephemeralRunner/runnerActivationClient';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { retainIfEqual } from '@/sync/domains/state/structuralSharing';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
 import {
     listNewSessionDraftProjections,
@@ -18,7 +20,7 @@ import {
 import { createServerRequestForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
-const EMPTY_DRAFTS = Object.freeze([]);
+const EMPTY_DRAFTS: readonly NewSessionDraftProjection[] = Object.freeze([]);
 
 export function projectMaterializedTemporaryComputerRecoveryCandidates(
     drafts: readonly NewSessionDraftProjection[],
@@ -32,6 +34,32 @@ export function projectMaterializedTemporaryComputerRecoveryCandidates(
             launchUserAttemptId: draft.localSupplement.launchUserAttemptId ?? null,
         } satisfies MaterializedTemporaryComputerRecoveryCandidate];
     });
+}
+
+/**
+ * The Account's recovery candidates, retained while they are unchanged. The new Session draft list
+ * republishes for every edit of any new Session draft on any device, and almost none of those edits
+ * touch an activation reference, so the Session host does not render (or re-run recovery) for them.
+ */
+export function useMaterializedTemporaryComputerRecoveryCandidates(
+    scope: ServerAccountScope | null,
+): readonly MaterializedTemporaryComputerRecoveryCandidate[] {
+    const retained = React.useRef<Readonly<{
+        drafts: readonly NewSessionDraftProjection[];
+        candidates: readonly MaterializedTemporaryComputerRecoveryCandidate[];
+    }> | null>(null);
+    const subscribe = React.useCallback((listener: () => void) => (
+        scope ? subscribeSessionDraftList(scope, listener) : () => undefined
+    ), [scope]);
+    const getSnapshot = React.useCallback(() => {
+        const drafts = scope ? listNewSessionDraftProjections(scope) : EMPTY_DRAFTS;
+        const previous = retained.current;
+        if (previous?.drafts === drafts) return previous.candidates;
+        const candidates = retainIfEqual(previous?.candidates, projectMaterializedTemporaryComputerRecoveryCandidates(drafts));
+        retained.current = { drafts, candidates };
+        return candidates;
+    }, [scope]);
+    return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
 /**
@@ -49,17 +77,7 @@ export function useMaterializedTemporaryComputerSessionRecovery(input: Readonly<
     const [status, setStatus] = React.useState<'idle' | 'recovering' | 'failed'>('idle');
     const scopeResolution = useServerCredentialAccountScopeResolution(input.serverId);
     const scope = scopeResolution.kind === 'bound' ? scopeResolution.scope : null;
-    const subscribe = React.useCallback((listener: () => void) => (
-        scope ? subscribeSessionDraftList(scope, listener) : () => undefined
-    ), [scope]);
-    const getSnapshot = React.useCallback(() => (
-        scope ? listNewSessionDraftProjections(scope) : EMPTY_DRAFTS
-    ), [scope]);
-    const drafts = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-    const candidates = React.useMemo(
-        () => projectMaterializedTemporaryComputerRecoveryCandidates(drafts),
-        [drafts],
-    );
+    const candidates = useMaterializedTemporaryComputerRecoveryCandidates(scope);
     useServerProfilesGeneration();
     const profile = input.serverId ? getServerProfileById(input.serverId) : null;
     const client = React.useMemo(() => {

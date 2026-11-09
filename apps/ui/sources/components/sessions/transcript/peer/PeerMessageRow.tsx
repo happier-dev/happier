@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { TranscriptPeerSenderV1 } from '@happier-dev/protocol';
+import type { TranscriptPeerSenderV1 } from '@happier-dev/protocol/sessions/messages/transcriptPeerSenderV1';
 
 import { ThinkingTimelineRow } from '@/components/sessions/transcript/thinking/ThinkingTimelineRow';
 import { t } from '@/text';

@@ -345,6 +345,41 @@ describe('SessionMediaInlineImages', () => {
         expect(onOpenPath).toHaveBeenCalledWith('.happier/uploads/artifacts/session-1/message-1/browser-recording.webm');
     });
 
+    it('reads a browser recording whose preview cannot load as the recording, not a broken raw file (RU2 J2)', async () => {
+        rejectDownloads = true;
+        const { t } = await import('@/text');
+        const path = '.happier/uploads/artifacts/session-1/message-1/0ea07d-browser-recording-browser_recording_87a6e3e2.webm';
+        const screen = await renderScreen(
+            <SessionMediaInlineImages
+                sessionId="s1"
+                media={[{
+                    id: 'recording-2', mediaKind: 'video', status: 'available',
+                    name: 'browser-recording-browser_recording_87a6e3e2.webm', path,
+                    mimeType: 'video/webm', sizeBytes: 2048, category: 'tool-artifact', role: 'output',
+                    browserRecording: { outcomeReason: 'user_stopped' },
+                }]}
+                onOpenPath={() => {}}
+                fileOpenEnabled
+                mediaPreviewEnabled
+            />,
+        );
+
+        const tileId = `message-session-media-inline-video:${path}`;
+        await vi.waitFor(() => expect(screen.findByTestId(tileId)?.props.accessibilityHint)
+            .toBe(t('files.sessionMedia.previewUnavailableA11y')));
+        const text = screen.getTextContent();
+        expect(text).toContain(t('files.sessionMedia.noPreview'));
+        expect(text).not.toContain('browser_recording_87a6e3e2');
+        expect(screen.findByTestId(tileId)?.props.accessibilityLabel)
+            .toBe(t('files.sessionMedia.toolArtifactVideoA11y', { name: t('files.sessionMedia.browserRecording') }));
+
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.show).mockClear();
+        screen.pressByTestId(tileId);
+        const [config] = vi.mocked(Modal.show).mock.calls[0] ?? [];
+        expect(config?.props?.items[0]).toMatchObject({ kind: 'video', title: t('files.sessionMedia.browserRecording') });
+    });
+
     it('renders unavailable media failure rows with translated accessible state', async () => {
         const { t } = await import('@/text');
 
@@ -488,6 +523,7 @@ describe('SessionMediaInlineImages', () => {
         const [config] = vi.mocked(Modal.show).mock.calls[0] ?? [];
         expect(config?.props?.items).toHaveLength(2);
         expect(config?.props?.items.map((item: { kind: string }) => item.kind)).toEqual(['image', 'image']);
+        expect(config?.props?.items[0].targetSession).toEqual({ serverId: fixture.scope.serverId, sessionId: 's1' });
         expect(config?.props?.initialIndex).toBe(0);
     });
 

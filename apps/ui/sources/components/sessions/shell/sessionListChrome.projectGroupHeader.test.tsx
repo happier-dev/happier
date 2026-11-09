@@ -136,6 +136,8 @@ const { renderScreen, standardCleanup } = await import('@/dev/testkit');
 const { HappierPressable } = await import('@happier-dev/plugin-ui/presentation');
 const { ProjectGroupHeader, CollapsibleSectionHeader, SessionSectionHeader } = await import('./sessionListChrome');
 const { clearWorkspaceFaviconCacheForTests } = await import('@/sync/ops/workspaceFavicon');
+const { layoutHitArea, hitAreaOverlap } = await import('@/dev/testkit/harness/hitFrameReach');
+const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
 
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (Array.isArray(style)) {
@@ -192,7 +194,7 @@ describe('ProjectGroupHeader menu items', () => {
                 type: 'header', title: 'Chats', headerKind: 'project', groupKey: 'chats-menu',
                 workspace: { t: 'managedSessions', serverId: 'server-a', machineId: 'machine-a' },
             }}
-            hasMultipleMachines={false} displayTitle="Chats" hasCustomLabel={false} canOpenProject={false}
+ displayTitle="Chats" hasCustomLabel={false} canOpenProject={false}
             onCreateSession={onCreateSession} onAddFolder={onAddFolder}
             onOpenProject={vi.fn()} onRename={vi.fn()} onReset={vi.fn()}
             collapsed={false} onToggleCollapse={vi.fn()}
@@ -205,6 +207,71 @@ describe('ProjectGroupHeader menu items', () => {
         expect(create).not.toHaveLength(0);
         await act(async () => { create[0].props.onPress({ stopPropagation() {} }); });
         expect(onCreateSession).toHaveBeenCalledOnce();
+    });
+
+    it('gives the header actions a finger-sized hit area that never overlaps its neighbour or reaches past the column edge', async () => {
+        const screen = await renderScreen(
+            <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
+                <ProjectGroupHeader
+                    item={{
+                        type: 'header', title: 'Chats', headerKind: 'project', groupKey: 'chats-touch',
+                        workspace: { t: 'managedSessions', serverId: 'server-a', machineId: 'machine-a' },
+                    }}
+ displayTitle="Chats" hasCustomLabel={false} canOpenProject={false}
+                    onCreateSession={vi.fn()} onAddFolder={vi.fn()}
+                    onOpenProject={vi.fn()} onRename={vi.fn()} onReset={vi.fn()}
+                    collapsed={false} onToggleCollapse={vi.fn()}
+                />
+            </HappierUiPlatformProvider>,
+        );
+        const host = (label: string) => () => screen.tree.root.findAll(
+            (node) => typeof node.type === 'string' && node.props.accessibilityLabel === label && typeof node.props.onLayout === 'function',
+        )[0];
+        // The glyph buttons draw 18x14, 4 px apart (`groupHeaderActionButton`); each takes half the gap toward its neighbour.
+        const menu = await layoutHitArea(host('common.moreActions'), { width: 18, height: 14 });
+        const create = await layoutHitArea(host('newSession.title'), { width: 18, height: 14 });
+        expect(menu.drawn).toEqual({ width: 18, height: 14 });
+        expect(menu.height).toBeGreaterThanOrEqual(24);
+        expect(hitAreaOverlap(menu, create, { axis: 'horizontal', gap: 4 })).toBe(0);
+        expect(menu.insets.right).toBe(0);
+        expect(create.insets.left).toBe(4);
+        expect(create.insets.right).toBe(0);
+    });
+
+    it('sets and removes the project colour beside Rename and marks a coloured project with a dot', async () => {
+        const { ProjectGroupHeader } = await import('./sessionListChrome');
+        const onSetColor = vi.fn();
+        const item = {
+            type: 'header', title: '/repo', headerKind: 'project', groupKey: 'project:repo', projectKey: 'project-repo',
+            workspaceKey: 'legacy_repo', workspaceScopeHint: { serverId: 'server_a', machineId: 'machine_a', rootPath: '/repo' },
+        } as const;
+        const render = (color: { kind: 'accent'; key: 'blue' } | null) => renderScreen(<ProjectGroupHeader
+            item={item as any} displayTitle="Repo" hasCustomLabel={false} canOpenProject={false}
+            onOpenProject={vi.fn()} onCreateSession={vi.fn()} onAddFolder={vi.fn()} onRename={vi.fn()} onReset={vi.fn()}
+            collapsed={false} onToggleCollapse={vi.fn()}
+            appearanceColor={color} appearanceServerId="server_a" onSetColor={onSetColor}
+        />);
+
+        const plain = await render(null);
+        expect(plain.findByTestId('session-workspace-color:project:repo')).toBeNull();
+        await plain.unmount();
+
+        const screen = await render({ kind: 'accent', key: 'blue' });
+        expect(screen.findByTestId('session-workspace-color:project:repo')).not.toBeNull();
+        const menu = dropdownMenuSpy.mock.calls.at(-1)?.[0];
+        const ids = (menu.items as Array<{ id: string }>).map((entry) => entry.id);
+        const colorIndex = ids.indexOf('workspace-color');
+        expect(colorIndex).toBe(ids.indexOf('rename') + 1);
+        const submenu = menu.items[colorIndex].submenu.items as any[];
+        const swatches = submenu.filter((entry) => entry.swatch && !entry.swatch.empty);
+        expect(swatches).toHaveLength(7);
+        expect(swatches.filter((entry) => entry.checked)).toHaveLength(1);
+        await act(async () => {
+            menu.onSelect(swatches.at(-1).id);
+            menu.onSelect(submenu.find((entry) => entry.swatch?.empty).id);
+            await Promise.resolve();
+        });
+        expect(onSetColor.mock.calls).toEqual([[{ kind: 'accent', key: 'purple' }], [null]]);
     });
 
     it('reuses the same menu item array when rerendered with identical scope values', async () => {
@@ -225,7 +292,7 @@ describe('ProjectGroupHeader menu items', () => {
         const screen = await renderScreen(
             <ProjectGroupHeader
                 item={item as any}
-                hasMultipleMachines={true}
+
                 displayTitle="Important Repo"
                 hasCustomLabel={true}
                 canOpenProject={true}
@@ -253,7 +320,7 @@ describe('ProjectGroupHeader menu items', () => {
                             rootPath: '/repo',
                         },
                     } as any}
-                    hasMultipleMachines={true}
+
                     displayTitle="Important Repo"
                     hasCustomLabel={true}
                     canOpenProject={true}
@@ -295,7 +362,7 @@ describe('ProjectGroupHeader menu items', () => {
                         rootPath: '/repo',
                     },
                 } as any}
-                hasMultipleMachines={false}
+
                 displayTitle="Important Repo"
                 hasCustomLabel={false}
                 canOpenProject={true}
@@ -329,7 +396,7 @@ describe('ProjectGroupHeader menu items', () => {
         const screen = await renderScreen(
             <ProjectGroupHeader
                 item={item as any}
-                hasMultipleMachines={true}
+
                 displayTitle="Important Repo"
                 hasCustomLabel={true}
                 canOpenProject={true}
@@ -705,7 +772,7 @@ describe('ProjectGroupHeader menu items', () => {
                         rootPath: '/repo',
                     },
                 } as any}
-                hasMultipleMachines={false}
+
                 displayTitle="Important Repo"
                 hasCustomLabel={true}
                 canOpenProject={true}
@@ -734,7 +801,7 @@ describe('ProjectGroupHeader menu items', () => {
                     headerKind: 'project',
                     workspaceScopeHint: { serverId: 'server_b', machineId: 'machine_b', rootPath: '/repo-b' },
                 } as any}
-                hasMultipleMachines={true}
+
                 displayTitle="Repo B"
                 hasCustomLabel={false}
                 canOpenProject={true}
@@ -778,7 +845,7 @@ describe('ProjectGroupHeader menu items', () => {
                         rootPath: '/repo',
                     },
                 } as any}
-                hasMultipleMachines={false}
+
                 displayTitle="Important Repo"
                 hasCustomLabel={false}
                 canOpenProject={true}
@@ -807,7 +874,7 @@ describe('ProjectGroupHeader menu items', () => {
         const screen = await renderScreen(
             <ProjectGroupHeader
                 item={item as any}
-                hasMultipleMachines={false}
+
                 displayTitle="Important Repo"
                 hasCustomLabel={false}
                 canOpenProject={true}
@@ -845,7 +912,7 @@ describe('ProjectGroupHeader menu items', () => {
         const screen = await renderScreen(
             <ProjectGroupHeader
                 item={item as any}
-                hasMultipleMachines={false}
+
                 displayTitle="Important Repo"
                 hasCustomLabel={true}
                 canOpenProject={true}
@@ -903,7 +970,7 @@ describe('ProjectGroupHeader menu items', () => {
                     },
                     serverId: 'server_a',
                 } as any}
-                hasMultipleMachines={false}
+
                 displayTitle="Important Repo"
                 hasCustomLabel={true}
                 canOpenProject={true}
@@ -944,7 +1011,7 @@ describe('ProjectGroupHeader menu items', () => {
                     workspaceScopeHint: { serverId: 'server_a', machineId: 'lead_machine', rootPath: '/lead-checkout' },
                     serverId: 'server_a',
                 } as any}
-                hasMultipleMachines={false} displayTitle="happier" hasCustomLabel={false} canOpenProject={true}
+ displayTitle="happier" hasCustomLabel={false} canOpenProject={true}
                 workspaceFaviconsEnabled={true} onOpenProject={vi.fn()} onCreateSession={vi.fn()} onAddFolder={vi.fn()}
                 onRename={vi.fn()} onReset={vi.fn()} collapsed={false} onToggleCollapse={vi.fn()}
                 {...props}
@@ -968,7 +1035,7 @@ describe('ProjectGroupHeader menu items', () => {
         }));
     });
 
-    it('hides machine subtitles when workspace machine subtitles are disabled', async () => {
+    it('shows the projected offline detail even for a single Machine', async () => {
 
         const screen = await renderScreen(
             <ProjectGroupHeader
@@ -986,11 +1053,11 @@ describe('ProjectGroupHeader menu items', () => {
                     },
                     serverId: 'server_a',
                 } as any}
-                hasMultipleMachines={true}
+
                 displayTitle="Important Repo"
                 hasCustomLabel={true}
                 canOpenProject={true}
-                workspaceMachineSubtitlesEnabled={false}
+                machineDetail={{ name: 'leeroy-mbp', end: 'Offline' }}
                 onOpenProject={vi.fn()}
                 onCreateSession={vi.fn()}
                 onAddFolder={vi.fn()}
@@ -1002,7 +1069,8 @@ describe('ProjectGroupHeader menu items', () => {
         );
 
         expect(screen.getTextContent()).toContain('Important Repo');
-        expect(screen.getTextContent()).not.toContain('leeroy-mbp');
+        expect(screen.getTextContent()).toContain('leeroy-mbp');
+        expect(screen.getTextContent()).toContain('· Offline');
     });
 
 });

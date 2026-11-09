@@ -4,6 +4,7 @@ import { resolveTranscriptMessageDisplayText, type TranscriptMessageDisplayOptio
 import type { StructuredFindTextBlock, StructuredFindTextContext } from '../structured/structuredFindText';
 import { projectStructuredMessageFindText } from '../structured/StructuredMessageBlock';
 import { deriveToolMessageDisplay } from '../toolCalls/deriveToolMessageDisplay';
+import { presentsAsSessionAskRecord } from '../references/readSessionMessageInvocation';
 import { projectReviewToolMessage } from '@/components/sessions/reviews/messages/projectReviewToolMessage';
 import {
     projectMarkdownFindText,
@@ -44,11 +45,10 @@ export function projectTranscriptFindText(message: Message, context?: Transcript
     if (message.kind === 'tool-call') {
         message = projectReviewToolMessage(message);
         const structured = projectStructuredMessageFindText(message, context);
+        if (context?.serverId && context.sessionId && presentsAsSessionAskRecord(message, { serverId: context.serverId, sessionId: context.sessionId })) return [];
         const display = deriveToolMessageDisplay({
             tool: message.tool,
-            hasStructuredNode: structured !== null,
-            toolViewTimelineChromeMode: context?.toolViewTimelineChromeMode,
-            permissionDisabledReason: context?.permissionDisabledReason,
+            meta: message.meta,
         });
         const toolBlocks = display.shouldRenderToolChrome || display.turnChanges
             ? projectToolFindText(message.tool, context) : [];

@@ -1,12 +1,14 @@
-import { getAgentInputActionShortcutPlacement } from './agentInputActionShortcutPlacements';
 import React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE } from '../definitions/agentInputChipIconMetrics';
+import { getAgentInputActionShortcutPlacement } from './agentInputActionShortcutPlacements';
+import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
+export { getAgentInputActionShortcutPlacement } from './agentInputActionShortcutPlacements';
 
 type ShortcutChipLayout = 'inline' | 'row';
 
@@ -40,10 +42,9 @@ export function createAgentInputActionShortcutChip(params: Readonly<{
             ) : null;
 
             return (
-                <Pressable
+                <AgentInputRailChip
                     onPress={params.onPress}
-                    hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                    style={(pressableState) => chipStyle(pressableState.pressed)}
+                    style={chipStyle}
                 >
                     {layout === 'row' ? (
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
@@ -56,7 +57,7 @@ export function createAgentInputActionShortcutChip(params: Readonly<{
                             {labelNode}
                         </>
                     )}
-                </Pressable>
+                </AgentInputRailChip>
             );
         },
     };

@@ -39,7 +39,7 @@ export function buildHappierCliInstallCommand(input: Readonly<{
 export type HappierInstallerRunAction =
     | 'home-create'
     | 'setup'
-    | 'machine-setup'
+    | 'machine-enroll'
     | 'auth-login'
     | 'daemon-install'
     | 'providers-setup';
@@ -66,8 +66,8 @@ function buildCliRunCommandForChannel(
     switch (run.action) {
         case 'setup':
             return `${invoker} setup${args}`;
-        case 'machine-setup':
-            return `${invoker} machine setup${args}`;
+        case 'machine-enroll':
+            return `${invoker} machine enroll${args}`;
         case 'home-create':
             return `${invoker} home create${args}`;
         case 'auth-login':

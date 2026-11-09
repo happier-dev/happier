@@ -1,6 +1,8 @@
 import { createSessionAccessActionChip } from '@/components/sessions/agentInput/definitions/createSessionAccessActionChip';
 import * as React from 'react';
-import type { ActionId, SessionInitialTriggerV1, WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
+import type { ActionId} from '@happier-dev/protocol/actions/actionIds';
+import type { SessionInitialTriggerV1} from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import type { WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol/sessions/metadata/windowsRemoteSessionLaunchMode';
 
 import type { AgentId } from '@/agents/catalog/catalog';
 import {

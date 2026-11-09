@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { encodeTerminalConnectLinkV4Payload } from '@happier-dev/protocol';
+import { encodeTerminalConnectLinkV4Payload } from '@happier-dev/protocol/auth/terminalConnectLinkV4';
 
 import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';

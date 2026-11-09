@@ -66,12 +66,11 @@ function resolveTranscriptViewportWriteOwner(
 export function createTranscriptViewportCommandController(): TranscriptViewportCommandController {
     let active = true;
     let currentSessionId: string | null = null;
-    let resolver = createTranscriptViewportController();
+    const resolver = createTranscriptViewportController();
     let ownership = createTranscriptViewportOwnership();
 
     const resetForSession = (params: Readonly<{ openEntryTransaction: boolean; sessionId: string }>) => {
         currentSessionId = params.sessionId;
-        resolver = createTranscriptViewportController();
         ownership = createTranscriptViewportOwnership();
         if (params.openEntryTransaction) {
             ownership.openTransaction('entry');

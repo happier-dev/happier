@@ -7,6 +7,9 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { clearPendingNavigationState, markSessionPendingAnswer, registerPendingNavigationRuntime } from '@/activity/source/pendingNavigationRuntime';
 import { PendingAttentionPill, PendingNavigationPill } from './PendingNavigationPill';
+import { t } from '@/text';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
+import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
 
 // Native viewport APIs are the boundary; responsive classification stays real.
 const device = vi.hoisted(() => ({ width: 1440, height: 900 }));
@@ -45,6 +48,7 @@ function seedWaitingSessions() {
 describe('PendingNavigationPill', () => {
     beforeEach(seedWaitingSessions);
     afterEach(() => {
+        setScreenSharingPrivacyActive(false);
         device.width = 1440;
         device.height = 900;
         standardCleanup();
@@ -127,6 +131,56 @@ describe('PendingNavigationPill', () => {
         expect(commits).toBe(baseline);
     });
 
+    it('keeps pending chrome settled on unrelated Session arrivals and updates when a waiting Session leaves', async () => {
+        let commits = 0;
+        const screen = await renderScreen(<React.Profiler id="pending-header" onRender={() => { commits += 1; }}>
+            <PendingNavigationPill address={address} presentation="header" />
+        </React.Profiler>);
+        const baseline = commits;
+        await act(async () => storage.setState(state => ({ sessions: {
+            ...state.sessions, unrelated: createSessionFixture({ id: 'unrelated', serverId: 'home-a' }),
+            'unrelated-other-home': createSessionFixture({ id: 'unrelated-other-home', serverId: 'home-c' }),
+        } })));
+        expect(commits).toBe(baseline);
+        expect(screen.findByTestId('pending-navigation-header-count')?.props.children).toBe('1 needs you');
+        await act(async () => storage.setState({ sessionListRowsByServerId: {}, ordinarySessionListMembershipByServerId: {} }));
+        expect(screen.findByTestId('pending-navigation-header')).toBeNull();
+        expect(commits).toBeGreaterThan(baseline);
+    });
+
+    // A retained Session tab behind another tab: its pending chrome parks, then shows the current count on reveal.
+    it.each(['header', 'composer'] as const)('parks the hidden %s pill and reveals the current pending state', async presentation => {
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        let commits = 0;
+        const frame = (presented: boolean) => <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>
+            <React.Profiler id="pending-pill" onRender={() => { commits += 1; }}>
+                <PendingNavigationPill address={address} presentation={presentation} />
+            </React.Profiler>
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(frame(true));
+        if (presentation === 'composer') await act(async () => { markSessionPendingAnswer(address, 'question'); });
+        expect(screen.findByTestId(`pending-navigation-${presentation}`)).not.toBeNull();
+        await screen.update(frame(false));
+        commits = 0;
+        const now = Date.now();
+        for (let index = 1; index <= 3; index++) {
+            const waiting = createSessionFixture({ id: `waiting-${index}`, serverId: 'home-a', active: true, activeAt: now, updatedAt: now, agentState: {
+                requests: { [`q-${index}`]: { tool: 'AskUserQuestion', kind: 'user_action', arguments: {}, createdAt: now } },
+            } });
+            await act(async () => storage.setState(state => ({
+                sessions: { ...state.sessions, [waiting.id]: waiting },
+                sessionListRowsByServerId: { ...state.sessionListRowsByServerId, 'home-a': {
+                    ...state.sessionListRowsByServerId['home-a'], [waiting.id]: buildSessionListRenderableFromSession(waiting) } },
+                ordinarySessionListMembershipByServerId: { ...state.ordinarySessionListMembershipByServerId,
+                    'home-a': [...(state.ordinarySessionListMembershipByServerId['home-a'] ?? []), waiting.id] },
+            })));
+        }
+        expect(commits).toBe(0);
+        await screen.update(frame(true));
+        if (presentation === 'header') expect(screen.findByTestId('pending-navigation-header-count')?.props.children).toBe('4 need you');
+        else expect(screen.findByTestId('pending-navigation-composer')).not.toBeNull();
+    });
+
     it('offers Next after an answer only in the answered Home and hides when nothing else waits', async () => {
         const screen = await renderScreen(<PendingNavigationPill address={address} presentation="composer" />);
         expect(screen.findByTestId('pending-navigation-composer')).toBeNull();
@@ -147,6 +201,52 @@ describe('PendingNavigationPill', () => {
         expect(screen.findByTestId('pending-navigation-composer')).toBeNull();
         await act(async () => { markSessionPendingAnswer(address, 'question-2'); });
         expect(screen.findByTestId('pending-navigation-composer')).not.toBeNull();
+    });
+
+    it.each(['offered', 'dismissed', 'removed'] as const)('masks the next private Session identity while preserving the waiting count and Next action (%s)', async phase => {
+        const current = storage.getState().sessions.same!;
+        const other = createSessionFixture({ ...current, serverId: 'home-b', metadata: { ...current.metadata!, name: 'Confidential next target' } });
+        storage.setState({ settings: { ...storage.getState().settings, sessionListHiddenTagIdsWhileRecording: { 'home-b': ['private'] } },
+            sessionListRowsByServerId: { ...storage.getState().sessionListRowsByServerId,
+                'home-b': { same: buildSessionListRenderableFromSession(other) } },
+            sessionOrganizationTagAssignmentsBySessionKey: {
+                [buildSessionOrganizationSessionKey('home-b', 'same')]: { sessionId: 'same', tagIds: ['private'] },
+            } });
+        const navigate = vi.fn(async () => ({ status: 'opened' as const }));
+        unregister = registerPendingNavigationRuntime(navigate);
+        const screen = await renderScreen(<PendingNavigationPill address={address} presentation="composer" />);
+        await act(async () => markSessionPendingAnswer(address, 'question'));
+        expect(screen.getTextContent()).toContain('Confidential next target');
+        if (phase !== 'offered') {
+            vi.useFakeTimers();
+            if (phase === 'dismissed') await screen.pressByTestIdAsync('pending-navigation-composer-dismiss');
+            else await act(async () => storage.setState({ sessionListRowsByServerId: {}, ordinarySessionListMembershipByServerId: {} }));
+            // The real presence owner keeps the leaving capsule painted until its exit settles.
+            expect(screen.findByTestId('pending-navigation-composer-dismiss')).not.toBeNull();
+        }
+        await act(async () => setScreenSharingPrivacyActive(true));
+        expect(screen.getTextContent()).not.toContain('Confidential next target');
+        if (phase === 'offered') {
+            await screen.pressByTestIdAsync('pending-navigation-composer');
+            expect(navigate).toHaveBeenCalledWith({ excluding: address });
+        }
+    });
+
+    it('updates the offered target title and request reason when the waiting count stays the same', async () => {
+        const screen = await renderScreen(<PendingNavigationPill address={address} presentation="composer" />);
+        await act(async () => { markSessionPendingAnswer(address, 'question'); });
+        expect(screen.getTextContent()).toContain(t('pendingNavigation.waitsForInput'));
+        const current = storage.getState().sessions.same!;
+        const permission = createSessionFixture({ ...current, serverId: 'home-b',
+            metadata: { ...current.metadata!, name: 'Review target' },
+            agentState: { requests: { approval: { tool: 'Bash', kind: 'permission', arguments: {}, createdAt: Date.now() } } },
+        });
+        await act(async () => storage.setState(state => ({ sessionListRowsByServerId: {
+            ...state.sessionListRowsByServerId, 'home-b': { same: buildSessionListRenderableFromSession(permission) },
+        } })));
+        expect(screen.getTextContent()).toContain('Review target');
+        expect(screen.getTextContent()).toContain(t('pendingNavigation.waitsForPermission'));
+        expect(screen.getTextContent()).not.toContain(t('pendingNavigation.waitsForInput'));
     });
 
     it('leaves by itself once you type in this composer (lab fnext N1a), and returns with the next answer', async () => {

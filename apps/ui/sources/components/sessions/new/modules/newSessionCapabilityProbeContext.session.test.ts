@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
-import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { resolveNewSessionModelCapabilityProbeContext } from './newSessionCapabilityProbeContext';
 
 describe('existing session model probe context', () => {

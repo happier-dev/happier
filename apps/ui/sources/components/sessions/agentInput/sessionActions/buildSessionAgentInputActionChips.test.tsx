@@ -69,6 +69,7 @@ describe('buildSessionAgentInputActionChips', () => {
 
         const chips = buildSessionAgentInputActionChips({
             accountScope: { serverId: 'server-a', accountId: 'account-a' },
+            openExecutionRunDraft: seed => createSessionActionDraftMock(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }),
             address: { serverId: 'server-a', sessionId: 'session-1' },
             defaultBackendTarget: { kind: 'builtInAgent', agentId: 'claude' } as const,
             defaultBackendId: 'claude',
@@ -124,6 +125,7 @@ describe('buildSessionAgentInputActionChips', () => {
         let current = true;
         const chips = buildSessionAgentInputActionChips({
             accountScope: { serverId: 'server-a', accountId: 'account-a' },
+            openExecutionRunDraft: seed => createSessionActionDraftMock(seed.scope, { serverId: seed.scope.serverId, sessionId: seed.sessionId }, { actionId: seed.actionId, input: seed.input }),
             accountScopeIsCurrent: () => current,
             address: { serverId: 'server-a', sessionId: 'session-1' },
             defaultBackendId: 'claude',

@@ -35,7 +35,7 @@ import {
 import { focusNativeAccessibilityTarget } from '@/keyboard/focusReturn';
 import type {
     ExternalSessionOperationSharedPresentationV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/operationV1';
 import {
     ExternalSessionOperationSharedCard,
 } from '@/components/sessions/external/progress/ExternalSessionOperationSharedCard';

@@ -130,6 +130,27 @@ vi.mock('react-native-gesture-handler', () => ({
 }));
 
 describe('useSessionInlineDrag', () => {
+    it('marks only the initiating occurrence as carried when a Session has two rows', async () => {
+        const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
+        const runtime = useEntityDragDropRuntime();
+        const scope = { serverId: 'mirror-home', accountId: 'account' };
+        const address = { serverId: scope.serverId, sessionId: 'mirrored' };
+        const sessionKey = sessionAddressKey(address);
+        const shelfId = treeRowId.session(scope.serverId, address.sessionId, undefined, 'needsYou');
+        const baseId = treeRowId.session(scope.serverId, address.sessionId);
+        const sourceId = `session-list-source:${scope.serverId}:${scope.accountId}:${shelfId}`;
+        const retire = runtime.registerSource({ id: sourceId, scope, getItem: () => ({ kind: 'session', scope, address }), isCurrent: () => true });
+        const shelf = await renderHook(() => useSessionInlineDrag({ ...dragParams({ sessionKey }), sourceRowId: shelfId }));
+        const base = await renderHook(() => useSessionInlineDrag({ ...dragParams({ sessionKey }), sourceRowId: baseId }));
+        await act(async () => { runtime.begin(sourceId); });
+        expect(shelf.getCurrent().animatedStyle).toMatchObject({ opacity: HAPPIER_CARRIED_SOURCE_OPACITY });
+        expect(base.getCurrent().animatedStyle).toMatchObject({ opacity: 1 });
+        await act(async () => { runtime.cancel(); });
+        retire();
+        await shelf.unmount();
+        await base.unmount();
+    });
+
     it('lets the native recognizer cancel the row touch when the carry activates', async () => {
         const { useSessionInlineDrag } = await import('./useSessionInlineDrag');
         const hook = await renderHook(() => useSessionInlineDrag(dragParams()));

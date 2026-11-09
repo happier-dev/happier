@@ -2,7 +2,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { PluginProjectedActionV2Schema, type MessageActionReferenceV1 } from '@happier-dev/protocol';
+import { PluginProjectedActionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { type MessageActionReferenceV1 } from '@happier-dev/protocol/sessions/messages/messageActionReferenceV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import type {

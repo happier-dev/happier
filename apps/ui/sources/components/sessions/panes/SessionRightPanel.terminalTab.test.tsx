@@ -53,7 +53,7 @@ async function renderPanel() {
     return screen;
 }
 async function createRightSidebarProjection(pluginId: string, descriptorId: string): Promise<PluginUiProjectionModel> {
-    const { PluginProjectionV2Schema } = await import('@happier-dev/protocol');
+    const { PluginProjectionV2Schema} = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
     const { normalizePluginUiProjection } = await import('@/sync/domains/plugins/ui/projection');
     const binding = normalizePluginUiDestinationBindingV1({
         pluginId, destinationId: descriptorId, rendererId: descriptorId + '-native',
@@ -62,7 +62,7 @@ async function createRightSidebarProjection(pluginId: string, descriptorId: stri
     if (!binding) throw new Error('Expected admitted Session sidebar binding');
     return normalizePluginUiProjection(PluginProjectionV2Schema.parse({
         v: 2, generation: 4, installedPackagesById: {}, agentsById: {}, actionsById: {},
-          resourcesById: {}, settingsById: {},
+        resourcesById: {}, settingsById: {},
         familiesById: { pluginUi: { family: 'pluginUi', entriesById: {
             [descriptorId]: {
                 id: descriptorId, pluginId, occurrenceId: pluginId + '#1',

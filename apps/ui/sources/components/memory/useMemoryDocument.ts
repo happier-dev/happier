@@ -1,5 +1,5 @@
 import type {
-  MemoryFactV1,
+  MemoryFactReadV1,
   MemoryTopicV1,
 } from '@happier-dev/protocol/prompts/library/memoryDocV1';
 import type { PromptDocArtifactRefV1 } from '@happier-dev/protocol/prompts/library/promptArtifactRefsV1';
@@ -14,9 +14,10 @@ import type {
 } from '@/sync/ops/promptLibrary/memoryDocuments';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createArtifactAccessApi } from '@/sync/api/artifacts/apiArtifacts';
-import { useArtifact, useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeCurrentness, captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
@@ -42,7 +43,7 @@ export type MemoryDocumentView = Readonly<{
   title: string;
   revision: MemoryDocumentRevision;
   /** The facts of this page: the index's key facts, or the open topic's facts. */
-  facts: readonly MemoryFactV1[];
+  facts: readonly MemoryFactReadV1[];
   /** The index's topic list (title + one-line summary); empty on a topic page. */
   topics: readonly Readonly<{ title: string; summary: string }>[];
   topic: Pick<MemoryTopicV1, 'title' | 'summary'> | null;
@@ -100,8 +101,8 @@ const LOCKED_CODES = new Set([
 /**
  * Display read of one `memory_doc.v1` document through the canonical `memory.read` Action:
  * the index first, or one topic when `topic` is given (D48: topics load
- * on demand). It keeps the last version while a newer one loads, re-reads when the Home's Artifact
- * row moves, and never writes; edits go through the `memory.*` Actions against `target`.
+ * on demand). It keeps the last version while a newer one loads, re-reads on the Home's exact Artifact
+ * changes, and never writes; edits go through the `memory.*` Actions against `target`.
  */
 export function useMemoryDocument(
   params: Readonly<{
@@ -122,19 +123,12 @@ export function useMemoryDocument(
   const accountScope = useActiveServerAccountScope();
   const activeLifetime = captureActiveServerAccountScopeLifetime();
   const identity = JSON.stringify([homeId, accountScope?.serverId, accountScope?.accountId, artifactId, topic ?? null]);
-  // The active row tracks content revisions; captured-Home wakes also cover grant-only changes.
-  const activeRow = useArtifact(artifactId);
-  const row = accountScope && areServerProfileIdentifiersEquivalent(accountScope.serverId, homeId) ? activeRow : null;
-  const key = JSON.stringify([
-    homeId,
-    artifactId,
-    topic ?? null,
-    row?.headerVersion ?? null,
-    row?.bodyVersion ?? null,
-    row?.access ?? null,
-    row?.publicAudience ?? null,
-  ]);
+  // The exact Home Artifact wake owns content and grant refreshes. Inventory
+  // hydration is not another document change and must not reopen its body.
+  const key = JSON.stringify([homeId, artifactId, topic ?? null]);
   const [loaded, setLoaded] = React.useState<Loaded | null>(null);
+  const loadedRef = React.useRef(loaded);
+  loadedRef.current = loaded;
   // Keep the canonical captured Home Account alive while its content is displayed.
   const displayedAccount = React.useRef<LazyActionAccountContext | null>(null);
   const pending = React.useRef<Readonly<{
@@ -149,21 +143,17 @@ export function useMemoryDocument(
     pending.current?.controller.abort();
     const controller = new AbortController();
     const currentness = captureActiveServerAccountScopeCurrentness();
-    // Memory's reviewed read belongs to the exact credential, not just the
-    // principal retained by general Action contexts across bearer renewal.
-    const isReadCurrent = () => currentness.isCurrent() && credentialLifetime.isCurrent();
-    const retainedAccount = displayedAccount.current;
+    let account: LazyActionAccountContext | null = null;
+    const isReadCurrent = () => currentness.isCurrent() && (account?.accountOnlyLifetime.isCurrent() ?? true);
     const successorRead = async (): Promise<MemoryDocumentTarget | null> => {
       const successor = pending.current;
       // An Artifact wake may supersede the post-write read while its caller is
       // awaiting the refreshed target. Follow that same-document read, never a
       // replacement Account or a different document's target.
-      if (!isReadCurrent() || !retainedAccount || !successor
+      if (!isReadCurrent() || !successor
         || successor.controller === controller || successor.identity !== identity) return null;
       try {
-        // Retain the Action owner's fresh credential-store check as well as
-        // Memory's stricter exact-credential retirement fence.
-        const target = await retainedAccount.runPrepared(() => successor.promise);
+        const target = await successor.promise;
         return isReadCurrent() ? target : null;
       } catch { return null; }
     };
@@ -180,7 +170,6 @@ export function useMemoryDocument(
       };
     });
     const promise = (async () => {
-      let account: LazyActionAccountContext | null = null;
       try {
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
         account = await captureLazyActionAccountContext(homeId, controller.signal);
@@ -189,9 +178,9 @@ export function useMemoryDocument(
         const readArtifactContent = account.readArtifactContent;
         // Observe the admitted Action's existing read, rather than fetching the body again for audience metadata.
         const observed: { artifact: Awaited<ReturnType<LazyActionAccountContext['readArtifactContent']>> } = { artifact: null };
-        readAccount.readArtifactContent = async (...args: Parameters<LazyActionAccountContext['readArtifactContent']>) => {
-          const artifact = await readArtifactContent(...args);
-          if (args[0] === artifactId) observed.artifact = artifact;
+        readAccount.readArtifactContent = async (requestedArtifactId, options) => {
+          const artifact = await readArtifactContent(requestedArtifactId, options);
+          if (requestedArtifactId === artifactId) observed.artifact = artifact;
           return artifact;
         };
         const result = await executeDefaultActionInCapturedAccount(readAccount, 'memory.read', {
@@ -238,10 +227,17 @@ export function useMemoryDocument(
                 topics: read.body.topics,
                 topic: null,
               };
-        const capturedLifetime = account.accountOnlyLifetime;
-        const isCurrent = () => isReadCurrent() && capturedLifetime.isCurrent();
-        displayedAccount.current?.dispose();
-        displayedAccount.current = account;
+        // Keep the displayed Account/material lifetime alive across ordinary refreshes,
+        // so retained drafts keep observing its canonical retirement after bearer renewal.
+        if (!displayedAccount.current?.accountOnlyLifetime.isCurrent()
+          || !areServerAccountScopesEqual(displayedAccount.current.accountOnlyLifetime.scope, account.accountOnlyLifetime.scope)) {
+          displayedAccount.current?.dispose();
+          displayedAccount.current = account;
+        }
+        const capturedDisplay = displayedAccount.current;
+        const capturedLifetime = capturedDisplay.accountOnlyLifetime;
+        const isCurrent = () => displayedAccount.current === capturedDisplay
+          && isReadCurrent() && capturedLifetime.isCurrent();
         setLoaded({ key, identity, accountId: account.accountId,
           isCurrent,
           status: 'ready', view, stale: false });
@@ -292,16 +288,6 @@ export function useMemoryDocument(
   }, [activeLifetime]);
 
   React.useEffect(() => {
-    const retirement = credentialLifetime?.onRetire(() => {
-      pending.current?.controller.abort();
-      displayedAccount.current?.dispose();
-      displayedAccount.current = null;
-      setLoaded(null);
-    });
-    return () => retirement?.dispose();
-  }, [credentialLifetime]);
-
-  React.useEffect(() => {
     if (!enabled) return;
     return subscribeHomeAccountChange(event => {
       if (!areServerProfileIdentifiersEquivalent(event.serverId, homeId)) return;
@@ -309,8 +295,11 @@ export function useMemoryDocument(
       if (event.entityIds && !event.entityIds.includes(artifactId)) return;
       // Grant changes have no document revision; the existing Account wake owns their invalidation.
       void refresh();
-    });
-  }, [artifactId, enabled, homeId, refresh]);
+    }, { serverIds: [homeId], reconnect: { readNotCurrent: () => {
+      const current = loadedRef.current;
+      return current?.identity !== identity || !current.isCurrent() || current.status !== 'ready' || current.view?.audience === null;
+    } } });
+  }, [artifactId, enabled, homeId, identity, refresh]);
 
   React.useEffect(() => () => {
     displayedAccount.current?.dispose();

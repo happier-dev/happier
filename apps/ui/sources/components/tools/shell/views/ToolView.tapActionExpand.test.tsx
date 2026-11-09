@@ -8,6 +8,8 @@ import {
     flushHookEffects,
     standardCleanup,
 } from '@/dev/testkit';
+import { layoutHitArea, readHitArea } from '@/dev/testkit/harness/hitFrameReach';
+import { HappierUiPlatformProvider } from '@happier-dev/plugin-ui/environment';
 import { installToolShellCommonModuleMocks, makeToolCall } from './ToolView.testHelpers';
 import { createUseSettingMock } from '@/dev/testkit/mocks/storage';
 
@@ -279,7 +281,7 @@ describe('ToolView (tap action: expand)', () => {
         expect(ensureSidechainMessagesLoadedMock).toHaveBeenCalledWith('s1', 'sidechain_run_123');
     });
 
-    it('uses hitSlop for the secondary action icon to keep it easy to tap', async () => {
+    it('reaches a finger on the secondary action icon through the shared hit area without growing it', async () => {
         pushSpy.mockReset();
         navigateWithBlurOnWebSpy.mockClear();
         renderedToolViewSpy.mockReset();
@@ -294,10 +296,14 @@ describe('ToolView (tap action: expand)', () => {
         });
 
         const screen = await renderWithSessionTranscriptSource(
-            React.createElement(ToolView, { tool, metadata: null, sessionId: 's1', messageId: 'm1' }), createTestSessionTranscriptSource({ navigate: pushSpy, loadSidechain: (sidechainId) => ensureSidechainMessagesLoadedMock('s1', sidechainId) }),);
+            React.createElement(HappierUiPlatformProvider, { platform: { platform: 'ios', colorScheme: 'light' } },
+                React.createElement(ToolView, { tool, metadata: null, sessionId: 's1', messageId: 'm1' })), createTestSessionTranscriptSource({ navigate: pushSpy, loadSidechain: (sidechainId) => ensureSidechainMessagesLoadedMock('s1', sidechainId) }),);
 
-        const secondaryAction = screen.findByTestId('tool-view-header-secondary');
-        expect(secondaryAction?.props.hitSlop).toBe(15);
+        // The control declares its drawn 34 px box itself; the layout engine reports the same box.
+        expect(readHitArea(screen.findByTestId('tool-view-header-secondary')!).drawn).toEqual({ width: 34, height: 34 });
+        const area = await layoutHitArea(() => screen.findByTestId('tool-view-header-secondary'), { width: 34, height: 34 });
+        expect(area.width).toBe(44);
+        expect(area.height).toBe(44);
     });
 
     it('uses the stable server route for the secondary open action when the message is already persisted', async () => {

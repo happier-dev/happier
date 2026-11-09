@@ -1,7 +1,8 @@
 import { Typography } from '@/constants/Typography';
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -13,7 +14,7 @@ import {
 } from '@/components/sessions/workState/sessionWorkflowActivityPresentation';
 import { useWorkflowRunForToolUseId } from '@/components/sessions/workState/useSessionWorkflowActivity';
 import type { WorkflowActivityRowViewModel } from '@/components/sessions/workState/sessionWorkflowActivityTypes';
-import type { SessionWorkflowAgentStatusV1, SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import type { SessionWorkflowAgentStatusV1, SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 import { useTranscriptRowLayoutMutation } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
 
 import { WorkflowAgentRow, projectWorkflowAgentDisplayText } from '@/components/workflows/presentation/WorkflowAgentRow';
@@ -24,6 +25,7 @@ import { formatWorkflowRunStatusLabel } from '@/components/workflows/presentatio
 import type { ToolViewProps } from '../core/_registry';
 import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
 import { ToolFindText, useToolFindState } from '../core/ToolFindText';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * UIW4 — records-backed transcript workflow card.
@@ -233,7 +235,7 @@ export const WorkflowActivityView = React.memo<ToolViewProps>(({ tool, messageId
                 )}
             </View>
             {hiddenCount > 0 ? (
-                <Pressable
+                <HappierPressable
                     onPress={() => {
                         rowLayoutMutation({
                             reason: 'content-change',
@@ -245,12 +247,11 @@ export const WorkflowActivityView = React.memo<ToolViewProps>(({ tool, messageId
                     accessibilityLabel={t('tools.workflowActivityView.showMore', { count: hiddenCount })}
                     style={styles.showMore}
                     testID={`workflow-card-${snapshot.runId}-show-more`}
-                    hitSlop={8}
                 >
                     <Text style={styles.showMoreText}>
                         {t('tools.workflowActivityView.showMore', { count: hiddenCount })}
                     </Text>
-                </Pressable>
+                </HappierPressable>
             ) : null}
             {footer ? (
                 <ToolFindText messageId={messageId} blockId="tool-workflow-footer" text={footer} style={styles.footer} numberOfLines={1} />
@@ -264,7 +265,7 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: theme.space.s12,
         borderRadius: 10,
-        backgroundColor: theme.colors.surface.inset,
+        backgroundColor: glassContentFill(theme.colors.surface.inset, theme.colors, { nested: true }),
         gap: theme.space.s8,
     },
     body: {

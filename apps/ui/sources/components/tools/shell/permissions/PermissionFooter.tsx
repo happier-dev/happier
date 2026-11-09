@@ -10,6 +10,7 @@ import React, { useRef, useState } from 'react';
 import { View, Platform } from 'react-native';
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { t } from '@/text';
 import { resolveAgentIdForPermissionUi } from '@/agents/catalog/resolve';
@@ -457,7 +458,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         return (
             <View style={{ marginTop: theme.space.s8, paddingHorizontal: theme.space.s12, paddingBottom: theme.space.s12 }}>
                 <View style={{
-                    backgroundColor: theme.colors.surface.elevated,
+                    backgroundColor: glassContentFill(theme.colors.surface.elevated, theme.colors, { nested: true }),
                     borderRadius: 10,
                     borderWidth: 1,
                     borderColor: theme.colors.border.default,
@@ -509,7 +510,7 @@ export const PermissionFooter: React.FC<PermissionFooterProps> = ({
         } catch (error) {
             // The response may already be applied when its result was lost: withhold both decisions
             // for this request, even if the footer that sent it is gone, instead of inviting a blind resend.
-            if (readPermissionActionDisposition(error) === 'outcomeUnknown') markPermissionAnswerUnconfirmed(requestKey);
+            if (readPermissionActionDisposition(error) === 'outcomeUnknown') markPermissionAnswerUnconfirmed(requestKey, error);
             if (isMounted.current && permissionActionInFlight.current?.token === token) {
                 setStoredActionFailure((previousDisplay) => ({
                     requestIdentity,

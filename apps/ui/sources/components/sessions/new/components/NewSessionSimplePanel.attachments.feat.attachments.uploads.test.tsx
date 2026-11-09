@@ -83,14 +83,10 @@ vi.mock('@/components/ui/lists/ItemGroup', () => ({
         React.createElement('ItemGroup', props, props.children),
 }));
 
-vi.mock('@/components/ui/popover', () => ({
-    PopoverBoundaryProvider: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement(React.Fragment, null, props.children),
-    PopoverPortalTargetProvider: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement(React.Fragment, null, props.children),
-    PopoverScope: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-        React.createElement(React.Fragment, null, props.children),
-}));
+vi.mock('@/components/ui/popover', async (importOriginal) => {
+    const { createInlinePopoverModuleMock } = await import('@/dev/testkit/mocks/popover');
+    return createInlinePopoverModuleMock(importOriginal);
+});
 
 vi.mock('@/components/sessions/agentInput', () => ({
     AgentInput: AgentInputMock,
@@ -110,16 +106,8 @@ vi.mock('@/components/sessions/attachments/useAttachmentsUploadConfig', () => ({
     }),
 }));
 
-vi.mock('@/components/sessions/attachments/uploadAttachmentDraftsToSession', () => ({
-    uploadAttachmentDraftsToSession: uploadAttachmentDraftsToSessionSpy,
-    buildAttachmentMessageMeta: (uploaded: unknown) => ({
-        happier: {
-            kind: 'attachments.v1',
-            payload: {
-                attachments: uploaded,
-            },
-        },
-    }),
+vi.mock('@/sync/domains/transfers/ops/uploadSessionAttachment', () => ({
+    sessionAttachmentsUploadFile: (request: unknown) => uploadAttachmentDraftsToSessionSpy(request),
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -139,6 +127,8 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureId === 'attachments.uploads' || featureId === 'files.reviewComments',
 }));
 
+const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+
 afterEach(() => {
     workspaceReviewDraftsState.draftsByRootPath.clear();
     standardCleanup();
@@ -147,7 +137,6 @@ afterEach(() => {
 
 describe('NewSessionSimplePanel (attachments.uploads)', () => {
     it('wires AgentInput attachments handlers and attach action when enabled', async () => {
-        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
 
         AgentInputMock.mockClear();
 
@@ -200,11 +189,11 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
     });
 
     it('projects its semantic Composer document through the attachment-owner and input surface', async () => {
-        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
         const onSelectionChangePersist = vi.fn();
         const onStructuredInputMentionsChange = vi.fn();
         const composerDocument = {
             ref: { kind: 'newSession', instanceId: 'new-session-composer-scope' },
+            readScope: () => null,
             revision: 1,
             attachments: [{
                 v: 1,
@@ -280,7 +269,6 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
     });
 
     it('does not emit raw text nodes under View when the attachment icon renders as text on web', async () => {
-        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
 
         AgentInputMock.mockClear();
         mockEnv.iconsRenderAsText = true;
@@ -361,7 +349,6 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
     });
 
     it('routes first attachment follow-up through the server-scoped spawned-session helper', async () => {
-        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
 
         AgentInputMock.mockClear();
         const drafts: AttachmentDraft[] = [{ id: 'draft-1', status: 'pending', source: {
@@ -372,13 +359,8 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
         followUpSpawnedSessionWithServerScopeSpy.mockReset();
 
         uploadAttachmentDraftsToSessionSpy.mockResolvedValue({
-            uploaded: [{
-                name: 'notes.txt',
-                path: '.happier/uploads/notes.txt',
-                mimeType: 'text/plain',
-                sizeBytes: 12,
-                sha256: 'abc123',
-            }],
+            success: true, path: '.happier/uploads/notes.txt', sizeBytes: 12, sha256: 'a'.repeat(64),
+            attachmentHandle: { v: 1, sessionId: 'sess_target', id: 'issued-notes' },
         });
 
         const handleCreateSession = vi.fn();
@@ -433,6 +415,7 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
         await act(async () => {
             await afterCreated({
                 sessionId: 'sess_target',
+                sessionTarget: { serverId: 'server-a', accountId: 'created-account', sessionId: 'sess_target' },
                 effectiveSpawnServerId: 'server-a',
                 launchAttempt: {
                     attachmentMessageLocalId: 'new-session-attachment-local-1',
@@ -440,13 +423,13 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
             });
         });
 
-        expect(uploadAttachmentDraftsToSessionSpy).toHaveBeenCalledWith({
+        expect(uploadAttachmentDraftsToSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'sess_target',
-            drafts,
+            sessionTarget: { serverId: 'server-a', accountId: 'created-account', sessionId: 'sess_target' },
+            file: drafts[0]?.source,
             config: expect.any(Object),
-            applyDraftPatch: expect.any(Function),
             messageLocalId: 'new-session-attachment-local-1',
-        });
+        }));
         expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith({
             sessionId: 'sess_target',
             targetServerId: 'server-a',
@@ -455,25 +438,13 @@ describe('NewSessionSimplePanel (attachments.uploads)', () => {
             profileId: 'profile-work',
             messageLocalId: 'new-session-attachment-local-1',
             metaOverrides: {
-                happier: {
-                    kind: 'attachments.v1',
-                    payload: {
-                        attachments: [{
-                            name: 'notes.txt',
-                            path: '.happier/uploads/notes.txt',
-                            mimeType: 'text/plain',
-                            sizeBytes: 12,
-                            sha256: 'abc123',
-                        }],
-                    },
-                },
+                happierStructuredInputV1: { v: 1, sessionAttachments: [{ v: 1, sessionId: 'sess_target', id: 'issued-notes' }] },
             },
         });
         expect(readNewSessionAttachmentDrafts('panel-follow-up')).toEqual([]);
     });
 
     it('shows review comments saved for the selected home-relative workspace', async () => {
-        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
 
         AgentInputMock.mockClear();
         workspaceReviewDraftsState.draftsByRootPath.set('/Users/leeroy/Documents/Development/happier-demo-projects/atlas', [{

@@ -15,7 +15,6 @@ installMessageViewCommonModuleMocks({
             Dimensions: {
                 get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
             },
-            useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
             View: 'View',
             Text: 'Text',
             Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
@@ -28,7 +27,7 @@ installMessageViewCommonModuleMocks({
         await createPartialStorageModuleMock(importOriginal, {
             useSetting: (key: string) => {
                 if (key === 'sessionThinkingDisplayMode') return 'inline';
-                // Structured cards only replace the tool chrome in the activity feed.
+                // Structured results use the tool disclosure in the activity feed.
                 if (key === 'toolViewTimelineChromeMode') return 'activity_feed';
                 return null;
             },
@@ -126,8 +125,8 @@ const EMPTY_STRUCTURED_TOOL_MESSAGE = createToolCallMessage({
     },
 });
 
-// Control: a structured envelope whose card always paints. The chrome must stay
-// suppressed here, otherwise the row would render the card *and* the tool chrome.
+// Control: a structured envelope whose card paints when its tool opens. The chrome stays
+// retained here so the structured result can use its disclosure.
 const PAINTING_STRUCTURED_TOOL_MESSAGE = createToolCallMessage({
     happier: {
         kind: 'review_follow_up.v1',
@@ -163,10 +162,10 @@ describe('MessageView tool row with a structured envelope', () => {
         expect(renderedToolTimelineRowProps).toHaveLength(1);
     });
 
-    it('still replaces the tool chrome when the structured card paints', async () => {
+    it('retains the tool chrome when a structured result is available', async () => {
         const screen = await renderToolRow(PAINTING_STRUCTURED_TOOL_MESSAGE);
 
-        expect(renderedToolTimelineRowProps).toHaveLength(0);
+        expect(renderedToolTimelineRowProps).toHaveLength(1);
         expect(JSON.stringify(screen.tree.toJSON() ?? '')).toContain('because it re-renders');
     });
 });

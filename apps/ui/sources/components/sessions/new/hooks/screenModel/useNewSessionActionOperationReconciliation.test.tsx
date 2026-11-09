@@ -2,7 +2,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { projectSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -75,7 +76,8 @@ vi.mock('@/components/appShell/workspace/destinationRoute', () => ({
 
 import { useNewSessionActionOperationReconciliation } from './useNewSessionActionOperationReconciliation';
 import { createActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
-import { buildApprovalRequestArtifactHeaderV1, type ApprovalRequestV2 } from '@happier-dev/protocol';
+import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 const draftScope = { serverId: 'server-a', accountId: 'account-a' } as const;
 
@@ -101,14 +103,14 @@ function operation(
         ...(state === 'succeeded'
             ? {
                 settledAt: 3,
-                result: {
+                result: projectSessionSpawnNewActionResultV1({
                     type: 'success',
                     disposition: 'created',
                     sessionId: 'session-created',
                     executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
                     organizationPlacement: { folderId: null, tagIds: [] },
                     initialInput: { status: 'notRequested' },
-                },
+                }),
             }
             : {}),
         ...(state === 'failed'
@@ -221,14 +223,14 @@ describe('useNewSessionActionOperationReconciliation', () => {
             presentationOrder.push('project');
         });
         mergeOperations([operation('succeeded', {
-            result: {
+            result: projectSessionSpawnNewActionResultV1({
                 type: 'success',
                 disposition: 'created',
                 sessionId: 'session-created',
                 executionTarget: { serverId: 'server-b', machineId: 'machine-a' },
                 organizationPlacement: { folderId: null, tagIds: [] },
                 initialInput: { status: 'accepted', localId: 'local-first-turn' },
-            },
+            }),
         })]);
         const disableDraftPersistence = vi.fn();
         const resetLaunchRequestId = vi.fn();
@@ -353,7 +355,7 @@ describe('useNewSessionActionOperationReconciliation', () => {
 
     it('preserves an outcome-unknown first turn instead of projecting it as accepted', async () => {
         mergeOperations([operation('succeeded', {
-            result: {
+            result: projectSessionSpawnNewActionResultV1({
                 type: 'success',
                 disposition: 'created',
                 sessionId: 'session-created',
@@ -364,7 +366,7 @@ describe('useNewSessionActionOperationReconciliation', () => {
                     localId: 'local-outcome-unknown',
                     code: 'ack_timeout',
                 },
-            },
+            }),
         })]);
         const router = { replace: vi.fn() };
 
@@ -442,14 +444,14 @@ describe('useNewSessionActionOperationReconciliation', () => {
     });
 
     describe('approval of the launch', () => {
-        const spawnSuccess = {
+        const spawnSuccess = projectSessionSpawnNewActionResultV1({
             type: 'success',
             disposition: 'created',
             sessionId: 'session-created',
             executionTarget: { serverId: 'server-a', machineId: 'machine-a' },
             organizationPlacement: { folderId: null, tagIds: [] },
             initialInput: { status: 'notRequested' },
-        } as const;
+        } as const);
 
         function approvalArtifact(status: 'open' | 'executed' | 'rejected' | 'canceled', requestId = 'request-1') {
             const request: ApprovalRequestV2 = {

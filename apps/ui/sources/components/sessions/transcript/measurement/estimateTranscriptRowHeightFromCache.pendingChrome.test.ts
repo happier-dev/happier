@@ -16,7 +16,7 @@ import type { TranscriptRowShellItem } from './transcriptRowShellSignature';
  */
 const ONE_SHORT_PENDING_MESSAGE_NATIVE_PX = 62;
 /** The same row on web, which paints the copy/send action row unconditionally. */
-const PENDING_MESSAGE_ACTION_ROW_PX = 20;
+const PENDING_MESSAGE_ACTION_ROW_PX = 22;
 /** `transcriptPendingQueueMaxHeightPx` account default: the compact BACKLOG strip. */
 const PENDING_QUEUE_BACKLOG_STRIP_PX = 80;
 /** `resolvePendingQueueHeadMaxHeightPx(24)` — six painted lines plus the bubble's own padding. */

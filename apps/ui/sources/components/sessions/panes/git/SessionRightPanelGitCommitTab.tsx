@@ -1,9 +1,12 @@
 import * as React from 'react';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { usePaneContentInsetPx } from '@/components/ui/lists/listPresentation';
 import { Platform, View, type ViewStyle } from 'react-native';
+import { indexPathsByFileName } from '@/components/ui/path/InlineRepoPathLabel';
 import {
     type CheckpointOverlapObservation,
     type SessionChangeAttribution,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/changes/types';
 import { useChangedFileRowLayout } from '@/components/workspaces/scm/changes/useChangedFileRowLayout';
 import { activeReviewFileKeyForSession, useActiveReviewFilePath } from '@/components/workspaces/scm/review/activeReviewFile';
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
@@ -47,10 +50,12 @@ import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { ScrollEdgeIndicators } from '@/components/ui/scroll/ScrollEdgeIndicators';
 import { createAdvancedDebounce } from '@/utils/timing/debounce';
 import { filterDirectoryLikeScmFileStatuses } from '@/scm/isDirectoryLikeScmFileStatus';
+import { sumChangedLines } from '@/components/sessions/sourceControl/status/statusSummary';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Icon } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import type { AgentId } from '@/agents/catalog/catalog';
@@ -186,17 +191,8 @@ function resolveRepositoryName(rootPath: string | null | undefined): string | nu
     return segments[segments.length - 1] ?? null;
 }
 
-function sumChangedLines(files: readonly ScmFileStatus[]): { added: number; removed: number } {
-    let added = 0;
-    let removed = 0;
-    for (const file of files) {
-        added += Number.isFinite(file.linesAdded) ? Math.max(0, file.linesAdded) : 0;
-        removed += Number.isFinite(file.linesRemoved) ? Math.max(0, file.linesRemoved) : 0;
-    }
-    return { added, removed };
-}
-
 export const SessionRightPanelGitCommitTab = React.memo((props: SessionRightPanelGitCommitTabProps) => {
+    const materialColor = useHappierMaterialColorResolver();
     const showCommitComposer = props.showCommitComposer !== false;
     const keyboardBottomInset = useKeyboardHeight();
     // Lab G1: the commit card names where it commits ("Commit to v0.3") and sums what is selected.
@@ -322,7 +318,7 @@ export const SessionRightPanelGitCommitTab = React.memo((props: SessionRightPane
                     style={{
                         borderTopWidth: Platform.select({ ios: 0.33, default: 1 }),
                         borderTopColor: props.theme.colors.border.default,
-                        backgroundColor: props.theme.colors.surface.base,
+                        backgroundColor: materialColor(props.theme.colors.surface.base, 'transparent'),
                         marginBottom: keyboardBottomInset > 0 ? keyboardBottomInset : undefined,
                     }}
                 >
@@ -605,6 +601,9 @@ function resolveChangedFilesScopeDescriptions(params: Readonly<{
 }
 
 const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
+    const materialColor = useHappierMaterialColorResolver();
+    // The pane's text edge: the scope row starts under the pane title, its rows' marks and section labels.
+    const contentInsetPx = usePaneContentInsetPx();
     const themeBorderDefault = props.theme.colors.border?.default ?? props.theme.colors.divider;
     const themeSurfaceBase = props.theme.colors.surface?.base ?? props.theme.colors.surface;
     const themeTextPrimary = props.theme.colors.text?.primary ?? props.theme.colors.text;
@@ -699,15 +698,7 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
     );
     // Duplicate names get their nearest distinguishing folder (lab G1): each row is handed only the
     // paths that share its name, so the work stays linear in the list.
-    const pathsByFileName = React.useMemo(() => {
-        const byName = new Map<string, string[]>();
-        for (const file of listedFiles) {
-            const paths = byName.get(file.fileName);
-            if (paths) paths.push(file.fullPath);
-            else byName.set(file.fileName, [file.fullPath]);
-        }
-        return byName;
-    }, [listedFiles]);
+    const pathsByFileName = React.useMemo(() => indexPathsByFileName(listedFiles), [listedFiles]);
     const scopedLineTotals = React.useMemo(() => sumChangedLines(listedFiles), [listedFiles]);
     const virtualizedStatsColumnWidth = React.useMemo(
         () => resolveScmChangeStatsColumnWidth(listedFiles),
@@ -783,10 +774,13 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
             <>
                 <View
                     style={{
-                        paddingHorizontal: 12,
+                        // The scope starts on the pane's text edge; the trailing icon buttons end where the pane
+                        // header's ⋯ does (its trailing half inset), so the row keeps its width for the scope.
+                        paddingLeft: contentInsetPx,
+                        paddingRight: contentInsetPx / 2,
                         paddingTop: 4,
                         paddingBottom: 6,
-                        backgroundColor: themeSurfaceBase,
+                        backgroundColor: materialColor(themeSurfaceBase, 'transparent'),
                     }}
                 >
                     <View
@@ -871,6 +865,7 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
             </>
         );
     }, [
+        contentInsetPx,
         showsFinishedState,
         props.scopeAccessory,
         hasChangedFilesViewSelector,
@@ -887,6 +882,7 @@ const CommitChangesSurface = React.memo((props: CommitChangesSurfaceProps) => {
         props.showTurnViewToggle,
         themeBorderDefault,
         themeSurfaceBase,
+        materialColor,
         themeTextPrimary,
         themeTextSecondary,
         scopedChangedFilesDescriptions,
@@ -1194,6 +1190,7 @@ const ChangeGroupHeaderRow = React.memo((props: Readonly<{
     agentId: AgentId | null;
 }>) => {
     const { group, onToggleGroupSelection } = props;
+    const contentInsetPx = usePaneContentInsetPx();
     let selected = 0;
     for (const file of group.files) {
         if (props.selectedPathSet.has(file.fullPath)) selected += 1;
@@ -1210,7 +1207,7 @@ const ChangeGroupHeaderRow = React.memo((props: Readonly<{
         <View
             testID={`scm-change-group:${group.id}`}
             accessibilityRole="header"
-            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: canToggle ? 8 : 12, paddingRight: 12, paddingTop: 10, paddingBottom: 4 }}
+            style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: canToggle ? contentInsetPx - 4 : contentInsetPx, paddingRight: contentInsetPx, paddingTop: 10, paddingBottom: 4 }}
         >
             <IconButton
                 testID={`scm-change-group-collapse:${group.id}`}
@@ -1218,7 +1215,7 @@ const ChangeGroupHeaderRow = React.memo((props: Readonly<{
                 size={24}
                 accessibilityLabel={group.title}
                 expanded={!props.collapsed}
-                icon={<Icon name={props.collapsed ? 'caret-right' : 'caret-down'} size={12} color={textSecondary} />}
+                icon={<DisclosureCaret expanded={!props.collapsed} size={12} />}
                 onPress={props.onToggleCollapsed}
             />
             {canToggle ? (

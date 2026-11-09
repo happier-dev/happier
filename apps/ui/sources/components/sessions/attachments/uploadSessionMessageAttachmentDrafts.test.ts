@@ -6,7 +6,7 @@ import type { AttachmentsUploadConfig, sessionAttachmentsUploadFile } from '@/sy
 import type { ExactSessionMachineTargetIdentity } from '@/sync/ops/sessionMachineTarget';
 import type { AttachmentDraft } from './attachmentDraftModel';
 import { captureSessionMessageAttachmentDrafts, recordAttachmentTargetUploadCheckpoint,
-    uploadSessionMessageAttachmentDrafts, uploadSessionMessageAttachmentDrafts as uploadDrafts } from './uploadSessionMessageAttachmentDrafts';
+    uploadSessionMessageAttachmentDrafts as uploadDrafts } from './uploadSessionMessageAttachmentDrafts';
 import { clearSessionAttachmentDrafts, readSessionAttachmentDrafts, writeSessionAttachmentDrafts } from './sessionAttachmentDraftStore';
 import type { AttachmentTargetUploadedDraftCheckpoint } from './uploadAttachmentDraftsToSession';
 import { createTransferFinalizeRecovery, settleTransferFinalizeRecovery } from '@/sync/domains/transfers/runtime/transferRuntime/plumbing/directTransferFinalizeRecovery';
@@ -28,6 +28,10 @@ const config: AttachmentsUploadConfig = {
 const target: ExactSessionMachineTargetIdentity = { serverId: 'home-a', accountId: 'account-a', sessionId: 'target-a' };
 const executionTarget = { serverId: 'home-a', machineId: 'machine-a' };
 const handle: SessionAttachmentHandleV1 = { v: 1, sessionId: target.sessionId, id: 'issued-a' };
+// These transfer/retry contracts inspect issued selections; the uploader also returns their media descriptors.
+async function uploadSessionMessageAttachmentDrafts(...args: Parameters<typeof uploadDrafts>) {
+    return (await uploadDrafts(...args))?.map(attachment => attachment.attachmentHandle) ?? null;
+}
 function draft(id = 'draft-a'): AttachmentDraft {
     return { id, status: 'uploaded', source: { kind: 'memory', name: `${id}.txt`, bytes: new Uint8Array([1, 2]) },
         uploadedPath: '/source/private.txt', uploadedSizeBytes: 99, sha256: 'source-checkpoint',

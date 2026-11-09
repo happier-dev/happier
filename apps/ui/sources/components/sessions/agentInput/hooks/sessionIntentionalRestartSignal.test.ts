@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { AgentEvent } from "@happier-dev/session-core/raw";
 
 import {
@@ -30,7 +30,7 @@ describe('sessionIntentionalRestartSignal', () => {
         })).toBeNull();
     });
 
-    it('keeps elapsed restart signals non-terminal until positive failure evidence arrives', () => {
+    it('keeps unresolved restart signals non-terminal until positive failure evidence arrives', () => {
         expect(resolveSessionIntentionalRestartState({
             signals: [{
                 status: 'restarting',
@@ -38,14 +38,39 @@ describe('sessionIntentionalRestartSignal', () => {
                 reason: 'manual_auth_switch',
                 startedAtMs: 1_000,
             }],
-            nowMs: 10_000,
-            failsafeMs: 1_000,
         })).toEqual({
-            status: 'pending_confirmation',
+            status: 'restarting',
             attemptId: 'manual-auth-switch:1',
             reason: 'manual_auth_switch',
             startedAtMs: 1_000,
         });
+    });
+
+    it.each(['failed', 'terminal'] as const)('projects a typed %s attempt over an older usage-limit restart', (outcome) => {
+        const signals = deriveSessionIntentionalRestartSignals({
+            runtimeIssue: {
+                v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit', source: 'usage_limit',
+                occurredAt: 1_000, agentId: 'codex',
+                usageLimit: { v: 1, resetAtMs: null, retryAfterMs: null, quotaScope: 'account', recoverability: 'switch_account', recoveryDecision: 'switching' },
+            },
+            events: [{ createdAtMs: 2_000, event: {
+                type: 'connected-service-account-switch-attempt', ok: false, action: 'restart_requested',
+                attemptedContinuityMode: 'restart', outcome,
+            } }],
+        });
+        expect(resolveSessionIntentionalRestartState({ signals })?.status).toBe('failed');
+    });
+
+    it.each([
+        { activeAt: 2_500 },
+        { latestReadyEventAt: 2_500 },
+        { latestTurnStatus: 'completed', latestTurnStatusObservedAt: 2_500 },
+    ])('clears failed restart state only on newer recovery evidence: %j', (evidence) => {
+        const signal = { status: 'failed', attemptId: 'switch:failed', reason: 'manual_auth_switch', startedAtMs: 2_000 } as const;
+        expect(resolveSessionIntentionalRestartState({
+            signals: [signal], recoveryEvidenceAtMs: resolveSessionIntentionalRestartRecoveryEvidenceAtMs(evidence),
+        })).toBeNull();
+        expect(resolveSessionIntentionalRestartState({ signals: [signal], recoveryEvidenceAtMs: 1_999 })).toBe(signal);
     });
 
     it('projects usage-limit switching into a shared restart signal', () => {
@@ -107,6 +132,32 @@ describe('sessionIntentionalRestartSignal', () => {
         }]);
     });
 
+    it('retains restart intent through a scheduled retry instead of interpreting it as failure', () => {
+        expect(deriveSessionIntentionalRestartSignals({ runtimeIssue: null, events: [
+            { createdAtMs: 1_000, event: {
+                type: 'connected-service-account-switch', serviceId: 'openai-codex', groupId: null,
+                fromProfileId: null, toProfileId: 'backup', reason: 'manual', mode: 'restart_resume',
+            } },
+            { createdAtMs: 2_000, event: {
+                type: 'connected-service-account-switch-attempt', ok: false, action: 'restart_requested', outcome: 'scheduled_retry',
+            } },
+        ] })).toEqual([expect.objectContaining({ status: 'restarting', startedAtMs: 1_000 })]);
+    });
+
+    it('does not turn a failed hot apply into a restart failure', () => {
+        expect(deriveSessionIntentionalRestartSignals({ runtimeIssue: null, events: [{ createdAtMs: 2_000, event: {
+            type: 'connected-service-account-switch-attempt', ok: false, action: 'hot_applied',
+            attemptedContinuityMode: 'hot_apply', outcome: 'failed',
+        } }] })).toEqual([]);
+    });
+
+    it('allows a new manual restart after an older failed attempt', () => {
+        const newerManual = { status: 'restarting', attemptId: 'manual:2', reason: 'manual_auth_switch', startedAtMs: 3_000 } as const;
+        expect(resolveSessionIntentionalRestartState({ signals: [newerManual, {
+            status: 'failed', attemptId: 'old:1', reason: 'runtime_auth_recovery', startedAtMs: 2_000,
+        }] })).toBe(newerManual);
+    });
+
     it('does not keep projecting a restart-resume switch event after newer recovery evidence', () => {
         const switchEvent: AgentEvent = {
             type: 'connected-service-account-switch',
@@ -118,12 +169,12 @@ describe('sessionIntentionalRestartSignal', () => {
             mode: 'restart_resume',
         };
 
-        expect(deriveSessionIntentionalRestartSignals({
-            runtimeIssue: null,
-            events: [
-                { event: switchEvent, createdAtMs: 2_000 },
-            ],
+        expect(resolveSessionIntentionalRestartState({
+            signals: deriveSessionIntentionalRestartSignals({
+                runtimeIssue: null,
+                events: [{ event: switchEvent, createdAtMs: 2_000 }],
+            }),
             recoveryEvidenceAtMs: 2_500,
-        })).toEqual([]);
+        })).toBeNull();
     });
 });

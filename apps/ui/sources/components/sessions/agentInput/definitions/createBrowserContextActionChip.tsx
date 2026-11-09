@@ -1,11 +1,9 @@
-import { getBrowserContextActionChipPlacement } from './agentInputActionChipPlacements';
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 
 import type {
     BrowserContextAttachmentV1,
-    BrowserContextItemV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/context/v1';
 
 import type {
     AgentInputExtraActionPresentation,
@@ -19,10 +17,25 @@ import {
     type BrowserContextState,
 } from '@/sync/domains/browser/context';
 import { t } from '@/text';
+import { getBrowserContextActionChipPlacement } from './agentInputActionChipPlacements';
+export { getBrowserContextActionChipPlacement } from './agentInputActionChipPlacements';
 import { Icon } from '@/components/ui/icons/Icon';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_OPTION_ICON_SIZE_PX, AGENT_INPUT_MENU_ICON_SIZE_PX } from './agentInputChipIconMetrics';
+import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
 
-function resolveContextTitle(item: BrowserContextItemV1 | undefined): string {
+function resolveContextTitle(item: BrowserContextState['itemsById'][string] | undefined): string {
+    if (item?.kind === 'browserAnnotation') {
+        if (item.pageTitle) return item.pageTitle;
+        if (item.pageUrl) {
+            try {
+                const origin = new URL(item.pageUrl).origin;
+                if (origin !== 'null') return origin;
+            } catch {
+                // A missing or malformed page address has no presentable origin.
+            }
+        }
+        return t('browserContext.composer.untitledPage');
+    }
     if (item?.kind !== 'browserPageReference') {
         return t('browserContext.composer.untitledPage');
     }
@@ -50,8 +63,24 @@ function resolveBadgeLabel(params: Readonly<{
         return t('browserContext.composer.attachPageReference');
     }
 
-    const title = resolveContextTitle(params.itemsById[attachment.contextId]);
-    if (attachment.state === 'navigationStale' || attachment.requiresReconfirmBeforeSend) {
+    const item = params.itemsById[attachment.contextId];
+    const title = resolveContextTitle(item);
+    const stale = attachment.state === 'navigationStale' || attachment.requiresReconfirmBeforeSend;
+    if (item?.kind === 'browserAnnotation') {
+        const elements = attachment.structuredBlock?.elements ?? [];
+        // One element is named ("Checkout · TotalRow"); several, or one without a name, are counted.
+        const only = elements.length === 1 ? elements[0] : undefined;
+        const element = only?.componentName ?? only?.accessibleName;
+        if (element) {
+            const named = `${title} · ${element}`;
+            return stale ? t('browserContext.composer.attachedPageStale', { title: named }) : named;
+        }
+        const count = String(elements.length);
+        return stale
+            ? t('browserContext.composer.attachedAnnotationStale', { title, count })
+            : t('browserContext.composer.attachedAnnotation', { title, count });
+    }
+    if (stale) {
         return t('browserContext.composer.attachedPageStale', { title });
     }
     return t('browserContext.composer.attachedPage', { title });
@@ -119,7 +148,7 @@ export function createBrowserContextActionChip(params: Readonly<{
             },
         }),
         render: (ctx: AgentInputExtraActionChipRenderContext) => (
-            <Pressable
+            <AgentInputRailChip
                 ref={ctx.chipAnchorRef}
                 testID="agent-input-browser-context-chip"
                 disabled={disabled}
@@ -127,8 +156,7 @@ export function createBrowserContextActionChip(params: Readonly<{
                     disabled,
                     onAttachPageReference: params.onAttachPageReference,
                 })}
-                hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                style={({ pressed }) => ctx.chipStyle(Boolean(pressed))}
+                style={ctx.chipStyle}
             >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                     {icon(ctx.iconColor, AGENT_INPUT_CHIP_ICON_SIZE_PX)}
@@ -138,7 +166,7 @@ export function createBrowserContextActionChip(params: Readonly<{
                         </Text>
                     ) : null}
                 </View>
-            </Pressable>
+            </AgentInputRailChip>
         ),
     };
 

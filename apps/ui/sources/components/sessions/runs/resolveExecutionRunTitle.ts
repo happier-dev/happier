@@ -1,4 +1,4 @@
-import type { ExecutionRunPublicState } from '@happier-dev/protocol';
+import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 
 import { t } from '@/text';
 
@@ -10,6 +10,8 @@ import { t } from '@/text';
 export function resolveExecutionRunTitle(
     run: Readonly<{ display?: Pick<NonNullable<ExecutionRunPublicState['display']>, 'title'> | null; intent?: string | null }>,
     surface: 'summary' | 'conversation' | 'recipient' = 'summary',
+    /** What names a Run whose kind of work has no words (an `agent` or `task` Run): its Agent, when the host knows it. */
+    unnamedFallback?: string | null,
 ): string {
     if (run.intent === 'scm_diff_summary') {
         if (surface === 'conversation') return t('walkthrough.conversationTitle');
@@ -22,6 +24,6 @@ export function resolveExecutionRunTitle(
         case 'plan': return t('runPage.intentTitles.plan');
         case 'delegate': return t('runPage.intentTitles.delegate');
         case 'scm_diff_summary': return t('runPage.intentTitles.scmDiffSummary');
-        default: return t('runPage.untitledRun');
+        default: return unnamedFallback?.trim() || t('runPage.untitledRun');
     }
 }

@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { normalizeActionsSettingsV1, tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { normalizeActionsSettingsV1} from '@happier-dev/protocol/actions/actionSettings';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { SESSION_DRAFT_V2_ROUTE_MUTATE } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { SESSION_DRAFT_ROUTE_MUTATE } from '@happier-dev/protocol/drafts/sessionDrafts';
 import { createMachineFixture, renderScreen, standardCleanup } from '@/dev/testkit';

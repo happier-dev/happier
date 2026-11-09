@@ -12,8 +12,10 @@ import {
     SESSION_ACTION_RAIL_PIN_ID,
     SESSION_ACTION_RAIL_UNPIN_ID,
     SESSION_ACTION_RENAME_ID,
+    SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
     SESSION_ACTION_SET_ATTENTION_STANDING_ID,
 } from '@/components/sessions/actions/sessionActionIds';
+import { buildSessionAppearanceColorMenuItem } from '@/components/sessions/organization/sessionAppearanceColorMenu';
 import { listVisibleSessionActionIds } from '@/components/sessions/actions/sessionActionAvailability';
 import { createSessionActionDropdownItem } from '@/components/sessions/actions/sessionActionPresentation';
 import { t } from '@/text';
@@ -128,7 +130,22 @@ export function buildSessionRowMoreMenuItems(params: SessionRowMoreMenuBuildPara
     const remainingItems: DropdownMenuItem[] = [];
     let moveToFolderItem: DropdownMenuItem | null = null;
 
-    for (const actionId of listVisibleSessionActionIds({ target: params.target, surface: 'rowMenu' })) {
+    let appearanceItem: DropdownMenuItem | null = null;
+    for (const actionId of listVisibleSessionActionIds({
+        target: params.target,
+        surface: 'rowMenu',
+        sessionAppearancesSupported: params.appearance != null,
+    })) {
+        if (actionId === SESSION_ACTION_SET_APPEARANCE_COLOR_ID) {
+            if (!params.appearance) continue;
+            appearanceItem = buildSessionAppearanceColorMenuItem({
+                ...params.appearance,
+                menuId: SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
+                iconColor: params.iconColor,
+                base: createSessionActionDropdownItem({ actionId, iconColor: params.iconColor }),
+            });
+            continue;
+        }
         if (actionId === SESSION_ACTION_MOVE_TO_FOLDER_ID) {
             if (params.canMoveToFolder === false) continue;
             moveToFolderItem = {
@@ -168,6 +185,7 @@ export function buildSessionRowMoreMenuItems(params: SessionRowMoreMenuBuildPara
     return [
         ...selectItems,
         ...primaryItems,
+        ...(appearanceItem ? [appearanceItem] : []),
         ...(params.target.reminderAction.canSchedule || (params.reminder && params.target.reminderAction.canClear) ? [buildSessionReminderMenuItem(
             params.iconColor,
             params.reminderPresets,
@@ -178,5 +196,6 @@ export function buildSessionRowMoreMenuItems(params: SessionRowMoreMenuBuildPara
         ...contextualItems,
         ...(params.spaceMembershipMenu?.items ?? []),
         ...placeMoveToSection(remainingItems, moveToFolderItem),
+        ...(params.trailingItems ?? []),
     ];
 }

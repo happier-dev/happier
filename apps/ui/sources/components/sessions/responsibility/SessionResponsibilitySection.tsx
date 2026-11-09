@@ -6,7 +6,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { Icon } from '@/components/ui/icons/Icon';
-import { ITEM_SUBTITLE_TEXT_METRICS, ITEM_TITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
+import { ITEM_ICON_BOX_SIZE, ITEM_ICON_MARGIN_RIGHT, ITEM_ROW_PADDING_HORIZONTAL, ITEM_SUBTITLE_TEXT_METRICS, ITEM_TITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { Text } from '@/components/ui/text/Text';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
@@ -25,13 +25,15 @@ const styles = StyleSheet.create((theme) => ({
     frame: {},
     row: {
         minHeight: 40,
-        paddingLeft: theme.space.s12,
+        paddingLeft: ITEM_ROW_PADDING_HORIZONTAL.compact,
         paddingRight: theme.space.s10,
         paddingVertical: theme.space.s8,
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
     },
+    // The flag sits in a row's icon slot, so "Responsible" starts on the same text edge as the rows above.
+    mark: { width: ITEM_ICON_BOX_SIZE.compact, alignItems: 'center', marginRight: ITEM_ICON_MARGIN_RIGHT.compact - theme.space.s8 },
     pressed: { backgroundColor: theme.colors.surface.pressed },
     label: {
         ...Typography.default(),
@@ -149,7 +151,7 @@ export function SessionResponsibilitySection(props: Readonly<{
                 onPress={editable ? pickerHost.openPicker : undefined}
                 style={({ pressed }) => [styles.row, pressed && editable ? [styles.pressed, { opacity: motionTokens.press.opacitySubtle }] : null]}
             >
-                <Icon name="flag" size={15} color={theme.colors.text.secondary} />
+                <View style={styles.mark}><Icon name="flag" size={18} color={theme.colors.text.secondary} /></View>
                 <Text style={styles.label}>{t('session.responsibilityRowTitle')}</Text>
                 <View style={styles.grow} />
                 <View style={styles.value}>

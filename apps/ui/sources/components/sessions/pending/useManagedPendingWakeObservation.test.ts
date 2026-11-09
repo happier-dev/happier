@@ -46,7 +46,7 @@ describe('managed pending wake protected observation', () => {
                 controller, allocation: 'bound', creationState: 'active', enrolledMachineId: 'guest-a',
                 desired: 'start', desiredWhen: 'now', intentRevision: 1,
                 retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
-                observation: { observedAt: 10, availability: 'present', power: state.power, storage: 'retained', daemon: 'disconnected' },
+                observation: { observedAt: 10, availability: 'present', power: state.power, storage: 'retained' },
             });
         });
         const retirement = new AbortController();

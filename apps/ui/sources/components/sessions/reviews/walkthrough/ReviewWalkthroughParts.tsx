@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
-import type { ReviewFinding } from '@happier-dev/protocol';
+import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
 
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { reviewSeverityLabel } from '@/components/sessions/reviews/findings/reviewFindingPresentation';

@@ -93,10 +93,12 @@ export function useCommittedMessageActions(input: CommittedMessageActionInput, p
         && message.kind === 'agent-text' && !message.isThinking && input.selectableText != null && !input.isStructuredOnly;
     const repeatableServerId = input.serverId ?? input.forkCommon.sessionForkSupportSource?.serverId;
     const writeClipboard = useClipboardWrite(repeatableServerId, { enabled: presentation.rowVisible || presentation.menuVisible });
-    // Message identity controls capability lifetime; streamed text is read by the action at press time.
-    const makeRepeatableSource = React.useMemo(() => makeRepeatableEligible ? {
+    // A closed row reads nothing from Workflows; the capability subscribes once its row or menu is shown (same demand
+    // as read-aloud and clipboard above). Message identity controls capability lifetime; streamed text is read at press time.
+    const makeRepeatableDemanded = makeRepeatableEligible && (presentation.rowVisible || presentation.menuVisible);
+    const makeRepeatableSource = React.useMemo(() => makeRepeatableDemanded ? {
         sessionId: input.sessionId, serverId: repeatableServerId, messageId: message.id,
-    } : null, [makeRepeatableEligible, input.sessionId, repeatableServerId, message.id]);
+    } : null, [makeRepeatableDemanded, input.sessionId, repeatableServerId, message.id]);
     const [makeRepeatableCapability, setMakeRepeatableCapability] = React.useState<Readonly<{
         source: NonNullable<typeof makeRepeatableSource>;
         available: boolean;

@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AccountProfileSchema, ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol';
+import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
+import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 
 import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installAgentInputCommonModuleMocks } from '../agentInput/agentInputTestHelpers';

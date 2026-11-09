@@ -5,6 +5,7 @@ import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/mod
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { useExecutionRunLauncherOptionsModel } from './useExecutionRunLauncherOptionsModel';
+import { applyExecutionRunChildSelection } from './executionRunChildChoice';
 
 it('exposes the applied inherited draft tuple without stamping it into child launch input', async () => {
     const applied = ProviderBoundModelRefSchema.parse({ agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'parent-source', modelId: 'applied-model' });
@@ -35,6 +36,32 @@ it('exposes the applied inherited draft tuple without stamping it into child lau
 });
 
 afterEach(standardCleanup);
+
+it('keeps a chosen reviewer model, then drops it when another reviewer is added', async () => {
+    const selected = ProviderBoundModelRefSchema.parse({
+        agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: 'review-source', modelId: 'review-model',
+    });
+    const hook = await renderHook(() => {
+        const [actionInput, setActionInput] = React.useState<Record<string, unknown>>(() => applyExecutionRunChildSelection({
+            engineIds: ['claude'], permissionMode: 'read_only', instructions: 'Review the captured changes',
+        }, selected));
+        const model = useExecutionRunLauncherOptionsModel({
+            sessionId: 'session_1', intent: 'review', actionInput, setActionInput,
+            enabledAgentIds: ['claude', 'codex'], executionRunsBackends: {
+                claude: { available: true, intents: ['review'] }, codex: { available: true, intents: ['review'] },
+            }, acpCatalogSnapshot: { status: 'ready', revision: 1, record: { v: 1, definitions: [] } },
+            initialBackendTarget: null, fallbackAgentId: null, machineCapabilitiesState: { status: 'idle' },
+        });
+        return { actionInput, model };
+    });
+    expect(hook.getCurrent().actionInput.modelSelection).toEqual(selected);
+    const nextReviewer = hook.getCurrent().model.backendChoices.find(choice => choice.backendId === 'codex');
+    expect(nextReviewer).toBeDefined();
+    await act(async () => hook.getCurrent().model.onSelectBackend(nextReviewer!.targetKey));
+    expect(hook.getCurrent().actionInput.engineIds).toEqual(['claude', 'codex']);
+    expect(hook.getCurrent().actionInput.instructions).toBe('Review the captured changes');
+    expect(hook.getCurrent().actionInput).not.toHaveProperty('modelSelection');
+});
 
 it('preserves the authored run selection when its required Account catalog is loading', async () => {
     const hook = await renderHook(() => {

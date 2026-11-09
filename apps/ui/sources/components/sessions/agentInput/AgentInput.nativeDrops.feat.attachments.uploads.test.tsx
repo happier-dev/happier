@@ -39,12 +39,12 @@ it('routes a native folder through the shared intake and mentions it at the rele
     const folder = { kind: 'folder', name: 'Design', mimeType: 'inode/directory', directories: ['empty'], entries: [
         { relativePath: 'icons/a.svg', source: { kind: 'native', uri: 'file:///cache/a.svg', name: 'a.svg', mimeType: 'image/svg+xml', sizeBytes: 3 } },
     ] } as const;
-    await act(async () => input().props.onAttachmentDrop({ nativeEvent: { sources: [folder], offset: 7, scope: input().props.attachmentDropScope } }));
+    await act(async () => input().props.onComposerAttachmentDrop({ nativeEvent: { sources: [folder], offset: 7, scope: input().props.attachmentDropScope } }));
     expect(drafts).toHaveLength(1);
     expect(drafts[0]?.source).toEqual(folder);
     expect(input().props.value).toBe(`Before [Design](happier-ref:attachment:${drafts[0]!.id}) after`);
     expect(input().props.references).toEqual([expect.objectContaining({ start: 7, state: 'pending' })]);
-    await act(async () => input().props.onAttachmentDrop({ nativeEvent: { sources: [folder], offset: 7, scope: 'old-composer' } }));
+    await act(async () => input().props.onComposerAttachmentDrop({ nativeEvent: { sources: [folder], offset: 7, scope: 'old-composer' } }));
     expect(drafts).toHaveLength(1);
     await act(async () => updateStatus?.('uploaded'));
     expect(input().props.references[0].state).toBe('ready');

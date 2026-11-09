@@ -18,7 +18,7 @@ export const TERMINAL_MENU_GLYPH_PX = 16;
 
 /** A terminal status as the shared tab status tone (strip tabs, list rows, phone chips). */
 export const SESSION_TERMINAL_STATUS_TONE: Readonly<Record<SessionTerminalStatus, DocumentTabStatus['tone']>> = {
-    running: 'running', attention: 'attention', exited: 'ended', failed: 'failed',
+    running: 'running', attention: 'attention', 'connection-lost': 'ended', exited: 'ended', failed: 'failed',
 };
 
 type Glyph = (name: IconName) => React.ReactNode;
@@ -143,6 +143,8 @@ export type SessionTerminalPaneMenuInput = Readonly<{
     jumpShortcut?: string;
     hideShortcut?: string;
     canOpenSettings: boolean;
+    /** Where Hide sends the pane, the same fact the strip's own Hide glyph shows (bottom by default). */
+    hideToward?: 'bottom' | 'end';
 }>;
 
 export function buildSessionTerminalPaneMenuItems(input: SessionTerminalPaneMenuInput, glyph: Glyph): DropdownMenuItem[] {
@@ -152,7 +154,7 @@ export function buildSessionTerminalPaneMenuItems(input: SessionTerminalPaneMenu
     }
     items.push(
         { id: 'showList', testID: 'terminal-pane-menu-show-list', title: t('terminalWorkspace.paneMenu.showList'), subtitle: t('terminalWorkspace.paneMenu.showListHint'), icon: glyph('list'), checked: input.showList },
-        { id: 'hide', testID: 'terminal-pane-menu-hide', title: t('terminalWorkspace.paneMenu.hide'), subtitle: t('terminalWorkspace.paneMenu.hideHint'), icon: glyph('caret-down'), ...(input.hideShortcut ? { shortcut: input.hideShortcut } : {}) },
+        { id: 'hide', testID: 'terminal-pane-menu-hide', title: t('terminalWorkspace.paneMenu.hide'), subtitle: t('terminalWorkspace.paneMenu.hideHint'), icon: glyph(input.hideToward === 'end' ? 'caret-right' : 'caret-down'), ...(input.hideShortcut ? { shortcut: input.hideShortcut } : {}) },
     );
     if (input.canOpenSettings) {
         items.push({ id: 'settings', testID: 'terminal-pane-menu-settings', title: t('terminalWorkspace.paneMenu.settings'), subtitle: t('terminalWorkspace.paneMenu.settingsHint'), icon: glyph('gear') });

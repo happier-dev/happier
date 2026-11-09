@@ -15,8 +15,9 @@ const initialStorage = getStorage().getState();
 const serverId = 'srv_session_reach';
 beforeEach(async () => {
     await home.reset();
-    await home.addHome({ name: 'Reachability Home', serverUrl: 'https://reachability.example.test',
+    const homeId = await home.addHome({ name: 'Reachability Home', serverUrl: 'https://reachability.example.test',
         serverIdentityId: serverId, accountId: 'account' });
+    getStorage().getState().activateProfileScope({ serverId: homeId, accountId: 'account' });
     const machine = createMachineFixture({ id: 'm1', activeAt: Date.now() });
     const session = createSessionFixture({ id: 's1', serverId, active: true, metadata: { machineId: 'm1', path: '/repo', host: 'host-1' } });
     getStorage().setState({ sessions: { s1: session }, machines: { m1: machine }, machineListByServerId: { [serverId]: [machine] } });
@@ -39,25 +40,28 @@ describe('useSessionMachineReachability', () => {
         expect(hook.getCurrent()).toEqual({ machineId: 'm1', basePath: '/repo' });
     });
 
-    it('normalizes session ids and observes offline status even when no RPC target is available', async () => {
+    it('keeps pushed presence until an authoritative offline fact and recovers on a newer observation', async () => {
         vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
         const hook = await renderHook(() => useSessionMachineReachability('  s1  ', serverId));
         const lastHeartbeat = getStorage().getState().machines.m1!.activeAt;
         expect(hook.getCurrent()).toEqual({ machineReachable: true, machineOnline: true,
             machineRpcTargetAvailable: true, machineReachability: 'reachable', machineLastSeenAt: null });
         await act(async () => { vi.advanceTimersByTime(60_001); });
-        // The honest time of the last known state: the machine's last heartbeat, said only while it is unreachable.
-        expect(hook.getCurrent()).toEqual({ machineReachable: false, machineOnline: false,
-            machineRpcTargetAvailable: false, machineReachability: 'unreachable', machineLastSeenAt: lastHeartbeat });
-        const refreshed = { ...getStorage().getState().machines.m1!, activeAt: Date.now() };
-        await act(async () => getStorage().setState({ machines: { m1: refreshed }, machineListByServerId: { [serverId]: [refreshed] } }));
+        // The server owns the deadline. A client's clock does not contradict
+        // its pushed fact; expiry arrives with the last admitted heartbeat.
         expect(hook.getCurrent()).toEqual({ machineReachable: true, machineOnline: true,
             machineRpcTargetAvailable: true, machineReachability: 'reachable', machineLastSeenAt: null });
-        const machine = getStorage().getState().machines.m1!;
-        const offline = { ...machine, active: false, activeAt: 1 };
-        await act(async () => getStorage().setState({ machines: { m1: offline }, machineListByServerId: { [serverId]: [offline] } }));
+        const source = { sourceServerId: serverId, sourceAccountId: 'account' };
+        await act(async () => getStorage().getState().applyMachineActivityUpdates([
+            { id: 'm1', active: false, activeAt: lastHeartbeat },
+        ], source));
         expect(hook.getCurrent()).toEqual({ machineReachable: false, machineOnline: false,
-            machineRpcTargetAvailable: false, machineReachability: 'unreachable', machineLastSeenAt: 1 });
+            machineRpcTargetAvailable: false, machineReachability: 'unreachable', machineLastSeenAt: lastHeartbeat });
+        await act(async () => getStorage().getState().applyMachineActivityUpdates([
+            { id: 'm1', active: true, activeAt: Date.now() },
+        ], source));
+        expect(hook.getCurrent()).toEqual({ machineReachable: true, machineOnline: true,
+            machineRpcTargetAvailable: true, machineReachability: 'reachable', machineLastSeenAt: null });
     });
 
     it('does not update visible reachability when an unrelated background session changes', async () => {

@@ -2,7 +2,8 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { ActionsSettingsV1Schema, isApprovalRequiredByActionsSettings } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { SessionBoardMutationV1Schema, SessionSurfaceItemV1Schema } from '@happier-dev/protocol/sessions/board';
 
@@ -55,7 +56,7 @@ describe('mounted Board note approval continuation', () => {
 
     it.each(['approve', 'reject', 'cancel', 'unknown'] as const)('retires the draft only after the real %s outcome applies the saved note', async (outcome) => {
         const decision = outcome === 'unknown' ? 'approve' : outcome;
-        const terminalStatus = outcome === 'unknown' ? 'failed' : decision === 'approve' ? 'executed' : decision === 'reject' ? 'rejected' : 'canceled';
+        const terminalStatus = outcome === 'unknown' ? 'outcome_unknown' : decision === 'approve' ? 'executed' : decision === 'reject' ? 'rejected' : 'canceled';
         const serverId = await homes.addHome({ name: 'Home', serverUrl: 'https://board-approval.example', accountId: 'alice' });
         const address = { serverId, sessionId: 'session-one' };
         const account = await captureLazyActionAccountContext(serverId);
@@ -133,7 +134,8 @@ describe('mounted Board note approval continuation', () => {
             expect(controller.noteDraft).not.toBeNull();
             expect(mutations).toHaveLength(0);
             const stored = homes.artifacts(serverId).readPlainBody(artifactId);
-            expect(stored).toContain('reviewedVisual');
+            expect(JSON.parse(stored)).toMatchObject({ actionId: 'session.board.item.upsert',
+                actionArgs: { item: { title: 'Shipping' } } });
             await act(async () => {
                 const result = await executor.execute('approval.request.decide', { artifactId, decision }, { serverId, surface: 'ui', authority: 'present_user', runtimeAccountId: 'alice' });
                 expect(result).toMatchObject({ ok: true, result: { status: terminalStatus } });

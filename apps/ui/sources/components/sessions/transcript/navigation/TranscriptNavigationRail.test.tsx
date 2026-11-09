@@ -378,7 +378,8 @@ describe('TranscriptNavigationRail', () => {
         expect(screen.findByTestId('transcript-navigation-rail.edge.top')).toBeNull();
         expect(screen.findByTestId('transcript-navigation-rail.edge.bottom')).toBeTruthy();
 
-        const marker = screen.findByTestId('transcript-navigation-rail.marker:turn-31');
+        // A marker the 192 px rail viewport shows: off-viewport markers are not mounted to hover.
+        const marker = screen.findByTestId('transcript-navigation-rail.marker:turn-12');
         await act(async () => {
             marker?.props.onPointerEnter?.({ nativeEvent: { pointerType: 'mouse' } });
         });
@@ -565,7 +566,8 @@ describe('TranscriptNavigationRail', () => {
             />,
         );
 
-        const marker = screen.findByTestId('transcript-navigation-rail.marker:turn-120');
+        // The last marker the 192 px rail viewport shows at rest.
+        const marker = screen.findByTestId('transcript-navigation-rail.marker:turn-16');
         await act(async () => {
             marker?.props.onPointerEnter?.({ nativeEvent: { pointerType: 'mouse' } });
         });
@@ -589,6 +591,57 @@ describe('TranscriptNavigationRail', () => {
         // 240 - 24 - 120 - 8 = 88px for a 120px-tall preview.
         expect(topAfterMeasure).toBeLessThan(topBeforeMeasure);
         expect(topAfterMeasure).toBeLessThanOrEqual(88);
+    });
+
+    // Ported from 0.2 #864: the rail remounts per Session and its entries grow with loaded and
+    // remote turns, so mounting one marker per entry made its cost follow the transcript length.
+    it('mounts only the markers within reach of the rail viewport and follows the rail scroll', async () => {
+        const { TranscriptNavigationRail } = await import('./TranscriptNavigationRail');
+        const screen = await renderScreen(
+            <TranscriptNavigationRail {...baseProps()} entries={buildEntries(400)} paneHeightPx={800} />,
+        );
+        const markerIds = () => new Set(screen
+            .findAll((node) => typeof node.type === 'string'
+                && /^transcript-navigation-rail\.marker:/.test(String(node.props?.testID ?? '')))
+            .map((node) => String(node.props.testID)));
+        const mountedAtTop = markerIds();
+        // A 640 px rail viewport at a 12 px pitch shows ~54 markers, plus half a viewport of overscan.
+        expect(mountedAtTop.size).toBeGreaterThanOrEqual(54);
+        expect(mountedAtTop.size).toBeLessThanOrEqual(81);
+        expect(mountedAtTop.has('transcript-navigation-rail.marker:turn-1')).toBe(true);
+        expect(mountedAtTop.has('transcript-navigation-rail.marker:turn-300')).toBe(false);
+
+        await act(async () => {
+            screen.findByTestId('transcript-navigation-rail.scroll')?.props.onScroll?.({
+                nativeEvent: { contentOffset: { y: 3_588 } },
+            });
+        });
+        const mountedAfterScroll = markerIds();
+        expect(mountedAfterScroll.has('transcript-navigation-rail.marker:turn-300')).toBe(true);
+        // The window plus the active marker, which stays mounted wherever it is.
+        expect(mountedAfterScroll.size).toBeLessThanOrEqual(108);
+        expect(mountedAfterScroll.has('transcript-navigation-rail.marker:turn-1')).toBe(true);
+    });
+
+    it('keeps mounted marker press handlers stable when entries append', async () => {
+        const { TranscriptNavigationRail } = await import('./TranscriptNavigationRail');
+        const onJump = vi.fn();
+        const screen = await renderScreen(
+            <TranscriptNavigationRail {...baseProps(onJump)} entries={buildEntries(20)} />,
+        );
+        const before = screen.findByTestId('transcript-navigation-rail.marker:turn-3')?.props.onClick;
+        await act(async () => {
+            screen.update(<TranscriptNavigationRail {...baseProps(onJump)} entries={buildEntries(21)} />);
+        });
+        const marker = screen.findByTestId('transcript-navigation-rail.marker:turn-3');
+        expect(marker?.props.onClick).toBe(before);
+        await act(async () => {
+            marker?.props.onClick?.();
+        });
+        expect(onJump).toHaveBeenCalledWith(
+            expect.objectContaining({ id: 'turn-3' }),
+            expect.objectContaining({ source: 'rail' }),
+        );
     });
 
     it('renders a quiet pinned marker distinction separate from the active state', async () => {

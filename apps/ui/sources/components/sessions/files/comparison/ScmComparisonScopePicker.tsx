@@ -24,6 +24,7 @@ const SOURCE_ICON: Readonly<Record<FilesComparisonScopeOption['sourceKind'], Ico
     turnCheckpoint: 'clock',
     branch: 'git-branch',
     commit: 'git-commit',
+    revisionRange: 'git-commit',
     pullRequest: 'git-pull-request',
 };
 
@@ -118,7 +119,9 @@ export const ScmComparisonScopePicker = React.memo(function ScmComparisonScopePi
             search={false}
             showCategoryTitles
             matchTriggerWidth={false}
-            maxWidthCap={360}
+            maxWidthCap={420}
+            popoverPhonePresentation="sheet"
+            popoverAccessibilityLabel={t('scmComparison.scopePicker.a11y')}
             placement="bottom"
             popoverAnchorAlign="start"
             trigger={({ toggle, open: triggerOpen }) => props.renderTrigger ? props.renderTrigger({ toggle, open: triggerOpen }) : (

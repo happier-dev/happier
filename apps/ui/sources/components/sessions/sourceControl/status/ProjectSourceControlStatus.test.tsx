@@ -14,7 +14,7 @@ let snapshotMock: any = null;
 installSourceControlStatusCommonModuleMocks({
     storage: async (importOriginal) =>
         createPartialStorageModuleMock(importOriginal, {
-            useSessionProjectScmSnapshot: () => snapshotMock,
+            useSessionProjectScmSummarySnapshot: () => snapshotMock,
         }),
     text: async () =>
         createTextModuleMock({

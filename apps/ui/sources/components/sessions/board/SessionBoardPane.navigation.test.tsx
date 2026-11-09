@@ -124,7 +124,6 @@ describe('SessionBoardPane placement composition', () => {
                 sessionId="session-1"
                 serverId="home-1"
                 host="details"
-                resolvePrimaryHost={() => 'details'}
                 density="full"
                 layout="grid"
             />,
@@ -148,7 +147,6 @@ describe('SessionBoardPane placement composition', () => {
                 sessionId="session-1"
                 serverId="home-1"
                 host={host}
-                resolvePrimaryHost={() => host}
                 density="full"
                 layout="grid"
                 {...(interaction ? { interaction } : {})}
@@ -178,7 +176,6 @@ describe('SessionBoardPane placement composition', () => {
                 sessionId="session-1"
                 serverId="home-1"
                 host="sidebar"
-                resolvePrimaryHost={() => null}
                 density="compact"
                 layout="single"
                 interaction="navigation"
@@ -195,7 +192,6 @@ describe('SessionBoardPane placement composition', () => {
                 sessionId="session-1"
                 serverId="home-1"
                 host="focusedDetails"
-                resolvePrimaryHost={() => 'focusedDetails'}
                 density="full"
                 layout="grid"
             />,

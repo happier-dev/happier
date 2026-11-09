@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable, HappierReviewSeveritySign } from '@happier-dev/plugin-ui/presentation';
-import type { ReviewFinding } from '@happier-dev/protocol';
+import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
 
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { StructuredFindText } from '@/components/sessions/transcript/structured/structuredFindText';

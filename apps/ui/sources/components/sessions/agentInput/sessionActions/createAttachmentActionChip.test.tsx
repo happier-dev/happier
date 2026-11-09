@@ -24,6 +24,79 @@ function assertSingleCollapsedAction(
 }
 
 describe('createAttachmentActionChip', () => {
+    it('adds the desktop capture entries to the root list, each running the action it was given', async () => {
+        const { createAttachmentActionChip } = await import('./createAttachmentActionChip');
+        const run = vi.fn();
+        const chip = createAttachmentActionChip({ onPickFile: () => {}, onPickImage: () => {}, screenCapture: [
+            { id: 'capture-screen', run }, { id: 'record-screen', run: () => {} }, { id: 'attach-recent-capture', run: () => {} },
+        ] });
+        const step = chip.collapsedOptionsPopover && 'rootStep' in chip.collapsedOptionsPopover ? chip.collapsedOptionsPopover.rootStep : null;
+        const section = step?.sections.find((candidate) => candidate.id === 'screen-capture');
+        const options = section && 'options' in section ? section.options : [];
+        expect(options.map((option) => option.id)).toEqual(['capture-screen', 'record-screen', 'attach-recent-capture']);
+        options[0]?.onSelect?.();
+        expect(run).toHaveBeenCalledTimes(1);
+    });
+
+    it('stays a direct file press on a desktop host with no capture entries', async () => {
+        const { createAttachmentActionChip } = await import('./createAttachmentActionChip');
+        const chip = createAttachmentActionChip({ onPickFile: () => {}, onPickImage: () => {} });
+        expect(chip.collapsedOptionsPopover).toBeUndefined();
+    });
+
+    it('keeps files available while image attachment options explain dispatcher refusal', async () => {
+        const { createAttachmentActionChip } = await import('./createAttachmentActionChip');
+        const originalOs = Platform.OS;
+        Platform.OS = 'ios';
+        try {
+            const onPickFile = vi.fn();
+            const onPickImage = vi.fn();
+            const onPasteImage = vi.fn();
+            const chip = createAttachmentActionChip({ onPickFile, onPickImage, onPasteImage,
+                imageInputDisabledReason: 'Agent cannot read images' });
+            const section = chip.collapsedOptionsPopover?.rootStep.sections[0];
+            if (section?.kind !== 'static') throw new Error('Expected attachment options');
+            const images = section.options.filter(option => option.id !== 'add-file');
+            expect(images).toHaveLength(2);
+            for (const option of images) {
+                expect(option).toMatchObject({ disabled: true, subtitle: 'Agent cannot read images' });
+                option.onSelect?.();
+            }
+            expect(onPickImage).not.toHaveBeenCalled();
+            expect(onPasteImage).not.toHaveBeenCalled();
+            const file = section.options.find(option => option.id === 'add-file');
+            expect(file?.disabled).not.toBe(true);
+            file?.onSelect?.();
+            expect(onPickFile).toHaveBeenCalledOnce();
+        } finally {
+            Platform.OS = originalOs;
+        }
+    });
+    it.each(['web', 'ios', 'android'] as const)('explains an unavailable attachment route on %s without opening a picker', async os => {
+        const { createAttachmentActionChip } = await import('./createAttachmentActionChip');
+        const originalOs = Platform.OS;
+        Platform.OS = os;
+        try {
+            const onPickFile = vi.fn();
+            const reason = { disabledReason: 'File transfer unavailable. Reconnect the session and try again.' };
+            const chip = createAttachmentActionChip({ ...reason, disabled: true, onPickFile, onPickImage: vi.fn() });
+            const action = chip.collapsedAction?.({ tint: '#000', dismiss: vi.fn(), blurInput: vi.fn(), openCollapsedPopover: vi.fn() });
+            assertSingleCollapsedAction(action);
+            expect(action).toMatchObject({ disabled: true, subtitle: reason.disabledReason });
+            action.onPress?.();
+            expect(onPickFile).not.toHaveBeenCalled();
+            const screen = await renderScreen(<>{chip.render({ chipStyle: () => ({}), showLabel: false,
+                iconColor: '#000', textStyle: {}, countTextStyle: {}, popoverAnchorRef: { current: null },
+            })}</>);
+            expect(screen.findByTestId('agent-input-attachments-chip')?.props).toMatchObject({
+                disabled: true, accessibilityHint: reason.disabledReason,
+            });
+            expect(screen.tree.findAllByProps({ children: reason.disabledReason }).length).toBeGreaterThan(0);
+        } finally {
+            Platform.OS = originalOs;
+        }
+    });
+
     it('on iOS it opens a chooser popover (image vs file) instead of launching a picker immediately', async () => {
         const { createAttachmentActionChip } = await import('./createAttachmentActionChip');
         const originalOs = Platform.OS;

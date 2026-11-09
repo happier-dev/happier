@@ -6,13 +6,9 @@ import { createSessionListRenderableSessionFixture, renderScreen } from '@/dev/t
 import { findTestInstanceByTypeContainingText, type RenderScreenResult } from '@/dev/testkit/render/renderScreen';
 import { sessionHumanPresenceStore } from '@/sync/domains/session/humanPresence/sessionHumanPresenceStore';
 import { storage } from '@/sync/domains/state/storageStore';
-import {
-    createSessionCollaborationHeaderMenuItem,
-    resolveSessionCollaborationHeaderPlacement,
-    SessionCollaborationHeaderEntry,
-    useSessionCollaborationHeaderState,
-} from './SessionCollaborationHeaderEntry';
-import { STALE_PRESENCE_OPACITY } from './SessionViewerFacepile';
+import { createSessionPeopleMenuItem, useSessionPeopleAttentionLabel } from '@/components/sessions/actions/sessionHeaderPeopleMenuItem';
+import { useSessionHumanPresence } from '@/sync/domains/session/humanPresence/useSessionHumanPresence';
+import { SessionViewerFacepile, STALE_PRESENCE_OPACITY } from './SessionViewerFacepile';
 import { SessionCollaborationRailBadge, useSessionConversationMentioned } from './sessionConversationAttention';
 import { SessionPresenceSection } from './SessionPresenceSection';
 
@@ -62,13 +58,18 @@ function publishViewerAttention(reasons: readonly ('mentioned' | 'unread_discuss
     }));
 }
 
-function HeaderEntryFromCanonicalState(props: Readonly<{ onPress: () => void }>) {
-    return <SessionCollaborationHeaderEntry target={target} onPress={props.onPress} />;
+// The live facepile over the canonical presence owner (People's own surfaces render it).
+function FacepileFromCanonicalState(props: Readonly<{ onPress: () => void }>) {
+    const presence = useSessionHumanPresence(target);
+    if (!(presence.status === 'live' || presence.status === 'stale')) return null;
+    return <SessionViewerFacepile viewers={presence.viewers} stale={presence.status === 'stale'} onPress={props.onPress} />;
 }
 
-function HeaderPlacementFromCanonicalState(props: Readonly<{ compact: boolean }>) {
-    const state = useSessionCollaborationHeaderState(target, props.compact);
-    return <View testID="session-collaboration-placement" accessibilityLabel={state.direct ? 'direct' : state.overflow ? 'overflow' : 'none'} />;
+// The Session header's ⋯ People entry while the rail is not on screen, from the canonical attention owner.
+function PeopleMenuEntryFromCanonicalState() {
+    const attentionLabel = useSessionPeopleAttentionLabel(target);
+    const item = createSessionPeopleMenuItem({ iconColor: '#111111', attentionColor: '#222222', attentionLabel });
+    return <View testID="session-people-menu-entry" accessibilityLabel={item.accessibilityLabel}>{item.rightElement ?? null}</View>;
 }
 
 function expectPresenceText(screen: RenderScreenResult, testID: string, text: string): void {
@@ -84,23 +85,8 @@ function expectPresenceText(screen: RenderScreenResult, testID: string, text: st
 }
 
 describe('Session presence surfaces', () => {
-    it('places the compact collaboration entry exactly once as presence changes', () => {
-        expect(resolveSessionCollaborationHeaderPlacement({ compact: true, hasNamedViewers: false })).toEqual({
-            direct: false,
-            overflow: true,
-        });
-        expect(resolveSessionCollaborationHeaderPlacement({ compact: true, hasNamedViewers: true })).toEqual({
-            direct: true,
-            overflow: false,
-        });
-        expect(resolveSessionCollaborationHeaderPlacement({ compact: false, hasNamedViewers: false })).toEqual({
-            direct: true,
-            overflow: false,
-        });
-    });
-
     it('preserves collaboration attention in the folded menu presentation', () => {
-        const item = createSessionCollaborationHeaderMenuItem({
+        const item = createSessionPeopleMenuItem({
             iconColor: '#111111',
             attentionColor: '#222222',
             attentionLabel: '1 unread',
@@ -110,18 +96,16 @@ describe('Session presence surfaces', () => {
         expect(item.rightElement).not.toBeNull();
     });
 
-    it('uses one header action, bounded avatars, all accessible names and stale continuity', async () => {
+    it('shows bounded avatars, all accessible names and stale continuity', async () => {
         home = sessionHumanPresenceStore.attachHome(target.serverId, 'self');
         home.beginDeclaration([target.sessionId]);
         const open = vi.fn();
-        const screen = await renderScreen(<HeaderEntryFromCanonicalState onPress={open} />);
-        expect(screen.findByTestId('session-collaboration-header')).not.toBeNull();
+        const screen = await renderScreen(<FacepileFromCanonicalState onPress={open} />);
         expect(screen.findByTestId('session-viewer-facepile')).toBeNull();
         await act(async () => home!.receiveSnapshot({ v: 1, sessionId: target.sessionId, observedAt: 1,
             viewers: ['Alice', 'Bob', 'Charlie', 'Dana', 'self'].map((id) => ({ account: account(id), typing: id === 'Alice' })),
         }));
         expect(screen.findByTestId('session-viewer-facepile')).not.toBeNull();
-        expect(screen.findByTestId('session-collaboration-header')).toBeNull();
         expect(screen.findAllByTestId('session-viewer-avatar')).toHaveLength(3);
         expect(screen.findByTestId('session-viewer-overflow')?.props.children).toBe('+1');
         expect(screen.findByTestId('session-viewer-facepile')?.props.accessibilityLabel).toContain('Dana');
@@ -134,7 +118,7 @@ describe('Session presence surfaces', () => {
     it('says who is typing instead of signalling it with the avatar ring colour alone', async () => {
         home = sessionHumanPresenceStore.attachHome(target.serverId, 'self');
         home.beginDeclaration([target.sessionId]);
-        const screen = await renderScreen(<HeaderEntryFromCanonicalState onPress={vi.fn()} />);
+        const screen = await renderScreen(<FacepileFromCanonicalState onPress={vi.fn()} />);
         await act(async () => home!.receiveSnapshot({
             v: 1, sessionId: target.sessionId, observedAt: 2,
             viewers: [{ account: account('Alice'), typing: true }, { account: account('Bob'), typing: false }],
@@ -183,74 +167,6 @@ describe('Session presence surfaces', () => {
 
         await act(async () => { screen.findByTestId('session-presence-summary-anchor')?.props.onBlur?.(); });
         expect(screen.findByTestId('session-presence-announcement')).toBeNull();
-    });
-
-    it('replaces the solo collaboration action with the compact facepile when another viewer arrives', async () => {
-        home = sessionHumanPresenceStore.attachHome(target.serverId, 'self');
-        home.beginDeclaration([target.sessionId]);
-        const open = vi.fn();
-        const screen = await renderScreen(
-            <HeaderEntryFromCanonicalState onPress={open} />,
-        );
-
-        expect(screen.findByTestId('session-collaboration-header')).not.toBeNull();
-        expect(screen.findByTestId('session-viewer-facepile')).toBeNull();
-
-        await act(async () => home!.receiveSnapshot({
-            v: 1,
-            sessionId: target.sessionId,
-            observedAt: 4,
-            viewers: [{ account: account('Alice'), typing: false }],
-        }));
-
-        expect(screen.findByTestId('session-viewer-facepile')).not.toBeNull();
-        await screen.pressByTestIdAsync('session-viewer-facepile');
-        expect(open).toHaveBeenCalledOnce();
-    });
-
-    it('keeps the facepile direct while allowing a folded solo action to stay in overflow', async () => {
-        home = sessionHumanPresenceStore.attachHome(target.serverId, 'self');
-        home.beginDeclaration([target.sessionId]);
-        const open = vi.fn();
-        const screen = await renderScreen(
-            <SessionCollaborationHeaderEntry target={target} attentionLabel={null} compact onPress={open} />,
-        );
-
-        expect(screen.findByTestId('session-collaboration-header')).toBeNull();
-        expect(screen.findByTestId('session-viewer-facepile')).toBeNull();
-
-        await act(async () => home!.receiveSnapshot({
-            v: 1,
-            sessionId: target.sessionId,
-            observedAt: 5,
-            viewers: [{ account: account('Alice'), typing: false }],
-        }));
-
-        expect(screen.findByTestId('session-viewer-facepile')).not.toBeNull();
-        await screen.pressByTestIdAsync('session-viewer-facepile');
-        expect(open).toHaveBeenCalledOnce();
-    });
-
-    it('moves the compact action from overflow to direct without subscribing its parent', async () => {
-        home = sessionHumanPresenceStore.attachHome(target.serverId, 'self');
-        home.beginDeclaration([target.sessionId]);
-        let parentRenderCount = 0;
-        function Parent() {
-            parentRenderCount += 1;
-            return <HeaderPlacementFromCanonicalState compact />;
-        }
-        const screen = await renderScreen(<Parent />);
-        expect(screen.findByTestId('session-collaboration-placement')?.props.accessibilityLabel).toBe('overflow');
-
-        await act(async () => home!.receiveSnapshot({
-            v: 1,
-            sessionId: target.sessionId,
-            observedAt: 6,
-            viewers: [{ account: account('Alice'), typing: false }],
-        }));
-
-        expect(screen.findByTestId('session-collaboration-placement')?.props.accessibilityLabel).toBe('direct');
-        expect(parentRenderCount).toBe(1);
     });
 
     it('keeps one present line through connecting, just-you and unsupported, never collapsing the space', async () => {
@@ -365,27 +281,16 @@ describe('Session presence surfaces', () => {
         expect(disabledRows).toEqual([]);
     });
 
-    it('decorates the existing header action from exact-Home canonical discussion attention', async () => {
+    it('carries exact-Home canonical discussion attention on the header ⋯ People entry', async () => {
         home = sessionHumanPresenceStore.attachHome(target.serverId, 'self');
         home.beginDeclaration([target.sessionId]);
         publishViewerAttention(['mentioned']);
 
-        const screen = await renderScreen(<HeaderEntryFromCanonicalState onPress={vi.fn()} />);
-        expect(screen.findByTestId('session-collaboration-attention')).not.toBeNull();
+        const screen = await renderScreen(<PeopleMenuEntryFromCanonicalState />);
+        expect(screen.findByTestId('session-collaboration-overflow-attention')).not.toBeNull();
         // A mention is the one targeted signal the feature adds; announcing the
         // generic "1 unread" both hid it and stated a count this client never has.
-        expect(screen.findByTestId('session-collaboration-header')?.props.accessibilityLabel)
-            .toContain('You were mentioned');
-
-        await act(async () => home!.receiveSnapshot({
-            v: 1,
-            sessionId: target.sessionId,
-            observedAt: 3,
-            viewers: [{ account: account('Alice'), typing: false }],
-        }));
-        expect(screen.findByTestId('session-collaboration-attention')).not.toBeNull();
-        expect(screen.findByTestId('session-viewer-facepile')?.props.accessibilityLabel)
-            .toContain('You were mentioned');
+        expect(screen.findByTestId('session-people-menu-entry')?.props.accessibilityLabel).toContain('You were mentioned');
     });
 
     it('announces ordinary unread discussion without the mention wording or a fabricated count', async () => {
@@ -393,8 +298,8 @@ describe('Session presence surfaces', () => {
         home.beginDeclaration([target.sessionId]);
         publishViewerAttention(['unread_discussion']);
 
-        const screen = await renderScreen(<HeaderEntryFromCanonicalState onPress={vi.fn()} />);
-        const label = screen.findByTestId('session-collaboration-header')?.props.accessibilityLabel as string;
+        const screen = await renderScreen(<PeopleMenuEntryFromCanonicalState />);
+        const label = screen.findByTestId('session-people-menu-entry')?.props.accessibilityLabel as string;
         expect(label).toContain('Unread conversations');
         expect(label).not.toContain('mention');
         expect(label).not.toContain('1 unread');
@@ -402,8 +307,8 @@ describe('Session presence surfaces', () => {
 
     it('does not decorate untracked, unknown, or another Home Session state', async () => {
         publishViewerAttention(['unread_discussion'], false);
-        const screen = await renderScreen(<HeaderEntryFromCanonicalState onPress={vi.fn()} />);
-        expect(screen.findByTestId('session-collaboration-attention')).toBeNull();
+        const screen = await renderScreen(<PeopleMenuEntryFromCanonicalState />);
+        expect(screen.findByTestId('session-collaboration-overflow-attention')).toBeNull();
 
         publishViewerAttention(['unread_discussion']);
         storage.setState((state) => ({
@@ -414,7 +319,7 @@ describe('Session presence surfaces', () => {
                 'another-home': state.sessionListRowsByServerId[target.serverId] ?? {},
             },
         }));
-        expect(screen.findByTestId('session-collaboration-attention')).toBeNull();
+        expect(screen.findByTestId('session-collaboration-overflow-attention')).toBeNull();
     });
 });
 

@@ -34,6 +34,29 @@ describe('resolveSessionListViewEmptyState', () => {
             .toMatchObject({ mode: 'empty', titleKey: 'sessionsList.queryNoMatchesLoadedTitle', action: 'load_more' });
     });
 
+    it('names the selected Space when it is empty, not the scope its filter happens to use', () => {
+        const input = {
+            presentation: { kind: 'ready', complete: true },
+            visibleSessionCount: 0,
+            filters: globalDefaults,
+            defaults: globalDefaults,
+            viewContext: { kind: 'global' },
+            includeInactive: true,
+            hasHiddenInactiveSessions: false,
+        } as const;
+        expect(resolveSessionListViewEmptyState({ ...input, emptySpaceName: 'Launch 0.3' })).toEqual({
+            mode: 'empty',
+            titleKey: 'sessionsList.querySpaceEmptyTitle',
+            titleParams: { name: 'Launch 0.3' },
+            descriptionKey: 'sessionsList.querySpaceEmptyDescription',
+            action: null,
+        });
+        // The default space keeps its scope wording and the way out to everything.
+        expect(resolveSessionListViewEmptyState(input)).toMatchObject({
+            titleKey: 'sessionsList.queryMyWorkEmptyTitle',
+            action: 'browse_all_accessible',
+        });
+    });
     it('keeps an incomplete text-search zero explicitly limited to loaded Sessions', () => {
         expect(resolveSessionListViewEmptyState({
             presentation: { kind: 'ready', complete: false },

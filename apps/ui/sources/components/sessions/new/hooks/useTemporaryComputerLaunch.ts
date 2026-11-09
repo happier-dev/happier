@@ -448,7 +448,7 @@ export function useTemporaryComputerLaunch(input: Readonly<{
             if (event.entityIds !== undefined
                 && !event.entityIds.includes(EPHEMERAL_RUNNER_ACTIVATION_ACCOUNT_CHANGE_ENTITY_ID_V1)) return;
             void refreshRef.current();
-        });
+        }, { reconnect: 'refresh' });
     }, [input.client, input.serverId, projection?.state]);
 
     // One live review producer per claimed, still-unreviewed activation. An

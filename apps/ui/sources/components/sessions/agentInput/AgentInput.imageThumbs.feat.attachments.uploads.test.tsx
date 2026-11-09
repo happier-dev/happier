@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { layoutHitArea } from '@/dev/testkit/harness/hitFrameReach';
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 // The static storage graph reaches the Socket.IO transport; register its external boundary before any import.
@@ -9,6 +10,7 @@ import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/pane
 import { projectAgentInputAttachmentRowItems, type AgentInputAttachment } from './agentInputContracts';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 import { ModalPortalTargetProvider } from '@/modal/portal/ModalPortalTarget';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (!style) return {};
@@ -198,17 +200,16 @@ describe('AgentInput (image attachment thumbnails)', () => {
 
         const screen = await renderAgentInput(attachments);
 
-        const { resolveMinimumInteractiveTargetSize } = await import('@/components/ui/interactiveTargetSize');
-        const touchFloor = resolveMinimumInteractiveTargetSize('web');
+        const touchFloor = HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE;
         for (const key of ['image', 'file']) {
             const remove = screen.findByTestId(`agent-input-attachment-remove:${key}`);
             expect(remove?.props.accessibilityRole).toBe('button');
             expect(remove?.props.accessibilityLabel).toBe('common.remove');
-            expect(remove?.props.hitSlop).toBeUndefined();
-            // The image tile draws its corner control in a fixed frame; the file chip grows a minimum frame.
+            // The corner control keeps its compact drawn square; the WCAG pointer floor is its hit area.
             const frame = flattenStyle(remove?.props.style);
-            expect({ width: frame?.width ?? frame?.minWidth, height: frame?.height ?? frame?.minHeight })
-                .toEqual({ width: touchFloor, height: touchFloor });
+            const drawn = { width: Number(frame?.width ?? frame?.minWidth), height: Number(frame?.height ?? frame?.minHeight) };
+            const area = await layoutHitArea(() => screen.findByTestId(`agent-input-attachment-remove:${key}`), drawn);
+            expect(Math.min(area.width, area.height)).toBeGreaterThanOrEqual(touchFloor);
         }
     });
 

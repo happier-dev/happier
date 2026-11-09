@@ -15,7 +15,7 @@ import { t } from '@/text';
  */
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
 
 import { renderScreen } from '@/dev/testkit';
@@ -172,7 +172,7 @@ describe('SessionModelPicker — the popup pattern survives every selection, sin
             selectedModelId="cached-model"
             selectedIndicatorColor="#fff"
             selectedModelSelection={{ v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'cached-model' } }}
-            modelDiscoveryFailed
+            modelOptionsProbe={{ phase: 'idle', failed: true }}
             onSelectModel={() => {}}
         />);
         expect(screen.getTextContent()).toContain('Cached model');

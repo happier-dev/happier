@@ -51,7 +51,6 @@ vi.mock('react-native', async () => {
             Dimensions: {
                 get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
             },
-            useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
         });
 });
 vi.mock('react-native-unistyles', async () => {
@@ -162,6 +161,32 @@ describe('MessageView (streaming smoothing)', () => {
         vi.useRealTimers();
         currentTree = null;
         getStorage().setState(previousStore, true);
+    });
+
+    it('advances reveal text without rendering message actions, selection or jump chrome', async () => {
+        const { MessageView } = await import('./MessageView');
+        const { CommittedMessageActions } = await import('./messageActions/CommittedMessageActions');
+        const { MessageSelectionCheckbox } = await import('./messageSelection/MessageSelectionCheckbox');
+        const { TranscriptJumpAttention } = await import('./navigation/TranscriptJumpHighlightOverlay');
+        const interaction = { canSendMessages: true, canApprovePermissions: true };
+        const screen = await renderScreen(<MessageView message={createAgentMessage()} metadata={null} sessionId="s1" interaction={interaction} />);
+        await screen.update(<MessageView message={createAgentMessage({ text: `Hello ${'streamed text '.repeat(8)}` })} metadata={null} sessionId="s1" interaction={interaction} />);
+        await flushHookEffects({ cycles: 2, turns: 2 });
+        const before = String(captured.markdownProps.at(-1)?.markdown);
+        // Observe committed props at the renderer boundary, without mocking any chrome.
+        const readChrome = () => screen.root.findAll(node => node.type === CommittedMessageActions
+            || node.type === MessageSelectionCheckbox || node.type === TranscriptJumpAttention).map(node => node.props);
+        let previous = readChrome();
+        expect(previous.length).toBeGreaterThan(0);
+        let chromeUpdates = 0;
+        for (let frame = 0; frame < 30; frame += 1) {
+            await act(async () => { vi.advanceTimersByTime(16); });
+            const next = readChrome();
+            chromeUpdates += next.filter((props, index) => props !== previous[index]).length;
+            previous = next;
+        }
+        expect(String(captured.markdownProps.at(-1)?.markdown).length).toBeGreaterThan(before.length);
+        expect(chromeUpdates).toBe(0);
     });
 
     it('records streaming Markdown placeholder history only after the same-message render commits', async () => {

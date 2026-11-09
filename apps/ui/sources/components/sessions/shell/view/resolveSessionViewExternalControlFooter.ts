@@ -1,6 +1,9 @@
 import type { ChatFooterExternalControlState } from '@/components/sessions/transcript/ChatFooter';
 import type { ExternalSessionIdentityPresentation } from '@/components/sessions/presentation/externalSessionIdentityPresentation';
-import type { ExternalSessionRuntimePresentation } from '@/components/sessions/presentation/externalSessionRuntimePresentation';
+import {
+    externalAgentStateNeedsAttention,
+    type ExternalSessionRuntimePresentation,
+} from '@/components/sessions/presentation/externalSessionRuntimePresentation';
 
 export type SessionViewExternalControlFooter = ChatFooterExternalControlState;
 
@@ -76,9 +79,11 @@ export function resolveSessionViewExternalControlFooter(input: Input): SessionVi
     }
 
     const status = input.externalSessionRuntime.status;
+    const externalAgentState = input.externalSessionRuntimePresentation?.externalAgent.state ?? 'unknown';
     return {
         externalAgentPresentation: {
-            state: input.externalSessionRuntimePresentation?.externalAgent.state ?? 'unknown',
+            state: externalAgentState,
+            needsAttention: externalAgentStateNeedsAttention(externalAgentState),
             labelKey:
                 input.externalSessionRuntimePresentation?.externalAgent.labelKey
                 ?? 'status.externalStatusUnknown',

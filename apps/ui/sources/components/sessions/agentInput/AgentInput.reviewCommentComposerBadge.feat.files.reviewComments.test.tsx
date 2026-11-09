@@ -1,10 +1,12 @@
 import React from 'react';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act } from 'react-test-renderer';
 import { renderScreen as renderPanelScreen } from '@/dev/testkit';
 import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (!style) return {};
@@ -232,13 +234,16 @@ describe('AgentInput review comment composer badge', () => {
             />,
         );
 
-        const { resolveMinimumInteractiveTargetSize } = await import('@/components/ui/interactiveTargetSize');
-        const touchFloor = resolveMinimumInteractiveTargetSize('web');
+        const touchFloor = HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE;
+        const { layoutHitArea } = await import('@/dev/testkit/harness/hitFrameReach');
         const removeButton = screen.findByTestId('agent-input-review-comments-attachment-badge-remove');
         expect(removeButton?.props.accessibilityRole).toBe('button');
         expect(removeButton?.props.accessibilityLabel).toBe('files.reviewComments.detachOrDiscardTitle');
         expect(removeButton?.props.hitSlop).toBeUndefined();
-        expect(flattenStyle(removeButton?.props.style)).toMatchObject({ minHeight: touchFloor, minWidth: touchFloor });
+        // The badge's remove control keeps its drawn square and reaches the pointer floor by hit area.
+        const drawn = flattenStyle(removeButton?.props.style);
+        const area = await layoutHitArea(() => screen.findByTestId('agent-input-review-comments-attachment-badge-remove'), { width: Number(drawn.width ?? drawn.minWidth), height: Number(drawn.height ?? drawn.minHeight) });
+        expect(Math.min(area.width, area.height)).toBeGreaterThanOrEqual(touchFloor);
 
         await screen.pressByTestIdAsync('agent-input-review-comments-attachment-badge-remove');
 
@@ -252,5 +257,52 @@ describe('AgentInput review comment composer badge', () => {
 
         discardButton.onPress();
         expect(clearDraftsSpy).toHaveBeenCalled();
+    });
+
+    it('keeps the review comment badge inert while the composer is disabled', async () => {
+        const draft = {
+            id: 'draft-1',
+            filePath: 'src/demo.ts',
+            source: 'file',
+            anchor: { kind: 'fileLine', startLine: 12 },
+            snapshot: { selectedLines: ['const x = 1;'], beforeContext: [], afterContext: [] },
+            body: 'Consider extracting this.',
+            createdAt: 1,
+        } satisfies ReviewCommentDraft;
+        const reviewCommentsPresentation = createReviewCommentsActionChip({
+            reviewCommentDrafts: [draft],
+            onSetDraftIncluded: setDraftIncludedSpy,
+            onClearDrafts: clearDraftsSpy,
+            onDeleteDraft: deleteDraftSpy,
+            onUpdateDraft: updateDraftSpy,
+        });
+        if (!reviewCommentsPresentation?.attachmentRowItem) {
+            throw new Error('Expected a review comments row item');
+        }
+
+        modalAlertSpy.mockClear();
+        modalShowSpy.mockClear();
+
+        const screen = await renderScreen(
+            <AgentInput
+                value="locked prompt"
+                placeholder="placeholder"
+                onChangeText={() => {}}
+                onSend={() => {}}
+                autocompleteKinds={[]}
+                autocompleteSuggestions={async () => []}
+                extraActionChips={[reviewCommentsPresentation.actionChip]}
+                attachmentRowItems={[reviewCommentsPresentation.attachmentRowItem]}
+                disabled
+            />,
+        );
+
+        expect(screen.findByTestId('agent-input-review-comments-attachment-badge')).toBeTruthy();
+        expect(screen.findByTestId('agent-input-review-comments-attachment-badge-remove')).toBeNull();
+        await act(async () => {
+            screen.findByTestId('agent-input-review-comments-attachment-badge')?.props.onPress?.();
+        });
+        expect(modalShowSpy).not.toHaveBeenCalled();
+        expect(modalAlertSpy).not.toHaveBeenCalled();
     });
 });

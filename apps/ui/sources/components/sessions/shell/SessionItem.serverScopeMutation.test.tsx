@@ -1,17 +1,15 @@
 import React from 'react';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createMachineFixture, createPlainAccountEncryptionCurrentnessFixture, createRootLayoutFeaturesResponse, createSessionFixture, pressTestInstanceAsync, renderScreen as renderCanonicalScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
-import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
-import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
     createModelBackedSessionItemTestComponent,
@@ -30,34 +28,15 @@ import {
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: any) => React.createElement('DropdownMenu', props),
-}));
 
-vi.mock('@/components/ui/forms/dropdown/ContextMenu', () => ({
-    ContextMenu: (props: any) => React.createElement('ContextMenu', props),
-}));
 
 vi.mock('react-native-gesture-handler', () => ({
     Swipeable: (props: any) => React.createElement('Swipeable', props),
 }));
 
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: 'Text',
-    TextInput: 'TextInput',
-}));
 
-vi.mock('@/components/ui/avatar/Avatar', () => ({
-    Avatar: 'Avatar',
-}));
 
-vi.mock('@/components/ui/status/StatusDot', () => ({
-    StatusDot: 'StatusDot',
-}));
 
-vi.mock('@/hooks/session/useNavigateToSession', () => ({
-    useNavigateToSession: () => vi.fn(),
-}));
 
 const modalConfirmSpy = vi.fn(async () => true);
 let hideInactiveSessions = false;
@@ -95,12 +74,17 @@ installSessionShellCommonModuleMocks({
 vi.doUnmock('@/sync/domains/state/storage');
 vi.doUnmock('@/hooks/session/useDraft');
 vi.doUnmock('@/agents/registry/registryUiBehavior');
+// Real menu dependencies retain Socket consumers, so install the SDK boundary first.
 const network = await installSessionOpsNetworkBoundary();
+const { ContextMenu } = await import('@/components/ui/forms/dropdown/ContextMenu');
 const { getSessionStatus } = await import('@/utils/sessions/sessionUtils');
 await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
+const { AuthProvider } = await import('@/auth/context/AuthContext');
 let previousState: ReturnType<typeof storage.getState>;
 let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let rowMachine: ReturnType<typeof createMachineFixture>;
+const deleteReplies: Response[] = [];
 const mutationRequests: Array<{ url: string; method: string; token: string | null; body: unknown }> = [];
 const mutationOrder: string[] = [];
 afterAll(() => network.dispose());
@@ -110,6 +94,8 @@ async function renderScreen(element: React.ReactElement<ModelBackedSessionItemTe
     if (props.session && props.serverId) {
         const homeUrl = `https://${props.serverId.replaceAll('_', '-')}.test`;
         const home = await network.addHome(homeUrl, 'row-account');
+        rowMachine = createMachineFixture({ id: 'machine-row', activeAt: Date.now(),
+            access: createPlainMachineRowFixture({ id: 'machine-row', accountId: 'row-account' }).access });
         const session = createSessionFixture({ ...props.session, serverId: home.id,
             metadata: { ...('agentState' in props.session ? props.session.metadata : undefined), path: '/repo', host: 'tester.local', machineId: 'machine-row', name: 'Scoped row' },
         });
@@ -121,12 +107,13 @@ async function renderScreen(element: React.ReactElement<ModelBackedSessionItemTe
             if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (url.pathname === '/v1/features' || url.pathname === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
-            if (url.pathname === '/v1/machines/read-batch' && method === 'POST') return createMachineReadBatchResponseFixture(init?.body,
-                id => id === 'machine-row' ? createPlainMachineRowFixture({ id, accountId: 'row-account' }) : null);
-            if (url.pathname.startsWith('/v1/machines/')) return Response.json({ machine: { id: 'machine-row', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } });
+            const machineResponse = createPlainMachineReadHttpResponseFixture(url.pathname, init, 'row-account', rowMachine);
+            if (machineResponse) return machineResponse;
+            if (url.pathname === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: 'machine-row', accountId: 'row-account', machine: rowMachine })]);
             if (method === 'DELETE' && url.pathname === `/v1/sessions/${session.id}`) {
                 mutationRequests.push({ url: url.href, method, token: new Headers(init?.headers).get('authorization'), body: null });
-                return Response.json({ success: true });
+                mutationOrder.push('delete');
+                return deleteReplies.shift() ?? Response.json({ success: true });
             }
             if (method === 'POST' && (url.pathname.endsWith('/archive') || url.pathname.endsWith('/read-state'))) {
                 mutationRequests.push({ url: url.href, method, token: new Headers(init?.headers).get('authorization'), body: init?.body ? JSON.parse(String(init.body)) : null });
@@ -139,10 +126,12 @@ async function renderScreen(element: React.ReactElement<ModelBackedSessionItemTe
             }
             return sessionHttp.handle(input, init) ?? Response.json({}, { status: 404 });
         }) });
-        storage.getState().applyMachines([createMachineFixture({ id: 'machine-row' })], true, { sourceServerId: home.id });
-        observeMachinePresenceForTest({ serverId: home.id, accountId: 'row-account' }, ['machine-row']);
+        storage.getState().applyMachines([rowMachine], true, { sourceServerId: home.id });
+        await publishMachineInventoryForTest({ serverId: home.id, accountId: 'row-account' }, [rowMachine]);
         storage.getState().applySessions([session]);
-        return renderCanonicalScreen(React.cloneElement(element, { ...props, session, serverId: home.id }));
+        return renderCanonicalScreen(<AuthProvider initialCredentials={account.credentials}>
+            {React.cloneElement(element, { ...props, session, serverId: home.id })}
+        </AuthProvider>);
     }
     return renderCanonicalScreen(element);
 }
@@ -151,7 +140,7 @@ async function expectStopRequest(sessionId: string) {
     await vi.waitFor(() => expect({
         requests: network.requests.filter((request) => request.method === RPC_METHODS.STOP_SESSION),
         alerts: modalAlertSpy.mock.calls,
-    }).toEqual({
+    }, JSON.stringify(modalAlertSpy.mock.calls)).toEqual({
         requests: [expect.objectContaining({ serverUrl: account!.home.serverUrl, targetId: 'machine-row', payload: { sessionId }, token: account!.credentials.token })],
         alerts: [],
     }));
@@ -181,7 +170,7 @@ describe('SessionItem server-scoped mutations', () => {
                 metadata: { path: '/repo', host: 'tester.local' } })}
             serverId="server_a" selected={false} variant="default" compact={false}
         />);
-        const menu = screen.root.findAll(node => String(node.type) === 'ContextMenu').find(node =>
+        const menu = screen.root.findAll(node => node.type === ContextMenu).find(node =>
             Array.isArray(node.props.items) && node.props.items.some((item: { id?: string }) => item.id === SESSION_ACTION_DELETE_ID));
         expect(menu).toBeTruthy();
         await act(async () => { menu!.props.onSelect(SESSION_ACTION_DELETE_ID); });
@@ -193,39 +182,49 @@ describe('SessionItem server-scoped mutations', () => {
         expect(modalAlertSpy).not.toHaveBeenCalled();
     });
 
-    it.each(['active', 'preserved terminal', 'lost access'] as const)(
-        'does not delete when the current row changes to %s while confirmation is open', async (change) => {
+    // Home owns current deletion eligibility; cached row changes are not another admission owner.
+    // See protocol actions/executor/session/delete.ts and readHomeDomainActionErrorV1.
+    it.each(['Session delete condition was lost', 'Session not found or not owned by user'] as const)(
+        'surfaces the Home refusal %s after confirmation without reporting a successful delete', async (error) => {
             const SessionItem = await importSessionItem();
             const sessionId = 'sess_archived_changed';
             const screen = await renderScreen(<SessionItem
                 session={createSessionFixture({ id: sessionId, active: false, activeAt: 0, presence: 0, archivedAt: 42 })}
                 serverId="server_a" selected={false} variant="default" compact={false}
             />);
-            const menu = screen.root.findAll(node => String(node.type) === 'ContextMenu').find(node =>
+            const menu = screen.root.findAll(node => node.type === ContextMenu).find(node =>
                 Array.isArray(node.props.items) && node.props.items.some((item: { id?: string }) => item.id === SESSION_ACTION_DELETE_ID));
             expect(menu).toBeTruthy();
             modalConfirmSpy.mockImplementationOnce(async () => {
-                const current = storage.getState().sessions[sessionId]!;
-                const changed = createSessionFixture({ ...current,
-                    metadataVersion: current.metadataVersion + 1,
-                    ...(change === 'active' ? { active: true, activeAt: Date.now(), presence: 'online' } : {}),
-                    ...(change === 'preserved terminal' ? { metadata: { ...current.metadata,
-                        path: '/repo', host: 'tester.local', terminal: { controlServiceabilityV1: {
-                            v: 1, state: 'recoverable_unservable', observedAt: Date.now(), retired: false,
-                        } },
-                    } } : {}),
-                    ...(change === 'lost access' ? { access: null } : {}),
-                });
-                storage.getState().applyServerScopedSessionListRows(account!.home.id,
-                    [buildSessionListRenderableFromSession(changed)], { source: 'archived', mode: 'append' });
-                expect(storage.getState().sessions[sessionId]!.active).toBe(false);
+                deleteReplies.push(Response.json({ error }, { status: error === 'Session delete condition was lost' ? 409 : 404 }));
                 return true;
             });
             await act(async () => { menu!.props.onSelect(SESSION_ACTION_DELETE_ID); });
             await vi.waitFor(() => expect(modalAlertSpy).toHaveBeenCalled());
-            expect(mutationRequests.filter(request => request.method === 'DELETE')).toEqual([]);
+            expect(mutationOrder).toEqual(['delete']);
+            expect(storage.getState().sessions[sessionId]).toBeDefined();
         },
     );
+
+    it('stops and retries deletion when Home reports the confirmed archived row is active', async () => {
+        const SessionItem = await importSessionItem();
+        const sessionId = 'sess_archived_now_active';
+        const screen = await renderScreen(<SessionItem
+            session={createSessionFixture({ id: sessionId, active: false, activeAt: 0, presence: 0, archivedAt: 42 })}
+            serverId="server_a" selected={false} variant="default" compact={false}
+        />);
+        const menu = screen.root.findAll(node => node.type === ContextMenu).find(node =>
+            Array.isArray(node.props.items) && node.props.items.some((item: { id?: string }) => item.id === SESSION_ACTION_DELETE_ID));
+        expect(menu).toBeTruthy();
+        modalConfirmSpy.mockImplementationOnce(async () => {
+            deleteReplies.push(Response.json({ error: 'Session is active' }, { status: 409 }));
+            return true;
+        });
+        await act(async () => { menu!.props.onSelect(SESSION_ACTION_DELETE_ID); });
+        await vi.waitFor(() => expect(mutationOrder).toEqual(['delete', 'stop', 'delete']));
+        await expectStopRequest(sessionId);
+        expect(modalConfirmSpy).toHaveBeenCalledTimes(1);
+    });
 
     it('warns that an offline managed archived row keeps its machine folder', async () => {
         const SessionItem = await importSessionItem();
@@ -234,10 +233,11 @@ describe('SessionItem server-scoped mutations', () => {
                 metadata: { path: '/managed', host: 'tester.local', machineId: 'machine-row', sessionDirectoryV1: { v: 1, kind: 'managed' } } })}
             serverId="server_a" selected={false} variant="default" compact={false}
         />);
-        storage.getState().applyMachines([createMachineFixture({ id: 'machine-row', active: false, activeAt: 0 })], true,
+        rowMachine = createMachineFixture({ ...rowMachine, active: false, activeAt: 0 });
+        storage.getState().applyMachines([rowMachine], true,
             { sourceServerId: account!.home.id });
-        observeMachinePresenceForTest({ serverId: account!.home.id, accountId: 'row-account' }, ['machine-row']);
-        const menu = screen.root.findAll(node => String(node.type) === 'ContextMenu').find(node =>
+        await publishMachineInventoryForTest({ serverId: account!.home.id, accountId: 'row-account' }, [rowMachine]);
+        const menu = screen.root.findAll(node => node.type === ContextMenu).find(node =>
             Array.isArray(node.props.items) && node.props.items.some((item: { id?: string }) => item.id === SESSION_ACTION_DELETE_ID));
         expect(menu).toBeTruthy();
         modalConfirmSpy.mockResolvedValueOnce(false);
@@ -253,7 +253,7 @@ describe('SessionItem server-scoped mutations', () => {
             session={createSessionFixture({ id: 'sess_archived_cancel', active: false, activeAt: 0, presence: 0, archivedAt: 42 })}
             serverId="server_a" selected={false} variant="default" compact={false}
         />);
-        const menu = screen.root.findAll(node => String(node.type) === 'ContextMenu').find(node =>
+        const menu = screen.root.findAll(node => node.type === ContextMenu).find(node =>
             Array.isArray(node.props.items) && node.props.items.some((item: { id?: string }) => item.id === SESSION_ACTION_DELETE_ID));
         expect(menu).toBeTruthy();
         modalConfirmSpy.mockResolvedValueOnce(false);
@@ -271,7 +271,7 @@ describe('SessionItem server-scoped mutations', () => {
             selected={false}
             variant="default" compact={false}
         />);
-        const menu = screen.root.findAll(node => String(node.type) === 'ContextMenu').find(node =>
+        const menu = screen.root.findAll(node => node.type === ContextMenu).find(node =>
             Array.isArray(node.props.items) && node.props.items.some((item: { id?: string }) => item.id === SESSION_ACTION_STOP_ID));
         expect(menu).toBeTruthy();
         await act(async () => { await menu!.props.onSelect(SESSION_ACTION_STOP_ID); });
@@ -290,13 +290,14 @@ describe('SessionItem server-scoped mutations', () => {
         });
         mutationRequests.length = 0;
         mutationOrder.length = 0;
+        deleteReplies.length = 0;
         rejectFirstArchive = false;
         modalConfirmSpy.mockReset().mockResolvedValue(true);
         modalAlertSpy.mockClear();
         storage.setState({ sessions: {}, sessionListRowsByServerId: {}, machines: {}, machineListByServerId: {} });
     });
     afterEach(async () => {
-        standardCleanup();
+        await standardCleanup();
         await account?.dispose();
         account = undefined;
         storage.setState(previousState, true);
@@ -546,7 +547,7 @@ describe('SessionItem server-scoped mutations', () => {
             />,
         );
 
-        const contextMenus = screen.root.findAll((node: any) => node.type === 'ContextMenu');
+        const contextMenus = screen.root.findAll((node: any) => node.type === ContextMenu);
         const moreMenu = contextMenus.find((node: any) =>
             Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === SESSION_ACTION_ARCHIVE_ID),
         );
@@ -652,7 +653,7 @@ describe('SessionItem server-scoped mutations', () => {
             />,
         );
 
-        const contextMenu = screen.root.findAll((node: any) => node.type === 'ContextMenu').find((node: any) =>
+        const contextMenu = screen.root.findAll((node: any) => node.type === ContextMenu).find((node: any) =>
             Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === SESSION_ACTION_MARK_UNREAD_ID),
         );
         expect(contextMenu).toBeTruthy();
@@ -699,7 +700,7 @@ describe('SessionItem server-scoped mutations', () => {
             />,
         );
 
-        const contextMenus = screen.root.findAll((node: any) => node.type === 'ContextMenu');
+        const contextMenus = screen.root.findAll((node: any) => node.type === ContextMenu);
         expect(contextMenus.some((node: any) =>
             Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === SESSION_ACTION_MARK_UNREAD_ID || item?.id === SESSION_ACTION_MARK_READ_ID),
         )).toBe(false);
@@ -744,7 +745,7 @@ describe('SessionItem server-scoped mutations', () => {
             />,
         );
 
-        const contextMenu = screen.root.findAll((node: any) => node.type === 'ContextMenu').find((node: any) =>
+        const contextMenu = screen.root.findAll((node: any) => node.type === ContextMenu).find((node: any) =>
             Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === SESSION_ACTION_MOVE_TO_FOLDER_ID),
         );
         expect(contextMenu).toBeTruthy();
@@ -810,7 +811,7 @@ describe('SessionItem server-scoped mutations', () => {
             />,
         );
 
-        const contextMenus = screen.root.findAll((node: any) => node.type === 'ContextMenu');
+        const contextMenus = screen.root.findAll((node: any) => node.type === ContextMenu);
         expect(contextMenus.some((node: any) =>
             Array.isArray(node.props?.items) && node.props.items.some((item: any) => item?.id === SESSION_ACTION_MARK_UNREAD_ID || item?.id === SESSION_ACTION_MARK_READ_ID),
         )).toBe(false);

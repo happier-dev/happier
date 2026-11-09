@@ -5,6 +5,7 @@ import { createTestSessionTranscriptSource, renderWithSessionTranscriptSource as
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createReducer } from "@happier-dev/session-core/reducer";
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
+import { createTranscriptSessionCommonPropsFixture } from './toolCalls/units/toolCallsGroupUnitsTestFixtures';
 
 let toolChromeMode: 'cards' | 'activity_feed' = 'cards';
 let pinActionEnabled = true;
@@ -18,7 +19,6 @@ installMessageViewCommonModuleMocks({
             Dimensions: {
                 get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
             },
-            useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
             View: 'View',
             Text: 'Text',
             Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
@@ -177,7 +177,7 @@ describe('MessageView (tool timeline chrome mode)', () => {
         toolChromeMode = 'activity_feed';
         pinActionEnabled = enabled;
         const onToggleToolPin = vi.fn();
-        const { MessageView } = await import('./MessageView');
+        const { MessageViewWithSessionCommon } = await import('./MessageView');
 
         const message: any = {
             kind: 'tool-call',
@@ -199,7 +199,8 @@ describe('MessageView (tool timeline chrome mode)', () => {
         };
 
         await renderScreen(
-            <MessageView
+            <MessageViewWithSessionCommon
+                {...createTranscriptSessionCommonPropsFixture({ messageDisplayCommon: { transcriptMessagePinActionEnabled: enabled } })}
                 message={message}
                 metadata={null}
                 sessionId="s1"
@@ -256,7 +257,7 @@ describe('MessageView (tool timeline chrome mode)', () => {
 
     it('passes a stable server route id to ToolView when the message is already persisted', async () => {
         toolChromeMode = 'cards';
-        const { MessageView } = await import('./MessageView');
+        const { MessageViewWithSessionCommon } = await import('./MessageView');
 
         const message: any = {
             kind: 'tool-call',
@@ -278,7 +279,8 @@ describe('MessageView (tool timeline chrome mode)', () => {
             children: [],
         };
 
-        await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" serverId="home-b" />,
+        await renderScreen(<MessageViewWithSessionCommon {...createTranscriptSessionCommonPropsFixture({ toolChromeCommon: { toolViewTimelineChromeMode: 'cards', serverId: 'home-b' } })}
+            message={message} metadata={null} sessionId="s1" serverId="home-b" />,
             createTestSessionTranscriptSource({ sessionId: 's1', serverId: 'home-b' }));
 
         expect(renderedToolViewProps).toHaveLength(1);
@@ -289,7 +291,7 @@ describe('MessageView (tool timeline chrome mode)', () => {
 
     it('renders ToolView when toolViewTimelineChromeMode is cards', async () => {
         toolChromeMode = 'cards';
-        const { MessageView } = await import('./MessageView');
+        const { MessageViewWithSessionCommon } = await import('./MessageView');
 
         const message: any = {
             kind: 'tool-call',
@@ -309,7 +311,8 @@ describe('MessageView (tool timeline chrome mode)', () => {
             children: [],
         };
 
-        await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />);
+        await renderScreen(<MessageViewWithSessionCommon {...createTranscriptSessionCommonPropsFixture({ toolChromeCommon: { toolViewTimelineChromeMode: 'cards' } })}
+            message={message} metadata={null} sessionId="s1" />);
 
         expect(renderedToolViewProps).toHaveLength(1);
         expect(renderedToolTimelineRowProps).toHaveLength(0);

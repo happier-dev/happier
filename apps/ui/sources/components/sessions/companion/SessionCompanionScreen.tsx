@@ -1,4 +1,3 @@
-import type { SessionBoardPrimaryMountResolver } from '@/sync/domains/session/board';
 import * as React from 'react';
 import { applySessionCompanionHumanIntent } from './presentation/sessionCompanionHumanAction';
 import { I18nManager, View } from 'react-native';
@@ -18,7 +17,6 @@ import { buildSessionCompanionMenuActions } from './sessionCompanionMenu';
 import { SessionCompanionAddControl } from './picker/SessionCompanionAddControl';
 import { useSessionCompanionBoardAdd } from './picker/useSessionCompanionBoardAdd';
 import type { SessionCompanionItemRefV1 } from './state/sessionCompanionPreference';
-import { resolveSessionCompanionItemCount } from './state/sessionCompanionPreference';
 import { useSessionCompanionController } from './state/useSessionCompanionController';
 import type { SessionSummaryDestinationHandlers } from './summary/SessionSummaryCard';
 
@@ -40,7 +38,6 @@ type SessionCompanionScreenProps = Readonly<{
     onRevealBoardItem: (itemId: string) => void;
     onRequestClose: () => void;
     summaryDestinations?: SessionSummaryDestinationHandlers;
-    resolvePrimaryHost: SessionBoardPrimaryMountResolver;
 }>;
 
 export const SessionCompanionScreen = React.memo(function SessionCompanionScreen(
@@ -102,8 +99,9 @@ export const SessionCompanionScreen = React.memo(function SessionCompanionScreen
 
     // The cockpit's large title is the one heading (session-tabs lab Cp). The Companion tells it where
     // it lives and how much it holds, and hands it the one menu (side, size, Hide).
-    const itemCount = resolveSessionCompanionItemCount({ visible: controller.preference.visible,
-        itemCount: controller.preference.items.length });
+    // The screen counts what its body shows. A hidden Companion's Show preview (the header toggle's
+    // projected count) is not shown here, where the body invites adding the summary instead.
+    const itemCount = controller.preference.items.length;
     // Phone (lab CAp): + in the navigation bar opens the same picker as the rail's
     // "Add to Companion" row, beside the one options menu.
     const headerAction = React.useMemo(() => (controller.availability === 'ready' ? (
@@ -166,7 +164,6 @@ export const SessionCompanionScreen = React.memo(function SessionCompanionScreen
                 serverId={props.address.serverId}
                 controller={controller}
                 boardBinding={mountedBoard?.binding ?? null}
-                resolvePrimaryHost={props.resolvePrimaryHost}
                 {...(mountedBoard?.pluginRuntime ? { pluginRuntime: mountedBoard.pluginRuntime } : {})}
                 {...(mountedBoard
                     ? { resolveSourceAvailability: mountedBoard.controller.resolveSourceAvailability }

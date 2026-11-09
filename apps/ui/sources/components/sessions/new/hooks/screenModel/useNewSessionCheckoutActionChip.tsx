@@ -1,6 +1,4 @@
-import { getNewSessionCheckoutActionChipPlacement } from '../../newSessionActionChipPlacements';
 import * as React from 'react';
-import { Pressable } from 'react-native';
 
 import type { AgentInputExtraActionChip, AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
@@ -19,6 +17,8 @@ import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE } from '@/co
 
 import type { WorktreeCreateSelection } from './buildWorktreeSelectionListSteps';
 import { useCheckoutSelectionPicker } from './useCheckoutSelectionPicker';
+import { getNewSessionCheckoutActionChipPlacement } from '../../newSessionActionChipPlacements';
+import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
 
 const CHIP_KEY = 'new-session-checkout';
 
@@ -48,7 +48,7 @@ function CheckoutChip(props: Readonly<{
     }, [toggleCollapsedPopover, checkoutPickerOpen, setCheckoutPickerOpen]);
 
     return (
-        <Pressable
+        <AgentInputRailChip
             ref={ctx.chipAnchorRef}
             testID="new-session-checkout-chip"
             onPress={() => {
@@ -58,8 +58,7 @@ function CheckoutChip(props: Readonly<{
                 }
                 setCheckoutPickerOpen((current) => !current);
             }}
-            hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-            style={({ pressed }) => ctx.chipStyle(pressed)}
+            style={ctx.chipStyle}
             accessibilityRole="button"
             accessibilityLabel={t('newSession.checkout.selectTitle')}
         >
@@ -69,7 +68,7 @@ function CheckoutChip(props: Readonly<{
                     {props.label}
                 </Text>
             ) : null}
-        </Pressable>
+        </AgentInputRailChip>
     );
 }
 

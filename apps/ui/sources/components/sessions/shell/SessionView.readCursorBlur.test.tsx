@@ -81,8 +81,8 @@ vi.mock('@/components/sessions/panes/useRegisterSessionPaneDriver', () => ({
 vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
     useSessionPaneUrlSync: () => {},
 }));
-vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
-    ChatHeaderView: () => null,
+vi.mock('@/components/sessions/shell/view/SessionPaneHeader', () => ({
+    SessionPaneHeader: () => null,
 }));
 vi.mock('@/components/sessions/transcript/ChatList', () => ({
     ChatList: () => React.createElement('ChatList'),
@@ -95,12 +95,6 @@ vi.mock('@/components/ui/forms/Deferred', () => ({
 }));
 vi.mock('@/components/sessions/actions/SessionHeaderActionMenu', () => ({
     SessionHeaderActionMenu: () => null,
-}));
-vi.mock('@/components/sessions/actions/SessionHeaderSubagentsButton', () => ({
-    SessionHeaderSubagentsButton: () => null,
-}));
-vi.mock('@/components/sessions/actions/SessionHeaderTerminalButton', () => ({
-    SessionHeaderTerminalButton: () => null,
 }));
 vi.mock('@/components/voice/surface/VoiceSurface', () => ({
     VoiceSurface: () => null,
@@ -164,9 +158,6 @@ installSessionShellCommonModuleMocks({
     },
     storage: async importOriginal => importOriginal(),
 });
-vi.mock('@/agents/runtime/resumeCapabilities', () => ({
-    canResumeSessionWithOptions: () => false,
-}));
 vi.mock('@/agents/hooks/useResumeCapabilityOptions', () => ({
     useResumeCapabilityOptions: () => [],
 }));
@@ -258,13 +249,6 @@ vi.mock('@/sync/domains/session/control/sessionLocalControl', () => ({
 }));
 vi.mock('@/sync/domains/session/control/effectiveRuntimeControlSurface', () => ({
     resolveEffectiveConfiguredRuntimeControlSurface: () => ({ localControl: { supported: true } }),
-}));
-vi.mock('@/sync/domains/models/modelOptions', () => ({
-    findModelOptionForEffectiveModelId: (options: any, effectiveModelId: any) =>
-        options?.find?.((option: any) => option.value === effectiveModelId)
-            ?? options?.find?.((option: any) => option.value === String(effectiveModelId ?? '').replace(/\[[^\]]*\]$/u, ''))
-            ?? null,
-    isModelSelectableForSession: () => true,
 }));
 vi.mock('@/sync/domains/session/control/localControlSwitch', async (importOriginal) => ({
     ...await importOriginal<typeof import('@/sync/domains/session/control/localControlSwitch')>(),

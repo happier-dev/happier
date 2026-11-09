@@ -1,5 +1,6 @@
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
-import { ActionsSettingsV1Schema, isApprovalRequiredByActionsSettings } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit';
 
 import { createSessionBoardActionAdapter } from '@/sync/api/session/sessionBoardActions';
@@ -35,7 +36,8 @@ export function realBoardActions(
     });
     const deps: Pick<ActionExecutorDeps, 'sessionBoardAction' | 'isActionApprovalRequired' | 'approvalsCreate'> = {
         sessionBoardAction: adapter,
-        isActionApprovalRequired: (actionId, context, input) => isApprovalRequiredByActionsSettings(actionId, settings, context, undefined, undefined, input),
+        isActionApprovalRequired: (actionId, context, input, defaultUiConfirmation, approvedOperation, approvalScope, defaultSafety) =>
+            isApprovalRequiredByActionsSettings(actionId, settings, context, defaultSafety, undefined, input, defaultUiConfirmation, undefined, approvedOperation, approvalScope),
         ...(approvalsCreate ? { approvalsCreate } : {}),
     };
     const executor = createActionExecutor(createActionExecutorBoundaryFixture(deps));

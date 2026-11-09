@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol';
+import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installSessionHandoffCommonModuleMocks } from './sessionHandoffTestHelpers';
@@ -344,7 +344,7 @@ describe('SessionHandoffProgressModal', () => {
     });
 
     it('renders a full checkpoint timeline that matches the protocol checkpoint enum', async () => {
-        const { SessionHandoffProgressCheckpointSchema } = await import('@happier-dev/protocol');
+        const { SessionHandoffProgressCheckpointSchema} = await import('@happier-dev/protocol/sessions/control/handoff/handoffStatus');
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
 
         const screen = await renderScreen(

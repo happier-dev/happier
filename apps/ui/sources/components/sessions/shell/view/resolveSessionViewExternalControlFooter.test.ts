@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     ExternalSessionOperationSharedPresentationV1Schema,
     type ExternalSessionOperationSharedPresentationV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/operationV1';
 
 import { presentExternalSessionOperationShell } from '@/components/sessions/external/progress/externalSessionOperationShellPresentation';
 
@@ -44,13 +44,15 @@ function createRecoveryProgress(
 
 describe('resolveSessionViewExternalControlFooter', () => {
     it.each([
-        ['working', 'status.workingExternally'],
-        ['waiting', 'status.needsInputExternally'],
-        ['idle', 'status.ready'],
-        ['unknown', 'status.externalStatusUnknown'],
+        ['working', 'status.workingExternally', false],
+        ['waiting', 'status.needsInputExternally', true],
+        ['retrying', 'status.retryingExternally', true],
+        ['idle', 'status.ready', false],
+        ['recentlyActive', 'status.recentlyActive', false],
+        ['unknown', 'status.externalStatusUnknown', false],
     ] as const)(
         'uses pushed %s presentation and canonical Agent/machine identity for descriptive status',
-        (state, labelKey) => {
+        (state, labelKey, needsAttention) => {
             const footer = resolveFooter({
                 externalSessionLink: { machineId: 'machine-1' },
                 externalSessionRuntimePresentation: {
@@ -75,11 +77,30 @@ describe('resolveSessionViewExternalControlFooter', () => {
             expect(footer?.externalAgentPresentation).toEqual({
                 state,
                 labelKey,
+                needsAttention,
                 agentLabel: 'Codex',
                 machineLabel: 'MacBook Pro',
             });
         },
     );
+
+    it('treats a missing pushed presentation as a calm unknown state', () => {
+        const footer = resolveFooter({
+            externalSessionLink: { machineId: 'machine-1' },
+            externalSessionRuntime: { status: null },
+            externalSessionTakeover: {
+                takeoverInFlight: null,
+                takeoverPreflightInFlight: false,
+                requestTakeoverPreflight: vi.fn(),
+            },
+            isHiddenSystemSessionSession: false,
+        });
+
+        expect(footer?.externalAgentPresentation).toMatchObject({
+            state: 'unknown',
+            needsAttention: false,
+        });
+    });
 
     it('projects materialize as a distinct primary intent only with current online write readiness', async () => {
         const requestMaterialize = vi.fn(async () => true);

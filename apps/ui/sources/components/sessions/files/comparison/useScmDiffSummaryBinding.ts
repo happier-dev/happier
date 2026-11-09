@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { SessionExecutionRunLaunchUnavailableReason } from '@/hooks/session/useSessionExecutionRunLaunchability';
-import type { ScmDiffSummaryOutputKind } from '@happier-dev/protocol';
+import type { ScmDiffSummaryOutputKind } from '@happier-dev/protocol/scm/diffSummary';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
 
@@ -19,11 +19,12 @@ import {
 import { createScmDiffSummaryResultOperations, type ScmDiffSummaryHost } from '@/sync/ops/scmDiffSummary/results';
 import { subscribeExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 import { t } from '@/text';
-import { SCM_DIFF_SUMMARY_DISABLED_FAILURE, selectScmDiffSummaryProducerModel } from '@/sync/domains/scm/diffSummary/state';
+import { SCM_DIFF_SUMMARY_DISABLED_FAILURE, SCM_DIFF_SUMMARY_MODEL_CATALOG_UNAVAILABLE_FAILURE, SCM_DIFF_SUMMARY_MODEL_UNAVAILABLE_FAILURE, selectScmDiffSummaryProducerModel } from '@/sync/domains/scm/diffSummary/state';
 import { scmComparisonKey } from './filesComparison';
 import { useScmDiffSummaryModelChoices } from '@/components/settings/sourceControl/useScmDiffSummaryModelChoices';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import { useScmReviewModelChoice } from './useSessionScmReviewTabState';
 
 /**
  * A comparison view's binding to its admitted host's saved diff-summary result: the one store's projection for the
@@ -40,6 +41,7 @@ export function useScmDiffSummaryBinding(params: Readonly<{
     /** Why runs cannot launch from this host, when its launch owner says (a Session's launchability). */
     launch: Readonly<{ canLaunchExecutionRuns: boolean; launchUnavailableReason?: SessionExecutionRunLaunchUnavailableReason | null }>;
     serverId?: string | null;
+    paneScopeId?: string;
     /** Null while the view is not mounted in front; nothing is read or restored then. */
     comparison: SessionScmReviewComparison | null;
     output: ScmDiffSummaryOutputKind;
@@ -64,8 +66,7 @@ export function useScmDiffSummaryBinding(params: Readonly<{
     }, [hostKey]);
     const explainEnabled = useSetting(SCM_DIFF_SUMMARY_SETTING_KEYS.enabled) !== false;
     const storedModel = useSetting(SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride);
-    const [model, setModel] = React.useState(typeof storedModel === 'string' ? storedModel : '');
-    React.useEffect(() => { setModel(typeof storedModel === 'string' ? storedModel : ''); }, [binding, storedModel]);
+    const { chosenModel, setModel } = useScmReviewModelChoice(hostKey, typeof storedModel === 'string' ? storedModel : null, params.paneScopeId);
     const [starting, setStarting] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
     const [inputObservation, setInputObservation] = React.useState<Readonly<{ hostKey: string; runId: string; inputId: string; resultId: string }> | null>(null);
@@ -87,14 +88,25 @@ export function useScmDiffSummaryBinding(params: Readonly<{
         && !producer.selection?.modelSelection?.providerConnectionId && !viewModel?.latestRun?.resolvedSelection?.teamCredentialModel
         ? { agentTargetKey: buildBackendTargetKeyV2(readBackendTargetRefV2(producer.backendTarget)), providerConnectionId: null, modelId: producer.modelId } : null);
     const observedValue = observedSelection.success ? encodeScmDiffSummaryModelOverride({ backendTargetKey: observedSelection.data.agentTargetKey,
-        modelId: observedSelection.data.modelId }) : undefined;
+        modelId: observedSelection.data.modelId,
+        ...(producer.selection?.connectedServices !== undefined ? { connectedServices: producer.selection.connectedServices } : {}) }) : undefined;
+    // An explicit picker choice (including its default row) wins. Otherwise keep the Account preference,
+    // or reuse the displayed producer rather than turning a saved retry into fresh host inheritance.
+    // A model-only observation may label the reading, but cannot reconstruct its authentication.
+    const recordedModel = producer.selection?.connectedServices !== undefined ? observedValue : undefined;
+    const model = chosenModel ?? (typeof storedModel === 'string' && storedModel.trim() ? storedModel : recordedModel ?? '');
     const modelChoices = useScmDiffSummaryModelChoices({ value: model, observedValue, machineId: machine?.machineId,
-        serverId, observeSelection: Boolean(scope && machineReachable && comparison && restoreState === 'ready'
-            && (!viewModel?.savedResult || observedValue || model.trim())) });
-    const selected = resolveScmDiffSummaryModelSelection({ storedValue: model, catalogProfiles: modelChoices.catalogProfiles });
-    // An unset choice is resolved by host admission, including the Session's applied model.
-    // The Account catalog can validate an explicit choice, but cannot decide inheritance.
-    const modelAvailable = model.trim() === '' || (selected.success && modelChoices.selectionAvailable);
+        serverId, observeSelection: Boolean(scope && machineReachable && comparison && restoreState === 'ready') });
+    const explicitSelection = Boolean(model.trim()) || chosenModel !== null;
+    const selected = resolveScmDiffSummaryModelSelection({ storedValue: model || (chosenModel !== null ? modelChoices.defaultProfile?.catalogId ?? '' : ''),
+        catalogProfiles: modelChoices.catalogProfiles });
+    // Only a fresh, untouched selection inherits from the host. A retry must name an offered model.
+    const modelAvailable = (!viewModel && !explicitSelection) || (explicitSelection && selected.success && modelChoices.selectionAvailable);
+    const generationFailure = viewModel?.error && !(viewModel.error.reason === 'disabled' && explainEnabled) ? viewModel.error : null;
+    // A plain retry cannot repair a settled missing model. Keep stronger refusals and pending observations truthful.
+    const retryModelFailure = generationFailure?.nextAction !== 'retry' || modelAvailable ? null
+        : modelChoices.catalogStatus === 'ready' ? SCM_DIFF_SUMMARY_MODEL_UNAVAILABLE_FAILURE
+            : modelChoices.catalogStatus === 'error' ? SCM_DIFF_SUMMARY_MODEL_CATALOG_UNAVAILABLE_FAILURE : null;
     const capturedComparison = viewModel?.comparison ?? null;
     const cwd = capturedComparison?.repository.rootPath ?? machine?.basePath ?? null;
     const operations = React.useMemo(() => scope ? createScmDiffSummaryResultOperations({ ...host,
@@ -116,21 +128,22 @@ export function useScmDiffSummaryBinding(params: Readonly<{
             const source = scmComparisonSourceOf(comparison, sessionId ?? '');
             return await generateScmDiffSummaryFromUserAction({ ...host, serverId: scope.serverId, scope,
                 shouldContinue: draftAccount?.accountOnlyLifetime.isCurrent ?? isCurrent,
-                ...(model.trim() && selected.success ? { backendTarget: selected.backendTarget } : {}),
+                ...(explicitSelection && selected.success ? { backendTarget: selected.backendTarget } : {}),
                 input: { cwd, source, ...(comparison.comparisonId ? { comparisonId: comparison.comparisonId } : {}),
                     outputs: [...outputs], ...(options.pullRequestDraft ? { pullRequestDraft: options.pullRequestDraft } : {}),
-                    ...(model.trim() && selected.success ? { modelSelector: selected.modelSelector } : {}) },
+                    ...(explicitSelection && selected.success ? { modelSelector: selected.modelSelector } : {}) },
                 settings: { ...getStorage().getState().settings, [SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride]: model },
                 intent: viewModel ? 'regenerate' : 'generate' });
         } catch (failure) {
             if (isCurrent()) setError(failure instanceof Error ? failure.message : t('walkthroughStart.unavailable'));
             return null;
         } finally { draftAccount?.dispose(); if (isCurrent()) setStarting(false); }
-    }, [binding, isCurrent, scope?.serverId, scope?.accountId, cwd, comparison, sessionId, host.machineId, output, selected, modelAvailable, canSend, launch.canLaunchExecutionRuns, starting, model, Boolean(viewModel), restoreState]);
+    }, [binding, isCurrent, scope?.serverId, scope?.accountId, cwd, comparison, sessionId, host.machineId, output, selected, explicitSelection, modelAvailable, canSend, launch.canLaunchExecutionRuns, starting, model, Boolean(viewModel), restoreState]);
 
     const key = viewModel?.requestKey;
     const resultId = viewModel?.resultId;
     const runId = viewModel?.executionRunId ?? null;
+    const linkedRunId = runId && (!viewModel?.savedResult || viewModel.savedResult.output.runId === runId) ? runId : null;
     const initialInputId = viewModel?.inputId ?? null;
     const cancelGeneration = React.useCallback(async () => {
         if (!sessionId || !scope || !runId || !isCurrent()) return false;
@@ -163,44 +176,29 @@ export function useScmDiffSummaryBinding(params: Readonly<{
             if (isCurrent()) setError(failure instanceof Error ? failure.message : t('walkthroughStart.unavailable'));
         }
     }, [operations, cwd, key, resultId, isCurrent]);
-    // Run activity/reconnect is the existing invalidation owner. No polling timer or generated text authority.
+    // Run activity refreshes Run state; the exact result-revision push owns saved content.
     React.useEffect(() => {
         if (!scope || !binding || !machineReachable || !key || !viewModel || !operations || !cwd) return;
         const abort = new AbortController();
         const current = () => isCurrent() && !abort.signal.aborted;
         let pending = false;
         let invalidated = false;
-        const refresh = async (readSaved = true) => {
+        const refresh = async () => {
             if (!current()) return;
             if (pending) { invalidated = true; return; }
             pending = true;
             try {
-                let currentRunId = runId;
-                let observation = viewModel;
-                if (readSaved && resultId && current()) {
-                    const saved = await operations.read({ cwd, resultId });
-                    if (saved.success && current()) {
-                        applySavedScmDiffSummaryResult(key, saved.result);
-                        currentRunId = saved.result.output.runId ?? runId;
-                        observation = { ...viewModel, revision: saved.result.revision, comparison: saved.result.output.comparison ?? null,
-                            outputs: saved.result.output.outputs ?? null };
-                    }
-                }
-                if (currentRunId === runId && runId && current()) {
+                if (runId && current()) {
                     const input = inputObservation?.hostKey === hostKey && inputObservation.resultId === resultId && inputObservation.runId === runId
                         ? inputObservation : null;
-                    const state = observation?.outputs?.walkthrough?.state;
-                    const waitForOutput = !sessionId && observation?.comparison && (state === 'pending' || state === 'writing')
-                        ? { kind: 'review_walkthrough' as const, comparisonId: observation.comparison.id,
-                            ...(resultId ? { resultId } : {}), ...(observation.revision !== null ? { afterRevision: observation.revision } : {}) } : undefined;
+                    const state = viewModel.outputs?.walkthrough?.state;
+                    const waitForOutput = !sessionId && viewModel.comparison && (state === 'pending' || state === 'writing')
+                        ? { kind: 'review_walkthrough' as const, comparisonId: viewModel.comparison.id,
+                            ...(resultId ? { resultId } : {}), ...(viewModel.revision !== null ? { afterRevision: viewModel.revision } : {}) } : undefined;
                     const waitForInputId = input?.inputId ?? (!sessionId ? initialInputId : null);
                     await refreshScmDiffSummaryRun({ key, ...host, serverId: scope.serverId, scope,
                         runId, signal: abort.signal, shouldContinue: current,
                         ...(waitForInputId ? { waitForInputId } : {}), ...(waitForOutput ? { waitForOutput } : {}) });
-                    if (!sessionId && resultId && current()) {
-                        const settled = await operations.read({ cwd, resultId });
-                        if (settled.success && current()) applySavedScmDiffSummaryResult(key, settled.result);
-                    }
                     if (input && current()) setInputObservation(previous => previous === input ? null : previous);
                 }
             } catch (failure) {
@@ -211,22 +209,23 @@ export function useScmDiffSummaryBinding(params: Readonly<{
             }
         };
         // Restoration owns the initial full-result read, including revalidation on remount/reconnect.
-        // Run observation consumes that admitted record; subsequent activity rereads its current revision.
-        void refresh(false);
-        // A newly seeded discussion can bind its Run after admission; reread the canonical
-        // saved linkage on Session activity too, rather than filtering out that new Run.
-        const unsubscribe = sessionId ? subscribeExecutionRunActivity({ sessionId, serverId: scope.serverId }, () => { void refresh(); }) : () => {};
+        // Run observation consumes the admitted record and keeps Stop/Retry state current.
+        void refresh();
+        const unsubscribe = sessionId ? subscribeExecutionRunActivity({ sessionId, serverId: scope.serverId }, notification => {
+            if (notification.runId && linkedRunId && notification.runId !== linkedRunId) return;
+            void refresh();
+        }) : () => {};
         return () => { abort.abort(); unsubscribe(); };
-    }, [binding, isCurrent, hostKey, inputObservation, initialInputId, scope?.serverId, scope?.accountId, machineReachable, key, resultId, runId, operations, cwd, sessionId, host.machineId]);
+    }, [binding, isCurrent, hostKey, inputObservation, initialInputId, scope?.serverId, scope?.accountId, machineReachable, key, resultId, runId, linkedRunId, operations, cwd, sessionId, host.machineId]);
 
     return {
-        host, serverId, comparison,
+        host, serverId, comparison, paneScopeId: params.paneScopeId,
         binding, isCurrent, scope, machine, machineReachable, canControl, canSend, launch, viewModel, capturedComparison, cwd, operations,
-        restoreState, retryRestore, machineReachability, restoration,
+        restoreState, restoreFailure: restoration.restoreFailure ?? null, retryRestore, machineReachability, restoration,
         admission: viewModel?.admission ?? null, checkAdmission, cancelGeneration,
         error, setError,
         /** The typed refusal or failure of the comparison's generation; never its diagnostic code or message. */
-        generationFailure: viewModel?.error && !(viewModel.error.reason === 'disabled' && explainEnabled) ? viewModel.error : null,
+        generationFailure: retryModelFailure ?? generationFailure,
         /**
          * Why Start cannot run at all: Explain changes is off. Start stays unavailable and says how to turn it on;
          * an action that still reaches the generation owner (Refresh, Try again) is refused there with the same

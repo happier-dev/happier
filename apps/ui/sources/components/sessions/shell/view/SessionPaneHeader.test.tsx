@@ -79,13 +79,6 @@ vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: (props: any) => React.createElement('Avatar', props),
 }));
 
-// Every Typography role resolves to no font styling; modules pulled in through the storage and list
-// chain use roles beyond `default` at import time.
-vi.mock('@/constants/Typography', async (importOriginal) => ({
-    ...(await importOriginal<typeof import('@/constants/Typography')>()),
-    Typography: new Proxy({}, { get: () => () => ({}) }),
-}));
-
 vi.mock('@/components/ui/layout/layout', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/components/ui/layout/layout')>();
     return {
@@ -189,7 +182,7 @@ describe('SessionPaneHeader', () => {
         expect(screen.getTextContent()).toContain('2 need you');
     });
 
-    it('keeps a phone navigation band: Back below the status bar, badges beside the title', async () => {
+    it('keeps a phone navigation band: Back below the status bar, with session metadata', async () => {
         safeAreaState.initial.insets.top = 22;
         const onBack = vi.fn();
         const screen = await renderScreen(<SessionPaneHeader title="Title" badges={['Direct']} onBackPress={onBack} />);
@@ -199,6 +192,26 @@ describe('SessionPaneHeader', () => {
         const band = screen.findHostByTestId('session-header')!;
         const flat = ([] as unknown[]).concat(band.props.style ?? []).flat(Infinity) as Array<Record<string, unknown> | null>;
         expect(flat.some((style) => style?.paddingTop === 22)).toBe(true);
+    });
+
+    it('keeps storage and host metadata below the session title alongside its subtitle', async () => {
+        const badges = ['Direct', 'Claude · workstation-with-a-very-long-hostname'];
+        const screen = await renderScreen(<SessionPaneHeader title="Investigate the session header"
+            badges={badges} subtitle="~/projects/happier" onBackPress={() => {}} />);
+        const titleRow = screen.findHostByTestId('session-header-title-row')!;
+        for (const badge of badges) {
+            expect(titleRow.findAll((node) => String(node.type) === 'Text' && node.props.children === badge)).toHaveLength(0);
+        }
+        const metadata = screen.findHostByTestId('session-header-metadata')!;
+        expect(metadata).toBeTruthy();
+        const text = screen.getTextContent();
+        expect(text.indexOf('~/projects/happier')).toBeLessThan(text.indexOf('Direct'));
+        for (const [index, badge] of badges.entries()) {
+            const label = screen.findHostByTestId(`session-header-badge:${index}:label`)!;
+            expect(label.props.numberOfLines).toBe(1);
+            expect(screen.findHostByTestId(`session-header-badge:${index}`)?.props.accessibilityLabel).toBe(badge);
+        }
+        expect(metadata.findAll((node) => node.props.testID === 'session-header-subtitle').length).toBeGreaterThan(0);
     });
 
     it('suppresses session-scoped testIDs when the session screen is hidden', async () => {

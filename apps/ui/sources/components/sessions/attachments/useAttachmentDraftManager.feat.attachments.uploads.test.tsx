@@ -29,6 +29,88 @@ vi.mock('@/platform/randomUUID', () => ({
 await import('./uploadAttachmentDraftsToSession');
 
 describe('useAttachmentDraftManager (attachments.uploads)', () => {
+    it.each(['before', 'during'] as const)('classifies owner cancellation %s the first upload without a failure or a second transfer', async phase => {
+        const { uploadAttachmentDraftsToSession } = await import('./uploadAttachmentDraftsToSession');
+        const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+        const controller = new AbortController();
+        const call = vi.fn(async (_method: string, _request: unknown, signal?: AbortSignal | null): Promise<never> => {
+            return await new Promise((_resolve, reject) => {
+                signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+            });
+        });
+        const applyDraftPatch = vi.fn();
+        if (phase === 'before') controller.abort();
+        const pending = uploadAttachmentDraftsToSession({ sessionId: 's1', signal: controller.signal,
+            transferContext: { kind: 'sessionBound', sessionId: 's1', call },
+            drafts: ['first', 'second'].map(id => ({ id, status: 'pending',
+                source: { kind: 'memory', name: `${id}.txt`, bytes: new Uint8Array([1]) } })),
+            config: { uploadLocation: 'workspace', workspaceRelativeDir: '.uploads', vcsIgnoreStrategy: 'none',
+                vcsIgnoreWritesEnabled: false, maxFileBytes: 1024 }, applyDraftPatch });
+        const settlement = pending.catch((error: unknown) => error);
+        if (phase === 'during') {
+            await vi.waitFor(() => expect(call).toHaveBeenCalledOnce());
+            controller.abort();
+        }
+        expect(await settlement).toMatchObject({ name: 'AttachmentUploadCancelled' });
+        expect(applyDraftPatch.mock.calls.some(([, patch]) => patch.status === 'error' || patch.status === 'uploaded')).toBe(false);
+        expect(call.mock.calls.map(([method]) => method)).toEqual(phase === 'before' ? [] : [RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT]);
+    });
+
+    it.each(['response', 'throw'] as const)('retains a typed Session upload %s on the draft and row until explicit retry', async mode => {
+        const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+        const { RpcError } = await import('@/sync/runtime/rpcErrors');
+        const { uploadAttachmentDraftsToSession } = await import('./uploadAttachmentDraftsToSession');
+        const { createTransferRecipientKeyPair } = await import('@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption');
+        const { useAttachmentDraftManager } = await import('./useAttachmentDraftManager');
+        const { projectAgentInputAttachmentRowItem } = await import('../agentInput/agentInputContracts');
+        const recipient = createTransferRecipientKeyPair();
+        const errorCode = 'filesystem_identity_custody_unavailable';
+        let refused = true;
+        // Only the Session RPC transport is substituted; file reading, upload,
+        // failure classification, draft custody and row projection remain real.
+        const call = vi.fn(async (method: string): Promise<unknown> => {
+            if (refused) {
+                if (mode === 'throw') throw new RpcError('Private transport diagnostic', errorCode);
+                return { success: false, error: 'Private transport diagnostic', errorCode };
+            }
+            if (method === RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT) return {
+                success: true, uploadId: 'upload-a', chunkSizeBytes: 3,
+                recipientPublicKeyBase64: recipient.recipientPublicKeyBase64,
+            };
+            if (method === RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE) return {
+                success: true, path: '.uploads/file.txt', sizeBytes: 3, sha256: 'digest',
+                attachmentHandle: { v: 1, sessionId: 's1', id: 'upload-a' },
+            };
+            return { success: true };
+        });
+        const transferContext = { kind: 'sessionBound' as const, sessionId: 's1',
+            call: async <T,>(method: string): Promise<T> => await call(method) as T };
+        const config = { uploadLocation: 'workspace' as const, workspaceRelativeDir: '.uploads',
+            vcsIgnoreStrategy: 'none' as const, vcsIgnoreWritesEnabled: false, maxFileBytes: 1024 };
+        const hook = await renderHook(() => useAttachmentDraftManager({ enabled: true, maxFileBytes: 1024 }));
+        try {
+            await act(async () => { hook.getCurrent().addWebFiles([], { sources: [{ kind: 'memory',
+                name: 'file.txt', bytes: new Uint8Array([1, 2, 3]) }] }); });
+            const upload = () => uploadAttachmentDraftsToSession({ sessionId: 's1', transferContext, config,
+                drafts: hook.getCurrent().getDraftsSnapshot(), messageLocalId: 'message-a',
+                applyDraftPatch: (id, patch) => hook.getCurrent().applyDraftPatch(id, patch) });
+            await act(async () => {
+                await expect(upload()).rejects.toMatchObject({ rpcErrorCode: errorCode });
+            });
+            expect(hook.getCurrent().getDraftsSnapshot()[0]).toMatchObject({ status: 'error', errorCode });
+            expect(hook.getCurrent().agentInputAttachments[0]).toMatchObject({ status: 'error', errorCode });
+            expect(projectAgentInputAttachmentRowItem(hook.getCurrent().agentInputAttachments[0]!)).toMatchObject({ status: 'error', errorCode });
+            expect(hook.getCurrent().agentInputAttachments[0]?.error).not.toContain('Private transport diagnostic');
+            // A non-retryable refusal settles without chunk work, cleanup or re-polling.
+            expect(call.mock.calls).toEqual([[RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT]]);
+            refused = false;
+            await act(async () => { await upload(); });
+            expect(hook.getCurrent().getDraftsSnapshot()[0]).toMatchObject({ status: 'uploaded', error: undefined, errorCode: undefined });
+            expect(hook.getCurrent().agentInputAttachments[0]).toMatchObject({ status: 'uploaded', errorCode: undefined });
+            expect(projectAgentInputAttachmentRowItem(hook.getCurrent().agentInputAttachments[0]!)).not.toHaveProperty('errorCode');
+        } finally { await hook.unmount(); }
+    });
+
     it.each([true, false])('starts folder uploads at intake and checkpoints success=%s', async (success) => {
         const { createTransferRecipientKeyPair } = await import('@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption');
         const recipient = createTransferRecipientKeyPair();

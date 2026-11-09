@@ -5,13 +5,14 @@ import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import { MarkdownView, type MarkdownInlineReferences } from '@/components/markdown/MarkdownView';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
+import { LazyMountOnScreen } from '@/components/ui/performance/LazyMountOnScreen';
 import { CODE_LINE_BASE_HEIGHT } from '@/components/ui/code/view/CodeLineRow';
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
 import { HAPPIER_UI_FONT_SCALE_CSS_VAR } from '@/components/ui/text/webUnistylesFontOverrides';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
-import { KeyHint } from '@/components/ui/keyboard/KeyHint';
+import { KeyboardCommandHint } from '@/components/ui/keyboard/KeyHint';
 import { FileIcon } from '@/components/ui/media/FileIcon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -20,12 +21,15 @@ import { WalkthroughReviewExplanation } from '@/components/sessions/reviews/walk
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 
 import { WalkthroughStopNumber } from './WalkthroughAtoms';
+import { WalkthroughStopExchangeList } from './WalkthroughStopExchanges';
 import { ScmChangeRow } from '@/components/workspaces/scm/changes/ScmChangeRow';
 import { scmFileStatusFromChange } from '@/scm/scmStatusFiles';
 import type { WalkthroughStop, WalkthroughStopFile } from './walkthroughReading';
 import type { ChangedFilesReviewFindModel } from '@/components/workspaces/scm/review/useChangedFilesReviewFind';
 import { ChangedFilesReviewFindCount } from '@/components/workspaces/scm/review/ChangedFilesReviewFind';
 import { walkthroughStopFindKey } from './walkthroughFind';
+import type { WalkthroughReviewedSource } from './walkthroughReviewedProjection';
+import { useWalkthroughReviewedStop } from './useWalkthroughReviewed';
 
 /** Find over the reading: the review Find model, whether it is open, and the place its current match is in. */
 export type WalkthroughFindProps = Readonly<{
@@ -130,6 +134,9 @@ export const WalkthroughHunkCard = React.memo(function WalkthroughHunkCard(props
                 </>) : null} />
             {file.unifiedDiff ? (
                 <View style={bodyStyle}>
+                    {/* A reading can hold hundreds of cards: code is drawn as its reserved body nears the viewport, or at once
+                        when Find lands on it. Find, counts and the contents read the captured evidence, never the drawn rows. */}
+                    <LazyMountOnScreen initiallyVisible={findTargetLineId !== undefined} style={{ minHeight: 'inherit' }}>
                     <HunkEvidenceBoundary key={file.unifiedDiff} fallback={evidence('render_failed')}>
                         <DiffViewer
                             mode="unified"
@@ -150,6 +157,7 @@ export const WalkthroughHunkCard = React.memo(function WalkthroughHunkCard(props
                             onScrollToLine={findTargetLineId ? find?.onScrollToLine : undefined}
                         />
                     </HunkEvidenceBoundary>
+                    </LazyMountOnScreen>
                 </View>
             ) : (
                 evidence(file.unavailableReason)
@@ -160,9 +168,10 @@ export const WalkthroughHunkCard = React.memo(function WalkthroughHunkCard(props
 
 export type WalkthroughStopSectionProps = Readonly<{
     stop: WalkthroughStop;
+    reviewedSource?: WalkthroughReviewedSource;
     current?: boolean;
     phone?: boolean;
-    /** The R key hint beside Mark reviewed, on the stop the keyboard acts on (web). */
+    /** The Mark reviewed key, as bound here, on the stop the keyboard acts on; drawn only where that key runs. */
     showKeys?: boolean;
     /** Marking needs the exact code and the person's account; absent hides the control. */
     onToggleReviewed?: (stop: WalkthroughStop) => void;
@@ -186,7 +195,7 @@ export type WalkthroughStopSectionProps = Readonly<{
 /** A stop: number, title and reading hint, the prose, then exactly its hunks, then the person's controls. */
 export const WalkthroughStopSection = React.memo(function WalkthroughStopSection(props: WalkthroughStopSectionProps) {
     const { theme } = useUnistyles();
-    const stop = props.stop;
+    const stop = useWalkthroughReviewedStop(props.reviewedSource, props.stop);
     const importance = props.phone ? null : resolveWalkthroughImportanceLabel(stop);
     const phone = props.phone === true;
     return (
@@ -239,6 +248,7 @@ export const WalkthroughStopSection = React.memo(function WalkthroughStopSection
                     </React.Fragment>
                 ))}
                 {props.findingCards}
+                <WalkthroughStopExchangeList stopId={stop.id} />
                 {!phone && (props.onToggleReviewed || props.onAsk) ? (
                     <View style={styles.footer}>
                         {props.onToggleReviewed ? (
@@ -265,7 +275,7 @@ export const WalkthroughStopSection = React.memo(function WalkthroughStopSection
                                 <Text style={[styles.actionText, stop.reviewed ? styles.actionTextMarked : styles.actionTextStrong]}>
                                     {stop.reviewed ? t('walkthrough.reviewed') : t('walkthrough.markReviewed')}
                                 </Text>
-                                {props.showKeys && !stop.reviewed ? <KeyHint label="R" /> : null}
+                                {props.showKeys && !stop.reviewed ? <KeyboardCommandHint testID={`walkthrough-mark-key-${stop.id}`} commandId="review.change.keep" /> : null}
                             </HappierPressable>
                         ) : null}
                         {props.onAsk ? (

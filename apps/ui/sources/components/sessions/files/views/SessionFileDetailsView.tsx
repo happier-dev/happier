@@ -8,6 +8,7 @@ import {
 import { useSessionFileScope } from './useSessionFileScope';
 import type { FileFindSeed } from '@/components/appShell/panes/fileFindSeedHandoff';
 import type { WorkspaceFileLinkView } from '@/utils/url/sessionFileDeepLink';
+import type { SessionScmReviewComparison } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 
 export type SessionFileDeepLinkAnchor = Readonly<{
     source: ReviewCommentSource;
@@ -20,6 +21,7 @@ export type SessionFileDetailsViewProps = Readonly<{
     scopeId: string;
     filePath: string;
     initialView?: WorkspaceFileLinkView;
+    initialChanges?: SessionScmReviewComparison;
     deepLinkAnchor?: SessionFileDeepLinkAnchor | null;
     findSeed?: FileFindSeed | null;
     onFindSeedConsumed?: () => void;
@@ -42,6 +44,7 @@ export function SessionFileDetailsView(props: SessionFileDetailsViewProps) {
             targetKind="session"
             filePath={props.filePath}
             initialView={props.initialView}
+            initialChanges={props.initialChanges}
             deepLinkAnchor={props.deepLinkAnchor ?? null}
             findSeed={props.findSeed}
             onFindSeedConsumed={props.onFindSeedConsumed}

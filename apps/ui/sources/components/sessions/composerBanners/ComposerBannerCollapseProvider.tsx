@@ -1,7 +1,7 @@
 import * as React from 'react';
 
-import { useLocalSetting, useSetting } from '@/sync/domains/state/storage';
-import { getStorage } from '@/sync/domains/state/storageStore';
+import { useSetting } from '@/sync/domains/state/storage';
+import { useComposerBannerCollapseRecord, writeComposerBannerCollapse } from '@/sync/domains/state/composerBannerUiState';
 
 import {
     isComposerBannerCollapsedInRecord,
@@ -30,7 +30,7 @@ const ComposerBannerCollapseContext = React.createContext<ComposerBannerCollapse
  */
 export function ComposerBannerCollapseProvider(props: Readonly<{ children: React.ReactNode }>): React.ReactElement {
     const remember = useSetting('sessionComposerRememberBannerVisibility') === true;
-    const persisted = useLocalSetting('sessionComposerCollapsedBannerKinds');
+    const persisted = useComposerBannerCollapseRecord();
     const [ephemeral, setEphemeral] = React.useState<ComposerBannerCollapseRecord>({});
 
     const collapsedKinds = React.useMemo(
@@ -50,7 +50,7 @@ export function ComposerBannerCollapseProvider(props: Readonly<{ children: React
             ephemeral: inputs.ephemeral,
             kind,
         });
-        if (plan.persisted) getStorage().getState().applyLocalSettings({ sessionComposerCollapsedBannerKinds: plan.persisted }, { source: 'ui' });
+        if (plan.persisted) writeComposerBannerCollapse(plan.persisted);
         if (plan.ephemeral) setEphemeral(plan.ephemeral);
     }, []);
 

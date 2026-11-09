@@ -14,6 +14,7 @@ import type { SessionWidgetDensity } from './SessionWidgetHost';
 import { resolveFitContentHeight } from './sessionBoardItemHeight';
 import { isSessionBoardItemEditableInPlace } from './sessionBoardItemPresentation';
 import { canPromoteSessionWidgetDefinitionSourceV1 } from '@happier-dev/protocol/widgets/widgetDefinitionPromotionV1';
+import { readSessionVisualNetworkChoice } from './sessionBoardVisualNetwork';
 
 /**
  * The widget card's reachable operations, in one place.
@@ -70,6 +71,12 @@ export type SessionBoardItemMenuInput = Readonly<{
     /** Deletes the shared record and every placement, through the shared Action. */
     onRemove?: (() => void) | undefined;
     /**
+     * A reply's Board facts (placement, revisions) are still loading for a viewer who may edit. The rows this
+     * item predicts (Pin, Edit, Network access…, Delete) are drawn in their final place, disabled until their
+     * handlers arrive, so nothing is inserted under the pointer. Compact density only.
+     */
+    boardFactsPending?: boolean | undefined;
+    /**
      * This placement's frame override, shared with everyone (stored with the Board layout, like
      * width): Show/Hide frame and the way back to the Board's Appearance default. Editors only.
      */
@@ -125,13 +132,14 @@ export function buildSessionBoardItemActions(input: SessionBoardItemMenuInput): 
 
     // Pin is a placement of this same item through the Board's layout owner, so it sits with the
     // other places the item can be shown, before the copies that cross to the Account.
-    if (input.onPinToBoard) {
+    const pending = input.boardFactsPending === true && input.density !== 'full';
+    if (input.onPinToBoard || pending) {
         actions.push({
             id: 'pin-to-board',
             title: t('sessionBoard.item.actions.pinToBoard'),
             icon: 'push-pin',
             group: contentGroup,
-            onPress: input.onPinToBoard,
+            ...(input.onPinToBoard ? { onPress: input.onPinToBoard } : { disabled: true }),
         });
     }
 
@@ -148,17 +156,28 @@ export function buildSessionBoardItemActions(input: SessionBoardItemMenuInput): 
         icon: 'link', group: contentGroup, onPress: input.visualCopy.onShare });
 
     if (input.density !== 'full' || !input.canEdit) {
-        // A compact Companion/sidebar placement still needs a way to remove the
-        // shared Board item. This is deliberately distinct from the viewer-local
-        // Companion removal above and remains capability-gated and destructive.
-        if (input.canEdit && input.onRemove) {
+        // A compact placement or a transcript reply edits and deletes the same shared item as the
+        // Board (content and deletion only; placement geometry belongs to the Board). Deletion is
+        // deliberately distinct from the viewer-local Companion removal above, capability-gated and destructive.
+        // While the Board facts load, the rows the item itself predicts hold their place, disabled.
+        const edit = input.canEdit ? input.onEdit : undefined;
+        const network = input.canEdit ? input.onEditNetwork : undefined;
+        const remove = input.canEdit ? input.onRemove : undefined;
+        const held = (handler: (() => void) | undefined) => handler ? { onPress: handler } : { disabled: true };
+        if (isSessionBoardItemEditableInPlace(item) && (edit || pending)) {
+            actions.push({ id: 'edit', title: t('common.edit'), icon: 'pencil', group: contentGroup, ...held(edit) });
+        }
+        if (network || (pending && readSessionVisualNetworkChoice(item) !== null)) {
+            actions.push({ id: 'network', title: t('sessionBoard.item.actions.network'), icon: 'globe', group: contentGroup, ...held(network) });
+        }
+        if (remove || pending) {
             actions.push({
                 id: 'remove',
                 title: t('sessionBoard.item.actions.remove'),
                 icon: 'trash',
                 group: destructiveGroup,
                 destructive: true,
-                onPress: input.onRemove,
+                ...held(remove),
             });
         }
         return actions;

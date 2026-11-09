@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useDestinationNavigation } from '@/components/appShell/workspace/DestinationInstanceHost';
-import type { FeatureDecision } from '@happier-dev/protocol';
+import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
 
 import { SurfaceStateCard, type SurfaceStateKind } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { FeatureDecisionScopeParams } from '@/hooks/server/useFeatureDecision';

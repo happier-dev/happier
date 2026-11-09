@@ -147,6 +147,7 @@ export const CommitProposalView = React.memo(function CommitProposalView(props: 
                     <SurfaceStateCard testID="commit-proposal-restoring" kind="loading" title={t('common.loading')} />
                 ) : props.phase === 'unavailable' ? (
                     <SurfaceStateCard testID="commit-proposal-unavailable" kind="error" title={t('common.requestFailed')}
+                        reason={props.error ?? undefined}
                         action={props.onRetryRestore ? { label: t('common.retry'), onPress: props.onRetryRestore } : undefined} />
                 ) : props.phase === 'writing' ? (
                     <SurfaceStateCard testID="commit-proposal-writing" kind="loading" title={t('commitProposal.none.writing')} />
@@ -387,7 +388,7 @@ export const CommitGroupCard = React.memo(function CommitGroupCard(props: Readon
     const onLayoutY = props.onLayoutY;
     const meta = (() => {
         switch (group.state) {
-            case 'landed': return group.landedSha ? <LandedMeta sha={group.landedSha} rewritten={group.rewrittenMessage !== null} committedAtMs={group.committedAtMs} signed={group.signed} /> : null;
+            case 'landed': return group.landedSha ? <LandedMeta sha={group.landedSha} committedAtMs={group.committedAtMs} signed={group.signed} /> : null;
             case 'writing': return <GroupMetaText>{t('commitProposal.state.writing')}</GroupMetaText>;
             case 'waiting': return <GroupMetaText>{t('commitProposal.state.waiting')}</GroupMetaText>;
             case 'paused': {
@@ -473,7 +474,7 @@ function FooterBar(props: Readonly<{ phone: boolean; bottomInset: number; childr
 }
 
 const styles = StyleSheet.create((theme) => ({
-    root: { flex: 1, minHeight: 0, backgroundColor: theme.colors.surface.base },
+    root: { flex: 1, minHeight: 0 },
     scroll: { flex: 1 },
     content: { paddingHorizontal: theme.space.s40, paddingTop: 28, paddingBottom: theme.space.s40 },
     contentPhone: { paddingHorizontal: 14, paddingTop: 18 },
@@ -497,7 +498,6 @@ const styles = StyleSheet.create((theme) => ({
     footer: {
         borderTopWidth: StyleSheet.hairlineWidth,
         borderTopColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
         paddingHorizontal: theme.space.s40,
         paddingVertical: theme.space.s12,
     },
@@ -514,7 +514,6 @@ const styles = StyleSheet.create((theme) => ({
         paddingTop: theme.space.s12,
         borderTopWidth: StyleSheet.hairlineWidth,
         borderTopColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
     },
     grow: { flex: 1 },
 }));

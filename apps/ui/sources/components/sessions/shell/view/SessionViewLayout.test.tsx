@@ -93,6 +93,32 @@ describe('SessionViewLayout', () => {
         safeAreaState.bottom = 11;
     });
 
+    it('withdraws the landscape Back control with the covered pane body, so focus and assistive tech cannot reach it', async () => {
+        const { SessionViewLayout } = await import('./SessionViewLayout');
+        const { PaneMainBodyPresentationContext } = await import('@/components/ui/panels/paneMainComposerAnchor');
+        const screen = await renderScreen(
+            <PaneMainBodyPresentationContext.Provider value={false}>
+                <SessionViewLayout
+                    content={null} input={null} placeholder={null}
+                    shouldShowCliWarning={false} onDismissCliWarning={() => {}}
+                    isLandscape deviceType="phone" onBackPress={() => {}}
+                />
+            </PaneMainBodyPresentationContext.Provider>,
+        );
+        const back = screen.findHostByTestId('session-view-landscape-back-button');
+        if (!back) throw new Error('Expected the landscape Back control');
+        // The pane owner's hidden boundary must sit on the control or a host above it; the browser then
+        // keeps it out of the tab order (inert), the accessibility tree (aria-hidden) and pointer hits.
+        const boundary: Record<string, unknown> = {};
+        for (let node: typeof back | null = back; node; node = node.parent) {
+            if (typeof node.type !== 'string') continue;
+            for (const key of ['inert', 'aria-hidden', 'pointerEvents'] as const) {
+                if (boundary[key] === undefined && node.props[key] !== undefined) boundary[key] = node.props[key];
+            }
+        }
+        expect(boundary).toEqual({ inert: true, 'aria-hidden': true, pointerEvents: 'none' });
+    });
+
     it('can remove the chat bottom spacing when embedded in cockpit chrome', async () => {
         const { SessionViewLayout } = await import('./SessionViewLayout');
 

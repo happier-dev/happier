@@ -7,6 +7,8 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useSessionScmDraft } from '@/hooks/session/sourceControl/useSessionScmDraft';
 import { useSessionProjectScmSnapshot } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { useSessionAddressForSessionId } from '@/components/sessions/plugins/useSessionPluginRuntime';
+import { SessionScmPullRequestSurface } from '@/components/workspaces/scm/update/ScmPullRequestSurface';
 
 import { GitPullRequestCard } from './GitPullRequestCard';
 import { GitPullRequestForm, type GitPullRequestCreated } from './GitPullRequestForm';
@@ -29,6 +31,7 @@ export function SessionScmPullRequestDetailsView(props: Readonly<{
     onCloseTab: () => void;
 }>) {
     const snapshot = useSessionProjectScmSnapshot(props.sessionId, props.serverId);
+    const sessionAddress = useSessionAddressForSessionId(props.sessionId, props.serverId);
     const { machineReachable } = useSessionMachineReachability(props.sessionId, props.serverId);
     const scmDraft = useSessionScmDraft({ sessionId: props.sessionId, serverId: props.serverId });
     const chrome = useDetailsTabChrome();
@@ -67,11 +70,13 @@ export function SessionScmPullRequestDetailsView(props: Readonly<{
     if (!snapshot) {
         return <SurfaceStateCard testID="git-pull-request-details-loading" kind="loading" title={t('common.loading')} />;
     }
-    const card = created ? resolveGitPullRequestCardModel(snapshot, created) : null;
+    const card = resolveGitPullRequestCardModel(snapshot);
+    const fallback = card ? <GitPullRequestCard model={card} sessionId={props.sessionId} serverId={props.serverId} /> : null;
     return (
         <ScrollView testID="git-pull-request-details" keyboardShouldPersistTaps="handled">
-            {card ? (
-                <GitPullRequestCard model={card.model} animateIn={card.source === 'just-created'} />
+            {created ? (
+                sessionAddress ? <SessionScmPullRequestSurface session={sessionAddress}
+                    pullRequest={created} origin="createdHere" fallback={fallback} /> : fallback
             ) : (
                 <GitPullRequestForm
                     sessionId={props.sessionId}

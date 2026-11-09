@@ -1,8 +1,9 @@
 import type { CapabilityApplyTimingV1 } from '@happier-dev/protocol/reach/capabilityApplyTimingV1';
-import type { SessionCapabilitiesGetOutputV1 } from '@happier-dev/protocol/actions/specs/sessionCapabilities';
+import type { SessionCapabilitiesGetOutputV1, SessionCapabilitiesSetOutputV1 } from '@happier-dev/protocol/actions/specs/sessionCapabilities';
 import { t } from '@/text';
 import { readAppliedSessionCapabilitySelectionFromMetadataV1, readSessionCapabilitySelectionFromMetadataV1, readPendingCapabilityApplyV1, readPendingCapabilityRuleApplyV1, readCapabilitySelectionApplyV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
 import { readSessionCapabilityOverrideV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
+import type { SessionSkillApplicationFacts } from '@/sync/domains/capabilities/session/useSessionCapabilities';
 
 export type SessionCapabilityChange = Readonly<{ kind: 'skill' | 'mcp_server' | 'native_skill'; title: string; state: 'on' | 'off' | 'inherit' }>;
 export type SessionCapabilityApplyChange = (SessionCapabilityChange | Readonly<{ kind: 'skill' | 'mcp_server'; source: 'rules' }>)
@@ -66,6 +67,7 @@ export function sessionCapabilityApplyNotice(input: Readonly<{
     let key: SessionCapabilityApplyNoticeKey;
     let restart: SessionCapabilityApplyNotice['restart'] = null;
     if (timing?.t === 'missing_resume_snapshot' || timing?.t === 'missing_resume_identity') key = 'cannotResume';
+    else if (record?.reason === 'new_sessions_only') key = 'newSessionsOnly';
     else if (input.machineOnline === null) key = 'saved';
     else if (!input.machineOnline) key = 'offline';
     else if (timing?.t === 'restart_to_apply') {
@@ -84,4 +86,29 @@ export function sessionCapabilityApplyNotice(input: Readonly<{
     const text = input.translate ? input.translate(`capabilities.session.apply.${key}`, { item, machine: input.machineName })
         : t(`capabilities.session.apply.${key}`, { item, machine: input.machineName });
     return { key, text, restart };
+}
+
+/** A saved result stays tied to this skill's actual acknowledgment, never a live-reload declaration. */
+export function sessionSkillApplyNotice(input: Readonly<{
+    facts: SessionSkillApplicationFacts; title: string; sessionRunning: boolean;
+    inclusion?: SessionCapabilitiesSetOutputV1;
+    applyTiming: CapabilityApplyTimingV1 | null;
+    machineOnline: boolean | null; machineName: string; turnSettled: boolean;
+}>): SessionCapabilityApplyNotice | null {
+    const refusedNewSession = input.facts.desired === 'inherit' && input.inclusion?.ok === false
+        && input.inclusion.code === 'applies_to_new_sessions_only';
+    if (input.facts.desired !== 'on' && !refusedNewSession) return null;
+    const pending = input.facts.pending || refusedNewSession;
+    // A declaration that live reload is supported is not its receipt. While this
+    // id is unacknowledged, only the runner's pending/refusal record explains it.
+    const pendingRecord = refusedNewSession ? { reason: 'new_sessions_only' }
+        : pending && input.facts.reason !== 'applied_now' ? input.facts : undefined;
+    const timing = !input.sessionRunning ? { t: 'session_not_running' as const }
+        : !pending ? { t: 'applied_now' as const }
+        : input.applyTiming?.t === 'applied_now' ? null : input.applyTiming;
+    return sessionCapabilityApplyNotice({ ...input,
+        pendingApply: { mcp: false, skills: true },
+        applyTiming: timing ? { mcp: timing, skills: timing } : null,
+        change: { kind: 'skill', title: input.title, state: 'on', ...(input.sessionRunning || refusedNewSession ? pendingRecord : undefined) },
+    });
 }

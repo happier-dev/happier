@@ -1,7 +1,12 @@
 import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
+import 'fake-indexeddb/auto';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { activateStorageAccountScope } from '@/dev/testkit/runtime/storageRuntime';
+import { getSessionDraftSnapshot, resetSessionDraftRepositoryForTests, writeNewSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { getSessionDraftDocumentField } from '@/sync/ops/sessionDrafts/sessionDraftDocumentFields';
+import { prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { createNewSessionPromptStore } from './newSessionPromptStore';
 import { useNewSessionComposerDocument } from './useNewSessionComposerDocument';
@@ -9,7 +14,52 @@ import { useNewSessionComposerDocument } from './useNewSessionComposerDocument';
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
-afterEach(() => standardCleanup());
+afterEach(async () => {
+    resetSessionDraftRepositoryForTests();
+    await standardCleanup();
+});
+
+it('clears an accepted durable New Session draft after its presentation unmounts', async () => {
+    await prepareSessionDraftPersistenceStorage();
+    const scope = { serverId: 'srv_new_draft', accountId: 'account-new-draft' };
+    const account = await activateStorageAccountScope(scope);
+    writeNewSessionDraft({
+        scope,
+        draftId: 'accepted-new-draft',
+        patch: { text: 'Accepted before navigation' },
+        materializationIntent: 'userEdit',
+    });
+    const promptStore = createNewSessionPromptStore('Accepted before navigation');
+    const holder: { current: ReturnType<typeof useNewSessionComposerDocument> | null } = { current: null };
+    function DocumentProbe() {
+        holder.current = useNewSessionComposerDocument({
+            promptStore, persistedAttachments: [], composerAttachmentEntriesById: {},
+            draftScope: scope, draftId: 'accepted-new-draft', scopeKey: `${scope.serverId}/${scope.accountId}`,
+            canSubmitRef: { current: true }, isSubmitting: false,
+        });
+        return null;
+    }
+    const screen = await renderScreen(<DocumentProbe />);
+    try {
+        const document = holder.current!;
+        const submitted = document.captureSubmissionSnapshot();
+        expect(submitted?.text).toBe('Accepted before navigation');
+        expect(getSessionDraftDocumentField(
+            getSessionDraftSnapshot(scope, { kind: 'newSession', draftId: 'accepted-new-draft' })?.document ?? null,
+            { kind: 'composer', field: 'text' },
+        )?.value).toBe('Accepted before navigation');
+        await screen.unmount();
+        expect(document.isCurrent()).toBe(false);
+        expect(document.clearAcceptedSnapshot(submitted!)).toBe(true);
+        const stored = getSessionDraftSnapshot(scope, { kind: 'newSession', draftId: 'accepted-new-draft' });
+        expect(getSessionDraftDocumentField(stored?.document ?? null, { kind: 'composer', field: 'text' })?.value ?? '').toBe('');
+        expect(promptStore.getPrompt()).toBe('Accepted before navigation');
+        expect(document.captureSubmissionSnapshot()).toBeNull();
+    } finally {
+        await screen.unmount();
+        account.dispose();
+    }
+});
 
 it('retains the same editable draft lifetime while hidden but rejects callbacks after unmount', async () => {
     const promptStore = createNewSessionPromptStore('Unsent retained draft');

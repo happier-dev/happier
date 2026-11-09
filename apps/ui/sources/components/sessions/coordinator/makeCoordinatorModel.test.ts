@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import type { OpenedSessionFollowRuleV1 } from '@happier-dev/protocol/sessions/follow/actions';
+import { normalizeSessionAccessProjection } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 
 import {
     buildMakeCoordinatorDraft,
     buildMakeCoordinatorEnableInput,
+    applyMakeCoordinatorEffectsToDraft,
     describeMakeCoordinatorOverlap,
     readMakeCoordinatorOutcome,
 } from './makeCoordinatorModel';
@@ -21,8 +23,6 @@ const SETTINGS = {
 
 const CHECKOUT = { id: 'checkout', projectKey: PROJECT.projectKey, serverId: SERVER,
     machineId: 'machine', rootPath: '/work/payments', label: null, createdAtMs: 1, lastOpenedAtMs: null };
-// A Project key alone no longer places a Session; its accepted workspace membership does.
-const PROJECT_MEMBER = { projectId: PROJECT.projectKey, machineId: CHECKOUT.machineId, path: CHECKOUT.rootPath };
 
 function homeWideRule(
     ruleId: string,
@@ -51,8 +51,8 @@ describe('Make coordinator draft', () => {
         const draft = buildMakeCoordinatorDraft({
             serverId: SERVER,
             sessionId: 's-new',
-            ownerMetadata: PROJECT_MEMBER,
-            workspaceRefs: [CHECKOUT],
+            ownerMetadata: { projectId: PROJECT.projectKey },
+            projectKey: PROJECT.projectKey,
             settings: SETTINGS,
             ruleIds: { project: 'r-project', home: 'r-home' },
             ruleCensus: null,
@@ -85,6 +85,7 @@ describe('Make coordinator draft', () => {
             serverId: SERVER,
             sessionId: 's-new',
             ownerMetadata: { projectId: PROJECT.projectKey },
+            projectKey: PROJECT.projectKey,
             settings: SETTINGS,
             ruleIds: { project: 'r-project', home: 'r-home' },
             ruleCensus: {
@@ -98,6 +99,7 @@ describe('Make coordinator draft', () => {
             serverId: SERVER,
             sessionId: 's-new',
             ownerMetadata: { projectId: PROJECT.projectKey },
+            projectKey: PROJECT.projectKey,
             settings: SETTINGS,
             ruleIds: { project: 'r-project', home: 'r-home' },
             ruleCensus: {
@@ -115,6 +117,8 @@ describe('Make coordinator draft', () => {
     it('offers the accepted Project for path-only membership, and withholds ambiguous or unreadable membership', () => {
         const input = { serverId: SERVER, sessionId: 'path-only',
             ownerMetadata: { machineId: CHECKOUT.machineId, path: CHECKOUT.rootPath }, workspaceRefs: [CHECKOUT],
+            workspaceRefsScope: { serverId: SERVER, accountId: 'viewer' },
+            sessionAuthority: { access: normalizeSessionAccessProjection({ share: null }, { allowLegacy: true }) },
             settings: SETTINGS, ruleIds: { project: 'project-rule', home: 'home-rule' }, ruleCensus: null };
         const draft = buildMakeCoordinatorDraft(input);
         expect(draft.rules[0]).toMatchObject({ scope: 'project', enabled: true,
@@ -123,6 +127,15 @@ describe('Make coordinator draft', () => {
         expect(buildMakeCoordinatorDraft({ ...input, workspaceRefs: undefined }).project).toBeNull();
         expect(buildMakeCoordinatorDraft({ ...input, ownerMetadata: null }).project).toBeNull();
         expect(buildMakeCoordinatorDraft({ ...input, workspaceRefs: [CHECKOUT, { ...CHECKOUT, id: 'other', projectKey: 'other' }] }).project).toBeNull();
+        const foreignCensus = { ...input, workspaceRefsScope: { serverId: 'foreign-home', accountId: 'viewer' } };
+        expect(buildMakeCoordinatorDraft(foreignCensus).project).toBeNull();
+        const recipient = { ...input, sessionAuthority: { access: normalizeSessionAccessProjection({
+            share: { accessLevel: 'view', canApprovePermissions: false },
+        }, { allowLegacy: true }) } };
+        expect(buildMakeCoordinatorDraft(recipient).project).toBeNull();
+        const otherOwner = { ...input, sessionAuthority: { ...input.sessionAuthority, ownerAccountId: 'other' } };
+        expect(buildMakeCoordinatorDraft(otherOwner).project).toBeNull();
+        expect(buildMakeCoordinatorDraft({ ...foreignCensus, ownerMetadata: null, projectKey: PROJECT.projectKey }).project).toEqual(PROJECT);
     });
 });
 
@@ -131,8 +144,8 @@ describe('Make coordinator enable input', () => {
         const draft = buildMakeCoordinatorDraft({
             serverId: SERVER,
             sessionId: 's-new',
-            ownerMetadata: PROJECT_MEMBER,
-            workspaceRefs: [CHECKOUT],
+            ownerMetadata: { projectId: PROJECT.projectKey },
+            projectKey: PROJECT.projectKey,
             settings: SETTINGS,
             ruleIds: { project: 'r-project', home: 'r-home' },
             ruleCensus: {
@@ -192,6 +205,26 @@ describe('Make coordinator overlap', () => {
 });
 
 describe('Make coordinator partial outcome', () => {
+    it('retains accepted rule versions for Retry without changing unfinished rules or the chosen scope', () => {
+        const draft = buildMakeCoordinatorDraft({ serverId: SERVER, sessionId: 's-new',
+            ownerMetadata: null, projectKey: PROJECT.projectKey, settings: SETTINGS,
+            ruleIds: { project: 'r-project', home: 'r-home' }, ruleCensus: null });
+        const next = applyMakeCoordinatorEffectsToDraft(draft, [
+            { operation: 'role', status: 'failed', errorCode: 'target_unavailable' },
+            { operation: 'rule', status: 'accepted', ruleId: 'r-project', version: 0 },
+            { operation: 'rule', status: 'failed', ruleId: 'r-home', errorCode: 'permission_denied' },
+        ]);
+        const retry = buildMakeCoordinatorEnableInput(next, { currentManagerSessionId: null });
+        expect(retry.ruleSuggestions.map(rule => ({ id: rule.source.ruleId, expectedVersion: rule.expectedVersion })))
+            .toEqual([{ id: 'r-project', expectedVersion: 0 }]);
+        expect(next.rules.find(rule => rule.scope === 'home')).toBe(draft.rules.find(rule => rule.scope === 'home'));
+        expect(next.roleId).toBe(draft.roleId);
+        expect(next.keep).toBe(draft.keep);
+        expect(applyMakeCoordinatorEffectsToDraft(next, [
+            { operation: 'rule', status: 'accepted', ruleId: 'r-project', version: 0 },
+        ])).toBe(next);
+    });
+
     const accepted = (operation: 'bot' | 'manager' | 'rule') => ({ operation, status: 'accepted' as const });
 
     it('tells a refused Role apart from the other unfinished steps, keeping the done ones out of both', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AIBackendProfileSchema } from '@happier-dev/protocol';
+import { AIBackendProfileSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
 
 import { resolveStrictV2ProfileSecretReadiness } from './resolveStrictV2ProfileSecretReadiness';
 import type { SavedSecretReferenceResolution } from '@/sync/store/settings/savedSecretCatalogSnapshot';

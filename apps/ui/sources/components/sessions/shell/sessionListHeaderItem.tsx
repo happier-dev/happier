@@ -4,6 +4,7 @@ import { GestureDetector } from 'react-native-gesture-handler';
 import Animated from 'react-native-reanimated';
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
+import type { SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
 import { t } from '@/text';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SessionListFirstGroupContext } from './SessionListGroup';
@@ -52,7 +53,6 @@ type SessionListHeaderItemProps = Readonly<{
     first?: boolean;
     collapsedKeys: Readonly<Record<string, boolean>>;
     projectHeaderViewModelByGroupKey: ReadonlyMap<string, SessionListProjectHeaderViewModel>;
-    hasMultipleMachines: boolean;
     onOpenProject: (workspaceRefId: string, serverId?: string) => void;
     onCreateSessionFromWorkspaceScope: CreateSessionFromWorkspaceScopeHandler;
     onAddFolderToWorkspace: (item: Extract<SessionListIndexItem, { type: 'header' }>) => void;
@@ -66,6 +66,8 @@ type SessionListHeaderItemProps = Readonly<{
         scopeHint: Readonly<{ serverId: string; machineId: string; rootPath: string }> | null;
     }>) => void;
     onToggleCollapse: (collapseKey: string) => void;
+    /** The list's canonical project-colour writer; sessions in the project inherit it. */
+    onSetWorkspaceColor?: (workspaceKey: string, color: SessionAppearanceColor | null, opts?: Readonly<{ serverId?: string | null }>) => void;
     /** A section's own facts: its chosen icon and complete membership count (absent while unproven). */
     sectionFactsByGroupKey?: ReadonlyMap<string, SessionSectionHeaderFacts>;
     onCreateSessionInSection?: (item: Extract<SessionListIndexItem, { type: 'header' }>) => void;
@@ -76,7 +78,6 @@ type SessionListHeaderItemProps = Readonly<{
     getRowMoveActionHandlers?: ReturnType<typeof useSessionListRowMoveActionHandlers>;
     onRegisterSessionFolderDropTarget?: RegisterSessionFolderDropTarget;
     workspaceFaviconsEnabled?: boolean;
-    workspaceMachineSubtitlesEnabled?: boolean;
     /** False in a Runs-only list, where no group is a place to start a Session. */
     newSessionEnabled?: boolean;
     overlayShared?: TreeDropOverlaySharedValues;
@@ -229,20 +230,25 @@ const SessionListGroupHeaderItem = React.memo((rawProps: SessionListHeaderItemPr
                 item={props.item}
                 faviconSource={faviconSource}
                 faviconSourceReachable={faviconSourceReachable}
-                machineSubtitle={projectHeaderViewModel?.machineSubtitle}
-                hasMultipleMachines={props.hasMultipleMachines}
+                machineDetail={projectHeaderViewModel?.machineDetail}
 
                 displayTitle={headerViewState.displayTitle}
                 hasCustomLabel={headerViewState.hasCustomLabel}
                 canOpenProject={Boolean(headerViewState.workspaceRefId)}
                 workspaceFaviconsEnabled={props.workspaceFaviconsEnabled === true}
-                workspaceMachineSubtitlesEnabled={props.workspaceMachineSubtitlesEnabled !== false}
                 newSessionEnabled={props.newSessionEnabled !== false}
                 onOpenProject={headerActionHandlers.onOpenProject}
                 onCreateSession={headerActionHandlers.onCreateSession}
                 onAddFolder={() => props.onAddFolderToWorkspace(props.item)}
                 onRename={headerActionHandlers.onRename}
                 onReset={headerActionHandlers.onReset}
+                appearanceColor={projectHeaderViewModel?.appearanceColor ?? null}
+                appearanceServerId={projectHeaderViewModel?.serverId ?? headerViewState.scopeHint?.serverId ?? props.item.serverId ?? null}
+                onSetColor={props.onSetWorkspaceColor && headerViewState.legacyWorkspaceKey
+                    ? (color) => props.onSetWorkspaceColor?.(headerViewState.legacyWorkspaceKey, color, {
+                        serverId: projectHeaderViewModel?.serverId ?? headerViewState.scopeHint?.serverId ?? props.item.serverId ?? null,
+                    })
+                    : undefined}
                 onMoveUp={moveActionHandlers?.onMoveUp}
                 onMoveDown={moveActionHandlers?.onMoveDown}
                 first={props.first}
@@ -293,6 +299,7 @@ const SessionListGroupHeaderItem = React.memo((rawProps: SessionListHeaderItemPr
             // Needs you opens the Inbox's Needs you view (R8); its chevron alone folds the group.
             onOpen={props.item.headerKind === 'attention' ? openNeedsYou : undefined}
             headerKind={props.item.headerKind}
+            detail={props.item.fromEverywhere ? t('sessionsList.spacesFromEverywhere') : undefined}
             rollup={props.item.rollup}
             count={props.item.headerKind === 'attention' || props.item.headerKind === 'working' ? props.item.eligibleCount : undefined}
             first={props.first}

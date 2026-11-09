@@ -67,4 +67,19 @@ describe('prompt picker composer admission', () => {
         expect(input.inputRef.current.setSelection).toHaveBeenCalledWith({ start: 13, end: 21 });
         expect(input.inputRef.current.focus).toHaveBeenCalled();
     });
+
+    it('refuses an aborted Action expansion before editing or handing off submission', async () => {
+        const input = setup();
+        const controller = new AbortController();
+        let resolve!: (value: { text: string }) => void;
+        const hook = await renderHook(() => usePromptPickerController({ ...input, composerKey: 'draft', editable: true, canSend: true }));
+        await act(async () => { hook.getCurrent().open(); });
+        let pending!: Promise<boolean>;
+        await act(async () => { pending = hook.getCurrent().apply(() => new Promise(done => { resolve = done; }), 'send', controller.signal); });
+        controller.abort();
+        await act(async () => { resolve({ text: 'obsolete' }); expect(await pending).toBe(false); });
+        expect(input.stateRef.current.text).toBe('@file before selected after');
+        expect(input.submitted).toEqual([]);
+        expect(input.apply).not.toHaveBeenCalled();
+    });
 });

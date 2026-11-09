@@ -13,11 +13,10 @@ import { useUserMessageHistoryRemoteEntries } from '@/hooks/session/useUserMessa
 import {
     readPersistedSessionMessagePins,
     readSessionMessagePinsRevision,
-    savePersistedSessionMessagePins,
     subscribeSessionMessagePinsChanges,
 } from '@/sync/domains/state/sessionMessagePinsPersistence';
 import {
-    toggleSessionMessagePin,
+    sessionMessagePinRowsMatch,
     type PersistedSessionMessagePinV1,
 } from "@happier-dev/session-core/pins";
 import type { Message } from "@happier-dev/session-core/messages";
@@ -96,10 +95,15 @@ export function useSessionTranscriptNavigationEntriesFromMessages(params: Readon
         transcriptNavigationLoadedMessagesCacheRef.current = createTranscriptNavigationLoadedMessagesCache();
     }
     const transcriptNavigationLoadedMessagesCache = transcriptNavigationLoadedMessagesCacheRef.current;
-    const togglePersistedSessionMessagePin = React.useCallback((pin: PersistedSessionMessagePinV1) => {
+    const togglePersistedSessionMessagePin = React.useCallback(async (pin: PersistedSessionMessagePinV1) => {
+        if (!activeServerAccountScope || pin.sessionId !== sessionId) return;
         const currentPins = readPersistedSessionMessagePins(sessionId, activeServerAccountScope);
-        const nextPins = toggleSessionMessagePin(currentPins, pin);
-        savePersistedSessionMessagePins(sessionId, nextPins, activeServerAccountScope);
+        const op = currentPins.some(existing => sessionMessagePinRowsMatch(existing, pin)) ? 'unpin' : 'pin';
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        await createDefaultActionExecutor().execute('session.messages.pins', { op, sessionId, pin }, {
+            surface: 'ui', authority: 'present_user', serverId: activeServerAccountScope.serverId,
+            expectedAccountId: activeServerAccountScope.accountId,
+        });
     }, [activeServerAccountScope, sessionId]);
     const transcriptNavigationLoadedMessages = React.useMemo(() => (
         buildTranscriptNavigationLoadedMessages({

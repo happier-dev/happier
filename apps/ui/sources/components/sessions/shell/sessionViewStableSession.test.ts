@@ -491,6 +491,24 @@ describe('buildSessionViewShellSessionSignature', () => {
 });
 
 describe('useSessionViewShellSession', () => {
+    it('publishes a failed activation cause that arrives after its failed authorization', async () => {
+        const previousState = storage.getState();
+        const base = createSessionFixture({ id: 'pool-failure', active: false, activeAt: 100,
+            pendingActivationAuthorization: { requestId: 'p1', requestedAt: 200, status: 'failed', failureCode: 'runtime_start_failed' } });
+        const failureDetails = { reason: 'spawn-rejected' as const, spawnErrorCode: 'SPAWN_VALIDATION_FAILED' as const,
+            runtimeReason: 'no_eligible_member' as const };
+        let unmount: (() => Promise<void>) | null = null;
+        try {
+            storage.getState().applySessions([base]);
+            const hook = await renderHook(() => useSessionViewShellSession(base.id));
+            unmount = hook.unmount;
+            await act(async () => storage.getState().applySessions([{ ...base, pendingActivationFailureDetails: failureDetails }]));
+            expect(hook.getCurrent()?.pendingActivationFailureDetails).toEqual(failureDetails);
+        } finally {
+            await unmount?.();
+            storage.setState(previousState);
+        }
+    });
     it('publishes later turn facts through the real store to a mounted Session consumer', async () => {
         const previousState = storage.getState();
         const base = createSessionFixture({ id: 'live-turn-session', serverId: 'live-turn-home', seq: 33, meaningfulActivityAt: 1 });

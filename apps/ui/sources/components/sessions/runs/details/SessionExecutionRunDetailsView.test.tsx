@@ -538,7 +538,7 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         await loaded(); await menu();
         await screen.pressByTestIdAsync('session-run-details-delete');
         await vi.waitFor(() => expect(screen.findByTestId('session-run-details-gone')).not.toBeNull());
-        expect(Modal.confirm).toHaveBeenCalledWith('sessionInfo.deleteSession', 'sessionInfo.deleteSessionWarning',
+        expect(Modal.confirm).toHaveBeenCalledWith('sessionInfo.deleteSession', 'sessionInfo.deleteDetachedHistoryWarning',
             expect.objectContaining({ destructive: true }));
         expect(Modal.confirm).toHaveBeenCalledOnce();
         expect(boundary.requests.filter(request => request.method === 'session.delete')).toEqual([

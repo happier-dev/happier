@@ -16,6 +16,7 @@ import { TranscriptEnterWrapper } from '@/components/sessions/transcript/motion/
 import { TranscriptCollapsible } from '@/components/sessions/transcript/motion/TranscriptCollapsible';
 import { Icon } from '@/components/ui/icons/Icon';
 import { ToolCallsGroupView } from './ToolCallsGroupView';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -65,13 +66,14 @@ describe('ToolCallsGroupView (real motion and row owners)', () => {
             toolMessages: [createToolCallMessageFixture({ id: 'm1', createdAt: 1 })] });
         const iconNames = () => screen.findAllByType(Icon).map(node => node.props.name);
         expect(iconNames()).toContain('stack-simple');
-        expect(iconNames()).not.toContain('caret-up');
+        const caretTurned = () => screen.findByType(DisclosureCaret).props.expanded;
+        expect(caretTurned()).toBe(false);
         expect(screen.findByTestId('transcript-tool-calls-header')?.props.accessibilityState).toMatchObject({ expanded: false });
         await screen.pressByTestIdAsync('transcript-tool-calls-header');
-        expect(iconNames()).toContain('caret-up');
+        expect(caretTurned()).toBe(true);
         expect(screen.findByTestId('transcript-tool-calls-header')?.props.accessibilityState).toMatchObject({ expanded: true });
         await screen.pressByTestIdAsync('transcript-tool-calls-header');
-        expect(iconNames()).not.toContain('caret-up');
+        expect(caretTurned()).toBe(false);
         expect(screen.findAllByType(ToolTimelineRow)).toHaveLength(0);
     });
 

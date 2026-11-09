@@ -1,6 +1,6 @@
 import { Typography } from '@/constants/Typography';
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { AnimatedNumber } from '@/components/instrument';
@@ -10,11 +10,10 @@ import { Text } from '@/components/ui/text/Text';
 import type { SessionScmSummary } from '@/components/sessions/sourceControl/status/statusSummary';
 import { t } from '@/text';
 
-import { instrumentStripStyles } from './instrumentStripStyles';
+import { instrumentStripStyles, useInstrumentStripHitReach } from './instrumentStripStyles';
 import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
-
-const GIT_HIT_SLOP = { top: 12, bottom: 12, left: 8, right: 8 } as const;
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 const formatAdded = (value: number) => `+${Math.trunc(value)}`;
 const formatRemoved = (value: number) => `−${Math.trunc(value)}`;
@@ -34,6 +33,7 @@ export type GitDeltaInstrumentProps = Readonly<{
  */
 export const GitDeltaInstrument = React.memo(function GitDeltaInstrument(props: GitDeltaInstrumentProps) {
     const { theme } = useUnistyles();
+    const hitReach = useInstrumentStripHitReach();
     const { git } = props;
 
     const addedColor = theme.colors.versionControl.added.foreground;
@@ -108,15 +108,15 @@ export const GitDeltaInstrument = React.memo(function GitDeltaInstrument(props: 
     }
 
     return (
-        <Pressable
+        <HappierPressable
             testID={props.testID ?? 'session-instrument-git'}
             accessibilityRole="button"
             accessibilityLabel={accessibilityLabel}
-            hitSlop={GIT_HIT_SLOP}
             onPress={handlePress}
+            hitReach={hitReach}
             style={({ pressed }) => (pressed ? { opacity: motionTokens.press.opacity } : null)}
         >
             {body}
-        </Pressable>
+        </HappierPressable>
     );
 });

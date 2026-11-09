@@ -1,10 +1,11 @@
 import * as React from 'react';
 
 import type {
-    SessionAccessAccountSummaryV1,
+    SessionAccessAccountSummaryV1} from '@happier-dev/protocol/sessions/access/sessionAccessPrincipalV1';
+import type {
     SessionResponsibilityCandidateV1,
     SetSessionResponsibilityResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/access/sessionResponsibilityV1';
 import { createActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import {
@@ -16,9 +17,9 @@ import {
     setSessionResponsibleAccount,
     type SessionResponsibilityMutationFailure,
 } from '@/sync/api/session/apiSessionResponsibility';
-import { storage, useSessionListRenderableWithServerScope } from '@/sync/domains/state/storage';
+import { storage, useSessionListRowSelector } from '@/sync/domains/state/storage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { useSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
+import { useSessionCollaborationAvailabilityState } from '@/hooks/session/useSessionCollaborationAvailability';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 export type SessionResponsibilityAvailability =
@@ -106,8 +107,17 @@ export function useSessionResponsibilityController(
     sessionId: string,
     scope: ServerAccountScope,
 ): SessionResponsibilityController {
-    const session = useSessionListRenderableWithServerScope(scope.serverId, sessionId);
-    const collaborationAvailability = useSessionCollaborationAvailability(scope.serverId);
+    // The row facts this controller reads, each subscribed alone: a transcript
+    // arrival advances other row fields and publishes nothing here.
+    const sessionKnown = useSessionListRowSelector(scope.serverId, sessionId, (row) => row != null);
+    const responsibleAccountId = useSessionListRowSelector(scope.serverId, sessionId, (row) => row?.responsibleAccountId);
+    const projectedSummary = useSessionListRowSelector(scope.serverId, sessionId,
+        (row) => (row as { responsibleAccount?: SessionAccessAccountSummaryV1 | null } | null)?.responsibleAccount ?? null);
+    const projectedAssignResponsibility = useSessionListRowSelector(scope.serverId, sessionId,
+        (row) => row?.access?.capabilities.assignResponsibility === true);
+    const collaborationAvailabilityState = useSessionCollaborationAvailabilityState(scope.serverId);
+    // Responsibility reads and mutations remain action admissions: unresolved fails closed at their API boundary.
+    const collaborationAvailability = collaborationAvailabilityState === 'available' ? 'available' : 'unavailable';
     const targetKey = JSON.stringify([scope.serverId, scope.accountId, sessionId]);
     const currentTarget = React.useRef(targetKey);
     currentTarget.current = targetKey;
@@ -120,8 +130,6 @@ export function useSessionResponsibilityController(
         mounted.current = true;
         return () => { mounted.current = false; };
     }, []);
-    const responsibleAccountId = session?.responsibleAccountId;
-    const projectedSummary = (session as { responsibleAccount?: SessionAccessAccountSummaryV1 | null } | null | undefined)?.responsibleAccount ?? null;
     const [pending, setPending] = React.useState(false);
     const [failure, setFailure] = React.useState<SessionResponsibilityMutationFailure | null>(null);
     const [pendingApproval, setPendingApproval] = React.useState<Readonly<{ artifactId: string; actionId: string; serverId: string }> | null>(null);
@@ -178,16 +186,15 @@ export function useSessionResponsibilityController(
     // The proven refusal only stands in for a projection that has not caught up
     // yet. Once the canonical projection itself withdraws the capability it owns
     // the answer again, so a later regrant restores the control normally.
-    const projectedAssignResponsibility = session?.access?.capabilities.assignResponsibility === true;
     React.useEffect(() => {
         if (!projectedAssignResponsibility) setAuthorityLost(false);
     }, [projectedAssignResponsibility]);
 
-    const availability: SessionResponsibilityAvailability = session == null
+    const availability: SessionResponsibilityAvailability = !sessionKnown || collaborationAvailabilityState === 'loading'
         ? 'loading'
         : responsibleAccountId === undefined || collaborationAvailability !== 'available'
             ? 'unsupported'
-        : session?.access?.capabilities.assignResponsibility === true && !authorityLost
+        : projectedAssignResponsibility && !authorityLost
             ? 'editable'
             : 'read_only';
 

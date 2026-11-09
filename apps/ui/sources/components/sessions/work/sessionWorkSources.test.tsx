@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { AutomationRunCauseSchema } from '@happier-dev/protocol';
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import { AutomationRunCauseSchema } from '@happier-dev/protocol/automations/run-cause';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { installSessionSubagentCommonModuleMocks } from '@/components/sessions/agents/sessionSubagentTestHelpers';
@@ -12,6 +12,7 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { resolveSessionListHomeKey } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -24,17 +25,72 @@ const { storage } = await import('@/sync/domains/state/storage');
 const { readLockedSessionName } = await import('@/utils/sessions/sessionUtils');
 // Load the real Work graph at collection so the test budget measures the journey.
 const { useSessionWorkSourcesOwner, toWorkReportSessionSource } = await import('./sessionWorkSources');
+const { useSessionLineage } = await import('./sessionLineage');
 const { resolveSessionInstructionsPolicy, useSessionInstructionsDetail } = await import('./useSessionInstructionsSource');
 const { useSessionAgentActivity } = await import('@/hooks/session/useSessionAgentActivity');
 const { createAppShellAction } = await import('@/sync/ops/actions/appShellAction');
 afterEach(() => { standardCleanup(); actionOperationStore.reset(); });
 
 describe('the Session Work operation source', () => {
+    it('refreshes same-ref Instructions from an Allow-mode Agent write without an approval and ignores unrelated Artifact wakes', async () => {
+        const { createPlainArtifactHomeFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
+        const { withUiPromptLibraryArtifactStore } = await import('@/sync/ops/promptLibrary/promptLibraryArtifactStore');
+        const { createPromptDocInLibrary } = await import('@happier-dev/protocol/prompts/library/promptLibraryActionOperations');
+        const { executeDefaultActionInCapturedAccount } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const { createSessionMetadataHttpBoundary } = await import('@/dev/testkit/harness/sessionMetadataHttpBoundary');
+        const sessionHttp = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
+        let bodyReads = 0;
+        const f = await createPlainArtifactHomeFixture('https://instructions-allowed.test', {
+            handleRequest: async (path, init) => {
+                if (path.startsWith('/v1/artifacts/') && (!init?.method || init.method === 'GET')) bodyReads++;
+                if (path === '/v2/account/settings') return Response.json({ version: 1, content: { t: 'plain', v: {
+                    actionsSettingsV1: { v: 1, actions: {}, approvalWaivedSurfaces: { 'prompt_doc.update': ['agent'] } },
+                } } });
+                return sessionHttp.handle(`https://instructions-allowed.test${path}`, init);
+            },
+        });
+        try {
+            await f.hydrateAccountSettings();
+            await withUiPromptLibraryArtifactStore(async (store, account) => {
+                const created = await createPromptDocInLibrary({ store, request: { title: 'Instructions', markdown: 'Previous' } });
+                const metadata = { work: { promptStack: [{ id: 'session.instructions', ref: { kind: 'doc', artifactId: created.artifactId },
+                    enabled: true, placement: 'system_append' }] } };
+                storage.setState({ isDataReady: true, sessions: { ...storage.getState().sessions,
+                    'allowed-author': createSessionFixture({ id: 'allowed-author', serverId: f.home.id,
+                        metadata: { ...createSessionFixture().metadata!, ...metadata } }) } });
+                sessionHttp.replaceSession('allowed-author');
+                const hook = await renderHook(() => useSessionInstructionsDetail({ sessionId: 'allowed-author', serverId: f.home.id,
+                    ownerMetadata: metadata, access: 'readable' }));
+                try {
+                    await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'ready', document: { markdown: 'Previous' } }));
+                    const before = bodyReads;
+                    await act(async () => {
+                        publishHomeAccountChange(f.home.id, ['another-document'], { changeKinds: ['artifact'] });
+                        publishHomeAccountChange(f.home.id, [created.artifactId], { changeKinds: ['session'] });
+                    });
+                    expect(bodyReads).toBe(before);
+                    await act(async () => {
+                        expect(await executeDefaultActionInCapturedAccount(account, 'prompt_doc.update', {
+                            artifactId: created.artifactId, title: 'Instructions', markdown: 'Allowed edit',
+                        }, { surface: 'agent', serverId: f.home.id, runtimeAccountId: account.accountId,
+                            defaultSessionId: 'allowed-author', actionRequestId: 'allowed-instructions' })).toMatchObject({ ok: true, result: { ok: true } });
+                        // This fixture has a disconnected socket. Deliver the server's content-free
+                        // committed Artifact wake at that transport boundary, as useMemoryDocument does.
+                        publishHomeAccountChange(f.home.id, [created.artifactId], { changeKinds: ['artifact'] });
+                    });
+                    await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'ready', document: { markdown: 'Allowed edit' } }));
+                    expect(f.boundary.list().filter(row => row.id !== created.artifactId)).toHaveLength(0);
+                } finally { await hook.unmount(); }
+            }, { serverId: f.home.id });
+        } finally { await f.dispose(); }
+    });
     it('observes actual Agent approval settlements in the Instructions read model and refreshes successive accepted revisions', async () => {
         const { createPlainArtifactHomeFixture } = await import('@/dev/testkit/harness/artifactStoreBoundary');
         const { withUiPromptLibraryArtifactStore } = await import('@/sync/ops/promptLibrary/promptLibraryArtifactStore');
         const { createPromptDocInLibrary } = await import('@happier-dev/protocol/prompts/library/promptLibraryActionOperations');
         const { executeDefaultActionInCapturedAccount } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
         const { createSessionMetadataHttpBoundary } = await import('@/dev/testkit/harness/sessionMetadataHttpBoundary');
         const sessionHttp = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
         const f = await createPlainArtifactHomeFixture('https://instructions-settlement.test', {
@@ -78,6 +134,9 @@ describe('the Session Work operation source', () => {
                     for (const markdown of ['First accepted', 'Second accepted']) {
                         const id = await propose(markdown, markdown);
                         await decide(id, 'approve');
+                        // Approval settlement is attribution; the disconnected transport fixture
+                        // must separately deliver the real document's committed Artifact wake.
+                        await act(async () => { publishHomeAccountChange(f.home.id, [created.artifactId], { changeKinds: ['artifact'] }); });
                         await vi.waitFor(() => expect(hook.getCurrent()).toMatchObject({ status: 'ready', document: { markdown },
                             writeFacts: { provenance: { changedBy: { kind: 'agent', sessionId },
                                 approvedBy: { kind: 'person', accountId: account.accountId } }, agentWriteResult: { status: 'updated' } } }));
@@ -88,6 +147,7 @@ describe('the Session Work operation source', () => {
     });
     it('says what a report waiting for permission wants, from the request when it is held and from its kind otherwise', async () => {
         const { createSessionViewerFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const { resolveSessionListHomeKey } = await import('@/sync/domains/session/listing/sessionListRowStateLookup');
         const { buildSessionListRenderableFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
         const now = Date.now();
         const waiting = createSessionFixture({ id: 'perm', active: true, activeAt: now,
@@ -120,7 +180,9 @@ describe('the Session Work operation source', () => {
         const reports = selectSessionReportSubtree({}, 'lead', 'home', { home: { child: row } });
         expect(toWorkReportSessionSource(reports[0]!, Date.now())).toMatchObject({ title: 'Review release', agentId: 'acme.reviewer' });
     });
-    it('refreshes a report identity on machine rename without reprojecting unrelated settings', async () => {
+    it('avoids report inventory traversal on unrelated publications while updating admitted rows, relations and hydrated bases', async () => {
+        const { buildSessionListRenderableFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
+        const { createSessionViewerFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
         const connection = await restoreServerAccountForTest({
             serverUrl: 'https://work-identity.test', serverIdentityId: 'srv_work_identity', accountId: 'account',
             request: async url => {
@@ -133,11 +195,28 @@ describe('the Session Work operation source', () => {
         });
         const initial = storage.getState();
         const serverId = connection.home.id;
+        const lead = createSessionFixture({ id: 'lead', serverId, seq: 0,
+            metadata: { ...createSessionFixture().metadata!, name: 'Current lead' } });
         const session = createSessionFixture({ id: 'report', serverId, manager: { sessionId: 'lead' },
             metadata: { ...createSessionFixture().metadata!, machineId: 'work-mac', host: 'mac.local' } });
         const machine = createMachineFixture({ id: 'work-mac',
             metadata: { ...createMachineFixture().metadata!, displayName: 'Studio Mac' } });
-        storage.setState({ sessions: { [session.id]: session }, sessionListRowsByServerId: {},
+        // Count real inventory enumeration, not selector calls or only suppressed React renders.
+        // The 1k unrelated admitted Sessions must never be walked for a message/settings publication.
+        let relationEnumerations = 0;
+        const admittedRows = {
+            ...Object.fromEntries(Array.from({ length: 1_000 }, (_, index) => {
+                const unrelated = createSessionFixture({ id: `unrelated-${index}`, serverId });
+                return [unrelated.id, buildSessionListRenderableFromSession(unrelated)];
+            })),
+            lead: buildSessionListRenderableFromSession(lead),
+            [session.id]: buildSessionListRenderableFromSession(session),
+        };
+        const rows = new Proxy(admittedRows, { ownKeys(target) {
+            relationEnumerations += 1;
+            return Reflect.ownKeys(target);
+        } });
+        storage.setState({ sessions: { lead, [session.id]: session }, sessionListRowsByServerId: { [serverId]: rows },
             machineListByServerId: { [serverId]: [machine] } });
         try {
             const hook = await renderHook(() => useSessionWorkSourcesOwner({ sessionId: 'lead', serverId,
@@ -154,17 +233,103 @@ describe('the Session Work operation source', () => {
             // A retained route and an opened pane can mount the same scoped Session producer.
             const equivalent = await renderHook(() => useSessionWorkSourcesOwner({ sessionId: 'lead', serverId,
                 ownerMetadata: null, agentActivity: useSessionAgentActivity({ sessionId: 'lead', serverId }) }));
+            const lineage = await renderHook(() => useSessionLineage(session.id, serverId));
+            expect(lineage.getCurrent()).toEqual([{ sessionId: 'lead', title: 'Current lead' }]);
             expect(await read()).toMatchObject({ status: 'ready', summary: before.summary });
-            await act(async () => { storage.setState({ settings: { ...storage.getState().settings, analyticsOptOut: true } }); });
+            relationEnumerations = 0;
+            const relationHome = resolveSessionListHomeKey(storage.getState().sessionRelationsByServerId, serverId)!;
+            const relationshipInputs = storage.getState().sessionRelationsByServerId[relationHome];
+            for (let index = 0; index < 3; index++) {
+                await act(async () => { storage.setState({ settings: { ...storage.getState().settings, analyticsOptOut: index % 2 === 0 } }); });
+                await act(async () => { storage.getState().applyMessages('lead', [{
+                    id: `ordinary-${index}`, seq: index + 1, localId: null, createdAt: index + 1,
+                    role: 'user', isSidechain: false, content: { type: 'text', text: 'Continue' },
+                }]); });
+                await act(async () => { storage.setState({ sessionListRowsByServerId: {
+                    ...storage.getState().sessionListRowsByServerId,
+                    'another-home': { [session.id]: { ...admittedRows[session.id]!, manager: null } },
+                } }); });
+            }
+            expect(relationEnumerations).toBe(0);
+            expect(storage.getState().sessions.lead?.seq).toBe(3);
+            expect(storage.getState().sessionRelationsByServerId[relationHome]).toBe(relationshipInputs);
+            expect(storage.getState().sessionMessages.lead?.messageIdsOldestFirst).toHaveLength(3);
+            expect(storage.getState().sessionListRowsByServerId[serverId]).toBe(rows);
             expect(hook.getCurrent().projection).toBe(before);
             await act(async () => { storage.setState({ machineListByServerId: { [serverId]: [{ ...machine,
                 metadata: { ...machine.metadata!, displayName: 'Travel Mac' } }] } }); });
             expect(hook.getCurrent().projection.sessions[0]?.facts.join(' · ')).toContain('Travel Mac');
             expect(await read()).toMatchObject({ status: 'ready',
                 items: [{ facts: hook.getCurrent().projection.sessions[0]!.facts }] });
+            const currentRows = storage.getState().sessionListRowsByServerId;
+            const renamed = createSessionFixture({ ...session,
+                metadata: { ...session.metadata!, name: 'Review release' } });
+            let relationshipPublications = 0;
+            const stop = storage.subscribe((next, previous) => {
+                if (next.sessionRelationsByServerId[relationHome] !== previous.sessionRelationsByServerId[relationHome]) relationshipPublications += 1;
+            });
+            try {
+                await act(async () => { storage.setState({ sessionListRowsByServerId: {
+                    ...currentRows, [serverId]: { ...admittedRows,
+                        [session.id]: buildSessionListRenderableFromSession({ ...renamed, manager: null }) },
+                } }); });
+                expect(relationshipPublications).toBe(1);
+            } finally { stop(); }
+            expect(hook.getCurrent().projection.sessions).toEqual([]);
+            expect(hook.getCurrent().projection.summary.sessions).toBe(0);
+            expect(lineage.getCurrent()).toEqual([]);
+            const now = Date.now();
+            const waiting = createSessionFixture({ ...renamed, active: true, activeAt: now,
+                viewer: createSessionViewerFixture({ attention: { needsAttention: true, reasons: ['permission_required'],
+                    primary: 'permission_required', presentation: 'full' } }),
+                agentState: { requests: { r1: { kind: 'permission', tool: 'Bash', arguments: { command: 'git status' }, createdAt: now } } },
+            });
+            await act(async () => { storage.setState({ sessionListRowsByServerId: {
+                ...currentRows, [serverId]: { ...admittedRows,
+                    [session.id]: buildSessionListRenderableFromSession(waiting) },
+            } }); });
+            expect(hook.getCurrent().projection.sessions[0]?.title).toBe('Review release');
+            expect(hook.getCurrent().projection.summary.sessions).toBe(1);
+            expect(hook.getCurrent().projection.sessions[0]?.facts).toContain('sessionWork.row.asksPermission');
+            expect(lineage.getCurrent()).toEqual([{ sessionId: 'lead', title: 'Current lead' }]);
+            await act(async () => { storage.setState({ sessionListRowsByServerId: {
+                ...storage.getState().sessionListRowsByServerId, [serverId]: {
+                    ...storage.getState().sessionListRowsByServerId[serverId],
+                    lead: buildSessionListRenderableFromSession(createSessionFixture({ id: 'lead', serverId,
+                        metadata: { ...createSessionFixture().metadata!, name: 'Release lead' } })),
+                },
+            } }); });
+            expect(lineage.getCurrent()).toEqual([{ sessionId: 'lead', title: 'Release lead' }]);
+            await act(async () => { storage.setState({ sessions: { ...storage.getState().sessions, [session.id]: waiting } }); });
+            expect(hook.getCurrent().projection.sessions[0]?.facts).toContain('sessionWork.row.needsApproval');
+            // Use real Session/list ingress for fallback membership, list override and removal.
+            const fallback = createSessionFixture({ id: 'fallback', serverId, seq: 1,
+                manager: { sessionId: 'lead' }, metadata: { ...session.metadata!, name: 'Hydrated fallback' } });
+            await act(async () => { storage.getState().applySessions([fallback]); });
+            expect(hook.getCurrent().projection.sessions.map(item => item.title)).toContain('Hydrated fallback');
+            const row = buildSessionListRenderableFromSession(fallback);
+            await act(async () => { storage.getState().applyServerScopedSessionListRows(serverId,
+                [{ ...row, manager: null }], { source: 'rowOnly', mode: 'append' }); });
+            expect(hook.getCurrent().projection.sessions.map(item => item.title)).not.toContain('Hydrated fallback');
+            await act(async () => { storage.getState().applyServerScopedSessionListRows(serverId,
+                [row], { source: 'rowOnly', mode: 'append' }); });
+            expect(hook.getCurrent().projection.sessions.map(item => item.title)).toContain('Hydrated fallback');
+            // Missing and null normalize equally at row ingress. Start this omission from an
+            // attached row so the admitted replacement actually exercises hydrated fallback.
+            await act(async () => { storage.getState().applyServerScopedSessionListRows(serverId,
+                [{ ...row, manager: undefined }], { source: 'rowOnly', mode: 'append' }); });
+            expect(hook.getCurrent().projection.sessions.map(item => item.title)).toContain('Hydrated fallback');
+            await act(async () => { storage.getState().deleteSession(fallback.id, serverId); });
+            expect(hook.getCurrent().projection.sessions.map(item => item.title)).not.toContain('Hydrated fallback');
+            expect(storage.getState().sessionRelationsByServerId[relationHome]?.[fallback.id]).toBeUndefined();
+            await act(async () => { storage.setState({ sessions: {}, sessionListRowsByServerId: {} }); });
+            expect(hook.getCurrent().projection.sessions).toEqual([]);
+            expect(lineage.getCurrent()).toEqual([]);
             await hook.unmount();
-            expect(await read()).toMatchObject({ status: 'ready', summary: equivalent.getCurrent().projection.summary });
+            // The equivalent owner remains mounted, but reset retired its source records.
+            expect(await read()).toMatchObject({ status: 'loading' });
             await equivalent.unmount();
+            await lineage.unmount();
             expect(await read()).toEqual({ status: 'unavailable' });
         } finally { storage.setState(initial, true); await connection.dispose(); }
     });

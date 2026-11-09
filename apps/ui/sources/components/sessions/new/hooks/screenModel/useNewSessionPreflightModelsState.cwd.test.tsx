@@ -9,7 +9,7 @@ import { NEW_SESSION_MODEL_PROBE_TIMEOUT_MS } from '@/components/sessions/new/mo
 import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;

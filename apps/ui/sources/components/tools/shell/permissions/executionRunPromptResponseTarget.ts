@@ -1,4 +1,4 @@
-import type { StructuredQuestionAnswersV1 } from '@happier-dev/protocol';
+import type { StructuredQuestionAnswersV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
 
 /**
  * One answer to a pending agent request owned by an Execution Run.

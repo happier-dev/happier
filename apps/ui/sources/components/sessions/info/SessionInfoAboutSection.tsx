@@ -1,17 +1,18 @@
 import * as React from 'react';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { machinePageHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { Icon } from '@/components/ui/icons/Icon';
-import {
-  ExpandableItem,
-  ExpandableItemCaret,
-} from '@/components/ui/lists/ExpandableItem';
+import { Text } from '@/components/ui/text/Text';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { getProfileDisplayName } from '@/components/profiles/profileDisplay';
+import { buildSessionDebugInformationForSession } from '@/components/sessions/debug/sessionDebugInformation';
 import { stringifySessionDebugJson } from '@/components/sessions/debug/sessionDebugRedaction';
 import { Typography } from '@/constants/Typography';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
@@ -34,6 +35,7 @@ import {
 } from '@/utils/sessions/terminalSessionDetails';
 import type { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useSessionInfoDisclosureCommands } from './useSessionInfoDisclosureCommands';
 
 type SessionInfoMetadata = ReturnType<typeof readSessionOwnerMetadataView>;
 
@@ -83,9 +85,6 @@ export const SessionInfoAboutSection = React.memo(
     const [privateFolderExpanded, setPrivateFolderExpanded] =
       React.useState(false);
     const mono = styles.mono;
-    const copyGlyph = (
-      <Icon name="copy" size={14} color={theme.colors.text.tertiary} />
-    );
     const formatDate = (timestamp: number) =>
       new Date(timestamp).toLocaleString();
 
@@ -172,8 +171,6 @@ export const SessionInfoAboutSection = React.memo(
                 {...headerProps}
                 title={t('session.folderless.folder')}
                 detail={t('session.folderless.privateToSession')}
-                showChevron={false}
-                rightElement={<ExpandableItemCaret expanded={expanded} />}
               />
             )}
           >
@@ -192,7 +189,6 @@ export const SessionInfoAboutSection = React.memo(
             detailStyle={mono}
             copy={metadata.path}
             showChevron={false}
-            rightElement={copyGlyph}
           />
         ),
       });
@@ -228,11 +224,10 @@ export const SessionInfoAboutSection = React.memo(
           <Item
             testID="session-info-resume-command"
             title={t('sessionPages.info.resumeCommand')}
-            detail={resumeCommand}
+            detail={t('sessionInfo.resumeCommand', { sessionId: middleTruncate(session.id) })}
             detailStyle={mono}
             copy={resumeCommand}
             showChevron={false}
-            rightElement={copyGlyph}
           />
         ),
       });
@@ -247,7 +242,18 @@ export const SessionInfoAboutSection = React.memo(
           detailStyle={mono}
           copy={session.id}
           showChevron={false}
-          rightElement={copyGlyph}
+        />
+      ),
+    });
+
+    lead.push({
+      key: 'copy-information',
+      node: (
+        <Item
+          testID="session-info-copy-debug-information"
+          title={t('sessionInfo.copyDebugInformation')}
+          copy={buildSessionDebugInformationForSession(session).text}
+          showChevron={false}
         />
       ),
     });
@@ -284,7 +290,6 @@ export const SessionInfoAboutSection = React.memo(
             detailStyle={mono}
             copy={props.vendorResumeId}
             showChevron={false}
-            rightElement={copyGlyph}
           />
         ),
       });
@@ -424,7 +429,6 @@ export const SessionInfoAboutSection = React.memo(
             detailStyle={mono}
             copy={attachCommand}
             showChevron={false}
-            rightElement={copyGlyph}
           />
         ),
       });
@@ -471,7 +475,6 @@ export const SessionInfoAboutSection = React.memo(
             detailStyle={mono}
             copy={sessionLogPath}
             showChevron={false}
-            rightElement={copyGlyph}
           />
         ),
       });
@@ -504,16 +507,22 @@ export const SessionInfoAboutSection = React.memo(
       });
     }
 
+    useSessionInfoDisclosureCommands([
+      { key: 'about', title: t('sessionPages.info.aboutTitle'), expanded: moreExpanded,
+        onExpandedChange: setMoreExpanded, available: more.length > 0 },
+      { key: 'private-folder', title: t('session.folderless.folder'), expanded: privateFolderExpanded,
+        onExpandedChange: setPrivateFolderExpanded, available: managedFolder && Boolean(metadata?.path) },
+    ]);
     useCurrentUiContextLocalCommands(React.useMemo(() => [
-      ...(more.length ? [{ key: 'session.info.about.toggle', title: moreExpanded
-        ? t('sessionPages.info.showFewer') : t('sessionPages.info.showMore', { count: more.length }), invoke: toggleMore }] : []),
       ...(moreExpanded && props.showUsage ? [{ key: 'session.info.usage', title: t('sessionPages.info.usage'), invoke: openUsage }] : []),
-    ], [more.length, moreExpanded, openUsage, props.showUsage, toggleMore]));
+    ], [moreExpanded, openUsage, props.showUsage]));
 
     return (
       <ItemGroup
         testID="session-info-about"
         title={t('sessionPages.info.aboutTitle')}
+        // A list of facts: the list shape of its density (in the Info inspector, value-first fact rows).
+        density="compact"
       >
         {lead.map((fact) => (
           <React.Fragment key={fact.key}>{fact.node}</React.Fragment>
@@ -526,15 +535,22 @@ export const SessionInfoAboutSection = React.memo(
         {more.length > 0 ? (
           <Item
             testID="session-info-about-more"
+            // The caret leads the words on the facts' own edge; no glyph column for the whole section.
             title={
-              moreExpanded
-                ? t('sessionPages.info.showFewer')
-                : t('sessionPages.info.showMore', { count: more.length })
+              <View style={styles.moreTitleRow}>
+                <DisclosureCaret expanded={moreExpanded} />
+                <Text style={styles.moreTitle}>
+                  {moreExpanded
+                    ? t('sessionPages.info.showFewer')
+                    : t('sessionPages.info.showMore', { count: more.length })}
+                </Text>
+              </View>
             }
-            titleStyle={styles.moreTitle}
+            accessibilityLabel={moreExpanded
+              ? t('sessionPages.info.showFewer')
+              : t('sessionPages.info.showMore', { count: more.length })}
             accessibilityExpanded={moreExpanded}
             showChevron={false}
-            icon={<ExpandableItemCaret expanded={moreExpanded} />}
             onPress={toggleMore}
           />
         ) : null}
@@ -564,6 +580,11 @@ function SessionMachinePoolOriginItem(
 const styles = StyleSheet.create((theme) => ({
   mono: {
     ...Typography.mono(),
+  },
+  moreTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s6,
   },
   moreTitle: {
     ...Typography.variant('body', 'medium'),

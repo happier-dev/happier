@@ -44,7 +44,7 @@ export type SessionViewEmbeddedPresentation = Readonly<{
     readOnlyNotice?: 'openSession' | 'readOnly';
     /** One quiet line under the composer, saying where replies go (the peek). */
     repliesBanner?: React.ReactNode;
-    /** What the empty composer asks in this host; default the Session placeholder. */
+    /** What an empty composer asks in this host (a Workflow step: "Reply in this step…"). Default: the Session's own. */
     composerPlaceholder?: string;
 }>;
 
@@ -76,12 +76,13 @@ export function readEmbeddedSessionPresentation(
  */
 export function resolveEmbeddedComposerControls(
     presentation: SessionViewEmbeddedPresentation | null,
-): Readonly<{ voiceAffordance: 'none'; engineControls: 'auto' | 'none'; attachments: boolean }> | null {
+): Readonly<{ voiceAffordance: 'none'; engineControls: 'auto' | 'none'; attachments: boolean; allowPlacementCustomization: false }> | null {
     if (!presentation) return null;
     return {
         voiceAffordance: 'none',
         engineControls: presentation.modelPicker === true ? 'auto' : 'none',
         attachments: presentation.attachments !== false,
+        allowPlacementCustomization: false,
     };
 }
 
@@ -99,8 +100,8 @@ export function narrowTranscriptInteractionForPresentation(
     const canSendMessages = interaction.canSendMessages && !readOnly && !presentation.composerInputLocked;
     const canApprovePermissions = interaction.canApprovePermissions && !readOnly;
     if (canSendMessages && canApprovePermissions) return interaction;
-    // An inactive Session keeps its own reason: nothing can be answered anywhere, so pointing the
-    // viewer at the full Session would promise an action that does not exist.
+    // Native prompts keep their inactive reason; Action decisions retain their independent grant
+    // only in writable presentations.
     const permissionDisabledReason = interaction.permissionDisabledReason === 'inactive'
         ? 'inactive'
         : presentation.readOnlyNotice === 'readOnly'
@@ -110,6 +111,7 @@ export function narrowTranscriptInteractionForPresentation(
         ...interaction,
         canSendMessages,
         canApprovePermissions,
+        canApproveActions: (interaction.canApproveActions ?? interaction.canApprovePermissions) && !readOnly,
         canFork: canSendMessages && interaction.canFork === true,
         permissionDisabledReason,
     };

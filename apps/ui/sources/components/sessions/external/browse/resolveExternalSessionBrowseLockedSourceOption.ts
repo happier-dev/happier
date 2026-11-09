@@ -1,9 +1,11 @@
 import type {
-    AccountProfile,
+    AccountProfile} from '@happier-dev/protocol/account/profile';
+import type {
     ExternalSessionsAgentId,
-    ExternalSessionsSource,
+    ExternalSessionsSource} from '@happier-dev/protocol/sessions/external/sourceCatalog';
+import type {
     PluginProjectionV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { resolveAgentUiBehavior } from '@/agents/registry/registryUiBehavior';
 import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';

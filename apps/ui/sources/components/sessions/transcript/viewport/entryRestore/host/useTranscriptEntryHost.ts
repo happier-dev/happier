@@ -152,6 +152,11 @@ type TranscriptEntryHostDeps = Readonly<{
     isViewportAnchorSeqLoaded(seq: number, items: readonly ChatTranscriptListItem[]): boolean;
     /** The older pager's own prefetch-threshold answer for the current physical viewport. */
     isViewportNearOlderEdge(): boolean;
+    /**
+     * The renderer reported its first load: rows laid out and the initial scroll placement finished
+     * (Legend `onLoad`). Before it, the DOM viewport is not the reader's settled position.
+     */
+    firstListPaintObservedRef: Readonly<{ current: boolean }>;
     jumpToSeq: number | null | undefined;
     lastScrollOffsetForIntentRef: MutableRef<number | null>;
     lastUserScrollIntentAtMsRef: TranscriptUserScrollIntentTimestampReader;
@@ -878,8 +883,25 @@ export function useTranscriptEntryHost(deps: TranscriptEntryHostDeps): Transcrip
                 let webConsecutiveNoProgressLoads = 0;
                 let webTransientRetries = 0;
                 let webContentHeightBaselinePx = deps.listContentHeightRef.current;
+                // Sufficiency is a question about the tail reader at its settled initial end
+                // placement. The latch can hand this fill the first page before that exists: the
+                // DOM is not laid out yet (renderer content 296 / DOM 297 / 297 px) or is laid out
+                // but still at scrollTop 0. Read there, the reader looks underfilled or at the
+                // older edge, and every open of a multi-page Session fetched, decrypted and
+                // prepended a second page (live 2026-11-03, 2,021 messages; placed, the tail reader
+                // sat 6.8k px clear of the edge). The renderer's load signal is that settlement:
+                // Legend reports it once its containers laid out AND its initial scroll finished.
+                const isInitialEndPlacementPending = (): boolean => deps.firstListPaintObservedRef.current !== true;
                 while (!webFillSignal.aborted) {
                     if (isInitialFillSufficient() && deps.committedMessagesCount > 0) break;
+                    // Waiting for placement is not fill progress: the no-progress budget starts once
+                    // the placement settles. The wait itself ends at one budget window, after which
+                    // the geometry is read as is, so a renderer that never reports load still fills.
+                    if (Date.now() - webStartedAtMs < budgetMs && isInitialEndPlacementPending()) {
+                        await new Promise((resolve) => setTimeout(resolve, WEB_FILL_TRANSIENT_RETRY_MS));
+                        webLastProgressAtMs = Date.now();
+                        continue;
+                    }
                     if (Date.now() - webLastProgressAtMs >= budgetMs) break;
                     if (Date.now() >= webAbsoluteFillDeadlineMs) break;
                     const result = await deps.loadOlder({ preservePrependViewport: true, showLoadingIndicator: false });

@@ -52,9 +52,10 @@ function flattenStyleProp(style: any): any {
 }
 
 function getActionContainer(screen: any, messageId: string) {
-  const forkButton = screen.findByTestId(`transcript-message-fork:${messageId}`);
-  expect(forkButton).toBeTruthy();
-  const actionContainer = findAncestor(forkButton, (node: any) => {
+  // The slot exists whether or not the row is revealed (a closed web row mounts no controls).
+  const actionSlot = screen.findByTestId(`transcript-message-actions:${messageId}`);
+  expect(actionSlot).toBeTruthy();
+  const actionContainer = findAncestor(actionSlot, (node: any) => {
     const style = flattenStyleProp(node.props?.style);
     return (
       style?.position === 'absolute' &&

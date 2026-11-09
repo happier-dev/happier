@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
-import { renderHook } from '@/dev/testkit';
+import { renderHook, flushHookEffects } from '@/dev/testkit';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { usePromptPickerLibrary } from './usePromptPickerLibrary';
 import { storage } from '@/sync/domains/state/storage';
@@ -29,7 +29,10 @@ describe('prompt picker Account invocation inventory', () => {
         // empty catalog destinations must still override those legacy bytes.
         await fixture.hydrateAccountSettings();
         hook = await renderHook(() => usePromptPickerLibrary(fixture!.home.id), { flushOptions: { cycles: 30, turns: 10 } });
-        expect(hook.getCurrent()).toMatchObject({ isLoading: false, error: false, coverage: 'complete', invocations: [], folders: [] });
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(hook!.getCurrent()).toMatchObject({ isLoading: false, error: false, coverage: 'complete', invocations: [], folders: [] });
+        });
     });
 
     it('lists through prompts.library.list admission instead of reading the Artifact store directly', async () => {

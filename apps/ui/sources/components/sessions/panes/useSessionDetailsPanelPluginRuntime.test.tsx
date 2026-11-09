@@ -9,32 +9,32 @@ import { useSessionDetailsPanelPluginRuntime } from './useSessionDetailsPanelPlu
 installSessionDetailsPanelCommonModuleMocks();
 
 describe('useSessionDetailsPanelPluginRuntime', () => {
-    it('keeps mounted details quiet when unrelated Profile fields change and observes a new Account id', async () => {
+    it('keeps Details free of unused diagnostics Profile subscriptions while following its registered Machine', async () => {
         const previous = storage.getState();
         storage.setState({ profile: { ...previous.profile, id: 'details-account' } });
         let renders = 0;
-        const hook = await renderHook(() => {
+        const hook = await renderHook(({ machineId }: { machineId: string }) => {
             renders++;
             return useSessionDetailsPanelPluginRuntime({
                 sessionId: 'details-session', routeServerId: 'details-home', pluginUiProjection: null,
                 paneSurfaceScope: {
-                    targetKind: 'session', sessionId: 'details-session', serverId: 'details-home', machineId: 'details-machine',
+                    targetKind: 'session', sessionId: 'details-session', serverId: 'details-home', machineId,
                     pluginUiProjection: null, pluginBrowserProjection: null, projectionPhase: 'unavailable',
                     interactionEnabled: false, platform: 'web',
                 },
             });
-        });
+        }, { initialProps: { machineId: 'details-machine' } });
         try {
-            expect(hook.getCurrent().peerMediationObservabilityScope).toEqual({
-                kind: 'machine', accountId: 'details-account', machineId: 'details-machine',
-            });
+            expect(hook.getCurrent().machineId).toBe('details-machine');
             const before = renders;
             for (let tick = 0; tick < 5; tick++) {
                 await act(async () => storage.setState(state => ({ profile: { ...state.profile, timestamp: tick + 1 } })));
             }
             expect(renders - before).toBe(0);
             await act(async () => storage.setState(state => ({ profile: { ...state.profile, id: 'replacement-account' } })));
-            expect(hook.getCurrent().peerMediationObservabilityScope).toMatchObject({ kind: 'machine', accountId: 'replacement-account' });
+            expect(renders - before).toBe(0);
+            await hook.rerender({ machineId: 'replacement-machine' });
+            expect(hook.getCurrent().machineId).toBe('replacement-machine');
         } finally {
             await hook.unmount();
             storage.setState(previous, true);

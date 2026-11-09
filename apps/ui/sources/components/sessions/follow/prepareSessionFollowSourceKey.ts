@@ -151,10 +151,8 @@ export async function prepareSessionFollowSourceKey(
         const sourceCrypto = await context.resolveSourceCrypto(input.sourceSessionId);
         input.signal?.throwIfAborted();
         if (sourceCrypto.encryptionMode === 'plain') return { kind: 'not_needed' };
-        if (sourceCrypto.encryptionMode !== 'e2ee') {
-            return { kind: 'waiting', reason: 'source_key_unavailable' };
-        }
 
+        // UI has store evidence; apps/cli/src/agent/runtime/session/follow/prepareSessionFollowSourceKey.ts defers key requirements to exact-Machine transport admission.
         const destination = deps.resolveDestination({
             serverId: context.serverId,
             accountId: context.accountId,
@@ -165,6 +163,9 @@ export async function prepareSessionFollowSourceKey(
             || isMachineReplaced(destination.machine)
             || destination.machine.availability?.kind === 'locked') return { kind: 'waiting', reason: 'runner_unreachable' };
         if (isPersistentMachine(destination.machine)) return { kind: 'not_needed' };
+        if (sourceCrypto.encryptionMode !== 'e2ee') {
+            return { kind: 'waiting', reason: 'source_key_unavailable' };
+        }
         if (!supportsMachineSessionFollowContextV1(destination.machine.operationProtocolCapabilities)) {
             return { kind: 'waiting', reason: 'unsupported' };
         }

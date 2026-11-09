@@ -161,6 +161,8 @@ describe('Save a committed message through the prompt library and Account writer
         const { screen, serverId, saved, catalog } = await mount();
         await screen.pressByTestIdAsync('save-message-prompt-shortcut-toggle');
         await act(async () => screen.changeTextByTestId('save-message-prompt-shortcut', '/clear'));
+        // The field's leading adornment owns the slash, so a typed one is not doubled ("//clear").
+        expect(screen.findByTestId('save-message-prompt-shortcut')!.props.value).toBe('clear');
         await screen.pressByTestIdAsync('save-message-prompt-save');
         expect(saved).toEqual([]);
         expect(harness.artifacts(serverId).list()).toHaveLength(0);

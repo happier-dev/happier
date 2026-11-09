@@ -930,7 +930,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         };
         const producer = createSessionDraftRepository({ syncEnabled: false, cipher,
             randomUUID: () => '00000000-0000-4000-8000-000000000001',
-            storage: { getString: (key) => values.get(key), set: (key, value) => { values.set(key, value); }, delete: (key) => { values.delete(key); } } });
+            storage: { getString: (key) => values.get(key), getAllKeys: () => [...values.keys()], set: (key, value) => { values.set(key, value); }, delete: (key) => { values.delete(key); } } });
         producer.writeExistingSessionDraft({ scope, sessionId: 'session_1', patch: { executionRunLauncher: {
             key: 'conversation', patch: { text: 'Previously retained text' },
         } } });

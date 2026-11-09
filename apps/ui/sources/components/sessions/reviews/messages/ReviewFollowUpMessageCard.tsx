@@ -3,7 +3,7 @@ import React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import type { ReviewFollowUpV1 } from '@happier-dev/protocol';
+import type { ReviewFollowUpV1 } from '@happier-dev/protocol/messages/structured/reviewFollowUpV1';
 
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { StructuredFindText, useStructuredFindState, type StructuredFindTextBlock } from '@/components/sessions/transcript/structured/structuredFindText';

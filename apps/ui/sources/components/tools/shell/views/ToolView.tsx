@@ -1,8 +1,11 @@
-import { useSessionTranscriptSource, useTranscriptVisualContext } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import { TranscriptToolResultCard } from '@/components/sessions/transcript/references/TranscriptToolResultCard';
+import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import { useOpenSubAgentRun } from '@/components/tools/renderers/workflow/useOpenSubAgentRun';
 import { useTranscriptRowContentDemand } from '@/components/sessions/transcript/viewport/visibility/TranscriptRowContentDemand';
 import * as React from 'react';
 import { View, TouchableOpacity, Platform } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
 import { getToolViewComponent } from '@/components/tools/renderers/core/_registry';
 import { Message, ToolCall } from "@happier-dev/session-core/messages";
 import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
@@ -49,7 +52,7 @@ import { buildApprovalToolCallLocation, selectMatchingToolApprovalRequests, read
 import { TranscriptJumpAttention } from '@/components/sessions/transcript/navigation/TranscriptJumpHighlightOverlay';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { RowActionRevealSlot } from '@/components/ui/lists/RowActionRevealSlot';
-import { readCoarsePrimaryPointer, useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
+import { useCoarsePrimaryPointer, useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
 import { shouldShowTranscriptRowPinAction } from '@/components/sessions/transcript/transcriptRowActionVisibility';
 import type { ToolRowPinAction } from '@/components/sessions/transcript/toolCalls/ToolCallPinAction';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -57,19 +60,17 @@ import {
     TranscriptRowSeqProvider,
     useHistoricalTranscriptAgentId,
 } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
-import { SessionBoardActionResultReference } from '@/components/sessions/transcript/references/SessionBoardActionResultReference';
-import { WorkflowRunActionResultReference } from '@/components/sessions/transcript/references/WorkflowRunActionResultReference';
-import { WorkflowDefinitionActionResultReference } from '@/components/sessions/transcript/references/WorkflowDefinitionActionResultReference';
-import { BrowserActionResultReference } from '@/components/sessions/transcript/references/BrowserActionResultReference';
-import { ComputerActionResultReference } from '@/components/sessions/transcript/references/ComputerActionResultReference';
 import type { TranscriptPermissionDisabledReason } from '@/utils/sessions/deriveTranscriptInteraction';
 import { useTranscriptFindRow } from '@/components/sessions/transcript/find/TranscriptFindContext';
 import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
 import { formatElapsedDuration } from '@/components/machines/durationWords';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 const TOOL_VIEW_HIGHLIGHT_RADIUS = 12;
 
 interface ToolViewProps {
+    /** Result content mounted only while this tool's existing disclosure is expanded. */
+    children?: React.ReactNode;
     metadata: Metadata | null;
     tool: ToolCall;
     messages?: Message[];
@@ -118,7 +119,6 @@ const ToolViewWithStoreSettings = React.memo<ToolViewProps>((props) => {
 const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDisplaySettings }>((props) => {
     const { tool, onPress, sessionId, messageId } = props;
     const contentDemand = useTranscriptRowContentDemand();
-    const visualContext = useTranscriptVisualContext();
     // The canonical transcript row sequence. It already reaches this component
     // for jump targeting; historical Agent attribution is its second reader, and
     // it is published to the whole tool subtree so the body, the permission
@@ -222,9 +222,12 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
         });
     }, [messageId, toolForRendering.id]);
 
+    const openRun = useOpenSubAgentRun({ tool: toolForRendering, sessionId, serverId: props.serverId, navigate: transcriptSource.navigate });
     const handleOpen = React.useCallback(() => {
         if (transcriptSource.navigate === null) return;
-        if (onPress) {
+        if (openRun) {
+            openRun();
+        } else if (onPress) {
             onPress();
         } else if (sessionId && routeMessageId) {
             navigateWithBlurOnWeb(() => {
@@ -235,9 +238,9 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
                 }));
             });
         }
-    }, [onPress, props.serverId, routeMessageId, transcriptSource, sessionId]);
+    }, [onPress, openRun, props.serverId, routeMessageId, transcriptSource, sessionId]);
 
-    const canOpen = transcriptSource.navigate !== null && !!(onPress || (sessionId && routeMessageId));
+    const canOpen = transcriptSource.navigate !== null && !!(openRun || onPress || (sessionId && routeMessageId));
 
     const description: string | null = headerModel.subtitle;
     const status: string | null = headerModel.statusText;
@@ -428,6 +431,7 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
     );
     const errorSummary =
         statusKind === 'error' && !bodyStatesError ? (resolveToolErrorSummary(toolForRendering) ?? t('common.error')) : null;
+    const coarsePrimaryPointer = useCoarsePrimaryPointer();
 
     return (
         <TranscriptRowSeqProvider value={transcriptSeq}>
@@ -488,7 +492,7 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
                                 platformOS: Platform.OS,
                                 isRowHovered: headerActionHost.isHovered,
                                 isActionHovered: false,
-                                coarsePrimaryPointer: readCoarsePrimaryPointer(),
+                                coarsePrimaryPointer,
                                 pinned: props.headerAction.pinned,
                             })}
                             style={styles.headerActionsContainer}
@@ -504,12 +508,10 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
                     ) : null}
 
                     {secondaryOnPress ? (
-                        <TouchableOpacity
+                        <HappierPressable
                             testID="tool-view-header-secondary"
                             onPress={secondaryOnPress}
-                            activeOpacity={0.8}
-                            style={styles.secondaryAction}
-                            hitSlop={15}
+                            style={({ pressed }) => [styles.secondaryAction, pressed ? { opacity: 0.8 } : null]}
                             accessibilityRole="button"
                             accessibilityLabel={secondaryTapAction === 'open' ? t('toolView.open') : t('toolView.expand')}
                         >
@@ -522,7 +524,7 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
                                     color={theme.colors.text.secondary}
                                 />
                             )}
-                        </TouchableOpacity>
+                        </HappierPressable>
                     ) : null}
                 </View>
             </View>
@@ -551,30 +553,9 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
                         setHeaderActions={setHeaderActions}
                         declinedApprovalShown={declinedApprovalShown}
                     />
+                    {isExpanded ? props.children : null}
                 </View>
             </TranscriptCollapsible>
-
-            {/*
-              * The managed workflow Run this call admitted, if it admitted one:
-              * the same row-level OUTCOME placement, linking the exact Run.
-              */}
-            <WorkflowRunActionResultReference
-                tool={toolForRendering}
-                serverId={props.serverId}
-            />
-            <WorkflowDefinitionActionResultReference tool={toolForRendering} serverId={props.serverId} />
-            <BrowserActionResultReference
-                tool={toolForRendering}
-                sessionId={sessionId}
-                serverId={props.serverId}
-                mediaPreviewEnabled={'canPreviewMedia' in interaction && interaction.canPreviewMedia === true}
-            />
-            <ComputerActionResultReference
-                tool={toolForRendering}
-                sessionId={sessionId}
-                serverId={props.serverId}
-                mediaPreviewEnabled={'canPreviewMedia' in interaction && interaction.canPreviewMedia === true}
-            />
 
             {/* Permission footer - rendered for most tools */}
             {/* AskUserQuestion and ExitPlanMode have custom action UIs */}
@@ -598,6 +579,7 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
                     artifact={request.artifact}
                     approval={request.approval}
                     location={approvalLocation}
+                    contentDemand={contentDemand}
                     toolOutput={declinedApprovalShown ? readToolOutputText(toolForRendering) : null}
                     sessionId={sessionId ?? request.approval.origin?.sessionId ?? ''}
                     metadata={props.metadata}
@@ -611,19 +593,8 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
                 <View testID="tool-view-waiting-edge" pointerEvents="none" style={styles.waitingEdge} />
             ) : null}
         </TranscriptJumpAttention>
-        {/*
-          * The Board item this call created, if it created one, is the call's OUTCOME: the agent's visual
-          * reply. It stands in the reply column below the card rather than inside its inset well, so it
-          * reads as the reply and the call above it stays a quiet line (an MCP-named tool collapses to its
-          * title by default). Inside the card it read as tool output.
-          */}
-        <SessionBoardActionResultReference
-            tool={toolForRendering}
-            sessionId={sessionId}
-            serverId={props.serverId}
-            contentDemand={contentDemand}
-            visualContext={visualContext}
-        />
+        <TranscriptToolResultCard tool={toolForRendering} sessionId={sessionId} serverId={props.serverId}
+            mediaPreviewEnabled={'canPreviewMedia' in interaction && interaction.canPreviewMedia === true} />
         </TranscriptRowSeqProvider>
     );
 });
@@ -636,7 +607,7 @@ function ElapsedView(props: { from: number }) {
 
 const styles = StyleSheet.create((theme) => ({
     container: {
-        backgroundColor: theme.colors.surface.inset,
+        backgroundColor: glassContentFill(theme.colors.surface.inset, theme.colors),
         borderRadius: theme.parts.toolCard.radius,
         marginVertical: theme.space.s4,
         overflow: 'hidden'
@@ -650,15 +621,16 @@ const styles = StyleSheet.create((theme) => ({
     containerEmbedded: {
         // Inside a tool-calls group card the unit card already paints a continuous
         // inset background; dropping the outer margin keeps grouped tools flush so no
-        // page background shows between them.
+        // page background shows between them. The group card owns the fill, so over glass this one clears.
         marginVertical: 0,
+        backgroundColor: glassContentFill(theme.colors.surface.inset, theme.colors, { nested: true }),
     },
     header: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: theme.space.s12,
-        backgroundColor: theme.colors.surface.elevated,
+        backgroundColor: glassContentFill(theme.colors.surface.elevated, theme.colors, { nested: true }),
     },
     headerCompact: {
         paddingHorizontal: theme.space.s10,

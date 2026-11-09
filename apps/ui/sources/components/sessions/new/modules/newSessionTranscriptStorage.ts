@@ -1,5 +1,4 @@
 import { getAgentBehavior } from '@/agents/catalog/catalog';
-import type { Settings } from '@/sync/domains/settings/settings';
 
 export type NewSessionTranscriptStorage = 'persisted' | 'direct';
 
@@ -29,7 +28,7 @@ export function supportsDirectTranscriptStorageForNewSession(params: Readonly<{
     const supportsTranscriptStorageMode = getAgentBehavior(params.agentId, params.machineId).newSession?.supportsTranscriptStorageMode;
     return supportsTranscriptStorageMode?.({
         agentId: params.agentId,
-        settings: params.settings as Settings,
+        settings: params.settings,
         storageMode: 'direct',
     }) === true;
 }

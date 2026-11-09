@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { ROOT_STACK_ANCHOR } from '@/components/navigation/root/rootStackAnchor';
 
 /**
  * Canonical owner of "which route is a surface anchored to".
@@ -49,7 +50,7 @@ export function resolveSurfaceAnchorPathname(
 ): string {
     const currentPathname = typeof pathname === 'string' ? pathname : '/';
     if (!isOverlaySurfaceRoutePathname(currentPathname)) return currentPathname;
-    return typeof previousAnchorPathname === 'string' ? previousAnchorPathname : currentPathname;
+    return typeof previousAnchorPathname === 'string' ? previousAnchorPathname : ROOT_STACK_ANCHOR.pathname;
 }
 
 /**
@@ -59,8 +60,8 @@ export function resolveSurfaceAnchorPathname(
  * for non-overlay routes, so the write is idempotent and a discarded render cannot leave a value
  * the next render would not write itself.
  *
- * A surface that mounts *while* an overlay is already open has no observed anchor and falls back to
- * the overlay pathname — correct, because in that case there is no background route it was showing.
+ * A surface that mounts while a directly linked overlay is already open uses the same Home anchor
+ * that the root navigator inserts behind that overlay.
  */
 export function useSurfaceAnchorPathname(pathname: string): string {
     const anchorPathnameRef = React.useRef<string | null>(null);

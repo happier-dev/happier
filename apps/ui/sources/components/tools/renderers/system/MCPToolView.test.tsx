@@ -17,6 +17,9 @@ vi.mock('@/components/ui/media/CodeView', () => ({
     CodeView: ({ code }: any) => React.createElement('Text', null, code),
 }));
 
+// Load the real renderer during collection; cold module transforms are setup, not an interaction timeout.
+await import('./MCPToolView');
+
 describe('MCPToolView', () => {
     it('indexes its decoded preview and exact full JSON, and reveals a preview match beyond the summary clamp', async () => {
         const { MCPToolView, projectMCPDisplayText } = await import('./MCPToolView');
@@ -84,6 +87,20 @@ describe('MCPToolView', () => {
 
         expect(rendered).toContain('unsupported_action · target_outside_led_subtree');
         expect(rendered).not.toContain('Stop a running session');
+    });
+
+    it('says an acknowledged section move in words instead of its JSON (lab clsections:agent)', async () => {
+        const result = { ok: true, result: { sessionId: 'session_1', sectionId: null, previousSectionId: 'launch' } };
+        const text = JSON.stringify(result);
+        const tool = makeToolCall({
+            name: 'mcp__happier__action_execute',
+            state: 'completed',
+            input: { actionId: 'session.section.set', input: { sessionId: 'session_1', sectionId: null } },
+            result: { content: [{ type: 'text', text }], structuredContent: null, text, _mcp: { serverId: 'happier', toolId: 'action_execute' } },
+        });
+        const rendered = (await renderView(tool, 'summary')).getTextContent();
+        expect(rendered).toContain('Moved this session back to its project');
+        expect(rendered).not.toContain('previousSectionId');
     });
 
     it('exports subtitle precedence for subtitle, title, path, and query', async () => {

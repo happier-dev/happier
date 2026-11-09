@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { getAgentModelConfig } from '@happier-dev/agents';
-import { resolveInitialNewSessionModelMode } from '@/components/sessions/new/hooks/newSessionModelModePolicy';
+import { coerceNewSessionModelMode } from '@/components/sessions/new/hooks/newSessionModelModePolicy';
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import { buildAcpConfigOptionOverridesV1, type AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { SessionCapabilitySelectionV1Schema, type SessionCapabilitySelectionV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
@@ -177,8 +177,10 @@ function resolveAuthoringModelState(params: Readonly<{
     if (candidate && !backendTargetKeysMatch(candidate.ref.agentTargetKey, params.agentTargetKey)) {
         throw new Error('Session authoring model selection target mismatch');
     }
-    const modelMode = resolveInitialNewSessionModelMode({
-        draftModelMode: candidate?.ref.modelId ?? null,
+    const modelMode = coerceNewSessionModelMode({
+        modelMode: candidate?.ref.modelId ?? null,
+        modelSelection: candidate,
+        preflight: null,
         modelConfig: {
             defaultMode: core?.model?.defaultMode ?? 'default',
             allowedModes: core?.model?.allowedModes ?? [],

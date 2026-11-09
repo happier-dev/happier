@@ -1,4 +1,3 @@
-import { SessionAttachmentHandleV1Schema, type SessionAttachmentHandleV1 } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentHandleV1';
 import { sessionAttachmentsUploadFile, type AttachmentsUploadConfig } from '@/sync/domains/transfers/ops/uploadSessionAttachment';
 import { isTransferFinalizeRecoveryFailure } from '@/sync/domains/transfers/runtime/transferRuntime';
 import type { SessionAttachmentsUploadFinalizeResponse } from '@/sync/domains/transfers/runtime/transferRuntime/families/sessionAttachmentTransfers';
@@ -6,7 +5,7 @@ import type { ExactSessionMachineTargetIdentity } from '@/sync/ops/sessionMachin
 import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import type { AttachmentDraft } from './attachmentDraftModel';
 import type { AttachmentsUploadFileSource } from '@/sync/domains/attachments/attachmentsUploadFileSource';
-import { uploadAttachmentDraftsToSession, type AttachmentTargetUploadedDraftCheckpoint } from './uploadAttachmentDraftsToSession';
+import { uploadAttachmentDraftsToSession, type AttachmentTargetUploadedDraftCheckpoint, type IssuedUploadedAttachment } from './uploadAttachmentDraftsToSession';
 
 export function isAttachmentTargetUploadCheckpointFor(
     checkpoint: AttachmentTargetUploadedDraftCheckpoint,
@@ -35,8 +34,10 @@ export function captureSessionMessageAttachmentDrafts(drafts: readonly Attachmen
     // native URIs retain the ordinary uploader's source-file lifetime contract.
     const captureFile = (source: AttachmentsUploadFileSource): AttachmentsUploadFileSource => source.kind === 'memory'
         ? { ...source, bytes: new Uint8Array(source.bytes) } : { ...source };
-    return drafts.map(({ id, source, targetUploadedCheckpoints, errorCode, error }) => ({
+    return drafts.map(({ id, source, targetUploadedCheckpoints, edit, browserAnnotation, errorCode, error }) => ({
         id,
+        ...(edit ? { edit } : {}),
+        ...(browserAnnotation ? { browserAnnotation } : {}),
         source: source.kind === 'folder' ? { ...source, entries: source.entries.map(entry => ({ ...entry, source: captureFile(entry.source) })),
             ...(source.directories ? { directories: [...source.directories] } : {}) } : captureFile(source),
         status: errorCode === 'attachment_source_missing' ? 'error' : 'pending',
@@ -60,17 +61,16 @@ export async function uploadSessionMessageAttachmentDrafts(args: Readonly<{
     isCurrent: () => boolean;
     onUploadedDraftCheckpoint?: (checkpoint: AttachmentTargetUploadedDraftCheckpoint) => Promise<void> | void;
     uploadFile?: typeof sessionAttachmentsUploadFile;
-}>): Promise<readonly SessionAttachmentHandleV1[] | null> {
+}>): Promise<readonly IssuedUploadedAttachment[] | null> {
     const isCurrent = () => !args.signal?.aborted && args.isCurrent();
     if (!isCurrent()) return null;
 
     const drafts = captureSessionMessageAttachmentDrafts(args.drafts).map(draft => {
         const checkpoint = draft.targetUploadedCheckpoints?.find(entry => entry.id === draft.id
             && isAttachmentTargetUploadCheckpointFor(entry, args.target, args.messageLocalId, args.executionTarget));
-        const handle = SessionAttachmentHandleV1Schema.safeParse(checkpoint?.attachmentHandle);
-        if (!checkpoint?.uploadedPath || !handle.success || handle.data.sessionId !== args.target.sessionId) return draft;
+        if (!checkpoint) return draft;
         const { target: _target, executionTarget: _executionTarget, messageLocalId: _messageLocalId, ...uploaded } = checkpoint;
-        return { ...draft, ...uploaded, attachmentHandle: handle.data };
+        return { ...draft, ...uploaded };
     });
     const assertCurrent = () => {
         if (!isCurrent()) throw new Error('Session attachment preparation is no longer current');
@@ -111,23 +111,13 @@ export async function uploadSessionMessageAttachmentDrafts(args: Readonly<{
             },
             onUploadedDraftCheckpoint: async checkpoint => {
                 assertCurrent();
-                const parsed = SessionAttachmentHandleV1Schema.safeParse(checkpoint.attachmentHandle);
-                if (!parsed.success || parsed.data.sessionId !== args.target.sessionId) {
-                    throw new Error('Session attachment preparation requires an issued target Session handle');
-                }
-                await args.onUploadedDraftCheckpoint?.({ ...checkpoint, attachmentHandle: parsed.data,
+                await args.onUploadedDraftCheckpoint?.({ ...checkpoint,
                     target: { ...args.target }, executionTarget: { ...args.executionTarget }, messageLocalId: args.messageLocalId });
                 assertCurrent();
             },
         });
         assertCurrent();
-        return uploaded.uploaded.map(attachment => {
-            const parsed = SessionAttachmentHandleV1Schema.safeParse(attachment.attachmentHandle);
-            if (!parsed.success || parsed.data.sessionId !== args.target.sessionId) {
-                throw new Error('Session attachment preparation requires an issued target Session handle');
-            }
-            return parsed.data;
-        });
+        return uploaded.uploaded;
     } catch {
         // Preparation refusal keeps the original composer sources available for a fresh retry.
         return null;

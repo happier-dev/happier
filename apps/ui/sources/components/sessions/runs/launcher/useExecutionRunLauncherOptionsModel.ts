@@ -1,4 +1,4 @@
-import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
+import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { ProviderBoundModelRefSchema, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
 import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
@@ -28,6 +28,7 @@ import { resolveExecutionRunLauncherActionId, resolveExecutionRunTargetFieldPath
 import { resolveExecutionRunLauncherBackendChoices, resolveInitialExecutionRunBackendTargetKey } from './resolveExecutionRunLauncherBackendChoices';
 import { doesExecutionRunProfileMatchSelectedBackends, resolveExecutionRunLauncherProfileChoices } from './resolveExecutionRunLauncherProfileChoices';
 import { resolveExecutionRunPermissionAgentId } from './resolveExecutionRunPermissionAgentId';
+import { clearExecutionRunChildSelection } from './executionRunChildChoice';
 
 export function useExecutionRunLauncherOptionsModel(params: Readonly<{
     sessionId: string | null;
@@ -175,10 +176,18 @@ export function useExecutionRunLauncherOptionsModel(params: Readonly<{
     const draftModelSelection = ProviderBoundModelRefSchema.safeParse(params.actionInput.modelSelection);
     const draftModelAgentTargetKey = draftModelSelection.success && draftModelSelection.data ? draftModelSelection.data.agentTargetKey : null;
     React.useEffect(() => {
-        if (!draftModelAgentTargetKey || !selectedBackendChoice) return;
-        if (backendTargetKeysMatch(draftModelAgentTargetKey, selectedBackendChoice.backendTarget)) return;
+        if (!draftModelAgentTargetKey) return;
+        if (params.intent === 'review' && selectedValues.length !== 1) {
+            params.setActionInput(clearExecutionRunChildSelection);
+            return;
+        }
+        if (!selectedBackendChoice || backendTargetKeysMatch(draftModelAgentTargetKey, selectedBackendChoice.backendTarget)) return;
+        if (params.intent === 'review') {
+            params.setActionInput(clearExecutionRunChildSelection);
+            return;
+        }
         params.setActionInput(({ modelSelection: _modelSelection, ...rest }) => rest);
-    }, [draftModelAgentTargetKey, params.setActionInput, selectedBackendChoice]);
+    }, [draftModelAgentTargetKey, params.intent, params.setActionInput, selectedBackendChoice, selectedValues.length]);
 
     const permissionModeOptions = React.useMemo(() => {
         const agentId = resolveExecutionRunPermissionAgentId({ selectedBackendChoices, fallbackAgentId: params.fallbackAgentId });

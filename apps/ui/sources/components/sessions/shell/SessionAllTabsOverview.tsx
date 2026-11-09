@@ -38,7 +38,7 @@ const COMPACT_CARD_MIN_HEIGHT = 64;
 const styles = StyleSheet.create((theme) => ({
     page: {
         flex: 1,
-        backgroundColor: theme.colors.background.canvas,
+        backgroundColor: theme.colors.surface.base,
     },
     pageHeader: {
         flexDirection: 'row',
@@ -278,7 +278,7 @@ export function SessionAllTabsPageView(props: Readonly<{
     const { theme } = useUnistyles();
     const materialColor = useHappierMaterialColorResolver();
     return (
-        <View style={[styles.page, { paddingTop: insets.top, backgroundColor: materialColor(theme.colors.background.canvas, 'transparent') }]} testID="session-all-tabs-page">
+        <View style={[styles.page, { paddingTop: insets.top, backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }]} testID="session-all-tabs-page">
             <View style={styles.pageHeader}>
                 <Text style={styles.pageTitle} accessibilityRole="header">{t('phoneNav.allTabs.title')}</Text>
                 <HappierPressable style={styles.done} onPress={props.onDone} accessibilityRole="button" testID="session-all-tabs-done">

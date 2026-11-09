@@ -2,9 +2,10 @@ import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import type { ReviewFinding } from '@happier-dev/protocol';
+import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
 
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -126,7 +127,7 @@ export const ReviewFindingRow = React.memo(function ReviewFindingRow(props: Read
             <Icon name="chat" size={ICON_SIZE.xs} color={askDisabled && replyCount === 0 ? theme.colors.text.tertiary : theme.colors.text.secondary} />
             <StructuredFindText blockId={`${props.findBlockPrefix}:thread-toggle`} text={replyCount > 0 ? t('runPage.review.replies', { count: replyCount }) : t('runPage.review.askAboutThis')} style={[styles.askText, askDisabled && replyCount === 0 ? styles.askTextDisabled : null]} />
             {replyCount > 0 ? (
-                <Icon name={props.threadOpen ? 'caret-up' : 'caret-down'} size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
+                <DisclosureCaret expanded={props.threadOpen} size={ICON_SIZE.xs} />
             ) : null}
         </Pressable>
     ) : null;

@@ -1,15 +1,19 @@
 import * as React from 'react';
-import { I18nManager, Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from 'react-native';
+import { I18nManager, Platform, ScrollView, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 // The app's ONE RTL-aware tab-key owner. A Board-local Arrow algorithm would move
 // the wrong way in a right-to-left locale; importing this is the contract.
-import { resolveHappierFocusRingVisible, resolveHappierTabKeySelection } from '@happier-dev/plugin-ui/presentation';
+import {
+    HAPPIER_PAGE_METRICS,
+    HappierPressable,
+    resolveHappierFocusRingVisible,
+    resolveHappierTabKeySelection,
+} from '@happier-dev/plugin-ui/presentation';
 
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { t } from '@/text';
 import { restoreFocusToBestTarget, type FocusReturnRef } from '@/keyboard/focusReturn';
 import type { SessionBoardViewProjection } from '@/sync/domains/session/board';
@@ -38,6 +42,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingBottom: theme.space.s6,
     },
     view: {
+        minHeight: HAPPIER_PAGE_METRICS.controlHeightPx,
         paddingHorizontal: theme.space.s10,
         justifyContent: 'center',
         borderRadius: 999,
@@ -96,7 +101,6 @@ export function SessionBoardViewStrip(props: Readonly<{
 }>): React.ReactElement | null {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const minimumTarget = resolveMinimumInteractiveTargetSize(Platform.OS);
     const views = props.views;
     const onSelectView = props.onSelectView;
     // A roving tablist owns its focus as well as its selection: the tab the
@@ -150,22 +154,20 @@ export function SessionBoardViewStrip(props: Readonly<{
         props.removalFocusRequest,
         views,
     ]);
-    const handleKeyDown = React.useCallback((index: number, event: unknown) => {
-        const native = event as { nativeEvent?: { key?: string }; key?: string; preventDefault?: () => void };
-        const key = native?.nativeEvent?.key ?? native?.key;
-        if (typeof key !== 'string') return;
+    // Returns whether the key was a tab-selection key: the shared pressable then consumes the event.
+    const handleKeyDown = React.useCallback((index: number, key: string): boolean => {
         const nextIndex = resolveHappierTabKeySelection({
             tabs: views,
             currentIndex: index,
             key,
             rtl: I18nManager.isRTL,
         });
-        if (nextIndex === null) return;
+        if (nextIndex === null) return false;
         const next = views[nextIndex];
-        if (!next) return;
-        native?.preventDefault?.();
+        if (!next) return false;
         onSelectView(next.id);
         if (nextIndex !== index) viewRefs.current.get(next.id)?.focus?.();
+        return true;
     }, [onSelectView, views]);
 
     // A lone view needs no selector — but hiding the strip also hid the inline rename
@@ -208,7 +210,7 @@ export function SessionBoardViewStrip(props: Readonly<{
                             accessibilityRole="tab"
                             accessibilityState={{ selected }}
                             {...(Platform.OS === 'web' ? { 'aria-controls': props.panelId } : {})}
-                            style={[styles.view, selected ? styles.viewActive : null, { minHeight: minimumTarget }]}
+                            style={[styles.view, selected ? styles.viewActive : null]}
                         >
                             <TextInput
                                 testID={`${props.testID ?? 'session-board-views'}-rename-${view.id}`}
@@ -235,52 +237,51 @@ export function SessionBoardViewStrip(props: Readonly<{
                     );
                 }
                 return (
-                    <Pressable
-                        key={view.id}
-                        nativeID={sessionBoardViewTabNativeId(props.tabIdPrefix, view.id)}
-                        ref={(node) => {
-                            const target = node as unknown as { focus?: () => void } | null;
-                            if (target) viewRefs.current.set(view.id, target);
-                            else viewRefs.current.delete(view.id);
-                            props.onViewFocusTargetChange?.(view.id, target);
-                        }}
-                        testID={`${props.testID ?? 'session-board-views'}-view-${view.id}`}
-                        accessibilityRole="tab"
-                        accessibilityState={{ selected }}
-                        aria-selected={selected}
-                        accessibilityLabel={label}
-                        // Roving focus is a web-DOM contract; React Native's
-                        // Pressable props do not declare it, so it is applied the
-                        // way the incumbent tab bar applies its own key handling.
-                        {...(Platform.OS === 'web'
-                            ? ({
-                                'aria-controls': props.panelId,
-                                tabIndex: selected ? 0 : -1,
-                                onKeyDown: (event: unknown) => handleKeyDown(index, event),
-                            } as Record<string, unknown>)
-                            : {})}
-                        onPress={() => props.onSelectView(view.id)}
-                        onFocus={() => { focusedViewIdRef.current = view.id; }}
-                        onBlur={() => {
-                            if (focusedViewIdRef.current === view.id) focusedViewIdRef.current = null;
-                        }}
-                        onLayout={(event) => props.onViewLayout?.(view.id, event)}
-                        style={(interactionState) => {
-                            const webState = interactionState as typeof interactionState & { focused?: boolean };
-                            return [
+                    // The Board measures each view's frame; the pressable owns its own layout callback for its hit area.
+                    <View key={view.id} onLayout={(event) => props.onViewLayout?.(view.id, event)}>
+                        <HappierPressable
+                            nativeID={sessionBoardViewTabNativeId(props.tabIdPrefix, view.id)}
+                            controlRef={(node) => {
+                                const target = node as { focus?: () => void } | null;
+                                if (target) viewRefs.current.set(view.id, target);
+                                else viewRefs.current.delete(view.id);
+                                props.onViewFocusTargetChange?.(view.id, target);
+                            }}
+                            testID={`${props.testID ?? 'session-board-views'}-view-${view.id}`}
+                            accessibilityRole="tab"
+                            selected={selected}
+                            accessibilityLabel={label}
+                            controls={props.panelId}
+                            // Roving focus is a web-DOM contract.
+                            tabIndex={Platform.OS === 'web' ? (selected ? 0 : -1) : undefined}
+                            onKeyDown={(key) => handleKeyDown(index, key)}
+                            onPress={() => props.onSelectView(view.id)}
+                            onFocusChange={(focused) => {
+                                if (focused) focusedViewIdRef.current = view.id;
+                                else if (focusedViewIdRef.current === view.id) focusedViewIdRef.current = null;
+                            }}
+                            // The chips stand one strip gap apart in a clipping scroller: the hit area takes half the
+                            // gap sideways and the scroller's own padding above and below.
+                            hitReach={{
+                                left: theme.space.s4 / 2,
+                                right: theme.space.s4 / 2,
+                                top: theme.space.s4,
+                                bottom: theme.space.s6,
+                            }}
+                            style={(interactionState) => [
                                 styles.view,
                                 selected ? styles.viewActive : null,
-                                { minHeight: minimumTarget, opacity: webState.pressed ? motionTokens.press.opacity : 1 },
-                                focusRingStyle({ focused: resolveHappierFocusRingVisible(webState.focused), color: theme.colors.border.focus }),
-                            ];
-                        }}
-                    >
-                        <View>
-                            <Text style={[styles.label, selected ? styles.labelActive : null]} numberOfLines={1}>
-                                {label}
-                            </Text>
-                        </View>
-                    </Pressable>
+                                { opacity: interactionState.pressed ? motionTokens.press.opacity : 1 },
+                                focusRingStyle({ focused: resolveHappierFocusRingVisible(interactionState.focused), color: theme.colors.border.focus }),
+                            ]}
+                        >
+                            <View>
+                                <Text style={[styles.label, selected ? styles.labelActive : null]} numberOfLines={1}>
+                                    {label}
+                                </Text>
+                            </View>
+                        </HappierPressable>
+                    </View>
                 );
             })}
             <View style={{ width: 4, backgroundColor: theme.colors.surface.base }} />

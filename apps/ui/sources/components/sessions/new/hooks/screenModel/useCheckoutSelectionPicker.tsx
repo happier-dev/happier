@@ -7,15 +7,12 @@ import { isFirstPartyGitScmBackendId } from '@/scm/registry/firstPartyScmBackend
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { generateWorktreeName } from '@/utils/worktree/generateWorktreeName';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 import {
     buildWorktreeSelectionListSteps,
     PENDING_GIT_WORKTREE_OPTION_ID,
     type WorktreeCreateSelection,
 } from './buildWorktreeSelectionListSteps';
-
-const WORKTREE_RELATIVE_TIME_TICK_MS = 60_000;
 
 /**
  * The one project checkout picker: which checkout of the selected repository
@@ -25,7 +22,7 @@ const WORKTREE_RELATIVE_TIME_TICK_MS = 60_000;
  * New Session presents it as its composer chip; the Workflow editor presents it
  * beside the project folder. Both hand in their own selection effects, and the
  * picker owns everything else — which checkouts exist, which one is selected,
- * how each is labelled and the relative-time tick — so the two pages cannot
+ * how each is labelled — so the two pages cannot
  * offer different checkouts for the same folder.
  *
  * Returns `null` where there is no first-party Git repository to pick within.
@@ -35,22 +32,6 @@ export type CheckoutSelectionPicker = Readonly<{
     selectedOptionId: string;
     selectedLabel: string;
 }>;
-
-function useWorktreePickerNowMs(): number {
-    const presented = useLayoutPresentationActive();
-    const [nowMs, setNowMs] = React.useState(() => Date.now());
-    React.useEffect(() => {
-        if (!presented) return;
-        // Catch up once when the retained destination returns, then keep its
-        // relative labels current only while someone can see them.
-        setNowMs(Date.now());
-        const intervalId = setInterval(() => {
-            setNowMs(Date.now());
-        }, WORKTREE_RELATIVE_TIME_TICK_MS);
-        return () => clearInterval(intervalId);
-    }, [presented]);
-    return nowMs;
-}
 
 export function useCheckoutSelectionPicker(params: Readonly<{
     repoScmSnapshot: ScmWorkingSnapshot | null;
@@ -75,13 +56,12 @@ export function useCheckoutSelectionPicker(params: Readonly<{
         onSelectPendingWorktree: () => void;
     }>;
 }>): CheckoutSelectionPicker | null {
-    const nowMs = useWorktreePickerNowMs();
     const { theme } = useUnistyles();
     const rowIconColor = theme.colors.text.tertiary;
     // Stable suggested name for this picker's lifetime. Pre-populates the
     // "name your worktree" step and is the fallback when the user commits an
     // empty/invalid name. Lazily generated once so the step tree (and the
-    // minute-tick rebuild) keep a stable suggestion rather than reshuffling.
+    // picker rebuild) keep a stable suggestion rather than reshuffling.
     const [worktreeNameSuggestion] = React.useState(() => generateWorktreeName());
     const {
         checkoutChipModel,
@@ -117,7 +97,6 @@ export function useCheckoutSelectionPicker(params: Readonly<{
             machineHomeDir: machineHomeDir ?? null,
             machinePlatform: machinePlatform ?? null,
             rowIconColor,
-            nowMs,
             onSelectCurrentDir: () => onSelectCheckoutPath(
                 currentPathOption?.kind === 'current_path' ? currentPathOption.path : null,
             ),
@@ -152,7 +131,6 @@ export function useCheckoutSelectionPicker(params: Readonly<{
         creation,
         machineHomeDir,
         machinePlatform,
-        nowMs,
         onSelectCheckoutPath,
         repoScmSnapshot,
         rowIconColor,

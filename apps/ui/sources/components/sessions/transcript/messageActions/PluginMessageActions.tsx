@@ -4,11 +4,13 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type {
     MessageActionReferenceV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/messages/messageActionReferenceV1';
 
+import type { PopoverAnchor } from '@/components/ui/popover';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
-import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { DropdownMenu, type DropdownMenuItem, type DropdownMenuSelection } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { openPluginContributedAction } from '@/components/plugins/actions/openPluginContributedAction';
 import { resolvePluginContributedActionIconName } from '@/components/plugins/actions/pluginContributedActionPresentation';
 import {
@@ -109,7 +111,7 @@ export function createPluginPersistedStructuredMessageActionController(params: R
 function PluginMessageActionButton(props: Readonly<{
     action: PluginContributedActionDescriptor;
     invertedActionsLayout: boolean;
-    onPress: (action: PluginContributedActionDescriptor) => void;
+    onPress: (action: PluginContributedActionDescriptor, anchor?: PopoverAnchor) => void;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const hitArea = useMessageActionHitArea(props.invertedActionsLayout);
@@ -120,7 +122,7 @@ function PluginMessageActionButton(props: Readonly<{
             onLayout={hitArea.onLayout}
             accessibilityRole="button"
             accessibilityLabel={props.action.title}
-            onPress={() => props.onPress(props.action)}
+            onPress={(event) => props.onPress(props.action, resolvePressTriggerAnchor(event))}
             style={({ pressed }) => [
                 styles.button,
                 props.invertedActionsLayout ? styles.buttonInverted : null,
@@ -148,7 +150,7 @@ function PluginMessageActionOverflow(props: Readonly<{
     open: boolean;
     onOpenChange: (open: boolean) => void;
     invertedActionsLayout: boolean;
-    onPress: (action: PluginContributedActionDescriptor) => void;
+    onPress: (action: PluginContributedActionDescriptor, anchor?: PopoverAnchor) => void;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const hitArea = useMessageActionHitArea(props.invertedActionsLayout);
@@ -165,10 +167,10 @@ function PluginMessageActionOverflow(props: Readonly<{
             />
         ),
     })), [props.actions, theme.colors.text.secondary]);
-    const handleSelect = React.useCallback((qualifiedActionId: string) => {
+    const handleSelect = React.useCallback((qualifiedActionId: string, selection?: DropdownMenuSelection) => {
         props.onOpenChange(false);
         const action = props.actions.find((candidate) => candidate.qualifiedActionId === qualifiedActionId);
-        if (action) props.onPress(action);
+        if (action) props.onPress(action, selection?.anchor);
     }, [props.actions, props.onOpenChange, props.onPress]);
 
     return (
@@ -277,11 +279,12 @@ export function usePluginMessageActions(props: Readonly<{
         legacy: overflowActions,
         semantic: semanticMenuActions,
     });
-    const openAction = React.useCallback((action: PluginContributedActionDescriptor) => {
+    const openAction = React.useCallback((action: PluginContributedActionDescriptor, anchor?: PopoverAnchor) => {
         if (!controller) return;
         fireAndForget(openPluginContributedAction({
             controller,
             action,
+            anchor,
             ...(host?.signal ? { signal: host.signal } : {}),
         }), { tag: 'PluginMessageActions.openAction' });
     }, [controller, host?.signal]);

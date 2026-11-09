@@ -1,16 +1,16 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
+import { renderHook, standardCleanup } from '@/dev/testkit';
+import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { storage } from '@/sync/domains/state/storageStore';
-import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { Encryption } from '@/sync/encryption/encryption';
 import { serveSessionActionHome } from '@/dev/testkit/harness/sessionActionHome';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { encodeBase64 } from '@/encryption/base64';
 import { deriveAccountSigningPublicKey } from '@/auth/flows/challenge';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
-import type { SessionMessagesEncryption } from '@/sync/engine/sessions/sessionMessagesPagePipeline';
+import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import type { SessionMessagesWindowState } from '@/sync/runtime/sessionMessagesWindowState';
 import { AppSessionTranscriptSourceProvider } from './appSessionTranscriptSource';
 import { useSessionTranscriptSource } from './SessionTranscriptSourceContext';
@@ -23,9 +23,16 @@ describe('source-owned Find history paging', () => {
     it('continues both frontiers of a route-created encrypted window through the real decrypt and reducer pipeline', async () => {
         const id = 'find-encrypted-window';
         const secret = new Uint8Array(32).fill(7);
+        const dataKey = new Uint8Array(32).fill(8);
         const encryption = await Encryption.create(secret);
-        await encryption.initializeSessions(new Map([[id, new Uint8Array(32).fill(8)]]));
+        await encryption.initializeSessions(new Map([[id, dataKey]]));
         const reader = encryption.getSessionEncryption(id)!;
+        const { ownerMetadata: _ownerMetadata, ...facts } = createPlainSessionCurrentProjectionRecordFixture({ id, seq: 102 });
+        const session = SessionCurrentProjectionRecordV1Schema.parse({
+            ...facts, encryptionMode: 'e2ee', metadataLayoutVersion: 0,
+            metadata: await reader.encryptRaw({ path: '/workspace', host: 'fixture' }),
+            dataEncryptionKey: encodeBase64(await encryption.encryptEncryptionKey(dataKey)),
+        });
         const request = vi.fn<(url: URL) => Promise<Response>>();
         home = await serveSessionActionHome({
             homes: [{ key: 'owner', serverUrl: 'https://find-history.test', accountId: 'account-a', accountMode: 'e2ee',
@@ -36,24 +43,27 @@ describe('source-owned Find history paging', () => {
                     recipientEnvelopeReadiness: { status: 'available' },
                 }),
             }],
-            route: ({ path, url }) => path === `/v1/sessions/${id}/messages` ? request(url) : undefined,
+            route: ({ path, url }) => {
+                if (path === `/v1/sessions/${id}/messages`) return request(url);
+                if (path === `/v2/sessions/${id}`) return Response.json({ session });
+                if (path === '/v2/sessions' || path === '/v2/sessions/active')
+                    return Response.json({ sessions: [session], nextCursor: null, hasNext: false });
+                // A fresh encrypted Account has no Project rows; plain row content is invalid here.
+                if (path === '/v1/account/project-rows/list')
+                    return Response.json({ status: 'listed', coverage: 'complete', rows: [] });
+                return undefined;
+            },
         });
         const { sync } = await import('@/sync/syncEngine');
         const previous = storage.getState();
-        // Seed the singleton's actual encryption and known-Session lifecycle.
+        // Admit the served encrypted record through the production route reader.
+        expect(await sync.ensureSessionVisibleForMessageRoute(id, {
+            serverId: home.serverId, hydrateMessages: false, includeTurnsProjection: false,
+        })).toMatchObject({ kind: 'available' });
         const owner = sync as unknown as {
-            encryption: { getSessionEncryption(id: string): SessionMessagesEncryption | null };
-            activeServerSessionIds: Set<string>; hasFetchedSessionsSnapshotForActiveServer: boolean;
             setSessionTargetWindowState(id: string, state: SessionMessagesWindowState): void;
         };
-        const previousEncryption = owner.encryption;
-        const previousIds = owner.activeServerSessionIds;
-        const previousFetched = owner.hasFetchedSessionsSnapshotForActiveServer;
         const previousWindow = sync.getSessionTargetWindowState(id);
-        owner.encryption = encryption;
-        owner.activeServerSessionIds = new Set([id]);
-        owner.hasFetchedSessionsSnapshotForActiveServer = true;
-        storage.getState().applySessions([createSessionFixture({ id, serverId: getActiveServerSnapshot().serverId, encryptionMode: 'e2ee', encryptedContentAvailability: 'ready', metadata: null })]);
         const encryptedRow = async (seq: number, text: string) => ({
             id: `m${seq}`, seq, localId: null, sidechainId: null, createdAt: seq, updatedAt: seq,
             content: { t: 'encrypted', c: await reader.encryptRaw({ role: 'user', content: { type: 'text', text } }) },
@@ -85,7 +95,6 @@ describe('source-owned Find history paging', () => {
         } finally {
             await hook.unmount();
             owner.setSessionTargetWindowState(id, previousWindow);
-            owner.encryption = previousEncryption; owner.activeServerSessionIds = previousIds; owner.hasFetchedSessionsSnapshotForActiveServer = previousFetched;
             storage.setState(previous);
         }
     });

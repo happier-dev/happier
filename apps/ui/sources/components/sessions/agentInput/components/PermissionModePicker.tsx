@@ -1,8 +1,11 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
+import { HappierRadioMark } from '@happier-dev/plugin-ui/presentation';
 
 import type { PermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { EffectivePermissionModeDescription } from '@/sync/domains/permissions/describeEffectivePermissionMode';
+import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
@@ -23,10 +26,6 @@ export function PermissionModePicker(props: {
         overlaySectionTitle: any;
         overlayOptionRow: any;
         overlayOptionRowPressed: any;
-        overlayRadioOuter: any;
-        overlayRadioOuterSelected: any;
-        overlayRadioOuterUnselected: any;
-        overlayRadioInner: any;
         overlayOptionLabel: any;
         overlayOptionLabelSelected: any;
         overlayOptionLabelUnselected: any;
@@ -35,6 +34,8 @@ export function PermissionModePicker(props: {
     effectivePermissionLabel: string;
     effectivePermissionPolicy: EffectivePermissionModeDescription;
 }): React.ReactNode {
+    const { theme } = useUnistyles();
+    const presentationTheme = usePluginUiTheme(theme);
     const selected = React.useMemo(() => {
         if (props.options.some((option) => option.value === props.selected)) {
             return props.selected;
@@ -67,14 +68,7 @@ export function PermissionModePicker(props: {
                         onPress={() => props.onSelect(option.value)}
                         style={({ pressed }) => [props.styles.overlayOptionRow, pressed ? props.styles.overlayOptionRowPressed : null]}
                     >
-                        <View
-                            style={[
-                                props.styles.overlayRadioOuter,
-                                isSelected ? props.styles.overlayRadioOuterSelected : props.styles.overlayRadioOuterUnselected,
-                            ]}
-                        >
-                            {isSelected ? <View style={props.styles.overlayRadioInner} /> : null}
-                        </View>
+                        <HappierRadioMark selected={isSelected} theme={presentationTheme} style={{ marginRight: theme.space.s12 }} />
                         <View style={{ flex: 1 }}>
                             <Text
                                 style={[

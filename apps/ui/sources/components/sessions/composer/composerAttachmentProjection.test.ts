@@ -1,7 +1,8 @@
 import type {
-    ComposerAttachmentViewV1,
+    ComposerAttachmentViewV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type {
     PluginProjectedComposerAttachmentEntryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { describe, expect, it, vi } from 'vitest';
 
 import {

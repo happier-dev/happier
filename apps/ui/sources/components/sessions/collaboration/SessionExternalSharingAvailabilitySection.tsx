@@ -1,7 +1,10 @@
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { Icon } from '@/components/ui/icons/Icon';
+import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import type { ExternalSessionSharingAvailability } from '@/components/sessions/external/sharing/useExternalSessionSharingAvailability';
@@ -23,7 +26,7 @@ export function SessionExternalSharingAvailabilitySection(props: Readonly<{
 
     if (snapshot.kind === 'loading') {
         return (
-            <ItemGroup title={t('session.sharing.title')}>
+            <ItemGroup>
                 <Item
                     testID="session-external-sharing-loading"
                     title={t('common.loading')}
@@ -36,12 +39,12 @@ export function SessionExternalSharingAvailabilitySection(props: Readonly<{
     }
     if (snapshot.kind === 'authorization_lost') {
         return (
-            <ItemGroup title={t('session.sharing.title')}>
+            <ItemGroup>
                 <Item
                     testID="session-external-sharing-authorization-lost"
                     title={t('errors.permissionDenied')}
                     subtitle={t('session.follow.accessLost')}
-                    icon={<Icon name="lock" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="lock" size={ICON_SIZE.lg} color={theme.colors.text.secondary} />}
                     mode="info"
                     showChevron={false}
                 />
@@ -50,12 +53,12 @@ export function SessionExternalSharingAvailabilitySection(props: Readonly<{
     }
     if (snapshot.kind === 'unsupported') {
         return (
-            <ItemGroup title={t('session.sharing.title')}>
+            <ItemGroup>
                 <Item
                     testID="session-external-sharing-unsupported"
                     title={t('externalSessions.sharingTranscriptUnavailableTitle')}
                     subtitle={t('externalSessions.operationActionErrorUpgradeRequired')}
-                    icon={<Icon name="cloud-slash" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="cloud-slash" size={ICON_SIZE.lg} color={theme.colors.text.secondary} />}
                     mode="info"
                     showChevron={false}
                 />
@@ -64,12 +67,12 @@ export function SessionExternalSharingAvailabilitySection(props: Readonly<{
     }
     if (snapshot.kind === 'unavailable' || !availability) {
         return (
-            <ItemGroup title={t('session.sharing.title')}>
+            <ItemGroup>
                 <Item
                     testID="session-external-sharing-retry"
                     title={t('errors.operationFailed')}
                     subtitle={t('common.retry')}
-                    icon={<Icon name="warning-circle" size={29} color={theme.colors.state.warning.foreground} />}
+                    icon={<Icon name="warning-circle" size={ICON_SIZE.lg} color={theme.colors.state.warning.foreground} />}
                     onPress={snapshot.retry}
                     showChevron={false}
                 />
@@ -84,18 +87,29 @@ export function SessionExternalSharingAvailabilitySection(props: Readonly<{
     if (sharingPresentation.state === 'requires_persisted_import') {
         const subtitle = availability.sourceMachineUnavailableReason
             ?? t('externalSessions.sharingTranscriptOnMachine', { machine: machineName });
+        // A prerequisite, said once with its one action: where the transcript is, then the button that
+        // brings it into Happier. The statement is information; only the button acts.
         return (
-            <ItemGroup title={t('session.sharing.title')}>
+            <ItemGroup>
                 <Item
-                    testID="session-external-sharing-materialize"
-                    title={t('externalSessions.operationTitleMaterialize')}
-                    subtitle={subtitle}
-                    icon={<Icon name="cloud-arrow-up" size={29} color={theme.colors.text.secondary} />}
-                    loading={availability.materializeInFlight}
-                    disabled={availability.materializeInFlight || !availability.sourceMachineOnline}
-                    onPress={availability.startMaterialization}
+                    testID="session-external-sharing-materialize-row"
+                    title={subtitle}
+                    titleLines={2}
+                    icon={<Icon name="cloud-arrow-up" size={ICON_SIZE.lg} color={theme.colors.text.secondary} />}
+                    mode="info"
                     showChevron={false}
-                    accessibilityLabel={`${t('externalSessions.operationTitleMaterialize')}. ${subtitle}`}
+                    bottomElementInset="text"
+                    bottomElementOutsidePressable
+                    bottomElement={<View style={styles.action}><RoundButton
+                        testID="session-external-sharing-materialize"
+                        size="small"
+                        display="secondary"
+                        title={t('externalSessions.operationTitleMaterialize')}
+                        loading={availability.materializeInFlight}
+                        disabled={availability.materializeInFlight || !availability.sourceMachineOnline}
+                        onPress={availability.startMaterialization}
+                        accessibilityLabel={`${t('externalSessions.operationTitleMaterialize')}. ${subtitle}`}
+                    /></View>}
                 />
             </ItemGroup>
         );
@@ -109,12 +123,12 @@ export function SessionExternalSharingAvailabilitySection(props: Readonly<{
             : availability.sourceMachineUnavailableReason
                 ?? t('externalSessions.sharingActionAwaitingAvailability');
         return (
-            <ItemGroup title={t('session.sharing.title')}>
+            <ItemGroup>
                 <Item
                     testID="session-external-sharing-resume"
                     title={title}
                     subtitle={subtitle}
-                    icon={<Icon name="cloud-arrow-up" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="cloud-arrow-up" size={ICON_SIZE.lg} color={theme.colors.text.secondary} />}
                     loading={availability.resumeInFlight}
                     disabled={!availability.canResumePartialImport || availability.resumeInFlight}
                     onPress={availability.canResumePartialImport ? availability.resumePartialImport : undefined}
@@ -127,14 +141,14 @@ export function SessionExternalSharingAvailabilitySection(props: Readonly<{
     if (sharingPresentation.state === 'shared_snapshot_stale') {
         const staleAt = sharingPresentation.materializedThroughSourceAt;
         return (
-            <ItemGroup title={t('session.sharing.title')}>
+            <ItemGroup>
                 {staleAt !== null ? (
                     <Item
                         testID="session-external-sharing-stale"
                         title={t('externalSessions.sharingSharedUpTo', {
                             time: formatShortRelativeTimeAt(staleAt, availability.sharingPresentationNowMs),
                         })}
-                        icon={<Icon name="clock" size={29} color={theme.colors.text.secondary} />}
+                        icon={<Icon name="clock" size={ICON_SIZE.lg} color={theme.colors.text.secondary} />}
                         mode="info"
                         showChevron={false}
                     />
@@ -143,7 +157,7 @@ export function SessionExternalSharingAvailabilitySection(props: Readonly<{
                     testID="session-external-sharing-update"
                     title={t('externalSessions.sharingUpdateSharedCopy')}
                     subtitle={availability.updateSharedCopySubtitle}
-                    icon={<Icon name="arrow-clockwise" size={29} color={theme.colors.text.secondary} />}
+                    icon={<Icon name="arrow-clockwise" size={ICON_SIZE.lg} color={theme.colors.text.secondary} />}
                     loading={availability.materializeInFlight}
                     disabled={availability.materializeInFlight || !availability.sourceMachineOnline}
                     onPress={availability.startMaterialization}
@@ -154,15 +168,19 @@ export function SessionExternalSharingAvailabilitySection(props: Readonly<{
         );
     }
     return (
-        <ItemGroup title={t('session.sharing.title')}>
+        <ItemGroup>
             <Item
                 testID="session-external-sharing-transcript-unavailable"
                 title={t('externalSessions.sharingTranscriptUnavailableTitle')}
                 subtitle={t('externalSessions.sharingTranscriptUnavailable')}
-                icon={<Icon name="cloud-slash" size={29} color={theme.colors.text.secondary} />}
+                icon={<Icon name="cloud-slash" size={ICON_SIZE.lg} color={theme.colors.text.secondary} />}
                 mode="info"
                 showChevron={false}
             />
         </ItemGroup>
     );
 }
+
+const styles = StyleSheet.create((theme) => ({
+    action: { flexDirection: 'row', paddingTop: theme.space.s8 },
+}));

@@ -7,7 +7,7 @@ import { Modal } from '@/modal';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { t } from '@/text';
-import type { SessionRollbackTarget } from '@happier-dev/protocol';
+import type { SessionRollbackTarget } from '@happier-dev/protocol/sessions/rollback';
 import type { CurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
 import { executeTranscriptRollbackAction, type CheckpointCodeRollbackEvidence } from './transcriptRollbackActionRunner';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';

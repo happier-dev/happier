@@ -1,4 +1,4 @@
-import type { ExternalSessionOperationActionErrorCodeV1 } from '@happier-dev/protocol';
+import type { ExternalSessionOperationActionErrorCodeV1 } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
 
 export type ExternalSessionOperationActionErrorTranslationKey =
     | 'externalSessions.operationActionErrorUpgradeRequired'

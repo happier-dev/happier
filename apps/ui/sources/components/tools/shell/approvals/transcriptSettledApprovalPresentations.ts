@@ -3,6 +3,8 @@ import { presentsSettledResourceProposal } from '@/components/approvals/resource
 import { readBrowserOpenAcceptance } from '@/sync/domains/browser/firstUse/browserFirstUse';
 import { readCapabilityEnableApproval } from '@/components/sessions/capabilities/capabilityEnableApproval';
 import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
+import { presentsApprovalVisualTranscriptOccurrence } from '@/components/approvals/approvalVisualTranscriptOccurrence';
+import { readApprovedSavedSkillResult } from '@/components/tools/renderers/system/savedSkillResultModel';
 
 /**
  * Approval bodies that keep rendering in the transcript after a decision (plan 60 AGW-8: a resource
@@ -10,6 +12,9 @@ import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/ap
  * the transcript projection keeps its selector identity.
  */
 export const TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS: readonly ApprovalSettledPresentation[] = [
+    // The Ask card is the visual's one transcript occurrence after replay; keep its live Artifact outcome here.
+    presentsApprovalVisualTranscriptOccurrence,
+    (approval) => readApprovedSavedSkillResult(approval) !== null,
     presentsSettledResourceProposal,
     // An Agent's enable request settles into its one line with Undo (P8 U8.5).
     (approval) => readCapabilityEnableApproval(approval) !== null,

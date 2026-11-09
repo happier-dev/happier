@@ -13,6 +13,7 @@ import { useReviewRunsComments } from '@/components/sessions/reviews/findings/us
 import { resolveEffectiveReviewFindings } from '@/components/sessions/reviews/messages/resolveEffectiveReviewFindings';
 import { resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { useSessionMessages } from '@/sync/domains/state/storage';
 import { sessionExecutionRunGet } from '@/sync/ops/sessionExecutionRuns';
 import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -95,38 +96,51 @@ export function useWalkthroughReview(params: Readonly<{
         if (!scope || runIds.length === 0 || (!sessionId && !machineId)) return;
         let current = true;
         let loading = false;
-        let refreshPending = false;
-        const load = async () => {
-            if (loading) { refreshPending = true; return; }
+        const selectedRunIds = new Set(runIds);
+        const pendingRunIds = new Set<string>();
+        const load = async (requestedRunIds: readonly string[] = runIds) => {
+            if (!current) return;
+            for (const runId of requestedRunIds) pendingRunIds.add(runId);
+            if (loading) return;
             loading = true;
             setReads((previous) => previous.key === readKey ? previous : ({
                 key: readKey,
                 reads: runIds.map((runId) => ({ runId, run: null, payload: null, state: 'loading' })),
             }));
-            const next = await Promise.all(runIds.map(async (runId): Promise<ReviewRunRead> => {
-                const got = await (sessionId
-                    ? sessionExecutionRunGet(sessionId, { runId, includeStructured: true }, { serverId: scope.serverId, scope })
-                    : createDefaultActionExecutor().execute('execution.run.get', { sessionId: null, runId, includeStructured: true }, {
-                        serverId: scope.serverId, expectedAccountId: scope.accountId, executionRunTargetMachineId: machineId!,
-                        externalActionTarget: { kind: 'machine', machineId: machineId!, project: { machineId: machineId!, directory: params.cwd } },
-                    }).then(result => result.ok ? ExecutionRunGetResponseSchema.parse(result.result) : null))
-                    .catch(() => null);
-                const payload = got && 'run' in got ? readReviewPayload(got.structuredMeta, got.reviewFindings) : null;
-                return got && 'run' in got
-                    ? { runId, run: got.run, payload, state: payload ? 'readable' : 'unread' }
-                    : { runId, run: null, payload: null, state: 'failed' };
-            }));
-            if (current) setReads((previous) => ({ key: readKey, reads: next.map((read) => {
-                const last = previous.key === readKey ? previous.reads.find((entry) => entry.runId === read.runId) : null;
-                return read.state === 'readable' ? read : { ...read, run: read.run ?? last?.run ?? null, payload: last?.payload ?? null };
-            }) }));
+            while (current && pendingRunIds.size > 0) {
+                const requested = [...pendingRunIds];
+                pendingRunIds.clear();
+                const next = await Promise.all(requested.map(async (runId): Promise<ReviewRunRead> => {
+                    const got = await (sessionId
+                        ? sessionExecutionRunGet(sessionId, { runId, includeStructured: true, includeLatestToolResult: false }, { serverId: scope.serverId, scope })
+                        : createDefaultActionExecutor().execute('execution.run.get', { sessionId: null, runId, includeStructured: true, includeLatestToolResult: false }, {
+                            serverId: scope.serverId, expectedAccountId: scope.accountId, executionRunTargetMachineId: machineId!,
+                            externalActionTarget: { kind: 'machine', machineId: machineId!, project: { machineId: machineId!, directory: params.cwd } },
+                        }).then(result => result.ok ? ExecutionRunGetResponseSchema.parse(result.result) : null))
+                        .catch(() => null);
+                    const payload = got && 'run' in got ? readReviewPayload(got.structuredMeta, got.reviewFindings) : null;
+                    return got && 'run' in got
+                        ? { runId, run: got.run, payload, state: payload ? 'readable' : 'unread' }
+                        : { runId, run: null, payload: null, state: 'failed' };
+                }));
+                if (current) setReads((previous) => {
+                    const previousReads = previous.key === readKey ? previous.reads : NO_READS;
+                    const updatesByRunId = new Map(next.map(read => [read.runId, read]));
+                    const incoming = previousReads.map(last => {
+                        const read = updatesByRunId.get(last.runId);
+                        if (!read) return last;
+                        return read.state === 'readable' ? read : { ...read, run: read.run ?? last.run, payload: last.payload };
+                    });
+                    const nextReads = retainKeyedRows(previousReads, incoming, read => read.runId);
+                    return previous.key === readKey && nextReads === previous.reads ? previous : { key: readKey, reads: nextReads };
+                });
+            }
             loading = false;
-            if (current && refreshPending) { refreshPending = false; await load(); }
         };
         fireAndForget(load(), { tag: 'useWalkthroughReview.load' });
         const unsubscribe = sessionId ? subscribeExecutionRunActivity({ serverId: scope.serverId, sessionId }, (notification) => {
-            if (notification.runId !== null && !runIds.includes(notification.runId)) return;
-            fireAndForget(load(), { tag: 'useWalkthroughReview.refresh' });
+            if (notification.runId !== null && !selectedRunIds.has(notification.runId)) return;
+            fireAndForget(load(notification.runId === null ? runIds : [notification.runId]), { tag: 'useWalkthroughReview.refresh' });
         }) : () => {};
         return () => { current = false; unsubscribe(); };
     }, [runIds, readKey, scope, sessionId, machineId, params.cwd, retryVersion]);
@@ -139,7 +153,8 @@ export function useWalkthroughReview(params: Readonly<{
         ])],
     ])), [runIds, runReads, producer]);
     const comments = useReviewRunsComments({ scope: sessionId ? scope : null, sessionId, runIds, commentIdsByRunId, enabled: Boolean(sessionId) && runIds.length > 0 });
-    const { messages } = useSessionMessages(sessionId, { enabled: Boolean(sessionId) && runIds.length > 0 });
+    // Effective findings read structured follow-up meta, never streamed text.
+    const { messages } = useSessionMessages(sessionId, { enabled: Boolean(sessionId) && runIds.length > 0, textUpdates: false });
     const retry = React.useCallback(async () => {
         setRetryVersion(version => version + 1);
         if (scope && sessionId) await Promise.all(runIds.map(runId => loadReviewRunComments({ scope, sessionId, runId,

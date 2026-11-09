@@ -1,17 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { ExecutionRunGetRequestSchema, ExecutionRunGetResponseSchema, ReviewFindingsV2Schema, ScmComparisonSchema } from '@happier-dev/protocol';
+import { ExecutionRunGetRequestSchema, ExecutionRunGetResponseSchema} from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ReviewFindingsV2Schema} from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
+import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ScmDiffSummaryResultSchema } from '@happier-dev/protocol/scm';
-import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import type { ToolCallMessage } from '@happier-dev/session-core/messages';
 import { createReducer } from '@happier-dev/session-core/reducer';
 import { buildReviewCommentFixture, storePlainReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installSessionActionFixture, installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 
-const boundary = vi.hoisted(() => ({ read: async (): Promise<unknown> => null }));
+const boundary = vi.hoisted(() => ({ read: async (_runId: string): Promise<unknown> => null }));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
@@ -23,8 +25,9 @@ const sessionRequests = installSessionActionRpcBoundary((request) => {
     // A wrong Session, operation or read selector must not receive a valid
     // review payload merely because the network fixture can supply one.
     expect(request.method).toBe(`${params.host.sessionId}:${SESSION_RPC_METHODS.EXECUTION_RUN_GET}`);
-    expect(ExecutionRunGetRequestSchema.parse(request.params)).toMatchObject({ runId: 'review-run', includeStructured: true });
-    return boundary.read();
+    const selector = ExecutionRunGetRequestSchema.parse(request.params);
+    expect(selector).toMatchObject({ includeStructured: true });
+    return boundary.read(selector.runId);
 });
 
 const { storage } = await import('@/sync/domains/state/storageStore');
@@ -64,12 +67,13 @@ beforeEach(async () => {
     installSessionActionFixture({ homes: harness, storage, serverId: scope.serverId, session: { id: params.host.sessionId } });
     boundary.read = async () => null;
 });
-function response(withFinding: boolean) {
-    return ExecutionRunGetResponseSchema.parse({ run: { runId: 'review-run', callId: 'review-call', sidechainId: 'sidechain',
+function response(withFinding: boolean, runId = 'review-run') {
+    const callId = runId === 'review-run' ? 'review-call' : `${runId}-call`;
+    return ExecutionRunGetResponseSchema.parse({ run: { runId, callId, sidechainId: 'sidechain',
         intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read_only',
         retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'streaming', status: 'succeeded', startedAtMs: 1, finishedAtMs: 2 },
         structuredMeta: { kind: 'review_findings.v2', payload: ReviewFindingsV2Schema.parse({
-            runRef: { runId: 'review-run', callId: 'review-call', backendId: 'codex' }, comparisonId: comparison.id,
+            runRef: { runId, callId, backendId: 'codex' }, comparisonId: comparison.id,
             reviewOutcome: 'complete', summary: 'Review', overviewMarkdown: 'Review details', generatedAtMs: 2,
             findings: withFinding ? [{ id: 'finding', severity: 'high', category: 'correctness', title: 'A reachable defect', summary: 'Fix this defect.' }] : [],
         }) } });
@@ -79,6 +83,136 @@ async function refresh() {
 }
 
 describe('a walkthrough reads findings before declaring a review complete', () => {
+    it('reads only an exactly hinted reviewer, omits the unused tool result, and refreshes all on an unscoped hint', async () => {
+        const runIds = Array.from({ length: 24 }, (_, index) => `review-${index}`);
+        boundary.read = async runId => response(false, runId);
+        const hook = await renderHook(() => useWalkthroughReview({ ...params, producer: null, startedReviewRunIds: runIds }));
+        await waitForHomeGovernance(() => expect(Object.values(hook.getCurrent()?.readStateByRunId ?? {})).toEqual(runIds.map(() => 'readable')));
+        expect(sessionRequests).toHaveLength(runIds.length);
+        sessionRequests.length = 0;
+        boundary.read = async runId => response(runId === runIds[5], runId);
+        await act(async () => notifyExecutionRunActivity({ serverId: scope.serverId, sessionId: params.host.sessionId }, { runId: runIds[5]! }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent()?.overlay.summary.total).toBe(1));
+        expect(sessionRequests.map(request => ExecutionRunGetRequestSchema.parse(request.params))).toEqual([
+            expect.objectContaining({ runId: runIds[5], includeStructured: true, includeLatestToolResult: false }),
+        ]);
+        sessionRequests.length = 0;
+        await act(async () => notifyExecutionRunActivity({ serverId: scope.serverId, sessionId: params.host.sessionId }, { runId: null }));
+        await flushHookEffects();
+        expect(sessionRequests.map(request => ExecutionRunGetRequestSchema.parse(request.params).runId)).toEqual(runIds);
+    });
+
+    it('publishes no new review identity for equal reads while changed findings, failure and recovery still reach its consumer', async () => {
+        boundary.read = async () => response(true);
+        const publications: unknown[] = [];
+        const hook = await renderHook(() => {
+            const review = useWalkthroughReview(params);
+            React.useEffect(() => { publications.push(review); }, [review]);
+            return review;
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent()?.readStateByRunId['review-run']).toBe('readable'));
+        await waitForHomeGovernance(() => expect(hook.getCurrent()?.comments[0]?.status).toBe('loaded'));
+        await flushHookEffects();
+        const initial = hook.getCurrent();
+        publications.length = 0;
+        for (let index = 0; index < 3; index += 1) await refresh();
+        await flushHookEffects();
+        expect(hook.getCurrent()).toBe(initial);
+        expect(publications).toHaveLength(0);
+        boundary.read = async () => response(false);
+        await refresh();
+        await waitForHomeGovernance(() => expect(hook.getCurrent()?.overlay.summary.total).toBe(0));
+        expect(hook.getCurrent()).not.toBe(initial);
+        const changed = hook.getCurrent();
+        boundary.read = async () => { throw new Error('Disconnected'); };
+        await refresh();
+        await waitForHomeGovernance(() => expect(hook.getCurrent()?.readStateByRunId['review-run']).toBe('failed'));
+        expect(hook.getCurrent()).not.toBe(changed);
+        const failed = hook.getCurrent();
+        boundary.read = async () => response(false);
+        await refresh();
+        await waitForHomeGovernance(() => expect(hook.getCurrent()?.readStateByRunId['review-run']).toBe('readable'));
+        expect(hook.getCurrent()).not.toBe(failed);
+        expect(hook.getCurrent()?.overlay.summary.total).toBe(0);
+    });
+
+    it('publishes a changed Run finish fact even when its findings remain unread', async () => {
+        boundary.read = async () => ({ run: { ...response(false).run, status: 'running', finishedAtMs: undefined } });
+        const hook = await renderHook(() => useWalkthroughReview({ ...params, producer: null, startedReviewRunIds: ['review-run'] }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent()?.readStateByRunId['review-run']).toBe('unread'));
+        expect(hook.getCurrent()?.reviewedAtMs).toBeNull();
+        boundary.read = async () => ({ run: { ...response(false).run, status: 'running', finishedAtMs: 7 } });
+        await refresh();
+        await waitForHomeGovernance(() => expect(hook.getCurrent()?.reviewedAtMs).toBe(7));
+        expect(hook.getCurrent()?.readStateByRunId['review-run']).toBe('unread');
+    });
+
+    it('catches up every distinct hint received during a pending read without rereading other reviewers', async () => {
+        const runIds = ['review-a', 'review-b', 'review-c', 'review-d'];
+        boundary.read = async runId => response(false, runId);
+        const hook = await renderHook(() => useWalkthroughReview({ ...params, producer: null, startedReviewRunIds: runIds }));
+        await waitForHomeGovernance(() => expect(Object.values(hook.getCurrent()?.readStateByRunId ?? {})).toEqual(runIds.map(() => 'readable')));
+        const pending = createDeferred<unknown>();
+        boundary.read = runId => runId === 'review-a' ? pending.promise : Promise.resolve(response(runId === 'review-c', runId));
+        sessionRequests.length = 0;
+        await act(async () => {
+            notifyExecutionRunActivity({ serverId: scope.serverId, sessionId: params.host.sessionId }, { runId: 'review-a' });
+        });
+        await waitForHomeGovernance(() => expect(sessionRequests).toHaveLength(1));
+        await act(async () => {
+            for (const runId of ['review-b', 'review-c', 'review-a', 'review-b', 'unselected-review']) {
+                notifyExecutionRunActivity({ serverId: scope.serverId, sessionId: params.host.sessionId }, { runId });
+            }
+        });
+        expect(sessionRequests).toHaveLength(1);
+        await act(async () => pending.resolve(response(false, 'review-a')));
+        await waitForHomeGovernance(() => expect(hook.getCurrent()?.overlay.summary.total).toBe(1));
+        expect(sessionRequests.map(request => ExecutionRunGetRequestSchema.parse(request.params).runId)).toEqual(['review-a', 'review-b', 'review-c', 'review-a']);
+        const pendingAll = createDeferred<unknown>();
+        boundary.read = runId => runId === 'review-b' ? pendingAll.promise : Promise.resolve(response(false, runId));
+        sessionRequests.length = 0;
+        await act(async () => notifyExecutionRunActivity({ serverId: scope.serverId, sessionId: params.host.sessionId }, { runId: 'review-b' }));
+        await waitForHomeGovernance(() => expect(sessionRequests).toHaveLength(1));
+        await act(async () => notifyExecutionRunActivity({ serverId: scope.serverId, sessionId: params.host.sessionId }, { runId: null }));
+        expect(sessionRequests).toHaveLength(1);
+        await act(async () => pendingAll.resolve(response(false, 'review-b')));
+        await waitForHomeGovernance(() => expect(sessionRequests).toHaveLength(1 + runIds.length));
+        expect(sessionRequests.map(request => ExecutionRunGetRequestSchema.parse(request.params).runId)).toEqual(['review-b', ...runIds]);
+        await waitForHomeGovernance(() => expect(hook.getCurrent()?.overlay.summary.total).toBe(0));
+    });
+
+    it('retires pending reads and hints when the selection or Account scope leaves', async () => {
+        const pending = createDeferred<unknown>();
+        boundary.read = runId => runId === 'review-a' ? pending.promise : Promise.resolve(response(false, runId));
+        let selected = ['review-a'];
+        let activeScope: typeof scope | null = scope;
+        const hook = await renderHook(() => useWalkthroughReview({ ...params, scope: activeScope, producer: null, startedReviewRunIds: selected }));
+        await waitForHomeGovernance(() => expect(sessionRequests).toHaveLength(1));
+        await act(async () => notifyExecutionRunActivity({ serverId: scope.serverId, sessionId: params.host.sessionId }, { runId: 'review-a' }));
+        selected = ['review-b'];
+        await hook.rerender();
+        await waitForHomeGovernance(() => expect(hook.getCurrent()?.readStateByRunId['review-b']).toBe('readable'));
+        await waitForHomeGovernance(() => expect(hook.getCurrent()?.comments[0]?.status).toBe('loaded'));
+        const current = hook.getCurrent();
+        await act(async () => pending.resolve(response(true, 'review-a')));
+        await flushHookEffects();
+        expect(hook.getCurrent()).toBe(current);
+        expect(sessionRequests.map(request => ExecutionRunGetRequestSchema.parse(request.params).runId)).toEqual(['review-a', 'review-b']);
+        const retired = createDeferred<unknown>();
+        boundary.read = () => retired.promise;
+        await act(async () => notifyExecutionRunActivity({ serverId: scope.serverId, sessionId: params.host.sessionId }, { runId: 'review-b' }));
+        await waitForHomeGovernance(() => expect(sessionRequests).toHaveLength(3));
+        activeScope = null;
+        await hook.rerender();
+        sessionRequests.length = 0;
+        await act(async () => notifyExecutionRunActivity({ serverId: scope.serverId, sessionId: params.host.sessionId }, { runId: null }));
+        await act(async () => retired.resolve(response(true, 'review-b')));
+        await flushHookEffects();
+        expect(sessionRequests).toHaveLength(0);
+        expect(hook.getCurrent()?.readStateByRunId['review-b']).toBe('loading');
+        expect(hook.getCurrent()?.overlay.summary.total).toBe(0);
+    });
+
     it('opens a Review child startup question from its needs-you notice and clears it after an answer', async () => {
         const requestId = 'execution-run:review-run:occurrence:folder%3Aquestion';
         const request = { tool: 'AskUserQuestion', kind: 'user_action' as const, createdAt: 1,

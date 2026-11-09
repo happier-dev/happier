@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { SessionContextUsageSnapshotV1 } from '@happier-dev/protocol';
+import type { SessionContextUsageSnapshotV1 } from '@happier-dev/protocol/usage/contextUsage';
 
 /**
  * A tiny reactive external store standing in for the session store. The strip's
@@ -33,7 +33,7 @@ const publishSpy = vi.hoisted(() => vi.fn());
 
 vi.mock('@/sync/domains/state/storage', () => ({
     useSessionUsage: () => React.useSyncExternalStore(store.subscribe, () => store.state.usage),
-    useSessionProjectScmSnapshot: () => React.useSyncExternalStore(store.subscribe, () => store.state.scm),
+    useSessionProjectScmSummarySnapshot: () => React.useSyncExternalStore(store.subscribe, () => store.state.scm),
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -127,7 +127,7 @@ describe('useInstrumentStripModel', () => {
         act(() => store.setScm({
             repo: { isRepo: true },
             branch: { head: 'main', upstream: null, ahead: 0, behind: 0 },
-            entries: [{}, {}],
+            entries: [],
             totals: {
                 includedAdded: 12, pendingAdded: 0, includedRemoved: 3, pendingRemoved: 0,
                 includedFiles: 2, pendingFiles: 0, untrackedFiles: 0,

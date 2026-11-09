@@ -130,6 +130,7 @@ vi.mock('@/hooks/session/useUserMessageHistory', () => ({
     warmup: (...args: any[]) => mocks.historyWarmup(...args),
     isBrowsing: (...args: any[]) => mocks.historyIsBrowsing(...args),
     hasRetainedSession: (...args: any[]) => mocks.historyHasRetainedSession(...args),
+    readPosition: () => null,
     pause: (...args: any[]) => mocks.historyPause(...args),
   }),
 }));
@@ -150,6 +151,7 @@ vi.mock('@/sync/domains/models/modelOptions', () => ({
             ?? options?.find?.((option: any) => option.value === String(effectiveModelId ?? '').replace(/\[[^\]]*\]$/u, ''))
             ?? null,
   getModelOptionsForSession: () => [{ value: 'default', label: 'Default' }],
+  resolveSessionModelLabel: (_agentType: unknown, _metadata: unknown, modelId: unknown) => (modelId === 'default' ? 'Default' : null),
   supportsFreeformModelSelectionForSession: () => false,
 }));
 
@@ -288,6 +290,46 @@ describe('AgentInput (history navigation)', () => {
       keyboardShortcutOverridesV1: {},
       keyboardShortcutDisabledCommandIdsV1: [],
     };
+  });
+
+  it('recalls prompts across Sessions in a new-session composer, which has no Session of its own', async () => {
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(
+      React.createElement(AgentInput, {
+        value: '',
+        placeholder: 'p',
+        onChangeText: mocks.onChangeText,
+        onSend: mocks.onSend,
+        autocompleteKinds: [],
+        autocompleteSuggestions: async () => [],
+      }),
+    );
+
+    expect(mocks.historyHookArgs.at(-1)).toEqual({ scope: 'global', sessionId: null });
+    await screen.unmount();
+  });
+
+  it('sends the other way round on the new-session send key', async () => {
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(
+      React.createElement(AgentInput, {
+        value: 'first prompt',
+        placeholder: 'p',
+        onChangeText: mocks.onChangeText,
+        onSend: mocks.onSend,
+        newSessionAfterSendMode: 'open',
+        autocompleteKinds: [],
+        autocompleteSuggestions: async () => [],
+      }),
+    );
+    const input = screen.root.findByProps({ testID: 'new-session-composer-input' });
+
+    await act(async () => {
+      expect(input.props.onKeyPress({ key: 'Enter', metaKey: true, shiftKey: true, platformOS: 'web', webPlatform: 'MacIntel' })).toBe(true);
+    });
+
+    expect(mocks.onSend).toHaveBeenCalledWith(expect.objectContaining({ afterSend: 'startAnother' }));
+    await screen.unmount();
   });
 
   it('sends on Enter when there are sendable attachments (web enter-to-send)', async () => {
@@ -1014,6 +1056,35 @@ describe('AgentInput (history navigation)', () => {
 
     expect(handled).toBe(false);
     expect(onPermissionModeChange).not.toHaveBeenCalled();
+  });
+
+  it('does not let history replace the text of a disabled composer', async () => {
+    mocks.historyMoveUp.mockReturnValue('previous message');
+
+    const { AgentInput } = await import('./AgentInput');
+    const screen = await renderScreen(<AgentInput
+          value="locked prompt"
+          onChangeText={mocks.onChangeText}
+          placeholder="p"
+          onSend={mocks.onSend}
+          autocompleteKinds={[]}
+          autocompleteSuggestions={async () => []}
+          sessionId="s1"
+          metadata={null}
+          disabled
+          showAbortButton={false}
+        />);
+
+    const input = findMultiTextInput(screen);
+    await act(async () => {
+      input.props.onStateChange?.({ text: 'locked prompt', selection: { start: 0, end: 0 } });
+    });
+
+    await act(async () => {
+      input.props.onKeyPress?.({ key: 'ArrowUp', shiftKey: false });
+    });
+
+    expect(mocks.onChangeText).not.toHaveBeenCalledWith('previous message');
   });
 
   it('intercepts ArrowUp at start-of-input on web and applies history text', async () => {

@@ -55,6 +55,21 @@ describe('the Machine name the viewer says', () => {
         expect(hook.getCurrent().mode).toBe('closed');
         expect(openDocked).not.toHaveBeenCalled();
     });
+    it('offers the existing Computer viewer to shared Use guests, managers and the owner', async () => {
+        const shared = (role: 'use' | 'manage') => ({ isShared: true, access: { custodian: { accountId: 'alice', displayName: 'Alice' },
+            role, resourceMode: 'plain', accessState: 'ready' } as NonNullable<Parameters<typeof createMachineFixture>[0]>['access'] });
+        function Wrapper(props: React.PropsWithChildren) {
+            return React.createElement(SessionViewerControllerProvider, {
+                sessionId: 's1', serverId, phone: false, canPresentSource: () => true, openDocked: vi.fn(),
+            }, props.children);
+        }
+        for (const machineSeed of [shared('use'), shared('manage'), {}]) {
+            seed(machineSeed);
+            const hook = await renderHook(() => useOpenSessionComputerScreen({ sessionId: 's1', serverId }), { wrapper: Wrapper });
+            expect(hook.getCurrent(), JSON.stringify(machineSeed)).not.toBeNull();
+            standardCleanup();
+        }
+    });
     it('retains Machine identity without an offline dot while its Home presence is withdrawn', async () => {
         seed({ active: false, activeAt: Date.now() - 120_000 });
         const hook = await renderHook(() => useSessionViewerMachine('s1', serverId, 'computer'));

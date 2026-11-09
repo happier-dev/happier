@@ -160,7 +160,7 @@ describe('AgentInputSubmitButton Dictation routing', () => {
         expect(onDictationPress).not.toHaveBeenCalled();
     });
 
-    it('stops the running turn instead of starting Dictation on an empty composer', async () => {
+    it('renders the Stop the composer placed here instead of starting Dictation', async () => {
         const { AgentInputSubmitButton } = await import('./AgentInputSubmitButton');
         const onDictationPress = vi.fn();
         const onStop = vi.fn();
@@ -173,7 +173,7 @@ describe('AgentInputSubmitButton Dictation routing', () => {
                 sessionId="session-1"
                 disabled={false}
                 hasSendableContent={false}
-                canStop={true}
+                holdsStop={true}
                 dictationPressHandler={onDictationPress}
                 dictationStatus="idle"
                 onSend={onSend}
@@ -207,7 +207,7 @@ describe('AgentInputSubmitButton Dictation routing', () => {
                 sessionId="session-1"
                 disabled={false}
                 hasSendableContent={false}
-                canStop={true}
+                holdsStop={true}
                 dictationPressHandler={onDictationPress}
                 dictationStatus="listening"
                 onSend={() => {}}
@@ -226,12 +226,7 @@ describe('AgentInputSubmitButton Dictation routing', () => {
         expect(onDictationPress).toHaveBeenCalledTimes(1);
         expect(onStop).not.toHaveBeenCalled();
     });
-    it('names the armed switch on an empty composer, and leaves it inert', async () => {
-        // The reported defect: the control stayed a plain circle until a character
-        // was typed, so arming an Agent produced no visible confirmation at all.
-        // Nothing else owns this button here — no dictation handler, no running
-        // turn — so it is still the send, and an inert send still says what
-        // pressing it would do.
+    it('submits an armed switch on an empty composer', async () => {
         const { AgentInputSubmitButton } = await import('./AgentInputSubmitButton');
         const onSend = vi.fn();
         let renderer: ReturnType<typeof create>;
@@ -240,7 +235,7 @@ describe('AgentInputSubmitButton Dictation routing', () => {
             renderer = create(<AgentInputSubmitButton
                 testID="composer-send"
                 sessionId="session-1"
-                disabled={true}
+                disabled={false}
                 hasSendableContent={false}
                 dictationStatus="idle"
                 armedContinuationTarget={{ agentId: 'codex', label: 'Codex' }}
@@ -250,15 +245,14 @@ describe('AgentInputSubmitButton Dictation routing', () => {
 
         const button = renderer!.root.findByType('RoundButton' as any);
         expect(button.props.accessibilityLabel).toBe('session.agentContinuation.sendLabel');
-        expect(button.props.disabled).toBe(true);
-        // Why it cannot be pressed, the same sentence the circular send uses.
-        expect(button.props.accessibilityHint).toBe('session.inputPlaceholder');
+        expect(button.props.disabled).toBe(false);
+        expect(button.props.accessibilityHint).toBeUndefined();
         expect(renderer!.root.findAllByType('PrimaryCircleIconButton' as any)).toHaveLength(0);
 
         act(() => {
             button.props.onPress();
         });
-        expect(onSend).not.toHaveBeenCalled();
+        expect(onSend).toHaveBeenCalledTimes(1);
     });
 
     it('drops the empty-composer hint once there is something to send', async () => {
@@ -288,38 +282,7 @@ describe('AgentInputSubmitButton Dictation routing', () => {
         expect(onSend).toHaveBeenCalledTimes(1);
     });
 
-    it('yields the armed name to Stop while a turn is running on an empty composer', async () => {
-        const { AgentInputSubmitButton } = await import('./AgentInputSubmitButton');
-        const onStop = vi.fn();
-        const onSend = vi.fn();
-        let renderer: ReturnType<typeof create>;
-
-        await act(async () => {
-            renderer = create(<AgentInputSubmitButton
-                testID="composer-send"
-                sessionId="session-1"
-                disabled={false}
-                hasSendableContent={false}
-                canStop={true}
-                dictationStatus="idle"
-                armedContinuationTarget={{ agentId: 'codex', label: 'Codex' }}
-                onSend={onSend}
-                onStop={onStop}
-            />);
-        });
-
-        expect(renderer!.root.findAllByType('RoundButton' as any)).toHaveLength(0);
-        const button = renderer!.root.findByType('PrimaryCircleIconButton' as any);
-        expect(button.props.accessibilityLabel).toBe('agentInput.stopCodingTurn');
-
-        act(() => {
-            button.props.onPress();
-        });
-        expect(onStop).toHaveBeenCalledTimes(1);
-        expect(onSend).not.toHaveBeenCalled();
-    });
-
-    it('yields the armed name to Dictation while Dictation owns the button', async () => {
+    it('submits the armed continuation instead of idle Dictation', async () => {
         const { AgentInputSubmitButton } = await import('./AgentInputSubmitButton');
         const onDictationPress = vi.fn();
         let renderer: ReturnType<typeof create>;
@@ -337,14 +300,13 @@ describe('AgentInputSubmitButton Dictation routing', () => {
             />);
         });
 
-        expect(renderer!.root.findAllByType('RoundButton' as any)).toHaveLength(0);
-        const button = renderer!.root.findByType('PrimaryCircleIconButton' as any);
-        expect(button.props.accessibilityLabel).toBe('voiceAssistant.startDictation');
+        const button = renderer!.root.findByType('RoundButton' as any);
+        expect(button.props.accessibilityLabel).toBe('session.agentContinuation.sendLabel');
 
         act(() => {
             button.props.onPress();
         });
-        expect(onDictationPress).toHaveBeenCalledTimes(1);
+        expect(onDictationPress).not.toHaveBeenCalled();
     });
 
     it('puts the mark on the side the sentence names the Agent on', async () => {

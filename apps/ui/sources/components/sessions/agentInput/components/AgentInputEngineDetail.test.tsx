@@ -68,6 +68,36 @@ describe('AgentInputEngineDetail', () => {
     expect(received).toEqual({ timing: 'Applies from your next message', notes: ['Kept for resume'] });
   });
 
+  // A provider-style control the producer lists before its model selector sits above the model; the ones it
+  // lists after (a fast toggle) sit directly beneath it; everything else follows. The producer's array
+  // decides, not a fixed model-then-config order.
+  it('places model-category controls beside the model by the producer array order', async () => {
+    const { AgentInputEngineDetail } = await import('./AgentInputEngineDetail');
+    const { computeSessionConfigOptionControlsForProvider } = await import('@/sync/domains/sessionControl/configOptionsControl');
+    const select = (id: string, category: string) => ({
+      id, name: id, category, type: 'select', currentValue: 'a', options: [{ value: 'a', name: 'A' }, { value: 'b', name: 'B' }],
+    });
+    const controls = computeSessionConfigOptionControlsForProvider({
+      providerId: 'fx',
+      configOptions: [select('provider', 'model'), select('model', 'model'), select('effort', 'thought_level'), select('fast', 'model')],
+      hideModelOption: true,
+      modelConfigOptionId: 'model',
+    });
+    const Model = () => React.createElement('ModelMarker', null, null);
+
+    let tree!: ReactTestRenderer;
+    await act(async () => {
+      tree = renderer.create(
+        <AgentInputEngineDetail modelContentOverride={<Model />} configControls={controls} surfaceVariant="plain" />,
+      );
+    });
+
+    const order = tree.root
+      .findAll((node) => node.type === Model || (typeof node.props.testID === 'string' && /^agent-input-config-option:[a-z]+$/.test(node.props.testID)))
+      .map((node) => (node.type === Model ? 'model' : String(node.props.testID).split(':')[1]));
+    expect([...new Set(order)]).toEqual(['provider', 'model', 'fast', 'effort']);
+  });
+
   // The model picker keeps what the person typed, scrolled and focused while the producer's catalog
   // arrives or is withdrawn: one container topology for the whole life of the open surface.
   it('keeps the model surface mounted and its state while configuration arrives and is withdrawn', async () => {

@@ -8,6 +8,7 @@ import { createSessionFileNativeTransferBoundary } from '../sessionFileNativeTra
 installSessionFilesViewBoundaries();
 let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
 let diffVersion = 1;
+let transfer: ReturnType<typeof createSessionFileNativeTransferBoundary>;
 const diff = (version: number) => 'diff --git a/src/a.txt b/src/a.txt\n--- a/src/a.txt\n+++ b/src/a.txt\n@@ -1 +1 @@\n-old\n+new-' + version + '\n';
 const snapshot = (pendingAdded: number) => fileViewSnapshot({ fetchedAt: pendingAdded ? 1 : 2, entries: [{
     path: 'src/a.txt', kind: 'modified', includeStatus: 'unmodified', pendingStatus: 'modified',
@@ -21,7 +22,7 @@ const { SessionFileDetailsView } = await import('./SessionFileDetailsView');
 beforeEach(async () => {
     standardCleanup();
     diffVersion = 1;
-    const transfer = createSessionFileNativeTransferBoundary({ bytes: new TextEncoder().encode('file-content'), name: 'a.txt' });
+    transfer = createSessionFileNativeTransferBoundary({ bytes: new TextEncoder().encode('file-content'), name: 'a.txt' });
     fixture = await createSessionFilesViewFixture({
         serverIdentityId: 'srv_scm_refresh',
         machineCarrierOrigin: 'http://127.0.0.1:48126', request: transfer.request,
@@ -60,6 +61,74 @@ describe('SessionFileDetailsView (SCM refresh)', () => {
         expect(JSON.stringify(reads.map(request => request.payload))).not.toContain('/repo/nested/nested/a.ts');
     });
 
+    it('prepares an image preview from only that file revision, preserving fresh bytes', async () => {
+        const { WorkspaceFileDetailsView } = await import('@/components/workspaces/files/details/WorkspaceFileDetailsView');
+        const { FileViewerBody } = await import('@/components/workspaces/files/file/FileViewerBody');
+        const marker = 'fileopen-unrelated-image-path';
+        const imageEntry = { ...snapshot(1).entries[0]!, path: 'asset.png', stats: { ...snapshot(1).entries[0]!.stats, isBinary: true } };
+        const largeSnapshot = fileViewSnapshot({ entries: [imageEntry, ...Array.from({ length: 2_000 }, (_, index) => ({
+            ...imageEntry, path: `${marker}/${index}.txt`,
+        }))] });
+        fixture.setSnapshot(largeSnapshot);
+        const stringify = JSON.stringify;
+        let serializedUnrelatedPathCharacters = 0;
+        const serialization = vi.spyOn(JSON, 'stringify').mockImplementation((...args) => {
+            const value: unknown = args[0];
+            if (Array.isArray(value)) for (const entry of value) {
+                if (typeof entry === 'string' && entry.includes(marker)) serializedUnrelatedPathCharacters += entry.length;
+            }
+            return Reflect.apply(stringify, JSON, args);
+        });
+        try {
+            const screen = await fixture.render(<WorkspaceFileDetailsView scope={fixture.scope} scopeId="project:fileopen-image-cost"
+                filePath="asset.png" initialView={{ view: 'view' }} />);
+            await vi.waitFor(() => expect(screen.tree.root.findByType(FileViewerBody).props.source.enabled).toBe(true));
+            await vi.waitFor(() => expect(transfer.prepares).toHaveLength(1));
+            expect(serializedUnrelatedPathCharacters).toBe(0);
+            await act(async () => {
+                transfer.setPayload(new TextEncoder().encode('updatedimage'), 'asset.png');
+                fixture.setSnapshot({ ...largeSnapshot, fetchedAt: 2, entries: [{ ...imageEntry,
+                    stats: { ...imageEntry.stats, pendingAdded: 0 } }, ...largeSnapshot.entries.slice(1)] });
+            });
+            await flushHookEffects({ cycles: 20 });
+            await vi.waitFor(() => expect(transfer.prepares).toHaveLength(2));
+            expect(serializedUnrelatedPathCharacters).toBe(0);
+        } finally { serialization.mockRestore(); }
+    });
+
+    it('opens a text file without constructing a repository-sized media preview identity', async () => {
+        const { WorkspaceFileDetailsView } = await import('@/components/workspaces/files/details/WorkspaceFileDetailsView');
+        const { FileContentPanel } = await import('@/components/workspaces/files/file/FileContentPanel');
+        const marker = 'fileopen-text-page-cost';
+        const largeSnapshot = fileViewSnapshot({ entries: [...snapshot(1).entries, ...Array.from({ length: 2_000 }, (_, index) => ({
+            ...snapshot(1).entries[0]!, path: `${marker}/${index}.txt`,
+        }))] });
+        fixture.setSnapshot(largeSnapshot);
+        const stringify = JSON.stringify;
+        let serializedMediaRevisionCharacters = 0;
+        const serialization = vi.spyOn(JSON, 'stringify').mockImplementation((...args) => {
+            const value: unknown = args[0];
+            if (Array.isArray(value) && value[0] === 'src/a.txt' && typeof value[2] === 'string' && value[2].includes(marker)) {
+                serializedMediaRevisionCharacters += value[2].length;
+            }
+            return Reflect.apply(stringify, JSON, args);
+        });
+        try {
+            const screen = await fixture.render(<WorkspaceFileDetailsView scope={fixture.scope} scopeId="project:fileopen-cost"
+                filePath="src/a.txt" initialView={{ view: 'changes' }} />);
+            await vi.waitFor(() => expect(screen.tree.root.findByType(FileContentPanel).props.diffContent).toBe(diff(1)));
+            expect(serializedMediaRevisionCharacters).toBe(0);
+            await act(async () => {
+                diffVersion = 2;
+                fixture.setSnapshot({ ...largeSnapshot, fetchedAt: 2, entries: largeSnapshot.entries.map((entry, index) => index === 0
+                    ? { ...entry, stats: { ...entry.stats, pendingAdded: 0 } } : entry) });
+            });
+            await flushHookEffects({ cycles: 20 });
+            await vi.waitFor(() => expect(screen.tree.root.findByType(FileContentPanel).props.diffContent).toBe(diff(2)));
+            expect(serializedMediaRevisionCharacters).toBe(0);
+        } finally { serialization.mockRestore(); }
+    });
+
     it('refreshes diff content in-place when SCM entry fingerprint changes', async () => {
         const { WorkspaceFileDetailsView } = await import('@/components/workspaces/files/details/WorkspaceFileDetailsView');
         const { FileContentPanel } = await import('@/components/workspaces/files/file/FileContentPanel');
@@ -73,6 +142,7 @@ describe('SessionFileDetailsView (SCM refresh)', () => {
             fixture.setSnapshot(snapshot(0));
         });
         await flushHookEffects({ cycles: 20 });
+        expect(fixture.storage.getState().getWorkspaceScmSnapshot(fixture.scope)?.entries[0]?.stats.pendingAdded).toBe(0);
         expect(screen.tree.root.findAllByType(FileContentPanel)).toHaveLength(1);
         await vi.waitFor(() => expect(screen.tree.root.findByType(FileContentPanel).props.diffContent).toBe(diff(2)));
         expect(screen.tree.root.findAllByType(FileLoadingState)).toHaveLength(0);

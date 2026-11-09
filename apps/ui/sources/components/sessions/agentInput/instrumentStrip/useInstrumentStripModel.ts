@@ -6,7 +6,7 @@ import {
 } from '@/components/sessions/sourceControl/status/statusSummary';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { CurrentSessionRunnerProcessIdentity } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
-import { useSessionProjectScmSnapshot, useSessionUsage } from '@/sync/domains/state/storage';
+import { useSessionProjectScmSummarySnapshot, useSessionUsage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { nowServerMs } from '@/sync/runtime/time';
 import {
@@ -77,7 +77,7 @@ export function useInstrumentStripModel(params: Readonly<{
     const usage = useSessionUsage(sessionId ?? '') as SessionUsageLike;
     // The git instrument counts this Session's changed files, so it reads the Home the strip was
     // mounted for rather than whichever Home a bare id happens to resolve to.
-    const scmSnapshot = useSessionProjectScmSnapshot(sessionId ?? null, serverId ?? null);
+    const scmSnapshot = useSessionProjectScmSummarySnapshot(sessionId ?? null, serverId ?? null);
 
     const snapshot = usage?.contextSnapshot ?? null;
     const contextSnapshotStale = usage?.contextSnapshotStale === true;

@@ -1,6 +1,6 @@
+import type { ExecutionRunLauncherDraftSeed } from '@/components/sessions/runs/launcher/prepareExecutionRunLauncherDraft';
 import React from 'react';
 
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { storage } from '@/sync/domains/state/storage';
@@ -10,10 +10,12 @@ import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/b
 import { createAgentInputActionShortcutChip } from '@/components/sessions/agentInput/sessionActions/createAgentInputActionShortcutChip';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { getAgentInputActionShortcutDefinition } from './agentInputActionShortcutPlacements';
 
 
 export function buildSessionAgentInputActionChips(params: Readonly<{
     address: SessionAddress;
+    openExecutionRunDraft: (seed: ExecutionRunLauncherDraftSeed) => void;
     accountScope: ServerAccountScope | null;
     accountScopeIsCurrent?: (() => boolean) | null;
     defaultBackendTarget?: BackendTargetRefV2Input | null;
@@ -35,11 +37,8 @@ export function buildSessionAgentInputActionChips(params: Readonly<{
         ? params.defaultBackendId.trim()
         : null;
     return actionIds.map((actionId) => {
-        const spec = getActionSpec(actionId as any);
-
         return createAgentInputActionShortcutChip({
-            key: `session-action:${actionId}`,
-            label: spec.title,
+            ...getAgentInputActionShortcutDefinition('session', actionId),
             layout: 'row',
             onPress: () => {
                 if (params.accountScopeIsCurrent?.() === false) return;
@@ -50,11 +49,7 @@ export function buildSessionAgentInputActionChips(params: Readonly<{
                     defaultBackendId: backendId,
                     instructions: params.readInstructionsText(),
                 });
-                storage.getState().createSessionActionDraft(
-                    accountScope,
-                    params.address,
-                    { actionId, input },
-                );
+                params.openExecutionRunDraft({ scope: accountScope, sessionId: params.address.sessionId, actionId, input });
             },
         });
     });

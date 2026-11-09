@@ -1,4 +1,5 @@
-import type { DaemonExecutionRunEntry, ExecutionRunPublicState } from '@happier-dev/protocol';
+import type { DaemonExecutionRunEntry} from '@happier-dev/protocol/daemon/executionRuns';
+import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { convertBackendTargetRefV2ToV1 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { Message } from "@happier-dev/session-core/messages";
 

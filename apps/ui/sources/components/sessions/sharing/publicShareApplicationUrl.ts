@@ -1,4 +1,5 @@
 import { Platform } from 'react-native';
+import { buildPublicShareApplicationUrlV1 } from '@happier-dev/protocol/sharing/storedContentPublicShareV1';
 import { resolveBuildDefaultProfile, resolveDefaultWebappUrl } from '@happier-dev/cli-common/happierCloud';
 
 import { sanitizeServerUrlForShareableLink } from '@/sync/domains/server/url/shareableServerUrl';
@@ -8,12 +9,7 @@ export function buildPublicShareApplicationUrl(params: Readonly<{
     token: string;
     serverUrl?: string | null;
 }>): string {
-    const applicationBaseUrl = params.applicationBaseUrl.replace(/\/+$/, '');
-    const path = `${applicationBaseUrl}/share/${encodeURIComponent(params.token)}`;
-    const serverUrl = sanitizeServerUrlForShareableLink(params.serverUrl);
-    return serverUrl
-        ? `${path}?${new URLSearchParams({ server: serverUrl }).toString()}`
-        : path;
+    return buildPublicShareApplicationUrlV1({ ...params, serverUrl: sanitizeServerUrlForShareableLink(params.serverUrl) });
 }
 
 /**

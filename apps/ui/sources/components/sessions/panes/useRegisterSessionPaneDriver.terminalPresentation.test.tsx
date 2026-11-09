@@ -1,3 +1,5 @@
+import { replacePersistentUiStateForTest, PersistedPaneScopesSchema } from '@/dev/testkit/harness/persistentUiState';
+import { paneUiState } from '@/sync/domains/state/filePaneUiState';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -62,7 +64,7 @@ function Cockpit(props: Readonly<{ surface: 'chat' | 'terminal'; runtime: Sessio
 
 describe('Session pane driver with retained cockpit terminal scenes', () => {
     beforeEach(async () => { await standardCleanup(); await homes.reset(); viewport.width = 390;
-        storage.getState().applyLocalSettings({ appPaneScopesV1: {} }); });
+        (replacePersistentUiStateForTest(paneUiState, PersistedPaneScopesSchema.parse({})), storage.getState().applyLocalSettings({ })); });
     afterEach(async () => { await standardCleanup(); await homes.reset(); });
     it('mounts one phone terminal view and retains the Chat draft and terminal workspace across scene returns', async () => {
         const serverId = await homes.addHome({ name: 'Terminal Home', serverUrl: 'https://terminal-scenes.test', accountId: 'alice', currentAccount: true });

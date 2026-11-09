@@ -31,6 +31,9 @@ import {
 import { storage } from '@/sync/domains/state/storage';
 import { loadSessionDrafts, saveSessionDrafts } from '@/sync/domains/state/sessionPersistence';
 import { apiSocket } from '@/sync/api/session/apiSocket';
+import { workflowDraftClientRpcMethod } from '@happier-dev/protocol/actions/workflowAuthoringAction';
+import { createWorkflowEditorDraft, type WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
+import { useWorkflowSessionBinding } from '@/components/workflows/editor/useWorkflowSessionBinding';
 
 const sessionRpc = vi.hoisted(() => vi.fn());
 const persistentValues = vi.hoisted(() => new Map<string, string>());
@@ -85,6 +88,8 @@ vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/sessionRpcWithPreferredSessionScope', () => ({
     sessionRpcWithPreferredSessionScope: (input: unknown) => sessionRpc(input),
 }));
+// Native SDK subscription is the boundary; the surface publisher and membership hook stay real.
+vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }));
 
 import {
     registerComposerPresentationTarget,
@@ -99,6 +104,14 @@ const persistentSessionScope: ServerAccountScope = {
     accountId: 'account-runtime',
 };
 const initialStorageState = storage.getState();
+
+function MountedWorkflowPublisherFixture(props: Readonly<{ draft: WorkflowEditorDraft; scope: ServerAccountScope }>) {
+    useWorkflowSessionBinding({
+        context: { scope: props.scope, draft: props.draft, editable: true, whereMachineId: null, candidates: [] },
+        onChange: () => {}, whereName: null, machineName: id => id,
+    });
+    return null;
+}
 
 function activatePersistentSessionDraft(sessionId: string, text: string): void {
     persistentValues.clear();
@@ -165,9 +178,64 @@ afterEach(() => {
     resetSessionDraftValueCachesForTests();
     storage.setState(initialStorageState, true);
     sessionRpc.mockReset();
+    vi.unstubAllGlobals();
 });
 
 describe('CurrentSessionPresentationRuntime', () => {
+    it('publishes committed Workflow methods without a reverse responder and withdraws only on membership changes', async () => {
+        const nativeInvoke = vi.fn(async (command: string, _input?: unknown) => {
+            if (command === 'desktop_app_window_surfaces') return [];
+            if (command === 'desktop_app_window_surface') return undefined;
+            throw new Error(`Unexpected native command: ${command}`);
+        });
+        vi.stubGlobal('__TAURI_INTERNALS__', {
+            invoke: nativeInvoke, metadata: { currentWindow: { label: 'workflow-secondary' } },
+        });
+        storage.setState({ profileScope: persistentSessionScope, sessions: {} });
+        const draft = createWorkflowEditorDraft({ draftId: 'draft:/shared', name: 'Before' });
+        const otherHome = { ...persistentSessionScope, serverId: 'other-home' };
+        const otherAccount = { ...persistentSessionScope, accountId: 'other-account' };
+        const render = (currentDraft: WorkflowEditorDraft | null) => React.createElement(React.Fragment, null,
+            React.createElement(CurrentSessionPresentationRuntime),
+            React.createElement(MountedWorkflowPublisherFixture, { key: 'other-home', draft, scope: otherHome }),
+            React.createElement(MountedWorkflowPublisherFixture, { key: 'other-account', draft, scope: otherAccount }),
+            currentDraft && React.createElement(MountedWorkflowPublisherFixture, {
+                key: 'current', draft: currentDraft, scope: persistentSessionScope,
+            }));
+        const view = await renderScreen(render(null));
+        await flushHookEffects();
+        const publications = () => nativeInvoke.mock.calls.filter(([command]) => command === 'desktop_app_window_surface')
+            .map(([, input]) => input);
+        expect(publications()).toEqual([{
+            homeId: persistentSessionScope.serverId, accountId: persistentSessionScope.accountId,
+            sessionId: null, methods: [],
+        }]);
+        nativeInvoke.mockClear();
+
+        await act(async () => { view.update(render(draft)); });
+        await flushHookEffects();
+        expect(publications()).toEqual([{
+            homeId: persistentSessionScope.serverId, accountId: persistentSessionScope.accountId, sessionId: null,
+            methods: [workflowDraftClientRpcMethod({ scope: persistentSessionScope }),
+                workflowDraftClientRpcMethod({ scope: persistentSessionScope, draftId: draft.draftId })].sort(),
+        }]);
+        nativeInvoke.mockClear();
+
+        for (let index = 0; index < 10; index++) {
+            await act(async () => { view.update(render({ ...draft, name: `Edited ${index}` })); });
+        }
+        await flushHookEffects();
+        expect(publications()).toEqual([]);
+
+        await act(async () => { view.update(render(null)); });
+        await flushHookEffects();
+        expect(publications()).toEqual([{
+            homeId: persistentSessionScope.serverId, accountId: persistentSessionScope.accountId,
+            sessionId: null, methods: [],
+        }]);
+        expect(sessionRpc).not.toHaveBeenCalled();
+    });
+
     it('rebinds once when the authenticated Home socket reconnects', async () => {
         const sessionId = 'reconnected-session';
         const address = { serverId: persistentSessionScope.serverId, sessionId } as const;
@@ -967,7 +1035,7 @@ describe('CurrentSessionPresentationRuntime', () => {
 
             // Leaving the surface retires the binding.
             presented = false;
-            storage.setState((state) => ({ ...state }));
+            unregister();
             await flushHookEffects({ cycles: 8, turns: 3 });
             expect(sessionRpc).toHaveBeenCalledWith(expect.objectContaining({
                 method: CURRENT_SESSION_PRESENTATION_UNBIND_RPC_METHOD,

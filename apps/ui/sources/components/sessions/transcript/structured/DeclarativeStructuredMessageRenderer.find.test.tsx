@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it } from 'vitest';
-import { createMessageStructuredPresentationV1 } from '@happier-dev/protocol';
+import { createMessageStructuredPresentationV1 } from '@happier-dev/protocol/sessions/messages/messageStructuredPresentationV1';
 import { renderScreen } from '@/dev/testkit';
 import { installToolShellCommonModuleMocks } from '@/components/tools/shell/views/ToolView.testHelpers';
 import { createTranscriptFindRowStore } from '../find/transcriptFindRowStore';

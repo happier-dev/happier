@@ -1,5 +1,5 @@
 import { HAPPIER_REVIEW_SEVERITY_RANK } from '@happier-dev/plugin-ui/presentation';
-import type { ReviewFinding } from '@happier-dev/protocol';
+import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
 
 import { t } from '@/text';
 

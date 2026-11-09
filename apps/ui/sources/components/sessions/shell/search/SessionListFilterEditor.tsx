@@ -44,7 +44,7 @@ import {
     type SessionListConditionCopy,
 } from './sessionListConditionFields';
 import { createSessionListViewFilterDefaults } from './sessionListViewFilters';
-import { useSessionListFilterProjectOptions } from './useSessionListFilterProjectOptions';
+import { useProjectPickerOptions } from '@/components/projects/useProjectPickerOptions';
 import { useSessionListFilterLocalOptions } from './useSessionListFilterLocalOptions';
 /*
  * Audience identity belongs to the filter state owner. This component consumes its
@@ -344,7 +344,7 @@ export const SessionListFilterEditor = React.memo(function SessionListFilterEdit
         props.removeAuthoritativelyDeletedSelections,
         props.teamAudienceContext,
     ]);
-    const projects = useSessionListFilterProjectOptions();
+    const projects = useProjectPickerOptions();
     const model = React.useMemo(() => buildSessionListFilterEditorModel({
         filters: props.filters,
         includeInactive: props.includeInactive,

@@ -5,7 +5,8 @@ import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 import { registerStandardCleanupTarget, unregisterStandardCleanupTarget, standardCleanup } from '@/dev/testkit';
 import renderer, { act } from 'react-test-renderer';
 import { Platform } from 'react-native';
-import type { ComposerAttachmentDraftV1, ComposerSnapshotV1 } from '@happier-dev/protocol';
+import type { ComposerAttachmentDraftV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type { ComposerSnapshotV1 } from '@happier-dev/protocol/plugins/ui/composer';
 
 import type { PickedAttachment } from '@/components/sessions/attachments/AttachmentFilePicker.types';
 import type { NewSessionComposerDocument } from '@/components/sessions/new/hooks/screenModel/useNewSessionComposerDocument';
@@ -18,6 +19,7 @@ import {
     writeNewSessionAttachmentDrafts,
 } from './newSessionAttachmentDraftStore';
 import { resolveNewSessionDraftAttachmentFlowId } from './newSessionDraftAttachmentFlowId';
+import { prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -56,6 +58,9 @@ const readCachedSnapshotForMachinePathMock = vi.hoisted(() => vi.fn((_input: Rea
 }>) => null));
 const deferOnWebSpy = vi.hoisted(() => vi.fn((callback: () => void) => callback()));
 
+vi.mock('@/sync/domains/state/browserRecordStorage', async () =>
+    (await import('@/dev/testkit/mocks/browserRecordStorage')).createBrowserRecordStorageModuleMock());
+
 vi.mock('@/hooks/server/useFeatureEnabled', () => ({
     useFeatureEnabled: (featureId: string) => featureEnabledSpy(featureId),
 }));
@@ -82,16 +87,8 @@ vi.mock('@/components/sessions/attachments/useAttachmentsUploadConfig', () => ({
     }),
 }));
 
-vi.mock('@/components/sessions/attachments/uploadAttachmentDraftsToSession', () => ({
-    uploadAttachmentDraftsToSession: uploadAttachmentDraftsToSessionSpy,
-    buildAttachmentMessageMeta: (uploaded: unknown) => ({
-        happier: {
-            kind: 'attachments.v1',
-            payload: {
-                attachments: uploaded,
-            },
-        },
-    }),
+vi.mock('@/sync/domains/transfers/ops/uploadSessionAttachment', () => ({
+    sessionAttachmentsUploadFile: (request: unknown) => uploadAttachmentDraftsToSessionSpy(request),
 }));
 
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/followUpSpawnedSession', () => ({
@@ -235,6 +232,7 @@ function createComposerDocument(input: Readonly<{
             onStructuredInputMentionsChange: () => {},
             onComposerFocusChange: () => {},
             onComposerFocusRequestChange: () => {},
+            onComposerBlurRequestChange: () => {},
             onComposerInputFlushRequestChange: () => {},
             onPromptPickerOpenRequestChange: () => {},
             flushComposerInput: () => {},
@@ -250,6 +248,7 @@ function createComposerDocument(input: Readonly<{
             extraActionChips: [],
             beforeComposer: null,
             afterComposer: null,
+            statusRegions: [],
             captureSubmissionSnapshot,
             clearAcceptedSnapshot,
             readCurrentDocumentSnapshot: () => input.snapshot,
@@ -371,6 +370,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         await act(async () => {
             hook.getCurrent().handleSend();
             promptStore.setPrompt('');
+            await flushHookEffects({ cycles: 1, turns: 1 });
             deferredCreate?.();
             await flushHookEffects({ cycles: 1, turns: 1 });
         });
@@ -473,6 +473,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         await act(async () => {
             await afterCreated?.({
                 sessionId: 'temporary-session',
+                sessionTarget: { serverId: 'server-a', accountId: 'account-a', sessionId: 'temporary-session' },
                 effectiveSpawnServerId: 'server-a',
                 launchAttempt: createLaunchAttempt(),
                 preuploadedAttachments: [],
@@ -918,28 +919,37 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
 
     it('releases a mounted deleted draft and does not republish its sources after a later update', async () => {
         const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        await prepareSessionDraftPersistenceStorage();
         const scope = { serverId: 'server-a', accountId: 'account-a' };
         const draftId = '00000000-0000-4000-8000-000000000804';
         const flowId = resolveNewSessionDraftAttachmentFlowId(draftId);
         const values = new Map<string, string>();
         const repository = createSessionDraftRepository({
-            storage: { getString: (key) => values.get(key), set: (key, value) => { values.set(key, value); }, delete: (key) => { values.delete(key); } },
+            storage: { getString: (key) => values.get(key), getAllKeys: () => [...values.keys()], set: (key, value) => { values.set(key, value); }, delete: (key) => { values.delete(key); } },
             scope, syncEnabled: false,
             cipher: { seal: async () => { throw new Error('local deletion needs no encryption'); }, open: async () => null },
         });
         repository.writeNewSessionDraft({ scope, draftId, patch: { text: 'delete me' }, materializationIntent: 'userEdit' });
-        writeNewSessionAttachmentDrafts(flowId, [{ id: 'file', status: 'pending', source: { kind: 'memory', bytes: new Uint8Array([1]), name: 'file.txt' } }]);
-        const hook = await renderHook(() => useNewSessionAttachmentsController({
-            flowId, isCreating: false, promptStore: createNewSessionPromptStore(''),
-            handleCreateSession: vi.fn(), selectedProfileId: null, targetServerId: 'server-a',
-        }));
+        writeNewSessionAttachmentDrafts(flowId, [{ id: 'file', status: 'pending', source: { kind: 'memory', bytes: new Uint8Array([1]), name: 'file.txt' } }], scope);
+        const promptStore = createNewSessionPromptStore('');
+        const hook = await renderHook(() => {
+            const composerDocument = useNewSessionComposerDocument({
+                draftId, draftScope: scope, scopeKey: 'deleted-draft-scope', promptStore,
+                persistedAttachments: [], composerAttachmentEntriesById: {},
+                canSubmitRef: { current: true }, isSubmitting: false,
+            });
+            return useNewSessionAttachmentsController({
+                flowId, composerDocument, isCreating: false, promptStore,
+                handleCreateSession: vi.fn(), selectedProfileId: null, targetServerId: 'server-a',
+            });
+        });
         expect(hook.getCurrent().drafts).toHaveLength(1);
         await act(async () => {
             await expect(repository.deleteSessionDraft({ scope, address: { kind: 'newSession', draftId } })).resolves.toBe(true);
             await flushHookEffects({ cycles: 1, turns: 1 });
         });
         expect(hook.getCurrent().drafts).toEqual([]);
-        expect(readNewSessionAttachmentDrafts(flowId)).toEqual([]);
+        expect(readNewSessionAttachmentDrafts(flowId, scope)).toEqual([]);
         // An in-flight picker can still finish before navigation unmounts the
         // old controller. It cannot reacquire custody of the deleted flow.
         await act(async () => {
@@ -948,7 +958,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         });
         await hook.rerender();
         expect(hook.getCurrent().drafts).toEqual([]);
-        expect(readNewSessionAttachmentDrafts(flowId)).toEqual([]);
+        expect(readNewSessionAttachmentDrafts(flowId, scope)).toEqual([]);
         await hook.unmount();
     });
 
@@ -1105,14 +1115,9 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
         const handleCreateSession = vi.fn();
         uploadAttachmentDraftsToSessionSpy.mockResolvedValue({
-            messageLocalId: 'm1',
-            uploaded: [{
-                name: 'note.txt',
-                path: '.happier/uploads/note.txt',
-                mimeType: 'text/plain',
-                sizeBytes: 12,
-                sha256: 'sha-note',
-            }],
+            success: true,
+            path: '.happier/uploads/note.txt', sizeBytes: 12, sha256: 'a'.repeat(64),
+            attachmentHandle: { v: 1, sessionId: 'session-1', id: 'issued-note' },
         });
 
         const hook = await renderHook(() => useNewSessionAttachmentsController({
@@ -1153,6 +1158,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
             await afterCreated({
                 sessionId: 'session-1',
                 effectiveSpawnServerId: 'server-a',
+                sessionTarget: { serverId: 'server-a', accountId: 'account-created', sessionId: 'session-1' },
                 launchAttempt: {
                     attachmentMessageLocalId: 'new-session-attachment-local-1',
                 },
@@ -1161,12 +1167,9 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
 
         expect(uploadAttachmentDraftsToSessionSpy).toHaveBeenCalledWith(expect.objectContaining({
             sessionId: 'session-1',
+            sessionTarget: { serverId: 'server-a', accountId: 'account-created', sessionId: 'session-1' },
             messageLocalId: 'new-session-attachment-local-1',
-            drafts: expect.arrayContaining([
-                expect.objectContaining({
-                    source: expect.objectContaining({ kind: 'native', name: 'note.txt' }),
-                }),
-            ]),
+            file: expect.objectContaining({ kind: 'native', name: 'note.txt' }),
         }));
         expect(followUpSpawnedSessionWithServerScopeSpy).toHaveBeenCalledWith({
             sessionId: 'session-1',
@@ -1176,18 +1179,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
             messageLocalId: 'new-session-attachment-local-1',
             profileId: 'profile-work',
             metaOverrides: {
-                happier: {
-                    kind: 'attachments.v1',
-                    payload: {
-                        attachments: [{
-                            name: 'note.txt',
-                            path: '.happier/uploads/note.txt',
-                            mimeType: 'text/plain',
-                            sizeBytes: 12,
-                            sha256: 'sha-note',
-                        }],
-                    },
-                },
+                happierStructuredInputV1: { v: 1, sessionAttachments: [{ v: 1, sessionId: 'session-1', id: 'issued-note' }] },
             },
         });
 
@@ -1242,6 +1234,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
             mimeType: 'text/plain',
             sizeBytes: 12,
             sha256: 'a'.repeat(64),
+            attachmentHandle: { v: 1, sessionId: 'runner-session-1', id: 'runner-issued-note' },
         } as const;
         await act(async () => {
             await afterCreated({
@@ -1261,10 +1254,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
             targetServerId: 'server-a',
             messageLocalId: 'runner-first-turn-local-1',
             metaOverrides: {
-                happier: {
-                    kind: 'attachments.v1',
-                    payload: { attachments: [verifiedAttachment] },
-                },
+                happierStructuredInputV1: { v: 1, sessionAttachments: [verifiedAttachment.attachmentHandle] },
             },
         }));
         expect(hook.getCurrent().drafts).toHaveLength(0);
@@ -1456,6 +1446,46 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
         await hook.unmount();
     });
 
+    it('holds the review comments chip while the session is being created', async () => {
+        const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
+        const { buildCollapsedExtraControlActions } = await import('@/components/sessions/agentInput/controls/buildCollapsedExtraControlActions');
+        featureEnabledSpy.mockImplementation((featureId: string) => featureId === 'files.reviewComments');
+        workspaceReviewDraftsState.draftsByRootPath.set('/repo', [{
+            id: 'draft-launching',
+            filePath: 'src/index.ts',
+            source: 'file',
+            anchor: { kind: 'fileLine', startLine: 3 },
+            snapshot: { selectedLines: ['const x = 1;'], beforeContext: [], afterContext: [] },
+            body: 'Keep this.',
+            createdAt: 1,
+        }]);
+
+        const hook = await renderHook(() => useNewSessionAttachmentsController({
+            flowId: 'flow-launching-review-comments',
+            isCreating: true,
+            promptStore: createNewSessionPromptStore('launching'),
+            handleCreateSession: vi.fn(),
+            selectedProfileId: null,
+            selectedMachineId: 'machine-1',
+            selectedPath: '/repo',
+            targetServerId: 'server-a',
+            baseActionChips: [],
+        }));
+
+        const chips = hook.getCurrent().actionChips;
+        expect(chips.find((chip) => chip.key === 'review-comments')).toBeTruthy();
+        const collapsed = buildCollapsedExtraControlActions({
+            chips,
+            tint: 'currentColor',
+            dismiss: vi.fn(),
+            blurInput: vi.fn(),
+            openCollapsedOptionsPopover: vi.fn(),
+        });
+        const reviewActions = Object.values(collapsed).flat().filter((action) => action.id === 'review-comments');
+        expect(reviewActions.length).toBeGreaterThan(0);
+        expect(reviewActions.every((action) => action.disabled === true)).toBe(true);
+    });
+
     it('discovers workspace review comments when the selected path is home-relative', async () => {
         const { useNewSessionAttachmentsController } = await import('./useNewSessionAttachmentsController');
         const handleCreateSession = vi.fn();
@@ -1511,14 +1541,9 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
             featureId === 'files.reviewComments' || featureId === 'attachments.uploads'
         );
         uploadAttachmentDraftsToSessionSpy.mockResolvedValue({
-            messageLocalId: 'm1',
-            uploaded: [{
-                name: 'note.txt',
-                path: '.happier/uploads/note.txt',
-                mimeType: 'text/plain',
-                sizeBytes: 12,
-                sha256: 'sha-note',
-            }],
+            success: true,
+            path: '.happier/uploads/note.txt', sizeBytes: 12, sha256: 'a'.repeat(64),
+            attachmentHandle: { v: 1, sessionId: 'session-1', id: 'issued-note' },
         });
         workspaceReviewDraftsState.draftsByRootPath.set('/repo/worktree-a', [{
             id: 'draft-1',
@@ -1598,18 +1623,7 @@ describe('useNewSessionAttachmentsController (attachments.uploads)', () => {
                         ],
                     },
                 },
-                happierAttachments: {
-                    kind: 'attachments.v1',
-                    payload: {
-                        attachments: [{
-                            name: 'note.txt',
-                            path: '.happier/uploads/note.txt',
-                            mimeType: 'text/plain',
-                            sizeBytes: 12,
-                            sha256: 'sha-note',
-                        }],
-                    },
-                },
+                happierStructuredInputV1: { v: 1, sessionAttachments: [{ v: 1, sessionId: 'session-1', id: 'issued-note' }] },
             },
         }));
         expect(deleteWorkspaceReviewCommentDraftSpy).toHaveBeenCalledWith('draft-1');

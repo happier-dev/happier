@@ -26,7 +26,7 @@ describe('full-height Companion header Machine binding', () => {
         const screen = await renderScreen(<runtime.Wrapper><PaneHeaderSlotProvider>
             <Header /><PaneHeaderSlotScope slotKey="companion"><SessionCompanionScreen
                 sessionId="s1" address={{ serverId: runtime.serverId, sessionId: 's1' }}
-                onRequestClose={() => {}} onRevealBoardItem={() => {}} resolvePrimaryHost={() => 'companion'}
+                onRequestClose={() => {}} onRevealBoardItem={() => {}}
             /></PaneHeaderSlotScope>
         </PaneHeaderSlotProvider></runtime.Wrapper>);
         const binding = screen.findAllByType(SessionCompanionAddControl)

@@ -1,13 +1,17 @@
 import React from 'react';
-import type { BrowserAdapterCapabilitiesV1, BrowserContextCapabilities } from '@happier-dev/protocol';
+import type { BrowserAdapterCapabilitiesV1} from '@happier-dev/protocol/browser/adapters/v1';
+import type { BrowserContextCapabilities } from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
 import {
+    addBrowserAnnotationElement,
     attachBrowserContextToComposer,
     captureBrowserPageReference,
     createBrowserContextState,
+    commitBrowserAnnotationDraft,
     markBrowserContextViewNavigation,
+    startBrowserAnnotationDraft,
     type BrowserContextState,
 } from '@/sync/domains/browser/context';
 
@@ -93,7 +97,7 @@ const target = {
 
 async function loadModule() {
     const modulePath = './createBrowserContextActionChip';
-    const loaded = await import(modulePath).catch(() => null);
+    const loaded = await import(modulePath);
     expect(loaded?.createBrowserContextActionChip).toBeTypeOf('function');
     return loaded as Readonly<{
         createBrowserContextActionChip: (params: Readonly<{
@@ -165,6 +169,77 @@ function expectSingleAction(action: ActionListItem | readonly ActionListItem[] |
 }
 
 describe('createBrowserContextActionChip', () => {
+    it.each([
+        { pageTitle: 'Checkout', pageUrl: 'https://shop.example/checkout?cart=private', title: 'Checkout' },
+        { pageTitle: undefined, pageUrl: 'https://shop.example/checkout?cart=private', title: 'https://shop.example' },
+        { pageTitle: undefined, pageUrl: 'invalid', title: 'browserContext.composer.untitledPage' },
+    ])('names annotation context from its page and element count ($title)', async ({ pageTitle, pageUrl, title }) => {
+        const { createBrowserContextActionChip } = await loadModule();
+        const binding = { browserSessionId: 'browser_1', viewId: 'view_1', navigationGeneration: 1 };
+        let state = startBrowserAnnotationDraft(createBrowserContextState(), {
+            ...binding, nowMs: 1,
+            source: { uri: 'blob:annotation_fixture', width: 100, height: 100, scale: 1 },
+            capture: { bytes: new Uint8Array([1]), mimeType: 'image/png', width: 100, height: 100, sizeBytes: 1 },
+            pageTitle, pageUrl,
+        });
+        for (const selectorPath of ['#total', '#pay']) {
+            state = addBrowserAnnotationElement(state, {
+                viewId: binding.viewId, markId: selectorPath, color: 'red',
+                element: { selectorPath, label: selectorPath, rect: { x: 10, y: 20, width: 30, height: 40 } },
+            });
+        }
+        const committed = commitBrowserAnnotationDraft({
+            ...binding, state, adapterKind: 'localPreview', capturedAtMs: 2,
+            imageRef: { mediaId: 'image_1', mediaKind: 'image', width: 100, height: 100, sizeBytes: 100 },
+        });
+        if (committed.status !== 'committed') throw new Error('annotation fixture failed');
+        const attached = attachBrowserContextToComposer(committed.state, {
+            attachmentId: 'attachment_1', contextId: committed.itemIds[0],
+        });
+        if (attached.status !== 'attached') throw new Error('annotation attachment fixture failed');
+        const presentation = createBrowserContextActionChip({ state: attached.state, onAttachPageReference: vi.fn() });
+        expect(presentation.attachmentRowItem?.label).toBe(`browserContext.composer.attachedAnnotation:${title}:2`);
+        const stale = createBrowserContextActionChip({
+            state: markBrowserContextViewNavigation(attached.state, { viewId: 'view_1', navigationGeneration: 2 }),
+            onAttachPageReference: vi.fn(),
+        });
+        expect(stale.attachmentRowItem?.label).toBe(`browserContext.composer.attachedAnnotationStale:${title}:2`);
+    });
+
+    it.each([
+        { element: { componentName: 'TotalRow', accessibleName: 'Order total' }, name: 'TotalRow' },
+        { element: { accessibleName: 'Order total' }, name: 'Order total' },
+    ])('names the one annotated element instead of counting it ($name)', async ({ element, name }) => {
+        const { createBrowserContextActionChip } = await loadModule();
+        const binding = { browserSessionId: 'browser_1', viewId: 'view_1', navigationGeneration: 1 };
+        let state = startBrowserAnnotationDraft(createBrowserContextState(), {
+            ...binding, nowMs: 1,
+            source: { uri: 'blob:annotation_fixture', width: 100, height: 100, scale: 1 },
+            capture: { bytes: new Uint8Array([1]), mimeType: 'image/png', width: 100, height: 100, sizeBytes: 1 },
+            pageTitle: 'Checkout', pageUrl: 'https://shop.example/checkout',
+        });
+        state = addBrowserAnnotationElement(state, {
+            viewId: binding.viewId, markId: '#total', color: 'red',
+            element: { selectorPath: '#total', label: name, rect: { x: 10, y: 20, width: 30, height: 40 }, ...element },
+        });
+        const committed = commitBrowserAnnotationDraft({
+            ...binding, state, adapterKind: 'localPreview', capturedAtMs: 2,
+            imageRef: { mediaId: 'image_1', mediaKind: 'image', width: 100, height: 100, sizeBytes: 100 },
+        });
+        if (committed.status !== 'committed') throw new Error('annotation fixture failed');
+        const attached = attachBrowserContextToComposer(committed.state, {
+            attachmentId: 'attachment_1', contextId: committed.itemIds[0],
+        });
+        if (attached.status !== 'attached') throw new Error('annotation attachment fixture failed');
+        const presentation = createBrowserContextActionChip({ state: attached.state, onAttachPageReference: vi.fn() });
+        expect(presentation.attachmentRowItem?.label).toBe(`Checkout · ${name}`);
+        const stale = createBrowserContextActionChip({
+            state: markBrowserContextViewNavigation(attached.state, { viewId: 'view_1', navigationGeneration: 2 }),
+            onAttachPageReference: vi.fn(),
+        });
+        expect(stale.attachmentRowItem?.label).toBe(`browserContext.composer.attachedPageStale:Checkout · ${name}`);
+    });
+
     it('exposes an explicit attach action chip for page-reference browser context', async () => {
         const { createBrowserContextActionChip } = await loadModule();
         const onAttachPageReference = vi.fn();

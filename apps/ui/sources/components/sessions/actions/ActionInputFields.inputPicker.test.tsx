@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import { HappierInputPickerProvider } from '@happier-dev/plugin-ui/presentation';
-import { ActionInputFieldHintSchema, type EffectiveActionInputField } from '@happier-dev/protocol';
+import { createTestResourceInvocationContext } from '@happier-dev/plugin-sdk/testing';
+import { InputFieldHintSchema as ActionInputFieldHintSchema} from '@happier-dev/protocol/inputs/inputFields';
+import { type EffectiveInputField  as EffectiveActionInputField} from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { readInputTypeOptions, type ResolvedInputTypeV1 } from '@happier-dev/protocol/inputs/runtime';
 import { act } from 'react-test-renderer';
 import { findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
@@ -26,7 +28,13 @@ const declared: ResolvedInputTypeV1 = {
     occurrenceId: 'occurrence-1',
     definition: { id: 'repository', ...repositoryInputTypes.repository },
 };
-const choices = readInputTypeOptions(declared, JSON.parse(repositoryResources['review-repositories'].runtime.read()));
+const repositoryResource = repositoryResources['review-repositories'];
+if (repositoryResource.source !== 'dynamic') throw new Error('The example repository Resource must be dynamic');
+const repositoryOptions = await repositoryResource.runtime.read(createTestResourceInvocationContext());
+const repositoryOptionsPage = JSON.parse(
+    typeof repositoryOptions === 'string' ? repositoryOptions : new TextDecoder().decode(repositoryOptions),
+);
+const choices = readInputTypeOptions(declared, repositoryOptionsPage.options);
 const savedValue = { repositoryId: 'example/review-assistant' };
 
 const field: EffectiveActionInputField = {

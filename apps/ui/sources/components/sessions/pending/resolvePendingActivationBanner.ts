@@ -5,7 +5,7 @@ import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 import type { ManagedWakeProjection } from '@/sync/domains/pending/managedWakeProjection';
 
 export type PendingActivationBannerPresentation = Readonly<{
-    kind: 'waiting_offline' | 'waiting' | 'failed' | 'queued' | 'queued_offline' | 'held';
+    kind: 'waiting_offline' | 'waiting' | 'failed' | 'queued' | 'queued_offline' | 'held' | 'held_offline';
     row: PendingMessage | null;
     primaryAction: 'retry' | 'resume' | 'process_when_online' | null;
     secondaryAction: 'keep_queued' | null;
@@ -48,7 +48,7 @@ export function resolvePendingActivationBanner(input: Readonly<{
     const managedWakeProjection = input.managedWakeProjection;
     const rows = input.pendingMessages.filter(isEligiblePendingUserRow).sort(comparePendingRows);
     if (!input.active && input.resumingAt == null && rows.length > 0 && input.autoResumeAdmission === 'held_by_person') {
-        return { kind: 'held', row: rows[0], primaryAction: input.machineReachable === true ? 'resume' : null,
+        return { kind: input.machineReachable === false ? 'held_offline' : 'held', row: rows[0], primaryAction: input.machineReachable === true ? 'resume' : null,
             secondaryAction: null, settingsAction: 'settings' };
     }
     // Current refusal can outlive a retained target after a grant downgrade.

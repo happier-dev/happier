@@ -60,6 +60,8 @@ export type SessionAgentActivityPresentation = Readonly<{
     startedAtMs: number | null;
     /** The moment a finished or waiting row is dated by. */
     atMs: number | null;
+    /** The work has something new the person has not seen: its title reads strong. */
+    unread?: boolean;
     /**
      * Secondary facts in canonical order, deduplicated, for the one line under the title.
      *

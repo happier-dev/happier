@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import type {
-    ComposerAttachmentViewV1,
+    ComposerAttachmentViewV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type {
     ComposerContentHandleV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/runtime/input/composerContentV1';
 
 import { ComposerStagedMediaPreview } from '@/components/sessions/attachments/preview/ComposerStagedMediaPreview';
 import { openMediaStage } from '@/components/ui/media/stage/useMediaStage';

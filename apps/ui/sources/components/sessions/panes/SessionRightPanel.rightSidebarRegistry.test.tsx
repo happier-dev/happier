@@ -1,10 +1,11 @@
 import * as React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { selectPluginRightSidebarTabPlacements } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { renderScreen } from '@/dev/testkit';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import {
     createPluginSurfaceDestinationNavigationBinding,
     PluginSurfaceDestinationNavigationBindingProvider,
@@ -166,7 +167,8 @@ vi.mock('@/components/plugins/projection/useScopedPluginUiProjection', () => ({
     useScopedPluginUiProjection: (params: unknown) => useScopedPluginUiProjectionMock(params),
 }));
 
-vi.mock('@/components/sessions/model/useSessionMachineTarget', () => ({
+vi.mock('@/components/sessions/model/useSessionMachineTarget', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/components/sessions/model/useSessionMachineTarget')>(),
     useSessionMachineTarget: () => ({ machineId: 'machine-1', basePath: '/repo' }),
 }));
 
@@ -292,6 +294,7 @@ function createPluginProjection(input: Readonly<{
 }
 
 describe('SessionRightPanel right-sidebar registry tabs', () => {
+    beforeAll(async () => { await loadSyncSingletonForTests(); });
     beforeEach(() => {
         terminalFeatureEnabled = true;
         boardFeatureEnabled = false;

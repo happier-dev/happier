@@ -1,5 +1,7 @@
 import * as React from 'react';
-import type { PrincipalRefV1, SessionAccessCreationDecisionV1, SessionInitialAccessDraftV1 } from '@happier-dev/protocol';
+import type { PrincipalRefV1} from '@happier-dev/protocol/teams/principal';
+import type { SessionAccessCreationDecisionV1} from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
+import type { SessionInitialAccessDraftV1 } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 
 import type { SessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -13,6 +15,7 @@ import { sessionAccessGrantMutation } from './sessionAccessGrantMutation';
 import { projectSessionAccessDelegationControl, sessionAccessSubjectKey } from './projectSessionAccessEditorSnapshot';
 import { resolveSessionAccessCreationDecision, resolveSessionAccessPrincipals } from '@/sync/api/session/sessionAccessApi';
 import { useSessionAccessDirectory, type SessionAccessDirectoryTeamContext } from './useSessionAccessDirectory';
+import { createSessionAccessQuery } from './sessionAccessQuery';
 import type {
     SessionAccessEditorActions,
     SessionAccessEditorController,
@@ -70,10 +73,11 @@ export function useNewSessionAccessDraftController(input: Readonly<{
     demanded: boolean;
     onChange: (next: SessionInitialAccessDraftV1 | null) => void;
     onPrimaryTeamIdChange: (next: string | null) => void;
-}>): SessionAccessEditorController {
+}>): SessionAccessEditorController & Readonly<{ placementPending: boolean }> {
     const { access, availability, demanded, onChange, onPrimaryTeamIdChange, primaryTeamId, scope } = input;
     const viewerProfile = useShareViewerProfile(scope);
-    const [query, setQuery] = React.useState('');
+    const [query] = React.useState(createSessionAccessQuery);
+    const setQuery = query.write;
     const [revision, setRevision] = React.useState(0);
     const [pendingContextTeamId, setPendingContextTeamId] = React.useState<string | null | undefined>(undefined);
     const [explainedReason, setExplainedReason] = React.useState<Readonly<{ code: string; message: string }> | null>(null);
@@ -420,7 +424,22 @@ export function useNewSessionAccessDraftController(input: Readonly<{
         } : {}),
     })), [directory.sections]);
 
+    const defaultGrant = creationDecision?.defaultGrant;
+    const differsFromDefault = primaryTeamId === null
+        ? grants.length > 0
+        : grants.some((grant) => grant.subject.kind !== 'team' || grant.subject.teamId !== primaryTeamId) ? true
+        : creationDecision?.teamId !== primaryTeamId ? false
+        : defaultGrant === null ? grants.length > 0
+        : grants.length !== 1 || !grants.some((grant) => grant.subject.kind === 'team'
+            && grant.subject.teamId === primaryTeamId
+            && grant.accessLevel === defaultGrant?.accessLevel
+            && grant.canApprovePermissions === defaultGrant?.canApprovePermissions);
+
     return {
+        query,
+        placementPending: differsFromDefault || primaryTeamPolicyUnavailable || contextDecisionError
+            || pendingContextDecision !== null || pendingContextTeamId !== undefined || explainedReason !== null
+            || input.homeReconciled === true || (!editable && grants.length > 0),
         actions,
         model: {
             revision,
@@ -429,7 +448,7 @@ export function useNewSessionAccessDraftController(input: Readonly<{
             content: { phase: 'ready', hasLastAcknowledgedSnapshot: true },
             owner: null,
             grants: rows,
-            directory: { query, sections },
+            directory: { sections },
             summary: projectSessionAccessChipSummary({ grants: rows, audienceComplete: true }),
             context: {
                 primaryTeamId,

@@ -2,12 +2,15 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-    WorkflowRunListRequestV1Schema,
-    WorkflowRunRecipientCensusResponseV1Schema,
-    materializeWorkflowAcceptedSnapshotV1,
+    WorkflowRunListRequestV1Schema} from '@happier-dev/protocol/workflows/actionsV1';
+import {
+    WorkflowRunRecipientCensusResponseV1Schema} from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import {
+    materializeWorkflowAcceptedSnapshotV1} from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import {
     sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
     serializeWorkflowStoredContentEnvelopeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workflows/workflowStoredContentV1';
 
 import { collectHostText, createDeferred, createRootLayoutFeaturesResponse, flushHookEffects, makeToolCall, renderWithSessionTranscriptSource, createTestSessionTranscriptSource, standardCleanup } from '@/dev/testkit';
 import { createWorkflowDefinitionFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';

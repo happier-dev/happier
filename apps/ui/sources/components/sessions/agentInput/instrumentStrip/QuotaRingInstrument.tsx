@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { SessionUsagePopoverContent } from '@/components/navigation/shell/sidebarFooter/SessionUsagePopoverContent';
@@ -13,7 +13,8 @@ import { t } from '@/text';
 
 import { AgentInputContentPopover } from '../components/AgentInputContentPopover';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
-import { instrumentStripStyles } from './instrumentStripStyles';
+import { instrumentStripStyles, useInstrumentStripHitReach } from './instrumentStripStyles';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * Plan/quota usage instrument: the ring is the session's tightest limit (the canonical System-B quota
@@ -45,6 +46,7 @@ function mapQuotaToneToTokenTone(tone: ConnectedServiceQuotaGaugeViewModel['tone
 export const QuotaRingInstrument = React.memo(function QuotaRingInstrument(props: QuotaRingInstrumentProps) {
     const styles = quotaStyles;
     const anchorRef = React.useRef(null);
+    const hitReach = useInstrumentStripHitReach();
     // Resting the pointer on the ring previews the popover (web); a press pins it (the shared hover owner).
     const { mode, toggle, close, hoverProps } = useHoverPreviewPopover({ enabled: Platform.OS === 'web' });
 
@@ -74,12 +76,12 @@ export const QuotaRingInstrument = React.memo(function QuotaRingInstrument(props
     return (
         <>
             <View ref={anchorRef} style={styles.trigger} {...hoverProps}>
-                <Pressable
+                <HappierPressable
                     testID={props.testID ?? 'session-instrument-quota-ring'}
                     accessibilityRole="button"
                     accessibilityLabel={accessibilityLabel}
                     onPress={() => toggle()}
-                    hitSlop={12}
+                    hitReach={hitReach}
                     style={({ pressed }) => (pressed ? styles.triggerPressed : null)}
                 >
                     <View style={styles.rings}>
@@ -116,7 +118,7 @@ export const QuotaRingInstrument = React.memo(function QuotaRingInstrument(props
                             );
                         })}
                     </View>
-                </Pressable>
+                </HappierPressable>
                 {props.showProviderGlyph && providerCaption ? (
                     <Text style={styles.providerCaption} numberOfLines={1}>
                         {providerCaption}

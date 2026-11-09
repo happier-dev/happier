@@ -161,15 +161,15 @@ describe('session header role chip', () => {
         expect(catalogReads()).toBe(0);
     });
 
-    it('has no chip without a role, on the phone lab layout, or on a blocked surface', () => {
+    it('keeps the role on a phone and omits it without a role or on a blocked surface', () => {
         expect(resolveSessionViewHeaderProps(input('role-chip-none', null)).titleAccessory).toBeUndefined();
         const current = input('role-chip-phone');
-        expect(resolveSessionViewHeaderProps({ ...current, windowWidth: 390 }).titleAccessory).toBeUndefined();
+        expect(resolveSessionViewHeaderProps({ ...current, windowWidth: 390 }).titleAccessory).toBeDefined();
         expect(resolveSessionViewHeaderProps({ ...current, blockedSurface: 'content_blocked' }).titleAccessory).toBeUndefined();
         expect(resolveSessionViewHeaderProps({ ...current, blockedSurface: 'access_denied' }).titleAccessory).toBeUndefined();
     });
 
-    it('retains header identity for snapshot edits while the selected-role leaf stays current', async () => {
+    it('keeps the mounted selected-role leaf current across snapshot edits without loading the catalog', async () => {
         const current = input('role-chip-stable', 'session:ui', 'Interface builder');
         storage.setState({ sessions: { [current.session.id]: current.session } });
         const first = resolveSessionViewHeaderProps(current);
@@ -180,13 +180,13 @@ describe('session header role chip', () => {
                 ...sessionRoles, notes: 'Unrelated orchestration notes',
             } },
         } } });
-        expect(unchanged).toBe(first);
+        expect(unchanged.titleAccessory).toEqual(first.titleAccessory);
         const renameInput = input('role-chip-stable', 'session:ui', 'Design reviewer');
         await act(async () => { storage.setState({ sessions: { [current.session.id]: renameInput.session } }); });
         const renamed = resolveSessionViewHeaderProps(renameInput);
-        expect(renamed).toBe(first);
+        expect(renamed.titleAccessory).toEqual(first.titleAccessory);
         expect(screen.getTextContent()).toContain('Design reviewer');
-        expect(resolveSessionViewHeaderProps(input('role-chip-stable', 'reviewer'))).not.toBe(renamed);
+        expect(resolveSessionViewHeaderProps(input('role-chip-stable', 'reviewer')).titleAccessory).not.toEqual(renamed.titleAccessory);
         expect(catalogReads()).toBe(0);
     });
 });

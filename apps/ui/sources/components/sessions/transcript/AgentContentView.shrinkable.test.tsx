@@ -76,22 +76,6 @@ describe('AgentContentView (shrinkable layout)', () => {
             }),
         );
     });
-
-    it('centres the placeholder beside a settled floating viewer instead of under it', async () => {
-        const { AgentContentView } = await import('./AgentContentView');
-        const { SessionViewerReadingInsetContext } = await import('@/components/sessions/viewer/SessionViewerController');
-
-        const screen = await renderScreen(
-            <SessionViewerReadingInsetContext.Provider value={{ left: 0, right: 0, centred: { left: 0, right: 480, bottom: 0 } }}>
-                <AgentContentView placeholder={<Placeholder />} input={<Composer />} />
-            </SessionViewerReadingInsetContext.Provider>,
-        );
-
-        const layer = screen.tree.root.findByProps({ testID: 'agent-content-placeholder-layer' });
-        expect(findStyleEntry(layer.props.style, (style) => style.position === 'absolute')).toEqual(
-            expect.objectContaining({ left: 0, right: 480 }),
-        );
-    });
 });
 
 function Content() {

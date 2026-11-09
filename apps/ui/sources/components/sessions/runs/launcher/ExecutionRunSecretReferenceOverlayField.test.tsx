@@ -1,173 +1,147 @@
 import * as React from 'react';
-import { AIBackendProfileSchema } from '@happier-dev/protocol';
+import { act } from 'react-test-renderer';
+import { AIBackendProfileSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { indexedDB, IDBKeyRange } from 'fake-indexeddb';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { settingsParse } from '@/sync/domains/settings/settings';
+import { resetSavedSecretCatalogEngineForTests, refreshSavedSecretCatalog } from '@/sync/engine/settings/savedSecretCatalogEngine';
+import { applySavedSecretCatalogPage, resetSavedSecretCatalogSnapshotsForTests } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 import { Modal } from '@/modal';
+import { ConnectSheetContent } from '@/components/settings/connectedServices/setup/ConnectSheetContent';
+import type { ConnectSheetContentProps } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 
 import { ExecutionRunSecretReferenceOverlayField, resolveExecutionRunSessionLaunchProfile } from './ExecutionRunSecretReferenceOverlayField';
 
-const sharedRef = 'happier:shared-secret:v1:shared-resource';
-const catalogState = vi.hoisted(() => ({
-    enabledArgs: [] as boolean[],
-    sharedStatus: 'ready' as 'ready' | 'temporarily_unavailable',
-    revision: 7,
-    entryName: 'Acme shared OpenAI key',
+const viewport = vi.hoisted(() => ({ width: 390 }));
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () =>
+    (await import('@/dev/testkit/mocks/serverScopedRpc')).createServerScopedMachineRpcBoundaryMock(async () => ({
+        policy: 'redacted', values: {
+            OPENAI_API_KEY: { isSet: true, display: 'redacted' },
+            ANTHROPIC_API_KEY: { isSet: true, display: 'redacted' },
+        },
+    })));
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+    useWindowDimensions: () => ({ width: viewport.width, height: 844, scale: 1, fontScale: 1 }),
 }));
-
-vi.mock('react-native-unistyles', async () => {
-    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-    return createUnistylesMock();
-});
-
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: (props: Record<string, unknown>) => React.createElement('Text', props, props.children as React.ReactNode),
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+vi.mock('socket.io-client', async importOriginal =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+// Connect imports the native Markdown SDK for its account variant; this key journey never renders it.
+vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
+    splitStreamingRevealTextParts: () => { throw new Error('Unexpected Markdown in key selection'); },
 }));
+installDisconnectedServerSocketBoundary();
 
-vi.mock('@/hooks/machine/useMachineEnvPresence', () => ({
-    useMachineEnvPresence: () => ({ meta: { OPENAI_API_KEY: { isSet: false } } }),
-}));
-
-vi.mock('@/components/secrets/useSavedSecretCatalog', () => ({
-    useSavedSecretCatalog: (options?: { sharedEnabled?: boolean }) => {
-        catalogState.enabledArgs.push(options?.sharedEnabled !== false);
-        return {
-            sharedEnabled: options?.sharedEnabled !== false,
-            resolveReference: (ref: string) => ({
-                ref,
-                kind: ref.startsWith('happier:shared-secret:v1:') ? 'shared_resource' : 'personal',
-                status: ref === sharedRef ? catalogState.sharedStatus : 'ready',
-                entry: ref === sharedRef ? {
-                    ref,
-                    source: 'shared_resource',
-                    relationship: 'recipient',
-                    name: catalogState.entryName,
-                    kind: 'apiKey',
-                    encryptionMode: 'e2ee',
-                    owner: null,
-                    accessSources: [],
-                    audience: null,
-                    ownerAccountId: 'owner-1',
-                    revision: catalogState.revision,
-                    materialStatus: catalogState.sharedStatus,
-                    capabilities: { use: true, rename: false, rotate: false, manageAccess: false, delete: false },
-                } : null,
-                secret: null,
-                revision: ref === sharedRef ? catalogState.revision : null,
-                fingerprint: `test:${ref}`,
-            }),
-        };
-    },
-}));
-
-vi.mock('@/modal', () => ({
-    Modal: { show: vi.fn() },
-}));
-
-const profile = AIBackendProfileSchema.parse({
-    id: 'profile-work',
-    name: 'Work',
+const profile = AIBackendProfileSchema.parse({ id: 'profile-work', name: 'Work',
     envVarRequirements: [{ name: 'OPENAI_API_KEY', required: true, kind: 'secret' }],
 });
+let home: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | null = null;
+
+beforeEach(() => {
+    vi.stubGlobal('indexedDB', indexedDB);
+    vi.stubGlobal('IDBKeyRange', IDBKeyRange);
+    viewport.width = 390;
+    resetSavedSecretCatalogEngineForTests();
+    resetSavedSecretCatalogSnapshotsForTests();
+    vi.mocked(Modal.show).mockClear();
+});
+afterEach(async () => {
+    await standardCleanup();
+    resetSavedSecretCatalogEngineForTests();
+    await home?.dispose();
+    home = null;
+});
+
+async function setup(options: Readonly<{ multiRequirement?: boolean }> = {}) {
+    home = await createSecretSettingsTestHarness({ settings: settingsParse({ secrets: [] }) });
+    const { entry } = await home.addOwnerResource();
+    const fieldProfile = options.multiRequirement ? AIBackendProfileSchema.parse({ ...profile,
+        envVarRequirements: [...profile.envVarRequirements!, { name: 'ANTHROPIC_API_KEY', required: true, kind: 'secret' }],
+    }) : profile;
+    const onChange = vi.fn();
+    const render = (sharedEnabled = true) => <ExecutionRunSecretReferenceOverlayField profile={fieldProfile}
+        machineId={options.multiRequirement ? 'machine-1' : null} serverId={home!.scope.serverId} accountScope={home!.scope}
+        defaultBindings={options.multiRequirement ? { OPENAI_API_KEY: entry.ref } : null}
+        personalSecrets={[]} sharedEnabled={sharedEnabled} editable onChange={onChange} />;
+    const screen = await renderScreen(render());
+    await act(async () => refreshSavedSecretCatalog(home!.scope, { includeMaterial: false }));
+    await flushHookEffects({ cycles: 2 });
+    return { entry, onChange, screen, render };
+}
 
 describe('ExecutionRunSecretReferenceOverlayField', () => {
     it('resolves the Session profile from the canonical catalog with its entity bindings', () => {
-        const canonicalProfile = { ...profile, secretBindings: { OPENAI_API_KEY: sharedRef } };
-
+        const canonicalProfile = { ...profile, secretBindings: { OPENAI_API_KEY: 'happier:shared-secret:v1:resource-a' } };
         expect(resolveExecutionRunSessionLaunchProfile({ profileId: profile.id }, [canonicalProfile])).toEqual(canonicalProfile);
         expect(resolveExecutionRunSessionLaunchProfile({ profileId: profile.id }, [])).toBeNull();
     });
 
-    beforeEach(() => {
-        catalogState.enabledArgs = [];
-        catalogState.sharedStatus = 'ready';
-        catalogState.revision = 7;
-        catalogState.entryName = 'Acme shared OpenAI key';
-        vi.mocked(Modal.show).mockReset();
-    });
-
-    afterEach(() => standardCleanup());
-
-    it('selects and reviews the exact value-free non-default shared reference without changing the Profile', async () => {
-        const onChange = vi.fn();
-        const screen = await renderScreen(
-            <ExecutionRunSecretReferenceOverlayField
-                profile={profile}
-                machineId="machine-1"
-                serverId="home-1"
-                accountScope={{ serverId: 'home-1', accountId: 'account-1' }}
-                defaultBindings={{ OPENAI_API_KEY: 'personal-default' }}
-                personalSecrets={[]}
-                sharedEnabled
-                editable
-                onChange={onChange}
-            />,
-        );
-
+    it('selects a Saved Secret inline on a phone without another modal, then retains typed readiness on withdrawal', async () => {
+        const { entry, onChange, screen, render } = await setup();
+        expect(screen.findAllByType(ConnectSheetContent)).toHaveLength(0);
+        const materialReads = () => home!.request.mock.calls.filter(([url]) =>
+            new URL(String(url)).pathname === '/v1/account/saved-secrets/resources/materials').length;
+        expect(materialReads()).toBe(0);
         await screen.pressByTestIdAsync('execution-run-secret-overlay-edit');
-        const modalProps = vi.mocked(Modal.show).mock.calls.at(-1)?.[0]?.props as {
-            onResolve: (result: unknown) => void;
-        };
-        modalProps.onResolve({
-            action: 'selectSaved',
-            envVarName: 'OPENAI_API_KEY',
-            secretId: sharedRef,
-            setDefault: false,
-        });
-        await flushHookEffects({ cycles: 3 });
-
-        const overlay = {
-            v: 1,
-            bindings: { OPENAI_API_KEY: { ref: sharedRef, revision: 7 } },
-        };
+        expect(Modal.show).not.toHaveBeenCalled();
+        expect(screen.findAllByType(ConnectSheetContent)).toHaveLength(1);
+        await screen.pressByTestIdAsync('connect-key-sheet:mode:saved');
+        await screen.pressByTestIdAsync(`connect-key-sheet:saved:${entry.ref}`);
+        await screen.pressByTestIdAsync('connect-key-sheet:use');
+        const overlay = { v: 1, bindings: { OPENAI_API_KEY: { ref: entry.ref, revision: entry.revision } } };
         expect(onChange).toHaveBeenLastCalledWith({ readiness: { ok: true, secretReferenceOverlay: overlay }, overlay });
-        const rendered = JSON.stringify(screen.tree.toJSON());
-        expect(rendered).toContain('OPENAI_API_KEY');
-        expect(rendered).toContain('Acme shared OpenAI key');
-        expect(rendered).toContain('Ready');
-        expect(rendered).not.toContain(sharedRef);
-        expect(rendered).not.toContain('revision');
-        expect(rendered).not.toContain('sealed');
-        expect(profile).toEqual(expect.objectContaining({ id: 'profile-work' }));
+        expect(screen.findAllByType(ConnectSheetContent)).toHaveLength(0);
+        expect(screen.getTextContent()).toContain(entry.name);
+        expect(screen.getTextContent()).not.toContain(entry.ref);
+        expect(materialReads()).toBe(0);
+        await screen.pressByTestIdAsync('execution-run-secret-overlay-edit');
+        await screen.pressByTestIdAsync('connect-key-sheet:cancel');
+        expect(screen.findAllByType(ConnectSheetContent)).toHaveLength(0);
+        expect(onChange).toHaveBeenLastCalledWith({ readiness: { ok: true, secretReferenceOverlay: overlay }, overlay });
+        await act(async () => applySavedSecretCatalogPage({ scope: home!.scope,
+            entries: [{ ...entry, materialStatus: 'temporarily_unavailable' }], observedAt: 2 }));
+        expect(onChange).toHaveBeenLastCalledWith({ readiness: { ok: false, reason: 'saved_secret_selection_unavailable' } });
+        await screen.update(render(false));
+        expect(onChange).toHaveBeenLastCalledWith({ readiness: { ok: false, reason: 'saved_secret_selection_unavailable' } });
+        expect(screen.getTextContent()).toContain(entry.name);
+        expect(screen.getTextContent()).not.toContain('temporarily_unavailable');
     });
 
-    it('keeps a selected shared reference visible as typed unavailable when the exact Home feature closes', async () => {
-        const onChange = vi.fn();
-        const render = (sharedEnabled: boolean) => (
-            <ExecutionRunSecretReferenceOverlayField
-                profile={profile}
-                machineId="machine-1"
-                serverId="home-1"
-                accountScope={{ serverId: 'home-1', accountId: 'account-1' }}
-                defaultBindings={{ OPENAI_API_KEY: 'personal-default' }}
-                personalSecrets={[]}
-                sharedEnabled={sharedEnabled}
-                editable
-                onChange={onChange}
-            />
-        );
-        const screen = await renderScreen(render(true));
+    it('uses the existing anchored Connect presenter on wide layouts and returns only the exact reference', async () => {
+        viewport.width = 1200;
+        const { entry, onChange, screen } = await setup();
         await screen.pressByTestIdAsync('execution-run-secret-overlay-edit');
-        const modalProps = vi.mocked(Modal.show).mock.calls.at(-1)?.[0]?.props as {
-            onResolve: (result: unknown) => void;
-        };
-        modalProps.onResolve({ action: 'selectSaved', envVarName: 'OPENAI_API_KEY', secretId: sharedRef, setDefault: false });
-        await flushHookEffects({ cycles: 2 });
+        const modal = vi.mocked(Modal.show).mock.calls.at(-1)![0];
+        expect(modal.component).toBe(ConnectSheetContent);
+        expect(modal.chrome).toMatchObject({ kind: 'card', phonePresentation: 'sheet', anchor: { kind: 'view' } });
+        const content = modal.props as ConnectSheetContentProps;
+        expect(content.request).toMatchObject({ scope: home!.scope, service: { kind: 'key', suggestedName: 'OPENAI_API_KEY' } });
+        await act(async () => content.onResult({ kind: 'selected', secretRef: entry.ref }));
+        expect(onChange).toHaveBeenLastCalledWith(expect.objectContaining({ overlay: {
+            v: 1, bindings: { OPENAI_API_KEY: { ref: entry.ref, revision: entry.revision } },
+        } }));
+        expect(screen.findAllByType(ConnectSheetContent)).toHaveLength(0);
+        expect(Modal.hide).toHaveBeenCalledWith('modal-id');
+    });
 
-        catalogState.sharedStatus = 'temporarily_unavailable';
-        await screen.update(render(false));
-        await flushHookEffects({ cycles: 2 });
-
-        expect(catalogState.enabledArgs).toContain(false);
-        expect(onChange).toHaveBeenLastCalledWith({
-            readiness: { ok: false, reason: 'saved_secret_selection_unavailable' },
-        });
-        const rendered = JSON.stringify(screen.tree.toJSON());
-        expect(rendered).toContain('OPENAI_API_KEY');
-        expect(rendered).toContain('Acme shared OpenAI key');
-        expect(rendered).toContain('Temporarily unavailable');
-        expect(rendered).not.toContain('saved_secret_selection_unavailable');
-        expect(rendered).not.toContain('temporarily_unavailable');
-        expect(rendered).not.toContain(sharedRef);
+    it('retains Profile defaults and selects a different requirement or its Machine environment inline', async () => {
+        const { entry, onChange, screen } = await setup({ multiRequirement: true });
+        expect(onChange).toHaveBeenLastCalledWith({ readiness: { ok: true } });
+        expect(screen.findByTestId('execution-run-secret-machine:OPENAI_API_KEY')).toBeNull();
+        await screen.pressByTestIdAsync('execution-run-secret-saved:ANTHROPIC_API_KEY');
+        await screen.pressByTestIdAsync('connect-key-sheet:mode:saved');
+        await screen.pressByTestIdAsync(`connect-key-sheet:saved:${entry.ref}`);
+        await screen.pressByTestIdAsync('connect-key-sheet:use');
+        const overlay = { v: 1, bindings: { ANTHROPIC_API_KEY: { ref: entry.ref, revision: entry.revision } } };
+        expect(onChange).toHaveBeenLastCalledWith({ readiness: { ok: true, secretReferenceOverlay: overlay }, overlay });
+        await screen.pressByTestIdAsync('execution-run-secret-machine:ANTHROPIC_API_KEY');
+        expect(onChange).toHaveBeenLastCalledWith({ readiness: { ok: true } });
+        expect(Modal.show).not.toHaveBeenCalled();
     });
 });

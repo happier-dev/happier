@@ -24,7 +24,6 @@ installMessageViewCommonModuleMocks({
             Dimensions: {
                 get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
             },
-            useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
             View: 'View',
             Text: 'Text',
             Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),

@@ -1,8 +1,25 @@
 import type { FollowDeliveryProjectionV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowDeliveryProjectionV1';
+import type { Message } from '@happier-dev/session-core/messages';
 
 type DeliveryMessage = Readonly<{ localId?: string | null; followDeliveryProjection?: FollowDeliveryProjectionV1 }>;
 
 const UNKNOWN_DELIVERY: FollowDeliveryProjectionV1 = { status: null, reason: null };
+
+/** Exact input correlation owns both the original's visibility and its wake notice's placement. */
+export function indexFollowWorkerCardsByInputLocalId(
+    messages: Readonly<Record<string, Message>>,
+    messageIds: readonly string[] = Object.keys(messages),
+): ReadonlyMap<string, string> {
+    const cards = new Map<string, string>();
+    for (const id of messageIds) {
+        const message = messages[id];
+        if (message?.kind === 'agent-event' && message.event.type === 'worker-update'
+            && message.event.followInputLocalId && !cards.has(message.event.followInputLocalId)) {
+            cards.set(message.event.followInputLocalId, message.id);
+        }
+    }
+    return cards;
+}
 
 /** Index only already-projected, exact input/batch messages; card events are never evidence by proximity. */
 export function indexFollowDeliveryByLocalId(messages: Readonly<Record<string, DeliveryMessage>>): ReadonlyMap<string, FollowDeliveryProjectionV1 | null> {

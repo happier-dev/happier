@@ -21,8 +21,9 @@ import {
 } from '@/dev/testkit/sessionDraftRepositoryTestkit';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { deleteRawSessionDraftValues } from '@/sync/domains/state/sessionDraftValuesPersistence';
-import { canonicalSessionDraftAddressV2, type SessionDraftDocumentV2 } from '@happier-dev/protocol';
+import { canonicalSessionDraftAddressV2, type SessionDraftDocumentV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { serverAccountScopedStorageKey } from '@/sync/domains/scope/serverAccountScope';
+import { sessionDraftRowKey } from '@/sync/ops/sessionDrafts/sessionDraftSerializedScope';
 import { getSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
 import { t } from '@/text';
 
@@ -294,9 +295,10 @@ describe('useInSessionAgentPickerControls', () => {
 
         await hook.unmount();
         const storage = getSessionDraftPersistenceStorage();
-        const key = serverAccountScopedStorageKey('session-drafts-repository-v1', DEFAULT_DRAFT_SCOPE);
-        const persisted = JSON.parse(storage.getString(key)!) as { replicas: Record<string, { localRawDocument: SessionDraftDocumentV2 }> };
-        const document = persisted.replicas[canonicalSessionDraftAddressV2({ kind: 'session', sessionId: 'session-1' })]!.localRawDocument;
+        const key = sessionDraftRowKey(serverAccountScopedStorageKey('session-drafts-repository-v1', DEFAULT_DRAFT_SCOPE),
+            canonicalSessionDraftAddressV2({ kind: 'session', sessionId: 'session-1' }));
+        const persisted = JSON.parse(storage.getString(key)!) as { localRawDocument: SessionDraftDocumentV2 };
+        const document = persisted.localRawDocument;
         if (document.target.kind !== 'session') throw new Error('Expected retained continuation');
         const retained = document.target.routing.agentContinuation.value;
         if (!retained || typeof retained !== 'object' || Array.isArray(retained)) throw new Error('Expected retained continuation value');

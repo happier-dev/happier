@@ -1,5 +1,5 @@
 import { t } from '@/text';
-import type { PendingRequestedActionV1 } from '@happier-dev/protocol';
+import type { PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
 

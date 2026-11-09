@@ -1,7 +1,9 @@
 import * as React from 'react';
 
-import type { PersistedBackendTargetRefV2, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { PersistedBackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
 import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { RuntimeDescriptorV1 } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import {
     projectAgentConnectedAccountPurposeDefaultsToSessionBindings,
     resolveAgentConnectedAccountPurposeDefaults,
@@ -16,10 +18,10 @@ import {
 import { resolveNewSessionModelCapabilityProbeContext } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
-import type { Settings } from '@/sync/domains/settings/settings';
 import type { SessionModelPickerExperimentalConfirmationController } from '@/components/sessions/modelPicker/SessionModelPicker';
 import type { FavoriteModelTogglePayload } from '@/components/sessions/new/hooks/screenModel/newSessionFavoriteModelsPickerOption';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
 
 /**
@@ -46,10 +48,13 @@ type SessionAgentPickerDetailContentParams = Readonly<{
     agentCatalogEntry: ResolvedAgentCatalogEntry;
     runtimeCarrierAgentId?: string | null;
     selectedMachineId: string | null;
+    accountScope?: ServerAccountScope | null;
     capabilityServerId: string;
     cwd: string | null;
-    settings: Settings;
+    settings: Readonly<Record<string, unknown>>;
     connectedServices?: ConnectedServiceBindingsV2 | null;
+    selectedProfileId?: string | null;
+    runtimeDescriptorV1?: RuntimeDescriptorV1 | null;
     refreshProbe?: OptionPickerProbeState | null;
     /**
      * One short line under the section label saying what choosing here means on
@@ -98,6 +103,10 @@ function SessionAgentPickerDetailContent(params: SessionAgentPickerDetailContent
         backendTarget: params.backendTarget,
         settings: params.settings,
         runtimeCarrierAgentId: params.runtimeCarrierAgentId ?? null,
+        machineId: params.selectedMachineId,
+        accountScope: params.accountScope,
+        selectedProfileId: params.selectedProfileId,
+        runtimeDescriptorV1: params.runtimeDescriptorV1,
         connectedServices: 'connectedServices' in params ? params.connectedServices : connectedServices,
     });
 

@@ -10,7 +10,7 @@ import {
     SPECIMEN_WALKTHROUGH,
 } from '@/components/dev/changes/walkthroughSpecimenFixture';
 
-import { SCM_DIFF_SUMMARY_GENERIC_FAILURE } from '@/sync/domains/scm/diffSummary/state';
+import { SCM_DIFF_SUMMARY_ENDED_PARTWAY_FAILURE, SCM_DIFF_SUMMARY_GENERIC_FAILURE } from '@/sync/domains/scm/diffSummary/state';
 
 import { buildWalkthroughReading, EMPTY_WALKTHROUGH_READING, type WalkthroughReadingInput } from './walkthroughReading';
 
@@ -131,6 +131,29 @@ describe('WalkthroughView (lab WT1-A)', () => {
         expect(Boolean(screen.findByTestId('walkthrough-start'))).toBe(false);
         expect(Boolean(screen.findByTestId(`walkthrough-${restoreState}`))).toBe(true);
     });
+    it('offers the Overview code map only when the reading outlines more than one group of files', async () => {
+        const reading = buildWalkthroughReading(COMPLETE);
+        expect(reading.codeMap.length).toBeGreaterThan(1);
+        const many = await renderScreen(<WalkthroughView reading={reading} scopeLabel="This session" layout="wide" />);
+        expect(Boolean(many.findByTestId('walkthrough-overview'))).toBe(true);
+        const one = await renderScreen(<WalkthroughView reading={{ ...reading, codeMap: reading.codeMap.slice(0, 1) }} scopeLabel="This session" layout="wide" />);
+        expect(Boolean(one.findByTestId('walkthrough-overview'))).toBe(false);
+    });
+    it('holds the reviewed fact\u2019s room, unseen, while the marks are read, and never claims progress it cannot read', async () => {
+        const hiddenFact = (screen: Awaited<ReturnType<typeof renderScreen>>) => {
+            let node = screen.findHostByTestId('walkthrough-reviewed-fact') ?? null;
+            if (!node) return { present: false, hidden: false };
+            let hidden = false;
+            for (; node; node = node.parent) hidden ||= node.props?.accessibilityElementsHidden === true;
+            return { present: true, hidden };
+        };
+        const pending = await renderScreen(view(COMPLETE, { reviewedProgressAvailable: false, reviewedProgressPending: true }));
+        expect(hiddenFact(pending)).toEqual({ present: true, hidden: true });
+        const unreadable = await renderScreen(view(COMPLETE, { reviewedProgressAvailable: false }));
+        expect(hiddenFact(unreadable).present).toBe(false);
+        const read = await renderScreen(view(COMPLETE, { reviewedProgressAvailable: true }));
+        expect(hiddenFact(read)).toEqual({ present: true, hidden: false });
+    });
     it('shows the captured rename, untracked and conflict kinds before narration, and opens their exact files', async () => {
         const reading = buildWalkthroughReading({ ...COMPLETE, walkthrough: { state: 'pending' } });
         const onOpenFile = vi.fn();
@@ -152,6 +175,42 @@ describe('WalkthroughView (lab WT1-A)', () => {
         expect(onToggleReviewed).not.toHaveBeenCalled();
         await screen.pressByTestIdAsync('walkthrough-phone-mark');
         expect(onToggleReviewed.mock.calls[0]?.[0]).toMatchObject({ id: stops[2]!.id, reviewed: false });
+    });
+    it.each(['wide', 'phone'] as const)('opens on the stop it begins at once measured, unless the reader moved first (%s)', async (layout) => {
+        const initial = buildWalkthroughReading(COMPLETE);
+        const stops = initial.stops.map((stop, index) => ({ ...stop, reviewed: index < 2 }));
+        const measure = async (screen: Awaited<ReturnType<typeof renderScreen>>, stopY: number) => {
+            let section = screen.findHostByTestId(`walkthrough-stop-${stops[2]!.id}`);
+            while (section && typeof section.props.onLayout !== 'function') section = section.parent;
+            let stream = section?.parent ?? null;
+            while (stream && typeof stream.props.onLayout !== 'function') stream = stream.parent;
+            await act(async () => {
+                stream!.props.onLayout({ nativeEvent: { layout: { y: 100 } } });
+                section!.props.onLayout({ nativeEvent: { layout: { y: stopY } } });
+            });
+        };
+        nativeScrollRequests.length = 0;
+        const screen = await renderScreen(<WalkthroughView reading={{ ...initial, stops }} scopeLabel="This session" layout={layout} />);
+        await measure(screen, 500);
+        // The pointer and the page agree: stop 3 is both what the bar names and what is on screen.
+        expect(nativeScrollRequests).toEqual([{ y: layout === 'phone' ? 548 : 600, animated: false }]);
+
+        nativeScrollRequests.length = 0;
+        const moved = await renderScreen(<WalkthroughView reading={{ ...initial, stops }} scopeLabel="This session" layout={layout} />);
+        const scroller = moved.findAll((node) => node.type === 'ScrollView' && typeof node.props.onScroll === 'function')[0]!;
+        await act(async () => { scroller.props.onScroll({ nativeEvent: { contentOffset: { y: 40 } } }); });
+        await measure(moved, 500);
+        expect(nativeScrollRequests).toEqual([]);
+    });
+    it('keeps the phone bar Ask slot while Ask is being resolved, so Mark reviewed never shrinks when it arrives (N5)', async () => {
+        const reading = buildWalkthroughReading(COMPLETE);
+        const onAsk = vi.fn();
+        const screen = await renderScreen(<WalkthroughView reading={reading} scopeLabel="This session" layout="phone" onToggleReviewed={vi.fn()} askPending />);
+        const pending = screen.findHostByTestId('walkthrough-phone-ask');
+        expect(pending?.props.accessibilityState?.disabled ?? pending?.props.disabled).toBe(true);
+        await screen.update(<WalkthroughView reading={reading} scopeLabel="This session" layout="phone" onToggleReviewed={vi.fn()} onAsk={onAsk} />);
+        await screen.pressByTestIdAsync('walkthrough-phone-ask');
+        expect(onAsk).toHaveBeenCalledTimes(1);
     });
     it.each(['wide', 'phone'] as const)('keeps saved-result controls in the reading stream on %s', async (layout) => {
         const screen = await renderScreen(view(COMPLETE, { layout, savedActions: <View testID="saved-result-actions-slot" /> }));
@@ -227,6 +286,38 @@ describe('WalkthroughView (lab WT1-A)', () => {
         expect(failed.findByTestId('walkthrough-notice-failed')).toBeTruthy();
         expect(failed.findByTestId('walkthrough-rest')).toBeTruthy();
         expect(failed.findByTestId('walkthrough-retry')).toBeTruthy();
+    });
+
+    it('names a reading that stopped partway beside the stops it kept, with Try again as the one recovery', async () => {
+        const partial = await renderScreen(view({
+            ...COMPLETE,
+            walkthrough: { state: 'partial', value: { ...SPECIMEN_WALKTHROUGH, stops: SPECIMEN_WALKTHROUGH.stops.slice(0, 2), otherChangeRefs: [] }, reason: 'capacity' },
+        }, { failure: SCM_DIFF_SUMMARY_ENDED_PARTWAY_FAILURE, onRetry: vi.fn(), onChooseModel: vi.fn() }));
+        expect(hostIds(partial, 'walkthrough-stop-')).toHaveLength(2);
+        expect(partial.findHostByTestId('walkthrough-notice-failed')?.props.accessibilityRole).toBe('alert');
+        // The band leads with the stops that were written; the unclassified cause adds nothing.
+        expect(partial.getTextContent()).toContain('walkthrough.notice.stoppedAfter');
+        expect(partial.getTextContent()).not.toContain('walkthrough.notice.endedPartway');
+        expect(partial.getTextContent()).not.toContain('capacity');
+        expect(partial.findByTestId('walkthrough-rest')).toBeTruthy();
+        expect(partial.findByTestId('walkthrough-retry')).toBeTruthy();
+        expect(partial.findByTestId('walkthrough-choose-model')).toBeNull();
+    });
+
+    it('says a stopped writing once: the typed cancellation carries Try again and the plain stopped line does not repeat it', async () => {
+        const cancelled = { reason: 'cancelled', messageKey: 'walkthrough.notice.cancelled', nextAction: 'retry', nextActionKey: 'walkthrough.notice.tryAgain' } as const;
+        const stopped = await renderScreen(view({
+            ...COMPLETE,
+            walkthrough: { state: 'cancelled', value: { ...SPECIMEN_WALKTHROUGH, stops: SPECIMEN_WALKTHROUGH.stops.slice(0, 2), otherChangeRefs: [] } },
+        }, { failure: cancelled, onRetry: vi.fn() }));
+        expect(stopped.getTextContent().split('walkthrough.notice.cancelled')).toHaveLength(2);
+        expect(stopped.findByTestId('walkthrough-retry')).toBeTruthy();
+        // Without a typed failure the stopped line still stands alone.
+        const bare = await renderScreen(view({
+            ...COMPLETE,
+            walkthrough: { state: 'cancelled', value: { ...SPECIMEN_WALKTHROUGH, stops: SPECIMEN_WALKTHROUGH.stops.slice(0, 2), otherChangeRefs: [] } },
+        }));
+        expect(bare.findByTestId('walkthrough-notice-cancelled')).toBeTruthy();
     });
 
     it('interrupts only for a failed write; a refinement update and stale reading stay polite', async () => {

@@ -152,7 +152,6 @@ const readySnapshot = () => ({
     }),
     refresh: () => {},
 });
-const resolvePrimaryHost = () => 'companion' as const;
 const shellRuntime = {
     serverId: 'server-a',
     machineId: 'machine-from-cockpit-shell',
@@ -167,7 +166,6 @@ const shellProps = {
     address: { serverId: 'server-a', sessionId: 'session-1' },
     onRequestClose: () => {},
     onRevealBoardItem: () => {},
-    resolvePrimaryHost,
 };
 
 describe('SessionCompanionScreen (mounted, mobile Cockpit)', () => {
@@ -231,6 +229,27 @@ describe('SessionCompanionScreen (mounted, mobile Cockpit)', () => {
         expect(renderer.findByTestId('session-companion-content-empty-note')).toBeTruthy();
         const headerText = renderer.getTextContent();
         expect(headerText).toContain('sessionBoard.companion.pane.justForYou');
+    });
+
+    it('counts only what the screen shows when a hidden Companion has no items', async () => {
+        storedPreference.value = {
+            v: 1,
+            visible: false,
+            collapsed: false,
+            edge: 'trailing',
+            density: 'compact',
+            items: [],
+        };
+        const renderer = await renderScreen(inCockpitHeader(
+            <SessionCompanionScreen
+                {...shellProps}
+            />,
+        ));
+
+        expect(renderer.findByTestId('session-companion-content-empty-action')).toBeTruthy();
+        const headerText = renderer.getTextContent();
+        expect(headerText).toContain('sessionBoard.companion.pane.justForYou');
+        expect(headerText).not.toContain('sessionBoard.companion.pane.itemCount');
     });
 
     it('manages a shared widget through Board and refuses an unbound personal edit', async () => {

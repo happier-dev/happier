@@ -44,17 +44,42 @@ describe('ScmComparisonPhoneHeader', () => {
         expect(onFind).toHaveBeenCalledWith('open');
         expect(onDisplay).toHaveBeenCalledWith('wrap');
     });
-    it('offers Back only when the host can leave the comparison', async () => {
+    it('heads a phone Details tab as its one header: no strip, no Back of its own, the tab group\'s controls beside ⋯', async () => {
+        const { View } = await import('react-native');
         const { ScmComparisonPhoneHeader } = await import('./ScmComparisonPhoneHeader');
-        const scope = { options: [], current: null, currentLabel: 'Pending changes', fileCount: 0, onSelect: () => {} };
-        const leave = vi.fn();
-        const closable = await renderScreen(<ScmComparisonPhoneHeader view="files" views={['files', 'walkthrough']} scope={scope}
-            onSelectView={() => {}} onBack={leave} onStartReview={() => {}} />);
-        await closable.pressByTestIdAsync('scm-comparison-phone-back');
-        expect(leave).toHaveBeenCalledOnce();
-        // A companion beside Code has nowhere to go back to: no arrow that does nothing.
-        const companion = await renderScreen(<ScmComparisonPhoneHeader view="files" views={['files', 'walkthrough']} scope={scope}
-            onSelectView={() => {}} onStartReview={() => {}} />);
-        expect(companion.findByTestId('scm-comparison-phone-back')).toBeNull();
+        const { DetailsTabGroupPanel } = await import('@/components/appShell/panes/details/workspace/DetailsTabGroupPanel');
+        const { SurfaceStateSizeProvider } = await import('@/components/ui/surfaces/surfaceStateSize');
+        const scope = { options: [], current: null, currentLabel: 'Pending changes', fileCount: 9, onSelect: () => {} };
+        const pane = { setActiveDetailsTab: vi.fn(), pinDetailsTab: vi.fn(), unpinDetailsTab: vi.fn(), closeDetailsTab: vi.fn() };
+        const walkthrough = { key: 'walk', kind: 'scmReview', title: 'Walkthrough', isPinned: true, isPreview: false,
+            resource: { kind: 'scmReview' } };
+        const render = (renderHeaderActions: (() => React.ReactNode) | null) => renderScreen(<SurfaceStateSizeProvider size="phone">
+            <DetailsTabGroupPanel pane={pane as never} collapseSingleTabStrip
+                group={{ id: 'group:1', tabKeys: ['walk'], activeTabKey: 'walk', tabs: [walkthrough as never], isFocused: true }}
+                testIds={{ tab: (key: string) => `strip-tab-${key}` }}
+                // The Session cockpit keeps Back in its own header and lends the strip nothing to carry.
+                renderHeaderLeadingActions={() => null}
+                renderHeaderActions={renderHeaderActions}
+                renderTabContent={() => <ScmComparisonPhoneHeader view="walkthrough" views={['files', 'walkthrough']} scope={scope}
+                    onSelectView={() => {}} onStartReview={() => {}} />} />
+        </SurfaceStateSizeProvider>);
+        const cockpit = await render(() => null);
+        expect(cockpit.findAllHostsByTestId('strip-tab-walk')).toHaveLength(0);
+        expect(cockpit.findByTestId('scm-comparison-phone-back')).toBeNull();
+        expect(cockpit.findByTestId('scm-comparison-phone-more')).toBeTruthy();
+        // Its title is the Details tab header's own title (the file viewer's size), wrapped by the scope picker.
+        expect(cockpit.findByTestId('scm-comparison-phone-header.title')).toBeTruthy();
+        expect(cockpit.findByTestId('scm-comparison-phone-scope')).toBeTruthy();
+        // What the strip's chip offered (unpin, close) is in this header's ⋯, and acts on the tab.
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const menu = cockpit.root.find((node) => node.type === DropdownMenu && node.props.testID === 'scm-comparison-phone-actions');
+        const rows = menu.props.items as { id: string; title: string }[];
+        expect(rows.map((row) => row.title)).toEqual(expect.arrayContaining(['session.detailsPanel.unpinTabA11y', 'session.detailsPanel.closeTabA11y']));
+        await React.act(async () => { menu.props.onSelect(rows.find((row) => row.title === 'session.detailsPanel.closeTabA11y')!.id); });
+        await vi.waitFor(() => expect(pane.closeDetailsTab).toHaveBeenCalledWith('walk'));
+        // A pane that does lend a control (its close) has it drawn once, in this header, not on a strip above it.
+        const lending = await render(() => <View testID="pane-close" />);
+        expect(lending.findAllHostsByTestId('strip-tab-walk')).toHaveLength(0);
+        expect(lending.findAllHostsByTestId('pane-close')).toHaveLength(1);
     });
 });

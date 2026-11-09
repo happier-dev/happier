@@ -138,6 +138,29 @@ describe('PermissionPromptCard interactive targets', () => {
         expect(navigate).toHaveBeenCalledWith('/session/session-1?jumpSeq=4&serverId=home-a');
     });
 
+    it('keeps a waiting card untouched while unrelated transcript messages arrive', async () => {
+        const { SessionPendingPromptCards } = await import('./SessionPendingPromptCards');
+        const { PermissionPromptCard } = await import('./PermissionPromptCard');
+        const message: ToolCallMessage = { kind: 'tool-call', id: 'message-1', localId: null, createdAt: 1,
+            tool: makeToolCall({ id: 'tool-1', name: 'Read', permission: { id: 'permission-1', status: 'pending' } }),
+            children: [], seq: 4,
+        };
+        const source = createTestSessionTranscriptSource({ sessionId: 'session-1', serverId: 'home-a', messages: [message] });
+        const permissions: PendingPermissionRequest[] = [{ id: 'permission-1', kind: 'permission', tool: 'Read', arguments: {}, createdAt: 1 }];
+        const card = <SessionPendingPromptCards testID="pending-cards" sessionId="session-1" serverId="home-a"
+            session={createSessionFixture({ active: true })} permissions={permissions} userActions={[]} />;
+        const screen = await renderBoundScreen(card, source);
+        const before = screen.findAllByType(PermissionPromptCard)[0]?.props.location;
+        expect(before).toMatchObject({ kind: 'top', seq: 4 });
+        await React.act(async () => {
+            source.update({ messages: [message, { kind: 'agent-text', id: 'text-5', localId: null, createdAt: 2, seq: 5, text: 'Working' }],
+                reducerState: null, metadata: null, agentState: null });
+        });
+        await screen.update(card);
+        // The memoized card redraws only when its own request or location changes, not per transcript write.
+        expect(screen.findAllByType(PermissionPromptCard)[0]?.props.location).toBe(before);
+    });
+
     beforeEach(() => {
         platformEnvironment.platform = 'web';
         standardCleanup();

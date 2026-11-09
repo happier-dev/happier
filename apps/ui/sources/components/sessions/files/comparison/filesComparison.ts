@@ -38,6 +38,7 @@ export function resolveFilesComparisonPresentation(
             return comparison.turnId || comparison.checkpointReceiptId ? { kind: 'captured' } : { kind: 'unsupported' };
         case 'branch':
         case 'commit':
+        case 'revisionRange':
         case 'pullRequest':
             return { kind: 'captured' };
     }
@@ -75,12 +76,14 @@ function sourceKey(comparison: SessionScmReviewComparison): string {
             return `branch:${comparison.head}:${comparison.base}`;
         case 'commit':
             return comparison.parent ? `commit:${comparison.commit}:${comparison.parent}` : `commit:${comparison.commit}`;
+        case 'revisionRange': return JSON.stringify(['revisionRange', comparison.baseOid, comparison.headOid]);
         case 'pullRequest': return JSON.stringify(['pullRequest', comparison.locator]);
     }
 }
 
 export function scmComparisonKey(comparison: SessionScmReviewComparison): string {
-    return comparison.comparisonId ? `${sourceKey(comparison)}:${comparison.comparisonId}` : sourceKey(comparison);
+    const key = comparison.comparisonId ? `${sourceKey(comparison)}:${comparison.comparisonId}` : sourceKey(comparison);
+    return comparison.savedResult ? JSON.stringify([key, comparison.savedResult.cwd, comparison.savedResult.resultId]) : key;
 }
 
 export type FilesComparisonScopeOption = Readonly<{
@@ -139,7 +142,7 @@ export function listFilesComparisonScopeOptions(
         const description = comparison.kind === 'workingTree' ? t('scmComparison.scopePicker.pendingDescription')
             : comparison.kind === 'session' ? t('scmComparison.scopePicker.sessionDescription')
                 : comparison.kind === 'turnCheckpoint' ? t('scmComparison.scopePicker.turnDescription')
-                    : comparison.kind === 'branch' ? t('scmComparison.scopePicker.branchDescription')
+                    : comparison.kind === 'branch' || comparison.kind === 'revisionRange' ? t('scmComparison.scopePicker.branchDescription')
                         : comparison.kind === 'commit' ? t('scmComparison.scopePicker.commitDescription')
                             : t('scmComparison.scopePicker.pullRequestDescription');
         return {

@@ -1,19 +1,22 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
-import type { ActionId, BackendTargetRefV2, WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
+import type { ActionId} from '@happier-dev/protocol/actions/actionIds';
+import type { BackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type { WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol/sessions/metadata/windowsRemoteSessionLaunchMode';
 import type { Router } from 'expo-router';
 
 import { useNewSessionCheckoutActionChip } from '@/components/sessions/new/hooks/screenModel/useNewSessionCheckoutActionChip';
 import { useNewSessionAgentInputExtraActionChips } from '@/components/sessions/new/hooks/screenModel/useNewSessionAgentInputExtraActionChips';
 import { getAutomationChipLabel } from '@/components/sessions/new/modules/automationChipModel';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
+import { useOpenExecutionRunLauncherDraft } from '@/components/sessions/runs/launcher/useOpenExecutionRunLauncherDraft';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
 import type { AgentId } from '@/agents/catalog/catalog';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import type { HandleCreateSessionOptions } from '@/components/sessions/new/hooks/useCreateNewSession';
 import type { ScmWorkingSnapshot, Machine } from '@/sync/domains/state/storageTypes';
-import { storage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import type { NewSessionCheckoutChipModel } from '@/components/sessions/new/modules/newSessionCheckoutChipModel';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type { NewSessionTranscriptStorage } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
@@ -48,6 +51,8 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     setCheckoutPickerOpen: React.Dispatch<React.SetStateAction<boolean>>;
     checkoutCreationDraft: NewSessionCheckoutCreationDraft | null;
     selectedMachineId: string | null;
+    /** A creation host has already resolved this exact Machine through its authoritative route. */
+    hostBoundMachineId?: string | null;
     selectedPath: string;
     setSelectedPath: React.Dispatch<React.SetStateAction<string>>;
     setCheckoutCreationDraft: React.Dispatch<React.SetStateAction<NewSessionCheckoutCreationDraft | null>>;
@@ -112,6 +117,8 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
         machineIds: params.selectedMachine ? [params.selectedMachine.id] : [] }], [params.targetServerId, params.selectedMachine?.id]);
     const selectedMachineReachability = useMachinePresenceSnapshot(readPresenceMachines, readReachability, presenceTargets);
     const selectedMachineReadinessStatus = params.selectedMachineSpawnReadiness?.status;
+    const hostResolvedMachine = Boolean(params.selectedMachineId)
+        && params.selectedMachineId === params.hostBoundMachineId;
     const canAttemptSpawn = canAttemptMachineSpawn({
         scope,
         selectedMachineId: params.selectedMachineId,
@@ -125,6 +132,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     // `.l12-sr`). A green "Online" beside a blocked-launch badge contradicted it.
     const connectionStatus = React.useMemo(() => {
         if (!params.selectedMachineId) return undefined;
+        if (hostResolvedMachine) return undefined;
         if (!params.selectedMachine || selectedMachineReachability === 'unknown') {
             return {
                 text: t('newSession.machineUnavailableStatus'),
@@ -147,6 +155,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     }, [
         params.selectedMachine?.id,
         params.selectedMachineId,
+        hostResolvedMachine,
         selectedMachineReachability,
         selectedMachineReadinessStatus,
         selectedMachineLabel,
@@ -196,6 +205,7 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
     });
 
     const actionDraftAccountScope = useActiveServerAccountScope();
+    const openExecutionRunDraft = useOpenExecutionRunLauncherDraft();
     const handleActionShortcutPress = React.useCallback((actionId: ActionId) => {
         const instructions = params.promptStore.getPrompt();
         params.handleCreateSession({
@@ -209,14 +219,10 @@ export function useNewSessionAgentInputPresentation(params: Readonly<{
                     defaultBackendId: params.agentType,
                     instructions,
                 });
-                storage.getState().createSessionActionDraft(
-                    actionDraftAccountScope,
-                    { serverId: actionDraftAccountScope.serverId, sessionId },
-                    { actionId, input },
-                );
+                openExecutionRunDraft({ scope: actionDraftAccountScope, sessionId, actionId, input });
             },
         });
-    }, [actionDraftAccountScope, params.agentType, params.backendTarget, params.handleCreateSession, params.promptStore, params.targetServerId]);
+    }, [actionDraftAccountScope, openExecutionRunDraft, params.agentType, params.backendTarget, params.handleCreateSession, params.promptStore, params.targetServerId]);
 
     const agentInputExtraActionChips = useNewSessionAgentInputExtraActionChips({
         staticAgentId: params.staticAgentId,

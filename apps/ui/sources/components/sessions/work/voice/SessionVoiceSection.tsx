@@ -13,6 +13,7 @@ import { happierPageTextMetrics, joinHappierFacts } from '@happier-dev/plugin-ui
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
+import { isStaleSessionIntent, SessionIntentConflictLine } from '@/components/sessions/work/SessionIntentConflictLine';
 import { WorkSection, WorkSectionEmptyLine } from '@/components/sessions/work/WorkSection';
 import {
   DropdownMenu,
@@ -155,6 +156,8 @@ const SessionVoicePicker = React.memo(function SessionVoicePicker(
   const [customOpen, setCustomOpen] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [refused, setRefused] = React.useState(false);
+  // A choice the Session was no longer at the revision for is held, not lost: the picker keeps the current choice.
+  const [held, setHeld] = React.useState<Readonly<{ preference: SessionVoicePreferenceV1 | null }> | null>(null);
   const declaredRows = React.useMemo(() => readDeclaredVoiceSettingsCatalog(declaration), [declaration]);
   const { catalog, lastKnownRows, requestCatalog } = useRealtimeVoiceCatalog({
     providerId,
@@ -226,6 +229,7 @@ const SessionVoicePicker = React.memo(function SessionVoicePicker(
     (next: SessionVoicePreferenceV1 | null) => {
       setSaving(true);
       setRefused(false);
+      setHeld(null);
       fireAndForget(
         (async () => {
           try {
@@ -241,7 +245,8 @@ const SessionVoicePicker = React.memo(function SessionVoicePicker(
               },
               { serverId, surface: 'ui', authority: 'present_user' },
             );
-            if (!result.ok) setRefused(true);
+            if (isStaleSessionIntent(result)) setHeld({ preference: next });
+            else if (!result.ok) setRefused(true);
             else if (
               ActionApprovalRequestCreatedResultSchema.safeParse(result.result)
                 .success
@@ -331,6 +336,15 @@ const SessionVoicePicker = React.memo(function SessionVoicePicker(
 
   return (
     <>
+      {held ? (
+        <SessionIntentConflictLine
+          testID="session-work-voice.conflict"
+          subject={t('sessionVoice.title')}
+          current={selectedName ?? undefined}
+          onApply={() => write(held.preference)}
+          onKeep={() => setHeld(null)}
+        />
+      ) : null}
       <DropdownMenu
         testID="session-work-voice.picker"
         open={open}

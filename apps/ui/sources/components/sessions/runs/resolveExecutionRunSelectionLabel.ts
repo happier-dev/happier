@@ -53,7 +53,7 @@ export function resolveExecutionRunSelectionLabel(
 /**
  * The native-model title resolver for a Run's recorded Agent. Callers pass the catalog already
  * admitted for that Run's Home and Machine; only its exact Agent target may name the model.
- * Without an observed title, keep the shared Session static-catalog fallback.
+ * A recorded Session/static title wins; catalog discovery fills only a missing name.
  */
 /** The model a Run records, from its resolved launch selection, else what was requested. */
 export function readExecutionRunModelId(run: Readonly<{
@@ -113,9 +113,10 @@ export function resolveRunNativeModelLabel(
     if (selection?.modelSelection?.providerConnectionId || selection?.teamCredentialModel) return null;
     const observed = targetKey ? catalogProfiles?.find(profile => profile.modelSelector?.backendTargetKey === targetKey
       && profile.modelSelector.modelId === modelId) : null;
-    return observed?.title.trim()
-      || (agentId && isBundledAgentId(agentId)
-        ? resolveSessionModelLabel(agentId, sessionModels?.agentId === agentId ? sessionModels.metadata : null, modelId)
-        : null);
+    const recorded = agentId && isBundledAgentId(agentId)
+      ? resolveSessionModelLabel(agentId, sessionModels?.agentId === agentId ? sessionModels.metadata : null, modelId)
+      : null;
+    // A recorded title is already available to every surface; catalog arrival must not rename it.
+    return (recorded && recorded !== modelId ? recorded : null) || observed?.title.trim() || recorded;
   };
 }

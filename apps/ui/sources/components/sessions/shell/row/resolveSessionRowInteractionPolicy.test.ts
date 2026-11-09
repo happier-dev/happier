@@ -124,18 +124,20 @@ describe('resolveSessionRowInteractionPolicy', () => {
         expect(policy.wholeRowDrag).toBe(true);
         expect(policy.showDragGrip).toBe(false);
         expect(policy.swipeEnabled).toBe(false);
+        expect(policy.enableLongPressContextMenu).toBe(false);
     });
 
-    it('never turns a whole row into a drag source in a phone browser, where it would steal scrolling', () => {
+    it('keeps row actions reachable by long-press in a phone browser without stealing scrolling for drag', () => {
         const policy = resolveSessionRowInteractionPolicy({ ...phoneRow, platformOs: 'web', touchPrimaryPointer: true, organizeMode: false });
 
+        expect(policy.enableLongPressContextMenu).toBe(true);
         expect(policy.wholeRowDrag).toBe(false);
         expect(policy.showDragGrip).toBe(false);
     });
 
-    it('does not offer an Android long-press menu when the row has no menu actions', () => {
+    it.each(['ios', 'android', 'web'])('does not offer a touch long-press menu on %s when the row has no menu actions', (platformOs) => {
         const policy = resolveSessionRowInteractionPolicy({
-            platformOs: 'android',
+            platformOs,
             touchPrimaryPointer: true,
             isActiveSession: true,
             canStopSession: true,

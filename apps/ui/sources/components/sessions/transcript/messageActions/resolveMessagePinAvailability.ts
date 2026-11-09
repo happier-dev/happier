@@ -1,5 +1,8 @@
 import {
     normalizeSessionMessagePinRouteMessageId,
+    normalizeSessionMessagePinSessionId,
+    normalizeSessionMessagePinSeq,
+    normalizeSessionMessagePinTranscriptBlockIndex,
     resolveSessionMessagePinRowIdentityKey,
     sessionMessagePinRowsMatch,
     type SessionMessagePinRole,
@@ -47,25 +50,6 @@ export type MessagePinAvailabilityInput = Readonly<{
     pinActionEnabled?: boolean;
 }>;
 
-function normalizeSessionId(sessionId: string | null | undefined): string | null {
-    if (typeof sessionId !== 'string') return null;
-    const trimmed = sessionId.trim();
-    return trimmed.length > 0 ? trimmed : null;
-}
-
-function normalizeSeq(seq: number | null | undefined): number | null {
-    if (typeof seq !== 'number' || !Number.isFinite(seq)) return null;
-    const normalized = Math.trunc(seq);
-    return normalized >= 0 ? normalized : null;
-}
-
-function normalizeTranscriptBlockIndex(value: number | null | undefined): number | null {
-    if (value === null || value === undefined) return null;
-    if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-    const normalized = Math.trunc(value);
-    return normalized >= 0 ? normalized : null;
-}
-
 function normalizePinnableRole(role: SessionMessagePinRole | string | null | undefined): SessionMessagePinRole | null {
     if (role === 'user' || role === 'assistant' || role === 'tool') return role;
     return null;
@@ -80,20 +64,20 @@ export function buildSessionMessagePinAtPressTime(
 }
 
 export function resolveMessagePinAvailability(input: MessagePinAvailabilityInput): MessagePinAvailability {
-    const sessionId = normalizeSessionId(input.sessionId);
+    const sessionId = normalizeSessionMessagePinSessionId(input.sessionId);
     if (!sessionId) return { status: 'unavailable', reason: 'missing-session' };
-    const displaySessionId = normalizeSessionId(input.displaySessionId);
+    const displaySessionId = normalizeSessionMessagePinSessionId(input.displaySessionId);
     if (input.readOnlyContext === true || (displaySessionId !== null && displaySessionId !== sessionId)) {
         return { status: 'unavailable', reason: 'read-only-context' };
     }
 
-    const seq = normalizeSeq(input.seq);
+    const seq = normalizeSessionMessagePinSeq(input.seq);
     if (seq === null) return { status: 'unavailable', reason: 'missing-seq' };
 
     const role = normalizePinnableRole(input.role);
     if (!role) return { status: 'unavailable', reason: 'unsupported-role' };
 
-    const transcriptBlockIndex = normalizeTranscriptBlockIndex(input.transcriptBlockIndex);
+    const transcriptBlockIndex = normalizeSessionMessagePinTranscriptBlockIndex(input.transcriptBlockIndex);
     const routeMessageId = normalizeSessionMessagePinRouteMessageId(input.routeMessageId);
     const identityInput = {
         sessionId,

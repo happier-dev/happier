@@ -1,6 +1,7 @@
 import * as React from 'react';
 
-import type { ActionExecuteResult, ActionId } from '@happier-dev/protocol';
+import type { ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { t } from '@/text';

@@ -1,10 +1,13 @@
 import type {
-    PrincipalRefV1,
-    SessionAccessGrantsListResponseV1,
+    PrincipalRefV1} from '@happier-dev/protocol/teams/principal';
+import type {
+    SessionAccessGrantsListResponseV1} from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
+import type {
     SessionDataKeyEnvelopeItemV1,
-    SessionDataKeyEnvelopeSummaryV1,
+    SessionDataKeyEnvelopeSummaryV1} from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';
+import type {
     SessionGrantMutationV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/access/sessionAccessGrantV1';
 import type { CurrentSessionPreparationOutcome } from '@/sync/encryption/prepareCurrentSessionDataKeyEnvelopes';
 import type { SessionAccessEncryptionRecipientsView, SessionAccessGrantOperationModel, SessionAccessUiError } from './sessionAccessEditorTypes';
 import { sessionAccessSubjectKey } from './projectSessionAccessEditorSnapshot';

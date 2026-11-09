@@ -109,6 +109,37 @@ describe('SessionScmReviewDetailsView (comparison)', () => {
             .toMatchObject({ ok: false, errorCode: 'client_surface_unavailable' });
     });
 
+    it('opens a file from a comparison on that file\'s change in the same comparison, in the pane and in its own Details link', async () => {
+        fixture = await createSessionFilesViewFixture({ rootPath: '/tmp/repo' });
+        fixture.setSnapshot(fileViewSnapshot({ rootPath: '/tmp/repo', entries: [{
+            path: 'file-000.js', kind: 'modified', includeStatus: 'unmodified', pendingStatus: 'modified',
+            hasIncludedDelta: false, hasPendingDelta: true, previousPath: null,
+            stats: { includedAdded: 0, includedRemoved: 0, pendingAdded: 60, pendingRemoved: 0, isBinary: false },
+        }], capabilities: { readDiffFile: true } }));
+        const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
+        const { ChangedFilesReview } = await import('@/components/workspaces/scm/review/ChangedFilesReview');
+        const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+        const { buildSessionDetailsTabHref, parseSessionPaneUrlState } = await import('@/components/sessions/panes/url/sessionPaneUrlState');
+        let pane: ReturnType<typeof useAppPaneScope> | undefined;
+        function PaneProbe() {
+            pane = useAppPaneScope('session:s1');
+            return null;
+        }
+        const screen = await fixture.render(<><PaneProbe /><SessionScmReviewDetailsView sessionId="s1"
+            serverId={fixture.home.id} scopeId="session:s1" target={{ comparison: { kind: 'workingTree' }, view: 'files' }} /></>);
+        await vi.waitFor(() => expect(screen.findAllByType(ChangedFilesReview)).toHaveLength(1));
+        const review = screen.findByType(ChangedFilesReview).props as React.ComponentProps<typeof ChangedFilesReview>;
+        await act(async () => review.onFilePress?.({ fullPath: 'file-000.js' } as Parameters<NonNullable<typeof review.onFilePress>>[0]));
+        const file = pane?.scopeState?.details.tabs.find(tab => tab.key === 'file:file-000.js');
+        // In the pane: the file's change in the comparison it was opened from, not the viewer's default scope.
+        expect(pane?.scopeState?.details.tabState['file:file-000.js']).toMatchObject({ view: { changesScope: { kind: 'workingTree' } } });
+        // As its own tab (a phone opens Details pages from Details as rail tabs): the link carries the same.
+        const href = buildSessionDetailsTabHref({ sessionId: 's1', serverId: fixture.home.id, tab: file! });
+        const params = Object.fromEntries(new URL(href!, 'https://happier.invalid').searchParams);
+        expect(parseSessionPaneUrlState(params)?.details).toMatchObject({ kind: 'file', path: 'file-000.js',
+            changes: { kind: 'workingTree' }, view: 'changes' });
+    });
+
     it('says it cannot show a comparison it cannot read yet, instead of showing another one', async () => {
         fixture = await createSessionFilesViewFixture();
         fixture.setSnapshot(fileViewSnapshot());

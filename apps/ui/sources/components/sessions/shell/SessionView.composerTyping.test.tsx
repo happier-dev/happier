@@ -5,10 +5,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen as renderCanonicalScreen } from '@/dev/testkit/render/renderScreen';
 import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNavigation';
 import { createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { createMachineFixture, createPlainMachineReadHttpResponseFixture, createReadyMachineAgentInventoryFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createPlainMachineReadHttpResponseFixture, createPlainMachineRowFixture, createReadyMachineAgentInventoryFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
@@ -18,7 +19,11 @@ import { MINIMUM_CLI_PENDING_QUEUE_V2_VERSION } from '@/utils/system/versionUtil
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { SessionModelSelectionIntentV1Schema } from '@happier-dev/protocol/providers/selection/v1';
+import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
+import { projectComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { SessionDraftReadRequestV2Schema, SessionDraftMutateRequestV2Schema, SessionDraftMutateResponseV2Schema, type SessionDraftRecordV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import { SESSION_HUMAN_PRESENCE_VISIBLE_REPLACE_EVENT, SessionHumanPresenceVisibleReplaceV1Schema, SessionHumanPresenceVisibleReplaceResultV1Schema } from '@happier-dev/protocol/sessions';
 import { BUNDLED_CANONICAL_AGENT_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -74,9 +79,10 @@ vi.mock('@react-navigation/native', () => ({
 // Observe shell slots without mounting their separate transcript/native renderers.
 // All Session, Account, draft, readiness, feature and send decisions remain real.
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
-  AgentContentView: (props: { input?: React.ReactNode }) => React.createElement('AgentContentView', props, props.input),
+  AgentContentView: (props: { input?: React.ReactNode; content?: React.ReactNode; placeholder?: React.ReactNode }) =>
+    React.createElement('AgentContentView', props, props.content, props.placeholder, props.input),
 }));
-vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({ ChatHeaderView: () => null }));
+vi.mock('@/components/sessions/shell/view/SessionPaneHeader', () => ({ SessionPaneHeader: () => null }));
 vi.mock('@/components/sessions/transcript/ChatList', () => ({ ChatList: () => null }));
 vi.mock('@/components/ui/empty/EmptyMessages', () => ({ EmptyMessages: () => null }));
 vi.mock('@/components/ui/forms/Deferred', () => ({
@@ -109,14 +115,48 @@ const composerProjection = DaemonContributionRegistryProjectionDescribeResponseS
 });
 let composerInventoryEnabled = false;
 const composerProjectionRequests: string[] = [];
+const guardKeepRequests: Array<{ targetId: string; input: unknown }> = [];
 const pendingComposerProjections = new Map<string, ReturnType<typeof createDeferred<typeof composerProjection>>>();
+// The Home HTTP boundary acknowledges real draft writes; controller/repository logic stays real.
+const draftRecords = new Map<string, SessionDraftRecordV2>();
+let heldDraftWrite: ReturnType<typeof createDeferred<void>> | null = null;
+let draftWritesStarted = 0;
+let syncDraftCase = false;
+let pendingEditCase = false;
+beforeEach(({ task }) => {
+  draftRecords.clear(); heldDraftWrite = null; draftWritesStarted = 0;
+  // Only the new cases extend their external Home contracts; preserve existing local-draft fixtures.
+  syncDraftCase = task.name.includes('first draft-status');
+  pendingEditCase = task.name.includes('real queued submission');
+});
 const runtime = installSessionPaneRuntimeTestHarness({
+  configureSocket: socket => {
+    if (!pendingEditCase) return;
+    const emitWithAck = vi.mocked(socket.emitWithAck).getMockImplementation();
+    vi.mocked(socket.emitWithAck).mockImplementation(async (event, payload: unknown) => {
+      if (event === SESSION_HUMAN_PRESENCE_VISIBLE_REPLACE_EVENT) {
+        const request = SessionHumanPresenceVisibleReplaceV1Schema.parse(payload);
+        return SessionHumanPresenceVisibleReplaceResultV1Schema.parse({
+          v: 1, ok: true, admittedSessionIds: request.sessionIds,
+          ...(request.locations ? { admittedLocations: request.locations } : {}),
+          ...(request.pendingMessageEdits ? { admittedPendingMessageEdits: request.pendingMessageEdits } : {}),
+        });
+      }
+      return emitWithAck?.(event, payload);
+    });
+  },
   features: () => {
-    const features = createRootLayoutFeaturesResponse();
+    const features = createRootLayoutFeaturesResponse(syncDraftCase
+      ? { features: { sessions: { enabled: true, drafts: { enabled: true } } } }
+      : undefined);
     features.capabilities.session.pendingInput = { protocolVersion: PENDING_INPUT_PROTOCOL_VERSION_V3 };
     return features;
   },
   rpc: async (method, _input, targetId) => {
+    if (method === RPC_METHODS.MACHINES_GUARD_IDLE_STOP_KEEP_RUNNING) {
+      guardKeepRequests.push({ targetId, input: _input });
+      return { status: 'kept' };
+    }
     if (composerInventoryEnabled) {
       if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
         composerProjectionRequests.push(targetId);
@@ -127,6 +167,26 @@ const runtime = installSessionPaneRuntimeTestHarness({
     throw new RpcError('Daemon method unavailable', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
   },
   request: async (url, init) => {
+    const path = new URL(String(url)).pathname;
+    if (/^\/v[12]\/account\/session-drafts\//.test(path)) {
+      if (path.endsWith('/list')) return Response.json({ items: [...draftRecords.values()] });
+      if (path.endsWith('/read')) {
+        const request = SessionDraftReadRequestV2Schema.parse(JSON.parse(String(init?.body)));
+        const record = draftRecords.get(JSON.stringify(request.address));
+        return Response.json(record ? { status: 'present', record } : { status: 'absent' });
+      }
+      if (path.endsWith('/mutate')) {
+        const request = SessionDraftMutateRequestV2Schema.parse(JSON.parse(String(init?.body)));
+        draftWritesStarted += 1;
+        await heldDraftWrite?.promise;
+        const key = JSON.stringify(request.address);
+        const previous = draftRecords.get(key);
+        const record = { address: request.address, content: request.content, revision: (previous?.revision ?? 0) + 1,
+          createdAt: previous?.createdAt ?? 1, updatedAt: (previous?.updatedAt ?? 0) + 1 };
+        draftRecords.set(key, record);
+        return Response.json(SessionDraftMutateResponseV2Schema.parse({ status: 'updated', record }));
+      }
+    }
     const machineResponse = createPlainMachineReadHttpResponseFixture(new URL(String(url)).pathname, init, 'account-a');
     if (machineResponse) return machineResponse;
     if (new URL(String(url)).pathname !== '/v2/sessions/s1/pending') return null;
@@ -153,10 +213,18 @@ const sessionUtils = await import('@/utils/sessions/sessionUtils');
 const shellRenders = vi.spyOn(sessionUtils, 'useSessionStatus');
 const resolver = await import('@/sync/domains/input/slashCommands/resolveSessionComposerSend');
 const resolveSessionComposerSendSpy = vi.spyOn(resolver, 'resolveSessionComposerSend');
+// Pass-through observations retain the real controller, coordinator, Action and submit owners.
+const coordinator = await import('@/components/sessions/composer/composerSubmissionCoordinator');
+const submitComposerSnapshotSpy = vi.spyOn(coordinator, 'submitComposerSnapshot');
+const transcriptActions = await import('@/components/sessions/transcript/source/appSessionTranscriptActions');
+const submitAppSessionComposerMessageSpy = vi.spyOn(transcriptActions, 'submitAppSessionComposerMessage');
+const summaryModels = await import('@happier-dev/protocol/actions/settings/scmDiffSummaryModels');
+const buildSummaryProfiles = vi.spyOn(summaryModels, 'buildScmDiffSummaryModelProfiles');
 const { SessionView } = await import('./SessionView');
 const { SessionComposerAgentInput } = await import('@/components/sessions/composer/SessionComposerAgentInput');
 const { SessionModelDiscoveryDetail } = await import('@/components/sessions/modelPicker/SessionModelDiscoveryDetail');
-const { getSessionComposerDraftSnapshot } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+const { ChatList } = await import('@/components/sessions/transcript/ChatList');
+const { getSessionComposerDraftSnapshot, flushSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
 await loadSyncSingletonForTests();
 const { sync } = await import('@/sync/sync');
 
@@ -167,6 +235,17 @@ function surfaceElement(renderComposer?: SessionComposerRenderer) {
 
 function renderScreen() {
   return renderCanonicalScreen(surfaceElement(), { wrapper: runtime.Wrapper });
+}
+
+/** The composer text the mounted AgentInput is given: a string, or the live source its text leaf subscribes to. */
+function composerText(agentInput: Readonly<{ props: Readonly<Record<string, unknown>> }>): string {
+  const value: unknown = agentInput.props.value;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object' && value !== null && 'getPrompt' in value && typeof value.getPrompt === 'function') {
+    const prompt: unknown = value.getPrompt();
+    if (typeof prompt === 'string') return prompt;
+  }
+  throw new Error('AgentInput was given no composer text');
 }
 
 function findAgentInput(screen: Awaited<ReturnType<typeof renderScreen>>) {
@@ -199,6 +278,7 @@ function publishSessionOwnerMetadata(
   const next = update(metadata);
   storage.getState().applySessions([{ ...current, metadataVersion: current.metadataVersion + 1,
     ...(current.metadataLayoutVersion === 1 ? { ownerMetadataView: next } : { metadata: next }),
+    composerOptionsInput: projectComposerOptionsInputV1(next),
   }]);
 }
 
@@ -209,8 +289,11 @@ describe('SessionView composer typing', () => {
     submittedMessages.length = 0;
     composerInventoryEnabled = false;
     composerProjectionRequests.length = 0;
+    guardKeepRequests.length = 0;
     pendingComposerProjections.clear();
     resolveSessionComposerSendSpy.mockClear();
+    submitComposerSnapshotSpy.mockClear();
+    submitAppSessionComposerMessageSpy.mockClear();
     storage.setState({
       settings: { ...settingsDefaults, experiments: true },
       localSettings: { ...storage.getState().localSettings, uiMultiPanePanelsEnabled: false },
@@ -222,12 +305,34 @@ describe('SessionView composer typing', () => {
         version: MINIMUM_CLI_PENDING_QUEUE_V2_VERSION },
       agentState: { controlledByUser: true },
     })]);
-    storage.getState().applyMachines([createMachineFixture({ id: 'm1', activeAt: Date.now() })], true, {
+    storage.getState().applyMachines([createMachineFixture({ id: 'm1', activeAt: Date.now(),
+      access: createPlainMachineRowFixture({ id: 'm1', accountId: 'account-a' }).access })], true, {
       sourceServerId: runtime.serverId,
     });
+    const scope = runtime.accountScope;
+    if (!scope) throw new Error('Expected the restored fixture Account');
+    await publishMachineInventoryForTest(scope, [storage.getState().machines.m1!]);
     expect((await sync.ensureSessionVisibleForMessageRoute('s1', {
       serverId: runtime.serverId, forceRefresh: true, hydrateMessages: false,
     })).kind).toBe('available');
+  });
+
+  it('explains a refused /fork from the mounted composer and retains its draft without sending agent input', async () => {
+    storage.setState({ settings: { ...storage.getState().settings,
+      actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.fork': { disabledSurfaces: ['ui'] } } }),
+    } });
+    const { Modal } = await import('@/modal');
+    vi.mocked(Modal.alert).mockClear();
+    const screen = await renderScreen();
+    try {
+      await typeCharacters(screen, '', '/fork');
+      await renderer.act(async () => { await findAgentInput(screen).props.onSend(); });
+      await vi.waitFor(() => expect(Modal.alert).toHaveBeenCalledWith('common.error', 'actionConfirmations.turnedOffUnnamedMessage'));
+      expect(composerText(findAgentInput(screen))).toBe('/fork');
+      expect(submittedMessages).toEqual([]);
+    } finally {
+      await screen.unmount();
+    }
   });
 
   it('opens a retained Custom ACP Session without offering a model picker for its abstract Agent', async () => {
@@ -245,6 +350,160 @@ describe('SessionView composer typing', () => {
     }
   });
 
+  it('builds zero walkthrough model profiles across twelve composer renders without a picker', async () => {
+    buildSummaryProfiles.mockClear();
+    const screen = await renderScreen();
+    try {
+      for (let index = 0; index < 12; index += 1) {
+        await renderer.act(async () => {
+          publishSessionOwnerMetadata(metadata => ({ ...metadata, name: `Composer render ${index}` }));
+        });
+      }
+      expect(buildSummaryProfiles, 'a composer without a walkthrough picker consumes no model profiles').toHaveBeenCalledTimes(0);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it('reads the Session creation record once across composer renders that leave the Session unchanged', async () => {
+    const screen = await renderScreen();
+    const parses = vi.spyOn(SessionCreationCorrespondenceV1ReadSchema, 'safeParse');
+    try {
+      const rendersBefore = shellRenders.mock.calls.length;
+      for (let index = 0; index < 6; index += 1) {
+        await renderer.act(async () => {
+          storage.setState({ localSettings: { ...storage.getState().localSettings, uiFontScale: index % 2 === 0 ? 1.1 : 1 } });
+        });
+      }
+      expect(shellRenders.mock.calls.length - rendersBefore, 'the composer controller rendered').toBeGreaterThanOrEqual(6);
+      expect(parses, 'an unchanged Session is not re-parsed per composer render').toHaveBeenCalledTimes(0);
+    } finally {
+      parses.mockRestore();
+      await screen.unmount();
+    }
+  });
+
+  it('keeps the composer controller still when an Account update only advances the profile timestamp', async () => {
+    const screen = await renderScreen();
+    try {
+      const rendersBefore = shellRenders.mock.calls.length;
+      for (let index = 1; index <= 3; index += 1) {
+        await renderer.act(async () => {
+          const profile = storage.getState().profile;
+          storage.getState().applyProfile({ ...profile, timestamp: profile.timestamp + index });
+        });
+      }
+      expect(shellRenders.mock.calls.length - rendersBefore).toBe(0);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it('retains the real submit failure and destination through composer admission without clearing the draft', async () => {
+    const screen = await renderScreen();
+    const typed = await typeCharacters(screen, '', 'keep this rejected draft');
+    await renderer.act(async () => {
+      publishSessionOwnerMetadata(metadata => ({ ...metadata, version: '0.0.1' }));
+    });
+    await renderer.act(async () => { findAgentInput(screen).props.onSend({ deliveryIntent: 'server_pending' }); });
+    await vi.waitFor(() => expect(submitAppSessionComposerMessageSpy).toHaveBeenCalledTimes(1));
+    const submitted = await submitAppSessionComposerMessageSpy.mock.results[0]!.value;
+    expect(submitted.type).toBe('rejected');
+    expect(submitted.errorCode).toBe('PENDING_QUEUE_UNSUPPORTED');
+    expect(submitted.errorMessage).toBeTruthy();
+    await vi.waitFor(() => expect(submitComposerSnapshotSpy).toHaveBeenCalledTimes(1));
+    const admission = await submitComposerSnapshotSpy.mock.results[0]!.value;
+    expect(admission).toMatchObject({
+      status: 'rejected',
+      reason: {
+        type: submitted.type,
+        errorMessage: submitted.errorMessage,
+        ...(submitted.errorCode !== undefined ? { errorCode: submitted.errorCode } : {}),
+        callerSurface: 'session_composer',
+        destination: 'sessionAgent',
+      },
+    });
+    expect(composerText(findAgentInput(screen))).toBe(typed);
+    expect(storedDraftText()).toBe(typed);
+    expect(submittedMessages).toHaveLength(0);
+    await screen.unmount();
+  });
+
+  it('withdraws a Guard countdown on the first draft edit with one Keep per warning, without Session content churn', async () => {
+    const stopAt = Date.now() + 300_000;
+    publishSessionOwnerMetadata(metadata => ({ ...metadata,
+      sessionGuardStateV1: { v: 1, kind: 'stopping', rule: 'idle_sessions', stopAt } }));
+    const screen = await renderScreen();
+    const contentVersion = storage.getState().sessions.s1.metadataVersion;
+    const first = await typeCharacters(screen, '', 'the first real typing burst');
+    await vi.waitFor(() => expect(guardKeepRequests).toHaveLength(1));
+    expect(guardKeepRequests[0]).toMatchObject({ targetId: 'm1', input: { machineId: 'm1', sessionId: 's1' } });
+    await typeCharacters(screen, first, ' and another hundred edits'.repeat(5));
+    expect(guardKeepRequests).toHaveLength(1);
+    expect(storage.getState().sessions.s1.metadataVersion).toBe(contentVersion);
+    await renderer.act(async () => {
+      publishSessionOwnerMetadata(metadata => ({ ...metadata, sessionGuardStateV1: undefined }));
+    });
+    // A later warning is a new generation; the current draft still stays local.
+    await renderer.act(async () => {
+      publishSessionOwnerMetadata(metadata => ({ ...metadata,
+        sessionGuardStateV1: { v: 1, kind: 'stopping', rule: 'idle_sessions', stopAt: stopAt + 300_000 } }));
+    });
+    expect(guardKeepRequests).toHaveLength(1);
+    await typeCharacters(screen, composerText(findAgentInput(screen)), ' another edit');
+    await vi.waitFor(() => expect(guardKeepRequests).toHaveLength(2));
+    await screen.unmount();
+  });
+
+  it('keeps the first draft-status transition out of transcript layout while text and draft advance', async () => {
+    const screen = await renderScreen();
+    heldDraftWrite = createDeferred<void>();
+    const readLayout = () => screen.tree.findAllByType('AgentContentView' as React.ElementType).at(-1)!.props;
+    let previous = readLayout();
+    let layoutUpdates = 0;
+    let typed = '';
+    for (const character of 'hello') {
+      typed = await typeCharacters(screen, typed, character);
+      const next = readLayout();
+      if (next !== previous) layoutUpdates += 1;
+      previous = next;
+    }
+    expect(composerText(findAgentInput(screen))).toBe(typed);
+    expect(storedDraftText()).toBe(typed);
+    const scope = runtime.accountScope;
+    if (!scope) throw new Error('Expected the real draft Account scope');
+    const flush = flushSessionDraft({ scope, address: { kind: 'session', sessionId: 's1' } });
+    await renderer.act(async () => { await vi.waitFor(() => expect(draftWritesStarted).toBeGreaterThan(0)); });
+    if (readLayout() !== previous) layoutUpdates += 1;
+    previous = readLayout();
+    heldDraftWrite.resolve();
+    await renderer.act(async () => { expect(await flush).toMatchObject({ status: 'clean' }); });
+    if (readLayout() !== previous) layoutUpdates += 1;
+    expect(layoutUpdates).toBe(0);
+    await screen.unmount();
+  });
+
+  it('keeps the composer host out of the first draft-status sync of a typing burst', async () => {
+    const screen = await renderScreen();
+    heldDraftWrite = createDeferred<void>();
+    // The first key turns an empty draft into a real one and starts its remote flush; the rest
+    // of the burst types while that write is in flight, then the write is acknowledged.
+    const first = await typeCharacters(screen, '', 'h');
+    await renderer.act(async () => { await vi.waitFor(() => expect(draftWritesStarted).toBeGreaterThan(0)); });
+    const hostRendersBefore = shellRenders.mock.calls.length;
+    const typed = await typeCharacters(screen, first, 'ello world');
+    heldDraftWrite.resolve();
+    const scope = runtime.accountScope;
+    if (!scope) throw new Error('Expected the real draft Account scope');
+    await renderer.act(async () => {
+      expect(await flushSessionDraft({ scope, address: { kind: 'session', sessionId: 's1' } })).toMatchObject({ status: 'clean' });
+    });
+    expect(storedDraftText()).toBe(typed);
+    // pending -> clean (and back) is not a badge the composer shows, so the host does not render for it.
+    expect(shellRenders.mock.calls.length - hostRendersBefore).toBe(0);
+    await screen.unmount();
+  });
+
   it('keeps typing out of the loaded shell while the draft persists, restores and submits', async () => {
     const screen = await renderScreen();
     expect(screen.tree.findAllByType('AgentInput' as React.ElementType)).toHaveLength(1);
@@ -253,13 +512,13 @@ describe('SessionView composer typing', () => {
     const rendersAfterFirstBurst = shellRenders.mock.calls.length;
     const typed = await typeCharacters(screen, first, ' world, typed');
     expect(shellRenders.mock.calls.length - rendersAfterFirstBurst).toBe(0);
-    expect(findAgentInput(screen).props.value).toBe('hello world, typed');
+    expect(composerText(findAgentInput(screen))).toBe('hello world, typed');
     expect(storedDraftText()).toBe(typed);
 
     // An unsent draft restores across a real same-Account mount lifetime.
     await screen.unmount();
     const reopened = await renderScreen();
-    expect(findAgentInput(reopened).props.value).toBe(typed);
+    expect(composerText(findAgentInput(reopened))).toBe(typed);
     expect(storedDraftText()).toBe(typed);
 
     // The actual resolver and send path read the restored input, then clear only on acceptance.
@@ -270,10 +529,41 @@ describe('SessionView composer typing', () => {
       content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: typed } } },
     });
     await vi.waitFor(() => {
-      expect(findAgentInput(reopened).props.value).toBe('');
+      expect(composerText(findAgentInput(reopened))).toBe('');
       expect(storedDraftText() ?? '').toBe('');
     });
     await reopened.unmount();
+  });
+
+  it('edits a real queued submission without rendering the unrelated transcript layout per character', async () => {
+    const screen = await renderScreen();
+    await typeCharacters(screen, '', 'queued original');
+    await renderer.act(async () => { await findAgentInput(screen).props.onSend(); });
+    await vi.waitFor(() => expect(submittedMessages).toHaveLength(1));
+    await vi.waitFor(() => expect(storage.getState().sessionPending.s1?.messages).toHaveLength(1));
+    await vi.waitFor(() => expect(composerText(findAgentInput(screen))).toBe(''));
+    const message = storage.getState().sessionPending.s1!.messages[0]!;
+    await renderer.act(async () => {
+      await screen.tree.findByType(ChatList).props.onEditPendingMessage({ id: message.id, text: message.text, message });
+    });
+    expect(composerText(findAgentInput(screen))).toBe('queued original');
+    const readFrame = () => {
+      let node = screen.tree.findAllByType('AgentContentView' as React.ElementType).at(-1)?.parent;
+      while (node && !('sessionStatusState' in node.props)) node = node.parent;
+      return node?.props ?? {};
+    };
+    // This boundary refuses plugin describe. Its one establishing→unavailable
+    // publication is a real fact change, not work caused by the following edits.
+    await vi.waitFor(() => expect(readFrame().sessionPluginRuntime?.phase).toBe('unavailable'));
+    const previousFrame = readFrame();
+    const previousLayout = screen.tree.findAllByType('AgentContentView' as React.ElementType).at(-1)!.props;
+    const edited = await typeCharacters(screen, 'queued original', ' edited');
+    expect(composerText(findAgentInput(screen))).toBe(edited);
+    expect(storage.getState().sessionPending.s1!.messages[0]!.text).toBe('queued original');
+    const frame = readFrame();
+    const changed = Object.keys(frame).filter(key => !Object.is(frame[key], previousFrame[key]));
+    expect(screen.tree.findAllByType('AgentContentView' as React.ElementType).at(-1)!.props, changed.join(', ')).toBe(previousLayout);
+    await screen.unmount();
   });
 
   it('retains populated composer catalog and model props across host rerenders while Agent, target, readiness and model changes remain fresh', async () => {
@@ -289,9 +579,16 @@ describe('SessionView composer typing', () => {
       selection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId },
     });
     storage.getState().applyMachines([
-      createMachineFixture({ id: firstMachineId, activeAt: Date.now() }),
-      createMachineFixture({ id: secondMachineId, activeAt: Date.now() }),
+      createMachineFixture({ id: firstMachineId, activeAt: Date.now(),
+        access: createPlainMachineRowFixture({ id: firstMachineId, accountId: 'account-a' }).access }),
+      createMachineFixture({ id: secondMachineId, activeAt: Date.now(),
+        access: createPlainMachineRowFixture({ id: secondMachineId, accountId: 'account-a' }).access }),
     ], true, { sourceServerId: runtime.serverId });
+    const scope = runtime.accountScope;
+    if (!scope) throw new Error('Expected the restored fixture Account');
+    await publishMachineInventoryForTest(scope, [
+      storage.getState().machines[firstMachineId]!, storage.getState().machines[secondMachineId]!,
+    ]);
     publishSessionOwnerMetadata(metadata => ({ ...metadata, machineId: firstMachineId,
       modelSelectionIntentV1: modelIntent('producer-first-model', 10) }));
     expect(readSessionOwnerMetadataView(storage.getState().sessions.s1)?.machineId).toBe(firstMachineId);
@@ -393,13 +690,13 @@ describe('SessionView composer typing', () => {
       await screen.update(surfaceElement(composer => host(composer)));
       expect(shellRenders.mock.calls.length).toBeGreaterThan(rendersBefore);
       const refreshed = readProducerProps();
-      for (const key of ['composerFileScope', 'sessionTypingPresence', 'statusBadges', 'extraActionChips', 'attachmentRowItems'] as const) {
+      for (const key of ['composerFileScope', 'sessionTypingPresence', 'statusBadges', 'extraActionChips', 'attachmentRowItems', 'statusRegions', 'instrumentQuota', 'connectionStatus', 'inputPersistence', 'inputExpansion'] as const) {
         expect.soft(refreshed[key], key).toBe(initial[key]);
       }
       // The existing input callback still writes to the live draft after the
       // producer descriptors have survived a parent update.
       await renderer.act(async () => { initial.onChangeText?.('retained callback draft'); });
-      expect(findAgentInput(screen).props.value).toBe('retained callback draft');
+      expect(composerText(findAgentInput(screen))).toBe('retained callback draft');
       expect(storedDraftText()).toBe('retained callback draft');
       await renderer.act(async () => {
         initial.inputPersistence?.onSelectionChangePersist?.({ start: 1, end: 1 }, 'retained callback draft'.length);
@@ -441,7 +738,35 @@ describe('SessionView composer typing', () => {
       });
       expect(readProducerProps().sessionTypingPresence).toEqual({ serverId: runtime.serverId, canSubmitAgentInput: false });
       expect(readProducerProps().sessionTypingPresence).not.toBe(initial.sessionTypingPresence);
-      expect(findAgentInput(screen).props.value).toBe('retained callback draft');
+      expect(composerText(findAgentInput(screen))).toBe('retained callback draft');
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it('retains the composer connection line and restore payload across a host rerender with equal facts', async () => {
+    publishSessionOwnerMetadata(metadata => ({ ...metadata,
+      sessionGuardStateV1: { v: 1, kind: 'stopping', rule: 'idle_sessions', stopAt: Date.now() + 300_000 } }));
+    const host: SessionComposerRenderer = composer => React.createElement('SessionComposerHost', null, composer.content);
+    const screen = await renderCanonicalScreen(surfaceElement(host), { wrapper: runtime.Wrapper });
+    const readProducerProps = () => screen.tree.findByType(SessionComposerAgentInput).props as React.ComponentProps<typeof SessionComposerAgentInput>;
+    try {
+      await typeCharacters(screen, '', 'abc');
+      await renderer.act(async () => { readProducerProps().inputPersistence?.onSelectionChangePersist?.({ start: 1, end: 1 }, 3); });
+      await screen.update(surfaceElement(composer => host(composer)));
+      const initial = readProducerProps();
+      // The guard's Keep running action rides the connection line.
+      expect(initial.connectionStatus?.action?.label).toBe('machineGuard.session.keepRunning');
+      await renderer.act(async () => { readProducerProps().inputPersistence?.onSelectionChangePersist?.({ start: 2, end: 2 }, 3); });
+      const rendersBefore = shellRenders.mock.calls.length;
+      await screen.update(surfaceElement(composer => host(composer)));
+      expect(shellRenders.mock.calls.length).toBeGreaterThan(rendersBefore);
+      const refreshed = readProducerProps();
+      // Equal facts keep the props identical, so the memoized input chrome does not re-render.
+      expect.soft(refreshed.connectionStatus, 'connectionStatus').toBe(initial.connectionStatus);
+      expect.soft(refreshed.inputPersistence, 'inputPersistence').toBe(initial.inputPersistence);
+      // The restore payload still reads the latest persisted selection when a composer mounts.
+      expect(refreshed.inputPersistence?.initialSelection).toEqual({ start: 2, end: 2 });
     } finally {
       await screen.unmount();
     }
@@ -466,7 +791,7 @@ describe('SessionView composer typing', () => {
     expect(screen.tree.findAllByType('AgentInput' as React.ElementType)).toHaveLength(1);
     expect(screen.tree.findAllByType('PhoneAskSheetHost' as React.ElementType)).toHaveLength(1);
     const inSheet = findAgentInput(screen).props;
-    expect(inSheet.value).toBe('Ask about this selection');
+    expect(composerText({ props: inSheet })).toBe('Ask about this selection');
     // The host changes; the real controller's handlers and selected agent/model do not.
     for (const key of ['onSend', 'onChangeText', 'onAbort', 'agentType', 'modelMode', 'attachmentRowItems']) {
       expect(before).toHaveProperty(key);
@@ -491,12 +816,12 @@ describe('SessionView composer typing', () => {
     expect(submittedMessages[0]).toMatchObject({
       content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Ask about this selection' } } },
     });
-    await vi.waitFor(() => expect(findAgentInput(screen).props.value).toBe(''));
+    await vi.waitFor(() => expect(composerText(findAgentInput(screen))).toBe(''));
 
     placement = 'SessionComposerHost';
     await screen.update(surfaceElement(composer => renderComposer(composer)));
     expect(screen.tree.findAllByType('AgentInput' as React.ElementType)).toHaveLength(1);
-    expect(findAgentInput(screen).props.value).toBe('');
+    expect(composerText(findAgentInput(screen))).toBe('');
     await screen.unmount();
   });
 
@@ -510,7 +835,7 @@ describe('SessionView composer typing', () => {
       screen = await renderScreen();
       expect(screen.tree.findAllByType('AgentInput' as React.ElementType)).toHaveLength(1);
       await typeCharacters(screen, '', 'A draft without DOM selection');
-      expect(findAgentInput(screen).props.value).toBe('A draft without DOM selection');
+      expect(composerText(findAgentInput(screen))).toBe('A draft without DOM selection');
     } finally {
       await screen?.unmount();
       platformState.os = 'ios';

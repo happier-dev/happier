@@ -1,7 +1,8 @@
 import * as React from 'react';
+import type { PopoverAnchor } from '@/components/ui/popover';
 
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
-import { resolvePluginUiText } from '@/sync/domains/plugins/ui/i18n';
+import { resolvePluginUiText, type PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import {
     evaluatePluginUiPolicy,
     type PluginUiPolicyEvaluationContext,
@@ -106,6 +107,7 @@ export function createPluginSessionHeaderActionMenuId(action: PluginUiSessionHea
 export function resolvePluginSessionHeaderActionPresentations(params: Readonly<{
     projection: PluginUiProjectionModel | null | undefined;
     locale?: string | null;
+    localize?: PluginLocalizedTextResolver;
     policyContext: PluginUiPolicyEvaluationContext;
     scopedLaunchFacts: PluginSurfaceScopedLaunchFacts | null | undefined;
 }>): readonly PluginSessionHeaderActionPresentation[] {
@@ -146,7 +148,7 @@ export function resolvePluginSessionHeaderActionPresentations(params: Readonly<{
             return Object.freeze({
                 action,
                 menuActionId: createPluginSessionHeaderActionMenuId(action),
-                title: resolvePluginUiText({
+                title: params.localize?.(action.pluginId, action.title) ?? resolvePluginUiText({
                     projection,
                     pluginId: action.pluginId,
                     key: title.key,
@@ -168,6 +170,7 @@ export function createPluginSessionHeaderActionDropdownItems(params: Readonly<{
     projection: PluginUiProjectionModel | null | undefined;
     iconColor: string;
     locale?: string | null;
+    localize?: PluginLocalizedTextResolver;
     policyContext: PluginUiPolicyEvaluationContext;
     scopedLaunchFacts: PluginSurfaceScopedLaunchFacts | null | undefined;
 }>): readonly DropdownMenuItem[] {
@@ -210,6 +213,7 @@ export function resolvePluginSessionHeaderAction(params: Readonly<{
  * so the caller can fall through to its own menu handling.
  */
 export async function dispatchPluginSessionHeaderAction(params: Readonly<{
+    anchor?: PopoverAnchor;
     projection: PluginUiProjectionModel | null | undefined;
     menuActionId: string;
     /** Required for executeAction; openSurface remains delegated unchanged. */
@@ -235,6 +239,7 @@ export async function dispatchPluginSessionHeaderAction(params: Readonly<{
     }
 
     return await dispatchPluginResolvedSemanticCommand({
+        actionInputAnchor: params.anchor,
         projection,
         callerPluginId: action.pluginId,
         command: action.command,

@@ -30,15 +30,7 @@ describe('PathAndResumeRow location order', () => {
         const control = (id: string) => React.createElement('Pressable', { key: id, testID: id });
         const screen = await renderScreen(<PathAndResumeRow
             styles={styles}
-            showChipLabels
-            iconColor="#000"
-            folderChipState={{ kind: 'folder', path: '/workspace/project' }}
-            resumeSessionId="session-1"
-            resumeLabelTitle="Resume session"
-            resumeLabelOptional="Resume: Optional"
-            onPathClick={() => {}}
-            onResumeClick={() => {}}
-            leadingControls={[control('machine')]}
+            leadingControls={[control('machine'), control('agent-input-path-chip'), control('agent-input-resume-chip')]}
             trailingControls={[control('checkout'), control('automate')]}
         />);
 

@@ -62,7 +62,8 @@ describe('createSessionGitPullRequest', () => {
             request: { base: 'dev', head: 'v0.3', title: 'Key the settings modal by route', body: 'Fixes the remount.', draft: true },
         });
 
-        expect(outcome).toMatchObject({ kind: 'created', number: 2501, url: 'https://github.com/o/r/pull/2501' });
+        expect(outcome).toMatchObject({ kind: 'created', number: 2501, url: 'https://github.com/o/r/pull/2501',
+            pullRequest: { title: 'Key the settings modal by route', headBranch: 'v0.3', baseBranch: 'dev', provider } });
         expect(openOrReuse).toHaveBeenCalledWith('s1', {
             base: 'dev', head: 'v0.3', title: 'Key the settings modal by route', body: 'Fixes the remount.', draft: true,
         }, undefined);

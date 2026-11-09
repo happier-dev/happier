@@ -1,7 +1,7 @@
 import type { DiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { Icon } from '@/components/ui/icons/Icon';
@@ -15,6 +15,7 @@ import { t } from '@/text';
 import type { DuplicateReview } from './MemoryDocumentBody';
 import { MemoryFactDetailSections } from './MemoryFactDetail';
 import { useMemoryDocument } from './useMemoryDocument';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * A duplicate review's look at one saved fact (C6 "Similar fact found"): the fact and its reason,
@@ -55,19 +56,18 @@ export function MemoryDuplicateSavedFact(
   return (
     <ListPresentationProvider value="page" pageInsets="contained">
     <View testID={props.testID} style={styles.root}>
-      <Pressable
+      <HappierPressable
         testID={`${props.testID}.back`}
         accessibilityRole="button"
         accessibilityLabel={t('memoryContext.memory.duplicateBack')}
         onPress={props.onBack}
-        hitSlop={8}
         style={styles.back}
       >
         <Icon name="arrow-left" size={16} />
         <Text style={styles.backLabel}>
           {t('memoryContext.memory.duplicateBack')}
         </Text>
-      </Pressable>
+      </HappierPressable>
       {/* The saved words lead, as on the fact's own page; the reviewed text shows while it is read. */}
       <Text style={styles.title} accessibilityRole="header" selectable>
         {fact?.text ?? candidate?.text ?? ''}

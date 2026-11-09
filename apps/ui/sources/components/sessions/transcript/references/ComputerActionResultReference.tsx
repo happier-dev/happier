@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { ComputerApprovalDisplayV1 } from '@happier-dev/protocol';
+import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
+import type { ComputerApprovalDisplayV1 } from '@happier-dev/protocol/computer/v1';
 import type { ToolCall } from '@happier-dev/session-core/messages';
 
 import { openComputerTargetPickerForSession } from '@/components/computer/openComputerTargetPickerForSession';
@@ -31,7 +32,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         padding: theme.space.s12,
         borderRadius: 12,
         borderCurve: 'continuous',
-        backgroundColor: theme.colors.surface.inset,
+        backgroundColor: glassContentFill(theme.colors.surface.inset, theme.colors),
     },
     askText: {
         flex: 1,
@@ -208,8 +209,8 @@ function MountedComputerActionReference(props: Readonly<{
     const machineName = reference.kind === 'choose' ? reference.machineName : cachedMachineName;
     // The row is where this device learns the Session uses this machine for computer use.
     React.useEffect(() => {
-        noteSessionComputerMachine({ sessionId, machineId: reference.machineId, machineName });
-    }, [machineName, reference.machineId, sessionId]);
+        noteSessionComputerMachine({ sessionId, serverId, accountLifetime, machineId: reference.machineId, machineName });
+    }, [accountLifetime, machineName, reference.machineId, serverId, sessionId]);
     const testID = `transcript-computer-action-${reference.actionId}`;
     const choose = React.useCallback(() => {
         openComputerTargetPickerForSession({

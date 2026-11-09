@@ -2,9 +2,10 @@ import * as React from 'react';
 
 import type {
     SessionWorkflowActivityHeadlineV1,
-    SessionWorkflowRunHeadlineV1,
+    SessionWorkflowRunHeadlineV1} from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
+import type {
     SessionWorkflowRunSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 
 import { observeWorkflowRunSnapshot } from '@/sync/ops/sessionWorkflowActivity';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';

@@ -117,7 +117,7 @@ describe('AgentInput (action bar auto layout)', () => {
         storage.getState().applyLocalSettings({ navigationSurfacePlacementsV1: {} }, { persist: false });
     });
 
-    it('separates the real Send and Voice targets in the 430px narrow web stack', async () => {
+    it('separates the real Send and Voice targets where they share the 430px phone rail', async () => {
         // Unistyles creates platform styles at module load. Load the actual web
         // owner first, rather than relabeling a stylesheet created for native.
         layoutMockState.platform = 'web';
@@ -171,18 +171,19 @@ describe('AgentInput (action bar auto layout)', () => {
         // shared Voice/Send cluster rather than assuming a fixed host depth.
         while (stack && flattenStyle(stack.props.style).flexDirection === undefined) stack = findNearestHostParent(stack);
         const stackGeometry = flattenStyle(stack?.props.style);
-        expect(stackGeometry.flexDirection).toBe('column-reverse');
+        // On a phone the pair rides the end of the last chip rail, Voice then Send in one row.
+        expect(stackGeometry.flexDirection).toBe('row');
         const voice = findAllHostTestInstances(screen.tree.root, node => node.props.testID === 'session-composer-voice')[0];
         if (!voice) throw new Error('Expected the real Voice target');
         const voiceGeometry = flattenStyle(voice.props.style);
-        // Voice's declared 8px INLINE row gap must not be spent against the narrower stack gap (web: 1px).
-        // Include the neighbor's real target margin and any Send reach not allocated in flow, not only its glyph.
-        const gap = Number(stackGeometry.rowGap ?? stackGeometry.gap ?? 0);
-        expect(gap).toBe(1);
-        const voiceTopMargin = Number(voiceGeometry.marginTop ?? voiceGeometry.marginVertical ?? 0);
-        // Send's reach below is spent against that gap unless its flow footprint already includes it.
-        const sendFlowBottom = reservedBottom + Number(geometry.marginBottom ?? 0);
-        const targetSeparation = gap + voiceTopMargin + Math.min(0, sendFlowBottom - hitSlop.bottom);
+        // Send's sideways reach is spent against the row gap unless its flow footprint already includes it;
+        // include Voice's real trailing margin, not only its glyph.
+        const gap = Number(stackGeometry.columnGap ?? stackGeometry.gap ?? 0);
+        const voiceEndMargin = Number(voiceGeometry.marginRight ?? voiceGeometry.marginHorizontal ?? 0);
+        const sendFlowStart = Number(geometry.paddingLeft ?? geometry.paddingHorizontal ?? 0)
+            + Number(geometry.marginLeft ?? geometry.marginHorizontal ?? 0);
+        expect(hitSlop.left).toBeGreaterThan(0);
+        const targetSeparation = gap + voiceEndMargin + Math.min(0, sendFlowStart - hitSlop.left);
         expect(targetSeparation).toBeGreaterThanOrEqual(0);
     });
 
@@ -277,7 +278,7 @@ describe('AgentInput (action bar auto layout)', () => {
         ))).toHaveLength(1);
     });
 
-    it.each(['ios', 'web'] as const)('reads predecessor collapsed as wrapping default chips on %s', async (platform) => {
+    it.each(['ios', 'web'] as const)('reads predecessor collapsed as auto: a 390 new session keeps two scrolling rails on %s', async (platform) => {
         layoutMockState.platform = platform;
         layoutMockState.width = 390;
         storageSettings = settingsParse({ ...storageSettings, agentInputActionBarLayout: 'collapsed' });
@@ -301,11 +302,12 @@ describe('AgentInput (action bar auto layout)', () => {
         />;
         const screen = await renderAgentInput(input);
 
-        // Retained collapsed normalizes to physical auto; placement supplies the ordinary defaults.
+        // Retained collapsed normalizes to physical auto, which scrolls on a phone as in 0.2 (owner 2026-10-30):
+        // the setup rail and the machine · folder rail, each one line; placement supplies the ordinary defaults.
         const tracks = findAllHostTestInstances(screen.tree.root, node => (
             node.type === 'ScrollView' && node.props.horizontal === true
         ));
-        expect(tracks).toHaveLength(0);
+        expect(tracks).toHaveLength(2);
         expect(findAllHostTestInstances(screen.tree.root, node => (
             node.type === 'Text' && node.props.children === 'Sonnet 4.6'
         ))).toHaveLength(1);
@@ -322,13 +324,16 @@ describe('AgentInput (action bar auto layout)', () => {
             ))).toHaveLength(0);
         }
 
-        // Explicit scroll changes physical flow without changing pinned membership.
-        storageSettings = { ...storageSettings, agentInputActionBarLayout: 'scroll' };
+        // Explicit wrap changes physical flow without changing pinned membership.
+        storageSettings = { ...storageSettings, agentInputActionBarLayout: 'wrap' };
         await act(async () => { storage.setState({ settings: storageSettings }); });
         await screen.update(React.cloneElement(input, { value: 'Updated draft' }));
         expect(findAllHostTestInstances(screen.tree.root, node => (
             node.type === 'ScrollView' && node.props.horizontal === true
-        ))).toHaveLength(2);
+        ))).toHaveLength(0);
+        expect(findAllHostTestInstances(screen.tree.root, node => (
+            node.type === 'Text' && node.props.children === 'Sonnet 4.6'
+        ))).toHaveLength(1);
     });
 
     it('publishes the mounted action-bar layout when the resolved mode changes', async () => {
@@ -860,11 +865,45 @@ describe('AgentInput (action bar auto layout)', () => {
         expect(railOf('agent-input-path-chip')).toBe(1);
     });
 
+    it('bounds every rail chip by its real gaps, so wrapped phone rails and the machine rail never overlap', async () => {
+        layoutMockState.width = 390;
+        storageSettings = { ...storageSettings, agentInputActionBarLayout: 'wrap' };
+        const { AgentInput } = await import('./AgentInput');
+        const { NATIVE_ACTION_CHIP_GAP_Y } = await import('./components/agentInputChromeStyles');
+        const { layoutHitArea } = await import('@/dev/testkit/harness/hitFrameReach');
+        const screen = await renderAgentInput(
+            <AgentInput
+                value="" placeholder="Type" onChangeText={() => {}} onSend={() => {}}
+                onPermissionClick={() => {}} onAgentClick={() => {}} agentType="codex"
+                onMachineClick={() => {}} machineName="Builder"
+                onPathClick={() => {}} currentPath="/tmp/my-repo"
+                autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+            />,
+        );
+        const host = (testID: string) => () => findAllHostTestInstances(screen.tree.root, (node) => node.props.testID === testID)[0];
+        for (const testID of ['agent-input-agent-chip', 'agent-input-permission-chip', 'agent-input-machine-chip', 'agent-input-path-chip']) {
+            const node = host(testID)();
+            if (!node) throw new Error(`Expected the real ${testID}`);
+            const style = flattenStyle(typeof node.props.style === 'function' ? node.props.style({ pressed: false }) : node.props.style);
+            // Native chips state the rail's column gap as their own trailing margin.
+            const columnGap = Number(style.marginRight);
+            expect(columnGap).toBeGreaterThan(0);
+            // A narrow drawn box needs reach on both axes, so only the rail's bounds can keep it in its gaps.
+            const area = await layoutHitArea(host(testID), { width: 24, height: 32 });
+            // Any chip may sit beside another and on any wrapped line: its reach is half of each real gap.
+            expect({ testID, left: area.insets.left, right: area.insets.right }).toEqual({ testID, left: columnGap / 2, right: columnGap / 2 });
+            expect({ testID, top: area.insets.top, bottom: area.insets.bottom })
+                .toEqual({ testID, top: NATIVE_ACTION_CHIP_GAP_Y / 2, bottom: NATIVE_ACTION_CHIP_GAP_Y / 2 });
+        }
+    });
+
     it('lets an armed continuation shrink and ellipsize instead of crowding the chip rail out of a phone session', async () => {
         // Unistyles creates platform styles at module load; the web owner is the one the QA
-        // export showed overlaying the rail at 390px.
+        // export showed overlaying the rail at 390px. A wrapping rail carries the cluster on its last line;
+        // auto scrolls on a phone (owner 2026-10-30), so Wrap is chosen explicitly here.
         layoutMockState.platform = 'web';
         layoutMockState.width = 390;
+        storageSettings = { ...storageSettings, agentInputActionBarLayout: 'wrap' };
         const { AgentInput } = await import('./AgentInput');
         const screen = await renderAgentInput(<AgentInput
             sessionId="s1" value="" placeholder="Type" onChangeText={() => {}} onSend={() => {}}
@@ -875,14 +914,21 @@ describe('AgentInput (action bar auto layout)', () => {
         const submit = findAllHostTestInstances(screen.tree.root, node => node.props.testID === 'session-composer-send')[0];
         if (!submit) throw new Error('Expected the armed submit target');
         expect(flattenStyle(submit.props.style)).toMatchObject({ flexShrink: 1, minWidth: 0 });
-        // The shape that clips the button and the cluster that holds it both give way, and the
-        // cluster's share is capped so the rail keeps a share of the card whatever the label says.
+        // The shape that clips the button and the cluster that holds it both give way. On a phone the
+        // cluster rides the end of the last chip rail: beside the chips when it fits, otherwise on its own
+        // line at the trailing edge, never wider than the card, so the rail keeps its whole width.
         let shape = findNearestHostParent(submit);
         while (shape && flattenStyle(shape.props.style).overflow !== 'hidden') shape = findNearestHostParent(shape);
         if (!shape) throw new Error('Expected the submit shape');
         expect(flattenStyle(shape.props.style)).toMatchObject({ flexShrink: 1, minWidth: 0 });
         const cluster = findNearestHostParent(shape);
-        expect(flattenStyle(cluster?.props.style)).toMatchObject({ flexShrink: 1, minWidth: 0, maxWidth: '85%' });
+        expect(flattenStyle(cluster?.props.style)).toMatchObject({ flexShrink: 1, minWidth: 0, maxWidth: '100%', marginLeft: 'auto' });
+        // A test instance's `.parent` is the composite View wrapping it; the rail line is the nearest host parent.
+        const railLine = findNearestHostParent(cluster);
+        let lastOnLine = railLine?.children.at(-1);
+        while (lastOnLine && typeof lastOnLine !== 'string' && typeof lastOnLine.type !== 'string') lastOnLine = lastOnLine.children[0];
+        expect(lastOnLine).toBe(cluster);
+        expect(flattenStyle(railLine?.props.style)).toMatchObject({ flexWrap: 'wrap' });
         // P3 §3.4 keeps automatic layout wrapping, with the pinned controls reachable.
         const rail = screen.tree.root.findAll((node) => typeof node.type === 'string' && String(node.type) === 'ScrollView' && node.props.horizontal === true);
         expect(rail).toHaveLength(0);

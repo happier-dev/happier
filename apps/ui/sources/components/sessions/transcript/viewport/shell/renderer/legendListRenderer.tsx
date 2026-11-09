@@ -69,6 +69,7 @@ import {
 import { useLegendHeldIntent } from './legend/useLegendHeldIntent';
 import { useLegendRevealRevalidation } from './legend/useLegendRevealRevalidation';
 import { usePaneHeaderScrollSink } from '@/components/appShell/panes/paneHeaderScroll';
+import { usePresentedValue } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 export { resolveLegendRendererAtEndStateFromWebMetrics } from './legend/atEnd';
 
@@ -122,6 +123,12 @@ function LegendListTranscriptRendererInner<TItem>(
     const initialPlacementAtEnd = retainedEntry?.isPinned === false
         ? false : props.frame.rendererOptions.initialPlacement.atEnd;
     const captureRetainedViewportRef = React.useRef<() => void>(() => undefined);
+    const restoreRetainedViewportRef = React.useRef<(snapshot: RetainedViewport) => void>(() => undefined);
+    const hiddenRetainedViewportRef = React.useRef<Readonly<{
+        dataKey: string;
+        lifetime: object;
+        viewport: RetainedViewport;
+    }> | null>(null);
     const restoredEntryRef = React.useRef<RetainedViewport | null>(null);
     const contentDemand = React.useMemo(createTranscriptRendererContentDemand, [props.dataKey]);
     const identityHostRef = React.useRef<React.ElementRef<typeof View> | null>(null);
@@ -712,10 +719,26 @@ function LegendListTranscriptRendererInner<TItem>(
     const recordViewportHeight = React.useCallback((nextHeight: number) => {
         const previousHeight = lastViewportHeightRef.current;
         lastViewportHeightRef.current = nextHeight;
+        if (isWebFrame && props.viewportRetention) {
+            if (nextHeight === 0 && previousHeight !== null && previousHeight > 0) {
+                // A retained route or phone panel hides this mounted list with display:none.
+                // Its zero-size DOM cannot replace the last physically captured reading row.
+                const viewport = retainedViewports.get(props.viewportRetention)?.get(props.dataKey);
+                hiddenRetainedViewportRef.current = viewport
+                    ? { dataKey: props.dataKey, lifetime: props.viewportRetention, viewport }
+                    : null;
+            } else if (nextHeight > 0 && previousHeight === 0) {
+                const hidden = hiddenRetainedViewportRef.current;
+                hiddenRetainedViewportRef.current = null;
+                if (hidden?.dataKey === props.dataKey && hidden.lifetime === props.viewportRetention) {
+                    restoreRetainedViewportRef.current(hidden.viewport);
+                }
+            }
+        }
         if (previousHeight === null || Math.abs(previousHeight - nextHeight) < 1) return;
         advanceMovementEpoch();
         requestHeldIntentSettle();
-    }, [advanceMovementEpoch, requestHeldIntentSettle]);
+    }, [advanceMovementEpoch, isWebFrame, props.dataKey, props.viewportRetention, requestHeldIntentSettle]);
 
     const recordVisualBottomSlotHeight = React.useCallback((nextHeight: number) => {
         const previousHeight = lastVisualBottomSlotHeightRef.current;
@@ -979,8 +1002,8 @@ function LegendListTranscriptRendererInner<TItem>(
         }
         emitRendererAtEndState({ offsetMoved, pendingCause: cause, webMovementFact });
         tryAcknowledgeInitialPresentationSettlement();
-        // Web capture is two synchronous DOM reads. Native capture observes the buffered
-        // window through Fabric and belongs to gesture settlement, not every scroll frame.
+        // Web capture checks the physical row against the viewport; only a stale Legend
+        // window needs the buffered-row fallback. Native Fabric capture belongs to settlement.
         if (isWebFrame) captureRetainedViewportRef.current();
         if (webMovementFact) {
             props.onScroll?.(event, webMovementFact);
@@ -1189,17 +1212,29 @@ function LegendListTranscriptRendererInner<TItem>(
     const retainedEntryIndex = retainedEntry?.anchor
         ? data.findIndex((item, index) => props.keyExtractor(item, resolveSourceIndex(index)) === retainedEntry.anchor?.itemId)
         : -1;
+    const restoreRetainedViewport = React.useCallback((snapshot: RetainedViewport) => {
+        if (snapshot.isPinned) {
+            scrollRendererToEnd({ animated: false });
+            return;
+        }
+        const index = data.findIndex((item, index) => props.keyExtractor(item, resolveSourceIndex(index)) === snapshot.anchor.itemId);
+        if (index < 0) return;
+        // Remount and reveal consume the same keyed placement owner. The library may
+        // still be reconciling its hidden-window measurements when reveal is observed.
+        holdIndexTarget(index, snapshot.anchor.itemOffsetPx, 0, {
+            ...snapshot.anchor,
+            reason: 'entry-restore',
+        });
+        requestHeldIntentSettle({ deferFirstVerification: true });
+    }, [data, holdIndexTarget, props.keyExtractor, requestHeldIntentSettle, resolveSourceIndex, scrollRendererToEnd]);
+    useCommittedTranscriptRef(restoreRetainedViewportRef, restoreRetainedViewport);
     React.useLayoutEffect(() => {
         if (!retainedEntry?.anchor || retainedEntryIndex < 0 || restoredEntryRef.current === retainedEntry) return;
         restoredEntryRef.current = retainedEntry;
         // Use the SAME keyed entry-placement transaction as the Session entry driver. Legend's
         // initial index materializes the row; its existing hold owns late measurement correction.
-        holdIndexTarget(retainedEntryIndex, retainedEntry.anchor.itemOffsetPx, 0, {
-            ...retainedEntry.anchor,
-            reason: 'entry-restore',
-        });
-        requestHeldIntentSettle();
-    }, [holdIndexTarget, requestHeldIntentSettle, retainedEntry, retainedEntryIndex]);
+        restoreRetainedViewportRef.current(retainedEntry);
+    }, [retainedEntry, retainedEntryIndex]);
 
     const captureRetainedViewport = React.useCallback(() => {
         const lifetime = props.viewportRetention;
@@ -1230,16 +1265,29 @@ function LegendListTranscriptRendererInner<TItem>(
         const state = legendListRef.current?.getState();
         const metrics = readWebScrollMetrics();
         if (!state || !metrics || !Number.isFinite(state.start)) return;
-        const index = state.start;
-        const item = data[index];
-        const element = state.elementAtIndex?.(index) as unknown as HTMLElement | null;
-        if (item === undefined || typeof element?.getBoundingClientRect !== 'function') return;
-        const itemOffsetPx = element.getBoundingClientRect().top - metrics.element.getBoundingClientRect().top;
-        if (!Number.isFinite(itemOffsetPx)) return;
-        save({ isPinned: false, anchor: {
-            kind: 'item', itemId: props.keyExtractor(item, resolveSourceIndex(index)), messageId: null,
-            itemOffsetPx,
-        } });
+        const viewport = metrics.element.getBoundingClientRect();
+        if (viewport.height <= 0) return;
+        const captureVisibleRow = (index: number): boolean => {
+            const item = data[index];
+            const element = state.elementAtIndex?.(index) as unknown as HTMLElement | null;
+            if (item === undefined || typeof element?.getBoundingClientRect !== 'function') return false;
+            const row = element.getBoundingClientRect();
+            const itemOffsetPx = row.top - viewport.top;
+            if (!Number.isFinite(itemOffsetPx) || row.bottom <= viewport.top || row.top >= viewport.bottom) return false;
+            save({ isPinned: false, anchor: {
+                kind: 'item', itemId: props.keyExtractor(item, resolveSourceIndex(index)), messageId: null,
+                itemOffsetPx,
+            } });
+            return true;
+        };
+        if (captureVisibleRow(state.start)) return;
+        // The browser moves before its scroll event updates Legend's window. A non-visible
+        // state.start preserves pixels against the wrong message when intervening rows grow.
+        // Read only mounted rows in the existing virtual buffer, never the full history.
+        if (!Number.isFinite(state.startBuffered) || !Number.isFinite(state.endBuffered)) return;
+        for (let index = state.startBuffered; index <= state.endBuffered; index += 1) {
+            if (index !== state.start && captureVisibleRow(index)) return;
+        }
     }, [data, hasActiveEntryPlacement, heldScrollIntentRef, isWebFrame, observeNativePhysicalViewport, props.dataKey, props.keyExtractor, props.viewportRetention, readWebScrollMetrics, resolveSourceIndex, retainedEntry]);
     useCommittedTranscriptRef(captureRetainedViewportRef, captureRetainedViewport);
     React.useLayoutEffect(() => () => captureRetainedViewportRef.current(), [props.dataKey, props.viewportRetention]);
@@ -1636,6 +1684,9 @@ function LegendListTranscriptRendererInner<TItem>(
         scrollEventThrottle: props.frame.rendererOptions.interaction.scrollEventThrottle,
         viewabilityConfig: props.viewabilityConfig,
     };
+    // A hidden retained Session tab is display:none (0 x 0): Legend keeps its last presented props and
+    // measurements until the tab is shown, so streamed rows never mount the whole transcript there.
+    const presentedLegendProps = usePresentedValue(legendProps);
 
     return (
         <TranscriptRendererContentDemandProvider demand={contentDemand}>
@@ -1660,7 +1711,7 @@ function LegendListTranscriptRendererInner<TItem>(
                 >
                     <LegendList
                         ref={legendListRef}
-                        {...legendProps}
+                        {...presentedLegendProps}
                     />
                 </TranscriptLayoutCommitObserver>
             </View>

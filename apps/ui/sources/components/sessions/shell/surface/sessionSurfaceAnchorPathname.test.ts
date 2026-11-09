@@ -31,7 +31,8 @@ describe('sessionSurfaceAnchorPathname', () => {
         expect(resolveSurfaceAnchorPathname('/session/session-2', '/session/session-1')).toBe('/session/session-2');
     });
 
-    it('falls back to the overlay route when no background route was ever observed', () => {
-        expect(resolveSurfaceAnchorPathname('/new', null)).toBe('/new');
+    it('uses the root stack Home anchor when a direct modal link has no observed background', () => {
+        expect(resolveSurfaceAnchorPathname('/new', null)).toBe('/');
+        expect(resolveSurfaceAnchorPathname('/new/pick/machine', null)).toBe('/');
     });
 });

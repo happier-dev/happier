@@ -6,17 +6,16 @@ export function resolveInactiveSessionToolCallFailure(params: Readonly<{
     permissionDisabledReason?: TranscriptPermissionDisabledReason;
 }>): ToolCall {
     if (params.permissionDisabledReason !== 'inactive') return params.tool;
-
-    const permission = params.tool.permission;
-    if (!permission || permission.status !== 'pending') return params.tool;
     if (params.tool.state !== 'running') return params.tool;
 
+    // Unsettled calls on a stopped Session use the existing interrupted
+    // presentation without changing their retained result or approval.
+    const permission = params.tool.permission;
     return {
         ...params.tool,
         state: 'error',
-        permission: {
-            ...permission,
-            status: 'canceled',
-        },
+        ...(permission?.status === 'pending' ? {
+            permission: { ...permission, status: 'canceled' as const },
+        } : {}),
     };
 }

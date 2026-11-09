@@ -1,4 +1,5 @@
 import type { HappierStagedMoveKeyIntent } from '@happier-dev/plugin-ui/presentation';
+import type { SessionListFolderAssignmentDestination } from '../drag/_types';
 
 import type {
     SessionListTreeDragSource,
@@ -36,7 +37,9 @@ function candidateRows(input: Input): SessionListTreeRowMetadata[] {
         .filter((row) => row.rowId !== input.source.id
             && !input.source.excludedDescendantIds.has(row.rowId)
             && row.kind !== 'workspace-root'
-            && row.rootId === sourceMetadata.rootId)
+            && (sourceMetadata.kind !== 'folder' || row.kind === 'folder')
+            && row.serverId === sourceMetadata.serverId
+            && !(sourceMetadata.kind === 'session' && row.kind === 'session' && row.sessionId === sourceMetadata.sessionId))
         .sort((a, b) => a.itemIndex - b.itemIndex);
 }
 
@@ -77,7 +80,7 @@ export function stepSessionListStagedMove(input: Input & Readonly<{
             break;
         case 'out':
             if (state.mode === 'under') next = { ...state, mode: 'line' };
-            else if (state.mode === 'line' && rootContainer(input)) next = { ...state, mode: 'top-level' };
+            else if (state.mode === 'line' && (input.source.metadata.kind === 'session' || rootContainer(input))) next = { ...state, mode: 'top-level' };
             break;
     }
     return { ...next, place: placeOf(input, next) };
@@ -89,7 +92,7 @@ function rootContainer(input: Input) {
 }
 
 /** The tree instruction for the staged place, or `null` while it is where it started. */
-export function resolveSessionListStagedMoveResult(input: Input & Readonly<{ state: SessionListStagedMoveState }>): SessionListTreeDropResult | null {
+export function resolveSessionListStagedMoveResult(input: Input & Readonly<{ state: SessionListStagedMoveState }>): SessionListTreeDropResult | SessionListFolderAssignmentDestination | null {
     const place = placeOf(input, input.state);
     const rows = candidateRows(input);
     switch (place.kind) {
@@ -99,6 +102,7 @@ export function resolveSessionListStagedMoveResult(input: Input & Readonly<{ sta
             return { instruction: { kind: 'blocked', reason: 'no-target' },
                 sessionListBlockReason: place.reason, visual: { kind: 'none' } };
         case 'top-level': {
+            if (input.source.metadata.kind === 'session') return { kind: 'folder-assignment', folderId: null };
             const container = rootContainer(input);
             return container
                 ? { instruction: { kind: 'move-to-root', containerId: container.containerId, rootId: container.rootId, depth: container.depth }, visual: { kind: 'none' } }

@@ -101,6 +101,7 @@ describe('sendReviewForChanges', () => {
         const session = buildSession({ sessionId: 's1', overrides: { pendingVersion: 2 } });
         // The admission port is the persistence/transport boundary; the real submission and draft owners run below it.
         const port: SessionSubmitPort = {
+            blockPendingDelivery: async () => { throw new Error('Cancelled admission cannot block delivery'); },
             enqueuePendingMessage: async () => ({ localId: 'cancelled', accepted: true, cancelled: true }),
             sendMessage: async () => { throw new Error('Direct send is unexpected'); },
             ensureSessionRuntimeForPendingInput: async () => ({ type: 'success' }),

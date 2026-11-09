@@ -31,7 +31,6 @@ import {
     resolveTranscriptItemActiveThinkingMessageId,
     resolveTranscriptRowItemType,
 } from '@/components/sessions/transcript/measurement/transcriptRowShellSignature';
-import type { ResolveSessionActionFieldOptions } from '@/components/sessions/actions/sessionActionFieldOptions';
 import {
     normalizeRestoreAnchorIdentity,
 } from '@/components/sessions/transcript/viewport/entryRestore/entryRestoreAnchorUtilities';
@@ -85,18 +84,6 @@ export type TranscriptItemsPipelineDeps = Readonly<{
     messagesById: Readonly<Record<string, Message>>;
     preDecompositionItemsRef: Ref<ChatTranscriptListItem[]>;
     renderWindowIndexMapRef: Ref<TranscriptRenderWindowProjection<ChatTranscriptListItem>['indexMap'] | null>;
-    /**
-     * F-4 (2026-08-11): the ONE option-resolution input this pipeline takes, and the reason it is a
-     * resolver rather than a settings value. An `action-draft` row paints one `HappierSelect` row per
-     * option of its `select` / `multiselect` fields, and that option list is a function of the SYNCED
-     * `backendEnabledByTargetKey` setting AND the async machine-capabilities snapshot — so it can
-     * change while the row is offscreen, where the row cannot re-measure itself and the reconciler's
-     * floor is monotonic within one structuralKey. The host supplies
-     * `useSessionActionFieldOptionsForRowHeight()`, whose identity moves only when a painted option
-     * row does, so unrelated settings or capability traffic cannot churn `buildRowShellSignature` and
-     * every row's size version through it.
-     */
-    resolveActionDraftFieldOptions: ResolveSessionActionFieldOptions;
     resolveThinkingExpanded: (messageId: string) => boolean;
     rowFontScaleKey: string;
     rowWidthBucket: string;
@@ -131,7 +118,6 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         messagesById,
         preDecompositionItemsRef,
         renderWindowIndexMapRef,
-        resolveActionDraftFieldOptions,
         resolveThinkingExpanded,
         rowFontScaleKey,
         rowWidthBucket,
@@ -335,7 +321,6 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
             groupingMode,
             item,
             latestCommittedActivityKey,
-            resolveActionDraftFieldOptions,
             resolveThinkingExpanded,
             sessionActive,
             widthBucket: rowWidthBucket,
@@ -349,7 +334,6 @@ export function useTranscriptItemsPipeline(deps: TranscriptItemsPipelineDeps) {
         getTurnMessageRevisionById,
         groupingMode,
         latestCommittedActivityKey,
-        resolveActionDraftFieldOptions,
         resolveThinkingExpanded,
         rowFontScaleKey,
         rowWidthBucket,

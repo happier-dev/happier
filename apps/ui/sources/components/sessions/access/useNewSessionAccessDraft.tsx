@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import type { SessionInitialAccessDraftV1 } from '@happier-dev/protocol';
+import type { SessionInitialAccessDraftV1 } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 
 import type { createSessionAccessActionChip } from '@/components/sessions/agentInput/definitions/createSessionAccessActionChip';
 import { useSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
@@ -204,6 +204,7 @@ export function useNewSessionAccessDraft(input: Readonly<{
     }, [updateAccess, updatePrimaryTeamId]);
 
     const resolution = useServerCredentialAccountScopeResolution(serverId);
+    // Draft candidate reads and eventual authority-bearing grants are action admission and intentionally fail closed.
     const availability = useSessionCollaborationAvailability(serverId ?? '');
     const scope = resolution.kind === 'bound' ? resolution.scope : null;
     const hasShareCandidates = useHasSessionShareCandidates({
@@ -249,6 +250,7 @@ export function useNewSessionAccessDraft(input: Readonly<{
                     <SessionAccessEditor
                         model={controller.model}
                         actions={controller.actions}
+                        query={controller.query}
                         presentation="full"
                         onRequestClose={closeScreen}
                         testID="session-access-editor:new-session-screen"
@@ -256,7 +258,7 @@ export function useNewSessionAccessDraft(input: Readonly<{
                 </View>
             ),
         };
-    }, [closeScreen, controller.actions, controller.model, input.useScreenHost, screenOpen]);
+    }, [closeScreen, controller.actions, controller.model, controller.query, input.useScreenHost, screenOpen]);
 
     const chip = React.useMemo<NewSessionAccessDraftState['chip']>(() => {
         // A restored shared draft must remain reachable even if this Home can no
@@ -267,6 +269,7 @@ export function useNewSessionAccessDraft(input: Readonly<{
         return {
             label: controller.model.summary.label,
             accessibilityLabel: controller.model.summary.accessibilityLabel,
+            pending: controller.placementPending,
             ...(input.useScreenHost ? {
                 onOpen: (focusReturnRef?: React.RefObject<View | null>) => {
                     screenFocusReturnRef.current = focusReturnRef?.current ?? null;
@@ -280,13 +283,14 @@ export function useNewSessionAccessDraft(input: Readonly<{
                     onDemand={demandEditor}
                     model={controller.model}
                     actions={controller.actions}
+                    query={controller.query}
                     presentation="compact"
                     onRequestClose={requestClose}
                     testID="session-access-editor:composer"
                 />
             ),
         };
-    }, [access?.grants.length, availability, controller.actions, controller.model, demandEditor, hasShareCandidates, homeReconciled, input.useScreenHost, primaryTeamId, scope]);
+    }, [access?.grants.length, availability, controller.actions, controller.model, controller.placementPending, controller.query, demandEditor, hasShareCandidates, homeReconciled, input.useScreenHost, primaryTeamId, scope]);
 
     // An unresolved scope hides the control; it never discards an authored
     // draft, which is authority-bearing creation input.

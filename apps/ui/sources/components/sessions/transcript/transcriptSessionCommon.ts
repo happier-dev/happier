@@ -7,8 +7,9 @@ import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { useSessionDebugInformationEnabled } from '@/sync/runtime/useSessionDebugInformationEnabled';
 import type { Message } from "@happier-dev/session-core/messages";
+import { resolveMessageRouteIdForDisplay } from "@happier-dev/session-core/messages";
 import type { FollowDeliveryProjectionV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowDeliveryProjectionV1';
-import { indexFollowDeliveryByLocalId } from './events/followWorkerCardDelivery';
+import { indexFollowDeliveryByLocalId, indexFollowWorkerCardsByInputLocalId } from './events/followWorkerCardDelivery';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useSessionTranscriptSource } from './source/SessionTranscriptSourceContext';
 import type { Settings } from '@/sync/domains/settings/settings';
@@ -122,9 +123,14 @@ export type TranscriptToolChromeCommon = Pick<TranscriptSessionCommonSettings,
     toolDisplaySettings?: ToolViewDisplaySettings;
 }>;
 
+/**
+ * Session-wide facts every row shares. It deliberately holds no message map: a tool row's route is a
+ * function of its own (live) message plus the reducer's id index, so publishing the transcript's tool
+ * map here re-rendered every mounted row on every tool start, progress and result.
+ */
 export type TranscriptToolRouteCommon = Readonly<{
-    messagesById: Readonly<Record<string, Message>>;
     followDeliveryByLocalId?: ReadonlyMap<string, FollowDeliveryProjectionV1 | null>;
+    followWorkerCardsByInputLocalId?: ReadonlyMap<string, string>;
     reducerState: ReducerState | null;
 }>;
 
@@ -132,6 +138,7 @@ export type TranscriptToolRouteCommon = Readonly<{
 export type TranscriptMessageRouteCommon = TranscriptToolRouteCommon | Readonly<{
     messageRouteId: string;
     followDeliveryByLocalId?: never;
+    followWorkerCardsByInputLocalId?: never;
 }>;
 
 export type TranscriptSessionCommon = Readonly<{
@@ -147,6 +154,18 @@ export type TranscriptSessionCommonProps = Readonly<{
     toolChromeCommon: TranscriptToolChromeCommon;
     toolRouteCommon: TranscriptToolRouteCommon;
 }>;
+
+/** The displayed route of a tool row, from the row's own message and the shared reducer index. */
+export function resolveTranscriptToolRouteMessageId(
+    message: Message,
+    toolRoute: Pick<TranscriptToolRouteCommon, 'reducerState'>,
+): string {
+    return resolveMessageRouteIdForDisplay({
+        message,
+        messagesById: { [message.id]: message },
+        reducerState: toolRoute.reducerState,
+    });
+}
 
 export function hasTranscriptSessionCommonProps(
     props: Partial<TranscriptSessionCommonProps>,
@@ -173,22 +192,23 @@ export function useTranscriptSessionCommon(): TranscriptSessionCommon {
     const sessionForkSupportSource = source.useForkSupportSource();
     const workspacePath = source.useWorkspacePath();
     const sourceMessagesById = source.useMessagesById({ textUpdates: false });
-    const relevantMessages = React.useMemo(() => {
-        const tools: Record<string, Message> = {};
+    const deliveryMessagesById = React.useMemo(() => {
         const deliveries: Record<string, Message> = {};
         for (const [id, message] of Object.entries(sourceMessagesById)) {
-            if (message.kind === 'tool-call') tools[id] = message;
-            if (message.localId && message.followDeliveryProjection) deliveries[id] = message;
+            if (message.localId && message.followDeliveryProjection
+                || message.kind === 'agent-event' && message.event.type === 'worker-update' && message.event.followInputLocalId) {
+                deliveries[id] = message;
+            }
         }
-        return { tools, deliveries };
+        return deliveries;
     }, [sourceMessagesById]);
-    // Only tool rows use this route lookup; streamed text has its own row-local reader.
-    const messagesById = useShallow((messages: Readonly<Record<string, Message>>) => messages)(relevantMessages.tools);
     // Delivery evidence changes far less often than transcript rows. Keep the
     // shared row props stable when unrelated messages stream in.
-    const followDeliveryMessagesById = useShallow((messages: Readonly<Record<string, Message>>) => messages)(relevantMessages.deliveries);
+    const followDeliveryMessagesById = useShallow((messages: Readonly<Record<string, Message>>) => messages)(deliveryMessagesById);
     const followDeliveryByLocalId = React.useMemo(
         () => indexFollowDeliveryByLocalId(followDeliveryMessagesById), [followDeliveryMessagesById]);
+    const followWorkerCardsByInputLocalId = React.useMemo(
+        () => indexFollowWorkerCardsByInputLocalId(followDeliveryMessagesById), [followDeliveryMessagesById]);
     const reducerState = source.useReducerState({ textUpdates: false });
     // The server the fork launchers spawn the child on, resolved through the one
     // owner they already use, so the decision below is scoped to that exact
@@ -321,10 +341,10 @@ export function useTranscriptSessionCommon(): TranscriptSessionCommon {
     ]);
 
     const toolRoute = React.useMemo<TranscriptToolRouteCommon>(() => ({
-        messagesById,
         followDeliveryByLocalId,
+        followWorkerCardsByInputLocalId,
         reducerState,
-    }), [messagesById, followDeliveryByLocalId, reducerState]);
+    }), [followDeliveryByLocalId, followWorkerCardsByInputLocalId, reducerState]);
 
     return React.useMemo<TranscriptSessionCommon>(() => ({
         fork,

@@ -55,7 +55,7 @@ describe('useFrozenSessionListItemsDuringDrag', () => {
         const snapshot = snapshotWith(frozen);
         const hook = await renderHook(() => useFrozenSessionListItemsDuringDrag({
             activeSnapshot: snapshot,
-            liveViewItems: [viewItem('a')],
+            liveViewItems: frozen,
         }));
 
         const projection = hook.getCurrent();
@@ -72,13 +72,13 @@ describe('useFrozenSessionListItemsDuringDrag', () => {
         const hook = await renderHook(({ live }: { live: SessionListIndexItem[] }) => useFrozenSessionListItemsDuringDrag({
             activeSnapshot: snapshot,
             liveViewItems: live,
-        }), { initialProps: { live: [viewItem('a'), viewItem('b')] } });
+        }), { initialProps: { live: frozen } });
 
         expect(hook.getCurrent().viewItems).toBe(frozen);
 
         // A background reorder swaps the live list. The visible (frozen) surface
         // must NOT reflect it until the drag ends.
-        await hook.rerender({ live: [viewItem('b'), viewItem('a'), viewItem('z')] });
+        await hook.rerender({ live: [frozen[1]!, frozen[0]!, viewItem('z')] });
 
         expect(hook.getCurrent().frozen).toBe(true);
         expect(hook.getCurrent().viewItems).toBe(frozen);
@@ -89,7 +89,7 @@ describe('useFrozenSessionListItemsDuringDrag', () => {
     it('returns the latest live list again after the drag clears', async () => {
         const frozen = [viewItem('a'), viewItem('b')];
         const snapshot = snapshotWith(frozen);
-        const latest = [viewItem('b'), viewItem('a'), viewItem('z')];
+        const latest = [frozen[1]!, frozen[0]!, viewItem('z')];
         const hook = await renderHook<
             ReturnType<typeof useFrozenSessionListItemsDuringDrag>,
             { active: SessionListDragSnapshot | null }
@@ -106,6 +106,38 @@ describe('useFrozenSessionListItemsDuringDrag', () => {
         expect(hook.getCurrent().viewItems).toBe(latest);
         expect(hook.getCurrent().snapshotId).toBeNull();
 
+        await hook.unmount();
+    });
+
+    it('withdraws a deleted or revoked row immediately while retaining the other presented positions', async () => {
+        const frozen = [viewItem('a'), viewItem('b'), viewItem('c')];
+        const hook = await renderHook(({ live }: { live: SessionListIndexItem[] }) => useFrozenSessionListItemsDuringDrag({
+            activeSnapshot: snapshotWith(frozen),
+            liveViewItems: live,
+        }), { initialProps: { live: frozen } });
+
+        await hook.rerender({ live: [viewItem('c'), viewItem('a'), { ...viewItem('b'), serverId: 'server-b' }, viewItem('new')] });
+
+        expect(hook.getCurrent().frozen).toBe(true);
+        expect(hook.getCurrent().viewItems.map((item) => item.type === 'session' ? item.sessionId : item.type))
+            .toEqual(['a', 'c']);
+        await hook.unmount();
+    });
+
+    it('keeps current header counts and labels at the frozen positions', async () => {
+        const header: SessionListIndexItem = { type: 'header', title: 'Needs you', headerKind: 'attention', groupKey: 'attention', eligibleCount: 1 };
+        const source = viewItem('a');
+        const frozen = [header, source];
+        const snapshot = snapshotWith(frozen);
+        const hook = await renderHook(({ live }: { live: SessionListIndexItem[] }) => useFrozenSessionListItemsDuringDrag({
+            activeSnapshot: snapshot,
+            liveViewItems: live,
+        }), { initialProps: { live: frozen } });
+        const currentHeader = { ...header, title: 'Current group', eligibleCount: 2 };
+
+        await hook.rerender({ live: [currentHeader, source, viewItem('arrival')] });
+
+        expect(hook.getCurrent().viewItems).toEqual([currentHeader, source]);
         await hook.unmount();
     });
 });

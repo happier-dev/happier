@@ -217,7 +217,6 @@ import { stampViewportAnchorForEmit as stampViewportAnchorForEmitState } from '@
 import { readSessionViewportForEntry } from '@/components/sessions/transcript/viewport/entryRestore/entryRestoreAnchorUtilities';
 import { resolveTranscriptMountSettleTuning } from '@/components/sessions/transcript/viewport/lifecycle/mountSettleTuning';
 import { useTranscriptFirstPaintState, useTranscriptItemsPipeline, useTranscriptToolAutoExpandEffect } from '@/components/sessions/transcript/items/useTranscriptItemsPipeline';
-import { useSessionActionFieldOptionsForRowHeight } from '@/components/sessions/actions/useSessionActionFieldOptions';
 import { useTranscriptItemRenderer, useTranscriptItemsEdgeSlots } from '@/components/sessions/transcript/rowHost/useTranscriptRowHost';
 import { useTranscriptExpansionState } from '@/components/sessions/transcript/rowHost/useTranscriptExpansionState';
 import { TranscriptPendingNavigationLanding } from '@/components/sessions/pendingNavigation/useTranscriptPendingNavigationLanding';
@@ -225,6 +224,7 @@ import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { TranscriptFindSurface } from '@/components/sessions/transcript/find/TranscriptFindSurface';
 import { useTranscriptFind, type TranscriptFindCorpus } from '@/components/sessions/transcript/find/useTranscriptFind';
 import { revealTranscriptFindMatch } from '@/components/sessions/transcript/find/revealTranscriptFindMatch';
+import { closeTranscriptRowTouchActions } from '@/components/sessions/transcript/messageActions/transcriptRowTouchReveal';
 export type { TranscriptViewportChangeState } from '@/components/sessions/transcript/chatListTypes';
 type ExplicitJumpTakeoverApplyEffect = TranscriptLifecycleHostExplicitJumpPlan['explicitJumpTakeoverEffects'][number];
 type FollowBottomIntentTakeoverApplyEffect = TranscriptLifecycleHostFollowBottomIntentPlan['followBottomIntentTakeoverEffects'][number];
@@ -539,15 +539,6 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
     const transcriptScrollPinEnabled = useSetting('transcriptScrollPinEnabled');
     const transcriptScrollPinOffsetThresholdPx = useSetting('transcriptScrollPinOffsetThresholdPx');
     const transcriptToolCallsCollapsedPreviewCountSetting = props.toolChromeCommon.transcriptToolCallsCollapsedPreviewCount;
-    // F-4 (2026-08-11): the height-bearing half of the action-draft option resolution, so an
-    // `action-draft` row's size key moves when a synced settings push or a capabilities snapshot adds
-    // or removes one of its option rows while the row is offscreen. This hook is deliberately the
-    // narrow variant: it is inert until this session actually has a draft, and its result identity
-    // moves only when a painted option row does, so it does not churn the transcript.
-    const resolveActionDraftFieldOptions = useSessionActionFieldOptionsForRowHeight(
-        props.sessionId,
-        props.sessionServerId,
-    );
     const [scrollPin, setScrollPin] = React.useState<TranscriptScrollPinState>(() => ({
         isPinned: resolveSessionEntryViewportState(readSessionViewportForEntry(props.sessionId)).shouldFollowBottom,
         newActivityCount: 0,
@@ -967,6 +958,8 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
     // The Session-surface key remounts this owner. A passive reset would erase
     // readiness already published by the warm renderer's child layout effects.
     const [firstListPaintObserved, setFirstListPaintObserved] = React.useState(false);
+    const firstListPaintObservedRef = React.useRef(false);
+    useCommittedTranscriptRef(firstListPaintObservedRef, firstListPaintObserved);
     const [nativeViewportPaintObserved, setNativeViewportPaintObservedState] = React.useState(false);
     const nativeViewportPaintObservedRef = React.useRef(false);
     const updateNativeViewportPaintObserved = React.useCallback((observed: boolean) => {
@@ -1025,7 +1018,6 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         messagesById: props.messagesById,
         preDecompositionItemsRef,
         renderWindowIndexMapRef,
-        resolveActionDraftFieldOptions,
         resolveThinkingExpanded,
         rowFontScaleKey: resolveFontScaleKey(),
         rowWidthBucket: listLayoutWidthBucket,
@@ -1710,6 +1702,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         });
     }, [isOlderPaginationNearEdge, resolveWebScrollMetrics]);
     const entryHost = useTranscriptEntryHost({
+        firstListPaintObservedRef,
         activeTargetWindowTargetRef,
         anchorLookupExhaustedRef,
         anchorLookupInFlightRef,
@@ -2124,6 +2117,12 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
         setListContentHeight,
         setListLayoutHeight,
     });
+    // A drag on the transcript closes a message's touch-opened actions (web closes them on the document's touchmove).
+    const scrollBeginDrag = scrollObservationHost.onScrollBeginDrag;
+    const onScrollBeginDrag = React.useCallback(() => {
+        closeTranscriptRowTouchActions();
+        scrollBeginDrag();
+    }, [scrollBeginDrag]);
     useCommittedTranscriptRef(
         observeCommittedProjectionLayoutRef,
         scrollObservationHost.observeCommittedProjectionLayout,
@@ -2190,7 +2189,7 @@ export const ChatListInternal = React.memo((props: ChatListInternalProps) => {
                     onLayout={scrollObservationHost.onLayout}
                     onContentSizeChange={scrollObservationHost.onContentSizeChange}
                     onScroll={scrollObservationHost.onScroll}
-                    onScrollBeginDrag={scrollObservationHost.onScrollBeginDrag}
+                    onScrollBeginDrag={onScrollBeginDrag}
                     onScrollEndDrag={scrollObservationHost.onScrollEndDrag}
                     onMomentumScrollBegin={scrollObservationHost.onMomentumScrollBegin}
                     onMomentumScrollEnd={scrollObservationHost.onMomentumScrollEnd}

@@ -58,6 +58,12 @@ function OptionalSelectionProbe() {
     return <ProbeRoot mode={state.isSelectionMode} count={state.count} version={state.version} />;
 }
 
+function OccurrenceRowProbe(props: Readonly<{ occurrenceKey: string; renders: Map<string, number> }>) {
+    const row = useSessionListSelectionRow(props.occurrenceKey);
+    props.renders.set(props.occurrenceKey, (props.renders.get(props.occurrenceKey) ?? 0) + 1);
+    return <ProbeRoot testID={props.occurrenceKey} selected={row.isSelected} focused={row.isFocused} />;
+}
+
 function ProbeRoot(props: React.PropsWithChildren<Record<string, unknown>>) {
     return React.createElement('ProbeRoot', props, props.children);
 }
@@ -74,6 +80,25 @@ async function pressByTestId(screen: Awaited<ReturnType<typeof renderScreen>>, t
 }
 
 describe('SessionListSelectionContext', () => {
+    it('paints both selected copies while leaving unrelated mounted occurrence rows unrendered', async () => {
+        const visibleOrderedKeys = ['attention:a', 'base:a', ...Array.from({ length: 998 }, (_, index) => `base:${index}`)];
+        const entityKeysByOccurrenceKey = new Map(visibleOrderedKeys.map((key) => [key, key === 'attention:a' || key === 'base:a' ? 'a' : key]));
+        const renders = new Map<string, number>();
+        const store = createSessionListSelectionStore({ scopeKey: 'mirrors', visibleOrderedKeys, entityKeysByOccurrenceKey });
+        const screen = await renderScreen(
+            <SessionListSelectionProvider scopeKey="mirrors" visibleOrderedKeys={visibleOrderedKeys} entityKeysByOccurrenceKey={entityKeysByOccurrenceKey} store={store}>
+                {visibleOrderedKeys.map((occurrenceKey) => <OccurrenceRowProbe key={occurrenceKey} occurrenceKey={occurrenceKey} renders={renders} />)}
+            </SessionListSelectionProvider>,
+        );
+        await act(async () => { store.replaceWith('base:0'); });
+        renders.clear();
+        await act(async () => { store.toggle('base:a'); });
+        expect(screen.findByTestId('attention:a')?.props).toMatchObject({ selected: true, focused: false });
+        expect(screen.findByTestId('base:a')?.props).toMatchObject({ selected: true, focused: true });
+        expect([...renders.keys()].sort()).toEqual(['attention:a', 'base:0', 'base:a']);
+        expect(store.getSnapshot().count).toBe(2);
+    });
+
     it('returns inert optional state outside a provider', async () => {
         const screen = await renderScreen(<OptionalSelectionProbe />);
 

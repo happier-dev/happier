@@ -25,7 +25,6 @@ import {
     resolveNewSessionOperationalProviderId,
 } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { computeAcpConfigOptionControlsForProvider } from '@/sync/domains/sessionControl/configOptionsControl';
-import type { Settings } from '@/sync/domains/settings/settings';
 import { useProviderSettingsForServer } from '@/providers/hooks/useProviderSettings';
 import { serializeModelVisibilityRefV1, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
 import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
@@ -62,6 +61,7 @@ import { ProviderErrorItems } from '@/components/settings/providers/ProviderErro
 import type { DaemonProviderModelProjectionRefreshFailureV1 } from '@happier-dev/protocol/rpc';
 import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { PROVIDER_DECLARATION_CONTEXT_SECTIONS } from '@/providers/catalog/accountProviderDeclarations';
 
 type FavoriteModelTogglePayload = Readonly<{
     modelId: string;
@@ -108,7 +108,7 @@ export type NewSessionFavoriteModelsDetailProps = Readonly<{
     capabilityServerId: string;
     projectionCurrent: boolean;
     cwd?: string | null;
-    settings: Settings;
+    settings: Readonly<Record<string, unknown>>;
     refreshProbe?: OptionPickerProbeState | null;
     onSelectFavoriteModel: (
         entry: ResolvedBackendCatalogEntry,
@@ -218,7 +218,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
     capabilityServerId: string;
     projectionCurrent: boolean;
     cwd?: string | null;
-    settings: Settings;
+    settings: Readonly<Record<string, unknown>>;
     onSnapshot: (targetKey: string, snapshot: FavoriteModelSnapshot) => void;
 }>) {
     const backendIdentity = React.useMemo(() => buildFavoriteBackendIdentity(props.entry), [props.entry]);
@@ -586,7 +586,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
 export function NewSessionFavoriteModelsDetail(props: NewSessionFavoriteModelsDetailProps) {
     // New Session already owns demand for this exact Machine's Agent catalog.
     // Opening Favorites shares that current answer instead of loading once per Agent.
-    const declarations = useDaemonMergedProjectionInputs({ machineId: props.selectedMachineId,
+    const declarations = useDaemonMergedProjectionInputs({ sections: PROVIDER_DECLARATION_CONTEXT_SECTIONS, machineId: props.selectedMachineId,
         serverId: props.capabilityServerId, enabled: Boolean(props.selectedMachineId), load: false });
     const declarationProjection = declarations.phase === 'ready' ? declarations.inputs?.pluginProjectionV2 ?? null : null;
     const favoriteBackendEntries = React.useMemo(() => props.resolvedBackendEntries.filter((entry) => {

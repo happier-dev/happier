@@ -66,19 +66,6 @@ export type TranscriptViewportCommand =
 
 export type TranscriptViewportControllerInput =
     | Readonly<{
-        type: 'first-paint';
-        sessionId: string;
-        shouldFollowBottom: boolean;
-        entrySnapshot?: TranscriptViewportEntrySnapshot | null;
-        jumpToSeq?: number | null;
-    }>
-    | Readonly<{
-        type: 'user-scroll';
-        sessionId: string;
-        distanceFromBottom: number;
-        pinThresholdPx: number;
-    }>
-    | Readonly<{
         type: 'jump-to-bottom';
         sessionId: string;
     }>

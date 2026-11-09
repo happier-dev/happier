@@ -109,6 +109,7 @@ export const SessionAgentActivitySummary = React.memo((props: Readonly<{
             liveIndicator={<ActivitySpinner size={9} color={theme.colors.text.secondary} />}
             facts={facts}
             trailingTime={trailingTime}
+            unread={presentation.unread}
             trailingState={trailingState}
             theme={workTheme}
             host={WORK_HOST}

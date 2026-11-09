@@ -16,16 +16,23 @@ import {
     formatWorkflowRunDisplayName,
     resolveWorkflowRunDisplayName,
 } from '@/components/workflows/presentation/workflowRunDisplayName';
-import { describeWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
+import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { getStorage } from '@/sync/domains/state/storage';
 import { readSessionPresentationRecord, readSessionPresentationInputSource, readSessionPresentationInputDisplay,
     type SessionRelationRecord, type SessionPresentationRecord } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
+import { resolveSessionListHomeKey } from '@/sync/domains/session/listing/sessionListRowStateLookup';
+import { EMPTY_SESSION_RELATION_FACTS } from '@/sync/store/domains/sessionRelations';
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { sessionWorkStalledFromStatus, readSessionWorkStatusFacts } from '@/components/work/status/sessionWorkStatusFacts';
-import { getSessionWorkContext } from '@/utils/sessions/sessionUtils';
+import { resolveToolHeaderTextPresentation } from '@/components/tools/shell/presentation/resolveToolHeaderTextPresentation';
+import { getSessionWorkContextParts } from '@/utils/sessions/sessionUtils';
+import { readStoredSessionTranscriptForAddress } from '@/sync/domains/messages/readStoredSessionMessagesForAddress';
+import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
+import { resolveSessionListRenderableMeaningfulActivityAt } from '@/sync/domains/session/listing/sessionListRenderableSorting';
 import { sessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
+import { describeWorkerUpdateHeadline } from '@/components/work/status/resolveWorkStatusTone';
 import { describeActionOperationStatusLabel, resolveActionOperationStatus } from '@/components/inbox/actionOperations/actionOperationPresentation';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { useSessionActionOperations } from '@/sync/domains/actionOperations/useActionOperations';
@@ -36,8 +43,9 @@ import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountS
 import { registerMountedWorkReadOwner } from '@/sync/ops/actions/mountedWorkReadAction';
 export { sessionInstructionsActions } from '@/sync/ops/promptLibrary/sessionInstructions';
 
-import { selectSessionReportSubtree } from './reportSubtree';
+import { readSessionRelationRecord, selectSessionReportIds } from './reportSubtree';
 import { readOwnTriggerRunIds } from './workflowRunTriggerScope';
+import { SessionWorkPresentationContext, type SessionWorkPresentationBinding } from './sessionWorkPresentation';
 import {
     EMPTY_WORK_SUMMARY,
     areWorkSummariesEqual,
@@ -70,7 +78,16 @@ export type SessionWorkSources = Readonly<{
 
 const SessionWorkSourcesContext = React.createContext<SessionWorkSources | null>(null);
 
-export const SessionWorkSourcesProvider = SessionWorkSourcesContext.Provider;
+export function SessionWorkSourcesProvider(props: Readonly<{ value: SessionWorkSources | null; children: React.ReactNode }>) {
+    const presentationRef = React.useRef<SessionWorkPresentationBinding | null>(null);
+    return (
+        <SessionWorkSourcesContext.Provider value={props.value}>
+            <SessionWorkPresentationContext.Provider value={presentationRef}>
+                {props.children}
+            </SessionWorkPresentationContext.Provider>
+        </SessionWorkSourcesContext.Provider>
+    );
+}
 
 /** The Work sources of the Session this surface is mounted under, or null outside a Session host. */
 export function useSessionWorkSources(): SessionWorkSources | null {
@@ -97,15 +114,41 @@ function normalizeId(value: string | null | undefined): string | null {
     return trimmed ? trimmed : null;
 }
 
+/**
+ * What a Session row says it is doing: what it waits on (a question, or the tool it wants permission
+ * to use), otherwise its latest update to the lead (the WorkerUpdate headline the lead's transcript
+ * already holds). Nothing else is invented: a working or quiet Session says only its kind. A compact
+ * list row knows that an approval is waiting (its attention type) but holds no request body, so it says only that.
+ */
+function readSessionWorkActivity(
+    statusFacts: WorkReportSessionSource['statusFacts'],
+    workerUpdateHeadline: string | undefined,
+): string | null {
+    const request = statusFacts.currentRequest;
+    if (request?.kind === 'permission') {
+        const tool = resolveToolHeaderTextPresentation({ tool: {
+            name: request.tool, state: 'running', input: request.arguments,
+            createdAt: request.createdAt ?? 0, startedAt: null, completedAt: null, description: null,
+        }, metadata: null }).title;
+        return t('sessionWork.row.needsApproval', { tool });
+    }
+    if (request?.questionV1) return t('sessionWork.row.asksQuestion');
+    if (statusFacts.attentionType === 'approval') return t('sessionWork.row.asksPermission');
+    return workerUpdateHeadline?.trim() || null;
+}
+
 export function toWorkReportSessionSource(
     input: SessionRelationRecord,
     nowMs: number,
+    context: Readonly<{ leadLocation?: string | null; workerUpdateHeadline?: string }> = {},
 ): WorkReportSessionSource {
     const session = readSessionPresentationRecord(input);
     const presentationSource = readSessionPresentationInputSource(input);
     const display = readSessionPresentationInputDisplay(input);
     const agentId = readSessionPresentationAgentId(display);
-    const context = getSessionWorkContext(display, display.serverId);
+    // The mark already says the engine, and every report runs where its lead does: a machine is said
+    // only when this report runs somewhere else.
+    const location = getSessionWorkContextParts(display, display.serverId).locationLabel;
     const statusFacts = readSessionWorkStatusFacts(session, nowMs, presentationSource);
     return {
         sessionId: session.id,
@@ -114,7 +157,9 @@ export function toWorkReportSessionSource(
         // ("Encrypted session"), not "Untitled session", until hydration settles it.
         title: sessionDisplayTitle(display),
         agentId,
-        facts: context ? [context] : [],
+        facts: location && location !== context.leadLocation ? [location] : [],
+        activity: readSessionWorkActivity(statusFacts, context.workerUpdateHeadline),
+        atMs: resolveSessionListRenderableMeaningfulActivityAt({ ...(presentationSource?.lifecycle ?? session), createdAt: session.createdAt }),
         statusFacts,
         stalled: sessionWorkStalledFromStatus(presentationSource?.lifecycle ?? session, statusFacts),
         archived: typeof session.archivedAt === 'number',
@@ -125,17 +170,17 @@ function toManagedRunSources(state: SessionManagedWorkflowRunsState): readonly W
     return state.runs.map((run) => ({
         run,
         title: formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName(state.metadataByRunId?.[run.id])),
-        word: describeWorkflowRunState(run.state, {
-            inAttentionWindow: state.attentionRunIds.has(run.id),
-            workflowCustodyState: run.workflowCustodyState,
-        }).label,
-        needsAttention: state.attentionRunIds.has(run.id),
+        word: readWorkflowRunWorkStatusFacts(run).word,
         time: formatAsOfTime(Date.parse(run.finishedAt ?? run.updatedAt)),
     }));
 }
 
 function describeProgress(progress: Readonly<{ completed: number; total: number }>): string {
     return t('sessionWork.progress', progress);
+}
+
+function describeReportsTo(lead: string): string {
+    return t('sessionWork.row.reportsTo', { lead });
 }
 
 function describeOperationStatus(operation: ActionOperationProjection): string {
@@ -172,16 +217,31 @@ export function useSessionWorkSourcesOwner(params: Readonly<{
         enabled,
     });
     const managedRuns = useSessionManagedWorkflowRuns({ sessionId: params.sessionId, serverId: params.serverId, enabled });
-    const reportSessions = getStorage()(useShallow((state) => (
-        enabled ? selectSessionReportSubtree(state.sessions, params.sessionId, params.serverId, state.sessionListRowsByServerId)
-            .flatMap(input => [readSessionPresentationRecord(input), 'record' in input ? input.baseSession : undefined]) : EMPTY_SESSIONS
-    )));
+    // Select the admitted inputs before walking the inventory. Other domains and Homes can publish
+    // without changing this subtree's source references.
+    const relations = getStorage()((state) => {
+        const key = enabled ? resolveSessionListHomeKey(state.sessionRelationsByServerId, params.serverId) : null;
+        return key ? state.sessionRelationsByServerId[key] ?? EMPTY_SESSION_RELATION_FACTS : EMPTY_SESSION_RELATION_FACTS;
+    });
+    const reportIds = React.useMemo(() => selectSessionReportIds(relations, params.sessionId), [relations, params.sessionId]);
+    const reportSessions = getStorage()(useShallow((state) => enabled ? reportIds.flatMap(id => {
+        const input = readSessionRelationRecord(state.sessions, id, params.serverId, state.sessionListRowsByServerId);
+        return input ? [readSessionPresentationRecord(input), 'record' in input ? input.baseSession : undefined] : [];
+    }) : EMPTY_SESSIONS));
     // Identity also depends on the named machine/workspace, not just the Session record. Only
     // changed displayed facts invalidate Work; unrelated machine or settings updates stay local.
     const reportContexts = getStorage()(useShallow(() => mapReportInputs(reportSessions, params.serverId, input => {
         const display = readSessionPresentationInputDisplay(input);
-        return getSessionWorkContext(display, display.serverId);
+        return getSessionWorkContextParts(display, display.serverId).locationLabel;
     })));
+    // The lead's own machine and the latest update each report sent it, read where the Work tab shows them.
+    const leadLocation = getStorage()((state) => {
+        const lead = enabled ? state.sessions[params.sessionId] : undefined;
+        return lead ? getSessionWorkContextParts(lead, lead.serverId).locationLabel : null;
+    });
+    const workerUpdateHeadlines = getStorage()((state) => (enabled
+        ? readStoredSessionTranscriptForAddress(state, normalizeSessionAddress(params.serverId, params.sessionId))?.latestWorkerUpdates?.session
+        : undefined));
     const ownTriggerRunIds = React.useMemo(
         () => readOwnTriggerRunIds({ sessionId: params.sessionId, runs: managedRuns.runs }),
         [managedRuns.runs, params.sessionId],
@@ -200,18 +260,26 @@ export function useSessionWorkSourcesOwner(params: Readonly<{
             accountId: operationAccountId,
             actionOperations,
             describeOperationStatus,
-            reportSessions: mapReportInputs(reportSessions, params.serverId, input => toWorkReportSessionSource(input, nowMs)),
+            reportSessions: mapReportInputs(reportSessions, params.serverId, input => {
+                const update = workerUpdateHeadlines?.[readSessionPresentationRecord(input).id];
+                return toWorkReportSessionSource(input, nowMs, {
+                    leadLocation, workerUpdateHeadline: update ? describeWorkerUpdateHeadline(update, {
+                        title: sessionDisplayTitle(readSessionPresentationInputDisplay(input)),
+                    }) : undefined,
+                });
+            }),
             agentEntries: entries,
             workflowHeadlineRuns: workflowActivity.activeRuns,
             managedRuns: toManagedRunSources(managedRuns),
             ownTriggerRunIds,
             describeAgentStatus: (entry) => resolveAgentActivityStatusPresentation(entry.status, entry.isActive).label,
             describeProgress,
+            describeReportsTo,
         }, previous?.sessionId === params.sessionId && previous.serverId === operationServerId && previous.accountId === operationAccountId
             ? previous.projection : null);
         previousProjection.current = { sessionId: params.sessionId, serverId: operationServerId, accountId: operationAccountId, projection: next };
         return next;
-    }, [actionOperations, entries, managedRuns, operationAccountId, operationServerId, ownTriggerRunIds, params.sessionId, reportContexts, reportSessions, workflowActivity.activeRuns]);
+    }, [actionOperations, entries, leadLocation, managedRuns, operationAccountId, operationServerId, ownTriggerRunIds, params.sessionId, reportContexts, reportSessions, workerUpdateHeadlines, workflowActivity.activeRuns]);
 
     React.useLayoutEffect(() => {
         const lifetime = captureActiveServerAccountScopeLifetime();

@@ -1,14 +1,47 @@
 import { describe, expect, it } from 'vitest';
-import { readSessionCapabilityApplyChange, sessionCapabilityApplyNotice } from './sessionCapabilityApplyNotice';
+import { readSessionCapabilityApplyChange, sessionCapabilityApplyNotice, sessionSkillApplyNotice } from './sessionCapabilityApplyNotice';
 import { readPendingCapabilityApplyV1, writeCapabilitySelectionApplyV1, clearCapabilitySelectionApplyV1, writeSessionCapabilitySelectionToMetadataV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
 import { createSessionOwnerMetadataV1, projectSessionSharedMetadataV1, SessionOwnerMetadataV1Schema, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { setSessionCapabilitySelectionItemV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 import type { CapabilityApplyTimingV1 } from '@happier-dev/protocol/reach/capabilityApplyTimingV1';
+import { readSessionSkillApplicationFacts } from '@/sync/domains/capabilities/session/useSessionCapabilities';
 import { SkillListItemV1Schema } from '@happier-dev/protocol/prompts/library/skills/skillLibraryItemV1';
 import { buildSkillComposerGroups, pickSkillComposerRow } from '@/sync/domains/skills/skillComposerGroups';
 import { SessionCapabilitySelectionAuthoringV1Schema } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 
 describe('the single session capability apply notice', () => {
+    const notice = (input: Omit<Parameters<typeof sessionSkillApplyNotice>[0], 'facts'> & { metadata: unknown; skillId: string }) =>
+        sessionSkillApplyNotice({ ...input, facts: readSessionSkillApplicationFacts(input.metadata, input.skillId) });
+    it('only calls a saved skill live after its own desired selection is acknowledged', () => {
+        const selected = setSessionCapabilitySelectionItemV1({}, 'skill', 'review', 'on');
+        const pending = writeSessionCapabilitySelectionToMetadataV1({}, selected, { sessionActive: true });
+        const input = { metadata: pending, skillId: 'review', title: 'Review', sessionRunning: true,
+            applyTiming: { t: 'applied_now' } as const, machineOnline: true, machineName: 'QA', turnSettled: true };
+        expect(notice(input)?.key).toBe('saved');
+        const acknowledged = writeSessionCapabilitySelectionToMetadataV1({}, selected, { sessionActive: false });
+        expect(notice({ ...input, metadata: acknowledged })?.key).toBe('addedNow');
+        expect(notice({ ...input, metadata: acknowledged, sessionRunning: false })?.key).toBe('nextStart');
+        expect(notice({ ...input, metadata: acknowledged, machineOnline: false })?.key).toBe('offline');
+    });
+    it('keeps a saved skill paired with its own apply record when MCP requires a terminal restart', () => {
+        const selection = setSessionCapabilitySelectionItemV1(setSessionCapabilitySelectionItemV1({}, 'skill', 'review', 'on'), 'mcp_server', 'linear', 'on');
+        const metadata = writeCapabilitySelectionApplyV1(writeSessionCapabilitySelectionToMetadataV1({}, selection, { sessionActive: true }), {
+            mcp: { reason: 'restart_to_apply', restartBy: 'terminal' }, skills: { reason: 'next_turn' },
+        });
+        const input = { metadata, skillId: 'review', title: 'Review', sessionRunning: true,
+            applyTiming: { t: 'applied_now' } as const, machineOnline: true, machineName: 'QA', turnSettled: true };
+        expect(notice(input)?.key).toBe('joinsNextTurn');
+        expect(notice({ ...input, skillId: 'other' })).toBeNull();
+        for (const [reason, restartBy, key] of [['restart_to_apply', 'terminal', 'restartTerminal'], ['restart_to_apply', 'user', 'restart'],
+            ['new_sessions_only', undefined, 'newSessionsOnly']] as const) {
+            expect(notice({ ...input, metadata: writeCapabilitySelectionApplyV1(metadata, { skills: { reason, ...(restartBy ? { restartBy } : {}) } }) })?.key).toBe(key);
+        }
+    });
+    it('presents an acknowledged inclusion refusal for new Sessions while no desired override was written', () => {
+        expect(notice({ metadata: {}, skillId: 'review', title: 'Review', sessionRunning: true,
+            inclusion: { ok: false, code: 'applies_to_new_sessions_only' }, applyTiming: null,
+            machineOnline: null, machineName: 'QA', turnSettled: true })?.key).toBe('newSessionsOnly');
+    });
     it('retains saved pending changes without an offline claim or restart action while Machine presence is unknown', () => {
         expect(sessionCapabilityApplyNotice({ pendingApply: { mcp: true, skills: false },
             applyTiming: { mcp: { t: 'restart_to_apply', restartBy: 'user' }, skills: { t: 'next_turn' } },

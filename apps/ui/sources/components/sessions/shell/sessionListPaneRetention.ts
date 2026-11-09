@@ -4,6 +4,7 @@ import type { VisibleSessionListPaneState } from '@/hooks/session/useVisibleSess
 import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 import type { SessionListQueryHomeState } from '@/sync/domains/session/listing/sessionListQueryController';
 import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { readSessionAddressLookupQueryMembership } from '@/sync/domains/session/resolveSessionAddressFromLocalState';
 
 export type RetainedSessionListPaneState = Readonly<{
     storageKind: SessionListStorageFilter;
@@ -62,6 +63,35 @@ export function readRetainedSessionListPaneState(
     return retainedPaneStateByKey.get(getRetentionKey(identity)) ?? null;
 }
 
+/**
+ * Retention readers consume only query membership: `active`, coverage and each Home's admitted lookup
+ * membership. The pane's query object also carries its row index, which every row write rebuilds, and
+ * its states carry revalidation stamps; neither is a retention change.
+ */
+function sameRetainedQueryMembership(
+    previous: VisibleSessionListPaneState['query'],
+    next: VisibleSessionListPaneState['query'],
+): boolean {
+    if (previous === next) return true;
+    if (!previous || !next) return false;
+    if (previous.active !== next.active || previous.coverageComplete !== next.coverageComplete) return false;
+    if (previous.statesByServerId === next.statesByServerId) return true;
+    // Freshness stamps and Home observations change on every revalidation; lookup reads only admitted membership.
+    const serverIds = new Set([...Object.keys(previous.statesByServerId), ...Object.keys(next.statesByServerId)]);
+    for (const serverId of serverIds) {
+        const before = previous.statesByServerId[serverId];
+        const after = next.statesByServerId[serverId];
+        if (before === after) continue;
+        if (!before || !after) return false;
+        const beforeMembership = readSessionAddressLookupQueryMembership(before);
+        const afterMembership = readSessionAddressLookupQueryMembership(after);
+        if (beforeMembership !== afterMembership && !(beforeMembership && afterMembership
+            && beforeMembership.length === afterMembership.length
+            && beforeMembership.every((address, index) => sessionAddressKey(address) === sessionAddressKey(afterMembership[index]!)))) return false;
+    }
+    return true;
+}
+
 export function retainSessionListPaneState(
     state: RetainedSessionListPaneState,
 ): RetainedSessionListPaneState | null {
@@ -75,7 +105,7 @@ export function retainSessionListPaneState(
         !previous
         || previous.queryMembershipActive !== state.queryMembershipActive
         || previous.referenceCorpusActive !== state.referenceCorpusActive
-        || previous.paneState.query !== state.paneState.query
+        || !sameRetainedQueryMembership(previous.paneState.query, state.paneState.query)
     ) publishRetentionChange();
     return state;
 }

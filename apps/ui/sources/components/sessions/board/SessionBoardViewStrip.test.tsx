@@ -328,6 +328,9 @@ describe('SessionBoardViewStrip', () => {
         try {
             document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
             focusTarget.focus();
+            await act(async () => {
+                screen.findByTestId('session-board-views-view-ship')?.props.onFocus?.({ target: focusTarget });
+            });
             const tab = screen.findByTestId('session-board-views-view-ship');
             const focused = flattenTestStyle(
                 (tab?.props.style as ((state: { pressed: boolean; focused: boolean }) => unknown))?.({

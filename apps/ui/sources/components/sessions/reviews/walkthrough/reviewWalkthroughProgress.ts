@@ -1,4 +1,4 @@
-import type { ScmDiffSummaryOutputState } from '@happier-dev/protocol';
+import type { ScmDiffSummaryOutputState } from '@happier-dev/protocol/scm/diffSummary';
 
 import type { WalkthroughReviewSummary } from './reviewWalkthroughOverlay';
 

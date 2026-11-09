@@ -12,6 +12,7 @@ import { SessionMessageReplyReadBatchRequestV1Schema } from '@happier-dev/protoc
 import { publishSessionMessageReplyInvalidation } from '@/sync/runtime/sessionMessageReplyInvalidation';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createToolCallMessageFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
+import { isSessionMessageInvocationAnchor, presentsAsSessionAskRecord } from './readSessionMessageInvocation';
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -42,6 +43,15 @@ function InvocationProbe(props: { scope: { serverId: string; accountId: string }
 }
 
 describe('source Session messaging invocation', () => {
+    it('keeps a failed explicit pass separate from the original Ask and its typed return', () => {
+        const message = createToolCallMessageFixture({ tool: { ...createToolCallMessageFixture().tool,
+            name: 'mcp__happier__action_execute', input: { actionId: 'session.message.reply', input: {
+                sessionId: 'receiver', requestLocalId: 'question', reply: { kind: 'pass' },
+            } }, result: { content: [{ type: 'text', text: JSON.stringify({ v: 1, ok: false, error: 'unavailable' }) }] },
+        } });
+        expect(isSessionMessageInvocationAnchor(message)).toBe(false);
+        expect(presentsAsSessionAskRecord(message, { serverId: 'home', sessionId: 'receiver' })).toBe(false);
+    });
     it.each(['outcomeUnknown', 'rejected'] as const)('does not attach an old original or return to an unadmitted %s operation key', async status => {
         const serverId = await homes.addHome({ name: 'Unbound', serverUrl: 'https://invocation-unbound.test', accountId: 'alice', currentAccount: true });
         const message = createToolCallMessageFixture({ id: 'second-call', tool: { ...createToolCallMessageFixture().tool,

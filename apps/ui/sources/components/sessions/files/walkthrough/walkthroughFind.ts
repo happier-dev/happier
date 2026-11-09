@@ -30,7 +30,7 @@ function filePathOf(key: string): string {
 type Connection = Parameters<ChangedFilesReviewFindModel['connect']>[0];
 
 function walkthroughFindInput(
-  reading: WalkthroughReading,
+  code: WalkthroughReading['code'],
   reveal: (target: ReviewFindTarget | null) => void,
 ): Connection {
   const states: Array<readonly [string, ReviewDiffState]> = [];
@@ -49,14 +49,14 @@ function walkthroughFindInput(
           },
     ]);
   };
-  for (const stop of reading.stops)
+  for (const stop of code.stops)
     for (const file of stop.files)
       add(
         walkthroughStopFindKey(stop.id, file.path),
         file.unifiedDiff,
         file.unavailableReason,
       );
-  for (const other of reading.others)
+  for (const other of code.others)
     add(
       walkthroughOtherFindKey(other.path),
       other.unifiedDiff,
@@ -71,16 +71,17 @@ export function connectWalkthroughFind(
   reading: WalkthroughReading,
   reveal: (target: ReviewFindTarget | null) => void,
 ): () => void {
-  return model.connect(walkthroughFindInput(reading, reveal));
+  return model.connect(walkthroughFindInput(reading.code, reveal));
 }
 
 export function useWalkthroughFind(
   reading: WalkthroughReading,
   reveal: (target: ReviewFindTarget | null) => void,
 ): ChangedFilesReviewFindModel {
+  const code = reading.code;
   const input = React.useMemo(
-    () => walkthroughFindInput(reading, reveal),
-    [reading.stops, reading.others, reveal],
+    () => walkthroughFindInput(code, reveal),
+    [code, reveal],
   );
   return useChangedFilesReviewFind(input);
 }

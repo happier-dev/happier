@@ -12,9 +12,10 @@ import {
 } from '@/dev/testkit';
 import { installWorkflowRendererCommonModuleMocks } from '@/components/tools/renderers/workflow/workflowRendererTestHelpers';
 import {
-    type SessionWorkflowRunHeadlineV1,
+    type SessionWorkflowRunHeadlineV1} from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
+import {
     type SessionWorkflowRunSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 
 import type { SessionWorkflowActivityState } from './useSessionWorkflowActivity';
 import type { WorkflowRunDetailState } from './sessionWorkflowActivityTypes';

@@ -1,10 +1,14 @@
 import type {
-    ComposerAttachmentViewV1,
-    ComposerContentHandleV1,
-    ComposerRefV1,
-    ComposerSnapshotV1,
+    ComposerAttachmentViewV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type {
+    ComposerContentHandleV1} from '@happier-dev/protocol/runtime/input/composerContentV1';
+import type {
+    ComposerRefV1} from '@happier-dev/protocol/plugins/ui/composerRef';
+import type {
+    ComposerSnapshotV1} from '@happier-dev/protocol/plugins/ui/composer';
+import type {
     SessionExecutionTargetV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import { composerRefsV1Equal } from '@happier-dev/protocol/plugins/ui/composerRef';
 import { admitMentionRefsV1ForText, parseMentionRefV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 import { INLINE_REFERENCE_ATTACHMENT_SCHEME_V1, scanInlineReferenceTokensV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';

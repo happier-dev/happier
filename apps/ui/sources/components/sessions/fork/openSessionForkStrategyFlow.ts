@@ -1,4 +1,4 @@
-import type { SessionForkPoint } from '@happier-dev/protocol';
+import type { SessionForkPoint } from '@happier-dev/protocol/sessions/fork';
 import type { Router } from 'expo-router';
 
 import type { CurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';

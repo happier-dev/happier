@@ -348,7 +348,8 @@ export const CurrentSessionPresentationRuntime = React.memo(function CurrentSess
                 syncAll();
             }
         });
-        const unsubscribeStorage = storage.subscribe(syncAll);
+        const unsubscribeStorage = storage.subscribe(syncAll, { sessions: true, sessionListRowsByServerId: true,
+            sessionListIndexByServerId: true, profileScope: true });
         const unsubscribeVisibility = subscribeSessionSurfaceVisibility(syncAll);
         const unsubscribeComposer = subscribeSessionComposerPresentationTargets(syncAll);
         return () => {

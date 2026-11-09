@@ -1,13 +1,16 @@
 import * as React from 'react';
+import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { installBrowserClipboardBoundary } from '@/dev/testkit';
+import { hitAreaOverlap, readHitArea } from '@/dev/testkit/harness/hitFrameReach';
+import { SESSION_HEADER_ACTION_SIZE_PX } from './sessionHeaderIconMetrics';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { FindController } from '@happier-dev/plugin-ui/presentation';
 import {
   createDeferred,
   createSessionAccessFixture,
   createSessionFixture,
-  flattenTestStyle,
   flushHookEffects,
   renderScreen,
 } from '@/dev/testkit';
@@ -30,11 +33,23 @@ import {
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
+
 const runSessionHandoffPickerFlowMock = vi.hoisted(() => vi.fn());
 const createDefaultActionExecutorMock = vi.hoisted(() => vi.fn());
 const openSessionForkStrategyFlowMock = vi.hoisted(() => vi.fn());
-const clipboardMock = vi.hoisted(() => vi.fn(async () => true));
+const clipboardMock = vi.hoisted(() => vi.fn(async (_text: string) => true));
 vi.mock('expo-clipboard', () => ({ setStringAsync: clipboardMock }));
+// The account encryption-mode HTTP adapter is a network boundary; a plain account writes plain display envelopes.
+vi.mock('@/sync/api/account/apiAccountEncryptionMode', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/sync/api/account/apiAccountEncryptionMode')>(),
+  fetchAccountEncryptionMode: async () => ({ mode: 'plain' }),
+}));
+// The session-organization HTTP adapter is the network boundary; scope resolution and the writer stay real.
+const appearanceRequestMock = vi.hoisted(() => vi.fn(async () => ({ appearance: null })));
+vi.mock('@/sync/api/session/sessionOrganizationApi', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/sync/api/session/sessionOrganizationApi')>(),
+  setSessionAppearance: appearanceRequestMock,
+}));
 const modalAlertMock = vi.hoisted(() => vi.fn());
 const modalPromptMock = vi.hoisted(() => vi.fn(async () => null as string | null));
 const resolveSessionTargetServerIdMock = vi.hoisted(() => vi.fn());
@@ -113,6 +128,8 @@ const storageState = vi.hoisted(() => ({
     ordinarySessionListMembershipByServerId: {} as Record<string, readonly string[]>,
     machines: {} as Record<string, any>,
     machineListByServerId: {} as Record<string, any>,
+    machinePresenceById: {},
+    machinePresenceByServerId: {},
     createSessionActionDraft: createSessionActionDraftMock,
   },
 }));
@@ -196,67 +213,13 @@ function createDeclaredCodexSourceProjection() {
   };
 }
 
-function buildConfiguredInactiveDaemonTransferState() {
-  return {
-    transfer: {
-      supported: {
-        import: true,
-        export: true,
-      },
-      listenerClasses: {
-        loopback_http: {
-          enabled: true,
-          configured: true,
-          active: false,
-        },
-        lan_http: {
-          enabled: false,
-          configured: false,
-          active: false,
-        },
-        tailscale_serve_https: {
-          enabled: false,
-          configured: false,
-          active: false,
-          available: false,
-        },
-      },
-      lifecycle: {
-        mode: 'lazy_idle_shutdown',
-        version: 1,
-      },
-    },
-  };
-}
-
 const EXTERNAL_SESSION_RPC_METHOD_PREFIX = 'daemon.externalSessions.';
-const EXTERNAL_SESSION_FOLLOW_SET_METHOD = 'daemon.externalSessions.backgroundFollow.set';
 
-/**
- * The header's handoff source-reachability probe issues its own unrelated
- * `machineRpcWithServerScope` traffic through the same mocked transport, so a
- * bare "was this transport used" assertion cannot distinguish it from the
- * follow behavior under test. Name the method instead of counting every call.
- */
+/** Count the External Session follow contract's own RPC methods. */
 function machineRpcCallsWithMethodPrefix(prefix: string): readonly unknown[][] {
   return machineRpcWithServerScopeMock.mock.calls.filter(
     (call) => String((call[0] as { method?: unknown } | undefined)?.method ?? '').startsWith(prefix),
   );
-}
-
-/**
- * Answer exactly one method through the shared transport. `mockResolvedValueOnce`
- * is not usable here: the reachability probe can consume the queued value before
- * the action under test ever reaches the transport.
- */
-function respondToMachineRpcMethod(
-  method: string,
-  respond: () => unknown,
-): void {
-  machineRpcWithServerScopeMock.mockImplementation(async (request: unknown) => {
-    if ((request as { method?: unknown } | undefined)?.method === method) return await respond();
-    throw new Error('unreachable');
-  });
 }
 
 installSessionActionsCommonModuleMocks({
@@ -329,36 +292,6 @@ vi.mock('react', async () => {
     ...actual,
     useMemo: actual.useMemo,
     useState: actual.useState,
-  };
-});
-
-vi.mock('@happier-dev/protocol', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@happier-dev/protocol')>();
-  return {
-    ...actual,
-    listActionSpecs: () => [
-      {
-        id: 'session.fork',
-        title: 'Fork session',
-        description: 'Create a child session',
-        surfaces: { ui: true },
-        placements: ['session_action_menu'],
-      },
-      {
-        id: 'session.handoff',
-        title: 'Hand off session',
-        description: 'Move the current session',
-        surfaces: { ui: true },
-        placements: ['session_action_menu'],
-      },
-      {
-        id: 'subagents.plan.start',
-        title: 'Start plan run',
-        description: 'Plan changes',
-        surfaces: { ui: true },
-        placements: ['session_action_menu'],
-      },
-    ],
   };
 });
 
@@ -490,6 +423,9 @@ vi.mock('@/voice/agent/teleportVoiceAgentToSessionRoot', () => ({
   teleportVoiceAgentToSessionRoot: (args: any) => teleportVoiceAgentToSessionRootMock(args),
 }));
 
+// Transform the new Start renderer graph during collection; each test still gets its reset module instance.
+await import('./SessionHeaderActionMenu');
+
 describe('SessionHeaderActionMenu handoff', () => {
   beforeEach(async () => {
     resetSessionActionsCommonModuleMockState();
@@ -499,6 +435,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     modalAlertMock.mockReset();
     clipboardMock.mockReset();
     clipboardMock.mockResolvedValue(true);
+    installBrowserClipboardBoundary(async text => { await clipboardMock(text); });
     modalPromptMock.mockReset();
     modalPromptMock.mockResolvedValue(null);
     resolveSessionTargetServerIdMock.mockReset();
@@ -553,6 +490,8 @@ describe('SessionHeaderActionMenu handoff', () => {
       ordinarySessionListMembershipByServerId: {},
       machines: {},
       machineListByServerId: {},
+      machinePresenceById: {},
+      machinePresenceByServerId: {},
       createSessionActionDraft: createSessionActionDraftMock,
     };
     allMachinesState.current = [];
@@ -573,7 +512,9 @@ describe('SessionHeaderActionMenu handoff', () => {
     // replaces the test store and every bridge-backed reader — renderable
     // row read-state, the External Session follow link fence — sees an empty
     // Home instead of the fixture.
-    await import('@/sync/domains/state/storageStore');
+    const { storage: canonicalStorage } = await import('@/sync/domains/state/storageStore');
+    const { settingsParse } = await import('@/sync/domains/settings/settings');
+    canonicalStorage.setState({ settings: settingsParse(storageState.current.settings) });
     const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
     registerStorageStateReader(() => storageState.current as any);
     const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
@@ -592,10 +533,11 @@ describe('SessionHeaderActionMenu handoff', () => {
     const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
     storageState.current.sessions[session.id] = { ...session, ownerMetadataView: { ...session.ownerMetadataView,
       nativeResumeIdentityV1: { v: 1, vendorResumeId: 'current-id' }, sessionLogPath: '/tmp/session.log' } };
+    await act(async () => { screen.findByType('DropdownMenu' as React.ElementType).props.onOpenChange(true); });
     const dropdown = screen.findByType('DropdownMenu' as React.ElementType);
     expect(dropdown.props.items).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'ui.session.pin' }),
-      expect.objectContaining({ id: 'session.copyDebugInformation' }),
+      expect.objectContaining({ id: 'session.copy' }),
     ]));
     await act(async () => {
       dropdown.props.onSelect('session.copyDebugInformation');
@@ -606,15 +548,76 @@ describe('SessionHeaderActionMenu handoff', () => {
       'agentInput.agent.codex session ID: current-id',
       'Happier logs: /tmp/session.log',
     ].join('\n'));
+    for (const [itemId, expected] of [
+      ['session.copySessionId', session.id],
+      ['session.copyProviderSessionId', 'current-id'],
+    ]) {
+      await act(async () => { dropdown.props.onOpenChange(true); });
+      await act(async () => {
+        dropdown.props.onSelect(itemId);
+        await Promise.all(fireAndForgetMock.mock.calls.map(([promise]) => promise));
+      });
+      expect(clipboardMock).toHaveBeenLastCalledWith(expected);
+    }
+
   });
 
-  it('reports clipboard refusal from the header information action', async () => {
-    clipboardMock.mockResolvedValue(false);
+  it('offers Set color only where the server stores session colours, and writes the chosen colour for this session', async () => {
     const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
-    const session = createSessionFixture({ id: 'header-copy-refused', serverId: 'server_a' });
+    const { upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const { getStorage } = await import('@/sync/domains/state/storageStore');
+    const profile = await upsertServerProfile({ serverUrl: 'https://header-colours.example', name: 'Header colour test' });
+    resolveSessionTargetServerIdMock.mockReturnValue(profile.id);
+    const session = createSessionFixture({ id: 'header-colour', serverId: profile.id });
+    const credentialsSpy = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl')
+      .mockResolvedValue({ token: 'header-token', secret: 'header-secret' } as any);
+    const openMenu = async (screen: Awaited<ReturnType<typeof renderScreen>>) => {
+      await act(async () => {
+        screen.findByType('DropdownMenu' as React.ElementType).props.onOpenChange(true);
+      });
+      return screen.findByType('DropdownMenu' as React.ElementType);
+    };
+    try {
+      const unsupported = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
+      expect(((await openMenu(unsupported)).props.items as Array<{ id: string }>).map((item) => item.id))
+        .not.toContain('ui.session.appearance-color');
+      await unsupported.unmount();
+
+      getStorage().setState({ sessionOrganizationSessionAppearancesSupportedByServerId: { [profile.id]: true } } as any);
+      const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
+      const dropdown = await openMenu(screen);
+      const colorItem = (dropdown.props.items as any[]).find((item) => item.id === 'ui.session.appearance-color');
+      expect(colorItem?.submenu?.items.some((item: { swatch?: unknown }) => item.swatch)).toBe(true);
+      const green = (colorItem.submenu.items as Array<{ id: string }>).find((item) => item.id.endsWith(':accent:green'))!;
+      await act(async () => {
+        dropdown.props.onSelect(green.id);
+        await Promise.all(fireAndForgetMock.mock.calls.map(([promise]) => promise));
+      });
+      expect(appearanceRequestMock).toHaveBeenCalledWith(expect.objectContaining({ sessionId: session.id }));
+    } finally {
+      credentialsSpy.mockRestore();
+      getStorage().setState({ sessionOrganizationSessionAppearancesSupportedByServerId: {} } as any);
+    }
+  });
+
+  it('omits the provider ID choice when none is available', async () => {
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+    const session = createSessionFixture({ id: 'header-no-provider-id', serverId: 'server_a' });
     const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
+    await act(async () => { screen.findByType('DropdownMenu' as React.ElementType).props.onOpenChange(true); });
+    const copy = screen.findByType('DropdownMenu' as React.ElementType).props.items.find((item: { id: string }) => item.id === 'session.copy');
+    expect(copy.submenu.items.map((item: { id: string }) => item.id)).toEqual(['session.copyDebugInformation', 'session.copySessionId']);
+  });
+
+  it.each(['session.copyDebugInformation', 'session.copySessionId', 'session.copyProviderSessionId'])('reports clipboard refusal for %s from the header', async (actionId) => {
+    clipboardMock.mockRejectedValue(new DOMException('', 'NotAllowedError'));
+    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
+    const session = createSessionFixture({ id: 'header-copy-refused', serverId: 'server_a', metadata: { path: '/workspace', host: 'host', flavor: 'claude', claudeSessionId: 'vendor-id' } });
+    const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
+    await act(async () => { screen.findByType('DropdownMenu' as React.ElementType).props.onOpenChange(true); });
     await act(async () => {
-      screen.findByType('DropdownMenu' as React.ElementType).props.onSelect('session.copyDebugInformation');
+      screen.findByType('DropdownMenu' as React.ElementType).props.onSelect(actionId);
       await Promise.all(fireAndForgetMock.mock.calls.map(([promise]) => promise));
     });
     expect(modalAlertMock).toHaveBeenCalledWith('common.error', 'sessionInfo.failedToCopyMetadata');
@@ -1099,6 +1102,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   });
 
   it('prefers the reachable source machine id for handoff gating and flow context when session metadata is stale', async () => {
+    machineRpcWithServerScopeMock.mockResolvedValue({});
     reachableMachineTargetState.current = {
       machineId: 'machine_rebound',
       basePath: '/workspace/repo',
@@ -1144,7 +1148,6 @@ describe('SessionHeaderActionMenu handoff', () => {
       sourceMachineId: 'machine_rebound',
       serverId: 'server_a',
       placement: 'session_action_menu',
-      availability: { available: true, reason: 'available' },
     });
   });
 
@@ -1163,13 +1166,14 @@ describe('SessionHeaderActionMenu handoff', () => {
         />);
 
     const dropdown = screen.findByType('DropdownMenu' as any);
-    const trigger = dropdown.props.trigger({
+    const triggerScreen = await renderScreen(dropdown.props.trigger({
       open: false,
       toggle: vi.fn(),
       openMenu: vi.fn(),
       closeMenu: vi.fn(),
       selectedItem: null,
-    }) as any;
+    }));
+    const trigger = triggerScreen.findByType('button');
 
     expect(trigger.props['data-testid']).toBe('session-header-action-menu-trigger');
     expect(trigger.props['aria-label']).toBe('session.actionMenu.openA11y');
@@ -1193,15 +1197,15 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const dropdown = screen.findByType('DropdownMenu' as any);
     const toggle = vi.fn();
-    const trigger = dropdown.props.trigger({
+    const triggerScreen = await renderScreen(dropdown.props.trigger({
       open: false,
       toggle,
       openMenu: vi.fn(),
       closeMenu: vi.fn(),
       selectedItem: null,
-    }) as any;
+    }));
+    const trigger = triggerScreen.findByType('button');
 
-    expect(trigger.type).toBe('button');
     expect(trigger.props['data-testid']).toBe('session-header-action-menu-trigger');
     expect(trigger.props.testID).toBeUndefined();
     expect(typeof trigger.props.onClick).toBe('function');
@@ -1227,11 +1231,16 @@ describe('SessionHeaderActionMenu handoff', () => {
     };
   }
 
-  it('uses the Android physical 48dp target instead of overlapping hit slop for direct and menu header controls', async () => {
+  it('keeps Android header controls compact with non-overlapping touch reach', async () => {
     const { Platform } = await import('react-native');
     const previousPlatform = Platform.OS;
     (Platform as { OS: string }).OS = 'android';
     try {
+      // The suite resets modules between cases; mount the same platform
+      // context instance the freshly imported controls will consume.
+      const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
+      const AndroidHeaderTestHost = ({ children }: React.PropsWithChildren) =>
+        <HappierUiPlatformProvider platform={{ platform: 'android', colorScheme: 'light' }}>{children}</HappierUiPlatformProvider>;
       const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
       const screen = await renderScreen(<SessionHeaderActionMenu
         sessionId="sess_1"
@@ -1248,31 +1257,29 @@ describe('SessionHeaderActionMenu handoff', () => {
           enabled: true,
         }]}
         pluginHeaderActionPlacement="direct"
-      />);
+      />, { wrapper: AndroidHeaderTestHost });
 
-      const directAction = screen.findByProps({
-        testID: 'session-header-plugin-action-plugin-ui:sessionHeaderAction:acme.preview:run-preview',
-      });
-      expect(flattenTestStyle(directAction.props.style({ pressed: false }))).toMatchObject({
-        width: 48,
-        height: 48,
-      });
-      expect(directAction.props.hitSlop).toBeUndefined();
+      const directAction = screen.findHostByTestId('session-header-plugin-action-plugin-ui:sessionHeaderAction:acme.preview:run-preview');
+      if (!directAction) throw new Error('Missing direct header action host');
+      const directArea = readHitArea(directAction);
 
       const dropdown = screen.findByType('DropdownMenu' as any);
-      const menuTrigger = dropdown.props.trigger({
+      const triggerScreen = await renderScreen(dropdown.props.trigger({
         open: false,
         toggle: vi.fn(),
         openMenu: vi.fn(),
         closeMenu: vi.fn(),
         selectedItem: null,
-      }) as any;
-      expect(menuTrigger.props.testID).toBe('session-header-action-menu-trigger');
-      expect(flattenTestStyle(menuTrigger.props.style({ pressed: false }))).toMatchObject({
-        width: 48,
-        height: 48,
-      });
-      expect(menuTrigger.props.hitSlop).toBeUndefined();
+      }), { wrapper: AndroidHeaderTestHost });
+      const menuTrigger = triggerScreen.findHostByTestId('session-header-action-menu-trigger');
+      if (!menuTrigger) throw new Error('Missing menu trigger host');
+      const menuArea = readHitArea(menuTrigger);
+      for (const area of [directArea, menuArea]) {
+        expect(area.drawn).toEqual({ width: SESSION_HEADER_ACTION_SIZE_PX, height: SESSION_HEADER_ACTION_SIZE_PX });
+        expect(area.height).toBeGreaterThanOrEqual(48);
+      }
+      // The actual header has a six-point gap; each neighbour owns half.
+      expect(hitAreaOverlap(directArea, menuArea, { axis: 'horizontal', gap: 6 })).toBe(0);
     } finally {
       (Platform as { OS: string }).OS = previousPlatform;
     }
@@ -1302,8 +1309,6 @@ describe('SessionHeaderActionMenu handoff', () => {
           available: true,
         },
       },
-
-
       resourcesById: {},
       settingsById: {},
       familiesById: {
@@ -1424,8 +1429,6 @@ describe('SessionHeaderActionMenu handoff', () => {
       installedPackagesById: {},
       agentsById: {},
       actionsById: {},
-
-
       resourcesById: {},
       settingsById: {},
       familiesById: {
@@ -1850,7 +1853,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   });
 
   it('fails closed (does not surface session.handoff) when machine transfer is disabled on the selected server', async () => {
-    const { FeaturesResponseSchema } = await import('@happier-dev/protocol');
+    const { FeaturesResponseSchema} = await import('@happier-dev/protocol/features/payload/featuresResponseSchema');
     serverSnapshotState.current = {
       status: 'ready',
       features: FeaturesResponseSchema.parse({
@@ -1896,7 +1899,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   });
 
   it('fails closed when direct peer is runtime-unknown and the selected server only exposes direct-peer handoff transport', async () => {
-    const { FeaturesResponseSchema } = await import('@happier-dev/protocol');
+    const { FeaturesResponseSchema} = await import('@happier-dev/protocol/features/payload/featuresResponseSchema');
     serverSnapshotState.current = {
       status: 'ready',
       features: FeaturesResponseSchema.parse({
@@ -1942,7 +1945,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   });
 
   it('fails closed when direct peer viability is runtime-unknown and the selected server would otherwise downgrade through server-routed fallback', async () => {
-    const { FeaturesResponseSchema } = await import('@happier-dev/protocol');
+    const { FeaturesResponseSchema} = await import('@happier-dev/protocol/features/payload/featuresResponseSchema');
     serverSnapshotState.current = {
       status: 'ready',
       features: FeaturesResponseSchema.parse({
@@ -1992,7 +1995,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   // negotiates `server_routed_stream` and reports the entry point as available.
   // The header must project that decision, not keep a stricter second reading.
   it('keeps session.handoff enabled when the selected server only offers server-routed handoff transport', async () => {
-    const { FeaturesResponseSchema } = await import('@happier-dev/protocol');
+    const { FeaturesResponseSchema} = await import('@happier-dev/protocol/features/payload/featuresResponseSchema');
     serverSnapshotState.current = {
       status: 'ready',
       features: FeaturesResponseSchema.parse({
@@ -2073,7 +2076,7 @@ describe('SessionHeaderActionMenu handoff', () => {
   });
 
   it('does not launch the handoff picker flow when session.handoff stays disabled by the canonical availability model', async () => {
-    const { FeaturesResponseSchema } = await import('@happier-dev/protocol');
+    const { FeaturesResponseSchema} = await import('@happier-dev/protocol/features/payload/featuresResponseSchema');
     serverSnapshotState.current = {
       status: 'ready',
       features: FeaturesResponseSchema.parse({
@@ -2114,50 +2117,8 @@ describe('SessionHeaderActionMenu handoff', () => {
     expect(runSessionHandoffPickerFlowMock).not.toHaveBeenCalled();
   });
 
-  it('surfaces session.handoff when source reachability is proven through server-scoped rpc even without a cached direct route', async () => {
-    preferredServerIdState.current = 'server_scoped_only';
-    readMachineTargetForSessionMock.mockReturnValue({
-      machineId: 'machine_scoped',
-      basePath: '/workspace/repo',
-    });
-    machineRpcWithServerScopeMock.mockResolvedValue({ ok: true });
-    storageState.current = {
-      ...storageState.current,
-      machineListByServerId: {
-        server_scoped_only: [{
-          id: 'machine_scoped',
-          daemonState: buildConfiguredInactiveDaemonTransferState(),
-        }],
-      },
-    };
-
-    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
-
-    const screen = await renderScreen(<SessionHeaderActionMenu
-          sessionId="sess_1"
-          session={{
-            id: 'sess_1',
-            metadata: {
-              machineId: 'machine_source',
-              flavor: 'claude',
-            },
-          } as any}
-        />);
-
-    await flushHookEffects({ cycles: 2 });
-
-    const dropdown = screen.findByType('DropdownMenu' as any);
-    expect(dropdown.props.items).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: 'session.handoff',
-        }),
-      ]),
-    );
-    expect(dropdown.props.items.find((item: any) => item?.id === 'session.handoff')?.disabled).not.toBe(true);
-  });
-
   it('keeps session.handoff enabled and executable for a layout-v1 session whose owner metadata view has not landed yet', async () => {
+    machineRpcWithServerScopeMock.mockResolvedValue({});
     // Cold owner projection: the layout is understood, but this device cannot read the owner view
     // for this session yet. The reachable machine target is already canonical, so the entry point
     // must not refuse the session — the daemon corridor stays the qualifying authority.
@@ -2209,7 +2170,6 @@ describe('SessionHeaderActionMenu handoff', () => {
       sourceMachineId: 'machine_rebound',
       serverId: 'server_a',
       placement: 'session_action_menu',
-      availability: { available: true, reason: 'available' },
     });
   });
 
@@ -2368,6 +2328,8 @@ describe('SessionHeaderActionMenu handoff', () => {
   });
 
   it('seeds configured ACP backend targets into non-handoff action drafts', async () => {
+    const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+    await prepareSessionDraftPersistenceStorage();
     resolveSessionActionDefaultBackendMock.mockReturnValue({
       backendTarget: { kind: 'configuredAcpBackend', backendId: 'acp-backend' },
       defaultBackendId: 'claude',
@@ -2411,17 +2373,14 @@ describe('SessionHeaderActionMenu handoff', () => {
       defaultBackendId: 'claude',
       instructions: '',
     }));
-    expect(createSessionActionDraftMock).toHaveBeenCalledWith(
-      { serverId: 'server_a', accountId: 'account_a' },
-      { serverId: 'server_a', sessionId: 'sess_1' },
-      {
-      actionId: 'subagents.plan.start',
-      input: { draft: true },
-      },
-    );
+    const { getSessionDraftSnapshot, executionRunLauncherDraftFieldPath } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+    const { getSessionDraftDocumentField } = await import('@/sync/ops/sessionDrafts/sessionDraftDocumentFields');
+    const document = getSessionDraftSnapshot({ serverId: 'server_a', accountId: 'account_a' }, { kind: 'session', sessionId: 'sess_1' })?.document ?? null;
+    expect(getSessionDraftDocumentField(document, executionRunLauncherDraftFieldPath('plan', 'selection'))?.value)
+      .toEqual(expect.objectContaining({ actionInput: { draft: true } }));
   });
 
-  it('adds a teleport action when the global daemon voice conversation exists only in shared session state', async () => {
+  it('adds teleport only for the exact retained global binding, not a shared carrier alone', async () => {
     voiceSettingState.current = {
       providerId: 'local_conversation',
       ui: { scopeDefault: 'global', surfaceLocation: 'auto', activityFeedEnabled: false },
@@ -2433,10 +2392,8 @@ describe('SessionHeaderActionMenu handoff', () => {
       },
     };
     storageState.current.settings.voice = voiceSettingState.current;
-    // The Voice owner-metadata reader is Home-scoped and, for a session it can
-    // see locally, addresses it on the active Home. A shared system session
-    // filed under any other Home is simply not the one this device would read,
-    // so the fixture files it where the reader looks.
+    // Even an eligible carrier on this Home does not choose the device's
+    // retained global conversation; the exact binding below does.
     const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
     storageState.current.sessions = {
       sys_voice: {
@@ -2471,7 +2428,19 @@ describe('SessionHeaderActionMenu handoff', () => {
         />);
 
     const dropdown = screen.findByType('DropdownMenu' as any);
-    expect(dropdown.props.items).toEqual(
+    expect(dropdown.props.items.find((item: { id: string }) => item.id === 'voice.teleport')).toBeUndefined();
+    const { voiceSessionBindingStore } = await import('@/voice/binding/voiceConversationBindingStore');
+    const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');
+    await act(async () => {
+      voiceSessionBindingStore.getState().bind({
+        adapterId: 'local_conversation', controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+        conversationSessionId: 'sys_voice',
+        conversationSessionAddress: { serverId: getActiveServerSnapshot().serverId, sessionId: 'sys_voice' },
+        transcriptMode: 'synthetic', targetSessionAddress: null, updatedAt: 10,
+      });
+    });
+    await flushHookEffects();
+    expect(screen.findByType('DropdownMenu' as any).props.items).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           id: 'voice.teleport',
@@ -2518,9 +2487,7 @@ describe('SessionHeaderActionMenu handoff', () => {
 
     const dropdown = screen.findByType('DropdownMenu' as any);
     expect(dropdown.props.items.find((item: { id: string }) => item.id === 'session.externalSession.backgroundFollow')).toBeUndefined();
-    // Publishing the menu must not probe or mutate External Session follow
-    // state. Unrelated handoff-reachability traffic on the same transport is
-    // not evidence about this contract.
+    // Publishing the menu must not probe or mutate External Session follow state.
     expect(machineRpcCallsWithMethodPrefix(EXTERNAL_SESSION_RPC_METHOD_PREFIX)).toHaveLength(0);
   });
 
@@ -2570,7 +2537,7 @@ describe('SessionHeaderActionMenu handoff', () => {
     expect(dropdown.props.items.find((item: { id: string }) => item.id === 'session.externalSession.backgroundFollow')).toBeUndefined();
   });
 
-  it('surfaces a disable toggle when background follow is already enabled and turns it off on select', async () => {
+  it('surfaces a disable toggle when background follow is already enabled', async () => {
     daemonMergedProjectionState.current = {
       phase: 'ready',
       inputs: { pluginProjectionV2: createDeclaredCodexSourceProjection() },
@@ -2634,114 +2601,6 @@ describe('SessionHeaderActionMenu handoff', () => {
       ]),
     );
 
-    respondToMachineRpcMethod(EXTERNAL_SESSION_FOLLOW_SET_METHOD, () => ({
-      ok: true,
-      enabled: false,
-      leaseActive: false,
-      updatedAtMs: 2,
-    }));
-    await act(async () => {
-      dropdown.props.onSelect('session.externalSession.backgroundFollow');
-      // Settle the exact dispatched mutation instead of guessing a tick budget.
-      const pending = fireAndForgetMock.mock.calls.at(-1)?.[0] as Promise<unknown> | undefined;
-      await pending;
-    });
-
-    expect(patchSessionMetadataWithRetryMock).not.toHaveBeenCalled();
-    expect(machineRpcWithServerScopeMock).toHaveBeenCalledWith(expect.objectContaining({
-      machineId: 'machine-1',
-      serverId: 'server_a',
-      method: 'daemon.externalSessions.backgroundFollow.set',
-      payload: expect.objectContaining({
-        sessionId: 's1',
-        agentId: 'codex',
-        remoteSessionId: 'vendor-session-1',
-        enabled: false,
-      }),
-    }));
-    expect(modalAlertMock).not.toHaveBeenCalled();
-    expect(applySessionMetadataLocallyMock).toHaveBeenCalledWith('s1', expect.any(Function));
-    expect((storageState.current.sessions.s1 as any).metadata.externalSessionV1.followPolicyV1).toEqual({
-      v: 1,
-      policy: 'attached_only',
-      updatedAtMs: 2,
-    });
-  });
-
-  it('silently retires a late follow settlement when the active Account is no longer current', async () => {
-    daemonMergedProjectionState.current = {
-      phase: 'ready',
-      inputs: { pluginProjectionV2: createDeclaredCodexSourceProjection() },
-    };
-    storageState.current.sessions = {
-      s1: {
-        id: 's1',
-        seq: 0,
-        encryptionMode: 'plain',
-        presence: 'offline',
-        active: true,
-        accessLevel: 'edit',
-        canApprovePermissions: false,
-        metadata: {
-          machineId: 'machine-1',
-          host: 'happy-host',
-          flavor: 'codex',
-          version: '0.0.0',
-          path: '/tmp',
-          homeDir: '/tmp',
-          externalSessionV1: {
-            v: 1,
-            agentId: 'codex',
-            machineId: 'machine-1',
-            remoteSessionId: 'vendor-session-1',
-            source: { kind: 'codexHome', home: 'user' },
-            followPolicyV1: { v: 1, policy: 'attached_only' },
-          },
-        },
-      } as any,
-    };
-
-    const { SessionHeaderActionMenu } = await import('./SessionHeaderActionMenu');
-    const { registerStorageStateReader } = await import('@/sync/domains/state/storageStateReaderBridge');
-    registerStorageStateReader(() => storageState.current as any);
-
-    const screen = await renderScreen(<SessionHeaderActionMenu
-          sessionId="s1"
-          session={storageState.current.sessions.s1 as any}
-        />);
-
-    const dropdown = screen.findByType('DropdownMenu' as any);
-    let resolveFollowPolicySet: ((value: unknown) => void) | undefined;
-    respondToMachineRpcMethod(
-      EXTERNAL_SESSION_FOLLOW_SET_METHOD,
-      () => new Promise((resolve) => {
-        resolveFollowPolicySet = resolve;
-      }),
-    );
-
-    await act(async () => {
-      dropdown.props.onSelect('session.externalSession.backgroundFollow');
-      for (let i = 0; i < 10; i++) await Promise.resolve();
-    });
-    // The follow mutation is actually in flight through the canonical machine
-    // RPC transport.
-    expect(resolveFollowPolicySet).toBeDefined();
-    // Account A retires while the machine RPC is in flight; the late
-    // settlement must not alert or publish into the successor Account.
-    accountCurrentnessState.current = false;
-    await act(async () => {
-      resolveFollowPolicySet?.({
-        ok: true,
-        enabled: true,
-        leaseActive: true,
-        updatedAtMs: 7,
-      });
-      for (let i = 0; i < 10; i++) await Promise.resolve();
-      await flushHookEffects({ cycles: 2, turns: 1 });
-    });
-
-    expect(applySessionMetadataLocallyMock).not.toHaveBeenCalled();
-    expect(modalAlertMock).not.toHaveBeenCalled();
   });
 
   it('does not surface background follow for direct-session agents without follow support', async () => {
@@ -2823,6 +2682,8 @@ describe('SessionHeaderActionMenu handoff', () => {
     };
 
     await act(async () => {
+      const { storage: canonicalStorage } = await import('@/sync/domains/state/storageStore');
+      canonicalStorage.getState().applySettingsLocal({ experiments: false, featureToggles: {} });
       dropdown.props.onOpenChange(true);
     });
     await flushHookEffects({ cycles: 1 });

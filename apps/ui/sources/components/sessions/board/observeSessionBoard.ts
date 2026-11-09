@@ -3,13 +3,14 @@ import type { SessionSurfaceItemV1 } from '@happier-dev/protocol/sessions/board/
 import type { SessionSystemRecordStoredPageResponse } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import { openSessionSystemRecord, type SessionSystemRecordPayloadResult } from '@/sync/domains/sessionSystemRecords/codec';
 import { projectSessionBoard, type SessionBoardOpenedRecord } from '@/sync/domains/session/board';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type {
     SessionSystemRecordQuery,
     SessionSystemRecordRepositoryEntry,
 } from '@/sync/domains/sessionSystemRecords/repository';
 import type { SessionBoardSnapshot } from '@/sync/domains/session/board';
-import type { SessionSystemRecordFetchResult } from '@/sync/domains/sessionSystemRecords/transport';
-import type { SessionSystemRecordAuthority, SessionSystemRecordObservationBase, SessionSystemRecordUnavailableReason } from '@/sync/domains/sessionSystemRecords/observation';
+import { projectSessionSystemRecordFetchFailure, type SessionSystemRecordFetchResult } from '@/sync/domains/sessionSystemRecords/transport';
+import type { SessionSystemRecordObservationBase, SessionSystemRecordUnavailableReason } from '@/sync/domains/sessionSystemRecords/observation';
 
 // The credential-resolution kinds are read from their own owner rather than
 // copied here, so a new non-bound kind can never silently fall outside the
@@ -17,7 +18,6 @@ import type { SessionSystemRecordAuthority, SessionSystemRecordObservationBase, 
 export type SessionBoardBindingUnavailableReason = SessionSystemRecordUnavailableReason | 'board_feature_disabled';
 export type SessionBoardBinding = Readonly<{ status: 'ready'; snapshot: SessionBoardSnapshot }>
     | Readonly<{ status: 'unavailable'; reason: SessionBoardBindingUnavailableReason }>;
-export type SessionBoardAuthority = SessionSystemRecordAuthority;
 export type SessionBoardObservationOptions = SessionSystemRecordObservationBase & Readonly<{
     /** Unopened/retained presentation never inventories Session content. */
     demanded?: boolean;
@@ -39,25 +39,20 @@ export function observeSessionBoard(options: SessionBoardObservationOptions): ()
     const pages = new Map<string, ObservedPage>();
     let stopped = false;
     let queued = false;
-    let authority = options.authority;
-    let authorityReachability: 'reachable' | 'offline' = 'reachable';
-    let needsAuthority = false;
-    let authorityRenewal: Promise<SessionSystemRecordFetchResult<SessionBoardAuthority>> | null = null;
     let previous: SessionBoardSnapshot | undefined;
     let currentJob: object | null = null;
     const emit = (binding: SessionBoardBinding) => { if (!stopped) options.onChange(binding); };
     const unavailable = (reason: SessionBoardBindingUnavailableReason) => {
-        // A pending renewal may still finish after a record read revokes
-        // access. Its next projection must not republish the denied content.
         if (reason === 'forbidden' || reason === 'not_found' || reason === 'board_feature_disabled') previous = undefined;
         emit({ status: 'unavailable', reason });
     };
     const initialCapabilities = options.readCapabilities();
-    if (options.session.serverId !== options.repository.scope.serverId || !initialCapabilities?.readTranscript || !options.isCurrent()) {
+    // The same Home can be addressed by its profile id or its identity id; the one equivalence owner decides.
+    if (!areServerProfileIdentifiersEquivalent(options.session.serverId, options.repository.scope.serverId)
+        || !initialCapabilities?.readTranscript || !options.isCurrent()) {
         unavailable('forbidden');
         return () => { stopped = true; };
     }
-    authority = { ...authority, capabilities: initialCapabilities };
 
     function decode<T>(schema: { safeParse(value: unknown): { success: true; data: T } | { success: false } }, value: unknown): SessionSystemRecordPayloadResult<T> {
         if (value && typeof value === 'object' && 'v' in value && typeof value.v === 'number' && value.v !== 1) {
@@ -68,39 +63,16 @@ export function observeSessionBoard(options: SessionBoardObservationOptions): ()
     }
     function changed(page: ObservedPage) {
         const next = options.repository.getSnapshot(options.session, page.query);
-        const before = page.snapshot;
         page.snapshot = next;
         const currentCapabilities = options.readCapabilities();
         if (
             !options.isCurrent()
             || !currentCapabilities?.readTranscript
-            || next.lastError?.status === 'forbidden'
-            || next.lastError?.status === 'not_found'
-            || next.lastError?.status === 'feature_disabled'
+            || (next.lastError !== null && next.lastError.status !== 'offline' && next.lastError.status !== 'server_error')
         ) {
             currentJob = null;
             unavailable(next.lastError ? toBoardUnavailableReason(next.lastError.status) : 'forbidden');
             return;
-        }
-        authority = { ...authority, capabilities: currentCapabilities };
-        // A fresh-to-stale wake can carry access changes. A same-state notification
-        // is the repository's content-context wake (including newly hydrated keys).
-        if (
-            (before.freshness === 'fresh' && next.freshness === 'stale')
-            || (before.data !== null && before.loading !== 'refreshing' && next.loading === 'refreshing')
-        ) {
-            needsAuthority = true;
-        } else if (
-            before !== next && before.data === next.data && before.loading === next.loading
-            && before.freshness === next.freshness && before.lastError === next.lastError
-        ) {
-            // The Session hydration owner announced newly current mode/key
-            // context. Reopen retained record bytes without another authority
-            // acquisition or full Session fetch.
-            authority = {
-                ...authority,
-                contentContext: options.readContentContext(),
-            };
         }
         schedule();
     }
@@ -129,42 +101,7 @@ export function observeSessionBoard(options: SessionBoardObservationOptions): ()
                 unavailable('forbidden');
                 return;
             }
-            authority = { ...authority, capabilities: currentCapabilities };
-            if (needsAuthority) {
-                needsAuthority = false;
-                if (previous) emit({
-                    status: 'ready',
-                    snapshot: {
-                        ...previous,
-                        capabilities: currentCapabilities,
-                        canEdit: currentCapabilities.editSessionRecords,
-                        freshness: 'stale',
-                        loading: 'refreshing',
-                    },
-                });
-                const renewal = authorityRenewal ??= options.renewAuthority();
-                let renewed: SessionSystemRecordFetchResult<SessionBoardAuthority>;
-                try {
-                    renewed = await renewal;
-                } catch (error) {
-                    if (currentJob === job) authorityRenewal = null;
-                    throw error;
-                }
-                if (!isCurrent()) { needsAuthority = true; schedule(); return; }
-                authorityRenewal = null;
-                if (renewed.status === 'ok') {
-                    const settledCapabilities = options.readCapabilities();
-                    if (!settledCapabilities?.readTranscript) {
-                        unavailable('forbidden');
-                        return;
-                    }
-                    authority = { ...renewed.value, capabilities: settledCapabilities };
-                    authorityReachability = 'reachable';
-                } else if (renewed.status === 'offline' && previous) {
-                    authorityReachability = 'offline';
-                } else { unavailable(toBoardUnavailableReason(renewed.status)); return; }
-            }
-            if (!authority.capabilities?.readTranscript) { unavailable('forbidden'); return; }
+            const authority = { contentContext: options.readContentContext(), capabilities: currentCapabilities };
             const chain: Page[] = [];
             const seen = new Set<string>();
             let cursor = '';
@@ -179,17 +116,16 @@ export function observeSessionBoard(options: SessionBoardObservationOptions): ()
                 cursor = page.data.nextCursor;
             }
             for (const [key, page] of pages) if (!seen.has(key)) { page.stop(); pages.delete(key); }
-            const denied = chain.find(page => page.lastError?.status === 'forbidden'
-                || page.lastError?.status === 'not_found'
-                || page.lastError?.status === 'feature_disabled');
+            const denied = chain.find(page => page.lastError !== null
+                && page.lastError.status !== 'offline' && page.lastError.status !== 'server_error');
             if (denied) { unavailable(toBoardUnavailableReason(denied.lastError!.status)); return; }
             const firstFailure = chain.find(page => !page.data && page.lastError)?.lastError;
             if (firstFailure && (!previous || previous.layoutState.kind === 'loading') && chain.every(page => !page.data)) {
                 unavailable(toBoardUnavailableReason(firstFailure.status));
                 return;
             }
-            const freshness = authorityReachability === 'offline' || chain.some(page => page.freshness === 'stale') ? 'stale' : 'fresh';
-            const reachability = authorityReachability === 'offline' || chain.some(page => page.reachability === 'offline') ? 'offline'
+            const freshness = chain.some(page => page.freshness === 'stale') ? 'stale' : 'fresh';
+            const reachability = chain.some(page => page.reachability === 'offline') ? 'offline'
                 : chain.every(page => page.reachability === 'reachable') ? 'reachable' : 'unknown';
             const loading = chain.some(page => page.loading !== 'idle') ? (previous ? 'refreshing' : 'initial') : 'idle';
             let layout: SessionBoardOpenedRecord<SessionBoardLayoutV1> | undefined;
@@ -210,8 +146,8 @@ export function observeSessionBoard(options: SessionBoardObservationOptions): ()
                 : projectSessionBoard({ layout, items, capabilities: authority.capabilities, freshness, reachability, loading, incomplete: !complete }, previous);
             previous = snapshot;
             emit({ status: 'ready', snapshot });
-        }).catch(() => {
-            if (!stopped && currentJob === job) unavailable('invalid_response');
+        }).catch(error => {
+            if (!stopped && currentJob === job) unavailable(toBoardUnavailableReason(projectSessionSystemRecordFetchFailure(error).status));
         });
     }
     observe('');

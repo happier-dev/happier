@@ -51,6 +51,20 @@ function rowKey(item: Pick<SessionListSessionIndexItem, 'serverId' | 'sessionId'
 }
 
 describe('buildSessionListRowViewModels', () => {
+    it('replaces only the row whose effective appearance changed', () => {
+        // Mounted rows fit the existing 512-entry shell cache; the store cost test uses 1k records.
+        const items = Array.from({ length: 200 }, (_, index) => ({ type: 'session' as const, serverId: 'appearance-home', sessionId: `appearance-${index}` }));
+        const colors = new Map<string, import('@/sync/domains/session/organization/appearanceColor').SessionAppearanceColor>([[sessionTagKey('appearance-home', 'appearance-0'), { kind: 'accent', key: 'blue' }]]);
+        const input = { listItems: items, reachableSessionDisplayById: new Map(), 
+            pinnedSessionKeys: new Set<string>(), sessionTags: {}, selectedSessionId: null, showServerBadge: false,
+            showPinnedServerBadge: false, relativeNowMs: 1_000, runtimeNowMs: 1_000, appearanceColorsBySessionKey: colors };
+        const before = buildSessionListRowViewModels(input);
+        expect(before[0]).toHaveProperty('appearanceColor', colors.get(sessionTagKey('appearance-home', 'appearance-0')));
+        const changed = new Map(colors).set(sessionTagKey('appearance-home', 'appearance-0'), { kind: 'accent', key: 'red' });
+        const after = buildSessionListRowViewModels({ ...input, appearanceColorsBySessionKey: changed });
+        expect(after[0]).not.toBe(before[0]);
+        expect(after.slice(1).every((row, index) => row === before[index + 1])).toBe(true);
+    });
     it('binds the P5 row context: a group implies its Project and baseline, a shelf names them (U5)', () => {
         const project = { serverId: 'home', projectKey: 'pk-happier' };
         const baseline = { id: 'ref-main', serverId: 'home', machineId: 'machine-a', rootPath: '/repo/happier', label: 'happier', createdAtMs: 1 };
@@ -78,7 +92,7 @@ describe('buildSessionListRowViewModels', () => {
             reachableSessionDisplayById: new Map(),
             reachableSessionDisplayByKey: new Map([[sessionTagKey('home', 'ctx-devbox'), { machineId: 'machine-b', machineLabel: 'devbox', workspaceSubtitle: '', workspaceSubtitleEllipsizeMode: 'head' as const }]]),
             rowRenderableByKey,
-            relativeNowMs: 1_000, runtimeNowMs: 1_000,
+            relativeNowMs: 1_000, runtimeNowMs: 1_000, 
             pinnedSessionKeys: new Set<string>(), sessionTags: {}, selectedSessionId: null,
             showServerBadge: false, showPinnedServerBadge: false, rowContext,
         };
@@ -129,7 +143,7 @@ describe('buildSessionListRowViewModels', () => {
         const shelf = { ...base, groupKey: 'attention', occurrenceRole: 'needsYou' as const };
         const input = { listItems: [shelf, base], reachableSessionDisplayById: new Map(),
             rowRenderableByKey: new Map([[rowKey(base), createRenderableSession(base.sessionId)]]),
-            relativeNowMs: 1_000, runtimeNowMs: 1_000,
+            relativeNowMs: 1_000, runtimeNowMs: 1_000, 
             pinnedSessionKeys: new Set<string>(), sessionTags: {}, selectedSessionId: base.sessionId,
             showServerBadge: false, showPinnedServerBadge: false };
         const first = buildSessionListRowViewModels(input);
@@ -159,7 +173,7 @@ describe('buildSessionListRowViewModels', () => {
         const session = createRenderableSession(item.sessionId);
         const base = {
             listItems: [item], reachableSessionDisplayById: new Map(),
-            rowRenderableByKey: new Map([[sessionKey, session]]),
+            rowRenderableByKey: new Map([[sessionKey, session]]), 
             pinnedSessionKeys: new Set<string>(), selectedSessionId: null,
             showServerBadge: false, showPinnedServerBadge: false,
         };
@@ -193,7 +207,7 @@ describe('buildSessionListRowViewModels', () => {
             audienceContext: { kind: 'group' as const, teamId: 'team', groupId: 'group' },
         } };
         const input = { listItems: [item], reachableSessionDisplayById: new Map(),
-            rowRenderableByKey: new Map([[rowKey(item), session]]),
+            rowRenderableByKey: new Map([[rowKey(item), session]]), 
             pinnedSessionKeys: new Set<string>(), sessionTags: {}, selectedSessionId: null,
             showServerBadge: false, showPinnedServerBadge: false,
             audienceScopes: new Map([[scope.serverId, scope]]) };
@@ -474,7 +488,7 @@ describe('buildSessionListRowViewModels', () => {
         const sessions = listItems.map((item) => createRenderableSession(item.sessionId));
         const input = {
             listItems, reachableSessionDisplayById: new Map(),
-            relativeNowMs: 1_000, runtimeNowMs: 1_000,
+            relativeNowMs: 1_000, runtimeNowMs: 1_000, 
             pinnedSessionKeys: new Set<string>(), sessionTags: {}, selectedSessionId: null,
             showServerBadge: false, showPinnedServerBadge: false,
         };

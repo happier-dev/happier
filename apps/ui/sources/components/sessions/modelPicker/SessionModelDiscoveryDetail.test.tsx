@@ -8,7 +8,7 @@ import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarne
 import { resetDynamicModelProbeCacheForTests } from '@/sync/domains/models/dynamicModelProbeCache';
 import { isModelSelectableForSession } from '@/sync/domains/models/modelOptions';
 import type { SessionModelDetailState } from './SessionModelDiscoveryDetail';
-import type { Settings } from '@/sync/domains/settings/settings';
+import { settingsParse } from '@/sync/domains/settings/settings';
 
 const invoke = vi.hoisted(() => vi.fn());
 // Action admission, discovery and cache remain real below the remote machine boundary.
@@ -28,32 +28,42 @@ const result = (id: string) => ({ ok: true, result: { runtimeDescriptorV1Accepte
 describe('SessionModelDiscoveryDetail', () => {
     beforeEach(async () => {
         invoke.mockReset(); resetDynamicModelProbeCacheForTests();
-        discovery.capabilityServerId = (await account.restore()).serverId;
+        discovery.capabilityServerId = (await account.restore({ settings: { codexBackendMode: 'appServer' } })).serverId;
     });
     afterEach(async () => { await standardCleanup(); await account.reset(); });
 
-    it('keeps an open detail current for dynamic Agent settings without rerendering its parent', async () => {
+    it('keeps declared Agent inputs current and performs no discovery work for unrelated Settings', async () => {
         const originalSettings = storage.getState().settings;
-        storage.setState({ settings: { ...originalSettings, experiments: false } });
-        let observedRuntime: boolean | undefined;
-        let observedSettings: Settings | undefined;
-        const readDiscovery = (settings: Settings) => {
+        storage.setState({ settings: settingsParse({ ...originalSettings, codexBackendMode: 'appServer' }) });
+        let observedRuntime: unknown;
+        let observedSettings: Readonly<Record<string, unknown>> | undefined;
+        let discoveries = 0;
+        const readDiscovery = (settings: Readonly<Record<string, unknown>>) => {
+            discoveries++;
             observedSettings = settings;
-            observedRuntime = settings?.experiments;
+            observedRuntime = settings.codexBackendMode;
             return { ...discovery, enabled: false, probeContext: { cacheKeySuffixParts: [String(observedRuntime)] } };
         };
         const screen = await renderScreen(<SessionModelDiscoveryDetail agentId="codex" composerOptionsInput={null}
             discovery={readDiscovery} renderDetail={() => null} />);
         try {
             await flushHookEffects();
-            expect(observedSettings).toBe(storage.getState().settings);
-            expect(observedRuntime).toBe(false);
+            // The Agent behavior's configuredRuntimeSettingKeys declares this consumed view.
+            expect(observedSettings).toEqual({ codexBackendMode: 'appServer' });
+            expect(observedRuntime).toBe('appServer');
+            const selected = observedSettings;
+            const before = discoveries;
             await act(async () => {
-                storage.setState((state) => ({ settings: { ...state.settings, experiments: true } }));
+                storage.setState((state) => ({ settings: { ...state.settings, showLineNumbers: !state.settings.showLineNumbers } }));
             });
-            await flushHookEffects();
-            expect(observedSettings).toBe(storage.getState().settings);
-            expect(observedRuntime).toBe(true);
+            expect(observedSettings).toBe(selected);
+            expect(discoveries - before).toBe(0);
+            await act(async () => {
+                storage.setState({ settings: settingsParse({ ...storage.getState().settings, codexBackendMode: 'acp' }) });
+            });
+            expect(observedSettings).toEqual({ codexBackendMode: 'acp' });
+            expect(observedRuntime).toBe('acp');
+            expect(discoveries - before).toBe(1);
         } finally {
             await screen.unmount();
             storage.setState({ settings: originalSettings });

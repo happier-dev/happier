@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { FloatingFrame } from '@happier-dev/plugin-ui/presentation';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { upsertServerProfileOnly } from '@/sync/domains/server/serverRuntime';
 import { renderScreen } from '@/dev/testkit';
 import { invokeTestInstanceHandler } from '@/dev/testkit/render/renderScreen';
@@ -49,9 +50,10 @@ describe('Session viewer destination continuity', () => {
                 otherHome: useSessionDestinationAccountBinding('session-a', 'other-home'),
             });
         }
-        const screen = await renderScreen(<SessionViewerDestinationScope sessionId="session-a" serverId={home.id}>
+        const credentials = await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id });
+        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><SessionViewerDestinationScope sessionId="session-a" serverId={home.id}>
             <Probe />
-        </SessionViewerDestinationScope>);
+        </SessionViewerDestinationScope></InjectedAuthProvider>);
         try {
             expect(observed[0]).toBeNull();
             const { binding, otherSession, otherHome } = screen.root.findByType('DestinationAuthorityProbe').props;
@@ -73,6 +75,7 @@ describe('Session viewer destination continuity', () => {
         await TokenStorage.setCredentialsForServerUrl(home.serverUrl, { serverId: home.id }, {
             token: `e30.${Buffer.from(JSON.stringify({ sub: 'viewer-account' })).toString('base64url')}.signature`,
         });
+        const credentials = await TokenStorage.getCredentialsForServerUrl(home.serverUrl, { serverId: home.id });
         const store = createRetainedPresentationSlotsStore();
         const observed: { controller: SessionViewerController | null; mounts: number; bound: boolean } = { controller: null, mounts: 0, bound: false };
         function Source() {
@@ -88,7 +91,8 @@ describe('Session viewer destination continuity', () => {
             observed.bound = destination !== null;
             return <>
                 {isSessionViewerPresenting(controller, 'computer') && destination ? (
-                    <RetainedSessionViewerSource sessionId="session-a" slotId="continuity-source" serverId={home.id} accountLifetime={destination.accountLifetime}>
+                    <RetainedSessionViewerSource sessionId="session-a" slotId="continuity-source" serverId={home.id} accountLifetime={destination.accountLifetime}
+                        windowGeometry={{ x: 0, y: 0, width: 800, height: 600 }}>
                         <Source />
                     </RetainedSessionViewerSource>
                 ) : null}
@@ -97,14 +101,14 @@ describe('Session viewer destination continuity', () => {
             </>;
         }
         function Tree(props: Readonly<{ width: 390 | 1440 }>) {
-            return <RetainedPresentationSlotsProvider store={store}>
+            return <InjectedAuthProvider credentials={credentials}><RetainedPresentationSlotsProvider store={store}>
                 <SessionViewerDestinationScope sessionId="session-a" serverId={home.id}>
                     <SessionViewerControllerProvider key={props.width} sessionId="session-a" serverId={home.id}
                         phone={props.width === 390} canPresentSource={() => true} openDocked={() => {}}>
                         <Presentation />
                     </SessionViewerControllerProvider>
                 </SessionViewerDestinationScope>
-            </RetainedPresentationSlotsProvider>;
+            </RetainedPresentationSlotsProvider></InjectedAuthProvider>;
         }
         const screen = await renderScreen(<Tree width={390} />);
         try {

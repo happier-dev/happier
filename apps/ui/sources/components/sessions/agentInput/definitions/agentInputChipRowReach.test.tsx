@@ -14,7 +14,7 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 
-import { AGENT_INPUT_CHIP_ROW_HIT_REACH, AgentInputChipRowReach } from './agentInputChipRowReach';
+import { AgentInputChipRowReach, resolveAgentInputChipRailHitReach } from './agentInputChipRowReach';
 import { createPermissionActionChip } from './createPermissionActionChip';
 
 const CHIP_HEIGHT = 32;
@@ -32,17 +32,15 @@ function permissionChip() {
 }
 
 describe('AgentInputChipRowReach', () => {
-    // The upper row's chips and the lower row's chips are at most 2 px apart: the upper row gives up its
-    // reach below, so the two rows' hit areas meet instead of overlapping by the target's full 6 px.
-    it('limits a chip to the reach its row declares, and leaves a lone row its full reach', async () => {
-        const rowAbove = await renderScreen(
+    // A wrapping rail's chips are 6 px apart in a line and 1 px apart between lines and rails: each chip takes
+    // half of every gap, so neighbours on any side meet instead of overlapping by the target's full reach.
+    it('limits a chip to the reach its rail declares, and leaves a chip outside any rail its full reach', async () => {
+        const inRail = await renderScreen(
             <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
-                <AgentInputChipRowReach reach={AGENT_INPUT_CHIP_ROW_HIT_REACH.upper}>{permissionChip()}</AgentInputChipRowReach>
+                <AgentInputChipRowReach reach={resolveAgentInputChipRailHitReach(6)}>{permissionChip()}</AgentInputChipRowReach>
             </HappierUiPlatformProvider>,
         );
-        const stacked = readHitFrameReach(rowAbove.findByTestId('agent-input-permission-chip')!);
-        expect(stacked?.bottom).toBe(0.5);
-        expect(stacked?.top).toBe(6);
+        expect(readHitFrameReach(inRail.findByTestId('agent-input-permission-chip')!)).toEqual({ top: 0.5, bottom: 0.5, left: 3, right: 3 });
 
         const alone = await renderScreen(
             <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>

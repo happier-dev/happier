@@ -5,6 +5,7 @@ import { TabBadge } from '@/components/ui/navigation/tabBadge/TabBadge';
 import { getStorage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import type { RailBadgeSignalRenderer } from '@/components/navigation/shell/appRail/AppRailBadge';
 
 import { selectSessionAgentAsksInTerminal } from '../presentation/useSessionTerminalPresentation';
 
@@ -15,6 +16,7 @@ import { selectSessionAgentAsksInTerminal } from '../presentation/useSessionTerm
 export const SessionTerminalRailBadge = React.memo(function SessionTerminalRailBadge(props: Readonly<{
     sessionId: string;
     serverId: string | null;
+    renderSignal?: RailBadgeSignalRenderer;
 }>) {
     const { theme } = useUnistyles();
     const asking = getStorage()((state) => {
@@ -22,6 +24,7 @@ export const SessionTerminalRailBadge = React.memo(function SessionTerminalRailB
         if (!session || (props.serverId && !areServerProfileIdentifiersEquivalent(session.serverId, props.serverId))) return false;
         return selectSessionAgentAsksInTerminal(session);
     });
+    if (props.renderSignal) return <>{props.renderSignal(asking ? { kind: 'dot', tone: 'attention' } : null)}</>;
     if (!asking) return null;
     return <TabBadge variant="dot" testID="session-action-rail:terminal:badge" style={{ backgroundColor: theme.colors.status.actionRequired }} />;
 });

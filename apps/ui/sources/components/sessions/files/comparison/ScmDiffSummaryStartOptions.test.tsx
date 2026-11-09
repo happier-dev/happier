@@ -51,6 +51,15 @@ describe('ScmDiffSummaryStartOptions', () => {
         expect(onChooseModel).toHaveBeenCalledTimes(1);
     });
 
+    it('lets the model choice already on screen be the next step, instead of a second control for it', async () => {
+        const onChooseModel = vi.fn();
+        const screen = await renderScreen(<ScmDiffSummaryStartOptions testID="start-options" failure={SPECIMEN_START_FAILURES.model} message={null}
+            model={{ value: '', onChange: vi.fn(), testID: 'start-options-model' }} onChooseModel={onChooseModel} />);
+        expect(screen.findByTestId('start-options-model')).not.toBeNull();
+        expect(screen.getTextContent()).toContain('walkthrough.generationFailure.modelUnavailable');
+        expect(screen.findByTestId('start-options-choose-model')).toBeNull();
+    });
+
     it('leaves an action nobody can press out of the refusal, instead of a dangling clause', async () => {
         const screen = await renderScreen(<ScmDiffSummaryStartOptions testID="start-options" failure={SPECIMEN_START_FAILURES.model} message={null} />);
         expect(screen.getTextContent()).toBe('walkthrough.generationFailure.modelUnavailable');

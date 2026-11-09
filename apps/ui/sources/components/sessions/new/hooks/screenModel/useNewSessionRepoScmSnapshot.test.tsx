@@ -110,6 +110,7 @@ describe('useNewSessionRepoScmSnapshot', () => {
             machineId: 'machine-a',
             path: '~/repo',
             homeDir: '/Users/server-b',
+            detail: 'facts',
         });
         expect(readCachedWorktreesEnrichmentMock).toHaveBeenCalledWith({
             serverId: 'server-b',
@@ -122,6 +123,7 @@ describe('useNewSessionRepoScmSnapshot', () => {
             machineId: 'machine-a',
             path: '~/repo',
             homeDir: '/Users/server-b',
+            detail: 'facts',
         });
         await hook.unmount();
         readCachedSnapshotForMachinePathMock.mockClear();

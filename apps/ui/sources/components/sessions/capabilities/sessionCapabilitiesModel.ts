@@ -1,6 +1,7 @@
 import type { SpawnCapabilitiesPreviewOutputV1, SessionCapabilitiesGetOutputV1 } from '@happier-dev/protocol/actions/specs/sessionCapabilities';
 import type { SessionSkillPlanV1 } from '@happier-dev/protocol/prompts/library/skills/resolveSessionSkillPlanV1';
-import { applySessionSelectionV1, readSessionCapabilityOverrideV1, type SessionCapabilitySelectionV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
+import { readSessionCapabilityOverrideV1, type SessionCapabilitySelectionV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
+import { resolveSessionCapabilityItemSelected } from '@/sync/domains/capabilities/session/sessionCapabilitiesQuery';
 import type { ReachContextV1 } from '@happier-dev/protocol/reach/resolveReachV1';
 import type { ReachRulesV1 } from '@happier-dev/protocol/reach/reachRuleV1';
 import type { CapabilityApplyTimingV1 } from '@happier-dev/protocol/reach/capabilityApplyTimingV1';
@@ -17,7 +18,8 @@ export type SessionCapabilityRowModel = Readonly<{
     line2: Readonly<{ kind: 'status'; status: CapabilityStatus }> | Readonly<{ kind: 'change'; change: 'added' | 'turned_off' }>
         | Readonly<{ kind: 'cost'; cost: CapabilityCost }> | null;
     scope: string;
-    action: Readonly<{ kind: 'fix'; status: CapabilityStatus }> | Readonly<{ kind: 'turn_on' | 'remove' | 'none' }>;
+    action: Readonly<{ kind: 'fix'; status: CapabilityStatus }> | Readonly<{ kind: 'turn_on'; state: 'inherit' | 'on' }>
+        | Readonly<{ kind: 'remove' | 'none' }>;
     dimmed: boolean; readOnlyReason: 'viewer' | 'new_sessions_only' | 'masked' | 'native_disable_unsupported' | null;
 }>;
 /**
@@ -74,9 +76,8 @@ export function buildSessionCapabilitiesModel(input: SessionCapabilitiesModelInp
             : item.sessionOverride === 'added' ? 'on' : item.sessionOverride === 'removed' ? 'off' : 'inherit';
         // The Machine preview owns reach (including its normalized workspace). Both
         // chip and sheet overlay the same optimistic Session selection on that fact.
-        const selected = input.selection ? applySessionSelectionV1({ reach: { enabled: item.selected, decidedBy: item.decidedBy },
-            selectable: item.selectable, forceIncluded: override === 'on', forceExcluded: override === 'off',
-            managedEnabled: item.kind !== 'mcp_server' || input.selection.mcp?.managedServersEnabled !== false }).selected : item.selected;
+        const selected = input.selection ? resolveSessionCapabilityItemSelected(item, override,
+            item.kind !== 'mcp_server' || input.selection.mcp?.managedServersEnabled !== false) : item.selected;
         const timing = input.view?.applyTiming[item.kind === 'mcp_server' ? 'mcp' : 'skills'];
         const masked = item.kind === 'skill' && plan?.items.some(fact => fact.skillId === item.id && fact.state === 'masked_by_native') === true;
         const readOnlyReason = input.readOnly ? 'viewer' : masked ? 'masked' : timing?.t === 'new_sessions_only' ? 'new_sessions_only' : null;
@@ -104,7 +105,10 @@ export function buildSessionCapabilitiesModel(input: SessionCapabilitiesModelInp
                 : shortWhereItsOn(decidingRule ? [decidingRule] : [], input.names),
             // An item's own fix (Sign in, Add key) is an Account action, so a row read-only for this session keeps it.
             action: readOnlyReason !== 'viewer' && status?.fix ? { kind: 'fix', status } : readOnlyReason ? { kind: 'none' }
-                : selected ? { kind: 'remove' } : { kind: 'turn_on' },
+                : selected ? { kind: 'remove' } : { kind: 'turn_on',
+                    // Clear a removal only when the Machine's deciding rule gives ON.
+                    // An OFF/no-rule baseline needs a Session include to actually turn on.
+                    state: (decidingRule?.enabled ?? item.reason === 'rule_on') ? 'inherit' : 'on' },
             dimmed: !selected, readOnlyReason };
         (item.kind === 'skill' ? skills : mcp).push(row);
     }
@@ -120,7 +124,7 @@ export function buildSessionCapabilitiesModel(input: SessionCapabilitiesModelInp
         return { key: `native_skill:${item.name}`, id: item.name, kind: 'native_skill', title: item.name, mark: 'none',
             line2: off ? { kind: 'change', change: 'turned_off' } : null, scope: input.nativeSkills!.machineName,
             dimmed: off, readOnlyReason,
-            action: readOnlyReason ? { kind: 'none' } : { kind: off ? 'turn_on' : 'remove' } };
+            action: readOnlyReason ? { kind: 'none' } : off ? { kind: 'turn_on', state: 'inherit' } : { kind: 'remove' } };
     });
     const pendingApply = input.applyState?.pendingApply ?? (input.view && 'pendingApply' in input.view ? input.view.pendingApply : { mcp: false, skills: false });
     const timing = input.applyState?.applyTiming ?? input.view?.applyTiming ?? null;

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ProviderErrorV1 } from '@happier-dev/protocol';
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 import { ProviderErrorItems } from '@/components/settings/providers/ProviderErrorItems';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';

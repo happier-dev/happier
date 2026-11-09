@@ -4,7 +4,7 @@ import { buildBackendTargetKeyV2, type PersistedBackendTargetRefV2 } from '@happ
 import type { WorkflowSessionAuthoringSelection } from '@happier-dev/protocol/workflows/workflowV1';
 import { buildSessionAgentPickerDetailContent, type SessionAgentPickerSelection } from '@/components/sessions/agentPicker/buildSessionAgentPickerDetailContent';
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
-import { useSettings } from '@/sync/domains/state/storage';
+import { useAgentUiSettings } from '@/agents/catalog/useAgentUiSettings';
 import { t } from '@/text';
 import { buildSessionModelSelectionForAgentTarget } from '../sessionModelSelectionValue';
 import type { SessionAuthoringControlFacts } from './sessionAuthoringFieldControls';
@@ -21,11 +21,12 @@ export function useSessionAuthoringEnginePicker(params: Readonly<{
     onChangeFields?: (fields: Partial<WorkflowSessionAuthoringSelection>) => void;
     roleSelection?: RolesRailPickerOptionParams;
 }>) {
-    const settings = useSettings();
     const latest = React.useRef(params);
     latest.current = params;
     const selectedKey = params.values.agentTarget ? buildBackendTargetKeyV2(params.values.agentTarget) : null;
     const targets = params.facts?.agentTargets ?? EMPTY_TARGETS;
+    const settings = useAgentUiSettings({ agentIds: targets.map(target => target.agentId).filter((id): id is string => Boolean(id)),
+        machineId: params.facts?.agentPickerContext?.machineId, domain: 'runtime' });
     const selected = targets.find(option => buildBackendTargetKeyV2(option.target) === selectedKey);
     const context = params.facts?.agentPickerContext;
     const options = React.useMemo<readonly AgentInputChipPickerOption[]>(() => buildSessionAgentPickerOptions({
@@ -78,6 +79,9 @@ export function useSessionAuthoringEnginePicker(params: Readonly<{
                     backendTarget, runtimeCarrierAgentId: option.agentId,
                     selectedMachineId: context?.machineId ?? null,
                     capabilityServerId: context?.serverId ?? '', cwd: context?.directory ?? null,
+                    ...('connectedServices' in latest.current.values ? { connectedServices: latest.current.values.connectedServices } : {}),
+                    selectedProfileId: latest.current.values.profileId,
+                    runtimeDescriptorV1: latest.current.values.runtimeDescriptorV1,
                     settings, selection: readSelection(), onSelectionChange: apply,
                 }),
             };

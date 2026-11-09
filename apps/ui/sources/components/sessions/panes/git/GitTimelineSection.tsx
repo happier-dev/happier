@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import Animated, { FadeIn, LinearTransition, ReduceMotion, ZoomIn } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { ScmLogEntry } from '@happier-dev/protocol';
+import type { ScmLogEntry } from '@happier-dev/protocol/scm';
 
 import { SourceControlOperationsHistoryTimelineRow } from '@/components/workspaces/scm/SourceControlOperationsHistoryTimelineRow';
 import { SourceControlOperationsHistoryLoadMoreButton } from '@/components/workspaces/scm/SourceControlOperationsHistoryLoadMoreButton';
@@ -11,6 +11,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
+import { usePaneContentInsetPx } from '@/components/ui/lists/listPresentation';
 import { Typography } from '@/constants/Typography';
 import { projectGitTimeline, type GitTimelineCommit } from '@/scm/history/gitTimelineProjection';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -32,8 +33,10 @@ export type GitTimelineSectionProps = Readonly<{
     /** What origin has that this branch does not; `null` while unknown. */
     incoming: readonly ScmLogEntry[] | null;
     loading: boolean;
+    error: boolean;
     hasMore: boolean;
     onLoadMore: () => void;
+    onRetry: () => void;
     onOpenCommit: (sha: string) => void;
     /** The commit that just landed from this pane (it wears "just now" and lands blue). */
     landedSha: string | null;
@@ -47,6 +50,8 @@ export type GitTimelineSectionProps = Readonly<{
  * `projectGitTimeline`; the pane owns the reads.
  */
 export const GitTimelineSection = React.memo(function GitTimelineSection(props: GitTimelineSectionProps) {
+    // The label and the lane start on the pane's text edge, under the pane title and the change rows' marks.
+    const contentInsetPx = usePaneContentInsetPx();
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const timeline = React.useMemo(() => projectGitTimeline({
@@ -100,12 +105,21 @@ export const GitTimelineSection = React.memo(function GitTimelineSection(props: 
     ) : null;
     const hasNow = props.changedCount > 0;
     const firstCommitSha = commits[0]?.commit.sha ?? null;
+    const historyFailure = props.error ? (
+        <SurfaceStateCard
+            testID="session-git-timeline-error"
+            size="line"
+            kind="error"
+            title={t('surfaceState.couldNotOpen', { name: t('files.operationsHistory.recentCommits') })}
+            action={{ label: t('surfaceState.tryAgain'), onPress: props.onRetry }}
+        />
+    ) : null;
 
     if (!hasNow && commits.length === 0) {
         if (props.loading) {
             return <SurfaceStateCard testID="session-git-timeline-loading" size="line" kind="loading" title={t('sessionGitPane.flow.timeline.loading')} />;
         }
-        return null;
+        return historyFailure;
     }
 
     const rows: React.ReactNode[] = [];
@@ -149,7 +163,7 @@ export const GitTimelineSection = React.memo(function GitTimelineSection(props: 
     }
 
     return (
-        <View testID={props.testID ?? 'session-git-timeline'} style={styles.section}>
+        <View testID={props.testID ?? 'session-git-timeline'} style={[styles.section, { paddingHorizontal: contentInsetPx }]}>
             <Text accessibilityRole="header" style={styles.title}>{t('sessionGitPane.flow.timeline.title')}</Text>
             {hasNow ? (
                 <View testID="session-git-timeline-now" style={styles.nowRow}>
@@ -167,6 +181,7 @@ export const GitTimelineSection = React.memo(function GitTimelineSection(props: 
                 </View>
             ) : null}
             {rows}
+            {historyFailure}
             {props.hasMore ? (
                 <SourceControlOperationsHistoryLoadMoreButton
                     theme={theme}
@@ -233,7 +248,6 @@ const OriginMarker = React.memo(function OriginMarker(props: Readonly<{ name: st
 
 const stylesheet = StyleSheet.create((theme) => ({
     section: {
-        paddingHorizontal: theme.space.s12,
         paddingTop: 14,
         paddingBottom: theme.space.s8,
     },

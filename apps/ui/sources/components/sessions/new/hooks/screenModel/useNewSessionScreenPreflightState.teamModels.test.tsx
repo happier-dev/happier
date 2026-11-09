@@ -123,7 +123,9 @@ describe('new Session model source authority', () => {
                 await act(async () => { hook.getCurrent().state.acpConfigOptionsProbeState.onRefresh(); });
                 await waitForHomeGovernance(async () => {
                     await flushHookEffects();
-                    expect(hook.getCurrent().state.acpConfigOptionsProbeState.failed).toBe(true);
+                    expect(hook.getCurrent().state.acpConfigOptionsProbeState).toMatchObject({
+                        failed: true, refreshErrorMessage: 'Native configuration rejected',
+                    });
                 });
                 await hook.rerender({ selectedSource: 'team' });
                 expect(hook.getCurrent().options.map(option => option.value?.modelId)).toEqual(['team-model']);

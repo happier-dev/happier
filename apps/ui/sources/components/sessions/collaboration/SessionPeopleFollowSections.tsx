@@ -12,6 +12,7 @@ import { projectAccountSessionFollowPolicyEditor } from '@/components/sessions/f
 import { AccountSessionFollowControl } from '@/components/sessions/follow/AccountSessionFollowControl';
 import type { AccountSessionFollowEditorParts } from '@/components/sessions/follow/AccountSessionFollowEditor';
 import { SessionFollowSourcesEditor } from '@/components/sessions/follow/SessionFollowSourcesEditor';
+import { FollowSessionMark } from '@/components/sessions/follow/FollowSessionMark';
 import { FollowEditorPage } from '@/components/sessions/follow/FollowEditorPage';
 import { FollowEditorPanel } from '@/components/sessions/follow/FollowEditorPanel';
 import { openFollowNotificationSettings } from '@/components/sessions/follow/openFollowNotificationSettings';
@@ -25,9 +26,12 @@ import { describeSessionFollowLevel } from '@/components/sessions/follow/session
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { PaneSectionHeader } from '@/components/ui/lists/PaneSectionHeader';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionListRowsForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
+import { useSessionListRowsByServerId } from '@/sync/domains/state/storage';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
@@ -205,16 +209,6 @@ function describeFollowingSummary(people: SessionPeopleFollow): string | null {
     );
 }
 
-function countFollowing(people: SessionPeopleFollow): number | null {
-    const projection = people.following.projection;
-    return projection ? projection.rules.length + projection.sources.length : null;
-}
-
-function countFollowers(people: SessionPeopleFollow): number | null {
-    const { sessions, peopleCount } = people.census;
-    return sessions && peopleCount !== null ? sessions.length + peopleCount : null;
-}
-
 /**
  * Who hears about this session, and what it hears about (C1 §6.1 R12): two summary rows under the
  * Discussions, Followers then Following, each opening the same Follow sheet in its direction, where the rows,
@@ -232,6 +226,8 @@ export const SessionPeopleFollowSections = React.memo(function SessionPeopleFoll
      * opens it once; ordinary People navigation passes none and the sheet stays closed.
      */
     openRequest?: SessionPeopleFollowOpenRequest | null;
+    /** Returns custody to the stable route owner before this remountable child opens the request. */
+    onOpenRequestAccepted?: (request: SessionPeopleFollowOpenRequest) => boolean;
 }>) {
     const people = useSessionPeopleFollow(props.target);
     const { census, following } = people;
@@ -288,22 +284,22 @@ export const SessionPeopleFollowSections = React.memo(function SessionPeopleFoll
         // Applied once Following is known to be offered here, so a request never pushes a page that can't render.
         if (!request || !people.enabled || handledRequest.current === request) return;
         handledRequest.current = request;
+        if (props.onOpenRequestAccepted?.(request) === false) return;
         open(request.direction);
-    }, [open, people.enabled, request]);
+    }, [open, people.enabled, props.onOpenRequestAccepted, request]);
     if (!people.enabled) return null;
     const followersSummary = describeFollowersSummary(people);
     const followingSummary = describeFollowingSummary(people);
-    const followersCount = countFollowers(people);
-    const followingCount = countFollowing(people);
     return (
         <View style={styles.section}>
+            {/* Its own heading: the summaries are who hears about it and what it hears, not part of the section above. */}
+            <PaneSectionHeader title={t('sessionPages.info.follow')} />
             <View ref={followersAnchorRef} collapsable={false}>
                 <Item pressableRef={followersTriggerRef} testID="session-people-followers-summary" density="compact" showDivider={false}
                     icon={<FollowerMark name="users" />}
                     title={t('session.collaboration.pane.followersTitle')}
                     subtitle={followersSummary ?? undefined}
                     subtitleLines={2}
-                    detail={followersCount ? String(followersCount) : undefined}
                     loading={followersSummary === null && (people.followersLoading || people.youLoading)}
                     onPress={() => open('followers')} />
             </View>
@@ -313,7 +309,6 @@ export const SessionPeopleFollowSections = React.memo(function SessionPeopleFoll
                     title={t('session.follow.sources.title')}
                     subtitle={followingSummary ?? undefined}
                     subtitleLines={2}
-                    detail={followingCount ? String(followingCount) : undefined}
                     loading={followingSummary === null && following.loading}
                     onPress={() => open('following')} />
             </View>
@@ -486,11 +481,13 @@ function SessionFollowerRows(props: Readonly<{
     const addresses = React.useMemo(() => props.followers.map((follower) => ({ sessionId: follower.sessionId, serverId: props.target.serverId })),
         [props.target.serverId, props.followers]);
     const titles = useSessionDisplayTitles(addresses);
+    const rows = readSessionListRowsForServerId(useSessionListRowsByServerId(), props.target.serverId);
     return <>
         {props.followers.map((follower, index) => {
             const title = titles[index] ?? t('session.untitled');
             return <Item key={follower.sessionId} testID={`session-people-follower-session-${follower.sessionId}`}
-                title={title} icon={<FollowerMark name="stack" />}
+                title={title}
+                icon={<FollowSessionMark session={rows?.[follower.sessionId] ?? null} serverId={props.target.serverId} rowGlyph />}
                 subtitle={describeSessionFollower(follower)} subtitleLines={2} onPress={() => props.onOpen(follower, title)} />;
         })}
     </>;

@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { JSDOM } from 'jsdom';
 import { onTestFinished, vi } from 'vitest';
-import { SessionMessagesPageV1Schema, SessionMessageV1Schema, FeaturesResponseSchema, type SessionMessagesPageV1 } from '@happier-dev/protocol';
+import { SessionMessagesPageV1Schema, SessionMessageV1Schema, type SessionMessagesPageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import type { Message } from '@happier-dev/session-core/messages';
 import { createSessionFixture, createSessionMessagesFixture, renderHook } from '@/dev/testkit';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';

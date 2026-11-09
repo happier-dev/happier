@@ -21,6 +21,9 @@ import {
 } from './sessionActionIds';
 import { executeSessionAction } from './sessionActionExecution';
 import { readPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
+import * as React from 'react';
+import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { emitSessionResumeRequest, useSessionResumeRequestListener } from '@/components/sessions/model/sessionResumeRequests';
 
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
@@ -55,6 +58,18 @@ function createTarget(overrides: Partial<SessionListRenderableSession> = {}) {
 }
 
 describe('executeSessionAction', () => {
+    it('preserves a declined exact-Home composer Resume without reporting an applied operation', async () => {
+        function ComposerListener() {
+            useSessionResumeRequestListener('session_1', async () => false, 'server_1');
+            return null;
+        }
+        const composer = await renderScreen(React.createElement(ComposerListener));
+        try {
+            expect(await executeSessionAction({ actionId: 'ui.session.resume', target: createTarget(), context: {
+                operations: { resumeSession: sessionId => emitSessionResumeRequest(sessionId, 'server_1') },
+            } })).toBe(false);
+        } finally { await composer.unmount(); }
+    });
     it('forwards the direct-report choice in the one archive request', async () => {
         const requests: unknown[] = [];
         await executeSessionAction({ actionId: SESSION_ACTION_ARCHIVE_ID, target: createTarget(),
@@ -332,7 +347,7 @@ describe('executeSessionAction', () => {
 
     it('does not silently ignore local action ids without an injected operation', async () => {
         await expect(executeSessionAction({
-            actionId: SESSION_ACTION_PIN_ID,
+            actionId: SESSION_ACTION_EDIT_TAGS_ID,
             target: createTarget(),
         })).rejects.toBeInstanceOf(HappyError);
     });

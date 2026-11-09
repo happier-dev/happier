@@ -11,7 +11,6 @@ import {
     createPartialStorageModuleMock } from '@/dev/testkit/mocks/storage';
 import {
     REMOVE_INDEX_LOCK_CONFIRMATION_TOKEN,
-    SCM_OPERATION_ERROR_CODES,
     type ScmStashDropResponse,
     type ScmStashListRequest,
     type ScmStashListResponse,
@@ -22,7 +21,9 @@ import {
     type ScmStashShowResponse,
     type ScmRepositoryRemoveIndexLockRequest,
     type ScmRepositoryRemoveIndexLockResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/scm';
+import {
+    SCM_OPERATION_ERROR_CODES} from '@happier-dev/protocol/scm/operationError';
 
 import { installSessionFilesViewCommonModuleMocks } from './sessionFilesViewsTestHelpers';
 

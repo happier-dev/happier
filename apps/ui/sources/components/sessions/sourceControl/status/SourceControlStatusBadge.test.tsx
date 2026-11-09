@@ -19,7 +19,7 @@ installSourceControlStatusCommonModuleMocks({
                     },
                 }),
             },
-            useSessionProjectScmSnapshot: () => snapshotMock,
+            useSessionProjectScmSummarySnapshot: () => snapshotMock,
         }),
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');

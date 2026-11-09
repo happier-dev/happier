@@ -52,11 +52,12 @@ function readSelections(
 export function useExecutableParticipantLabel(
   value: unknown,
   serverId: string | null,
+  enabled = true,
 ): string | undefined {
   const selections = React.useMemo(() => readSelections(value), [value]);
   const addresses = React.useMemo(
     () =>
-      selections.flatMap((selection) =>
+      enabled ? selections.flatMap((selection) =>
         selection.kind === 'session'
           ? [
               {
@@ -65,12 +66,13 @@ export function useExecutableParticipantLabel(
               },
             ]
           : [],
-      ),
-    [selections],
+      ) : [],
+    [enabled, selections],
   );
   const titles = useSessionDisplayTitles(addresses);
-  const machines = useMachineListForServer(serverId ?? '');
-  return React.useMemo(() => {
+  const machines = useMachineListForServer(serverId ?? '', enabled && selections.some(selection => selection.kind === 'model'));
+  const label = React.useMemo(() => {
+    if (!enabled) return undefined;
     if (selections.length === 0) return undefined;
     let sessionIndex = 0;
     return selections
@@ -91,5 +93,9 @@ export function useExecutableParticipantLabel(
         });
       })
       .join(', ');
-  }, [machines, selections, titles]);
+  }, [enabled, machines, selections, titles]);
+  // A retained field keeps its last label while its detail subscriptions are withdrawn.
+  const retainedLabel = React.useRef(label);
+  React.useLayoutEffect(() => { if (enabled) retainedLabel.current = label; }, [enabled, label]);
+  return enabled ? label : retainedLabel.current;
 }

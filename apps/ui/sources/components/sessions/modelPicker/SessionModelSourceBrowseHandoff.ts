@@ -8,8 +8,9 @@ import type { SessionModelBrowseScope } from './SessionModelSourceScope';
  * scope from here. Nothing is committed by a request, and it is dropped when the pane closes.
  */
 export type SessionModelSourceBrowseHandoff = Readonly<{
-    request: Readonly<{ agentTargetKey: string; scope: SessionModelBrowseScope; key: number }> | null;
-    browse: (agentTargetKey: string, scope: SessionModelBrowseScope) => void;
+    request: Readonly<{ agentTargetKey: string; scope: SessionModelBrowseScope; key: number; onSelect?: () => void }> | null;
+    /** Commit the requested auth choice only when a model in this source is picked. */
+    browse: (agentTargetKey: string, scope: SessionModelBrowseScope, onSelect?: () => void) => void;
 }>;
 
 export const SessionModelSourceBrowseHandoffContext = React.createContext<SessionModelSourceBrowseHandoff | null>(null);

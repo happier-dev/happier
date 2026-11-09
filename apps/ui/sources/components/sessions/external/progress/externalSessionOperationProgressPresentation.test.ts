@@ -4,7 +4,7 @@ import {
     EXTERNAL_SESSION_OPERATION_TIMELINES_V1,
     ExternalSessionOperationProgressV1Schema,
     type ExternalSessionOperationProgressV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/operationV1';
 
 import { presentExternalSessionOperationProgress } from './externalSessionOperationProgressPresentation';
 

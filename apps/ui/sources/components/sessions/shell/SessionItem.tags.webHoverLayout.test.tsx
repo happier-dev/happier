@@ -67,9 +67,6 @@ vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => vi.fn(),
 }));
 
-vi.mock('@/utils/platform/responsive', () => ({
-    useIsTablet: () => false,
-}));
 
 vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (fn: any) => [false, fn],
@@ -103,8 +100,11 @@ function createSession() {
     });
 }
 
+// Loaded once at collection: the module graph is heavy and must not count against a test's own timeout.
+const { SessionItem: SessionItemModule } = await import('./SessionItem');
+
 async function importSessionItem() {
-    const { SessionItem } = await import('./SessionItem');
+    const SessionItem = SessionItemModule;
     return createModelBackedSessionItemTestComponent(SessionItem, {
         defaultRowViewModelOverrides: {
             activityTimeLabel: '1m',

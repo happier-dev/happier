@@ -1,6 +1,26 @@
-import { StyleSheet } from 'react-native-unistyles';
+import * as React from 'react';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import type { HappierHitReach } from '@happier-dev/plugin-ui/environment';
 
 import { Typography } from '@/constants/Typography';
+
+/** The strip's line: its instruments draw a 16 px glyph line centred in it. */
+export const INSTRUMENT_STRIP_LINE_HEIGHT_PX = 28;
+const INSTRUMENT_GLYPH_LINE_PX = 16;
+
+/**
+ * An instrument's hit area: half the cluster gap toward each neighbour, and above and below only the strip
+ * line's own free band. Above the line is the transcript (a queued row's actions), below it the composer, so a
+ * finger there belongs to them, not to the gauge or the quota ring.
+ */
+export function useInstrumentStripHitReach(): HappierHitReach {
+    const { theme } = useUnistyles();
+    const sideways = theme.space.s10 / 2;
+    return React.useMemo(() => {
+        const band = (INSTRUMENT_STRIP_LINE_HEIGHT_PX - INSTRUMENT_GLYPH_LINE_PX) / 2;
+        return { left: sideways, right: sideways, top: band, bottom: band };
+    }, [sideways]);
+}
 
 /**
  * Layout for the session instrument strip. One 28-high row: connection/working
@@ -12,7 +32,7 @@ import { Typography } from '@/constants/Typography';
  */
 export const instrumentStripStyles = StyleSheet.create((theme) => ({
     root: {
-        minHeight: 28,
+        minHeight: INSTRUMENT_STRIP_LINE_HEIGHT_PX,
         flexDirection: 'row',
         flexWrap: 'wrap',
         justifyContent: 'flex-end',
@@ -78,10 +98,23 @@ export const instrumentStripStyles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         flexShrink: 0,
         marginLeft: theme.space.s10,
+        // The host's actions (Look, the composer's close) are drawn apart by the strip's rhythm, so their
+        // hit areas split a real gap instead of meeting at none.
+        gap: theme.space.s10,
     },
     /** An instrument's entrance wrapper shrinks with the cluster, so a long badge label wraps or ellipsizes inside the row. */
     instrumentEntrance: {
         flexShrink: 1,
+        minWidth: 0,
+    },
+    /**
+     * Plain values, quiet notes and plugin items give way first. Flex shortfall is shared by
+     * shrink factor times width; a factor this far above `instrumentEntrance` leaves a prominent
+     * badge or gauge less than a hundredth of a pixel while any of these can still shrink, and
+     * (unlike a fractional factor, which a browser caps) they share it fully once these reach zero.
+     */
+    instrumentEntranceYielding: {
+        flexShrink: 10000,
         minWidth: 0,
     },
     instrumentSlot: {

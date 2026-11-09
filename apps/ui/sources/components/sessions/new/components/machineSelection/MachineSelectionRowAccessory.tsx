@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { MachineSummaryStrip } from '@/components/machines/summary/MachineSummaryStrip';
 import { useMachineResourceSummary } from '@/sync/domains/machines/resources/useMachineResourceSummary';
-import { Platform, Pressable, View, type GestureResponderEvent } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { StatusDot } from '@/components/ui/status/StatusDot';
@@ -17,12 +17,10 @@ import { Icon } from '@/components/ui/icons/Icon';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { useManagedProvisionerPresentation } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { useThisComputerMachineId } from '@/components/machines/add/useMachineAddPaths';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { resolveMachineKindGlyph } from '@/components/machines/machineKindGlyph';
 
-type AccessoryPressEvent = Partial<GestureResponderEvent> & {
-    nativeEvent?: GestureResponderEvent['nativeEvent'] & {
-        stopImmediatePropagation?: () => void;
-    };
-};
+type AccessoryPressEvent = Readonly<{ stopPropagation?: () => void; nativeEvent?: unknown }>;
 
 /**
  * The presence dot leading a machine row's status line ("● Online · …"). It carries the row's
@@ -56,16 +54,18 @@ export function MachinePresenceDot(props: Readonly<{
 /** The provider's own mark for a machine Happier created, read like its page header reads it. */
 function ManagedMachineRowMark(props: Readonly<{ machine: ManagedMachineV1; serverId: string; size: number }>): React.ReactElement {
     const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller: props.machine.controller,
-        provider: props.machine.launch.provider, schemaVersion: props.machine.launch.schemaVersion });
+        provider: props.machine.launch.provider, schemaVersion: props.machine.launch.schemaVersion, purpose: 'mark' });
     return <>{presentation.markAt(props.size)}</>;
 }
 
 /**
- * A machine row's leading mark (lab m-pick): the provider's mark for a machine Happier created, a
- * laptop for this computer, and the device glyph for every other machine.
+ * A machine row's leading mark (lab m-pick): the provider's mark for a machine Happier created, else the
+ * glyph for the machine's kind.
  */
 export function MachineRowMark(props: Readonly<{
     machineId: string;
+    /** The machine's published OS platform (`metadata.platform`); unknown keeps the desktop glyph. */
+    platform?: string | null;
     serverId: string;
     managedMachine?: ManagedMachineV1;
     size: number;
@@ -78,7 +78,7 @@ export function MachineRowMark(props: Readonly<{
     }
     return (
         <Icon
-            name={props.machineId === thisComputerMachineId ? 'laptop' : 'desktop'}
+            name={resolveMachineKindGlyph({ isThisComputer: props.machineId === thisComputerMachineId, platform: props.platform })}
             size={props.size}
             color={props.color ?? theme.colors.text.secondary}
         />
@@ -127,7 +127,7 @@ export function MachineSelectionRowAccessory<TMachine extends MachineDisplayRend
 
     const handleToggleFavorite = React.useCallback((event?: AccessoryPressEvent) => {
         event?.stopPropagation?.();
-        event?.nativeEvent?.stopImmediatePropagation?.();
+        (event?.nativeEvent as { stopImmediatePropagation?: () => void } | undefined)?.stopImmediatePropagation?.();
         props.onToggleFavorite?.(props.machine);
     }, [props]);
 
@@ -152,8 +152,8 @@ export function MachineSelectionRowAccessory<TMachine extends MachineDisplayRend
                 />
             ) : null}
             {showFavoriteToggle ? (
-                <Pressable
-                    hitSlop={{ top: 10, right: 10, bottom: 10, left: 10 }}
+                <HappierPressable
+                    hitReach={0}
                     onPress={handleToggleFavorite}
                     style={styles.favoriteButton}
                     accessibilityRole="button"
@@ -167,7 +167,7 @@ export function MachineSelectionRowAccessory<TMachine extends MachineDisplayRend
                         color={props.isFavorite ? selectedColor : theme.colors.text.secondary}
                         weight={props.isFavorite ? 'fill' : 'regular'}
                     />
-                </Pressable>
+                </HappierPressable>
             ) : null}
         </View>
     );

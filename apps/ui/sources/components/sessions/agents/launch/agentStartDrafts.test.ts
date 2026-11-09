@@ -5,7 +5,7 @@ import type { PaneDetailsStateView } from '@/components/appShell/panes/details/w
 import { createDiscussionSelectionInteractiveExecutionRunDraftDetailsTab } from '@/components/sessions/runs/launcher/executionRunLauncherModel';
 import { executionRunLauncherDraftFieldPath, readSessionLauncherDraftKeysFromDraft, readSessionLauncherDraftPreviewFromDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 
-import { projectAgentStartDrafts } from './agentStartDrafts';
+import { executionRunLauncherDraftKey, projectAgentStartDrafts } from './agentStartDrafts';
 
 function tab(key: string, kind: string, resource: unknown) {
     return { key, kind, title: key, resource, isPreview: false, isPinned: false };
@@ -25,6 +25,19 @@ function details(tabs: ReturnType<typeof tab>[], activeTabKey: string | null, is
 }
 
 describe('projectAgentStartDrafts', () => {
+    it('keeps comparison source drafts separate and never reads comparison identity as a role', () => {
+        const comparison = { cwd: '/repo', comparison: { kind: 'branch' as const, base: 'main', head: 'HEAD' },
+            scopeLabel: 'main → HEAD', defaultWalkthrough: true };
+        const first = executionRunLauncherDraftKey({ intent: 'review', comparisonReview: comparison });
+        const second = executionRunLauncherDraftKey({ intent: 'review', comparisonReview: { ...comparison,
+            comparison: { kind: 'workingTree' as const } } });
+        expect(first).not.toBe(second);
+        expect(first).not.toBe(executionRunLauncherDraftKey({ intent: 'review' }));
+        expect(projectAgentStartDrafts(null, [first, second])).toEqual([
+            { key: first, tabKey: null, intent: 'review', roleId: null, comparison: true, active: false },
+            { key: second, tabKey: null, intent: 'review', roleId: null, comparison: true, active: false },
+        ]);
+    });
     it('keeps two Discussion previews distinct from a retained plain conversation', () => {
         const discussionTabs = ['selection_1', 'selection_2'].map((draftCorrelationId) => {
             const discussion = createDiscussionSelectionInteractiveExecutionRunDraftDetailsTab({

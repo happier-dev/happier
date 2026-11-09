@@ -1,6 +1,6 @@
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ApprovalRequestV2 } from '@happier-dev/protocol';
+import type { ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
 
@@ -13,7 +13,6 @@ const boundary = vi.hoisted(() => ({
 
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
     createDefaultActionExecutor: () => ({ execute: boundary.execute }),
-    requiresExactDaemonApprovalReplay: () => true,
     resolveApprovalReplayRoute: (approval: ApprovalRequestV2) => boundary.profileId
         ? {
             serverId: boundary.profileId,

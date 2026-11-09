@@ -1,28 +1,21 @@
-import type { ToolCall } from '@happier-dev/session-core/messages';
-import type { Settings } from '@/sync/domains/settings/settings';
-import type { TranscriptPermissionDisabledReason } from '@/utils/sessions/deriveTranscriptInteraction';
-import { resolveInactiveSessionToolCallFailure } from '@/components/tools/shell/permissions/resolveInactiveSessionToolCallFailure';
-import { resolveToolStatusIndicatorKind } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
+import { readTranscriptSessionMediaMeta } from '../structured/happierMetaEnvelope';
+import type { ParsedSessionMediaMessageMeta } from '@/sync/domains/session/media/sessionMediaMessageMeta';
+import type { ToolCall, ToolCallMessage } from '@happier-dev/session-core/messages';
 import { readTurnChangesFromDiffTool, type TurnChangesFromDiffTool } from '@/components/sessions/files/turnChanges/readTurnChangesFromDiffTool';
 
 /** The transcript tool row's display decision, shared with its pre-mount text projection. */
 export function deriveToolMessageDisplay(params: Readonly<{
     tool: ToolCall;
-    hasStructuredNode: boolean;
-    toolViewTimelineChromeMode?: Settings['toolViewTimelineChromeMode'];
-    permissionDisabledReason?: TranscriptPermissionDisabledReason;
-}>): Readonly<{ turnChanges: TurnChangesFromDiffTool | null; shouldRenderToolChrome: boolean }> {
+    meta?: ToolCallMessage['meta'];
+    /** The call is drawn as its Ask record, which replaces the generic tool row. */
+    presentedAsAskRecord?: boolean;
+}>): Readonly<{ turnChanges: TurnChangesFromDiffTool | null; shouldRenderToolChrome: boolean; sessionMedia: ParsedSessionMediaMessageMeta | null }> {
+    const sessionMedia = readTranscriptSessionMediaMeta(params.meta);
     const turnChanges = readTurnChangesFromDiffTool(params.tool);
     const showsTurnChangesCard = turnChanges !== null && turnChanges.files.length > 0;
-    const toolForSession = resolveInactiveSessionToolCallFailure({
-        tool: params.tool,
-        permissionDisabledReason: params.permissionDisabledReason,
-    });
-    const statusKind = resolveToolStatusIndicatorKind(toolForSession);
-    const forceChromeForStatus = statusKind === 'error' || statusKind === 'permission_blocked';
     return {
+        sessionMedia,
         turnChanges: showsTurnChangesCard ? turnChanges : null,
-        shouldRenderToolChrome: !showsTurnChangesCard && !(params.toolViewTimelineChromeMode === 'activity_feed'
-            && params.hasStructuredNode && !forceChromeForStatus),
+        shouldRenderToolChrome: !showsTurnChangesCard && params.presentedAsAskRecord !== true,
     };
 }

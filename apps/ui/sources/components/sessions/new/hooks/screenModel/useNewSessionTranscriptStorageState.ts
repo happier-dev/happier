@@ -8,7 +8,7 @@ import {
     supportsDirectTranscriptStorageForNewSession,
     type NewSessionTranscriptStorage,
 } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
-import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
+import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { useSettingsSelector } from '@/sync/store/hooks';
 import { getAgentUiSettingsKeys } from '@/agents/catalog/useAgentUiSettings';
 import { getStorage } from '@/sync/domains/state/storageStore';

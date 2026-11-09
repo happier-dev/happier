@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import type { ScmLogEntry } from '@happier-dev/protocol';
+import type { ScmLogEntry } from '@happier-dev/protocol/scm';
 
 import { renderScreen } from '@/dev/testkit';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
@@ -43,8 +43,10 @@ async function readOrder(props: Partial<React.ComponentProps<typeof import('./Gi
             entries={[LOCAL_A, LOCAL_B, SHARED]}
             incoming={null}
             loading={false}
+            error={false}
             hasMore={false}
             onLoadMore={() => {}}
+            onRetry={() => {}}
             onOpenCommit={() => {}}
             landedSha={null}
             {...props}
@@ -61,6 +63,12 @@ async function readOrder(props: Partial<React.ComponentProps<typeof import('./Gi
 }
 
 describe('GitTimelineSection (Git lab A/HI/S)', () => {
+    it('keeps a failed history read visible even when the working tree and timeline are empty', async () => {
+        const { screen } = await readOrder({ changedCount: 0, entries: [], error: true });
+        expect(screen.findHostByTestId('session-git-timeline-error')).not.toBeNull();
+        expect(screen.findHostByTestId('session-git-timeline-error-action')).not.toBeNull();
+    });
+
     it('puts origin right after the commits only this machine has', async () => {
         expect((await readOrder({ ahead: 2 })).ids).toEqual(['aaaaaaa', 'bbbbbbb', 'origin', 'ccccccc']);
         expect((await readOrder({ ahead: 0 })).ids).toEqual(['origin', 'aaaaaaa', 'bbbbbbb', 'ccccccc']);

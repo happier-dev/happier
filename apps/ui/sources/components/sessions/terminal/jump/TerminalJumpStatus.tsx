@@ -20,7 +20,7 @@ const stylesheet = StyleSheet.create((theme) => ({
  * A Jump row's trailing status (terminal lab B4): the same dot colours as the strip's tab slot, said
  * in words. The tab the pane shows reads "Showing"; a quiet terminal says nothing.
  */
-export function TerminalJumpStatus(props: Readonly<{ status: SessionTerminalStatus | null; showing: boolean }>) {
+export function TerminalJumpStatus(props: Readonly<{ status: SessionTerminalStatus | null; showing: boolean; title?: string }>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
     if (!props.status) {
@@ -33,7 +33,7 @@ export function TerminalJumpStatus(props: Readonly<{ status: SessionTerminalStat
     return (
         <View style={styles.row}>
             <StatusDot color={color} size={6} />
-            <Text style={[styles.label, props.status === 'attention' ? styles.attention : null]}>{describeSessionTerminalStatus(props.status)}</Text>
+            <Text style={[styles.label, props.status === 'attention' ? styles.attention : null]}>{describeSessionTerminalStatus(props.status, props.title)}</Text>
         </View>
     );
 }

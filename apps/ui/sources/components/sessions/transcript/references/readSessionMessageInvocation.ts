@@ -18,6 +18,14 @@ export function isSessionMessageInvocationAnchor(message: Message): boolean {
     return message.kind === 'tool-call' && readHappierActionCallId(message.tool.name, message.tool.input) === 'session.message.send';
 }
 
+/**
+ * An agent's Ask/Send tool call whose result is a recognized send is presented as its Ask record alone;
+ * a call without a recognizable result keeps its generic tool row (so a pending or unreadable call is never hidden).
+ */
+export function presentsAsSessionAskRecord(message: Message, source: Readonly<{ serverId: string; sessionId: string }>): boolean {
+    return message.kind === 'tool-call' && isSessionMessageInvocationAnchor(message) && readSessionMessageInvocation(message, source) !== null;
+}
+
 /** Both origins feed one read model. Tool results keep their existing exact transcript anchor. */
 export function readSessionMessageInvocation(message: Message, source: Readonly<{ serverId: string; sessionId: string }>): SessionMessageInvocationEntry | null {
     if (message.kind === 'agent-event') {

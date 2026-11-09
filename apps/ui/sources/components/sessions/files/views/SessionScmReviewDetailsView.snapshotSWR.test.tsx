@@ -1,7 +1,11 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ReviewCommentCreateRequestV1Schema, ReviewCommentListRequestV1Schema, ReviewCommentWorkspaceV1Schema, matchesReviewCommentListFilters, type ReviewCommentV1, type PluginPermissionGrantV1, type WorkspaceRefV1 } from '@happier-dev/protocol';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ReviewCommentCreateRequestV1Schema, ReviewCommentWorkspaceV1Schema, type ReviewCommentV1} from '@happier-dev/protocol/reviews/comments/v1';
+import { ReviewCommentListRequestV1Schema} from '@happier-dev/protocol/reviews/comments/actions';
+import { matchesReviewCommentListFilters} from '@happier-dev/protocol/reviews/comments/queries';
+import { type PluginPermissionGrantV1} from '@happier-dev/protocol/plugins/permissions/grants';
+import { type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { flushHookEffects, standardCleanup, applyProjectAccountRowsFixture, invokeTestInstanceHandler } from '@/dev/testkit';
 import { buildReviewCommentFixture, storePlainReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
 import { createSessionFilesViewFixture, fileViewSnapshot, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from './sessionFilesViewTestkit';
@@ -21,7 +25,8 @@ let requests: Array<{ path: string; method: string; accountId: string | null }> 
 let pane: AppPaneScopeApi;
 let pendingSnapshotResponses: Array<() => void> = [];
 const tabKey = 'scmReview:working';
-beforeAll(prepareSessionFilesViewTestkit);
+await prepareSessionFilesViewTestkit();
+const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
 beforeEach(async () => {
     standardCleanup();
     servedReviewComments = [];
@@ -78,7 +83,6 @@ afterEach(async () => {
 });
 
 async function render(tick = 0) {
-    const { SessionScmReviewDetailsView } = await import('./SessionScmReviewDetailsView');
     const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
     function Probe() { pane = useAppPaneScope('session:s1'); return null; }
     const element = (nextTick: number) => <React.Fragment><Probe /><Tick tick={nextTick} /><SessionScmReviewDetailsView serverId={fixture.home.id} sessionId="s1" scopeId="session:s1" /></React.Fragment>;
@@ -99,8 +103,6 @@ function scrollTop() { return (pane.scopeState?.details.tabState[tabKey] as { sc
 describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
     it('creates a Session-scoped comment without a counter and lists it from the Project workspace scope', async () => {
         enableReviewComments();
-        const { Modal } = await import('@/modal');
-        vi.mocked(Modal.confirm).mockResolvedValueOnce(true);
         const { ReviewCommentsSessionSurface } = await import('@/components/reviews/ReviewCommentsSessionSurface');
         const screen = await render();
         const surfaceProps = screen.tree.root.findByType(ReviewCommentsSessionSurface).props as React.ComponentProps<typeof ReviewCommentsSessionSurface>;
@@ -123,20 +125,24 @@ describe('SessionScmReviewDetailsView (snapshot SWR)', () => {
         expect(JSON.parse(listRequest?.url.searchParams.get('workspace') ?? 'null')).toEqual({ machineId: 'm1', path: '/tmp/repo' });
     });
 
-    it('refuses a Session comment write when confirmation is declined', async () => {
+    it('creates the person’s reversible Session comment without confirmation by default', async () => {
         enableReviewComments();
         const { Modal } = await import('@/modal');
-        vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
         const { ReviewCommentsSessionSurface } = await import('@/components/reviews/ReviewCommentsSessionSurface');
         const screen = await render();
         const surface = screen.tree.root.findByType(ReviewCommentsSessionSurface).props as React.ComponentProps<typeof ReviewCommentsSessionSurface>;
-        await expect(surface.execute('reviews.comments.create', {
+        // Canonical policy: packages/protocol/src/actions/actionApprovalPolicy.ts#requiresDefaultApprovalFloor.
+        // Host present_user reversible UI intent is direct; explicit Actions Settings still win.
+        const confirm = vi.mocked(Modal.confirm).mockReset().mockResolvedValue(false);
+        const response = await surface.execute('reviews.comments.create', {
             workspace: surface.workspace, sessionId: surface.sessionId,
             anchor: { kind: 'file', filePath: 'src/a.ts' }, snapshot: { kind: 'none', capturedAt: 1 },
-            body: 'Do not persist this declined comment.', clientMutationId: 'session-declined',
-        })).rejects.toMatchObject({ code: 'approval_canceled' });
-        expect(homeRequests.filter(request => request.path === '/v1/reviews/comments' && request.method === 'POST')).toEqual([]);
-        expect(servedReviewComments).toEqual([]);
+            body: 'Persist this reversible comment directly.', clientMutationId: 'session-direct',
+        });
+        expect(confirm).not.toHaveBeenCalled();
+        expect(response).toMatchObject({ comment: { body: 'Persist this reversible comment directly.' } });
+        expect(homeRequests.filter(request => request.path === '/v1/reviews/comments' && request.method === 'POST')).toHaveLength(1);
+        expect(servedReviewComments).toEqual([expect.objectContaining({ body: 'Persist this reversible comment directly.' })]);
     });
 
     it('finds a Project grant after counter reassignment and refuses another checkout or a missing ref', async () => {

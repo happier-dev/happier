@@ -10,6 +10,7 @@ import {
     type SessionGettingStartedMachinesInput,
 } from './gettingStartedModel';
 import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
+import type { ServerCredentialAccountScopeResolution } from '@/sync/domains/scope/serverCredentialAccountScope';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { primeServerFeaturesSnapshot, deleteServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -28,7 +29,7 @@ function normalizeFixtureMachines(input: FixtureMachinesInput): SessionGettingSt
     return { ...input, activeMachines: machines(input.activeMachines),
         machineListByServerId: Object.fromEntries(Object.entries(input.machineListByServerId)
             .map(([serverId, rows]) => [serverId, rows ? machines(rows) : rows])),
-        accountScopesByServerId: input.accountScopesByServerId ?? new Map([...serverIds].map(serverId => [serverId, { serverId, accountId: 'guidance-account' }])),
+        accountScopeResolutionsByServerId: input.accountScopeResolutionsByServerId ?? new Map([...serverIds].map(serverId => [serverId, { kind: 'bound' as const, scope: { serverId, accountId: 'guidance-account' } }])),
     };
 }
 function buildSessionGettingStartedViewModel(input: Omit<Parameters<typeof buildScopedViewModel>[0], 'activeMachines' | 'machineListByServerId'> & FixtureMachinesInput) {
@@ -87,6 +88,68 @@ describe('computeSessionGettingStartedDecision', () => {
 });
 
 describe('buildSessionGettingStartedViewModel', () => {
+    it.each([
+        { availability: { kind: 'locked' as const, reason: 'content_unreadable' as const }, metadata: null },
+        { availability: { kind: 'available' as const }, metadata: null, active: true, activeAt: Date.now() },
+    ])('FX28 settles unavailable Machine content into setup guidance: %j', machineContent => {
+        const serverId = 'fx28-locked-home';
+        const machine = createMachineFixture({ id: 'fx28-locked-machine', active: false, ...machineContent });
+        const model = buildSessionGettingStartedViewModel({
+            sessionsReady: true, sessionCount: 0, activeMachines: [machine],
+            selection: { activeTarget: { kind: 'server', id: serverId }, activeServerId: serverId, allowedServerIds: [serverId] },
+            serverSelectionGroups: [], activeServerProfile: { id: serverId, name: 'Studio', serverUrl: 'https://fx28.test' },
+            machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' },
+        });
+        expect(model.kind).toBe('start_daemon');
+    });
+
+    it.each(['signed_out', 'unavailable', 'unknown_home'] as const)('FX28 reports settled %s credentials rather than waiting for presence', kind => {
+        const serverId = 'fx28-terminal-home';
+        const machine = createMachineFixture({ id: 'fx28-terminal-machine', activeAt: Date.now() });
+        const input = {
+            sessionsReady: true, sessionCount: 0, activeMachines: [machine],
+            selection: { activeTarget: { kind: 'server' as const, id: serverId }, activeServerId: serverId, allowedServerIds: [serverId] },
+            serverSelectionGroups: [], activeServerProfile: { id: serverId, name: 'Studio', serverUrl: 'https://fx28.test' },
+            machineListByServerId: { [serverId]: [machine] }, machineListStatusByServerId: { [serverId]: 'idle' as const },
+            accountScopeResolutionsByServerId: new Map<string, ServerCredentialAccountScopeResolution>([[serverId, { kind }]]),
+        };
+        expect(buildScopedViewModel(input)).toMatchObject({ kind: 'start_daemon', unavailableServerIds: [serverId] });
+        // An unbound Home cannot finish its first Session read until credentials recover.
+        expect(buildScopedViewModel({ ...input, sessionsReady: false }).kind).toBe('start_daemon');
+        const pending = { ...input, sessionsReady: false,
+            accountScopeResolutionsByServerId: new Map<string, ServerCredentialAccountScopeResolution>([[serverId, { kind: 'resolving' }]]),
+        };
+        expect(buildScopedViewModel(pending).kind).toBe('loading');
+        expect(buildScopedViewModel({ ...input, activeMachines: [], machineListByServerId: {} }))
+            .toMatchObject({ kind: 'connect_machine', unavailableServerIds: [serverId] });
+        expect(buildScopedViewModel({ ...input, sessionCount: 1 }).kind).toBe('select_session');
+    });
+    it('keeps unknown daemon presence separate from known stopped Machines', () => {
+        const serverId = 'pending-daemon-home';
+        const accountId = 'pending-daemon-account';
+        const machine = createMachineFixture({ id: 'pending-daemon-machine', activeAt: Date.now() });
+        const input = { sessionsReady: true, sessionCount: 0, activeMachines: [machine],
+            selection: { activeTarget: { kind: 'server' as const, id: serverId }, activeServerId: serverId, allowedServerIds: [serverId] },
+            serverSelectionGroups: [], activeServerProfile: { id: serverId, name: 'Studio', serverUrl: 'https://pending-daemon.test' },
+            machineListByServerId: { [serverId]: [machine] }, accountScopeResolutionsByServerId: new Map() };
+        expect(resolveScopedMachinesSummary(input)).toMatchObject({ machineCount: 1, onlineCount: 0, hasUnknownServers: true });
+        expect(resolveSessionGettingStartedMachineSetupSatisfied(input)).toBe(true);
+        expect(buildScopedViewModel(input).kind).toBe('loading');
+        expect(buildScopedViewModel({ ...input, sessionCount: 1 }).kind).toBe('select_session');
+        const bound = { ...input, accountScopeResolutionsByServerId: new Map([[serverId, { kind: 'bound' as const, scope: { serverId, accountId } }]]) };
+        expect(buildScopedViewModel(bound).kind).toBe('create_session');
+        recordMachineRequestFailed({ serverId, accountId, machineId: machine.id });
+        try { expect(buildScopedViewModel(bound).kind).toBe('start_daemon'); }
+        finally { recordMachineRequestSucceeded({ serverId, accountId, machineId: machine.id }); }
+    });
+
+    it('waits on unresolved selected Homes only when no known Machine can start a Session', () => {
+        const known = computeMachinesSummary([{ machineCount: 1, onlineCount: 0 }, { machineCount: null, onlineCount: null }]);
+        expect(computeSessionGettingStartedDecision({ sessionsReady: true, sessionCount: 0, machines: known })).toBe('loading');
+        const ready = computeMachinesSummary([{ machineCount: 1, onlineCount: 1 }, { machineCount: null, onlineCount: null }]);
+        expect(computeSessionGettingStartedDecision({ sessionsReady: true, sessionCount: 0, machines: ready })).toBe('create_session');
+    });
+
     it('reads profile identity once per bulk summary and refreshes it on the next invocation', async () => {
         const { MMKV } = await import('react-native-mmkv');
         const { setServerProfileIdentityForUrl, upsertServerProfile } = await import('@/sync/domains/server/serverProfiles');
@@ -99,7 +162,7 @@ describe('buildSessionGettingStartedViewModel', () => {
         const read = (rows: readonly Machine[]) => resolveScopedMachinesSummary({
             selection: { activeTarget: { kind: 'server', id: serverId }, activeServerId: serverId, allowedServerIds: [serverId] },
             activeMachines: rows, machineListByServerId: { [serverId]: rows },
-            accountScopesByServerId: new Map([[serverId, { serverId, accountId: 'bulk-guidance-account' }]]),
+            accountScopeResolutionsByServerId: new Map([[serverId, { kind: 'bound', scope: { serverId, accountId: 'bulk-guidance-account' } }]]),
         });
         // Observe the canonical native storage boundary; all identity and fleet logic remains real.
         const reads = vi.spyOn(MMKV.prototype, 'getString');

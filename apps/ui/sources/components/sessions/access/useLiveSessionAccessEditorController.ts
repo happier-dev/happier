@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { PrincipalRefV1, SessionGrantMutationV1 } from '@happier-dev/protocol';
+import type { PrincipalRefV1} from '@happier-dev/protocol/teams/principal';
+import type { SessionGrantMutationV1 } from '@happier-dev/protocol/sessions/access/sessionAccessGrantV1';
 import type {
     RemoveSessionAccessGrantResponseV1,
     SetSessionAccessGrantResponseV1,
@@ -39,6 +40,7 @@ import type {
 } from './sessionAccessEditorTypes';
 import { presentSessionAccessFailure, presentSessionAccessReason } from './presentSessionAccessFailure';
 import { useSessionAccessApprovalHold } from './useSessionAccessApprovalHold';
+import { createSessionAccessQuery } from './sessionAccessQuery';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
 
@@ -51,6 +53,7 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
     /** The card needs grants; recipient and directory details need an open Share panel. */
     detailsDemanded?: boolean;
 }>): SessionAccessEditorController {
+    // Privileged access reads and mutations intentionally fail closed until the exact Home decision settles.
     const availability = useSessionCollaborationAvailability(input.scope.serverId);
     const detailsDemanded = input.detailsDemanded ?? true;
     const detailsDemandedRef = React.useRef(detailsDemanded);
@@ -58,7 +61,10 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
     const viewerProfile = useShareViewerProfile(input.scope);
     const scopeKey = `${serverAccountScopeKeySuffix(input.scope)}:${input.sessionId}:${availability}`;
     const [state, dispatch] = React.useReducer(reduceSessionAccessEditorState,scopeKey,createSessionAccessEditorState);
-    const [query,setQuery] = React.useState('');
+    // The typed search lives in its own store: this controller is hosted above the whole
+    // Collaboration pane, and a key must not re-render it.
+    const [query] = React.useState(createSessionAccessQuery);
+    const setQuery = query.write;
     const [directoryRevision,setDirectoryRevision] = React.useState(0);
     const [pendingContextTeamId, setPendingContextTeamId] = React.useState<string | null | undefined>(undefined);
     const currentScope = React.useRef(scopeKey);
@@ -142,7 +148,7 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
             // names this Session.
             if (event.entityIds&&!event.entityIds.includes(input.sessionId)) return;
             void refresh();
-        });
+        },{reconnect:'refresh'});
         void refresh();
         return ()=>{lifetime.current=false;requestRevision.current++;unsubscribe();unsubscribeAccountChange();};
     },[input.scope.serverId,input.sessionId,lifetime,refresh,scopeKey]);
@@ -540,13 +546,17 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
     }, [current.snapshot, detailsDemanded, directoryRevision, inspectCandidatePolicy, projection.accessMode]);
     const admittedCandidateContext = candidatePolicy?.scopeKey === scopeKey
         && candidatePolicy.primaryTeamId === current.snapshot?.primaryTeamId ? candidatePolicy : null;
+    // A newly committed context renders before its exact candidate-policy read
+    // can settle. Absence is therefore the read's pending state, not evidence of
+    // failure. Candidate additions remain blocked until their own exact inspect;
+    // only a settled failed inspection publishes the unavailable reason.
     const contextPolicyReason: SessionAccessUiReason | undefined = !current.snapshot?.primaryTeamId ? undefined
         : admittedCandidateContext?.error ?? (admittedCandidateContext?.context?.archived ? {
             code: 'session_access_external_sharing_disabled',
             message: t('session.access.contextTeamArchived', { team: admittedCandidateContext.context.name }),
         } : admittedCandidateContext?.context?.externalSharingReason
             ? presentSessionAccessReason(admittedCandidateContext.context.externalSharingReason)
-            : admittedCandidateContext ? undefined : unavailablePolicyReason);
+            : undefined);
     const resolveCandidateAvailability = React.useCallback(async (
         rows: readonly SessionAccessCandidateRowModel[], signal?: AbortSignal,
     ): Promise<readonly SessionAccessCandidateRowModel[]> => {
@@ -757,7 +767,7 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
         ...(current.snapshot?.visibility === 'complete' && current.snapshot.credentialBindingConsequences
             ? { credentialBindings: current.snapshot.credentialBindingConsequences } : {}),
     });
-    return {actions,model:{...projection,revision:directoryRevision,
+    return {actions,query,model:{...projection,revision:directoryRevision,
         ...(current.snapshot && availability === 'available' ? { context: { primaryTeamId: current.snapshot.primaryTeamId, options: [{ teamId: null, label: t('session.access.private'),
             ...(contextLockedByTeamPolicy ? { blockedReason: { code: 'session_access_team_policy_required', message: t('session.access.required') } }
                 : currentContextPolicyUnavailable ? { blockedReason: { code: 'session_access_context_policy_unavailable', message: t('session.access.contextPolicyUnavailable') } } : {}) }, ...namedContextTeams, ...currentContextTeam], operation: contextOperation,
@@ -769,7 +779,7 @@ export function useLiveSessionAccessEditorController(input: Readonly<{
                 consequences: pendingConsequences,
             } } : {}) } } : {}),
         content:{phase:current.refreshing?(current.snapshot?'refreshing':'initial'):current.issue?'error':current.snapshot?'ready':'initial',hasLastAcknowledgedSnapshot:current.snapshot!==null,...(current.issue?{issue:current.issue}:{})},
-        directory:{query,sections:candidateSections},
+        directory:{sections:candidateSections},
         ...(contextPolicyReason ? { notice: { message: contextPolicyReason.message, reason: contextPolicyReason } } : {}),
         ...(encryption?{encryption}:{}),
         ...(currentPendingApproval?{pendingApproval:currentPendingApproval}:{}),

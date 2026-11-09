@@ -39,6 +39,8 @@ export function SaveMessagePromptForm(props: SaveProps) {
         <Text style={styles.hint}>{t(favorite ? 'committedMessageActions.savedHintFavorite' : 'committedMessageActions.savedHint')}</Text>
         {shortcutExpanded ? <FieldTextInput testID="save-message-prompt-shortcut" accessibilityLabel={t('committedMessageActions.shortcut')}
             value={shortcut} onChangeText={(value) => { setError(null); setShortcut(value); }} autoCapitalize="none" monospace autoFocus
+            // The shortcut is typed as `/token` everywhere else (picker badges, composer): the field shows the slash it continues.
+            leading={<Text style={styles.shortcutSlash}>/</Text>}
             placeholder={t('committedMessageActions.shortcutPlaceholder')} returnKeyType="done" onSubmitEditing={canSave ? save : undefined} />
             : <View style={styles.shortcutToggle}>
                 <TextLinkButton testID="save-message-prompt-shortcut-toggle" size="meta" expanded={false}
@@ -87,6 +89,7 @@ const styles = StyleSheet.create((theme) => ({
     heading: { ...Typography.variant('label', 'semiBold'), color: theme.colors.text.primary, marginBottom: theme.space.s2 },
     hint: { ...Typography.variant('meta'), color: theme.colors.text.secondary, marginTop: -4 },
     shortcutToggle: { alignSelf: 'flex-start' },
+    shortcutSlash: { ...Typography.mono(), color: theme.colors.text.tertiary },
     buttons: { flexDirection: 'row', justifyContent: 'flex-end', gap: theme.space.s8, marginTop: theme.space.s4 },
     error: { ...Typography.variant('meta'), color: theme.colors.state.danger.foreground },
 }));

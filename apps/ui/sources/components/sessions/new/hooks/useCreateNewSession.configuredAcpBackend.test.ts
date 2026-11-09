@@ -12,8 +12,9 @@ import type { useCreateNewSession } from './useCreateNewSession';
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
-import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { writePersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { readLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
 
 type CreateParams = Parameters<typeof useCreateNewSession>[0];
 const configuredTarget = {
@@ -53,6 +54,9 @@ const runtime = installSessionPaneRuntimeTestHarness({
         });
     },
 });
+
+// Keep cold Sync module compilation in collection, outside the Account restore hook's budget.
+await (await import('@/dev/testkit/harness/syncSingletonLoader')).loadSyncSingletonForTests();
 
 async function mount(overrides: Partial<CreateParams> = {}) {
     const { storage } = await import('@/sync/domains/state/storageStore');
@@ -119,13 +123,26 @@ function expectNoSpawn() {
 }
 
 describe('useCreateNewSession configured ACP backend spawning', () => {
+    it('remembers the next New Session target without writing Account settings', async () => {
+        const harness = await mount();
+        const { getPersistenceStorage } = await import('@/sync/domains/state/persistenceStorage');
+        const writes = vi.spyOn(getPersistenceStorage(), 'set');
+        await harness.create();
+        expect(writes.mock.calls.map(([key]) => key).filter(key => key === 'settings' || key.startsWith('account-settings:'))).toEqual([]);
+        const { useNewSessionBackendTargetState } = await import('./screenModel/useNewSessionBackendTargetState');
+        const next = await renderHook(() => useNewSessionBackendTargetState({ entries: [], projectionPhase: 'loading' }), {
+            wrapper: runtime.Wrapper,
+        });
+        expect(next.getCurrent().backendTarget).toEqual(writePersistedBackendTargetRefV2(configuredTarget));
+    });
+
     it('fails closed without a private spawn when a configured backend target is unrepresentable', async () => {
         const harness = await mount();
         await harness.create();
         expectNoSpawn();
         await vi.waitFor(() => expect(harness.storage.getState().authoringMemory.recentMachinePaths)
             .toEqual([{ machineId: 'm1', path: '/tmp' }]));
-        expect(harness.storage.getState().settings.lastUsedBackendTarget).toEqual(writePersistedBackendTargetRefV2(configuredTarget));
+        expect(readLastUsedBackendSelection(harness.storage.getState().settingsScope).lastUsedBackendTarget).toEqual(writePersistedBackendTargetRefV2(configuredTarget));
     });
 
     it('does not prepare account settings for an unrepresentable configured backend target', async () => {
@@ -147,7 +164,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
             { machineId: 'm1', path: '/tmp' }, { machineId: 'm1', path: '/old/a' },
             { machineId: 'm2', path: '/other' },
         ]));
-        expect(harness.storage.getState().settings.lastUsedBackendTarget).toEqual(writePersistedBackendTargetRefV2(configuredTarget));
+        expect(readLastUsedBackendSelection(harness.storage.getState().settingsScope).lastUsedBackendTarget).toEqual(writePersistedBackendTargetRefV2(configuredTarget));
         expectNoSpawn();
     });
 
@@ -158,7 +175,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         expectNoSpawn();
         await vi.waitFor(() => expect(harness.storage.getState().authoringMemory.recentMachinePaths)
             .toEqual([{ machineId: 'm1', path: '/tmp' }]));
-        expect(harness.storage.getState().settings.lastUsedBackendTarget).toEqual(writePersistedBackendTargetRefV2(target));
+        expect(readLastUsedBackendSelection(harness.storage.getState().settingsScope).lastUsedBackendTarget).toEqual(writePersistedBackendTargetRefV2(target));
     });
 
     it('does not save an automation for an unrepresentable configured ACP target', async () => {
@@ -192,7 +209,7 @@ describe('useCreateNewSession configured ACP backend spawning', () => {
         await harness.create();
         await vi.waitFor(() => expect(harness.storage.getState().authoringMemory.recentMachinePaths)
             .toEqual([{ machineId: 'm1', path: '/tmp' }]));
-        expect(harness.storage.getState().settings.lastUsedBackendTarget).toEqual(writePersistedBackendTargetRefV2(target));
+        expect(readLastUsedBackendSelection(harness.storage.getState().settingsScope).lastUsedBackendTarget).toEqual(writePersistedBackendTargetRefV2(target));
         expectNoSpawn();
     });
 

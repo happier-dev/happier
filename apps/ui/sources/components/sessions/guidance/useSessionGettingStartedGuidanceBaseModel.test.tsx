@@ -1,5 +1,5 @@
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -70,6 +70,55 @@ describe('useSessionGettingStartedGuidanceBaseModel', () => {
         storage.getState().clearSessionLocalStateScope();
         storage.getState().clearProfileScope();
         storage.setState(previousState);
+    });
+
+    it.each(['signed_out', 'unavailable'] as const)('FX28 settles first-use %s through the credential boundary', async kind => {
+        const read = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl');
+        if (kind === 'signed_out') read.mockResolvedValue(null);
+        else read.mockRejectedValue(new Error('Synthetic secure-store read failure'));
+        storage.setState({ sessionListIndexByServerId: {}, sessions: {}, isDataReady: false });
+        try {
+            const hook = await renderHook(() => useSessionGettingStartedGuidanceBaseModel());
+            try {
+                await flushHookEffects();
+                expect(hook.getCurrent()).toMatchObject({ kind: 'start_daemon' });
+                expect(hook.getCurrent().unavailableServerIds).toHaveLength(1);
+            } finally { await hook.unmount(); }
+        } finally { read.mockRestore(); }
+    });
+
+    it('does not rerender for a Machine publication that changes no guidance fact', async () => {
+        let renders = 0;
+        const hook = await renderHook(() => { renders += 1; return useSessionGettingStartedGuidanceBaseModel(); });
+        await flushHookEffects();
+        const settled = hook.getCurrent();
+        const rendersBefore = renders;
+        const [machine] = storage.getState().machineListByServerId[settled.serverId] ?? [];
+        if (!machine) throw new Error('The Machine fixture was not listed');
+        // A daemon keeps republishing its loopback endpoint expiry; the row is new, the guidance answer is not.
+        for (let i = 1; i <= 5; i += 1) {
+            await act(async () => {
+                storage.getState().applyMachines([{ ...machine, daemonState: { ...(machine.daemonState as object), peerMediation: { loopback: { endpoint: { expiresAt: Date.now() + i } } } } }], false, { sourceServerId: settled.serverId });
+            });
+        }
+        await flushHookEffects();
+        expect(hook.getCurrent()).toBe(settled);
+        expect(renders - rendersBefore).toBe(0);
+        await hook.unmount();
+    });
+
+    it('rerenders once a Machine publication changes the guidance answer', async () => {
+        const hook = await renderHook(() => useSessionGettingStartedGuidanceBaseModel());
+        await flushHookEffects();
+        const settled = hook.getCurrent();
+        const [machine] = storage.getState().machineListByServerId[settled.serverId] ?? [];
+        if (!machine) throw new Error('The Machine fixture was not listed');
+        await act(async () => {
+            storage.getState().applyMachines([], true, { sourceServerId: settled.serverId });
+        });
+        await flushHookEffects();
+        expect(hook.getCurrent()).toMatchObject({ kind: 'connect_machine' });
+        await hook.unmount();
     });
 
     it('keeps guidance available when an unavailable Home retains known online machines', async () => {

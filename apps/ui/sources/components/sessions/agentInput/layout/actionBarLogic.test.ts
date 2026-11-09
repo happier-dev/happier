@@ -23,10 +23,9 @@ describe('agentInput/actionBarLogic', () => {
         expect(shouldShowSecondaryControlRow('wrap', false)).toBe(false);
         expect(shouldShowSecondaryControlRow('scroll', true)).toBe(true);
         expect(shouldShowSecondaryControlRow('scroll', false)).toBe(false);
-        expect(shouldShowSecondaryControlRow('collapsed', true)).toBe(false);
     });
 
-    it('treats resume as an action (prevents collapsed menu from being empty)', () => {
+    it('treats resume as an action', () => {
         expect(getHasAnyAgentInputActions({
             showPermissionChip: false,
             hasProfile: false,
@@ -60,7 +59,7 @@ describe('agentInput/actionBarLogic', () => {
         })).toBe(false);
     });
 
-    it('treats delivery as an action so collapsed controls stay reachable', () => {
+    it('treats delivery as an action so overflow controls stay reachable', () => {
         expect(getHasAnyAgentInputActions({
             showPermissionChip: false,
             hasProfile: false,
@@ -77,7 +76,7 @@ describe('agentInput/actionBarLogic', () => {
         })).toBe(true);
     });
 
-    it('treats canonical extra action chips as actions so collapsed controls stay reachable', () => {
+    it('treats canonical extra action chips as actions so overflow controls stay reachable', () => {
         expect(getHasAnyAgentInputActions({
             showPermissionChip: false,
             hasProfile: false,

@@ -61,7 +61,7 @@ export const SessionWorkMapDetailsView = React.memo((props: Readonly<{
     }
     return (
         <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
-            <SessionWorkMapView map={map} projection={projection} testIDPrefix="session-work-map-details" onOpenItem={openItem} />
+            <SessionWorkMapView map={map} projection={projection} showFacts testIDPrefix="session-work-map-details" onOpenItem={openItem} />
         </ScrollView>
     );
 });

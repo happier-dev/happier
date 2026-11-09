@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AIBackendProfileSchema, type SavedSecret } from '@happier-dev/protocol';
+import { AIBackendProfileSchema, type SavedSecret } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import type { ComposerSnapshotV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { renderHook } from '@/dev/testkit';

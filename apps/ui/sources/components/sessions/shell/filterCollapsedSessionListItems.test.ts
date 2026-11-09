@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { buildSessionListIndexNodeId, type SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
 import { filterCollapsedSessionListItems } from './filterCollapsedSessionListItems';
+import { buildSessionListCollapseContextKey, buildSessionListCollapseKey, readSessionListCollapsedGroups } from '@/sync/domains/session/listing/sessionListCollapseState';
+import { collapsedGroupsState, replaceCollapsedGroupKeys } from '@/sync/domains/state/disclosureUiState';
+
+afterEach(() => replaceCollapsedGroupKeys({}));
 
 function makeSession(id: string, groupKey: string): Extract<SessionListIndexItem, { type: 'session' }> {
     return {
@@ -16,6 +20,62 @@ function makeSession(id: string, groupKey: string): Extract<SessionListIndexItem
 }
 
 describe('filterCollapsedSessionListItems', () => {
+    it('folds a Home with its project headers and stops at the next Home', () => {
+        const items: SessionListIndexItem[] = [
+            { type: 'header', headerKind: 'server', title: 'Home', groupKey: 'server:home' },
+            { type: 'header', headerKind: 'project', title: 'One', groupKey: 'one' }, makeSession('one', 'one'),
+            { type: 'header', headerKind: 'project', title: 'Two', groupKey: 'two' }, makeSession('two', 'two'),
+            { type: 'header', headerKind: 'server', title: 'Other', groupKey: 'server:other' }, makeSession('other', 'other'),
+        ];
+        expect(filterCollapsedSessionListItems(items, { 'server:home': true })).toEqual([items[0], ...items.slice(5)]);
+    });
+
+    it('folds a folder subtree after rollup without hiding its parent siblings or another project', () => {
+        const items: SessionListIndexItem[] = [
+            { type: 'header', headerKind: 'project', title: 'Project', groupKey: 'project' },
+            { type: 'header', headerKind: 'folder', title: 'Parent', groupKey: 'parent', folderId: 'parent', folderDepth: 0 },
+            { type: 'header', headerKind: 'folder', title: 'Child', groupKey: 'child', folderId: 'child', folderDepth: 1 },
+            { ...makeSession('child-session', 'child'), groupKind: 'folder', folderDepth: 2 },
+            { ...makeSession('parent-session', 'parent'), groupKind: 'folder', folderDepth: 1 },
+            { ...makeSession('root-session', 'root'), groupKind: 'folder', folderDepth: 0 },
+            { type: 'header', headerKind: 'project', title: 'Other', groupKey: 'other' },
+            makeSession('other-session', 'other'),
+        ];
+        expect(filterCollapsedSessionListItems(items, { parent: true })).toEqual([items[0], items[1], ...items.slice(5)]);
+        expect(filterCollapsedSessionListItems(items, { child: true })).toEqual([...items.slice(0, 3), ...items.slice(4)]);
+    });
+
+    it('isolates folds by the captured list context and ignores orphaned flat keys', () => {
+        const groupKey = 'server:home-a:day:2026-10-23';
+        const items: SessionListIndexItem[] = [
+            { type: 'header', title: 'Today', headerKind: 'date', groupKey },
+            makeSession('session-a', groupKey),
+        ];
+        const input = { retentionScopeKey: '[global,home-a,account-a]', corpusStorage: 'active' as const, layout: 'projects', selectedSpaceId: 'space-a' };
+        const context = buildSessionListCollapseContextKey(input, input.layout);
+        replaceCollapsedGroupKeys({ [groupKey]: true });
+        collapsedGroupsState.set(buildSessionListCollapseKey(context, groupKey), true);
+        const keys = collapsedGroupsState.readAll();
+        expect(keys[buildSessionListCollapseKey(context, groupKey)]).toBe(true);
+        expect(filterCollapsedSessionListItems(items, readSessionListCollapsedGroups(keys, context))).toEqual([items[0]]);
+        for (const other of [
+            { ...input, retentionScopeKey: '[global,home-b,account-a]' },
+            { ...input, retentionScopeKey: '[global,home-a,account-b]' },
+            { ...input, retentionScopeKey: '[team,team-a,home-a,account-a]' },
+            { ...input, corpusStorage: 'archived' as const },
+            { ...input, layout: 'recent_activity' },
+            { ...input, selectedSpaceId: 'space-b' },
+        ]) {
+            expect(filterCollapsedSessionListItems(items, readSessionListCollapsedGroups(keys, buildSessionListCollapseContextKey(other, other.layout))))
+                .toBe(items);
+        }
+        collapsedGroupsState.set('neighbor', true);
+        collapsedGroupsState.set(buildSessionListCollapseKey(context, groupKey), false);
+        const expanded = collapsedGroupsState.readAll();
+        expect(expanded.neighbor).toBe(true);
+        expect(filterCollapsedSessionListItems(items, readSessionListCollapsedGroups(expanded, context))).toBe(items);
+    });
+
     it('folds a Bot\'s reports by default behind its disclosure, and an explicit local choice wins either way', () => {
         const bot = { ...makeSession('bot', 'g'), reportsParent: true as const, reportsDefaultCollapsed: true as const };
         const ordinary = { ...makeSession('ordinary', 'g'), reportsParent: true as const };

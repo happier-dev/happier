@@ -3,7 +3,7 @@ import { array } from 'zod/mini';
 
 import { flushHookEffects, renderHook } from '@/dev/testkit';
 import { act } from 'react-test-renderer';
-import { SessionInitialTriggerV1Schema } from '@happier-dev/protocol';
+import { SessionInitialTriggerV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 // Live source-turn truth for the injected exact-turn reader.
 const liveCurrentTurn = vi.hoisted(() => ({ value: 'turn-7' }));

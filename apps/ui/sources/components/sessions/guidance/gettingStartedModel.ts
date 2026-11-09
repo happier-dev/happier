@@ -2,13 +2,14 @@ import { DEFAULT_HAPPIER_CLOUD_SERVER_URL } from '@happier-dev/cli-common/happie
 import { resolveHomeDisplayLabel, type HomeDisplayProfile } from '@/components/settings/server/homeDisplayName';
 
 import { resolveHomeTargetSummary } from '@/components/navigation/connectionStatus/resolveHomeConnectionSummary';
-import { resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
+import { readMachineInventoryRowReadiness, resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { computeMachinesSummary, type MachinesSummary } from './computeMachinesSummary';
-import { isMachineSelectableForFleet } from '@/sync/domains/machines/administration/fleetUnion';
-import type { MachineReachabilityScope } from '@/sync/domains/machines/reachability/machineReachability';
+import { resolveFleetMachineAvailability } from '@/sync/domains/machines/administration/fleetUnion';
+import type { ServerCredentialAccountScopeResolution } from '@/sync/domains/scope/serverCredentialAccountScope';
 import { captureServerProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
 import { isMachineVisibleForSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { resolveMachineSetupSatisfied } from '@/components/machines/add/machineAddPaths';
+import { isSeededDemoHome } from '@/demoMode/runtime/enterExitDemoMode';
 
 export { computeMachinesSummary, type MachinesSummary } from './computeMachinesSummary';
 
@@ -18,6 +19,15 @@ export type SessionGettingStartedDecisionKind =
     | 'start_daemon'
     | 'create_session'
     | 'select_session';
+
+/**
+ * Whether the getting-started guidance is Home itself. Only "none of your machines is running" replaces
+ * Home: with no machine yet, Home stays the showcase and its Machines and Capacity widgets carry the first
+ * steps (58d AF1), so a person who installed only the app lands on Home, not on a setup page.
+ */
+export function isSessionGettingStartedGuidanceHome(kind: SessionGettingStartedDecisionKind): boolean {
+    return kind === 'start_daemon';
+}
 
 export type ServerTargetLabel = Readonly<{
     kind: 'server' | 'group';
@@ -38,7 +48,7 @@ export function computeSessionGettingStartedDecision(params: Readonly<{
     }
     if (params.machines.machineCount === 0) return 'connect_machine';
     if (params.sessionCount > 0) return 'select_session';
-    if (params.machines.onlineCount === 0) return 'start_daemon';
+    if (params.machines.onlineCount === 0) return params.machines.hasUnknownServers ? 'loading' : 'start_daemon';
     if (params.sessionCount === 0) return 'create_session';
     return 'select_session';
 }
@@ -46,8 +56,8 @@ export function computeSessionGettingStartedDecision(params: Readonly<{
 export type SessionGettingStartedViewModelInput = Readonly<{
     sessionsReady: boolean;
     sessionCount: number;
-    accountScopesByServerId?: ReadonlyMap<string, MachineReachabilityScope>;
-    activeMachines: ReadonlyArray<Parameters<typeof isMachineSelectableForFleet>[1]>;
+    accountScopeResolutionsByServerId?: ReadonlyMap<string, ServerCredentialAccountScopeResolution>;
+    activeMachines: ReadonlyArray<Parameters<typeof resolveFleetMachineAvailability>[1]>;
     selection: Readonly<{
         activeTarget: Readonly<{ kind: 'server' | 'group'; id: string; groupId?: string }>;
         activeServerId: string;
@@ -76,7 +86,7 @@ type SessionGettingStartedServerProfile = Readonly<HomeDisplayProfile & {
 }>;
 
 export type SessionGettingStartedMachinesInput = Readonly<{
-    accountScopesByServerId?: ReadonlyMap<string, MachineReachabilityScope>;
+    accountScopeResolutionsByServerId?: ReadonlyMap<string, ServerCredentialAccountScopeResolution>;
     activeMachines: SessionGettingStartedViewModelInput['activeMachines'];
     selection: SessionGettingStartedViewModelInput['selection'];
     activeServerProfile?: SessionGettingStartedViewModelInput['activeServerProfile'] | null;
@@ -89,8 +99,11 @@ export type SessionGettingStartedMachinesResolution = MachinesSummary & Readonly
 }>;
 
 /** Same reading as the Homes status: a Home whose projection failed, or needs sign-in, is not answering. */
-function isHomeUnavailable(status: MachineListStatus | undefined): boolean {
-    const kind = resolveHomeTargetSummary({ authStatus: 'unknown', projectionStatus: status }).kind;
+function isHomeUnavailable(status: MachineListStatus | undefined, scope?: ServerCredentialAccountScopeResolution): boolean {
+    const kind = resolveHomeTargetSummary({
+        authStatus: scope?.kind === 'signed_out' ? 'signedOut' : 'unknown',
+        projectionStatus: scope?.kind === 'unavailable' || scope?.kind === 'unknown_home' ? 'error' : status,
+    }).kind;
     return kind === 'unavailable' || kind === 'sign_in';
 }
 
@@ -153,7 +166,7 @@ function resolveTargetLabel(input: SessionGettingStartedViewModelInput, activeSe
 function resolveGettingStartedMachines(
     input: SessionGettingStartedMachinesInput,
     summarize: (machines: SessionGettingStartedViewModelInput['activeMachines'], serverId: string,
-        resolveScopeId: ReturnType<typeof captureServerProfileScopeResolver>) => Readonly<{ machineCount: number; onlineCount: number }>,
+        resolveScopeId: ReturnType<typeof captureServerProfileScopeResolver>) => Readonly<{ machineCount: number; onlineCount: number | null }>,
 ): SessionGettingStartedMachinesResolution {
     const resolveScopeId = captureServerProfileScopeResolver();
     const machinesFor = (serverId: string) => resolveServerScopedMachines({
@@ -166,8 +179,11 @@ function resolveGettingStartedMachines(
     }, resolveScopeId);
     // A Home that is not answering never holds the decision: it is reported, and the Homes that
     // answer (or the active Home) decide.
+    const credentialUnavailable = (serverId: string) => !isSeededDemoHome(serverId)
+        && isHomeUnavailable(undefined, input.accountScopeResolutionsByServerId?.get(serverId));
     const unavailableServerIds = input.selection.allowedServerIds.filter((serverId) => (
-        !machinesFor(serverId) && isHomeUnavailable(input.machineListStatusByServerId?.[serverId])
+        credentialUnavailable(serverId)
+        || (!machinesFor(serverId) && isHomeUnavailable(input.machineListStatusByServerId?.[serverId]))
     ));
     const selectedServerIds = input.selection.allowedServerIds.filter((serverId) => !unavailableServerIds.includes(serverId));
     const activeServerMachines = machinesFor(input.selection.activeServerId);
@@ -185,8 +201,9 @@ function resolveGettingStartedMachines(
     if (selectedServerIds.length === 0 && unavailableServerIds.length > 0) {
         return {
             ...(activeServerSummary
-                ? { hasUnknownServers: false, machineCount: activeServerSummary.machineCount, onlineCount: activeServerSummary.onlineCount }
-                : { hasUnknownServers: true, machineCount: 0, onlineCount: 0 }),
+                ? { hasUnknownServers: activeServerSummary.onlineCount === null, machineCount: activeServerSummary.machineCount, onlineCount: activeServerSummary.onlineCount ?? 0 }
+                : { hasUnknownServers: !isHomeUnavailable(input.machineListStatusByServerId?.[input.selection.activeServerId],
+                    input.accountScopeResolutionsByServerId?.get(input.selection.activeServerId)), machineCount: 0, onlineCount: 0 }),
             unavailableServerIds,
         };
     }
@@ -194,7 +211,7 @@ function resolveGettingStartedMachines(
         ? selectedMachines
         : !selectedMachines.hasUnknownServers && activeServerSummary && activeServerSummary.machineCount && activeServerSummary.machineCount > 0
             ? {
-                hasUnknownServers: false,
+                hasUnknownServers: activeServerSummary.onlineCount === null,
                 machineCount: activeServerSummary.machineCount,
                 onlineCount: activeServerSummary.onlineCount ?? 0,
             }
@@ -204,16 +221,30 @@ function resolveGettingStartedMachines(
 }
 
 export function resolveSessionGettingStartedMachinesSummary(input: SessionGettingStartedMachinesInput): SessionGettingStartedMachinesResolution {
-    return resolveGettingStartedMachines(input, (machines, serverId, resolveScopeId) => ({
-        machineCount: machines.length,
-        onlineCount: machines.filter(machine => isMachineSelectableForFleet(input.accountScopesByServerId?.get(serverId),
-            machine, undefined, resolveScopeId)).length,
-    }));
+    return resolveGettingStartedMachines(input, (machines, serverId, resolveScopeId) => {
+        const resolution = input.accountScopeResolutionsByServerId?.get(serverId);
+        // A settled credential failure cannot become a pending presence observation.
+        if (isHomeUnavailable(undefined, resolution)) return { machineCount: machines.length, onlineCount: 0 };
+        const scope = resolution?.kind === 'bound' ? resolution.scope : undefined;
+        let onlineCount = 0;
+        let unknown = false;
+        for (const machine of machines) {
+            // Unreadable content needs setup/recovery, not more time for daemon presence.
+            if (readMachineInventoryRowReadiness(machine) === 'unavailable') continue;
+            const availability = resolveFleetMachineAvailability(scope, machine, undefined, resolveScopeId);
+            if (availability === 'online') onlineCount++;
+            if (availability === 'unknown') unknown = true;
+        }
+        // Pending presence holds startup; terminal rows keep the existing setup guidance.
+        // A known online Machine already proves creation is possible in this Home.
+        return { machineCount: machines.length, onlineCount: onlineCount === 0 && unknown ? null : onlineCount };
+    });
 }
 
 /** Setup needs existence, not fleet presentation or liveness. Worst case scans a Home with no visible Machine. */
 export function resolveSessionGettingStartedMachineSetupSatisfied(input: SessionGettingStartedMachinesInput): boolean | null {
-    return resolveMachineSetupSatisfied(resolveGettingStartedMachines(input, machines => ({
+    // Existence is an inventory question, independent of credential/presence readiness.
+    return resolveMachineSetupSatisfied(resolveGettingStartedMachines({ ...input, accountScopeResolutionsByServerId: undefined }, machines => ({
         machineCount: machines.some(isMachineVisibleForSelection) ? 1 : 0,
         onlineCount: 0,
     })));
@@ -224,9 +255,13 @@ export function buildSessionGettingStartedViewModel(input: SessionGettingStarted
     const serverName = resolveHomeDisplayLabel(activeProfile, activeProfile.id);
     const targetLabel = resolveTargetLabel(input, serverName);
     const machines = resolveSessionGettingStartedMachinesSummary(input);
+    // No first Session read can settle until these credentials recover. Keep a genuinely
+    // pending Home waiting, but let terminal unbound Homes expose the existing setup/recovery.
+    const credentialRecoveryRequired = isHomeUnavailable(undefined, input.accountScopeResolutionsByServerId?.get(input.selection.activeServerId))
+        && input.selection.allowedServerIds.every(serverId => isHomeUnavailable(undefined, input.accountScopeResolutionsByServerId?.get(serverId)));
 
     const kind = computeSessionGettingStartedDecision({
-        sessionsReady: input.sessionsReady,
+        sessionsReady: input.sessionsReady || credentialRecoveryRequired,
         sessionCount: input.sessionCount,
         machines,
     });

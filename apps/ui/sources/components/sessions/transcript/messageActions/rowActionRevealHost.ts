@@ -1,61 +1,15 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 
-import { isCoarsePrimaryPointerEnvironment } from '@/utils/platform/webMobileHeuristics';
-
-const PRIMARY_POINTER_MEDIA_QUERY = '(pointer: coarse)';
-
-type MediaQueryListLike = Readonly<{
-    addEventListener?: (event: 'change', listener: () => void) => void;
-    addListener?: (listener: () => void) => void;
-}>;
-
-type WindowLike = Readonly<{ matchMedia?: (query: string) => MediaQueryListLike }>;
-
-let coarsePrimaryPointer: boolean | null = null;
-let pointerCapabilityWatchStarted = false;
+import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 
 /**
- * One module-scope listener invalidates the cache when the host's primary
- * pointer changes — a convertible switching between laptop and tablet mode. Per
- * row this would be hundreds of listeners for one host property, so rows pick
- * the new capability up on their next render instead of being notified.
+ * Transcript hover policy consumes the shared browser pointer fact; native visibility is
+ * decided by the row policy's platform input, as before.
  */
-function startPointerCapabilityWatch(): void {
-    if (pointerCapabilityWatchStarted) return;
-    pointerCapabilityWatchStarted = true;
-    const maybeWindow = (globalThis as { window?: WindowLike }).window;
-    if (typeof maybeWindow?.matchMedia !== 'function') return;
-    let query: MediaQueryListLike;
-    try {
-        query = maybeWindow.matchMedia(PRIMARY_POINTER_MEDIA_QUERY);
-    } catch {
-        // Hosts without pointer-media support keep the first resolved value.
-        return;
-    }
-    const invalidate = (): void => {
-        coarsePrimaryPointer = null;
-    };
-    if (typeof query.addEventListener === 'function') {
-        query.addEventListener('change', invalidate);
-        return;
-    }
-    query.addListener?.(invalidate);
-}
-
-/**
- * Resolves the primary-pointer capability once per host capability change
- * instead of once per transcript row: the media query result is a host
- * property, and evaluating `matchMedia` inside every row render would be pure
- * churn on long transcripts.
- */
-export function readCoarsePrimaryPointer(): boolean {
-    if (Platform.OS !== 'web') return false;
-    startPointerCapabilityWatch();
-    if (coarsePrimaryPointer === null) {
-        coarsePrimaryPointer = isCoarsePrimaryPointerEnvironment();
-    }
-    return coarsePrimaryPointer;
+export function useCoarsePrimaryPointer(): boolean {
+    const touch = useHappierTouchPrimaryPointer(Platform.OS);
+    return Platform.OS === 'web' && touch;
 }
 
 export type RowActionHoverHost = Readonly<{

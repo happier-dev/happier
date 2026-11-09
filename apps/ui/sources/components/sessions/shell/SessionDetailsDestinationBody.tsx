@@ -31,7 +31,6 @@ import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback'
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { SessionBoardControllerProvider } from '@/components/sessions/board/SessionBoardControllerProvider';
-import { useSessionBoardPrimaryMountResolver } from '@/components/sessions/board/useSessionBoardPrimaryMountHost';
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 import type { SessionMobileSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
 
@@ -42,19 +41,9 @@ function createDetailsRouteParamsSignature(params: SessionDetailsRouteParamsShap
     return JSON.stringify([details ? serializeSessionPaneUrlState({ details }) : {}, params.sourceSurface ?? '']);
 }
 
-function ClassicSessionDetailsSurface(props: React.ComponentProps<typeof SessionDetailsPanel> & Readonly<{
-    presented: boolean;
-    detailsDestinationKey?: string | null;
-}>) {
-    const { presented, detailsDestinationKey, ...panelProps } = props;
-    const address = React.useMemo(() => normalizeSessionAddress(panelProps.routeServerId, panelProps.sessionId),
-        [panelProps.routeServerId, panelProps.sessionId]);
-    const resolvePrimaryHost = useSessionBoardPrimaryMountResolver({
-        address, paneScopeId: panelProps.scopeId, presented, detailsDestinationKey,
-    });
-    return <SessionBoardControllerProvider sessionId={panelProps.sessionId} serverId={panelProps.routeServerId}
-        resolvePrimaryHost={resolvePrimaryHost}>
-        <SessionDetailsPanel {...panelProps} resolveBoardPrimaryHost={resolvePrimaryHost} />
+function ClassicSessionDetailsSurface(props: React.ComponentProps<typeof SessionDetailsPanel>) {
+    return <SessionBoardControllerProvider sessionId={props.sessionId} serverId={props.routeServerId}>
+        <SessionDetailsPanel {...props} />
     </SessionBoardControllerProvider>;
 }
 
@@ -224,10 +213,9 @@ export function SessionDetailsDestinationBody() {
                             scopeId={scopeId}
                             presentation="screen"
                             routeServerId={routeHydrationState.serverId ?? routeScope.serverId}
-                            presented={visible && (instanceKey !== null || isFocused)}
                             onRequestClose={instanceKey ? returnToSession : onRequestClose}
                             {...(instanceKey ? { destinationTab, destinationActive: visible,
-                                detailsDestinationKey: destinationTab?.key ?? null, onOpenDestinationTab: openDestinationTab } : {})}
+                                onOpenDestinationTab: openDestinationTab } : {})}
                         />
                 )
             ) : (

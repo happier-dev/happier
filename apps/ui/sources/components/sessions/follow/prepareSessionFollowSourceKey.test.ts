@@ -1,4 +1,4 @@
-import { buildSessionFollowSourceKeyPrepareRequestV1 } from '@happier-dev/protocol';
+import { buildSessionFollowSourceKeyPrepareRequestV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
 import { describe, expect, it, vi } from 'vitest';
 
 import { prepareSessionFollowSourceKey } from './prepareSessionFollowSourceKey';

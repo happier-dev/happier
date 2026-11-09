@@ -2,6 +2,7 @@ import { Typography } from '@/constants/Typography';
 import * as React from 'react';
 import { View, TouchableOpacity } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
 import { ToolViewProps } from '../core/_registry';
 import { resolvePermissionRequestId } from '../core/resolvePermissionRequestId';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
@@ -207,7 +208,7 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s6,
     padding: theme.space.s10,
     borderRadius: 8,
-    backgroundColor: theme.colors.surface.elevated,
+    backgroundColor: glassContentFill(theme.colors.surface.elevated, theme.colors, { nested: true }),
   },
   previewHeader: {
     ...Typography.variant('meta', 'semiBold'),

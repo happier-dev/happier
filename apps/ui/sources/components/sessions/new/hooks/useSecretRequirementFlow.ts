@@ -28,8 +28,7 @@ export function useSecretRequirementFlow(params: Readonly<{
     shouldShowSecretSection: boolean;
     selectedMachineId: string | null;
     machineEnvPresence: UseMachineEnvPresenceResult;
-    secrets: SavedSecret[];
-    setSecrets: (secrets: SavedSecret[]) => void;
+    secrets: readonly SavedSecret[];
     secretBindingsByProfileId: Record<string, Record<string, string>>;
     setSecretBindingsByProfileId: (next: Record<string, Record<string, string>>) => Promise<void>;
     selectedSecretIdByProfileIdByEnvVarName: SecretChoiceByProfileIdByEnvVarName;
@@ -182,7 +181,6 @@ export function useSecretRequirementFlow(params: Readonly<{
                 secretEnvVarName: targetEnvVarName,
                 secretEnvVarNames: satisfaction.items.map((i) => i.envVarName),
                 machineId: params.selectedMachineId ?? null,
-                secrets: params.secrets,
                 defaultSecretId: params.secretBindingsByProfileId[profile.id]?.[targetEnvVarName] ?? null,
                 selectedSavedSecretId: selectedSavedSecretIdForProfile,
                 selectedSecretIdByEnvVarName: selectedSecretIdByEnvVarName,
@@ -200,7 +198,7 @@ export function useSecretRequirementFlow(params: Readonly<{
                         Modal.alert(t('common.error'), error instanceof Error ? error.message : t('common.error'));
                     }
                 },
-                onChangeSecrets: params.setSecrets,
+                allowManage: true,
                 allowSessionOnly: true,
                 onResolve: handleResolve,
             },

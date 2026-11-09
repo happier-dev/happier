@@ -1,8 +1,9 @@
 import type {
-    ComposerAttachmentViewV1,
+    ComposerAttachmentViewV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type {
     ComposerInputLockSnapshotV1,
     ComposerSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/ui/composer';
 
 import type { ComposerAttachmentAvailabilityCatalog } from './composerScopeAdapters';
 import {

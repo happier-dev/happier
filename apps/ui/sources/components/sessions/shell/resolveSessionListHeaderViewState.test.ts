@@ -1,9 +1,25 @@
 import { describe, expect, it } from 'vitest';
 
-import type { SessionListProjectHeaderViewModel } from './sessionListProjectHeaderViewModels';
+import { buildSessionListProjectHeaderViewModels, type SessionListProjectHeaderViewModel } from './sessionListProjectHeaderViewModels';
 import { resolveSessionListHeaderViewState } from './resolveSessionListHeaderViewState';
 
 describe('resolveSessionListHeaderViewState', () => {
+    it('preserves an admitted Project model with no baseline instead of restoring the raw checkout hint', () => {
+        const item = {
+            type: 'header', title: '/private/lead', headerKind: 'project',
+            groupKey: JSON.stringify(['project', 'no-baseline-home', 'accepted']),
+            projectKey: { serverId: 'no-baseline-home', projectKey: 'accepted' },
+            workspaceScopeHint: { serverId: 'no-baseline-home', machineId: 'lead-machine', rootPath: '/private/lead' },
+        } as const;
+        const model = buildSessionListProjectHeaderViewModels({ listItems: [item], workspaceRefs: [] });
+        expect(model.projectHeaderViewModelByGroupKey.get(item.groupKey)?.scopeHint).toBeNull();
+        const state = resolveSessionListHeaderViewState({ item, collapsedKeys: {},
+            projectHeaderViewModelByGroupKey: model.projectHeaderViewModelByGroupKey,
+            translateServerHeader: server => server });
+        expect(state?.kind === 'project' ? state.scopeHint : undefined).toBeNull();
+        expect(state?.kind === 'project' ? state.newSessionTarget : undefined).toBeNull();
+    });
+
     it('reuses the same header view state object for identical project inputs', () => {
         const item = {
             type: 'header',

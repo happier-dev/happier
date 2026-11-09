@@ -1,27 +1,38 @@
 // @vitest-environment jsdom
 
+import 'fake-indexeddb/auto';
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndex';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createPlainSessionByIdResponseFixture, createSessionFixture, createSessionOwnerViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 
 import type { SessionListVirtualizedNode } from './sessionListVirtualizedContent';
 
+const home = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(home);
+installDisconnectedServerSocketBoundary();
+
 // The browser list runtime is the boundary under test, so react-native resolves to react-native-web.
 vi.mock('react-native', async () => vi.importActual('react-native-web'));
-vi.mock('./sessionListChrome', () => ({
-  SessionsListHeader: () => null,
-}));
-vi.mock('./NewSessionDraftsSection', () => ({
-  NewSessionDraftsSection: () => null,
-}));
-vi.mock('./SessionListViewEmptyState', () => ({
-  SessionListViewEmptyState: () => null,
-}));
-vi.mock('@/components/ui/empty/EmptyState', () => ({ EmptyState: () => null }));
-vi.mock('@/text', () => ({ t: (key: string) => key }));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
+
+// Keep graph loading outside the observable browser layout/focus test budgets.
+await import('./sessionListVirtualizedContent');
+const { useSessionListViewState } = await import('./useSessionListViewState');
+const { SessionListRowFactsProvider } = await import('./sessionListRowFacts');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+const { CommandPaletteProvider } = await import('@/components/appShell/commandPalette/CommandPaletteProvider');
+const { InboxSummaryProvider } = await import('@/hooks/inbox/useInboxSummary');
 
 const VIEWPORT_HEIGHT = 400;
 const ROW_COUNT = 240;
@@ -150,8 +161,8 @@ function rectOf(element: HTMLElement): DOMRectReadOnly {
 
 type Phase = 'placeholders' | 'hydrated';
 
-function buildNodes(): SessionListVirtualizedNode[] {
-  return Array.from({ length: ROW_COUNT }, (_, index) => ({
+function buildNodes(count = ROW_COUNT): SessionListVirtualizedNode[] {
+  return Array.from({ length: count }, (_, index) => ({
     id: buildSessionListIndexNodeId({
       type: 'session',
       sessionId: `s${index}`,
@@ -175,7 +186,8 @@ describe('session list web window while row and header heights change', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
-    observers.clear();
+    // RNW retains its one useElementLayout ResizeObserver across mounted lists.
+    // Keep that real observer registered; unmount retires its individual targets.
     container = document.createElement('div');
     document.body.appendChild(container);
     root = createRoot(container);
@@ -279,17 +291,17 @@ describe('session list web window while row and header heights change', () => {
   }
 
   async function renderList(
-    params: Readonly<{ phase: Phase; scheduledHeight: number }>,
+    params: Readonly<{ phase: Phase; scheduledHeight: number; count?: number }>,
   ) {
-    const { SessionListVirtualizedContent } =
+    const { SessionListVirtualizedContent, SESSION_LIST_SUPPORTING_SECTIONS_NODE } =
       await import('./sessionListVirtualizedContent');
-    const nodes = buildNodes();
+    const nodes = buildNodes(params.count);
     const indexById = new Map(nodes.map((node, index) => [node.id, index]));
     await act(async () => {
       root.render(
         <div id="host">
           <SessionListVirtualizedContent
-            nodes={nodes}
+            nodes={[SESSION_LIST_SUPPORTING_SECTIONS_NODE, ...nodes]}
             rowHeight={PLACEHOLDER_ROW_HEIGHT}
             safeAreaBottom={0}
             renderItem={({ item }) => (
@@ -329,6 +341,84 @@ describe('session list web window while row and header heights change', () => {
     await settle();
   }
 
+  it('updates mounted row context, identity and status words from current Account choices without a reload', async () => {
+    // IndexedDB preparation owns real browser tasks; virtual-list layout below uses the shared fake clock.
+    vi.useRealTimers();
+    const { storage } = await import('@/sync/domains/state/storage');
+    const { SessionListVirtualizedContent } = await import('./sessionListVirtualizedContent');
+    const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+    await prepareSessionDraftPersistenceStorage();
+    const previous = storage.getState();
+    await home.reset();
+    await loadSyncSingletonForTests();
+    const serverId = await home.addHome({ name: 'Web row choices', serverUrl: 'https://web-row-choices.test', accountId: 'u1' });
+    const now = Date.now();
+    const session = createSessionFixture({ id: 'web-choices', serverId, owner: 'u1', seq: 1,
+      projectKey: 'row-choices', active: true, activeAt: now, presence: 'online', thinking: true, thinkingAt: now,
+      latestTurnStatus: 'in_progress', latestTurnStatusObservedAt: now, updatedAt: now,
+      metadata: { host: 'dev', name: 'Live choices', path: '/repo/choices', machineId: 'machine-choices', branch: 'live-branch', flavor: 'claude' } });
+    const settings = { sessionListLayoutV1: 'projects', sessionListAttentionPlacementV1: 'inPlace',
+      sessionListDensity: 'narrow', sessionListRowContextV1: true, sessionListIdentityDisplay: 'avatar',
+      sessionListStatusWords: false, hideInactiveSessions: false } as const;
+    const http = createHomeHubArtifactHttpBoundary('u1');
+    const account = await restoreServerAccountForTest({ serverUrl: 'https://web-row-choices.test', accountId: 'u1', request: async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: settings }, version: 1 });
+      if (path === '/v2/sessions') return Response.json({ sessions: [{ ...createPlainSessionByIdResponseFixture(session).session,
+        viewer: createSessionOwnerViewerFixture(session) }], nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false });
+      if (['/v2/sessions/active', '/v2/sessions/attention'].includes(path)) return Response.json({ sessions: [], nextCursor: null, hasNext: false });
+      return createEmptyAccountBootstrapHttpResponse(path, init) ?? http.request(input, init);
+    } });
+    const occurrence = buildSessionListIndexNodeId({ type: 'session', serverId, sessionId: session.id });
+    // RNW maps testID to data-testid; the canonical native-SVG boundary preserves its authored testID.
+    const query = (kind: string, suffix = '') => Array.from(container.querySelectorAll<HTMLElement>('[data-testid], [testid]'))
+      .find(element => (element.dataset.testid ?? element.getAttribute('testid')) === `${kind}-${occurrence}${suffix}`) ?? null;
+    function CurrentList() {
+      const state = useSessionListViewState('all', { pathname: '/' });
+      return <div id="host"><SessionListRowFactsProvider value={state.rowFacts}><SessionListVirtualizedContent nodes={state.nodes} rowHeight={48} safeAreaBottom={0}
+        renderItem={state.renderVirtualizedItem} rowExtraData={state.virtualizedRowExtraData}
+        onStopScrollEventPropagationOnWeb={() => {}} showDrafts={false} showReminders={false} /></SessionListRowFactsProvider></div>;
+    }
+    try {
+      await storage.getState().activateSettingsScope({ serverId, accountId: 'u1' });
+      storage.getState().applySettingsLocal(settings);
+      storage.getState().applySessions([session]);
+      storage.getState().applyServerScopedSessionListRows(serverId,
+        [storage.getState().sessionListRowsByServerId[serverId]![session.id]!], { source: 'ordinary', mode: 'replace' });
+      vi.useFakeTimers();
+      await act(async () => root.render(<InjectedAuthProvider credentials={account.credentials}>
+        <InboxSummaryProvider><AppPaneProvider><CommandPaletteProvider><CurrentList /></CommandPaletteProvider></AppPaneProvider></InboxSummaryProvider>
+      </InjectedAuthProvider>));
+      await settle();
+      const row = query('session-list-item');
+      expect(row).not.toBeNull();
+      row!.focus();
+      expect(document.activeElement).toBe(row);
+      expect(query('session-list-row-context-checkout')?.textContent).toContain('live-branch');
+      expect(query('session-list-agent-logo')).toBeNull();
+      expect(query('session-list-status-word')).toBeNull();
+      await act(async () => { storage.getState().applySettingsLocal({ sessionListRowContextV1: false }); });
+      await settle();
+      expect(query('session-list-row-context-checkout')).toBeNull();
+      await act(async () => { storage.getState().applySettingsLocal({ sessionListRowContextV1: true,
+        sessionListIdentityDisplay: 'projectWithAgent', sessionListStatusWords: true }); });
+      await settle();
+      expect(query('session-list-row-context-checkout')?.textContent).toContain('live-branch');
+      expect(query('session-list-agent-logo', '-project-fallback')).not.toBeNull();
+      expect(query('session-list-agent-logo', '-agent-badge')).not.toBeNull();
+      expect(query('session-list-status-word')).not.toBeNull();
+      expect(query('session-list-item')).toBe(row);
+      expect(document.activeElement).toBe(row);
+    } finally {
+      await act(async () => root.render(null));
+      const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
+      await disconnectActiveServerConnection();
+      await account.dispose();
+      storage.setState(previous, true);
+      await home.reset();
+    }
+  });
+
   /** The longest stretch of the viewport, [offset, offset + viewport), that no mounted row covers. */
   function longestUncoveredGap(offset: number): number {
     const spans = Array.from(
@@ -346,6 +436,17 @@ describe('session list web window while row and header heights change', () => {
     }
     return Math.max(longest, offset + VIEWPORT_HEIGHT - cursor);
   }
+
+  it('measures an empty supporting slot without reserving a Session height', async () => {
+    await renderList({ phase: 'placeholders', scheduledHeight: 0, count: 2 });
+    // An admitted presentation slot whose children draw nothing has no estimated-row gap.
+    expect(topOf(container.querySelector<HTMLElement>('[data-session-row]')!)).toBe(0);
+    await renderList({ phase: 'placeholders', scheduledHeight: 96, count: 2 });
+    expect(container.querySelector('[data-row-height="96"]')).not.toBeNull();
+    expect(topOf(container.querySelector<HTMLElement>('[data-session-row]')!)).toBe(96);
+    await renderList({ phase: 'placeholders', scheduledHeight: 0, count: 2 });
+    expect(topOf(container.querySelector<HTMLElement>('[data-session-row]')!)).toBe(0);
+  });
 
   it('keeps a row under every part of the viewport after the header grows and rows hydrate', async () => {
     await renderList({ phase: 'placeholders', scheduledHeight: 0 });
@@ -381,5 +482,37 @@ describe('session list web window while row and header heights change', () => {
     }
 
     expect(gaps.filter(([, gap]) => gap > MAX_UNCOVERED_GAP)).toEqual([]);
+  });
+
+  it('preserves focused supporting content when attention changes its measured cell index', async () => {
+    const { SessionListVirtualizedContent, SESSION_LIST_SUPPORTING_SECTIONS_NODE } =
+      await import('./sessionListVirtualizedContent');
+    const needs = { id: buildSessionListIndexNodeId({ type: 'session', sessionId: 'needs', serverId: 'home',
+      occurrenceRole: 'needsYou' }), kind: 'session' as const };
+    const working = { id: buildSessionListIndexNodeId({ type: 'session', sessionId: 'working', serverId: 'home',
+      occurrenceRole: 'working' }), kind: 'session' as const };
+    const ordinary = { id: buildSessionListIndexNodeId({ type: 'session', sessionId: 'ordinary', serverId: 'home' }),
+      kind: 'session' as const };
+    const render = async (withWorking: boolean) => {
+      await act(async () => root.render(<div id="host">
+        <SessionListVirtualizedContent nodes={[needs, ...(withWorking ? [working] : []),
+          SESSION_LIST_SUPPORTING_SECTIONS_NODE, ordinary]} rowHeight={48} safeAreaBottom={0}
+          renderItem={({ item }) => <div data-row-height="48" data-order={item.id} />}
+          rowExtraData={null} onStopScrollEventPropagationOnWeb={() => {}} showDrafts={false} showReminders={false}
+          scheduledSection={<div data-row-height="48" data-order="scheduled"><button data-support-focus="">Keep focus</button></div>} />
+      </div>));
+      await settle();
+    };
+    const renderedOrder = () => Array.from(container.querySelectorAll<HTMLElement>('[data-order]'))
+      .sort((left, right) => topOf(left) - topOf(right)).map(node => node.dataset.order);
+    await render(false);
+    expect(renderedOrder()).toEqual([needs.id, 'scheduled', ordinary.id]);
+    const focused = container.querySelector<HTMLButtonElement>('[data-support-focus]')!;
+    focused.focus();
+    expect(document.activeElement).toBe(focused);
+    await render(true);
+    expect(renderedOrder()).toEqual([needs.id, working.id, 'scheduled', ordinary.id]);
+    expect(container.querySelector('[data-support-focus]')).toBe(focused);
+    expect(document.activeElement).toBe(focused);
   });
 });

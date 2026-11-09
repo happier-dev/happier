@@ -151,6 +151,23 @@ describe('mounted New Session machine inventory', () => {
         } finally { storage.setState(previous, true); }
     });
 
+    it('keeps the same history rows across a re-render with unchanged inventory', async () => {
+        const serverId = getActiveServerSnapshot().serverId;
+        const machines = [createMachineFixture({ id: 'kept-a' }), createMachineFixture({ id: 'kept-b' })];
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue(null);
+        act(() => storage.setState({ machineListByServerId: { [serverId]: machines }, machineListStatusByServerId: { [serverId]: 'idle' } }));
+        const inventory: NewSessionMachinePickerInventory = {
+            allowedServerIds: [serverId], activeServerId: serverId, targetServerId: serverId,
+            recentMachinePaths: [{ machineId: 'kept-a', path: '/repo' }], favoriteMachineIds: ['kept-b'],
+        };
+        const hook = await renderHook(() => useNewSessionMachinePickerInventory(inventory));
+        const first = hook.getCurrent();
+        await hook.rerender();
+        expect(hook.getCurrent().recentMachines).toBe(first.recentMachines);
+        expect(hook.getCurrent().favoriteMachineItems).toBe(first.favoriteMachineItems);
+        await hook.unmount();
+    });
+
     it('preserves remembered order, dedupes paths and omits retired Machines from picker history', () => {
         const a = createMachineFixture({ id: 'a' });
         const b = createMachineFixture({ id: 'b' });

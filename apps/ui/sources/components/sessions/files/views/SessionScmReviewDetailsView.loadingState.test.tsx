@@ -30,7 +30,6 @@ installSessionFilesViewCommonModuleMocks({
             useSessionMessages: () => ({ messages: [], isLoaded: true }),
             useSessionProjectScmSnapshot: () => null,
             useSessionProjectScmSnapshotError: () => null,
-            useWorkspaceScmTouchedPathsForSession: () => [],
             useSessionProjectScmOperationLog: () => [],
             useProjectForSession: () => null,
             useProjectSessions: () => [],

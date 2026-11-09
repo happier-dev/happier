@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it, vi, onTestFinished } from 'vitest';
-import { SessionSystemRecordStoredSchema } from '@happier-dev/protocol';
+import { SessionSystemRecordStoredSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { makeToolCall, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createSessionSystemRecordHttpFixture, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';

@@ -1,9 +1,12 @@
 import {
-    type ComposerAttachmentViewV1,
-    type ComposerRefV1,
-    type ComposerSnapshotV1,
+    type ComposerAttachmentViewV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import {
+    type ComposerRefV1} from '@happier-dev/protocol/plugins/ui/composerRef';
+import {
+    type ComposerSnapshotV1} from '@happier-dev/protocol/plugins/ui/composer';
+import {
     type SessionExecutionTargetV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { getComposerMediaContentAvailability } from '@/sync/domains/transfers/runtime/transferRuntime';

@@ -1,13 +1,13 @@
 import * as React from 'react';
-import { ScrollView, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useShallow } from 'zustand/react/shallow';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import { readSessionLiveManagedSessionCountV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 
 import {
-  RAIL_POPOVER_ROSTER_LIST_STYLE,
   RailPopoverRoster,
+  RailPopoverRosterList,
 } from '@/components/navigation/shell/sidebarFooter/RailPopoverRoster';
 import {
   buildSessionListFilterQueryHomes,
@@ -52,6 +52,7 @@ import { readSessionPresentationRecord, readSessionPresentationServerId, readSes
   readSessionPresentationInputRelations, type SessionRelationRecord } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { useOpenStoreBots } from '@/components/store/catalog/useOpenStoreBots';
 
 import { AskHappierMark, AskHappierOfferCard } from './AskHappierOfferCard';
 import {
@@ -63,6 +64,9 @@ import { readBotActivity, type BotActivity } from './botActivity';
 import { useOrderedBots } from './botsSummary';
 import { BOTS_GLYPH } from './botsGlyph';
 import { BotRosterReadiness } from './BotRosterReadiness';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { ActionListSection } from '@/components/ui/lists/ActionListSection';
+import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { openNewBotDraft } from './newBotDraft';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
@@ -133,7 +137,7 @@ function useRosterRows(items: readonly SessionIndexItem[]) {
     item,
     unscopedSelectionIsUnique: false, reachableSessionDisplayById: NO_REACHABLE_DISPLAY,
     rowRenderableByKey: renderables, relativeNowMs, runtimeNowMs,
-    identityDisplay,
+    identityDisplay, 
     pinnedSessionKeys: NO_PINNED_KEYS, sessionTags: NO_TAGS, selectedSessionId: null,
     showServerBadge: false, showPinnedServerBadge: false,
     });
@@ -278,6 +282,12 @@ export function BotsPopoverContent(
     botActivity: row.session ? readBotActivity(row.session, presentedRows.runtimeNowMs, row.sessionStatus ?? undefined) : 'quiet',
   })), [presentedRows.rows, presentedRows.runtimeNowMs]);
   const counts = React.useMemo(() => readRosterCounts(botRows), [botRows]);
+  // A quiet top-level Bot can have its readiness checked (lab K3-R). Nothing is read until the person
+  // asks once for the whole roster, so opening it never wakes a machine.
+  const [readinessDemanded, setReadinessDemanded] = React.useState(false);
+  const checkableServerIds = React.useMemo(() => [...new Set(items.flatMap((item, index) =>
+    !item.reportsDepth && rows[index]?.botActivity === 'quiet' && item.serverId ? [item.serverId] : []))], [items, rows]);
+  const readinessBindings = useServerCredentialAccountScopeBindings(checkableServerIds);
 
   // Page to the end of every Home's Bot candidates and attention frontier, one page at a time.
   const query = pane.query;
@@ -314,9 +324,9 @@ export function BotsPopoverContent(
   const failed =
     presentation?.kind === 'error' ||
     (presentation?.kind === 'partial' && !offlineHome);
-  const loading =
-    rows.length === 0 &&
-    (pane.showLoading || presentation?.kind === 'initial_loading' || paging);
+  // A roster still arriving says so beneath the Bots it already has: on a cold load they come in over
+  // several pages, and without the line the partial roster reads as the whole one.
+  const loading = pane.showLoading || presentation?.kind === 'initial_loading' || paging;
   const empty = rows.length === 0 && !loading && !offlineHome && presentation?.kind !== 'error';
 
   const offerVisible = useAskHappierOfferVisible();
@@ -324,6 +334,10 @@ export function BotsPopoverContent(
   const openAskHappier = useAskHappierOpener();
   const { execute: executeAuthoring } = useMountedActionExecution(useAccountSettingsScope());
   const { close } = props;
+  const openStoreBots = useOpenStoreBots(close);
+  const fromTemplate = React.useCallback(() => {
+    fireAndForget(openStoreBots(), { tag: 'BotsRoster.fromTemplate' });
+  }, [openStoreBots]);
   const newBot = React.useCallback(() => {
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (lifetime)
@@ -350,6 +364,21 @@ export function BotsPopoverContent(
     </View>
   ) : null;
 
+  // Readiness is offered once for the whole roster, so only once the roster is whole.
+  const readinessLine = !loading && !readinessDemanded && readinessBindings.size > 0 ? (
+    <View style={[styles.line, styles.readinessLine]} testID="bots-roster.readiness">
+      <Text variant="meta" style={styles.readinessText}>{t('session.collaboration.readiness.rosterNotChecked')}</Text>
+      <TextLinkButton
+        testID="bots-roster.readiness-check"
+        size="meta"
+        label={t('session.collaboration.readiness.check')}
+        // The line's own padding is its free space: above it the roster, below it the footer's New bot.
+        verticalReach={theme.space.s4}
+        onPress={() => setReadinessDemanded(true)}
+      />
+    </View>
+  ) : null;
+
   const iconColor = theme.colors.text.secondary;
   const footerActions = [
     {
@@ -369,6 +398,13 @@ export function BotsPopoverContent(
         </Text>
       ),
       onPress: newBot,
+    },
+    {
+      id: 'from-template',
+      testID: 'bots-roster.from-template',
+      label: t('botTemplates.fromTemplate'),
+      icon: <Icon name={BOTS_GLYPH} size={MENU_ROW_METRICS.iconGlyphSizePx} color={iconColor} />,
+      onPress: fromTemplate,
     },
     {
       id: 'ask-happier',
@@ -412,6 +448,9 @@ export function BotsPopoverContent(
             />
           }
         />
+        {/* The same From a template… row as the filled roster's footer: one menu row, one way to the Store. */}
+        <View style={[styles.divider, styles.emptyDivider]} />
+        <ActionListSection style={styles.emptyActions} actions={footerActions.filter(action => action.id === 'from-template')} />
         {freshnessLine}
         {offerVisible ? (
           <>
@@ -477,17 +516,12 @@ export function BotsPopoverContent(
           />
         </View>
       ) : null}
-      <ScrollView
-        style={RAIL_POPOVER_ROSTER_LIST_STYLE}
-        keyboardShouldPersistTaps="always"
-        testID="bots-roster.list"
-      >
+      <RailPopoverRosterList testID="bots-roster.list">
         {rows.map((row, index) => {
-          const isLast = index === rows.length - 1;
-          // A quiet top-level Bot carries its readiness under its row (lab K3-R); busy ones say what they do.
-          const readinessServerId = !items[index]!.reportsDepth
+          const readinessBinding = !items[index]!.reportsDepth
             && row.botActivity === 'quiet'
-            ? items[index]!.serverId ?? null : null;
+            ? readinessBindings.get(items[index]!.serverId ?? '') ?? null : null;
+          const readinessLifetime = readinessDemanded ? readinessBinding : null;
           return row.session ? (
             <React.Fragment key={row.sessionKey ?? items[index]!.sessionId}>
             <SessionItem
@@ -499,6 +533,7 @@ export function BotsPopoverContent(
               showTalkAction
               quietWhenOffline
               actionMenuSurface="botsRoster"
+              botActivity={row.botActivity}
               reportsDepth={items[index]!.reportsDepth}
               reportsDisclosure={readSessionLiveManagedSessionCountV1(row.session.managedSessions) > 0
                 ? (collapsed[buildSessionListIndexNodeId(items[index]!)] ?? (row.session.metadata?.bot?.kind === 'bot')) ? 'collapsed' : 'expanded'
@@ -506,8 +541,8 @@ export function BotsPopoverContent(
               onSetReportsCollapsed={setCollapsed}
               onOpened={close}
             />
-            {readinessServerId ? (
-              <BotRosterReadiness serverId={readinessServerId} sessionId={row.session.id} separator={!isLast} />
+            {readinessLifetime ? (
+              <BotRosterReadiness accountLifetime={readinessLifetime} sessionId={row.session.id} />
             ) : null}
             {readSessionLiveManagedSessionCountV1(row.session.managedSessions) > 0 && collapsed[buildSessionListIndexNodeId(items[index]!)] === false
               ? <BotRosterReports lead={row.session} item={items[index]!} />
@@ -522,7 +557,8 @@ export function BotsPopoverContent(
             title={t('bots.loading')}
           />
         ) : null}
-      </ScrollView>
+      </RailPopoverRosterList>
+      {readinessLine}
       {freshnessLine}
     </RailPopoverRoster>
   );
@@ -555,7 +591,25 @@ const stylesheet = StyleSheet.create((theme) => ({
     marginHorizontal: theme.space.s12,
     backgroundColor: theme.colors.border.default,
   },
+  readinessLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.space.s8,
+  },
+  readinessText: {
+    flexShrink: 1,
+    color: theme.colors.text.secondary,
+  },
   emptyRoot: {
+    // The glyph leads the popover: it keeps the roster header's top inset instead of touching the edge.
+    paddingTop: theme.space.s12,
     paddingBottom: theme.space.s12,
+  },
+  // The New bot button keeps its breath above the footer row it now shares the popover with.
+  emptyDivider: {
+    marginTop: theme.space.s12,
+  },
+  emptyActions: {
+    paddingVertical: theme.space.s4,
   },
 }));

@@ -16,11 +16,13 @@ describe('embedded composer controls', () => {
             voiceAffordance: 'none',
             engineControls: 'none',
             attachments: true,
+            allowPlacementCustomization: false,
         });
         expect(resolveEmbeddedComposerControls({ kind: 'embedded', composer: 'auto', attachments: false, modelPicker: true })).toEqual({
             voiceAffordance: 'none',
             engineControls: 'auto',
             attachments: false,
+            allowPlacementCustomization: false,
         });
     });
 });

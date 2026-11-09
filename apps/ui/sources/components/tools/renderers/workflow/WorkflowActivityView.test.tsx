@@ -18,13 +18,17 @@ import {
     renderScreen,
 } from '@/dev/testkit';
 import {
-    buildWorkflowRunSystemRecordLocalId,
-    FeaturesResponseSchema,
-    projectSessionAccessCapabilitiesV1,
+    buildWorkflowRunSystemRecordLocalId} from '@happier-dev/protocol/sessions/system/records/activity/activitySystemRecordKinds';
+import {
+    FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import {
+    projectSessionAccessCapabilitiesV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import {
     SessionSystemRecordStoredSchema,
-    type SessionSystemRecordStored,
+    type SessionSystemRecordStored} from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
+import {
     type SessionWorkflowRunSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 
 import {
     createSessionSystemRecordHttpFixture,

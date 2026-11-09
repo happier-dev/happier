@@ -4,11 +4,11 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { t } from '@/text';
-import { AGENT_INPUT_FIELD_ACCESSORY_EDGES_PX } from './agentInputChromeStyles';
+import { AGENT_INPUT_FIELD_ACCESSORY_EDGES_PX, AGENT_INPUT_QUIET_ICON_SIZE_PX } from './agentInputChromeStyles';
 import type { VoiceDictationSnapshot } from '@/voice/dictation/VoiceDictationController';
 
 /** The drawn circle; a finger reaches it through the button's hit area, not a larger slot. */
-const DICTATION_VISUAL_SIZE = 24;
+const DICTATION_VISUAL_SIZE = AGENT_INPUT_QUIET_ICON_SIZE_PX;
 
 /**
  * Dictation, at the top-right corner of the text field (§2.3, VE-02).

@@ -1,23 +1,28 @@
 import * as React from 'react';
 import { act, create } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { ComposerSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/composer';
 
 import type {
-    ComposerRefV1,
+    ComposerRefV1} from '@happier-dev/protocol/plugins/ui/composerRef';
+import type {
     DaemonPluginUiComposerSurfaceCatalogEntryV1,
     PluginProjectedComposerControlEntryV1,
     PluginProjectedComposerRegionEntryV1,
     PluginProjectionV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
     DaemonPluginUiComposerSurfaceCatalogEntryV1Schema,
     PluginProjectedComposerControlEntryV1Schema,
     PluginProjectedComposerRegionEntryV1Schema,
     PluginProjectionV2Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { PluginSurfaceTarget } from '@happier-dev/plugin-sdk/ui';
 
 import { renderHook, renderScreen } from '@/dev/testkit';
+import { Modal, ModalProvider } from '@/modal';
+import type { PluginSurfaceOpenHandler, PluginSurfaceOpenOutcome } from '@/components/plugins/surfaces/openPluginSurface';
+import { createPluginUiTranslationRuntime, PluginUiTranslationRuntimeProvider } from '@/sync/domains/plugins/ui/i18n';
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import type {
@@ -33,8 +38,29 @@ import {
     useComposerScopePluginPresentation,
     type ComposerScopePluginPresentation,
 } from './useComposerScopePluginPresentation';
+import { registerComposerPresentationTarget, registerSessionComposerPresentationTarget } from './sessionComposerPresentationTargets';
+
+const accountScope = { serverId: 'server-1', accountId: 'composer-account' };
+const accountLifetime = { scope: accountScope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+
+function registerMountedComposer(ref: ComposerRefV1): void {
+    const snapshot = ComposerSnapshotV1Schema.parse({
+        revision: 1, ref, text: '', references: [], attachments: [], layout: 'wrap',
+        capabilities: { text: true, references: true, attachments: true, submit: true },
+        state: { focused: false, editable: true, submittable: true, submitting: false, running: false },
+    });
+    const target = { readScope: () => accountScope, readSnapshot: () => snapshot, readRevision: () => 1, replace: () => 1 };
+    onTestFinished(ref.kind === 'session'
+        ? registerSessionComposerPresentationTarget({ serverId: accountScope.serverId, sessionId: ref.sessionId }, target)
+        : registerComposerPresentationTarget(ref, target));
+}
 
 const pluginSurfaceHostSpy = vi.hoisted(() => vi.fn());
+
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock({ renderCustomModals: true }).module;
+});
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -253,6 +279,35 @@ const scopeCases: readonly Readonly<{
 ];
 
 describe('useComposerScopePluginPresentation', () => {
+    it('refreshes visible copy without retiring the current Action snapshot', async () => {
+        const base = publishDaemonMergedProjectionInputs({ projection: createProjection() });
+        const projectionInputs = { ...base, pluginUiProjection: { ...base.pluginUiProjection, translationsByPluginId: {
+            'acme.compose': { id: 'translations:acme.compose', pluginId: 'acme.compose', contributionKind: 'translations' as const,
+                locales: ['en'], resourceIdsByLocale: { en: 'copy.en' } },
+        } } };
+        let finishRead!: (bytes: Uint8Array) => void;
+        const runtime = createPluginUiTranslationRuntime({ projection: projectionInputs.pluginUiProjection,
+            readResourceBytes: () => new Promise<Uint8Array>((resolve) => { finishRead = resolve; }) });
+        const isScopeCurrent = () => true;
+        const hook = await renderHook(() => {
+            const presentation = useComposerScopePluginPresentation({
+                composer: { kind: 'discussion', discussionId: 'discussion-1' }, physicalTarget: { kind: 'app' },
+                resourceContext: { kind: 'global' }, machineId: 'machine-1', serverId: 'server-1', projectionPhase: 'ready',
+                projectionInputs, accountLifetime: null, isScopeCurrent, attachmentsEnabled: false, includeSessionActions: false,
+            });
+            return { presentation, label: presentation.localizePluginText('acme.compose', { key: 'compose.label', fallback: 'Author label' }) };
+        }, { wrapper: ({ children }) => React.createElement(PluginUiTranslationRuntimeProvider, { runtime }, children) });
+        const snapshot = hook.getCurrent().presentation.getCurrentActionSnapshot();
+        expect(snapshot?.host.isCurrent?.()).toBe(true);
+        expect(hook.getCurrent().label).toBe('Author label');
+        await act(async () => { finishRead(new TextEncoder().encode(JSON.stringify({ 'compose.label': 'Loaded label' }))); });
+        expect(hook.getCurrent().label).toBe('Loaded label');
+        expect(hook.getCurrent().presentation.getCurrentActionSnapshot()).toBe(snapshot);
+        expect(snapshot?.host.isCurrent?.()).toBe(true);
+        await hook.unmount();
+        runtime.dispose();
+    });
+
     it('keeps control Actions usable when the optional physical surface catalog is omitted', async () => {
         const projectionInputs = publishDaemonMergedProjectionInputs({ projection: createProjection() });
         const open = vi.fn();
@@ -271,6 +326,26 @@ describe('useComposerScopePluginPresentation', () => {
             expect(menu.disabled).toBe(false);
             menu.onPress?.();
             expect(open).toHaveBeenCalledWith(expect.objectContaining({ action: control.identity }));
+        } finally { await hook.unmount(); }
+    });
+
+    it('retains its presentation across a host re-render with unchanged inputs and an omitted catalog', async () => {
+        const projectionInputs = publishDaemonMergedProjectionInputs({ projection: createProjection() });
+        const open = vi.fn();
+        const isScopeCurrent = () => true;
+        const composer = { kind: 'session', sessionId: 'session-1' } as const;
+        const hook = await renderHook(() => useComposerScopePluginPresentation({
+            composer, physicalTarget: composer, resourceContext: composer, machineId: 'machine-1', serverId: 'server-1',
+            projectionPhase: 'ready', projectionInputs, accountLifetime: null, isScopeCurrent,
+            attachmentsEnabled: true, includeSessionActions: false, onOpenControlAction: open,
+        }));
+        try {
+            const first = hook.getCurrent();
+            await hook.rerender();
+            // The Session composer re-renders its whole input chrome when these change identity.
+            expect(hook.getCurrent().statusRegions).toBe(first.statusRegions);
+            expect(hook.getCurrent().renderComposerRegion).toBe(first.renderComposerRegion);
+            expect(hook.getCurrent()).toBe(first);
         } finally { await hook.unmount(); }
     });
 
@@ -322,7 +397,7 @@ describe('useComposerScopePluginPresentation', () => {
             projectionInputs,
             accountLifetime: null, isScopeCurrent: () => true, attachmentsEnabled: false, includeSessionActions: false,
         }));
-        expect(hook.getCurrent().extraActionChips.map(chip => chip.controlId)).toEqual(['plugin:acme.compose/refresh']);
+        expect(hook.getCurrent().extraActionChips.map(chip => chip.controlId)).toEqual(['plugin:control:acme.compose/refresh']);
         expect(hook.getCurrent().composerRegions.map(entry => entry.id)).toEqual(['acme.compose/summary']);
         await hook.unmount();
     });
@@ -410,9 +485,9 @@ describe('useComposerScopePluginPresentation', () => {
         if (presentation === null) throw new Error('expected Composer presentation');
 
         expect(presentation.extraActionChips.map((chip) => chip.controlId)).toEqual([
-            'plugin:acme.compose/a-tie',
-            'plugin:acme.compose/z-tie',
-            'plugin:acme.compose/late',
+            'plugin:control:acme.compose/a-tie',
+            'plugin:control:acme.compose/z-tie',
+            'plugin:control:acme.compose/late',
         ]);
         expect(presentation.composerRegions.map((entry) => entry.id)).toEqual([
             'acme.compose/a-tie-region',
@@ -424,6 +499,7 @@ describe('useComposerScopePluginPresentation', () => {
     });
 
     it.each(scopeCases)('mounts a region for $label through the shared host seam', async (scope) => {
+        registerMountedComposer(scope.composer);
         pluginSurfaceHostSpy.mockClear();
         const projection = createProjection();
         const { pluginUiProjection, composerSurfaceCatalog, composerSurfaceActionInputSelectionFacts } = publishDaemonMergedProjectionInputs({ projection, composerSurfaceCatalog: [createCatalogEntry()] });
@@ -441,7 +517,7 @@ describe('useComposerScopePluginPresentation', () => {
                 composerSurfaceCatalog,
                 composerSurfaceActionInputSelectionFacts,
             },
-            accountLifetime: null,
+            accountLifetime,
             isScopeCurrent: () => true,
             attachmentsEnabled: scope.composer.kind !== 'automationAuthoring',
             includeSessionActions: false,
@@ -473,6 +549,7 @@ describe('useComposerScopePluginPresentation', () => {
     // asserts the binding reaches the physical mount, not merely that the
     // scope resolved one.
     it('hands the enclosing scope navigation binding to every physical Composer surface', async () => {
+        registerMountedComposer({ kind: 'session', sessionId: 'session-1' });
         pluginSurfaceHostSpy.mockClear();
         const {
             PluginSurfaceDestinationNavigationBindingProvider,
@@ -499,7 +576,7 @@ describe('useComposerScopePluginPresentation', () => {
                 composerSurfaceCatalog,
                 composerSurfaceActionInputSelectionFacts,
             },
-            accountLifetime: null,
+            accountLifetime,
             isScopeCurrent: () => true,
             attachmentsEnabled: true,
             includeSessionActions: false,
@@ -521,10 +598,66 @@ describe('useComposerScopePluginPresentation', () => {
         await hook.unmount();
     });
 
+    it.each(scopeCases.filter((scope) => scope.composer.kind === 'newSession' || scope.composer.kind === 'session'))(
+        'dismisses only an opened destination from the $label picker dialog', async (scope) => {
+            onTestFinished(() => Modal.hideAll());
+            registerMountedComposer(scope.composer);
+            pluginSurfaceHostSpy.mockClear();
+            const { PluginSurfaceDestinationNavigationBindingProvider } = await import('@/components/plugins/surfaces/pluginSurfaceDestinationNavigation');
+            // Incumbent route navigation is the boundary: keep the real Composer
+            // owner, mounted surface and custom modal content beneath it.
+            let finishOpen!: (outcome: PluginSurfaceOpenOutcome) => void;
+            const openSurface = vi.fn<PluginSurfaceOpenHandler>()
+                .mockResolvedValueOnce({ ok: false, code: 'unsupported_method', reason: 'destination unavailable' })
+                .mockImplementationOnce(() => new Promise((resolve) => { finishOpen = resolve; }));
+            const binding = Object.freeze({ targetKind: scope.physicalTarget.kind, openSurface, registerOwner: () => () => {} });
+            const projection = createProjection();
+            const inputs = publishDaemonMergedProjectionInputs({
+                projection,
+                composerSurfaceCatalog: [{ ...createCatalogEntry(), role: 'attachmentPicker' }],
+            });
+            const hook = await renderHook(() => useComposerScopePluginPresentation({
+                composer: scope.composer,
+                physicalTarget: scope.physicalTarget,
+                resourceContext: scope.resourceContext,
+                machineId: 'machine-1', serverId: 'server-1', projectionPhase: 'ready',
+                projectionInputs: { ...inputs, pluginProjectionById: {}, pluginProjectionV2: projection },
+                accountLifetime, isScopeCurrent: () => true, attachmentsEnabled: true, includeSessionActions: false,
+            }), { wrapper: ({ children }) => (
+                <PluginSurfaceDestinationNavigationBindingProvider binding={binding}>{children}</PluginSurfaceDestinationNavigationBindingProvider>
+            ) });
+            const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
+            const interaction = hook.getCurrent().resolveAttachmentInteraction({
+                attachment: {
+                    v: 1, instanceId: 'entry-42', attachment: region.identity, key: '42', value: { entryId: '42' },
+                    presentation: { typeLabel: 'Entry', label: 'Entry 42' }, availability: { status: 'ready' },
+                },
+                catalog: { identity: region.identity, occurrenceId: 'generation-1', picker: { renderer: 'summary-renderer' } },
+            });
+            expect(interaction?.onPress).toBeDefined();
+            await act(async () => { interaction?.onPress?.(); });
+            expect(screen.findAllByType('PluginSurfaceHost')).toHaveLength(1);
+            const hostProps = pluginSurfaceHostSpy.mock.calls.at(-1)?.[0] as Readonly<{
+                composerMount: Readonly<{ binding: Readonly<{ openSurface: PluginSurfaceOpenHandler }> }>;
+            }>;
+            const request = { destination: region.identity, input: { originComposer: scope.composer, entryId: '42' } };
+            await act(async () => { expect(await hostProps.composerMount.binding.openSurface(request)).toMatchObject({ ok: false }); });
+            expect(screen.findAllByType('PluginSurfaceHost')).toHaveLength(1);
+            let opened!: ReturnType<PluginSurfaceOpenHandler>;
+            await act(async () => { opened = hostProps.composerMount.binding.openSurface(request); });
+            expect(screen.findAllByType('PluginSurfaceHost')).toHaveLength(1);
+            await act(async () => { finishOpen({ ok: true }); expect(await opened).toEqual({ ok: true }); });
+            expect(openSurface.mock.calls.at(-1)?.[0]).toEqual(request);
+            expect(screen.findAllByType('PluginSurfaceHost')).toHaveLength(0);
+            await hook.unmount();
+        },
+    );
+
     // Factual absence is preserved: a Composer scope with no enclosing
     // destination binding must not advertise a navigation handler the host
     // cannot honour.
     it('installs no openSurface binding when the scope has no enclosing destination owner', async () => {
+        registerMountedComposer({ kind: 'session', sessionId: 'session-1' });
         pluginSurfaceHostSpy.mockClear();
         const projection = createProjection();
         const { pluginUiProjection, composerSurfaceCatalog, composerSurfaceActionInputSelectionFacts } = publishDaemonMergedProjectionInputs({ projection, composerSurfaceCatalog: [createCatalogEntry()] });
@@ -542,7 +675,7 @@ describe('useComposerScopePluginPresentation', () => {
                 composerSurfaceCatalog,
                 composerSurfaceActionInputSelectionFacts,
             },
-            accountLifetime: null,
+            accountLifetime,
             isScopeCurrent: () => true,
             attachmentsEnabled: true,
             includeSessionActions: false,

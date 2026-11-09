@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { SessionTerminalMemberV1 } from '@happier-dev/protocol';
+import type { SessionTerminalMemberV1 } from '@happier-dev/protocol/terminal/workspace';
 import { View } from 'react-native';
 
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
@@ -15,6 +15,7 @@ import { useSessionEmbeddedTerminalPty } from './useSessionEmbeddedTerminalPty';
 export type SessionEmbeddedTerminalPaneProps = Readonly<{
     sessionId: string;
     scopeId: string;
+    presentationId?: string;
     currentDockLocation: EmbeddedTerminalDockLocation;
     terminalInstanceId?: string;
     onOpenNewTerminalTab?: (() => void) | null;
@@ -59,6 +60,7 @@ export function useSessionEmbeddedTerminalPaneModel(props: SessionEmbeddedTermin
 
     const terminalId = props.terminalIdentity.terminalId;
     const { findSurfaceId, onOpenApproval } = useEmbeddedTerminalPresentation({ scopeId: props.scopeId, terminalKey,
+        presentationId: props.presentationId,
         terminalId, available: props.terminalIdentity.available, focused: props.focused, controller, terminalRef: terminalRendererRef });
 
     const execute = React.useMemo(() => createFrontDoorActionExecute(), []);

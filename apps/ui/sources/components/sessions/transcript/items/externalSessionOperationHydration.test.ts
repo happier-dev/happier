@@ -2,7 +2,7 @@ import {
     ExternalSessionOperationProgressV1Schema,
     ExternalSessionOperationSharedPresentationV1Schema,
     type ExternalSessionOperationProgressV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/operationV1';
 import { describe, expect, it } from 'vitest';
 
 import { readExternalSessionOperationPresentationFromMetadata } from './externalSessionOperationMetadata';

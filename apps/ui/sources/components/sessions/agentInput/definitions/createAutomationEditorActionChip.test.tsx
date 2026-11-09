@@ -28,16 +28,16 @@ const renderContext = () => ({
     toggleCollapsedPopover: vi.fn(),
 });
 
+const { createAutomationEditorActionChip } = await import('./createAutomationEditorActionChip');
+
 describe('createAutomationEditorActionChip', () => {
     it('opens the shared Automation editor instead of embedding a settings popover', async () => {
-        const { createAutomationEditorActionChip } = await import('./createAutomationEditorActionChip');
         const onPress = vi.fn();
         const chip = createAutomationEditorActionChip({ label: 'Automate', onPress });
 
         // No collapsed popover: the chip is navigation, so the composed draft
         // is authored in one place rather than in a second inline editor.
         expect(chip.collapsedContentPopover).toBeUndefined();
-        expect(chip.collapsedAction).toBeUndefined();
 
         const screen = await renderScreen(
             <>{chip.render(renderContext() as never)}</>,
@@ -47,5 +47,14 @@ describe('createAutomationEditorActionChip', () => {
         await (async () => pressable.props.onPress())();
 
         expect(onPress).toHaveBeenCalledTimes(1);
+
+        // P3 §3.4 puts Automation in + by default; both entry points keep the
+        // same draft handoff instead of introducing a second editor.
+        const dismiss = vi.fn();
+        const action = chip.collapsedAction?.({ dismiss, tint: '#000', blurInput: vi.fn(), openCollapsedPopover: vi.fn() });
+        if (!action || !('onPress' in action)) throw new Error('Expected the Automation navigation action');
+        action.onPress?.();
+        expect(dismiss).toHaveBeenCalledTimes(1);
+        expect(onPress).toHaveBeenCalledTimes(2);
     });
 });

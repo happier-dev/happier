@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import type { SessionInitialAccessDraftV1 } from '@happier-dev/protocol';
+import type { SessionInitialAccessDraftV1 } from '@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { t } from '@/text';
@@ -155,7 +155,7 @@ describe('useNewSessionAccessDraftController', () => {
         expect(latest.model.grants.map((row) => row.principal.accessibilityLabel)).toEqual([
             'Alice Second, @second-alice', 'Bob Second, @second-bob',
         ]);
-        expect(latest.model.directory.query).toBe('');
+        expect(latest.query.read()).toBe('');
         expect(requested[1]).toEqual({ origin: 'https://draft-second.example.test', body: {
             v: 1, subjects: initial.grants.map((grant) => grant.subject),
         } });
@@ -176,7 +176,7 @@ describe('useNewSessionAccessDraftController', () => {
         // the currently loaded search page (or the directory is unavailable).
         expect(new Set(latest!.model.grants.map((row) => row.principal.displayName)).size).toBe(2);
         expect(new Set(latest!.model.grants.map((row) => row.principal.accessibilityLabel)).size).toBe(2);
-        expect(latest!.model.directory.query).toBe('');
+        expect(latest!.query.read()).toBe('');
         expect(latest!.model.grants.map((row) => row.grant)).toEqual([
             { kind: 'account', accountId: 'off-page-alice' },
             { kind: 'account', accountId: 'off-page-bob' },
@@ -408,11 +408,13 @@ describe('useNewSessionAccessDraftController', () => {
             canApprovePermissions: false,
         }] });
         expect(latest!.model.grants[0]?.removal.kind).toBe('allowed');
+        expect(latest!.placementPending).toBe(false);
 
         await act(async () => { latest!.actions.requestRemove({ kind: 'team', teamId: 'team-default' }); });
         expect(draft).toBeNull();
         expect(primaryTeamId).toBe('team-default');
         expect(latest!.model.context?.primaryTeamId).toBe('team-default');
+        expect(latest!.placementPending).toBe(true);
     });
 
     it('keeps Team context choices on the canonical Team cursor as more candidates load', async () => {
@@ -529,10 +531,13 @@ describe('useNewSessionAccessDraft repository currentness', () => {
             sourceAccess={null} sourcePrimaryTeamId={null} onReady={(state) => { latest = state; }} />);
         expect(latest!.chip).not.toBeNull();
 
+        expect(latest!.chip?.pending).toBe(false);
+
         shareCandidateAvailability.value = false;
         await screen.update(<AccessDraftProbe serverId="home-one" sourceRevision={2}
             sourceAccess={alice} sourcePrimaryTeamId={null} onReady={(state) => { latest = state; }} />);
         expect(latest!.chip).not.toBeNull();
+        expect(latest!.chip?.pending).toBe(true);
     });
 
     it('adopts a newer synchronized access/team choice and exposes that same snapshot to the editor', async () => {

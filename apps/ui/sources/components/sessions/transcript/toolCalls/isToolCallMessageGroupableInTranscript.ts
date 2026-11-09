@@ -1,7 +1,8 @@
 import { readTurnChangeToolMetadataFromToolCall } from '@happier-dev/protocol/sessions/messages/canonicalTurnDiffTool';
-import { isTranscriptSessionBoardItemReplyCallV1 } from '@happier-dev/protocol/sessions/board';
+import { readTranscriptToolResultCardKind } from '../references/transcriptToolResultCard';
 import { readReviewToolRunId } from '@/components/sessions/reviews/messages/projectReviewToolMessage';
 import { isSessionMessageInvocationAnchor } from '../references/readSessionMessageInvocation';
+import { hasToolCarriedStructuredResultCard } from '../structured/structuredToolResultCards';
 
 import type { Message, ToolCallMessage } from "@happier-dev/session-core/messages";
 
@@ -16,12 +17,8 @@ export function isToolCallMessageGroupableInTranscript(message: Message): messag
         return false;
     }
 
-    // A call that answered with a transcript visual stands alone: the visual is the agent's reply, so it
-    // sits in the reply column with its call as a quiet line, never inside a tool group's well.
-    const { tool } = message;
-    if (isTranscriptSessionBoardItemReplyCallV1({ toolName: tool.name, state: tool.state, input: tool.input, result: tool.result })) {
-        return false;
-    }
+    // Every result card is a visible reply block, never content of a collapsed tool group.
+    if (readTranscriptToolResultCardKind(message.tool) !== null || hasToolCarriedStructuredResultCard(message)) return false;
 
     // An agent's Ask or Send is a record of who was asked and how it ended (its row sits under the call), so it
     // stays in the reply column instead of inside a collapsed group.

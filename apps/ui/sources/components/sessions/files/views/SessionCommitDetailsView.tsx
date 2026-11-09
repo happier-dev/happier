@@ -337,7 +337,7 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
     }
 
     return (
-        <View style={[styles.container, { backgroundColor: theme.colors.surface.base, position: 'relative' }]}>
+        <View style={[styles.container, { position: 'relative' }]}>
             <ScmCommitDetailsHeader
                 sha={sha}
                 commit={commitEntry}
@@ -405,6 +405,5 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
 const styles = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.surface.base,
     },
 }));

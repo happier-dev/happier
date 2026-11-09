@@ -14,9 +14,8 @@
  * because those only exist when pixel bounds are supplied. Drop-resolution reads
  * row geometry live and uses these structural facts once a row id is hit.
  *
- * `../dev` note: the snapshot carries no `folderSortMode` — `../dev` resolves
- * folder-sort behaviour at commit time via `SessionListGroupOrderChildKind`,
- * reading the live `sessionListFolderSortModeV1`.
+ * Section headers use their record order. Session sibling order remains a
+ * separate projection; the snapshot carries neither persisted order map.
  */
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
@@ -38,7 +37,7 @@ import type {
     SessionListTreeModel,
     SessionListTreeRowMetadata,
 } from '../drop-resolution/sessionListTreeTypes';
-import { isFolderTreeRowId, isWorkspaceRootTreeRowId } from '../drop-resolution/treeRowId';
+import { isFolderTreeRowId, isSessionTreeRowId, isWorkspaceRootTreeRowId } from '../drop-resolution/treeRowId';
 
 let snapshotSequence = 0;
 
@@ -52,7 +51,7 @@ function resolveSourceRowIdFromDragKey(
     sessionKey: string,
     tree: SessionListTreeModel,
 ): string {
-    if (isFolderTreeRowId(sessionKey) || isWorkspaceRootTreeRowId(sessionKey)) return sessionKey;
+    if (isFolderTreeRowId(sessionKey) || isSessionTreeRowId(sessionKey) || isWorkspaceRootTreeRowId(sessionKey)) return sessionKey;
     const matches = Array.from(tree.rowMetadataById.values()).filter((metadata) =>
         metadata.kind === 'session'
         && metadata.serverId
@@ -60,6 +59,9 @@ function resolveSourceRowIdFromDragKey(
         && sessionAddressKey({ serverId: metadata.serverId, sessionId: metadata.sessionId }) === sessionKey
     );
     if (matches.length === 1) return matches[0]!.rowId;
+    const base = matches.find(metadata => metadata.item.type === 'session'
+        && (!metadata.item.occurrenceRole || metadata.item.occurrenceRole === 'base'));
+    if (base) return base.rowId;
     if (matches.length > 1 && matches.every((metadata) => metadata.rowId === matches[0]!.rowId)) {
         return matches[0]!.rowId;
     }

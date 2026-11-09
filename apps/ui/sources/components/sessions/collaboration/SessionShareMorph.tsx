@@ -176,7 +176,9 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: 16,
         borderWidth: StyleSheet.hairlineWidth,
         borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.elevated,
+        // The panel's own paint, one surface with the list it holds; `surface.elevated` is a control's
+        // fill step and read as a dark grey block around a white list.
+        backgroundColor: theme.colors.edge.floatingFill,
         // Raised because it is the focused, expanded object (premium-feel §4); the level is the
         // overlay step every floating surface uses.
         ...shadowLevelStyle(theme.colors.shadowLevels[4]),

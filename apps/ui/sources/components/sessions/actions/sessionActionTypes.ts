@@ -37,6 +37,7 @@ export type SessionActionId =
     | 'ui.session.talk'
     | 'ui.session.tags.edit'
     | 'ui.session.move-to-folder'
+    | 'ui.session.appearance-color'
     | 'ui.session.set-attention-standing'
     | 'ui.session.clear-attention-standing'
     | 'ui.session.put-under'
@@ -128,13 +129,13 @@ export type SessionActionExecutionOperations = Readonly<{
         stopErrorMessage: string;
         archiveErrorMessage: string;
     }) => Promise<void | false>;
-    stopSession?: (sessionId: string, opts?: Readonly<{ serverId?: string | null }>) => Promise<SessionActionOperationResult>;
+    stopSession?: (sessionId: string, opts?: Readonly<{ serverId?: string | null; signal?: AbortSignal; expectedAccountId?: string }>) => Promise<SessionActionOperationResult>;
     archiveSession?: (sessionId: string, opts?: Readonly<{ serverId?: string | null; alsoArchiveReports?: boolean; archiveOperation?: SessionArchiveOperation }>) => Promise<SessionActionOperationResult>;
     unarchiveSession?: (sessionId: string, opts?: Readonly<{ serverId?: string | null }>) => Promise<SessionActionOperationResult>;
     setSessionAnswersWorkerQuestions?: (sessionId: string, enabled: boolean, opts?: Readonly<{ serverId?: string | null }>) => Promise<Readonly<{ ok: boolean; error?: string }>>;
     renameSession?: (sessionId: string, title: string, opts?: Readonly<{ serverId?: string | null }>) => Promise<SessionActionOperationResult>;
     openPutUnderPicker?: (params: Readonly<{ sessionId: string; serverId: string | null }>) => void;
-    resumeSession?: (sessionId: string) => void | Promise<void>;
+    resumeSession?: (sessionId: string) => boolean | void | Promise<boolean | void>;
     deleteSession?: (sessionId: string, opts?: Readonly<{
         serverId?: string | null;
         confirmed?: true;

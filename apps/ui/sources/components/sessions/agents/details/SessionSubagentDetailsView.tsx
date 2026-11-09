@@ -7,7 +7,7 @@ import { SessionParticipantComposer } from '@/components/sessions/participants/c
 import { SessionExecutionRunDetailsView } from '@/components/sessions/runs/details/SessionExecutionRunDetailsView';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useSessionAgentActivityRoster } from '@/hooks/session/useSessionAgentActivity';
-import { useMessage, useResolvedSessionMessageRouteId, useSessionMessages } from '@/sync/domains/state/storage';
+import { useMessage, useResolvedSessionMessageRouteId, useSessionTranscriptLoaded } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { deriveTranscriptInteractionFromSession } from '@/utils/sessions/deriveTranscriptInteraction';
 import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
@@ -34,7 +34,7 @@ export const SessionSubagentDetailsView = React.memo((props: Readonly<{
         serverId: props.serverId ?? session?.serverId,
         session,
     });
-    const { isLoaded: messagesLoaded } = useSessionMessages(props.sessionId);
+    const messagesLoaded = useSessionTranscriptLoaded(props.sessionId);
 
     const subagent = React.useMemo(() => {
         return subagents.find((candidate) => candidate.id === props.subagentId) ?? null;

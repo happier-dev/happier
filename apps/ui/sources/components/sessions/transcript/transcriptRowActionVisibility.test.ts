@@ -22,10 +22,26 @@ describe('shouldShowTranscriptRowActions', () => {
         expect(shouldShowTranscriptRowActions({ ...hiddenOnFinePointerWeb, isRowFocused: true })).toBe(true);
     });
 
-    it('keeps actions visible on hover-less hosts: touch platforms and coarse-primary-pointer web', () => {
+    it('keeps actions visible on touch for a row without a tap-to-open gesture', () => {
         expect(shouldShowTranscriptRowActions({ ...hiddenOnFinePointerWeb, platformOS: 'ios' })).toBe(true);
         expect(shouldShowTranscriptRowActions({ ...hiddenOnFinePointerWeb, platformOS: 'android' })).toBe(true);
         expect(shouldShowTranscriptRowActions({ ...hiddenOnFinePointerWeb, coarsePrimaryPointer: true })).toBe(true);
+    });
+
+    it('on touch, shows a message row only while that message is opened by tap or long-press', () => {
+        for (const touch of [{ platformOS: 'ios' as const }, { platformOS: 'android' as const }, { coarsePrimaryPointer: true }]) {
+            expect(shouldShowTranscriptRowActions({ ...hiddenOnFinePointerWeb, ...touch, touchOpened: false })).toBe(false);
+            expect(shouldShowTranscriptRowActions({ ...hiddenOnFinePointerWeb, ...touch, touchOpened: true })).toBe(true);
+            // A touch-emulated hover (mouse events synthesized from a tap) never reveals on its own.
+            expect(shouldShowTranscriptRowActions({ ...hiddenOnFinePointerWeb, ...touch, touchOpened: false, isRowHovered: true })).toBe(false);
+            expect(shouldShowTranscriptRowActions({ ...hiddenOnFinePointerWeb, ...touch, touchOpened: false, isRowFocused: true })).toBe(true);
+            expect(shouldShowTranscriptRowActions({ ...hiddenOnFinePointerWeb, ...touch, touchOpened: false, selectionModeActive: true })).toBe(true);
+        }
+    });
+
+    it('keeps hover on a fine pointer whether or not the row can be opened by tap', () => {
+        expect(shouldShowTranscriptRowActions({ ...hiddenOnFinePointerWeb, touchOpened: false })).toBe(false);
+        expect(shouldShowTranscriptRowActions({ ...hiddenOnFinePointerWeb, touchOpened: false, isRowHovered: true })).toBe(true);
     });
 
     it('keeps actions visible while transcript selection mode is active', () => {
@@ -36,6 +52,7 @@ describe('shouldShowTranscriptRowActions', () => {
 describe('shouldShowTranscriptRowPinAction', () => {
     it('keeps a pinned row pin visible without hover', () => {
         expect(shouldShowTranscriptRowPinAction({ ...hiddenOnFinePointerWeb, pinned: true })).toBe(true);
+        expect(shouldShowTranscriptRowPinAction({ ...hiddenOnFinePointerWeb, coarsePrimaryPointer: true, touchOpened: false, pinned: true })).toBe(true);
     });
 
     it('does not drag the rest of the row into view for a pinned row', () => {

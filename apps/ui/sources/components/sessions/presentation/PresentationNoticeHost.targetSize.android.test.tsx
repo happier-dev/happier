@@ -1,7 +1,10 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createLayoutChangeEvent } from '@/dev/testkit/fixtures/nativeEventFixtures';
+import { readHitArea } from '@/dev/testkit/harness/hitFrameReach';
 
 vi.mock('react-native', async () => (
     await import('@/dev/testkit/mocks/reactNative')
@@ -18,9 +21,10 @@ afterEach(() => {
 });
 
 describe('PresentationNoticeHost Android target', () => {
-    // A copied 44 is an iOS number. Undo is the one thing a person can press here,
-    // and it appears on a transient card that leaves after a few seconds.
-    it('uses the canonical 48dp minimum interactive target for Undo', async () => {
+    // A copied 44 is an iOS number. Undo is the one thing a person can press here, and it appears on a
+    // transient card that leaves after a few seconds. It is drawn as a label and reaches Android's 48dp
+    // by hit area; the card never grows to hold a target.
+    it('draws Undo as a label and reaches the 48dp Android target by hit area', async () => {
         publishPresentationNotice({
             key: 'notice-android-target',
             message: 'Added to Companion',
@@ -28,13 +32,16 @@ describe('PresentationNoticeHost Android target', () => {
             undo: { label: 'Undo', run: () => {} },
         });
 
-        const screen = await renderScreen(<PresentationNoticeHost />);
-        const styleProp = screen.findHostByTestId('current-session-presentation-notice-undo')?.props.style;
-        const style = flattenTestStyle(
-            typeof styleProp === 'function' ? styleProp({ pressed: false }) : styleProp,
-        );
+        const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
+        const screen = await renderScreen(<HappierUiPlatformProvider platform={{ platform: 'android', colorScheme: 'light' }}>
+            <PresentationNoticeHost />
+        </HappierUiPlatformProvider>);
+        const undo = screen.findHostByTestId('current-session-presentation-notice-undo');
+        await act(async () => { undo!.props.onLayout(createLayoutChangeEvent({ x: 0, y: 0, width: 56, height: 28 })); });
+        const area = readHitArea(screen.findHostByTestId('current-session-presentation-notice-undo')!, { width: 56, height: 28 });
 
-        expect(style.minHeight).toBe(48);
+        expect(flattenTestStyle(typeof undo!.props.style === 'function' ? undo!.props.style({ pressed: false }) : undo!.props.style).minHeight).toBeUndefined();
+        expect(area.height).toBe(48);
     });
 
     // React Native removes a `pointerEvents="none"` view AND its whole subtree

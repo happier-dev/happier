@@ -1,4 +1,5 @@
-import { buildSessionWorkflowActivityHeadline, type SessionWorkflowRunHeadlineV1 } from '@happier-dev/protocol';
+import { buildSessionWorkflowActivityHeadline} from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineBuild';
+import { type SessionWorkflowRunHeadlineV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
 import { describe, expect, it } from 'vitest';
 
 import { readSessionWorkflowActivityHeadlineFromMetadata } from './sessionWorkflowActivityPresentation';

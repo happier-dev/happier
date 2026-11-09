@@ -21,6 +21,8 @@ export type SessionCompanionRevealPort = Readonly<{
     revealAfterMutation: (outcome: SessionCompanionMutationOutcome) => void;
     /** Reveals the exact current Board item through the mounted Session shell. */
     revealBoardItem: (itemId: string) => void;
+    /** Current shell's admitted presentation Action; absent on surfaces without Chat. */
+    showItemInChat?: (itemId: string, occurrenceId: string) => void;
 }>;
 
 const SessionCompanionRevealContext = React.createContext<SessionCompanionRevealPort | null>(null);
@@ -31,6 +33,7 @@ export function SessionCompanionRevealPortProvider(
         openFullSurface: () => void;
         revealAfterMutation: (outcome: SessionCompanionMutationOutcome) => void;
         revealBoardItem: (itemId: string) => void;
+        showItemInChat?: SessionCompanionRevealPort['showItemInChat'];
     }>>,
 ): React.ReactElement {
     const value = React.useMemo<SessionCompanionRevealPort | null>(() => (
@@ -40,9 +43,10 @@ export function SessionCompanionRevealPortProvider(
                 openFullSurface: props.openFullSurface,
                 revealAfterMutation: props.revealAfterMutation,
                 revealBoardItem: props.revealBoardItem,
+                showItemInChat: props.showItemInChat,
             })
             : null
-    ), [props.address, props.openFullSurface, props.revealAfterMutation, props.revealBoardItem]);
+    ), [props.address, props.openFullSurface, props.revealAfterMutation, props.revealBoardItem, props.showItemInChat]);
     return (
         <SessionCompanionRevealContext.Provider value={value}>
             {props.children}
@@ -61,6 +65,7 @@ export function SessionCompanionRevealOwner(
         paneScopeId: string;
         openFullSurface: () => void;
         revealBoardItem: (itemId: string) => void;
+        showItemInChat?: SessionCompanionRevealPort['showItemInChat'];
     }>>,
 ): React.ReactElement {
     const resolvePlacement = useResolveSessionCompanionPlacement({
@@ -83,6 +88,7 @@ export function SessionCompanionRevealOwner(
             openFullSurface={props.openFullSurface}
             revealAfterMutation={revealAfterMutation}
             revealBoardItem={props.revealBoardItem}
+            showItemInChat={props.showItemInChat}
         >
             {props.children}
         </SessionCompanionRevealPortProvider>

@@ -26,8 +26,9 @@ export const SessionAgentPendingPrompts = React.memo((props: Readonly<{
     /** Rendered when nothing waiting can be answered from here. */
     fallback: React.ReactNode;
 }>) => {
-    const { messages } = useSessionMessages(props.sessionId);
-    const reducerState = useSessionMessagesReducerState(props.sessionId);
+    // Prompts are request rows; streamed text never changes them.
+    const { messages } = useSessionMessages(props.sessionId, { textUpdates: false });
+    const reducerState = useSessionMessagesReducerState(props.sessionId, { textUpdates: false });
     const { session, subagent } = props;
 
     const prompts = React.useMemo(() => {

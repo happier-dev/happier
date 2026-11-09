@@ -1,4 +1,4 @@
-import type { ComposerSnapshotV1 } from '@happier-dev/protocol';
+import type { ComposerSnapshotV1 } from '@happier-dev/protocol/plugins/ui/composer';
 import { buildMentionRefV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 import { INLINE_REFERENCE_ATTACHMENT_SCHEME_V1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
 

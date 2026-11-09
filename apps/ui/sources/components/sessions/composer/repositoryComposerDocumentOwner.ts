@@ -22,7 +22,7 @@ import {
 import {
     parseComposerStructuredInputMentionsForText,
 } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { readServerAccountScopeOwnerLifetime, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import {
     captureSessionDraftCurrentness,
     clearSessionDraftCurrentnessLocal,
@@ -122,7 +122,10 @@ export function createRepositoryComposerDocumentOwner(input: Readonly<{
     /** Actual composer mutations only; hydration and repository echoes never call this. */
     onDocumentEdit?: () => void;
     isCurrent?: () => boolean;
+    /** Accepted input can settle after its view closes, within the captured Account. */
+    scopeLifetime?: ServerAccountScopeLifetime;
 }>): MutableComposerDocumentOwner {
+    const acceptedLifetime = input.scopeLifetime ? readServerAccountScopeOwnerLifetime(input.scopeLifetime) : null;
     const address = input.address ?? (input.ref.kind === 'session'
         ? { kind: 'session' as const, sessionId: input.ref.sessionId }
         : input.ref.kind === 'newSession'
@@ -198,6 +201,8 @@ export function createRepositoryComposerDocumentOwner(input: Readonly<{
                     mentions: nextMentions.map(strictJson),
                 } : {}),
                 attachments: nextAttachments.map(strictJson),
+                ...(mutation.sessionDiscussionSelectionSourceV1
+                    ? { sessionDiscussionSelectionSourceV1: mutation.sessionDiscussionSelectionSourceV1 } : {}),
             };
             if (address.kind === 'session' || address.kind === 'run') {
                 writeExistingSessionDraft({
@@ -247,7 +252,7 @@ export function createRepositoryComposerDocumentOwner(input: Readonly<{
                     composerAttachments: false,
                 },
             } as const);
-            if (input.isCurrent?.() === false) return noChange();
+            if ((acceptedLifetime ? acceptedLifetime.isCurrent() : input.isCurrent?.()) === false) return noChange();
             if (!sameComposerDocumentRef(input.ref, currentness.ref)) return noChange();
             const repositoryCurrentness = repositoryCurrentnessByCapture.get(currentness);
             if (!repositoryCurrentness) return noChange();

@@ -22,6 +22,17 @@ describe('sessionPaneUrlState', () => {
         expect(tab?.key).toBe(same?.key);
     });
 
+    it('keeps exact revision range endpoints in comparison and file deep links', () => {
+        const before = 'a'.repeat(40);
+        const after = 'b'.repeat(40);
+        const target = { kind: 'scmReview' as const, comparison: { kind: 'revisionRange' as const, baseOid: before, headOid: after }, view: 'files' as const };
+        const params = serializeSessionPaneUrlState({ details: target });
+        expect(parseSessionPaneUrlState(params)?.details).toEqual(target);
+        const tab = createSessionPaneDetailsTab(target)!;
+        expect(parseSessionPaneUrlState(buildActiveDetailsRouteParams([tab], tab.key))?.details).toEqual(target);
+        expect(parseSessionPaneUrlState({ ...params, baseOid: 'HEAD' })?.details).toEqual({ kind: 'scmReview', view: 'files' });
+    });
+
     it('preserves literal file path spelling through parsing, construction and outward links', () => {
         const path = ' leading /LICENSE ';
         const state = parseSessionPaneUrlState({ details: 'file', path });
@@ -32,13 +43,17 @@ describe('sessionPaneUrlState', () => {
     });
     it('reflects current file view rather than replaying the opening link after a user changes mode', () => {
         const tab = createSessionPaneDetailsTab({ kind: 'file', path: 'src/a.ts', view: 'changes' })!;
-        const read = (mode: 'file' | 'diff' | 'markdown') => deriveSessionPaneUrlStateFromScopeState({
+        const read = (mode: 'file' | 'diff' | 'markdown' | 'edit') => deriveSessionPaneUrlStateFromScopeState({
             right: { isOpen: false, activeTabId: null }, bottom: { isOpen: false, activeTabId: null },
             details: { isOpen: true, tabs: [tab], activeTabKey: tab.key, tabState: { [tab.key]: { view: { mode } } } },
         })?.details;
         expect(read('file')).toMatchObject({ view: 'view' });
         expect(read('diff')).toMatchObject({ view: 'changes' });
         expect(read('markdown')).not.toHaveProperty('view');
+        expect(read('edit')).toMatchObject({ view: 'edit' });
+        expect(parseSessionPaneUrlState(buildActiveDetailsRouteParams([tab], tab.key, {
+            [tab.key]: { view: { mode: 'edit' } },
+        }))?.details).toMatchObject({ view: 'edit' });
     });
     it('uses the tab view Changes scope after file.view.set supersedes its opening link', () => {
         const tab = createSessionPaneDetailsTab({ kind: 'file', path: 'src/a.ts', changes: { kind: 'turnCheckpoint', turnId: 'turn-4' } })!;
@@ -108,6 +123,15 @@ describe('sessionPaneUrlState', () => {
         expect(state?.details).toMatchObject({ comparison: { kind: 'turnCheckpoint', checkpointReceiptId: 'receipt-4', comparisonId: 'captured-4' } });
         if (!state) throw new Error('The captured receipt-only turn must be a valid pane target');
         expect(serializeSessionPaneUrlState(state)).toEqual(params);
+    });
+    it('preserves a receipt saved-result address through links and tab resources', () => {
+        const comparison = { kind: 'workingTree' as const, comparisonId: 'captured-reading',
+            savedResult: { cwd: '/other checkout/reading', resultId: 'saved-reading' } };
+        const target = { kind: 'scmReview' as const, comparison, view: 'walkthrough' as const };
+        const params = serializeSessionPaneUrlState({ details: target });
+        expect(parseSessionPaneUrlState(params)?.details).toEqual(target);
+        const tab = createSessionPaneDetailsTab(target, { sessionId: 'carrier', serverId: 'home' })!;
+        expect(parseSessionPaneUrlState(buildActiveDetailsRouteParams([tab], tab.key))?.details).toEqual(target);
     });
     it('preserves a captured comparison identity through links and tab resources', () => {
         const target = { kind: 'scmReview' as const, comparison: { kind: 'session' as const, comparisonId: 'captured-1' }, view: 'walkthrough' as const };

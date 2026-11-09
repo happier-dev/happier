@@ -34,6 +34,20 @@ export const SESSION_TERMINAL_STRIP_METRICS = Object.freeze({
 });
 const S = SESSION_TERMINAL_STRIP_METRICS;
 
+/** The gap between the strip's controls, and the margin each side of the separator before Hide. */
+const STRIP_GAP_PX = 2;
+const SEPARATOR_MARGIN_PX = 4;
+/** Half of the gap from More to Hide (gap, margin, hairline, margin, gap): each takes its half, and the hairline itself stays unreached. */
+const SEPARATOR_HALF_GAP_PX = (STRIP_GAP_PX * 2 + SEPARATOR_MARGIN_PX * 2) / 2;
+/**
+ * The strip declares its real gaps to its icon buttons: each hit area takes half of the gap to its
+ * neighbour. New abuts its dropdown chevron (gap 0), which has no reach of its own, so New stops at its edge;
+ * Hide ends at the strip's end padding.
+ */
+const NEW_EDGES_PX = { leading: STRIP_GAP_PX / 2, trailing: 0 } as const;
+const MORE_EDGES_PX = { leading: STRIP_GAP_PX / 2, trailing: SEPARATOR_HALF_GAP_PX } as const;
+const HIDE_EDGES_PX = { leading: SEPARATOR_HALF_GAP_PX, trailing: S.paddingEndPx } as const;
+
 export type SessionTerminalStripProps = Readonly<{
     tabs: readonly SessionTerminalTabDescriptor[];
     activeTabId: string | null;
@@ -58,6 +72,10 @@ export type SessionTerminalStripProps = Readonly<{
     onOpenUrl: (url: string) => void;
     /** The pane's one quiet trust line (a shared Machine's terminal runs as its operating-system user). */
     notice?: SessionTerminalTrustNoticeContent;
+    /** A pane too narrow for the list view: the trust line keeps only its mark, so the tabs keep their room. */
+    narrow?: boolean;
+    /** Where Hide sends the pane: down for the bottom pane, toward the window edge for a side pane. */
+    hideToward?: 'bottom' | 'end';
     testIdPrefix?: string;
 }>;
 
@@ -69,7 +87,7 @@ export const SessionTerminalStrip = React.memo(function SessionTerminalStrip(pro
 
     const items = useSessionTerminalDocumentTabs(props.tabs);
     const resolvePresentation = React.useCallback((tab: SessionTerminalDocumentTab): DocumentTabPresentation | null => (
-        tab.status ? { status: { tone: SESSION_TERMINAL_STATUS_TONE[tab.status], label: describeSessionTerminalStatus(tab.status) } } : null
+        tab.status ? { status: { tone: SESSION_TERMINAL_STATUS_TONE[tab.status], label: describeSessionTerminalStatus(tab.status, tab.title) } } : null
     ), []);
     const renderLeadingIcon = React.useCallback((tab: SessionTerminalDocumentTab, emphasized: boolean) => renderSessionTerminalMark(
         tab.mark, M.tabGlyphPx - 1, emphasized ? theme.colors.text.primary : theme.colors.text.secondary,
@@ -115,8 +133,9 @@ export const SessionTerminalStrip = React.memo(function SessionTerminalStrip(pro
                     />
                 </View>
             )}
-            <View style={styles.grow} />
-            {props.notice ? <SessionTerminalTrustNotice notice={props.notice} testID={testId('notice')} /> : null}
+            {/* The tabs take the room the actions leave; the list view's title row needs a spacer instead. */}
+            {props.listShowing ? <View style={styles.grow} /> : null}
+            {props.notice ? <SessionTerminalTrustNotice notice={props.notice} compact={props.narrow === true} testID={testId('notice')} /> : null}
             {url ? <SessionTerminalLivePill url={url} onOpen={props.onOpenUrl} testID={testId('live-pill')} /> : null}
             {meta ? <Text style={styles.meta} numberOfLines={1}>{meta}</Text> : null}
             <View style={[styles.splitButton, props.newMenuOpen ? styles.splitButtonOpen : null]}>
@@ -126,6 +145,7 @@ export const SessionTerminalStrip = React.memo(function SessionTerminalStrip(pro
                     size={S.actionSizePx}
                     iconSize={S.actionGlyphPx}
                     iconName="plus"
+                    interactiveTargetEdgesPx={NEW_EDGES_PX}
                     accessibilityLabel={t('terminalWorkspace.actions.newShell')}
                     tooltip={t('terminalWorkspace.actions.newShell')}
                     tooltipPlacement="top"
@@ -167,6 +187,7 @@ export const SessionTerminalStrip = React.memo(function SessionTerminalStrip(pro
                 size={S.actionSizePx}
                 iconSize={S.actionGlyphPx}
                 iconName="square-split-horizontal"
+                interactiveTargetGapPx={STRIP_GAP_PX}
                 accessibilityLabel={t('terminalWorkspace.actions.split')}
                 tooltip={t('terminalWorkspace.actions.split')}
                 tooltipPlacement="top"
@@ -192,6 +213,7 @@ export const SessionTerminalStrip = React.memo(function SessionTerminalStrip(pro
                         size={S.actionSizePx}
                         iconSize={S.actionGlyphPx}
                         iconName="dots-three"
+                        interactiveTargetEdgesPx={MORE_EDGES_PX}
                         accessibilityLabel={t('terminalWorkspace.actions.more')}
                         tooltip={t('terminalWorkspace.actions.more')}
                         tooltipPlacement="top"
@@ -207,7 +229,8 @@ export const SessionTerminalStrip = React.memo(function SessionTerminalStrip(pro
                 variant="plain"
                 size={S.actionSizePx}
                 iconSize={S.actionGlyphPx}
-                iconName="caret-down"
+                iconName={props.hideToward === 'end' ? 'caret-right' : 'caret-down'}
+                interactiveTargetEdgesPx={HIDE_EDGES_PX}
                 accessibilityLabel={t('terminalWorkspace.actions.hide')}
                 tooltip={t('terminalWorkspace.actions.hide')}
                 tooltipPlacement="top"
@@ -223,17 +246,17 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexShrink: 0,
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 2,
+        gap: STRIP_GAP_PX,
         paddingLeft: S.paddingStartPx,
         paddingRight: S.paddingEndPx,
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
     },
     tabs: {
-        flexShrink: 1,
+        flex: 1,
         minWidth: 0,
         flexDirection: 'row',
+        marginRight: 8,
     },
     current: {
         flexShrink: 1,
@@ -291,7 +314,7 @@ const stylesheet = StyleSheet.create((theme) => ({
     separator: {
         width: StyleSheet.hairlineWidth,
         height: 16,
-        marginHorizontal: 4,
+        marginHorizontal: SEPARATOR_MARGIN_PX,
         backgroundColor: theme.colors.border.default,
     },
 }));

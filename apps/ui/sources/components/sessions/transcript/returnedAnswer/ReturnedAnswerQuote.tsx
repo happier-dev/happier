@@ -8,10 +8,7 @@ import {
   type HappierReturnedAnswerQuoteTextProps,
 } from '@happier-dev/plugin-ui/components';
 import type { Message } from '@happier-dev/session-core/messages';
-import {
-  readSessionInputAuthority,
-  type SessionInputReturnedAnswerV1,
-} from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import type { SessionInputReturnedAnswerV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { transcriptMarkdownTextStyle } from '@/components/sessions/transcript/transcriptMarkdownTypography';
@@ -25,15 +22,6 @@ import { Text } from '@/components/ui/text/Text';
 import { resolveVerticalScrollEdgeMaskStyle } from '@/components/ui/scroll/resolveScrollEdgeMaskStyle';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { t } from '@/text';
-
-/** The protected return facts on an answer that came back to this session, if it is one. */
-export function readReturnedAnswer(
-  message: Message,
-): SessionInputReturnedAnswerV1 | null {
-  if (message.kind !== 'user-text') return null;
-  const authority = readSessionInputAuthority(message.meta, 'stored');
-  return authority?.v === 1 ? (authority.returnedAnswer ?? null) : null;
-}
 
 // The clip ends in the shared scroll-edge fade, so a long answer never ends on half a line of text.
 const QUOTE_CLIP_FADE = resolveVerticalScrollEdgeMaskStyle(

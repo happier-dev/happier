@@ -22,6 +22,9 @@ import { buildNewSessionManagedProgressBadge } from './newSessionManagedProgress
 
 export function buildNewSessionScreenVariantModel(params: Readonly<{
     useEnhancedSessionWizard: boolean;
+    spaceMembership?: NewSessionScreenModel['spaceMembership'];
+    setSpaceMembership?: NewSessionScreenModel['setSpaceMembership'];
+    requesterIsolation?: NewSessionScreenModel['requesterIsolation'];
     popoverBoundaryRef: React.RefObject<View>;
     launchOverlay: React.ReactNode | null;
     temporaryComputerLaunch?: NewSessionTemporaryComputerLaunch;
@@ -48,13 +51,19 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
     if (!params.useEnhancedSessionWizard || params.botCreation) {
         const simpleProps: NewSessionSimpleScreenProps = {
             ...params.simplePanelProps,
+            managedMachineDraft: params.managedMachineDraft,
             ...(managedProgressBadge ? { statusBadges: [...(params.simplePanelProps.statusBadges ?? []), managedProgressBadge] } : {}),
             checkoutCreationDraft: params.checkoutCreationDraft,
             setCheckoutCreationDraft: params.setCheckoutCreationDraft,
+            // The composer draws the requester's folder hint with its launch notices.
+            requesterIsolation: params.requesterIsolation,
         };
 
         return {
             variant: 'simple',
+            spaceMembership: params.spaceMembership,
+            setSpaceMembership: params.setSpaceMembership,
+            requesterIsolation: params.requesterIsolation,
             popoverBoundaryRef: params.popoverBoundaryRef,
             launchOverlay: params.launchOverlay,
             temporaryComputerLaunch: params.temporaryComputerLaunch,
@@ -71,6 +80,9 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
 
     return {
         variant: 'wizard',
+        spaceMembership: params.spaceMembership,
+        setSpaceMembership: params.setSpaceMembership,
+        requesterIsolation: params.requesterIsolation,
         popoverBoundaryRef: params.popoverBoundaryRef,
         launchOverlay: params.launchOverlay,
         temporaryComputerLaunch: params.temporaryComputerLaunch,
@@ -88,9 +100,12 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
             profiles: params.wizardProfilesProps,
             agent: params.wizardAgentProps,
             machine: params.wizardMachineProps,
-            footer: managedProgressBadge
-                ? { ...params.wizardFooterProps, statusBadges: [...(params.wizardFooterProps.statusBadges ?? []), managedProgressBadge] }
-                : params.wizardFooterProps,
+            // The wizard draws the requester's folder hint with its launch notices, as the composer does.
+            footer: {
+                ...params.wizardFooterProps,
+                requesterIsolation: params.requesterIsolation,
+                ...(managedProgressBadge ? { statusBadges: [...(params.wizardFooterProps.statusBadges ?? []), managedProgressBadge] } : {}),
+            },
         },
     };
 }

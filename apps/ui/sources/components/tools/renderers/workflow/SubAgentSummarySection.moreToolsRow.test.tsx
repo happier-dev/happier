@@ -103,13 +103,13 @@ describe('SubAgentSummarySection (+N more tools row)', () => {
         )).resolves.toBeUndefined();
     });
 
-    it('renders the +N more tools row above the visible tools (and makes it tappable)', async () => {
+    it.each(['Task', 'SubAgentRun'])('opens the %s destination from the +N tools row without a pane host', async name => {
         pushSpy.mockClear();
 
         const taskTool = makeToolCall({
-            name: 'Task',
+            name,
             state: 'running',
-            input: { description: 'Tool stress ideas' },
+            input: { description: 'Tool stress ideas', ...(name === 'SubAgentRun' ? { runId: 'run_7425823b-704c-445f-aa46-a2ceb57bcfa1' } : {}) },
             createdAt: 10,
             startedAt: 10,
             completedAt: null,
@@ -144,6 +144,8 @@ describe('SubAgentSummarySection (+N more tools row)', () => {
         expect(order[0]).toBe('task-like-summary-more-tools');
 
         await screen.pressByTestIdAsync('task-like-summary-more-tools');
-        expect(pushSpy).toHaveBeenCalledWith('/session/s1/message/msg-task-1');
+        expect(pushSpy).toHaveBeenCalledWith(name === 'SubAgentRun'
+            ? '/session/s1/runs/run_7425823b-704c-445f-aa46-a2ceb57bcfa1'
+            : '/session/s1/message/msg-task-1');
     });
 });

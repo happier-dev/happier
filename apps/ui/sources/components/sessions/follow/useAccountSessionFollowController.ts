@@ -42,7 +42,7 @@ export function useAccountSessionFollowController(address: SessionAddress, enabl
         const changes = subscribeHomeAccountChange(event => {
             if (areServerProfileIdentifiersEquivalent(event.serverId, serverId)
                 && isSessionFollowAccountChangeRelevant(event, sessionIds)) void controller.refresh();
-        });
+        }, { reconnect: { readNotCurrent: () => controller.getSnapshot().projection === null || controller.getSnapshot().error !== null } });
         void controller.refresh();
         return () => { retirement.dispose(); credentials(); connectivity(); changes(); };
     }, [actions.binding, actions.ready, controller, enabled, serverId, sessionId]);

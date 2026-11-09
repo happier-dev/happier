@@ -13,11 +13,16 @@ import { readSessionListProjectHeaderMachineId } from './sessionListProjectHeade
 import { machineCollectionValues, findMachineInCollection, type MachineCollection } from '@/sync/domains/machines/identity/machineCollection';
 import { normalizeMachineHost } from '@happier-dev/protocol/machines/host/normalizeMachineHost';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
+import { readSessionAppearanceWorkspaceKey } from '@/sync/domains/session/organization/appearanceWorkspaceKey';
+import { areSessionAppearanceColorsEqual, type SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
+
+type WorkspaceColorsByServerId = Readonly<Record<string, Readonly<Record<string, SessionAppearanceColor>>>>;
 
 type ReachabilityMachineDisplay = Readonly<Pick<MachineDisplayRenderable, 'id' | 'metadata' | 'replacedByMachineId'>
     & Partial<Pick<MachineDisplayRenderable, 'availability' | 'active' | 'revokedAt'>>>;
 
 type ReachableSessionDisplay = Readonly<{
+    appearanceColor: SessionAppearanceColor | null;
     machineId: string | null;
     machineLabel: string;
     workspaceSubtitle: string;
@@ -58,6 +63,7 @@ export type SessionListReachabilitySummaryCache = {
     workspaceRefs?: ReadonlyArray<WorkspaceRefV1>;
     workspacePathDisplayModeV1?: WorkspacePathDisplayModeV1 | null;
     renderablesByKey?: ReadonlyMap<string, SessionListReachabilityRenderable>;
+    workspaceColorsByServerId?: WorkspaceColorsByServerId;
 };
 
 export type SessionListReachabilitySummary = Readonly<{
@@ -106,6 +112,7 @@ function resolveRowCacheKey(item: Extract<SessionListIndexItem, { type: 'session
 }
 
 function buildSessionDisplayRow(input: Readonly<{
+    appearanceColor: SessionAppearanceColor | null;
     item: Extract<SessionListIndexItem, { type: 'session' }>;
     machinesById: MachineCollection<ReachabilityMachineDisplay>;
     renderable: SessionListReachabilityRenderable | null;
@@ -133,6 +140,7 @@ function buildSessionDisplayRow(input: Readonly<{
         workspacePathDisplayModeV1: input.workspacePathDisplayModeV1,
     });
     const display = {
+        appearanceColor: input.appearanceColor,
         machineId,
         machineLabel,
         workspaceSubtitle: workspaceDisplay.displayTitle,
@@ -168,6 +176,7 @@ function indexRow(index: Map<string, Set<string>>, dependency: string, rowKey: s
 }
 
 function buildSessionDisplayRows(input: Readonly<{
+    workspaceColorsByServerId?: WorkspaceColorsByServerId;
     cache?: SessionListReachabilitySummaryCache;
     listItems: ReadonlyArray<SessionListIndexItem>;
     machinesById: MachineCollection<ReachabilityMachineDisplay>;
@@ -230,6 +239,15 @@ function buildSessionDisplayRows(input: Readonly<{
             if (entry.renderable !== next) dirty.add(key);
         }
     }
+    const readColor = (item: Extract<SessionListIndexItem, { type: 'session' }>) => {
+        const workspaceKey = readSessionAppearanceWorkspaceKey(item);
+        return item.serverId && workspaceKey ? input.workspaceColorsByServerId?.[item.serverId]?.[workspaceKey] ?? null : null;
+    };
+    if (cache.workspaceColorsByServerId !== input.workspaceColorsByServerId) {
+        for (const [key, entry] of cache.entriesByKey) {
+            if (!areSessionAppearanceColorsEqual(entry.row.display.appearanceColor, readColor(entry.item))) dirty.add(key);
+        }
+    }
     let position = 0;
     for (const rowCacheKey of dirty) {
         const cached = cache.entriesByKey.get(rowCacheKey);
@@ -237,20 +255,24 @@ function buildSessionDisplayRows(input: Readonly<{
         if (!item) continue;
         const sessionId = item.sessionId.trim();
         const renderable = input.renderablesByKey ? input.renderablesByKey.get(rowCacheKey) ?? null : input.resolveSessionRenderable(item);
+        const appearanceColor = readColor(item);
         // Layout/order changes consume existing displays; they do not change
         // target, label or workspace inputs. Keep simultaneous Machine edits dirty.
-        const nextRow = cached && !invalidatedByMachine.has(rowCacheKey)
+        const retainedRow = cached && !invalidatedByMachine.has(rowCacheKey)
             && cached.renderable === renderable
             && cached.workspaceRefs === input.workspaceRefs
             && cached.workspacePathDisplayModeV1 === input.workspacePathDisplayModeV1
             ? cached.row
-            : buildSessionDisplayRow({ ...input, item, sessionId, renderable });
+            : buildSessionDisplayRow({ ...input, item, sessionId, renderable, appearanceColor });
+        const nextRow = areSessionAppearanceColorsEqual(retainedRow.display.appearanceColor, appearanceColor) ? retainedRow
+            : { ...retainedRow, display: { ...retainedRow.display, appearanceColor } };
         const previous = cached?.row;
         const row = previous && previous.machineKey === nextRow.machineKey
             && previous.display.machineId === nextRow.display.machineId
             && previous.display.machineLabel === nextRow.display.machineLabel
             && previous.display.workspaceSubtitle === nextRow.display.workspaceSubtitle
             && previous.display.workspaceSubtitleEllipsizeMode === nextRow.display.workspaceSubtitleEllipsizeMode
+            && areSessionAppearanceColorsEqual(previous.display.appearanceColor, nextRow.display.appearanceColor)
             ? previous : nextRow;
         const rowPosition = structuralChange ? position++ : cached!.position;
         if (!structuralChange && previous?.machineKey) {
@@ -284,6 +306,7 @@ function buildSessionDisplayRows(input: Readonly<{
     cache.listItems = input.listItems; cache.workspaceRefs = input.workspaceRefs;
     cache.workspacePathDisplayModeV1 = input.workspacePathDisplayModeV1;
     cache.renderablesByKey = input.renderablesByKey;
+    cache.workspaceColorsByServerId = input.workspaceColorsByServerId;
     return rows;
 }
 
@@ -291,6 +314,21 @@ function areDisplayRowsReferenceEqual(left: readonly SessionDisplayRow[], right:
     if (left === right) return true;
     if (left.length !== right.length) return false;
     return left.every((row, index) => row === right[index]);
+}
+
+function areDisplayMapsLookupEqual(
+    left: ReadonlyMap<string, ReachableSessionDisplay>,
+    right: ReadonlyMap<string, ReachableSessionDisplay>,
+): boolean {
+    if (left.size !== right.size) return false;
+    for (const [key, display] of right) if (left.get(key) !== display) return false;
+    return true;
+}
+
+function areSummariesLookupEqual(left: SessionListReachabilitySummary, right: SessionListReachabilitySummary): boolean {
+    return left.hasMultipleMachines === right.hasMultipleMachines
+        && areDisplayMapsLookupEqual(left.displayById, right.displayById)
+        && areDisplayMapsLookupEqual(left.displayByKey, right.displayByKey);
 }
 
 function buildSummaryFromDisplayRows(rows: readonly SessionDisplayRow[], hasMultipleMachines: boolean): SessionListReachabilitySummary {
@@ -315,6 +353,7 @@ function buildSummaryFromDisplayRows(rows: readonly SessionDisplayRow[], hasMult
 }
 
 export function buildSessionListReachabilitySummary(input: Readonly<{
+    workspaceColorsByServerId?: WorkspaceColorsByServerId;
     listItems: ReadonlyArray<SessionListIndexItem>;
     machinesById: MachineCollection<ReachabilityMachineDisplay>;
     workspaceRefs: ReadonlyArray<WorkspaceRefV1>;
@@ -346,6 +385,11 @@ export function buildSessionListReachabilitySummary(input: Readonly<{
         }
         const summary = buildSummaryFromDisplayRows(rows, hasMultipleMachines);
         input.cache.previousRows = rows;
+        // Consumers only look rows up by key; a reorder that resolves every key to the same display
+        // keeps the published summary, so a row moving in its group does not redraw every other row.
+        if (input.cache.previousSummary && areSummariesLookupEqual(input.cache.previousSummary, summary)) {
+            return input.cache.previousSummary;
+        }
         input.cache.previousSummary = summary;
         return summary;
     }

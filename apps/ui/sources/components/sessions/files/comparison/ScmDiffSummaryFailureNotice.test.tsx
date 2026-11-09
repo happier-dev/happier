@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -16,7 +17,8 @@ vi.mock('@/text', async () => {
 });
 
 const { ScmDiffSummaryFailureNotice } = await import('./ScmDiffSummaryFailureNotice');
-const { SCM_DIFF_SUMMARY_GENERIC_FAILURE } = await import('@/sync/domains/scm/diffSummary/state');
+const { SCM_DIFF_SUMMARY_ENDED_PARTWAY_FAILURE, SCM_DIFF_SUMMARY_GENERIC_FAILURE } = await import('@/sync/domains/scm/diffSummary/state');
+const { applyScmDiffSummaryEvent, createInitialScmDiffSummaryState, selectScmDiffSummaryViewModel } = await import('@/sync/domains/scm/diffSummary/state');
 
 const MODEL_UNAVAILABLE = { reason: 'modelUnavailable', messageKey: 'walkthrough.generationFailure.modelUnavailable',
     nextAction: 'chooseModel', nextActionKey: 'walkthrough.notice.chooseModel' } as const;
@@ -24,9 +26,20 @@ const RECONNECT = { reason: 'machineUnavailable', messageKey: 'walkthrough.gener
     nextAction: 'reconnectMachine', nextActionKey: 'walkthrough.generationFailure.reconnectMachine' } as const;
 
 describe('ScmDiffSummaryFailureNotice', () => {
-    it('offers an unavailable model\'s next action as the action that opens the picker', async () => {
+    it('shows Choose model for a typed Start model refusal and opens the existing picker action', async () => {
         const onChooseModel = vi.fn();
-        const screen = await renderScreen(<ScmDiffSummaryFailureNotice testID="proposal" failure={MODEL_UNAVAILABLE} onChooseModel={onChooseModel} />);
+        const output = ScmDiffSummaryGenerateOutputSchema.parse({ success: false, errorCode: 'MODEL_UNAVAILABLE',
+            error: 'Diff-summary model is unavailable', nextAction: 'chooseModel',
+            outputs: { walkthrough: { state: 'failed', reasonCode: 'MODEL_UNAVAILABLE', reason: 'Diff-summary model is unavailable' } } });
+        const state = applyScmDiffSummaryEvent(createInitialScmDiffSummaryState(), { type: 'request_started',
+            key: 'model-refused', sessionId: 'session', actionId: 'scm.diffSummary.generate',
+            input: { cwd: '/repo', source: { kind: 'workingTree' }, outputs: ['walkthrough'] },
+            structuredOutput: output, runId: null, requestedAtMs: 1, intent: 'generate' });
+        const view = selectScmDiffSummaryViewModel(state, 'model-refused', 'walkthrough');
+        expect(view).toMatchObject({ status: 'failed', executionRunId: null, error: { nextAction: 'chooseModel' } });
+        if (!view.error) throw new Error('Expected the typed unavailable model');
+        const screen = await renderScreen(<ScmDiffSummaryFailureNotice testID="proposal" failure={view.error} onChooseModel={onChooseModel} />);
+        expect(screen.findByTestId('proposal-choose-model')).not.toBeNull();
         screen.findByTestId('proposal-choose-model')?.props.onPress();
         expect(onChooseModel).toHaveBeenCalledTimes(1);
         // The action is the button, not also a clause of the sentence.
@@ -51,6 +64,31 @@ describe('ScmDiffSummaryFailureNotice', () => {
         expect(screen.findByTestId('proposal-notice-failed-reason')).toBeNull();
         expect(screen.findByTestId('proposal-choose-model')).toBeNull();
         expect(screen.findByTestId('proposal-retry')).not.toBeNull();
+    });
+
+    it('leads with the fact of where writing stopped, and adds the cause only when it is typed', async () => {
+        const unclassified = await renderScreen(<ScmDiffSummaryFailureNotice testID="proposal" lead="stopped after 3" failure={SCM_DIFF_SUMMARY_ENDED_PARTWAY_FAILURE} onRetry={() => {}} />);
+        expect(unclassified.getTextContent()).toContain('stopped after 3');
+        expect(unclassified.getTextContent()).not.toContain('walkthrough.notice.endedPartway');
+        const typed = await renderScreen(<ScmDiffSummaryFailureNotice testID="proposal" lead="stopped after 3" failure={MODEL_UNAVAILABLE} onChooseModel={() => {}} />);
+        expect(typed.getTextContent()).toContain('stopped after 3');
+        // The lead and its cause read as two clauses of one line, not one run-on sentence.
+        expect(typed.getTextContent()).toContain('stopped after 3 ·');
+        expect(unclassified.getTextContent()).not.toContain('stopped after 3 ·');
+        expect(typed.getTextContent()).toContain('walkthrough.generationFailure.modelUnavailable');
+        expect(typed.findByTestId('proposal-choose-model')).not.toBeNull();
+    });
+
+
+    it('names a change too large for the runtime without offering a retry or a model that cannot fix it', async () => {
+        const tooLarge = { reason: 'inputTooLarge', messageKey: 'walkthrough.generationFailure.inputTooLarge',
+            nextAction: 'narrowChange', nextActionKey: 'walkthrough.generationFailure.narrowChange' } as const;
+        const screen = await renderScreen(<ScmDiffSummaryFailureNotice testID="proposal" lead="stopped after 3" failure={tooLarge}
+            onChooseModel={() => {}} onRetry={() => {}} />);
+        expect(screen.getTextContent()).toContain('walkthrough.generationFailure.inputTooLarge');
+        expect(screen.getTextContent()).toContain('walkthrough.generationFailure.narrowChange');
+        expect(screen.findByTestId('proposal-choose-model')).toBeNull();
+        expect(screen.findByTestId('proposal-retry')).toBeNull();
     });
 
 });

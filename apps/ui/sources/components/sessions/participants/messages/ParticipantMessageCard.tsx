@@ -3,7 +3,7 @@ import React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import type { ParticipantMessageV1 } from '@happier-dev/protocol';
+import type { ParticipantMessageV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 import type { Message } from '@happier-dev/session-core/messages';
 
 import { StructuredFindText, type StructuredFindTextBlock } from '@/components/sessions/transcript/structured/structuredFindText';

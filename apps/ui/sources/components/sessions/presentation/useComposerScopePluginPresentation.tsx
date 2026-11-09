@@ -2,19 +2,26 @@ import * as React from 'react';
 import { Platform, View } from 'react-native';
 
 import type {
-    ComposerAttachmentViewV1,
-    ComposerRefV1,
+    ComposerAttachmentViewV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type {
+    ComposerRefV1} from '@happier-dev/protocol/plugins/ui/composerRef';
+import type {
     ComposerSnapshotV1,
-    ComposerSurfaceRoleV1,
-    PluginContributionIdentityV1,
-    PluginProjectedComposerRegionEntryV1,
+    ComposerSurfaceRoleV1} from '@happier-dev/protocol/plugins/ui/composer';
+import type {
+    PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import type {
+    PluginProjectedComposerRegionEntryV1} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import type {
     PluginResourceContextV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/v2';
 import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
 import type { PluginSurfaceTarget } from '@happier-dev/plugin-sdk/ui';
 
 import type { DaemonMergedProjectionPhase } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { compareOrderedComposerContributions } from '@/components/plugins/actions/pluginComposerPlacement';
+export { compareOrderedComposerContributions } from '@/components/plugins/actions/pluginComposerPlacement';
 import {
     createComposerControlSurfaceListRootStep,
     createComposerControlSurfaceSplitOptions,
@@ -38,6 +45,7 @@ import {
     openPluginContributedActionReference,
 } from '@/components/plugins/actions/openPluginContributedAction';
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
+import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
 import type { BoundPluginSurfaceMountLifetime } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 import { AgentInputContentPopover } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
 import { AgentInputChipPickerSurface } from '@/components/sessions/agentInput/components/AgentInputChipPickerSurface';
@@ -45,6 +53,7 @@ import { SelectionList } from '@/components/ui/selectionList';
 import type {
     AgentInputAttachmentRowBadge,
     AgentInputExtraActionChip,
+    AgentInputStatusRegion,
     ComposerAttachmentCatalogRowDescriptor,
     ComposerAttachmentRowSurfacePresentation,
 } from '@/components/sessions/agentInput/agentInputContracts';
@@ -69,6 +78,7 @@ import {
     EMPTY_PLUGIN_UI_PROJECTION,
     type PluginUiComposerAttachmentProjection,
 } from '@/sync/domains/plugins/ui/projection';
+import type { PopoverAnchor } from '@/components/ui/popover';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import {
     CurrentUiContextBridge,
@@ -77,10 +87,9 @@ import {
 } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { useRetainedPluginSurfaceFocusNode } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import {
-    resolvePluginLocalizedText,
+    usePluginLocalizedTextResolver,
     type PluginLocalizedTextResolver,
 } from '@/sync/domains/plugins/ui/i18n';
-import { getPreferredLanguage } from '@/text';
 
 export type ComposerScopeProjectionInputs = Pick<
     DaemonMergedProjectionInputs,
@@ -100,29 +109,11 @@ type ComposerScopeControlActionInput = Readonly<{
 }>;
 
 type ComposerScopeContributedActionInput = Readonly<{
+    anchor?: PopoverAnchor;
     controller: PluginContributedActionController;
     action: PluginContributedActionDescriptor;
     signal: AbortSignal;
 }>;
-
-type OrderedComposerContribution = Readonly<{
-    id: string;
-    definition: Readonly<{ order?: number }>;
-}>;
-
-/**
- * Composer declarations are admitted as maps for identity lookup. Their visual
- * projection is a separate host-owned ordering concern: authored rank first,
- * then the qualified contribution id so map insertion order cannot leak into
- * the control rail or before/after region slots.
- */
-export function compareOrderedComposerContributions(
-    left: OrderedComposerContribution,
-    right: OrderedComposerContribution,
-): number {
-    return (left.definition.order ?? 0) - (right.definition.order ?? 0)
-        || left.id.localeCompare(right.id);
-}
 
 export type ComposerScopePluginPresentation = Readonly<{
     /** Exact current attachment catalog; retained drafts stay separately owned. */
@@ -144,6 +135,8 @@ export type ComposerScopePluginPresentation = Readonly<{
     /** Physical rich-region slots owned by the surrounding Composer screen. */
     beforeComposer: React.ReactNode;
     afterComposer: React.ReactNode;
+    /** Items consumed by the incumbent instrument strip, in canonical region order. */
+    statusRegions: readonly AgentInputStatusRegion[];
     renderAttachmentSurface: (input: ComposerAttachmentPresentationRequest) => ComposerAttachmentRowSurfacePresentation | undefined;
     resolveAttachmentInteraction: (input: ComposerAttachmentPresentationRequest) => ComposerAttachmentRowInteractionPresentation | undefined;
 }>;
@@ -170,6 +163,9 @@ export type ComposerScopePluginPresentationParams = Readonly<{
     onOpenContributedAction?: (input: ComposerScopeContributedActionInput) => void;
 }>;
 
+const dialogFrameStyle = { minWidth: 280, maxWidth: 720 } as const;
+const contentDialogFillStyle = { ...dialogFrameStyle, flex: 1 } as const;
+
 function ComposerScopePluginSurfaceDialog(props: CustomModalInjectedProps & Readonly<{
     title: string;
     layout?: 'content' | 'list' | 'split';
@@ -182,7 +178,11 @@ function ComposerScopePluginSurfaceDialog(props: CustomModalInjectedProps & Read
             kind: 'card',
             title: props.title,
             scrollHost: 'body',
-            bodyScroll: props.layout === 'content' || props.layout === undefined ? 'auto' : 'none',
+            // A declared layout means the surface owns its scrolling: `content`
+            // fills the bounded body and scrolls its own List, as the list and
+            // split shells do. Only an undeclared dialog (a chip's preview)
+            // lets the modal body scroll for it.
+            bodyScroll: props.layout === undefined ? 'auto' : 'none',
         });
         return () => props.setChrome?.(null);
     }, [props.layout, props.setChrome, props.title]);
@@ -222,8 +222,15 @@ function ComposerScopePluginSurfaceDialog(props: CustomModalInjectedProps & Read
             )
             : props.children;
 
-    return <View style={{ minWidth: 280, maxWidth: 720 }}>{content}</View>;
+    return (
+        <View style={props.layout === 'content' ? contentDialogFillStyle : dialogFrameStyle}>
+            {content}
+        </View>
+    );
 }
+
+/** One identity for an omitted catalog, so the surface renderer (and every region the Session composer shows) stays stable across host renders. */
+const EMPTY_COMPOSER_SURFACE_CATALOG: NonNullable<NonNullable<ComposerScopePluginPresentationParams['projectionInputs']>['composerSurfaceCatalog']> = [];
 
 /**
  * Projects one live Composer document through the existing daemon catalog,
@@ -295,6 +302,15 @@ export function useComposerScopePluginPresentation(
     ]);
     React.useEffect(() => () => scopeAbort.abort(), [scopeAbort]);
 
+    const localizePluginText = usePluginLocalizedTextResolver({
+        projection: params.projectionPhase === 'ready' ? params.projectionInputs?.pluginUiProjection : null,
+    });
+    const localizePluginTextRef = React.useRef(localizePluginText);
+    localizePluginTextRef.current = localizePluginText;
+    const localizeMountedPluginText = React.useCallback<PluginLocalizedTextResolver>(
+        (pluginId, value) => localizePluginTextRef.current(pluginId, value),
+        [],
+    );
     const actionSnapshotRef = React.useRef<PluginContributedActionCurrentSnapshot | null>(null);
     const actionSnapshot = React.useMemo<PluginContributedActionCurrentSnapshot | null>(() => {
         const inputs = params.projectionInputs;
@@ -316,6 +332,7 @@ export function useComposerScopePluginPresentation(
         snapshot = {
             pluginProjectionById: inputs.pluginProjectionById,
             pluginUiProjection: inputs.pluginUiProjection,
+            localize: localizeMountedPluginText,
             resolveContributedAction: createPluginUiProjectedActionResolver(
                 projection.actionsById,
             ),
@@ -349,6 +366,7 @@ export function useComposerScopePluginPresentation(
         return snapshot;
     }, [
         params.accountLifetime,
+        localizeMountedPluginText,
         currentUiContextReader,
         openDestinationSurface,
         scopeKey,
@@ -371,22 +389,10 @@ export function useComposerScopePluginPresentation(
         [],
     );
     const pluginProjection = actionSnapshot?.pluginUiProjection ?? EMPTY_PLUGIN_UI_PROJECTION;
-    // One resolver for every declared Composer string this scope displays:
-    // control labels, choice options, dialog titles, and the attachment type
-    // label frozen at admission. It is referentially stable because it takes
-    // part in the Composer host and applier identity; the projection it reads
-    // is the current one at call time.
+    // Visible controls refresh when their demanded copy arrives. The transaction
+    // applier reads that same resolver through a stable callback to retain its mount.
     const pluginProjectionRef = React.useRef(pluginProjection);
     pluginProjectionRef.current = pluginProjection;
-    const localizePluginText = React.useCallback<PluginLocalizedTextResolver>(
-        (pluginId, value) => resolvePluginLocalizedText({
-            projection: pluginProjectionRef.current,
-            pluginId,
-            value,
-            locale: getPreferredLanguage(),
-        }),
-        [],
-    );
     const attachmentEntriesById = actionSnapshot && params.attachmentsEnabled
         ? pluginProjection.composerAttachmentsById
         : null;
@@ -409,21 +415,24 @@ export function useComposerScopePluginPresentation(
             ))
             .sort(compareOrderedComposerContributions);
     }, [actionSnapshot, params.composer.kind, params.contributorPluginId, pluginProjection.composerRegionsById]);
-    const composerSurfaceCatalog = params.projectionInputs?.composerSurfaceCatalog ?? [];
+    const composerSurfaceCatalog = params.projectionInputs?.composerSurfaceCatalog ?? EMPTY_COMPOSER_SURFACE_CATALOG;
     const physicalCatalog = params.projectionInputs?.composerSurfaceCatalog;
     const physicalCatalogRef = React.useRef(physicalCatalog);
     physicalCatalogRef.current = physicalCatalog;
     const transactionApplier = React.useMemo(() => createComposerPresentationTransactionApplier({
-        ...(params.composer.kind === 'discussion' ? { scope: params.accountLifetime?.scope ?? null } : {}),
+        // Metro lowers spreads to Object.assign: keep this live getter on the
+        // target object, not a copied source that would freeze the initial catalog.
         get composerAttachmentsById() { return pluginProjectionRef.current.composerAttachmentsById; },
-        localize: localizePluginText,
+        localize: localizeMountedPluginText,
+        ...(params.composer.kind === 'discussion' || params.composer.kind === 'session'
+            ? { scope: params.accountLifetime?.scope ?? null } : {}),
         ...(params.composer.kind === 'session'
             ? { sessionAddress: exactSessionAddress }
             : {}),
     }), [
         exactSessionAddress,
         params.accountLifetime,
-        localizePluginText,
+        localizeMountedPluginText,
         params.composer.kind,
     ]);
     const hasSurfaceSnapshot = actionSnapshot !== null;
@@ -474,7 +483,7 @@ export function useComposerScopePluginPresentation(
     // unsupported instead of resolving after doing nothing.
     const renderComposerSurface = React.useCallback((request: ComposerPluginSurfaceMountRequest & Readonly<{
         fallback?: React.ReactNode;
-    }>): React.ReactNode => {
+    }>, openSurface: PluginSurfaceOpenHandler | undefined = openDestinationSurface): React.ReactNode => {
         const snapshot = actionSnapshotRef.current;
         const inputs = params.projectionInputs;
         const projection = inputs?.pluginProjectionV2;
@@ -513,9 +522,9 @@ export function useComposerScopePluginPresentation(
                 // means absent method: the prop is omitted rather than passed
                 // as `undefined`, so the controller keeps reporting the method
                 // as factually unsupported.
-                {...(openDestinationSurface === undefined
+                {...(openSurface === undefined
                     ? {}
-                    : { openSurface: openDestinationSurface })}
+                    : { openSurface })}
             />
         );
     }, [
@@ -532,6 +541,7 @@ export function useComposerScopePluginPresentation(
         identity: PluginContributionIdentityV1,
         occurrenceId: string,
         instanceKey: string,
+        openSurface?: PluginSurfaceOpenHandler,
     ): React.ReactNode => {
         if (!params.attachmentsEnabled) return null;
         const snapshot = readCurrentComposerSnapshot();
@@ -551,9 +561,9 @@ export function useComposerScopePluginPresentation(
                 )),
             },
             instanceKey,
-        });
+        }, openSurface);
     }, [params.attachmentsEnabled, params.composer, readCurrentComposerSnapshot, renderComposerSurface]);
-    const renderControlSurface = React.useCallback((presentation: PluginComposerControlSurfacePresentation): React.ReactNode => {
+    const renderControlSurface = React.useCallback((presentation: PluginComposerControlSurfacePresentation, openSurface?: PluginSurfaceOpenHandler): React.ReactNode => {
         if (presentation.kind === 'control') {
             const role: ComposerSurfaceRoleV1 = presentation.role === 'compact'
                 ? 'controlCompact'
@@ -575,7 +585,7 @@ export function useComposerScopePluginPresentation(
                 ...(presentation.role === 'compact' && presentation.fallback !== undefined
                     ? { fallback: presentation.fallback }
                     : {}),
-            });
+            }, openSurface);
         }
         if (!params.attachmentsEnabled) return null;
         const attachments = Object.values(pluginProjection.composerAttachmentsById).filter((attachment) => (
@@ -588,6 +598,7 @@ export function useComposerScopePluginPresentation(
             attachment.identity,
             attachment.occurrenceId,
             `composer:attachmentPicker:${attachment.id}`,
+            openSurface,
         );
     }, [
         params.attachmentsEnabled,
@@ -616,12 +627,20 @@ export function useComposerScopePluginPresentation(
         layout?: 'content' | 'list' | 'split';
         surfaceKey?: string;
         accessibilityLabel?: string;
-        content: React.ReactNode;
+        renderContent: (openSurface: PluginSurfaceOpenHandler | undefined) => React.ReactNode;
         focusReturnRef?: FocusReturnRef;
     }>): void => {
         const lifetime = surfaceLifetime;
         if (!lifetime || !lifetime.isCurrent()) return;
         let modalId: string | null = null;
+        const content = input.renderContent(openDestinationSurface === undefined ? undefined : async (request) => {
+            const outcome = await openDestinationSurface(request);
+            // The destination owner settles navigation. Dismiss this picker
+            // only after success; a refusal leaves its recovery controls open.
+            if (outcome.ok && modalId) Modal.hide(modalId);
+            return outcome;
+        });
+        if (content === null || content === undefined) return;
         let retiredBeforeShow = false;
         const retirement = lifetime.onRetire(() => {
             retiredBeforeShow = true;
@@ -640,7 +659,7 @@ export function useComposerScopePluginPresentation(
                 // current-context owner or leaving its Host API unsupported.
                 children: React.cloneElement(retainedDialogFocusRef.current, undefined,
                     <CurrentUiContextBridge publisher={currentUiContextPublisher} reader={currentUiContextReader}>
-                        {input.content}
+                        {content}
                     </CurrentUiContextBridge>,
                 ),
             },
@@ -654,9 +673,10 @@ export function useComposerScopePluginPresentation(
             return;
         }
         if (retiredBeforeShow) Modal.hide(modalId);
-    }, [currentUiContextPublisher, currentUiContextReader, surfaceLifetime]);
+    }, [currentUiContextPublisher, currentUiContextReader, openDestinationSurface, surfaceLifetime]);
     const renderAttachmentPreviewSurface = React.useCallback((
         input: ComposerAttachmentPresentationRequest,
+        openSurface?: PluginSurfaceOpenHandler,
     ): React.ReactNode => {
         if (input.catalog.preview?.kind !== 'surface') return null;
         return renderComposerSurface({
@@ -671,7 +691,7 @@ export function useComposerScopePluginPresentation(
                 instance: input.attachment,
             },
             instanceKey: `composer:attachmentPreview:${input.attachment.instanceId}`,
-        });
+        }, openSurface);
     }, [params.composer, renderComposerSurface]);
     const renderAttachmentSurface = React.useCallback((
         input: ComposerAttachmentPresentationRequest,
@@ -729,11 +749,9 @@ export function useComposerScopePluginPresentation(
             }
             return {
                 onPress: (context) => {
-                    const content = renderAttachmentPreviewSurface(input);
-                    if (content === null || content === undefined) return;
                     openSurfaceDialog({
                         title: input.attachment.presentation.label,
-                        content,
+                        renderContent: (openSurface) => renderAttachmentPreviewSurface(input, openSurface),
                         focusReturnRef: context?.focusReturnRef,
                     });
                 },
@@ -742,15 +760,14 @@ export function useComposerScopePluginPresentation(
         if (preview !== undefined || input.catalog.picker === undefined) return undefined;
         return {
             onPress: (context) => {
-                const content = renderAttachmentPickerSurface(
-                    input.catalog.identity,
-                    input.catalog.occurrenceId,
-                    `composer:attachmentPicker:${input.attachment.instanceId}`,
-                );
-                if (content === null || content === undefined) return;
                 openSurfaceDialog({
                     title: input.attachment.presentation.label,
-                    content,
+                    renderContent: (openSurface) => renderAttachmentPickerSurface(
+                        input.catalog.identity,
+                        input.catalog.occurrenceId,
+                        `composer:attachmentPicker:${input.attachment.instanceId}`,
+                        openSurface,
+                    ),
                     focusReturnRef: context?.focusReturnRef,
                 });
             },
@@ -853,8 +870,6 @@ export function useComposerScopePluginPresentation(
         },
         renderSurfaceContent: renderControlSurface,
         openSurfaceDialog: (presentation, options) => {
-            const content = renderControlSurface(presentation);
-            if (content === null || content === undefined) return;
             openSurfaceDialog({
                 // A Resource-produced label is already a resolved runtime
                 // string; only the declaration needs the current locale.
@@ -865,7 +880,7 @@ export function useComposerScopePluginPresentation(
                 layout: presentation.layout,
                 surfaceKey: `composer:${presentation.kind}:${presentation.control.id}:dialog`,
                 accessibilityLabel: presentation.state.accessibilityLabel,
-                content,
+                renderContent: (openSurface) => renderControlSurface(presentation, openSurface),
                 // The control affordance that opened this dialog owns the exact
                 // native focus-return target; the incumbent modal owner
                 // restores it on dismissal.
@@ -886,15 +901,16 @@ export function useComposerScopePluginPresentation(
         surfaceLifetime,
         transactionApplier,
     ]);
-    const openContributedAction = React.useCallback((action: PluginContributedActionDescriptor): void => {
+    const openContributedAction = React.useCallback((action: PluginContributedActionDescriptor, anchor?: PopoverAnchor): void => {
         if (surfaceLifetime?.isCurrent() !== true) return;
         if (params.onOpenContributedAction) {
-            params.onOpenContributedAction({ controller: actionController, action, signal: scopeAbort.signal });
+            params.onOpenContributedAction({ controller: actionController, action, signal: scopeAbort.signal, anchor });
             return;
         }
         fireAndForget(openPluginContributedAction({
             controller: actionController,
             action,
+            anchor,
             signal: scopeAbort.signal,
         }), { tag: 'ComposerScopePluginPresentation.openContributedAction' });
     }, [actionController, params.onOpenContributedAction, scopeAbort, surfaceLifetime]);
@@ -923,6 +939,13 @@ export function useComposerScopePluginPresentation(
         .filter((region) => region.definition.placement === 'afterComposer')
         .map((region) => <React.Fragment key={region.id}>{renderComposerRegion(region)}</React.Fragment>),
     [composerRegions, renderComposerRegion]);
+    const statusRegions = React.useMemo(() => composerRegions
+        .filter((region) => region.definition.placement === 'statusStrip')
+        .map((region) => ({
+            emphasis: region.definition.emphasis,
+            node: <React.Fragment key={region.id}>{renderComposerRegion(region)}</React.Fragment>,
+        })),
+    [composerRegions, renderComposerRegion]);
 
     return React.useMemo(() => ({
         attachmentEntriesById,
@@ -935,6 +958,7 @@ export function useComposerScopePluginPresentation(
         extraActionChips,
         beforeComposer,
         afterComposer,
+        statusRegions,
         renderAttachmentSurface,
         resolveAttachmentInteraction,
     }), [
@@ -950,5 +974,6 @@ export function useComposerScopePluginPresentation(
         renderComposerRegion,
         resolveAttachmentInteraction,
         scopeAbort,
+        statusRegions,
     ]);
 }

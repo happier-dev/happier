@@ -14,6 +14,7 @@ import {
     type MessagePinAvailability,
 } from '../messageActions/resolveMessagePinAvailability';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { RowActionDeferredIcon } from '@/components/ui/lists/RowActionRevealSlot';
 
 type PressEventWithPropagation = Readonly<{
     stopPropagation?: () => void;
@@ -61,11 +62,13 @@ export function ToolCallPinAction(props: Readonly<{
                 pressed ? styles.buttonPressed : null,
             ]}
         >
-            {pinned ? (
-                <PinSlashIcon size={ICON_SIZE.xs} color={iconColor} />
-            ) : (
-                <PinIcon size={ICON_SIZE.xs} color={iconColor} />
-            )}
+            <RowActionDeferredIcon size={ICON_SIZE.xs}>
+                {pinned ? (
+                    <PinSlashIcon size={ICON_SIZE.xs} color={iconColor} />
+                ) : (
+                    <PinIcon size={ICON_SIZE.xs} color={iconColor} />
+                )}
+            </RowActionDeferredIcon>
         </HappierPressable>
     );
 }

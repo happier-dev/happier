@@ -33,6 +33,11 @@ export const SessionTranscriptAgentAttributionProvider =
 
 export const TranscriptRowSeqProvider = TranscriptRowSeqContext.Provider;
 
+/** The existing row owner supplies transcript ordering to its presentation consumers. */
+export function useTranscriptRowSeq(): number | null {
+    return React.useContext(TranscriptRowSeqContext);
+}
+
 /**
  * Builds the transcript-root context only when the ordered divider boundaries
  * change. A streamed row still replaces the message map, but cannot make every

@@ -47,6 +47,7 @@ export type PendingMessageComposerEditState = Readonly<{
     /** The canonical pending-message identity used by the Composer admission scope. */
     localId: string;
     holdId: string;
+    releasePresence: () => void;
     accountScope: ServerAccountScope | null;
     accountLifetime: ActiveServerAccountScopeLifetime | null;
     /** Current mounted Pending document, never mirrored into the Session draft. */

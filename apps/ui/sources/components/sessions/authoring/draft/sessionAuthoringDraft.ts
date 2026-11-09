@@ -1,12 +1,16 @@
 import type {
-    AcpConfigOptionOverridesV1,
+    AcpConfigOptionOverridesV1} from '@happier-dev/protocol/sessions/metadata/overrides';
+import type {
     SessionAuthoringCheckoutCreationDraftV1,
-    RuntimeDescriptorV1,
     SessionAuthoringTerminalV1,
-    SessionAuthoringValueV1,
-    SessionCapabilitySelectionV1,
+    SessionAuthoringValueV1} from '@happier-dev/protocol/sessions/authoring/index';
+import type {
+    RuntimeDescriptorV1} from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
+import type {
+    SessionCapabilitySelectionV1} from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
+import type {
     WindowsRemoteSessionLaunchMode,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/metadata/windowsRemoteSessionLaunchMode';
 import type { NewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import type { SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol/teams';
 import type { SessionIdentityAdditions } from '@happier-dev/protocol/sessions/identity/sessionBotV1';

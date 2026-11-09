@@ -10,12 +10,14 @@ import { SessionTerminalPage } from './SessionTerminalPage';
 export const SessionRightPanelTerminalView = React.memo(function SessionRightPanelTerminalView(props: Readonly<{
     sessionId: string;
     scopeId: string;
+    presentation?: 'page';
 }>) {
     const sessionScreenTestIdsEnabled = useSessionScreenTestIdsEnabled();
     return (
         <SessionTerminalPage
             sessionId={props.sessionId}
             scopeId={props.scopeId}
+            presentation={props.presentation}
             testIdPrefix={sessionScreenTestIdsEnabled ? 'session-rightpanel-terminal' : null}
         />
     );

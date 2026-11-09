@@ -19,6 +19,7 @@ import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerS
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
 import { ToolFindText, useToolFindState } from '../core/ToolFindText';
+import { useOpenSubAgentRun } from './useOpenSubAgentRun';
 
 
 type TaskOperation = 'run' | 'create' | 'list' | 'update' | 'unknown';
@@ -167,10 +168,12 @@ export const SubAgentSummarySection = React.memo<{
         });
     }, [messageId, tool.id]);
 
-    const canOpenDetails = Boolean(sessionId && routeMessageId)
+    const openRun = useOpenSubAgentRun({ tool, sessionId, serverId, navigate: transcriptSource.navigate });
+    const canOpenDetails = Boolean(openRun || (sessionId && routeMessageId))
         && detailLevel !== 'full'
         && transcriptSource.navigate !== null;
     const handleOpenDetails = React.useCallback(() => {
+        if (openRun) { openRun(); return; }
         if (!sessionId || !routeMessageId || transcriptSource.navigate === null) return;
         navigateWithBlurOnWeb(() => {
             transcriptSource.navigate?.(buildScopedSessionRouteHref({
@@ -179,7 +182,7 @@ export const SubAgentSummarySection = React.memo<{
                 suffix: `/message/${encodeURIComponent(routeMessageId)}`,
             }));
         });
-    }, [routeMessageId, transcriptSource, serverId, sessionId]);
+    }, [openRun, routeMessageId, transcriptSource, serverId, sessionId]);
 
     if (effectiveDetailLevel === 'title') return null;
 

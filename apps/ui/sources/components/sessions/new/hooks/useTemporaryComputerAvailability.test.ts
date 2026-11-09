@@ -1,6 +1,6 @@
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { createFeatureDecision } from '@happier-dev/protocol';
+import { createFeatureDecision } from '@happier-dev/protocol/features/decision';
 import type { VerifiedRunnerArtifactV1 } from '@happier-dev/protocol/ephemeralRunner/runnerArtifact';
 
 import { renderHook } from '@/dev/testkit';

@@ -36,6 +36,20 @@ describe('Session shared browser consumer', () => {
         const onOpenFile = vi.fn();
         return { screen: await fixture.render(<SessionRepositoryTreeBrowserView sessionId="s1" serverId={fixture.scope.serverId} onOpenFile={onOpenFile} {...overrides} />), onOpenFile };
     }
+    // In a Session pane the + lives in the pane header, which renders what the view publishes.
+    async function renderInPane() {
+        const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
+        const { PaneHeaderSlotProvider, PaneHeaderSlotScope, usePublishedPaneHeaderContent } = await import('@/components/appShell/panes/paneHeaderSlot');
+        function PaneHeaderAction() {
+            return <>{usePublishedPaneHeaderContent('files')?.action ?? null}</>;
+        }
+        return { screen: await fixture.render(<PaneHeaderSlotProvider>
+            <PaneHeaderAction />
+            <PaneHeaderSlotScope slotKey="files">
+                <SessionRepositoryTreeBrowserView sessionId="s1" serverId={fixture.scope.serverId} onOpenFile={vi.fn()} />
+            </PaneHeaderSlotScope>
+        </PaneHeaderSlotProvider>) };
+    }
     function findSearchResult(screen: Awaited<ReturnType<typeof fixture.render>>, path: string) {
         return screen.findAllByType(Item).find(row => {
             const title: unknown = row.props.title;
@@ -81,13 +95,18 @@ describe('Session shared browser consumer', () => {
         await publishMachineInventoryForTest({ serverId: fixture.scope.serverId, accountId: 'alice' }, [
             { ...original, active: false }, ...peers,
         ]);
-        const { screen } = await render();
+        const { screen } = await renderInPane();
         // Loaded incident: the original d2 daemon is stopped while several
         // other daemons on the same host are active. This is not a lost folder.
         expect(screen.findByTestId('repository-tree-unreachable')).toBeTruthy();
         expect(screen.findByTestId('repository-tree-root-error')).toBeNull();
         expect(fixture.requests.filter(request => request.method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY
             || request.method === RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST)).toEqual([]);
+        // The header's + keeps its place; the rows it can't run say why once, above them (lab FB1o).
+        const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+        const createMenu = screen.findAllByType(DropdownMenu).find(menu => menu.props.testID === 'repository-tree-create-menu');
+        expect(createMenu?.props.items.every((item: { disabled?: boolean }) => item.disabled)).toBe(true);
+        expect(createMenu?.props.header?.props).toMatchObject({ kind: 'unavailable', title: 'projects.checkouts.notAnswering' });
 
         // The Home pushes the original Machine's recovery. No Retry or Session
         // metadata write is needed to re-resolve its known folder and list it.

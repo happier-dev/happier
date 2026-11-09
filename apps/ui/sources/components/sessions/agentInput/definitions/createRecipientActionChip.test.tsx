@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
+import type { ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
 
@@ -39,9 +39,23 @@ const buildRunTarget = (runId: string): SessionParticipantTarget => ({
 
 // Resolve the real UI dependency graph during collection, outside individual
 // behavior-test budgets on cold distributed execution hosts.
-const { createRecipientActionChip } = await import('./createRecipientActionChip');
+const { createRecipientActionChip, createRecipientMultiSelectActionChip } = await import('./createRecipientActionChip');
 
 describe('createRecipientActionChip', () => {
+    it('shares one placement identity while preserving context defaults and retained addressing', () => {
+        const session = createRecipientActionChip({ isReadOnly: false, participantTargets: [buildRunTarget('A1')],
+            recipient: null, onRecipientChange: () => {} });
+        const addressed = createRecipientActionChip({ isReadOnly: false, participantTargets: [],
+            recipient: { kind: 'execution_run', runId: 'A1' }, onRecipientChange: () => {} });
+        const discussion = createRecipientMultiSelectActionChip({ isReadOnly: false,
+            model: { targets: [{ id: 'A1', label: 'Run A1', recipient: null }], selectedIds: [], selectedRecipients: [], removedRecipients: [], clear: () => {}, toggle: () => {} } });
+        const selectedDiscussion = createRecipientMultiSelectActionChip({ isReadOnly: false,
+            model: { targets: [], selectedIds: ['A1'], selectedRecipients: [], removedRecipients: [], clear: () => {}, toggle: () => {} } });
+        expect(session?.placement).toMatchObject({ id: 'recipient', defaultPlacement: 'overflow', pending: false });
+        expect(addressed?.placement).toMatchObject({ id: 'recipient', pending: true });
+        expect(discussion?.placement).toMatchObject({ id: 'recipient', defaultPlacement: 'pinned', pending: false });
+        expect(selectedDiscussion?.placement).toMatchObject({ id: 'recipient', pending: true });
+    });
     it('returns undefined when read-only', async () => {
 
         const chip = createRecipientActionChip({

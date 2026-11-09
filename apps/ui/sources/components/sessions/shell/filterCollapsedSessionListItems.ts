@@ -14,6 +14,9 @@ export function filterCollapsedSessionListItems(
 
     let result: SessionListIndexItem[] | undefined;
     let skipUntilNextSection = false;
+    let skipUntilNextGroup = false;
+    let skipUntilNextServer = false;
+    let collapsedFolderDepth: number | null = null;
     let collapsedReportsDepth: number | null = null;
 
     const ensureResult = (index: number): SessionListIndexItem[] => {
@@ -27,6 +30,20 @@ export function filterCollapsedSessionListItems(
         if (item.type === 'header') {
             collapsedReportsDepth = null;
             const kind = item.headerKind;
+            if (skipUntilNextServer) {
+                if (kind !== 'server') { ensureResult(index); continue; }
+                skipUntilNextServer = false;
+            }
+            // Home re-entry ends the preceding Home's primary band. Its own
+            // Sessions header below applies that Home's logical collapse choice.
+            if (kind === 'server') {
+                skipUntilNextSection = false;
+                skipUntilNextGroup = false;
+                collapsedFolderDepth = null;
+                skipUntilNextServer = Boolean(item.groupKey && keys[item.groupKey]);
+                if (result !== undefined) result.push(item);
+                continue;
+            }
             // A collapsed section owns everything down to the next primary section
             // header. That set is the canonical one — Needs attention, Working,
             // Pinned, Active, Inactive and the one-section Sessions header — because
@@ -36,6 +53,8 @@ export function filterCollapsedSessionListItems(
 
             if (isSection) {
                 skipUntilNextSection = false;
+                skipUntilNextGroup = false;
+                collapsedFolderDepth = null;
                 const collapseKey = item.groupKey || `${kind}:${item.serverId ?? 'local'}`;
                 if (keys[collapseKey]) {
                     const filteredItems = ensureResult(index);
@@ -51,13 +70,32 @@ export function filterCollapsedSessionListItems(
                 ensureResult(index);
                 continue;
             }
+            if (skipUntilNextGroup) {
+                if (kind === 'folder') { ensureResult(index); continue; }
+                skipUntilNextGroup = false;
+            }
+            if (collapsedFolderDepth !== null) {
+                if (kind === 'folder' && (item.folderDepth ?? 0) > collapsedFolderDepth) {
+                    ensureResult(index);
+                    continue;
+                }
+                collapsedFolderDepth = null;
+            }
+            if (item.groupKey && keys[item.groupKey]) {
+                if (kind === 'folder') collapsedFolderDepth = item.folderDepth ?? 0;
+                else skipUntilNextGroup = true;
+            }
             if (result !== undefined) result.push(item);
             continue;
         }
 
-        if (skipUntilNextSection) {
+        if (skipUntilNextSection || skipUntilNextGroup || skipUntilNextServer) {
             ensureResult(index);
             continue;
+        }
+        if (collapsedFolderDepth !== null) {
+            if ((item.folderDepth ?? 0) > collapsedFolderDepth) { ensureResult(index); continue; }
+            collapsedFolderDepth = null;
         }
         const groupKey = item.groupKey ?? '';
         if (groupKey && keys[groupKey]) {

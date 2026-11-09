@@ -1,10 +1,11 @@
 import type {
     SessionWorkflowActivityHeadlineV1,
+    SessionWorkflowRunHeadlineV1} from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
+import type {
     SessionWorkflowAgentStatusV1,
-    SessionWorkflowRunHeadlineV1,
     SessionWorkflowRunSnapshotV1,
     SessionWorkflowRunStatusV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 import type { WorkflowRunSnapshotObservation } from '@/sync/ops/sessionWorkflowActivity';
 
 export type WorkflowRunDetailFailure = Exclude<WorkflowRunSnapshotObservation['status'], 'ready' | 'loading'>;

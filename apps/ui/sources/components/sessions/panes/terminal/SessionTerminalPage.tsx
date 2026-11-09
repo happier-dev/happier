@@ -1,6 +1,6 @@
 import * as React from 'react';
-import type { SessionTerminalMemberV1, SessionTerminalWorkspaceV1 } from '@happier-dev/protocol';
-import { Pressable, View, type GestureResponderEvent } from 'react-native';
+import type { SessionTerminalMemberV1, SessionTerminalWorkspaceV1 } from '@happier-dev/protocol/terminal/workspace';
+import { View, type GestureResponderEvent } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -10,6 +10,7 @@ import { DocumentTabStrip } from '@/components/ui/navigation/DocumentTabStrip';
 import { resolvePointerMenuAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import type { PopoverAnchor } from '@/components/ui/popover';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { SessionEmbeddedTerminalPane } from '@/components/sessions/terminal/SessionEmbeddedTerminalPane';
@@ -31,6 +32,10 @@ import { useOpenTerminalJump } from '@/components/sessions/terminal/jump/useOpen
 import { parseSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { t } from '@/text';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { SessionTerminalList } from '@/components/sessions/terminal/strip/SessionTerminalList';
+import { useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
+import { selectSessionTerminalWorkspaceHost } from '@/components/sessions/terminal/sessionTerminalWorkspace';
 
 /** A horizontal swipe this long on the terminal moves a split tab to its next or previous half. */
 const PAGER_SWIPE_PX = 48;
@@ -47,8 +52,11 @@ export const SessionTerminalPage = React.memo(function SessionTerminalPage(props
     sessionId: string;
     scopeId: string;
     testIdPrefix?: string | null;
+    presentation?: 'page';
 }>) {
     const { workspace, execute } = useSessionTerminalWorkspace(props.scopeId);
+    const renderTerminals = useAppPaneContext(value =>
+        selectSessionTerminalWorkspaceHost(value.state, props.scopeId) === (props.presentation ?? 'right'));
     const serverId = parseSessionPaneScopeId(props.scopeId)?.address?.serverId ?? null;
     const context = useSessionTerminalDescribeContext(props.sessionId, serverId);
     const tabs = useSessionTerminalTabDescriptors({ sessionId: props.sessionId, scopeId: props.scopeId, workspace, context });
@@ -59,23 +67,25 @@ export const SessionTerminalPage = React.memo(function SessionTerminalPage(props
     const onOpenJump = React.useMemo(() => openJump ? () => openJump({ sessionId: props.sessionId, serverId, scopeId: props.scopeId }) : undefined, [openJump, props.scopeId, props.sessionId, serverId]);
     const run = React.useCallback((actionId: Parameters<typeof execute>[0], input?: Readonly<Record<string, unknown>>) => execute(actionId, input), [execute]);
     const tabMenu = useSessionTerminalTabMenu({ scopeId: props.scopeId, workspace, tabs, run });
-    const renderTerminal = React.useCallback((member: SessionTerminalMemberV1, descriptor: SessionTerminalDescriptor) => (
+    const renderTerminal = React.useCallback((member: SessionTerminalMemberV1, descriptor: SessionTerminalDescriptor, focused: boolean) => (
         <SessionEmbeddedTerminalPane
             key={member.id}
             sessionId={props.sessionId}
             scopeId={props.scopeId}
             currentDockLocation="sidebar"
+            presentationId={tabMenu.presentationId}
             terminal={member}
             chrome="none"
             title={descriptor.title}
             machineName={context.sessionMachineName}
-            focused
+            focused={focused}
             testIdPrefix={props.testIdPrefix ?? null}
         />
-    ), [context.sessionMachineName, props.scopeId, props.sessionId, props.testIdPrefix]);
+    ), [context.sessionMachineName, props.scopeId, props.sessionId, props.testIdPrefix, tabMenu.presentationId]);
     return (
         <SessionTerminalPageView
             workspace={workspace}
+            renderTerminals={renderTerminals}
             tabs={tabs}
             context={context}
             onAction={onAction}
@@ -95,7 +105,11 @@ export const SessionTerminalPageView = React.memo(function SessionTerminalPageVi
     onAction: (actionId: SessionTerminalAction, input: Readonly<Record<string, unknown>>) => void;
     tabMenu?: Readonly<{ items: (tabId: string) => readonly DropdownMenuItem[]; select: (tabId: string, itemId: string) => void }> | null;
     onOpenJump?: () => void;
-    renderTerminal: (member: SessionTerminalMemberV1, descriptor: SessionTerminalDescriptor) => React.ReactNode;
+    renderTerminal: (member: SessionTerminalMemberV1, descriptor: SessionTerminalDescriptor, focused: boolean) => React.ReactNode;
+    /** The page keeps its discovery controls when a companion pane owns the live renderer. */
+    renderTerminals?: boolean;
+    /** Why the list stands in for the terminal (recovered Shells), said once above it. */
+    listNote?: string;
     testIdPrefix?: string | null;
 }>) {
     const styles = stylesheet;
@@ -175,7 +189,9 @@ export const SessionTerminalPageView = React.memo(function SessionTerminalPageVi
 
     return (
         <View testID={testId('page')} style={styles.page}>
+            {/* The chips scroll; New terminal and the tab menu stay pinned at the end, however many Shells run. */}
             <View style={styles.chips}>
+                <View style={styles.chipRail}>
                 <DocumentTabStrip
                     variant="rail"
                     tabs={chips}
@@ -197,49 +213,59 @@ export const SessionTerminalPageView = React.memo(function SessionTerminalPageVi
                         tabClose: (key) => testId(`chip-close-${key}`),
                         tabStatus: (key) => testId(`chip-status-${key}`),
                     }}
-                    railTrailing={(
-                        <View style={{ flexDirection: 'row' }}>
-                            {props.tabMenu && activeTab ? (
-                                <IconButton
-                                    testID={testId('tab-menu')}
-                                    accessibilityLabel={t('terminalWorkspace.actions.more')}
-                                    onPress={(event) => setMenu({ tabId: activeTab.id, anchor: resolvePointerMenuAnchor(event) })}
-                                    iconName="dots-three"
-                                    size={32}
-                                    interactiveTargetGapPx={0}
-                                />
-                            ) : null}
-                            <IconButton
-                                testID={testId('new-shell')}
-                                accessibilityLabel={t('terminalWorkspace.actions.newShell')}
-                                onPress={openShell}
-                                iconName="plus"
-                                size={32}
-                                interactiveTargetGapPx={0}
-                            />
-                        </View>
-                    )}
                 />
+                </View>
+                <View style={styles.chipActions}>
+                    {props.tabMenu && activeTab ? (
+                        <IconButton
+                            testID={testId('tab-menu')}
+                            accessibilityLabel={t('terminalWorkspace.actions.more')}
+                            onPress={(event) => setMenu({ tabId: activeTab.id, anchor: resolvePointerMenuAnchor(event) })}
+                            iconName="dots-three"
+                            size={32}
+                            interactiveTargetGapPx={0}
+                        />
+                    ) : null}
+                    <IconButton
+                        testID={testId('new-shell')}
+                        accessibilityLabel={t('terminalWorkspace.actions.newShell')}
+                        onPress={openShell}
+                        iconName="plus"
+                        size={32}
+                        interactiveTargetGapPx={0}
+                    />
+                </View>
             </View>
             {place || nextHalf ? (
                 <View style={styles.meta}>
                     {place ? <Text style={styles.metaText} numberOfLines={1}>{place}</Text> : null}
                     <View style={styles.grow} />
                     {nextHalf ? (
-                        <Pressable
+                        <HappierPressable
                             testID={testId('pager-next')}
                             accessibilityRole="button"
                             accessibilityLabel={t('terminalWorkspace.keys.pagerNext', { title: nextHalf.title })}
                             onPress={() => focusTerminal(nextHalf.terminalId)}
-                            hitSlop={8}
                         >
                             <Text style={styles.metaHint} numberOfLines={1}>{t('terminalWorkspace.keys.pagerNext', { title: nextHalf.title })}</Text>
-                        </Pressable>
+                        </HappierPressable>
                     ) : null}
                 </View>
             ) : null}
             <View style={styles.body} {...pagerResponder}>
-                {focusedMember && focusedDescriptor ? props.renderTerminal(focusedMember, focusedDescriptor) : (
+                {props.renderTerminals === false && tabs.length > 0 ? (
+                    <SessionTerminalList tabs={tabs} activeTabId={workspace.activeTabId} focusedTerminalId={focusedMember?.id ?? null}
+                        onActivateTab={activateChip} onFocusTerminal={focusTerminal} note={props.listNote}
+                        onTabMenu={(tabId, event) => setMenu({ tabId, anchor: resolvePointerMenuAnchor(event) })}
+                        testIdPrefix={props.testIdPrefix ? `${props.testIdPrefix}-list` : undefined} />
+                ) : focusedMember && focusedDescriptor && props.renderTerminals !== false ? workspace.tabs.flatMap(tab => tab.terminals.map(member => {
+                    const descriptor = tabs.find(item => item.tabId === tab.id)?.members.find(item => item.terminalId === member.id);
+                    if (!descriptor) return null;
+                    const active = tab.id === workspace.activeTabId && member.id === focusedMember.id;
+                    return <RetainedPanelSurface key={member.id} isActive={active} mode="flow">
+                        {props.renderTerminal(member, descriptor, active)}
+                    </RetainedPanelSurface>;
+                })) : (
                     <View style={styles.empty}>
                         <SurfaceStateCard
                             testID={testId('empty')}
@@ -277,11 +303,21 @@ const stylesheet = StyleSheet.create((theme) => ({
         flex: 1,
         minHeight: 0,
         minWidth: 0,
-        backgroundColor: theme.colors.surface.base,
     },
     chips: {
+        flexDirection: 'row',
+        alignItems: 'center',
         paddingTop: 4,
         paddingBottom: 8,
+    },
+    chipRail: {
+        flex: 1,
+        minWidth: 0,
+    },
+    chipActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingRight: theme.space.s8,
     },
     meta: {
         flexDirection: 'row',

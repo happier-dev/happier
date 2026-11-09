@@ -1,4 +1,4 @@
-import { createProviderErrorV1 } from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { describe, expect, it } from 'vitest';
 
 import { presentProviderModelRow } from '@/providers/models/presentProviderModelRow';
@@ -25,6 +25,20 @@ const base = {
 };
 
 describe('presentProviderModelRow', () => {
+    it('keeps Machine readiness informational for a preference and blocking for execution', () => {
+        const input = { ...base, authorization: { authorized: false as const,
+            error: createProviderErrorV1('provider_machine_unavailable') },
+            compatibility: { result: { status: 'experimental' as const, selectedProtocol: 'openai-responses' as const,
+                reasons: ['compatibility_evidence_missing' as const], confirmationScope: { kind: 'model' as const, modelId: base.modelId } },
+                compatibilityFingerprint: 'compatibility:v1:test', confirmed: false },
+        };
+        expect(presentProviderModelRow({ ...input, purpose: 'preference' })).toMatchObject({
+            selectionDisabled: false, primaryStatus: { kind: 'authorization' },
+        });
+        expect(presentProviderModelRow(input)).toMatchObject({ selectionDisabled: true });
+        expect(presentProviderModelRow({ ...input, purpose: 'preference', visibility: 'hidden_current_selection' }))
+            .toMatchObject({ selectionDisabled: true });
+    });
     it.each(['hidden_agent', 'hidden_all_agents'] as const)('presents the canonical %s visibility fact', (visibility) => {
         expect(presentProviderModelRow({ ...base, visibility })).toMatchObject({
             primaryStatus: { kind: 'visibility' },

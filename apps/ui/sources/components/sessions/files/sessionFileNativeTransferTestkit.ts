@@ -2,7 +2,7 @@ import { vi } from 'vitest';
 import {
     DirectRouteGrantRequestV2Schema, SignedDirectRouteGrantV2Schema,
     createDirectRouteGrantSigningInputV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { FilesystemDownloadInputSchema, FilesystemDownloadOutputSchema, FilesystemReadFileOutputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
@@ -46,7 +46,7 @@ export function createSessionFileNativeTransferBoundary(input: Readonly<{ bytes?
     sdk.tunnels.clear();
     sdk.stop.mockImplementation(async (leaseId: string) => { sdk.tunnels.delete(leaseId); });
     sdk.start.mockImplementation(async (input: { handshakeJson: string }) => {
-        const { IrohMachineHandshakeV1Schema, verifyPeerRouteEphemeralProofV2 } = await import('@happier-dev/protocol');
+        const [{ IrohMachineHandshakeV1Schema}, { verifyPeerRouteEphemeralProofV2}] = await Promise.all([import('@happier-dev/protocol/connectivity/iroh/machineHandshakeV1'), import('@happier-dev/protocol/machines/peer/mediation/ephemeralPeerRouteProofV2')]);
         const handshake = IrohMachineHandshakeV1Schema.parse(JSON.parse(input.handshakeJson));
         const proof = verifyPeerRouteEphemeralProofV2({ grant: handshake.grant, proof: handshake.proof });
         if (!proof.valid) throw new Error(`Invalid client proof: ${proof.reasonCode}`);

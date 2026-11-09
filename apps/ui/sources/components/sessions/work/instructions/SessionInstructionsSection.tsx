@@ -20,6 +20,7 @@ import { ACTIONS_PROMPT_DOCUMENT_SETTINGS } from '@/components/settings/actions/
 import { useSettingActionWriter } from '@/components/settings/catalog/useSettingActionWriter';
 import { normalizeActionsSettings } from '@/components/settings/actions/normalizeActionsSettings';
 import { promptCollectionItemHref } from '@/components/settings/prompts/collection/promptCollectionModel';
+import { isStaleSessionIntent, SessionIntentConflictLine } from '@/components/sessions/work/SessionIntentConflictLine';
 import { WorkSection, WorkSectionBlock, WorkSectionEmptyLine } from '@/components/sessions/work/WorkSection';
 import { Icon } from '@/components/ui/icons/Icon';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -59,11 +60,14 @@ import {
 const COLLAPSED_LINES = 4;
 
 type SaveState = 'idle' | 'pending';
+/** Why a change didn't apply: this Account may not change it, or it didn't land for another reason. */
+type Refusal = 'refused' | 'failed';
 /**
- * Why a change didn't apply: the reviewed Session revision moved (the metadata CAS refused a stale
- * basis), this Account may not change it, or it didn't land for another reason.
+ * A change the Session was no longer at the revision for (the metadata CAS refused a stale basis): the
+ * document the person asked to attach, or null to detach. It is held, not lost, until they apply it to
+ * the current revision or keep what the Session has.
  */
-type Refusal = 'conflict' | 'refused' | 'failed';
+type HeldChange = Readonly<{ ref: PromptDocArtifactRefV1 | null }>;
 const PERMISSION_REFUSALS: ReadonlySet<string> = new Set([
   'forbidden',
   'action_disabled',
@@ -71,7 +75,6 @@ const PERMISSION_REFUSALS: ReadonlySet<string> = new Set([
   'session_access_denied',
 ]);
 const REFUSAL_COPY = {
-  conflict: 'sessionInstructions.setConflict',
   refused: 'sessionInstructions.refused',
   failed: 'sessionInstructions.setFailed',
 } as const satisfies Record<Refusal, string>;
@@ -89,9 +92,9 @@ export function resolveSessionInstructionsAccess(
 /** An Action outcome as the section reports it: applied, waiting for approval, or why it didn't apply. */
 function readOutcome(
   result: ActionExecuteResult,
-): 'applied' | 'pending' | Refusal {
+): 'applied' | 'pending' | 'conflict' | Refusal {
   if (!result.ok) {
-    if (result.errorCode === 'conflict') return 'conflict';
+    if (isStaleSessionIntent(result)) return 'conflict';
     return PERMISSION_REFUSALS.has(result.errorCode) ? 'refused' : 'failed';
   }
   return ActionApprovalRequestCreatedResultSchema.safeParse(result.result)
@@ -154,6 +157,7 @@ export const SessionInstructionsBody = React.memo(function SessionInstructionsBo
   const [saveState, setSaveState] = React.useState<SaveState>('idle');
   // A change that didn't apply says why in the section, where it was asked for, until the next attempt.
   const [refusal, setRefusal] = React.useState<Refusal | null>(null);
+  const [held, setHeld] = React.useState<HeldChange | null>(null);
   const target = React.useMemo<SessionInstructionsTarget>(
     () => ({
       sessionId: session.id,
@@ -174,13 +178,19 @@ export const SessionInstructionsBody = React.memo(function SessionInstructionsBo
     );
   }, [ref, router, serverId]);
 
+  // `change` is what a session write asked for, read after the run (Create learns its document then); only a
+  // write that names one can meet a stale Session, so any other conflicting outcome is a plain failure.
   const settle = React.useCallback(
-    async (run: () => Promise<ActionExecuteResult>): Promise<boolean> => {
+    async (run: () => Promise<ActionExecuteResult>, change?: () => HeldChange | null): Promise<boolean> => {
       setSaveState('pending');
       setRefusal(null);
+      setHeld(null);
       try {
         const outcome = readOutcome(await run());
-        if (outcome !== 'applied' && outcome !== 'pending') setRefusal(outcome);
+        const heldChange = outcome === 'conflict' ? change?.() ?? null : null;
+        if (heldChange) setHeld(heldChange);
+        else if (outcome === 'conflict') setRefusal('failed');
+        else if (outcome !== 'applied' && outcome !== 'pending') setRefusal(outcome);
         // An approval request leaves the line saying it is waiting; the accepted write re-renders the section.
         if (outcome !== 'pending') setSaveState('idle');
         return outcome === 'applied';
@@ -196,7 +206,7 @@ export const SessionInstructionsBody = React.memo(function SessionInstructionsBo
   const attach = React.useCallback(
     (next: PromptDocArtifactRefV1) => {
       fireAndForget(
-        settle(() => sessionInstructionsActions.set(target, next, undefined, execution.execute)),
+        settle(() => sessionInstructionsActions.set(target, next, undefined, execution.execute), () => ({ ref: next })),
         { tag: 'SessionInstructions.attach' },
       );
     },
@@ -218,7 +228,8 @@ export const SessionInstructionsBody = React.memo(function SessionInstructionsBo
           );
           created.ref = authored.createdRef;
           return authored.result;
-        });
+        // The created document stays reusable: a stale attach holds it for the current revision.
+        }, () => created.ref ? { ref: created.ref } : null);
         const opened = created.ref;
         if (applied && opened && execution.isCurrent())
           router.push(
@@ -232,10 +243,16 @@ export const SessionInstructionsBody = React.memo(function SessionInstructionsBo
   }, [execution.execute, execution.isCurrent, router, serverId, session, settle, target]);
   const detach = React.useCallback(() => {
     fireAndForget(
-      settle(() => sessionInstructionsActions.set(target, null, undefined, execution.execute)),
+      settle(() => sessionInstructionsActions.set(target, null, undefined, execution.execute), () => ({ ref: null })),
       { tag: 'SessionInstructions.detach' },
     );
   }, [execution.execute, settle, target]);
+  // Apply mine sends the held change again on the revision the Session has now (`target` is current).
+  const applyHeld = React.useCallback(() => {
+    if (!held) return;
+    if (held.ref) attach(held.ref);
+    else detach();
+  }, [attach, detach, held]);
 
   const status = source.status;
   const repairable =
@@ -263,6 +280,14 @@ export const SessionInstructionsBody = React.memo(function SessionInstructionsBo
           testID="session-work-instructions.pending"
           busy
           reason={t('sessionInstructions.savePending')}
+        />
+      ) : held ? (
+        <SessionIntentConflictLine
+          testID="session-work-instructions.conflict"
+          subject={t('sessionInstructions.title')}
+          current={document?.title}
+          onApply={applyHeld}
+          onKeep={() => setHeld(null)}
         />
       ) : refusal ? (
         <SurfaceFreshnessLine

@@ -1,6 +1,6 @@
 import type { Message, ToolCall } from '@happier-dev/session-core/messages';
 import type { Metadata } from '@happier-dev/session-core/state';
-import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 /** Text rendered by a tool's display owner, including text revealed by Find. */

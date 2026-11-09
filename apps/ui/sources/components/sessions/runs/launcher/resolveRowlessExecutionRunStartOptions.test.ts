@@ -12,15 +12,19 @@ const choice = {
     disabled: false,
 } satisfies ExecutionRunLauncherBackendChoice;
 
+const conversation = { sessionId: 'session_1', text: 'Inspect this', localInputId: 'input_1' };
+
 describe('resolveRowlessExecutionRunStartOptions', () => {
     it.each(['native', null])('preserves explicit native connected-service choice %s instead of inheriting', (connectedServices) => {
         expect(resolveRowlessExecutionRunStartOptions({
+            conversation,
             choice, input: { permissionMode: 'read_only', connectedServices },
         })).toMatchObject({ ok: true, options: { connectedServices: null } });
     });
 
     it('preserves an explicit native model reset on first Send', () => {
         expect(resolveRowlessExecutionRunStartOptions({
+            conversation,
             choice, input: { permissionMode: 'read_only', modelSelection: null },
         })).toMatchObject({ ok: true, options: { modelSelection: null } });
     });
@@ -28,9 +32,11 @@ describe('resolveRowlessExecutionRunStartOptions', () => {
     it.each(['connection-work', null])('preserves the exact model tuple for connection %s on first Send', (providerConnectionId) => {
         const modelSelection = { agentTargetKey: choice.targetKey, providerConnectionId, modelId: 'shared-model' };
         expect(resolveRowlessExecutionRunStartOptions({
+            conversation,
             choice, input: { permissionMode: 'read_only', modelSelection },
         })).toMatchObject({ ok: true, options: { modelSelection } });
         expect(resolveRowlessExecutionRunStartOptions({
+            conversation,
             choice, input: { permissionMode: 'read_only', modelId: ' shared-model ', modelSelection },
         })).toMatchObject({ ok: true, options: { modelId: 'shared-model', modelSelection } });
     });
@@ -38,6 +44,7 @@ describe('resolveRowlessExecutionRunStartOptions', () => {
     it('matches a retained target spelling to the current Agent without rewriting the model ref', () => {
         const modelSelection = { agentTargetKey: 'agent:codex', providerConnectionId: 'connection-work', modelId: 'shared-model' };
         expect(resolveRowlessExecutionRunStartOptions({
+            conversation,
             choice, input: { permissionMode: 'read_only', modelSelection },
         })).toMatchObject({ ok: true, options: { modelSelection } });
     });
@@ -48,12 +55,14 @@ describe('resolveRowlessExecutionRunStartOptions', () => {
         { agentTargetKey: choice.targetKey, modelId: 'shared-model' },
     ])('refuses an invalid or conflicting exact model selection %j before first Send', (modelSelection) => {
         expect(resolveRowlessExecutionRunStartOptions({
+            conversation,
             choice, input: { permissionMode: 'read_only', modelId: 'shared-model', modelSelection },
         })).toEqual({ ok: false });
     });
 
     it('refuses competing Account and Team model selections before first Send', () => {
         expect(resolveRowlessExecutionRunStartOptions({
+            conversation,
             choice,
             input: {
                 permissionMode: 'read_only', modelId: 'shared-model',
@@ -68,18 +77,21 @@ describe('resolveRowlessExecutionRunStartOptions', () => {
 
     it.each([true, false])('preserves the report chip value %s on first Send', (notifyParentOnCompletion) => {
         expect(resolveRowlessExecutionRunStartOptions({
+            conversation,
             choice, input: { permissionMode: 'read_only', notifyParentOnCompletion },
         })).toMatchObject({ ok: true, options: { notifyParentOnCompletion } });
     });
 
     it('refuses a malformed report chip instead of silently dropping it', () => {
         expect(resolveRowlessExecutionRunStartOptions({
+            conversation,
             choice, input: { permissionMode: 'read_only', notifyParentOnCompletion: 'false' },
         })).toEqual({ ok: false });
     });
 
     it('projects the selected target and canonical launcher options onto the direct first-Send start', () => {
         const result = resolveRowlessExecutionRunStartOptions({
+            conversation,
             choice,
             input: {
                 permissionMode: 'workspace_write',
@@ -172,6 +184,7 @@ describe('resolveRowlessExecutionRunStartOptions', () => {
 
     it('fails closed on a conflicting config alias or incomplete profile selection', () => {
         expect(resolveRowlessExecutionRunStartOptions({
+            conversation,
             choice,
             input: {
                 permissionMode: 'workspace_write',
@@ -184,10 +197,12 @@ describe('resolveRowlessExecutionRunStartOptions', () => {
             },
         })).toEqual({ ok: false });
         expect(resolveRowlessExecutionRunStartOptions({
+            conversation,
             choice,
             input: { permissionMode: 'workspace_write', profileId: 'profile_work' },
         })).toEqual({ ok: false });
         expect(resolveRowlessExecutionRunStartOptions({
+            conversation,
             choice,
             input: {
                 permissionMode: 'workspace_write',
@@ -198,6 +213,7 @@ describe('resolveRowlessExecutionRunStartOptions', () => {
 
     it('fails closed when a previously selected target becomes unavailable', () => {
         expect(resolveRowlessExecutionRunStartOptions({
+            conversation,
             choice: { ...choice, disabled: true },
             input: { permissionMode: 'workspace_write' },
         })).toEqual({ ok: false });

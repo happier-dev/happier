@@ -9,6 +9,8 @@ import type { PluginSurfaceTarget } from '@happier-dev/plugin-sdk/ui';
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import {
     createComposerPresentationHostHandlers,
+    isScopedMountedComposerPresentationTargetReady,
+    subscribeComposerPresentationTarget,
     type ComposerPresentationTransactionApplier,
 } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import type { BoundPluginSurfaceMountLifetime } from '@/components/plugins/surfaces/boundPluginSurfaceController';
@@ -148,6 +150,15 @@ export function ComposerPluginSurface(props: ComposerPluginSurfaceProps): React.
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [catalogKey, mountKey],
     );
+    const composer = mount?.mount.composer ?? null;
+    const subscribeComposerAdmission = React.useCallback((notify: () => void) => composer
+        ? subscribeComposerPresentationTarget(composer, notify, { includePersistentSession: false })
+        : () => {}, [composer]);
+    const readComposerAdmission = React.useCallback(() => composer !== null
+        && props.parentLifetime.isCurrent()
+        && isScopedMountedComposerPresentationTargetReady(composer, props.scope),
+    [composer, props.parentLifetime, props.scope]);
+    const composerReady = React.useSyncExternalStore(subscribeComposerAdmission, readComposerAdmission, readComposerAdmission);
     const publisherRef = React.useRef<PluginSurfaceComposerSubscriptionPublisher | null>(null);
     const publishComposerSnapshot = React.useCallback((event: Readonly<{
         subscriptionId: string;
@@ -168,6 +179,7 @@ export function ComposerPluginSurface(props: ComposerPluginSurfaceProps): React.
         if (!mount) return null;
         return createComposerPresentationHostHandlers({
             scope: props.scope,
+            mountedComposer: mount.mount.composer,
             owner: {
                 identity: mount.mount.contribution,
                 occurrenceId: mount.mount.occurrenceId,
@@ -204,7 +216,9 @@ export function ComposerPluginSurface(props: ComposerPluginSurfaceProps): React.
         publisherRef.current = null;
     }, []);
 
-    if (!mount || !props.parentLifetime.isCurrent()) return null;
+    // Some authors ask activeComposer only once. Do not start their renderer
+    // before the opener can answer; the existing document push admits it later.
+    if (!mount || !composerReady || !props.parentLifetime.isCurrent()) return null;
     // The retained physical binding can outlive an equivalent catalog delivery;
     // the dependency snapshot belongs to the currently acquired exact row.
     const actionInputSelectionFactsKey = requestedCatalogEntry

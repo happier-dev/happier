@@ -1,12 +1,24 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { standardCleanup } from '@/dev/testkit';
+import { createTestSessionTranscriptSource, standardCleanup } from '@/dev/testkit';
 import { layoutHitArea } from '@/dev/testkit/harness/hitFrameReach';
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 import { findGestureByKind, type TestGestureChain } from '@/dev/testkit/mocks/gestureHandler';
 import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+
+const homes = createHomeGovernanceHarness();
+let copyServerId: string;
+installHomeGovernanceBoundaries(homes);
+beforeEach(async () => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'Message copy', serverUrl: 'https://message-copy.test', accountId: 'copy-owner' });
+    copyServerId = serverId;
+    await homes.setActionPolicy(serverId, 'clipboard.write', 'ui', 'allowed');
+    await homes.selectHomes([serverId]);
+});
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -32,9 +44,9 @@ installMessageViewCommonModuleMocks({
             },
         });
     },
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
+    storage: async (importOriginal) => {
+        const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
+        return createPartialStorageModuleMock(importOriginal, {
             useSetting: (key: string) => key === 'transcriptMessageSelectionEnabled' ? true : null,
             useSession: () => null,
         });
@@ -83,10 +95,6 @@ vi.mock('react-native-gesture-handler', async () =>
 vi.mock('@expo/vector-icons', () => ({
     Ionicons: 'Ionicons',
     Octicons: 'Octicons',
-}));
-
-vi.mock('@/sync/sync', () => ({
-    sync: { submitMessage: vi.fn(), sendMessage: vi.fn() },
 }));
 
 // Compile the real transcript graph during collection, after its boundaries are installed, so a cold
@@ -234,7 +242,6 @@ describe('MessageView (native inline action targets)', () => {
     it('copies user message options on long press without submitting them', async () => {
         platformState.os = 'ios';
         const Clipboard = await import('expo-clipboard');
-        const { sync } = await import('@/sync/sync');
         const { MessageView } = await import('./MessageView');
         const { renderWithSessionTranscriptSource: renderScreen } = await import('@/dev/testkit/sessionTranscriptSource');
         const { TranscriptMessageSelectionProvider } = await import('./messageSelection/TranscriptMessageSelectionContext');
@@ -250,15 +257,14 @@ describe('MessageView (native inline action targets)', () => {
             ].join('\n'),
         };
 
+        const boundSource = createTestSessionTranscriptSource({ serverId: copyServerId });
         const screen = await renderScreen(
             <TranscriptMessageSelectionProvider sessionId="s1" eligibleMessageIdsInOrder={['m1']}>
-                <MessageView message={message} metadata={null} sessionId="s1" />
-            </TranscriptMessageSelectionProvider>,
+                <MessageView message={message} metadata={null} sessionId="s1" serverId={copyServerId} />
+            </TranscriptMessageSelectionProvider>, boundSource,
         );
-
         const markdownView = screen.findByType('MarkdownView' as any);
         expect(typeof markdownView.props.onOptionLongPress).toBe('function');
-
         let copied = false;
         await act(async () => {
             copied = await markdownView.props.onOptionLongPress({ title: 'Run command' });
@@ -266,6 +272,6 @@ describe('MessageView (native inline action targets)', () => {
 
         expect(copied).toBe(true);
         expect(Clipboard.setStringAsync).toHaveBeenCalledWith('Run command');
-        expect(sync.submitMessage).not.toHaveBeenCalled();
+        expect(homes.requests.filter(request => request.method !== 'GET' && request.path.includes('/sessions/'))).toEqual([]);
     });
 });

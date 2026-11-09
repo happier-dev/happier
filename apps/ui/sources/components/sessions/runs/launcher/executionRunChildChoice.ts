@@ -1,7 +1,8 @@
 import { ExecutionRunStartFailureDetailsV1Schema, readExecutionRunStartRunCreation,
     type ExecutionRunChildChoiceV1 } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import type { ProviderBoundModelRef, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol';
+import type { ProviderBoundModelRef} from '@happier-dev/protocol/providers/selection/v1';
+import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams/credentials/providerModelCatalogV1';
 
 /** The part of a refused start a chooser reads: an Action result, or one member of a fan-out. */
 export type ExecutionRunStartRefusal = Readonly<{ ok: boolean; error?: string; errorCode?: string; details?: unknown }>;

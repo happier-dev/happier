@@ -6,6 +6,9 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import { StatusPill, type StatusPillVariant } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
+import { ReplyQuote } from '@/components/ui/text/ReplyQuote';
+import { useOptionalSessionTranscriptSource } from '../source/SessionTranscriptSourceContext';
+import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 
 import type { TranscriptComposerAttachment } from './messageComposerAttachments';
 
@@ -36,6 +39,7 @@ function accessibleAttachmentLabel(attachment: TranscriptComposerAttachment): st
 export const ComposerAttachmentFallbackRow = React.memo((props: ComposerAttachmentFallbackRowProps) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const transcript = useOptionalSessionTranscriptSource();
 
     if (props.attachments.length === 0) return null;
 
@@ -43,6 +47,29 @@ export const ComposerAttachmentFallbackRow = React.memo((props: ComposerAttachme
         <View style={styles.row}>
             {props.attachments.map((attachment) => {
                 const testID = `transcript-composer-attachment:${props.messageId}:${attachment.instanceId}`;
+                const source = attachment.source;
+                if (source) {
+                    // An attachment about a transcript message reads as the one source quote (lab T2-A):
+                    // its kind, the quoted words and its note; pressing it opens the source message.
+                    const navigate = transcript?.navigate;
+                    return (
+                        <View key={attachment.instanceId} testID={testID} style={styles.sourceAttachment}>
+                            <ReplyQuote
+                                testID={`transcript-composer-attachment-source:${props.messageId}:${attachment.instanceId}`}
+                                kind="message"
+                                source={{
+                                    state: 'available',
+                                    label: attachment.typeLabel,
+                                    text: attachment.label,
+                                    ...(attachment.description ? { detail: attachment.description } : {}),
+                                    ...(navigate ? { onPress: () => navigate(buildScopedSessionRouteHref({
+                                        serverId: source.session.serverId, sessionId: source.session.sessionId, messageId: source.messageId,
+                                    })) } : {}),
+                                }}
+                            />
+                        </View>
+                    );
+                }
                 const label = `${attachment.typeLabel}: ${attachment.label}`;
                 return (
                     <View
@@ -88,6 +115,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     attachment: {
         flexShrink: 1,
         maxWidth: '100%',
+        minWidth: 0,
+    },
+    sourceAttachment: {
+        width: '100%',
         minWidth: 0,
     },
     description: {

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
     ExternalSessionOperationSharedPresentationV1Schema,
     type ExternalSessionOperationSharedPresentationV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/operationV1';
 
 import { presentExternalSessionOperationShell } from './externalSessionOperationShellPresentation';
 

@@ -47,6 +47,8 @@ import {
 } from '@/components/onboarding/tour/stage/useSpotlightTarget';
 import type { SessionItemProps } from './SessionItem';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useEffectiveSessionAppearanceColor } from '@/hooks/session/useSessionAppearance';
+import { readSessionAppearanceWorkspaceKey } from '@/sync/domains/session/organization/appearanceWorkspaceKey';
 
 const EMPTY_ROW_RENDERABLES = new Map<string, SessionListRenderableSession>() as ReadonlyMap<string, SessionListRenderableSession>;
 export type SessionListRowViewModelBoundaryProps = Readonly<{
@@ -81,6 +83,7 @@ export type SessionListRowViewModelBoundaryProps = Readonly<{
     onMoveToFolder?: () => void;
     sectionMove?: SessionItemProps['sectionMove'];
     spaceMembership?: SessionItemProps['spaceMembership'];
+    onSetSessionAppearance?: SessionItemProps['onSetSessionAppearance'];
     onMoveToWorkspaceRoot?: () => void;
     onMoveUp?: () => void;
     onNativeContextMenuOpenChangeSessionKey: ((sessionKey: string, next: boolean) => void) | null;
@@ -133,6 +136,11 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         : frozenRowRenderableByKeyRef.current;
 
     const rowKey = buildSessionListServerScopedRowKey(props.item.serverId, props.item.sessionId);
+    const liveAppearanceColor = useEffectiveSessionAppearanceColor(props.item.serverId, props.item.sessionId,
+        readSessionAppearanceWorkspaceKey(props.item), { enabled: readLiveRowRenderables });
+    const retainedAppearanceColor = React.useRef(liveAppearanceColor);
+    if (readLiveRowRenderables) retainedAppearanceColor.current = liveAppearanceColor;
+    const appearanceColor = props.dataActive ? liveAppearanceColor : retainedAppearanceColor.current;
     const session = rowKey ? rowRenderableByKey.get(rowKey) ?? null : null;
     const standing = props.item.serverId
         ? props.attentionStandingPolicy.overridesBySessionKey[sessionTagKey(props.item.serverId, props.item.sessionId)]
@@ -162,6 +170,7 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
         }
         : undefined), [draftScope, hasDraft, sessionId]);
     const rowViewModel = React.useMemo<SessionListRowViewModel>(() => buildSessionListRowViewModel({
+        appearanceColor,
         audienceScopes: props.audienceScope ? new Map([[props.audienceScope.serverId, props.audienceScope]]) : undefined,
         homeObservations: props.item.serverId && props.homeObservation
             ? { [props.item.serverId]: props.homeObservation }
@@ -200,6 +209,7 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
             rowContextStatusWords: props.rowContextStatusWords,
         },
     }), [
+        appearanceColor,
         props.rowContextEnabled,
         props.rowContextIdentityDisplay,
         props.rowContextGroupServerId,
@@ -264,6 +274,7 @@ export const SessionListRowViewModelBoundary = React.memo(function SessionListRo
             onMoveToFolder={props.onMoveToFolder}
             sectionMove={props.sectionMove}
             spaceMembership={props.spaceMembership}
+            onSetSessionAppearance={props.onSetSessionAppearance}
             onMoveToWorkspaceRoot={props.onMoveToWorkspaceRoot}
             onMoveUp={props.onMoveUp}
             onMoveDown={props.onMoveDown}

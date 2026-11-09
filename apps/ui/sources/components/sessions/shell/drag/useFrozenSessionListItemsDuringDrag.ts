@@ -6,9 +6,11 @@
  * (`.project/plans/session-list-drag-geometry-performance-unification.md`,
  * section 3.3). It only selects; it never blocks background store updates. The
  * frozen order comes straight from the snapshot held by the caller, so a
- * background reorder during an active drag does NOT move the visible surface
- * (the snapshot is captured once at drag start and never mutated). After
- * drop/cancel the caller clears the snapshot and the latest live list renders.
+ * background reorder during an active drag does NOT move the visible surface.
+ * Current facts and deleted/revoked withdrawals come from the admitted live index;
+ * the snapshot itself is never mutated. At effect dispatch (or cancellation),
+ * the caller clears the snapshot so optimistic membership, placement and rollback
+ * come from the same live projection while the effect owner settles the outcome.
  *
  * No per-pointer-move React state lives here: the projection only flips when
  * the active snapshot itself flips (drag start/end), driven by the caller's
@@ -16,6 +18,7 @@
  */
 
 import * as React from 'react';
+import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndexIdentity';
 
 import type {
     FrozenSessionListProjectionInput,
@@ -29,9 +32,24 @@ export function useFrozenSessionListItemsDuringDrag(
 
     return React.useMemo<FrozenSessionListProjectionResult>(() => {
         if (activeSnapshot) {
+            // Freeze occurrence positions only. The admitted live index still
+            // owns current facts and withdrawals, including same-id foreign Homes.
+            const liveItemsById = new Map(liveViewItems.map(item => [buildSessionListIndexNodeId(item), item]));
+            const frozenItems = activeSnapshot.frozenViewItems;
+            const currentItems: (typeof liveViewItems)[number][] = [];
+            let changed = false;
+            for (const presentedItem of frozenItems) {
+                const currentItem = liveItemsById.get(buildSessionListIndexNodeId(presentedItem));
+                if (!currentItem) {
+                    changed = true;
+                    continue;
+                }
+                currentItems.push(currentItem);
+                if (currentItem !== presentedItem) changed = true;
+            }
             return {
                 frozen: true,
-                viewItems: activeSnapshot.frozenViewItems,
+                viewItems: changed ? currentItems : frozenItems,
                 snapshotId: activeSnapshot.snapshotId,
             };
         }

@@ -5,10 +5,9 @@ import type { AgentInputChipPickerOption } from '@/components/sessions/agentInpu
 import { NewSessionFavoriteModelsDetail, type NewSessionFavoriteModelsDetailProps } from '@/components/sessions/new/components/NewSessionFavoriteModelsDetail';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
-import type { Settings } from '@/sync/domains/settings/settings';
-import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
+import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/state/newSessionInteractionSchemas';
 import { deferAgentInputPopoverClose } from '@/components/sessions/agentInput/selection/deferAgentInputPopoverClose';
-import type { SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
 import {
     favoriteModelSelectionMatchesBackend,
     type FavoriteProviderDisplaySnapshot,
@@ -17,7 +16,7 @@ import {
 import { buildFavoriteBackendIdentity } from '@/sync/domains/models/favoriteModelBackendIdentity';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
-import { useSettings } from '@/sync/store/hooks';
+import { useAgentUiSettings } from '@/agents/catalog/useAgentUiSettings';
 
 export const FAVORITE_MODELS_AGENT_PICKER_OPTION_ID = 'favorite-models';
 
@@ -28,11 +27,11 @@ export type FavoriteModelTogglePayload = Readonly<{
     providerDisplaySnapshot?: FavoriteProviderDisplaySnapshot;
 }>;
 
-function NewSessionFavoriteModelsPickerDetail(props: Omit<NewSessionFavoriteModelsDetailProps, 'settings'>
-    & Readonly<{ readSettings: () => Settings }>) {
-    useSettings();
-    const { readSettings, ...detail } = props;
-    return <NewSessionFavoriteModelsDetail {...detail} settings={readSettings()} />;
+function NewSessionFavoriteModelsPickerDetail(props: Omit<NewSessionFavoriteModelsDetailProps, 'settings'>) {
+    const detail = props;
+    const settings = useAgentUiSettings({ agentIds: props.resolvedBackendEntries.map(entry => entry.agentId),
+        machineId: props.selectedMachineId, domain: 'runtime' });
+    return <NewSessionFavoriteModelsDetail {...detail} settings={settings} />;
 }
 
 function FavoriteModelsPickerIcon(props: Readonly<{ size?: number }>) {
@@ -59,7 +58,6 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
     capabilityServerId: string;
     projectionCurrent: boolean;
     selectedPath: string | null;
-    readSettings: () => Settings;
     refreshProbe?: OptionPickerProbeState | null;
     onSelectFavoriteModel: (
         entry: ResolvedBackendCatalogEntry,
@@ -121,7 +119,6 @@ export function buildNewSessionFavoriteModelsPickerOption(params: Readonly<{
                 capabilityServerId={params.capabilityServerId}
                 projectionCurrent={params.projectionCurrent}
                 cwd={params.selectedPath}
-                readSettings={params.readSettings}
                 refreshProbe={params.refreshProbe ?? null}
                 onSelectFavoriteModel={(entry, modelSelection, configOverrides) => {
                     params.onSelectFavoriteModel(entry, modelSelection, configOverrides);

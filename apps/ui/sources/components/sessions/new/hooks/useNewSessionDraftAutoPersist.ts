@@ -1,5 +1,8 @@
 import * as React from 'react';
 import { InteractionManager, Platform } from 'react-native';
+import { useDestinationInstanceKey } from '@/components/appShell/workspace/destinationInstanceContext';
+import { useDetailsTabNavigationKey } from '@/components/appShell/panes/details/workspace/detailsTabLifetime';
+import { registerMountedTabUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
 
 import {
     TEXT_INPUT_LARGE_TEXT_CHANGE_DEBOUNCE_MS,
@@ -107,6 +110,25 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
         cancelIdlePersistRef.current = null;
         cancelIdlePersist();
     }, []);
+
+    const flushPendingDraft = React.useCallback(() => {
+        if (draftSaveTimerRef.current === null && cancelIdlePersistRef.current === null) return;
+        if (persistenceEnabledRef.current) persistDraftNowRef.current();
+        if (draftSaveTimerRef.current !== null) {
+            clearTimeout(draftSaveTimerRef.current);
+            draftSaveTimerRef.current = null;
+        }
+        cancelPendingIdlePersist();
+    }, [cancelPendingIdlePersist]);
+
+    const destinationTabId = useDestinationInstanceKey();
+    const mountedTabId = useDetailsTabNavigationKey(destinationTabId ?? '');
+    React.useEffect(() => registerMountedTabUnsavedChangesGuard(mountedTabId || null, {
+        isDirtyRef: { current: false },
+        requestDecision: async () => 'keepEditing',
+        prepareGuard: flushPendingDraft,
+        tag: 'NewSessionDraftAutoPersist',
+    }), [flushPendingDraft, mountedTabId]);
 
     const persistAfterCurrentPolicy = React.useCallback((options?: Readonly<{
         allowUnfocused?: boolean;
@@ -243,15 +265,8 @@ export function useNewSessionDraftAutoPersist(params: Readonly<{
         });
     }, [armDebouncedPersist, params.draftText]);
 
-    // Flush pending work on unmount so fast navigation / modal close doesn't drop draft state.
+    // Teardown cannot leave an idle callback behind after its presentation guard releases.
     React.useEffect(() => {
-        return () => {
-            if (draftSaveTimerRef.current === null) {
-                return;
-            }
-            clearTimeout(draftSaveTimerRef.current);
-            draftSaveTimerRef.current = null;
-            persistAfterCurrentPolicy({ allowUnfocused: true });
-        };
-    }, [persistAfterCurrentPolicy]);
+        return flushPendingDraft;
+    }, [flushPendingDraft]);
 }

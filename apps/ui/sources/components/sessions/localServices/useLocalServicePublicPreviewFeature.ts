@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import type { FeatureState } from '@happier-dev/protocol/features/decision';
 
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useFeatureLocalPolicySettings } from '@/hooks/server/useFeatureLocalPolicySettings';
@@ -49,6 +50,8 @@ export function useLocalServicePresentationFeatures(
     options?: Readonly<{ enabled?: boolean }>,
 ): Readonly<{
     publicPreviewFeatureEnabled: boolean;
+    /** The decided state, or null while this Home's features are not yet known. */
+    publicPreviewFeatureState: FeatureState | null;
     publicPreviewCapabilityDisabledReasons: LocalServiceCapabilityDisabledReasons;
 }> {
     const normalizedServerId = normalizeServerId(serverId);
@@ -66,6 +69,7 @@ export function useLocalServicePresentationFeatures(
     return useMemo(() => {
         if (!enabled) return {
             publicPreviewFeatureEnabled: false,
+            publicPreviewFeatureState: null,
             publicPreviewCapabilityDisabledReasons: NO_DISABLED_REASONS,
         };
         const decision = resolveRuntimeFeatureDecisionFromSnapshot({
@@ -79,6 +83,7 @@ export function useLocalServicePresentationFeatures(
         const localServices = snapshot.status === 'ready' ? snapshot.features.capabilities.localServices : null;
         return {
             publicPreviewFeatureEnabled: decision?.state === 'enabled',
+            publicPreviewFeatureState: decision?.state ?? null,
             publicPreviewCapabilityDisabledReasons: localServices ? {
                 preview: localServices.preview.disabledReasons,
                 publicPreview: localServices.publicPreview.disabledReasons,

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
 import { installSessionGitPaneCommonModuleMocks } from './sessionGitPaneTestHelpers';
-import { installSessionPaneRuntimeTestHarness } from '../sessionPaneRuntimeTestHarness';
+import { installSessionPaneRuntimeTestHarness, prepareSessionPaneRuntimeForTests } from '../sessionPaneRuntimeTestHarness';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -36,6 +36,7 @@ installSessionGitPaneCommonModuleMocks({
         });
     },
 });
+await prepareSessionPaneRuntimeForTests();
 const runtime = installSessionPaneRuntimeTestHarness();
 
 describe('SessionRightPanelGitCommitTab (draft debounce)', () => {

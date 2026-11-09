@@ -22,6 +22,11 @@ describe('resolveSessionGitPaneActions', () => {
             .toEqual({ key: 'push', count: 3, disabled: false, emphasis: 'primary' });
     });
 
+    it('offers the existing PR form to choose a base when SCM has no default branch', () => {
+        expect(resolveSessionGitPaneActions({ ...base, choosePrBase: true }).primary)
+            .toMatchObject({ key: 'create-pr', reason: 'missing-base', disabled: false });
+    });
+
     it('orders the next step Resolve, Publish, Pull, Push, then the open PR or Up to date', () => {
         expect(resolveSessionGitPaneActions({ ...base, hasConflicts: true, conflictCount: 2, changedCount: 14, commitReady: true }).primary)
             .toMatchObject({ key: 'resolve', count: 2, emphasis: 'primary' });
@@ -29,17 +34,20 @@ describe('resolveSessionGitPaneActions', () => {
             .toMatchObject({ key: 'publish', emphasis: 'primary' });
         expect(resolveSessionGitPaneActions({ ...base, ahead: 3, behind: 2 }).primary).toMatchObject({ key: 'pull', count: 2 });
         expect(resolveSessionGitPaneActions({ ...base, ahead: 3 }).primary).toMatchObject({ key: 'push', count: 3 });
-        expect(resolveSessionGitPaneActions({ ...base, changedCount: 11 }).primary).toMatchObject({ key: 'up-to-date', emphasis: 'quiet' });
+        expect(resolveSessionGitPaneActions({ ...base, changedCount: 11 }).primary).toMatchObject({ key: 'create-pr', emphasis: 'primary' });
         expect(resolveSessionGitPaneActions({ ...base, prState: 'open', prNumber: 2501 }).primary)
             .toEqual({ key: 'open-pr', count: 2501, disabled: false, emphasis: 'quiet' });
         expect(resolveSessionGitPaneActions({ ...base, prState: 'open', prNumber: null, canCreatePr: false }).primary)
             .toEqual({ key: 'up-to-date', count: null, disabled: true, emphasis: 'quiet' });
     });
 
-    it('keeps a clean branch quiet while pull request creation remains available in the menu', () => {
+    it('offers Create PR as the next step on a synchronized branch without a PR', () => {
         const actions = resolveSessionGitPaneActions(base);
-        expect(actions.primary).toMatchObject({ key: 'up-to-date', emphasis: 'quiet' });
+        expect(actions.primary).toMatchObject({ key: 'create-pr', disabled: false, emphasis: 'primary' });
         expect(actions.menu).toContainEqual({ key: 'create-pr', count: null, disabled: false });
+        for (const override of [{ prState: 'unknown' as const }, { canCreatePr: false }, { upstream: null }, { ahead: 1, remoteActions: [] }, { behind: 1, remoteActions: [] }]) {
+            expect(resolveSessionGitPaneActions({ ...base, ...override }).primary.key).not.toBe('create-pr');
+        }
     });
 
     it('marks the reachable pull recovery after a rejected push as attention, not an ordinary sync primary', () => {

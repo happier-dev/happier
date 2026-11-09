@@ -20,12 +20,15 @@ export function buildNewSessionLaunchRouteParams(params: Readonly<{
     machineId?: string | null;
     targetServerId?: string | null;
     worktree?: string | null;
+    /** The Section a "New session here" entry starts in: entry context, stored only with the first authored edit. */
+    sectionId?: string | null;
 }>): Readonly<{
     draftId: string;
     directory?: string;
     machineId?: string;
     spawnServerId?: string;
     worktree?: string;
+    sectionId?: string;
 }> {
     return {
         draftId: params.draftId,
@@ -33,6 +36,7 @@ export function buildNewSessionLaunchRouteParams(params: Readonly<{
         ...(params.directory ? { directory: params.directory } : {}),
         ...(params.worktree ? { worktree: params.worktree } : {}),
         ...(params.targetServerId ? { spawnServerId: params.targetServerId } : {}),
+        ...(params.sectionId ? { sectionId: params.sectionId } : {}),
     };
 }
 

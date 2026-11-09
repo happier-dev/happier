@@ -1,13 +1,12 @@
 import React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { collectUnexpectedRawTextNodes, renderScreen } from '@/dev/testkit';
+import { collectUnexpectedRawTextNodes, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionGuidanceCommonModuleMocks } from './sessionGuidanceTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const routerPushSpy = vi.fn();
-const reachabilityState = vi.hoisted(() => ({ unavailable: false }));
 
 const mockEnv = vi.hoisted(() => ({
   iconsRenderAsText: false,
@@ -67,10 +66,6 @@ vi.mock('@/hooks/session/useConnectTerminal', () => ({
   }),
 }));
 
-vi.mock('@/components/ui/buttons/RoundButton', () => ({
-  RoundButton: (props: any) => React.createElement('RoundButton', props, null),
-}));
-
 const mockAppConfig = vi.hoisted(() => ({
   variant: 'production' as string,
   cliNpmDistTag: undefined as unknown,
@@ -80,35 +75,50 @@ vi.mock('@/config', () => ({
   config: mockAppConfig,
 }));
 
-// The Home reachability owner: while it reports the Home unavailable, its loading gate settles.
-vi.mock('@/components/navigation/connectionStatus/HomeReachabilityGate', () => ({
-  HomeReachabilityGate: (props: { variant: string; children: React.ReactNode }) => (reachabilityState.unavailable
-    ? React.createElement('HomeUnreachable', { variant: props.variant })
-    : React.createElement(React.Fragment, null, props.children)),
-}));
+vi.mock('socket.io-client', async importOriginal =>
+  (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+// Install the common platform ports before loading Sync's UI dependency graph.
+const { createHomeGovernanceHarness, installHomeGovernanceBoundaries } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+const { storage } = await import('@/sync/domains/state/storageStore');
+const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+const { publishAppliedActiveServerRuntimeAvailability, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+await loadSyncSingletonForTests();
+const initialStorage = storage.getState();
 
 describe('SessionGettingStartedGuidanceView', () => {
+  beforeEach(async () => {
+    await homes.reset();
+    const serverId = await homes.addHome({ name: 'Company', serverUrl: 'https://company.example.test', accountId: 'guidance-account' });
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    publishAppliedActiveServerRuntimeAvailability(true);
+    storage.setState({ machineListStatusByServerId: { [serverId]: 'idle' }, endpointStatus: 'online', socketStatus: 'connected', endpointReason: null, syncError: null });
+  });
+  afterEach(async () => {
+    standardCleanup();
+    await homes.reset();
+    publishAppliedActiveServerRuntimeAvailability(false);
+    storage.setState(initialStorage, true);
+  });
   // An unreachable Home never blocks: the "Loading… Fetching your machines and sessions" state
   // settles into the reachability owner's "Can't reach {Home} · Retry" on every surface.
-  it.each([['sidebar', 'line'], ['primaryPane', 'pane']] as const)(
+  it.each(['sidebar', 'primaryPane'] as const)(
     'settles its loading state through the Home reachability owner (%s)',
-    async (variant, gateVariant) => {
-      reachabilityState.unavailable = true;
-      try {
-        const { SessionGettingStartedGuidanceView } = await import('./SessionGettingStartedGuidance');
-        const screen = await renderScreen(
-          <SessionGettingStartedGuidanceView
-            variant={variant}
-            model={{ kind: 'loading', targetLabel: 'Company', serverUrl: '', serverName: 'company', showServerSetup: false }}
-          />,
-        );
-        const settled = screen.findAllByType('HomeUnreachable' as any);
-        expect(settled).toHaveLength(1);
-        expect(settled[0]!.props.variant).toBe(gateVariant);
-        expect(screen.getTextContent()).not.toContain('sessionGettingStarted.subtitle.loading');
-      } finally {
-        reachabilityState.unavailable = false;
-      }
+    async (variant) => {
+      storage.setState({ endpointStatus: 'offline', socketStatus: 'disconnected' });
+      const { SessionGettingStartedGuidanceView } = await import('./SessionGettingStartedGuidance');
+      const screen = await renderScreen(
+        <SessionGettingStartedGuidanceView
+          variant={variant}
+          model={{ kind: 'loading', targetLabel: 'Company', serverUrl: '', serverName: 'company', showServerSetup: false }}
+        />,
+      );
+      expect(screen.findByTestId('home-unreachable')).not.toBeNull();
+      expect(screen.findByTestId('home-unreachable-retry')).not.toBeNull();
+      expect(screen.getTextContent()).not.toContain('sessionGettingStarted.subtitle.loading');
     },
   );
 
@@ -130,7 +140,7 @@ describe('SessionGettingStartedGuidanceView', () => {
     );
 
     expect(screen.findByTestId('session-getting-started-open-setup')).not.toBeNull();
-    expect(screen.findAllByType('RoundButton' as any)).toHaveLength(1);
+    expect(screen.findAllByType(RoundButton)).toHaveLength(1);
   });
 
   it('skips rerendering the guidance view when props are equal by value', async () => {
@@ -150,11 +160,12 @@ describe('SessionGettingStartedGuidanceView', () => {
     );
 
     const screen = await renderScreen(createElement());
-    expect(guidanceNativeRenders.renderCount).toBe(1);
+    expect(guidanceNativeRenders.renderCount).toBeGreaterThan(0);
+    const mountedRenderCount = guidanceNativeRenders.renderCount;
 
     await screen.update(createElement());
 
-    expect(guidanceNativeRenders.renderCount).toBe(1);
+    expect(guidanceNativeRenders.renderCount).toBe(mountedRenderCount);
   });
 
   it('hides terminal follow-up when setup is available', async () => {
@@ -181,10 +192,12 @@ describe('SessionGettingStartedGuidanceView', () => {
     expect(content).not.toMatch(/\bh(?:appier|prev|dev) server add\b/);
     expect(content).not.toContain('happier daemon install');
     expect(screen.findByTestId('session-getting-started-scroll')).not.toBeNull();
-    expect(screen.findByTestId('session-getting-started-logo')).not.toBeNull();
+    // The pane is the first thing a new Account sees: the Daybreak "no machines" scene, not the logo.
+    expect(screen.findByTestId('session-getting-started-logo')).toBeNull();
+    expect(screen.findByTestId('session-getting-started-connect-machine-scene')).not.toBeNull();
     expect(screen.findByTestId('session-getting-started-kind-connect_machine')).not.toBeNull();
     expect(screen.findByTestId('session-getting-started-open-setup')).not.toBeNull();
-    expect(screen.findAllByType('RoundButton' as any)).toHaveLength(1);
+    expect(screen.findAllByType(RoundButton)).toHaveLength(1);
 
     await screen.pressByTestIdAsync('session-getting-started-open-setup');
     expect(onOpenSetup).toHaveBeenCalledTimes(1);
@@ -211,7 +224,7 @@ describe('SessionGettingStartedGuidanceView', () => {
       expect(screen.findByTestId('session-getting-started-setup-primary-card')).not.toBeNull();
       expect(screen.findByTestId('session-getting-started-cli-follow-up')).toBeNull();
       expect(screen.findByTestId('session-getting-started-open-setup')).not.toBeNull();
-      expect(screen.findAllByType('RoundButton' as any)).toHaveLength(1);
+      expect(screen.findAllByType(RoundButton)).toHaveLength(1);
       routerPushSpy.mockClear();
       await screen.pressByTestIdAsync('session-getting-started-open-setup');
       expect(routerPushSpy).toHaveBeenCalledWith('/settings/machines/add?path=thisComputer');

@@ -29,6 +29,28 @@ describe('buildSessionBoardItemActions', () => {
         expect(actions.map(action => action.id)).toEqual(expect.arrayContaining(['pin-to-board', 'about', 'addTo', 'saveAsYours', 'shareVisual']));
     });
 
+    it('holds a reply\'s predicted editor rows in their final place, disabled, while its Board facts load', () => {
+        const html = { ...item, destination: 'transcript' as const, frame: 'frameless' as const,
+            source: { kind: 'hostedHtml' as const, source: artifactHtmlBundleFromBodyV1('<main>Tides</main>') } };
+        const shared = { density: 'compact' as const, item: html, onAddToCompanion: vi.fn(),
+            visualCopy: { onSaveArtifact: vi.fn(), onShare: vi.fn() } };
+        const pending = buildSessionBoardItemActions({ ...shared, canEdit: false, boardFactsPending: true });
+        const ready = buildSessionBoardItemActions({ ...shared, canEdit: true, onPinToBoard: vi.fn(), onEdit: vi.fn(),
+            onEditNetwork: vi.fn(), onRemove: vi.fn() });
+        expect(pending.map(action => action.id)).toEqual(ready.map(action => action.id));
+        expect(ready.map(action => action.id)).toEqual(expect.arrayContaining(['pin-to-board', 'network', 'remove']));
+        for (const id of ['pin-to-board', 'edit', 'network', 'remove']) {
+            const held = pending.find(action => action.id === id);
+            if (!held) continue;
+            expect(held).toMatchObject({ disabled: true });
+            expect(held.onPress).toBeUndefined();
+            expect(ready.find(action => action.id === id)?.disabled).toBeUndefined();
+        }
+        // Nothing is held for a viewer who is not an editor, or once the facts have loaded.
+        expect(buildSessionBoardItemActions({ ...shared, canEdit: false }).map(action => action.id))
+            .not.toEqual(expect.arrayContaining(['pin-to-board']));
+    });
+
     it('offers Network access only to an editor with a handler, in the content group', () => {
         const onEditNetwork = vi.fn();
         const withHandler = buildSessionBoardItemActions({ density: 'full', canEdit: true, item, onEditNetwork });

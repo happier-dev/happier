@@ -10,6 +10,10 @@ import { SCM_DIFF_SUMMARY_SETTING_KEYS } from '@/settings/scmDiffSummary/setting
 import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { ScmDiffSummaryResultDeleteResponseSchema, ScmDiffSummaryResultEditInputSchema, ScmDiffSummaryResultResponseSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 
 const boundary = vi.hoisted(() => ({
     saved: null as ScmDiffSummaryResult | null,
@@ -47,7 +51,7 @@ async function remote(method: string, payload?: unknown): Promise<unknown> {
         run: { runId: boundary.saved?.output.runId, callId: 'generator-call', sidechainId: 'generator-sidechain',
             intent: 'scm_diff_summary', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read_only',
             retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', status: 'running', startedAtMs: 1 },
-        latestToolResult: boundary.saved?.output,
+        structuredMeta: { kind: 'scm_diff_summary.v1', payload: boundary.saved?.output },
     });
     if (method === RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_LIST) {
         const saved = boundary.saved!;
@@ -65,7 +69,11 @@ async function remote(method: string, payload?: unknown): Promise<unknown> {
 }
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
     const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
-    const rpc = async (request: { method: string; machineId?: string; payload?: unknown }) => { boundary.requests.push(request); return remote(request.method, request.payload); };
+    const rpc = async (request: { method: string; machineId?: string; payload?: unknown }) => {
+        if (request.method === RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE) throw new Error('Run admission requires requester-carrying Home HTTP');
+        boundary.requests.push(request);
+        return remote(request.method, request.payload);
+    };
     // Method-specific external wire fixtures cannot express the transport's arbitrary R.
     return createServerScopedMachineRpcBoundaryMock(rpc as typeof import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc').machineRpcWithServerScope);
 });
@@ -87,6 +95,7 @@ const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFix
 const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
 const { getStorage } = await import('@/sync/domains/state/storage');
 const { createScmDiffSummaryModelCatalogHttpBoundary } = await import('@/dev/testkit/harness/scmDiffSummaryModelCatalogBoundary');
+const { createScmRunActionHttpBoundary } = await import('@/dev/testkit/harness/scmActionTransport');
 const { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } = await import('@happier-dev/protocol/acp/catalog/catalogRowsV1');
 const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
 await loadSyncSingletonForTests();
@@ -101,8 +110,9 @@ const { ScmCommitsView } = await import('./ScmCommitsView');
 const { RunWorkNotifications } = await import('@/components/sessions/work/RunWorkNotifications');
 const { applySavedScmDiffSummaryResult, retireScmDiffSummaryScope } = await import('@/sync/ops/scmDiffSummary/generate');
 const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
-const { WorkflowTriggerSetV1Schema } = await import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1');
-const { buildTriggerTarget } = await import('@/components/workflows/triggers/sessionTriggerForm');
+const { OtherAccountFollowV1Schema } = await import('@happier-dev/protocol/sessions/follow/accountFollow');
+const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+const { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID } = await import('@happier-dev/protocol/sessions/follow/changes');
 const { SPECIMEN_COMPARISON } = await import('@/components/dev/changes/walkthroughSpecimenFixture');
 const initialStorage = getStorage().getState();
 let fixtureHomeId: string | null = null;
@@ -128,7 +138,13 @@ async function addHome(name: string) {
     const id = await homes.addHome({ name, serverUrl: `https://${name}.example.test`,
         serverIdentityId: `srv_${name.replaceAll('-', '_')}`, accountId: 'commit-plan-account', accountEncryptionMode: 'plain', currentAccount: true });
     fixtureHomeId = id;
+    const features = createRootLayoutFeaturesResponse({ features: { sessions: { following: { enabled: true } } },
+        capabilities: { serverIdentity: { serverIdentityId: `srv_${name.replaceAll('-', '_')}` } } });
+    homes.answer(id, '/v1/features', { body: features });
+    homes.answer(id, '/v1/features/authenticated', { body: features });
+    primeServerFeaturesSnapshot({ serverId: id, snapshot: { status: 'ready', features } });
     homes.answer(id, ACP_CATALOG_ROWS_ROUTE_V1, { body: AcpCatalogRowReadResponseV1Schema.parse({ status: 'absent' }) });
+    homes.answer(id, '/v2/account/follows/sources', { body: { follow: null } });
     return { id };
 }
 
@@ -168,6 +184,14 @@ function savedResult(revision: number, status: 'unknown' | 'applying' | 'complet
         } });
 }
 
+async function pushResultUpdate(serverId: string, revision: number, resultId = 'poll-result', machineId = 'machine:commit-progress') {
+    const { handleEphemeralSocketUpdate } = await import('@/sync/engine/socket/socket');
+    await handleEphemeralSocketUpdate({ sourceServerId: serverId,
+        update: { type: 'scm-diff-summary-result-updated', machineId, resultId, revision },
+        addActivityUpdate: () => {}, addMachineActivityUpdate: () => {},
+        getSessionEncryption: () => null, getSession: () => undefined, applyMessages: () => {} });
+}
+
 async function mountProposal(sessionId: string, saved = savedResult(1, 'unknown')) {
     boundary.sessionId = sessionId;
     boundary.saved = saved;
@@ -203,10 +227,18 @@ async function mountWorkspaceProposal(saved = savedResult(1, 'unknown'), renderP
     (await createScmDiffSummaryModelCatalogHttpBoundary({ serverUrl: 'https://workspace-commit-plan.example.test',
         serverIdentityId: 'srv_workspace_commit_plan', accountId: 'commit-plan-account', machineId: machine.id,
         targets: [{ backendTarget, models: OFFERED_MODELS }] })).installOn(homes, home.id);
+    (await createScmRunActionHttpBoundary({ serverUrl: 'https://workspace-commit-plan.example.test',
+        serverIdentityId: 'srv_workspace_commit_plan', accountId: 'commit-plan-account', machineId: machine.id,
+        actionIds: ['scm.diffSummary.generate'], execute(_actionId, input) {
+            boundary.requests.push({ method: RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE, machineId: machine.id, payload: input });
+            return remote(RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE, input);
+        } })).installOn(homes, home.id);
     getStorage().setState({ profileScope: { serverId: home.id, accountId: 'commit-plan-account' },
         sessions: {}, machines: machineKnown ? { [machine.id]: machine } : {}, machineListByServerId: { [home.id]: machineKnown ? [machine] : [] },
         settings: { ...initialStorage.settings, experiments: true, featureToggles: { 'execution.runs': true },
             [SCM_DIFF_SUMMARY_SETTING_KEYS.modelProfileOverride]: profile.catalogId } });
+    // A visible Run Follow control consumes the applied Account, not a saved-Home credential alone.
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
     const latest: { current: ReturnType<typeof useSessionCommitPlan> | null } = { current: null };
     const target: {
         setRoot: React.Dispatch<React.SetStateAction<string>> | null;
@@ -305,6 +337,19 @@ describe('proposal discard Action policy', () => {
 });
 
 describe('exact workspace commit plans', () => {
+    it('shows the saved-read refusal reason in Commits and clears it after Retry', async () => {
+        const failure = { success: false, errorCode: 'result_unavailable', error: 'The saved comparison could not be read.' };
+        boundary.read = async () => failure;
+        const { latest, screen } = await mountWorkspaceProposal(savedResult(1, 'complete'), true, true);
+        await vi.waitFor(() => expect(latest.current?.phase).toBe('unavailable'));
+        expect(latest.current?.binding.restoreFailure).toEqual(failure);
+        expect(screen.getTextContent()).toContain(failure.error);
+        boundary.read = null;
+        await act(async () => { latest.current!.binding.retryRestore(); });
+        await vi.waitFor(() => expect(latest.current?.phase).toBe('ready'));
+        expect(screen.getTextContent()).not.toContain(failure.error);
+        await screen.unmount();
+    });
     it('restores the exact workspace proposal before its machine presence hydrates', async () => {
         const saved = savedResult(1, 'complete');
         const { latest, screen } = await mountWorkspaceProposal(saved, false, false, false);
@@ -334,11 +379,16 @@ describe('exact workspace commit plans', () => {
         boundary.listSaved = false;
         const admission = createDeferred<unknown>();
         let generations = 0;
-        boundary.generate = () => ++generations === 1 ? Promise.resolve(saved.output) : admission.promise;
-        const { latest, screen } = await mountWorkspaceProposal(saved, true, true);
+        // Real admission precedes publication: revision0 names the Run, then the
+        // Machine's revision1 hint makes its complete saved proposal readable.
+        boundary.generate = () => ++generations === 1 ? Promise.resolve(ScmDiffSummaryGenerateOutputSchema.parse({
+            ...saved.output, revision: 0, outputs: { commitPlan: { state: 'pending' } },
+        })) : admission.promise;
+        const { latest, screen, home, machine } = await mountWorkspaceProposal(saved, true, true);
         await vi.waitFor(() => expect(latest.current?.binding.modelAvailable, proposalDiagnostic(latest.current)).toBe(true));
         await vi.waitFor(() => expect(latest.current?.binding.launch.canLaunchExecutionRuns).toBe(true));
         await act(async () => { await latest.current!.binding.onStart(['commitPlan']); });
+        await act(async () => { await pushResultUpdate(home.id, saved.revision, saved.resultId, machine.id); });
         await vi.waitFor(() => expect(latest.current?.binding.viewModel?.savedResult?.resultId).toBe(saved.resultId));
         let start!: ReturnType<ReturnType<typeof useSessionCommitPlan>['binding']['onStart']>;
         await act(async () => { start = latest.current!.binding.onStart(['commitPlan']); });
@@ -357,6 +407,31 @@ describe('exact workspace commit plans', () => {
         expect(screen.findByTestId('commit-group:g1')).toBeTruthy();
         expect(Boolean(screen.findByTestId('commit-proposal-notice-failed-reason'))).toBe(false);
         expect(screen.getTextContent()).not.toContain('Retry failed.');
+    });
+
+    it('starts a new attempt from a restored terminal admission failure instead of reselecting its receipt', async () => {
+        const initial = savedResult(1, 'complete');
+        const failed = ScmDiffSummaryResultSchema.parse({ ...initial, application: undefined,
+            output: { ...initial.output, success: false, errorCode: 'SUMMARY_FAILED',
+                error: 'Project launch requester custody is unavailable',
+                outputs: { commitPlan: { state: 'failed', reason: 'Project launch requester custody is unavailable' } } } });
+        const fresh = ScmDiffSummaryGenerateOutputSchema.parse({ ...initial.output,
+            resultId: 'fresh-proposal', revision: 0, runId: 'fresh-generator',
+            outputs: { commitPlan: { state: 'pending' } } });
+        boundary.generate = async () => fresh;
+        const { latest, screen, machine } = await mountWorkspaceProposal(failed, true, true);
+        await vi.waitFor(() => expect(latest.current?.binding.restoreState).toBe('ready'));
+        await vi.waitFor(() => expect(latest.current?.binding.modelAvailable, proposalDiagnostic(latest.current)).toBe(true));
+        await vi.waitFor(() => expect(latest.current?.binding.launch.canLaunchExecutionRuns).toBe(true));
+        expect(latest.current?.binding.viewModel?.savedResult?.resultId, proposalDiagnostic(latest.current)).toBe(failed.resultId);
+        expect(latest.current?.binding.generationFailure).toMatchObject({ reason: 'generationFailed' });
+        await act(async () => { screen.findByTestId('commit-proposal-start')!.props.onPress(); });
+        await vi.waitFor(() => expect(boundary.requests.find(request => request.method === RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE))
+            .toMatchObject({ machineId: machine.id, payload: { cwd: '/repo/exact', outputs: ['commitPlan'], cachePolicy: { mode: 'bypass' } } }));
+        await vi.waitFor(() => expect(latest.current?.binding.viewModel?.resultId).toBe('fresh-proposal'));
+        expect(latest.current?.binding.viewModel?.executionRunId).toBe('fresh-generator');
+        expect(latest.current?.isGenerating).toBe(true);
+        expect(boundary.saved).toBe(failed);
     });
 
     it('shows a generation failure retained in a successfully admitted saved result', async () => {
@@ -422,7 +497,7 @@ describe('exact workspace commit plans', () => {
                 outputs: { commitPlan: { state, ...(state === 'pending' ? {} : { value: plan }) } } },
         });
         const pending = outputAt(1, 'pending');
-        const { latest, screen, machine } = await mountWorkspaceProposal(pending, true, true);
+        const { latest, screen, machine, home } = await mountWorkspaceProposal(pending, true, true);
         await vi.waitFor(() => expect(screen.findByTestId('commit-proposal-notify'), proposalDiagnostic(latest.current)).toBeTruthy());
         const notification = screen.root.findByType(RunWorkNotifications);
         const sourceIdentity = notification.props.source;
@@ -432,18 +507,12 @@ describe('exact workspace commit plans', () => {
             comparisonId: pending.output.comparison!.id, resultId: pending.resultId });
         expect(screen.findByTestId('commit-group:g1')).toBeNull();
         const requestKey = latest.current!.binding.viewModel!.requestKey;
-        const armed = WorkflowTriggerSetV1Schema.parse({ automationId: 'proposal-notification', revision: 1,
-            enabled: true, health: 'available', project: { machineId: machine.id, directory: '/repo/exact' },
-            target: buildTriggerTarget({ kind: 'notifyMe', message: 'Proposal update', title: '', channels: [] }, 'account'),
-            triggers: [{ id: 'proposal-trigger', revision: 0, createdAt: 1, updatedAt: 1, enabled: true,
-                kind: 'runLifecycle', condition: 'terminal', remainingOccurrences: 1, status: { state: 'waiting', runId: null },
-                triggerDefinitionEnvelope: null,
-                source: { ...sourceIdentity, observation: { kind: 'scm_diff_summary', output: 'commitPlan',
-                    comparisonId: pending.output.comparison!.id, resultId: pending.resultId, afterRevision: 1 } } }],
-        });
-        // External persisted trigger snapshot, parsed by the strict consumer; real store matching and control stay mounted.
-        await act(async () => getStorage().getState().upsertWorkflowTriggerSet({ set: armed, queryKey: 'account_inline' }));
-        expect(screen.findByTestId('notify-run-terminal-cancel:commit-plan-generator')).toBeTruthy();
+        const armed = OtherAccountFollowV1Schema.parse({ source: sourceIdentity, following: true, persistent: false,
+            policy: { preset: 'quiet' }, once: [{ kind: 'output_ready', outputRef: { kind: 'scm_diff_summary', output: 'commitPlan',
+                comparisonId: pending.output.comparison!.id, resultId: pending.resultId }, afterRevision: 1 }] });
+        homes.answer(home.id, '/v2/account/follows/sources', { body: { follow: armed } });
+        await act(async () => publishHomeAccountChange(home.id, [ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID], { changeKinds: ['account'] }));
+        await vi.waitFor(() => expect(screen.findByTestId('notify-run-terminal-cancel:commit-plan-generator')).toBeTruthy());
         const writing = outputAt(2, 'writing');
         boundary.saved = writing;
         await act(async () => applySavedScmDiffSummaryResult(requestKey, writing));
@@ -468,7 +537,7 @@ describe('exact workspace commit plans', () => {
         const { latest, machine } = await mountWorkspaceProposal(saved, true);
         await vi.waitFor(() => expect(latest.current?.phase, proposalDiagnostic(latest.current)).toBe('ready'));
         await vi.waitFor(() => expect(latest.current?.binding.launch.canLaunchExecutionRuns).toBe(true));
-        expect(latest.current?.binding.selected.success).toBe(true);
+        await vi.waitFor(() => expect(latest.current?.binding.selected.success, proposalDiagnostic(latest.current)).toBe(true));
         expect(latest.current?.actions.onRegenerate).toBeDefined();
         await act(async () => latest.current?.actions.onRegenerate?.());
         await vi.waitFor(() => expect(latest.current?.binding.generationFailure).toMatchObject({ reason: 'generationFailed' }));
@@ -518,8 +587,46 @@ describe('exact workspace commit plans', () => {
 });
 
 describe('useSessionCommitPlan application progress', () => {
+    it.each(['session', 'workspace'] as const)('observes approved apply progress and Stop revisions in a mounted %s proposal without an active Action request', async host => {
+        const proposal = savedResult(1, 'unknown');
+        const { application: _application, ...editable } = proposal;
+        const { latest, home, screen } = host === 'session' ? await mountProposal('approved-commit-progress', editable)
+            : await mountWorkspaceProposal(editable);
+        // An absent application is also the pre-hydration value. Observe the saved proposal
+        // before measuring revision pushes, so its initial read is outside that measurement.
+        await vi.waitFor(() => expect(latest.current?.binding.viewModel?.savedResult)
+            .toMatchObject({ resultId: proposal.resultId, revision: 1 }));
+        let reads = 0;
+        boundary.read = async () => { reads++; return { success: true, result: boundary.saved }; };
+        const push = (revision: number, resultId = proposal.resultId, machineId = host === 'session' ? 'machine:commit-progress' : 'machine:workspace-commit-plan', serverId = home.id) =>
+            pushResultUpdate(serverId, revision, resultId, machineId);
+        const applying = savedResult(2, 'applying');
+        boundary.saved = applying;
+        await act(async () => { await push(2, 'another-result'); await push(2, proposal.resultId, 'another-machine');
+            await push(2, proposal.resultId, undefined, 'another-home'); });
+        expect(reads).toBe(0);
+        await act(async () => { await push(2); });
+        await vi.waitFor(() => expect(latest.current?.proposal?.application?.status).toBe('applying'));
+        expect(latest.current?.actions.onStopAfterCurrent).toBeTypeOf('function');
+        expect(reads).toBe(1);
+        await act(async () => { await push(2); await push(1); });
+        expect(reads).toBe(1);
+        boundary.saved = ScmDiffSummaryResultSchema.parse({ ...applying, revision: 3,
+            output: { ...applying.output, revision: 3 }, application: { ...applying.application, stopAfterCurrent: true } });
+        await act(async () => { await push(3); });
+        await vi.waitFor(() => expect(latest.current?.proposal?.application?.stopAfterCurrent).toBe(true));
+        expect(reads).toBe(2);
+        boundary.saved = savedResult(4, 'complete');
+        await act(async () => { publishHomeAccountChange(home.id, undefined, { source: 'connected' }); });
+        await vi.waitFor(() => expect(latest.current?.proposal?.groups[0]?.state).toBe('landed'));
+        expect(reads).toBe(3);
+        await act(async () => screen.unmount());
+        await act(async () => { await push(5); });
+        expect(reads).toBe(3);
+    }, 120_000);
+
     it('keeps at most one slow progress read in flight and preserves progress and final publication', async () => {
-        const { latest } = await mountProposal('slow-commit-progress');
+        const { latest, home } = await mountProposal('slow-commit-progress');
         const slowRead = createDeferred<unknown>();
         const recovery = createDeferred<unknown>();
         let outstanding = 0;
@@ -527,16 +634,23 @@ describe('useSessionCommitPlan application progress', () => {
         let reads = 0;
         boundary.read = async () => {
             reads += 1; outstanding += 1; maxOutstanding = Math.max(maxOutstanding, outstanding);
-            try { return await slowRead.promise; } finally { outstanding -= 1; }
+            try { return reads === 1 ? await slowRead.promise : { success: true, result: boundary.saved }; } finally { outstanding -= 1; }
         };
         boundary.recover = () => recovery.promise;
         vi.useFakeTimers();
         await act(async () => latest.current?.actions.onRecover?.());
+        await act(async () => { await pushResultUpdate(home.id, 2); });
         await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
         expect(maxOutstanding).toBe(1);
+        boundary.saved = savedResult(3, 'applying');
+        await act(async () => { await pushResultUpdate(home.id, 3); });
         await act(async () => slowRead.resolve({ success: true, result: savedResult(2, 'applying') }));
+        // Resolving the first transport read starts the queued authenticated reread.
+        await vi.waitFor(() => expect(latest.current?.binding.viewModel?.revision).toBe(3));
         expect(latest.current?.proposal?.groups[0]?.state).toBe('writing');
-        await act(async () => recovery.resolve({ success: true, result: savedResult(3, 'complete') }));
+        expect(reads).toBe(2);
+        expect(maxOutstanding).toBe(1);
+        await act(async () => recovery.resolve({ success: true, result: savedResult(4, 'complete') }));
         expect(latest.current?.proposal?.groups[0]?.state).toBe('landed');
         expect(latest.current?.busy).toBe(false);
         const completedReads = reads;
@@ -545,7 +659,7 @@ describe('useSessionCommitPlan application progress', () => {
     }, 120_000);
 
     it('stops reading progress after the proposal view unmounts without cancelling its application', async () => {
-        const { latest, screen } = await mountProposal('unmounted-commit-progress');
+        const { latest, screen, home } = await mountProposal('unmounted-commit-progress');
         const recovery = createDeferred<unknown>();
         boundary.recover = () => recovery.promise;
         let reads = 0;
@@ -553,10 +667,12 @@ describe('useSessionCommitPlan application progress', () => {
         vi.useFakeTimers();
         const idleTimers = vi.getTimerCount();
         await act(async () => latest.current?.actions.onRecover?.());
-        expect(vi.getTimerCount()).toBe(idleTimers + 1);
+        expect(vi.getTimerCount()).toBe(idleTimers);
+        await act(async () => { await pushResultUpdate(home.id, 2); });
         await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
         expect(reads).toBe(1);
         await act(async () => screen.unmount());
+        await act(async () => { await pushResultUpdate(home.id, 3); });
         await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
         expect(reads).toBe(1);
         expect(vi.getTimerCount()).toBe(idleTimers);
@@ -568,8 +684,8 @@ describe('useSessionCommitPlan application progress', () => {
         expect(reopened.latest.current?.proposal?.groups[0]?.state).toBe('landed');
     }, 120_000);
 
-    it('retires progress polling when a retained Git view is hidden and preserves the final current-Account result', async () => {
-        const { latest, visibility } = await mountProposal('hidden-commit-progress');
+    it('retires pushed progress reads when a retained Git view is hidden and preserves the final current-Account result', async () => {
+        const { latest, visibility, home } = await mountProposal('hidden-commit-progress');
         const recovery = createDeferred<unknown>();
         boundary.recover = () => recovery.promise;
         let reads = 0;
@@ -577,15 +693,17 @@ describe('useSessionCommitPlan application progress', () => {
         vi.useFakeTimers();
         const idleTimers = vi.getTimerCount();
         await act(async () => latest.current?.actions.onRecover?.());
+        await act(async () => { await pushResultUpdate(home.id, 2); });
         await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
         expect(reads).toBe(1);
         await act(async () => visibility.setEnabled?.(false));
+        await act(async () => { await pushResultUpdate(home.id, 3); });
         await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
         expect(reads).toBe(1);
         expect(vi.getTimerCount()).toBe(idleTimers);
         boundary.saved = savedResult(3, 'complete');
         await act(async () => recovery.resolve({ success: true, result: boundary.saved }));
         await act(async () => visibility.setEnabled?.(true));
-        expect(latest.current?.proposal?.groups[0]?.state).toBe('landed');
+        await vi.waitFor(() => expect(latest.current?.proposal?.groups[0]?.state).toBe('landed'));
     }, 120_000);
 });

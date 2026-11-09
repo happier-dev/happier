@@ -315,7 +315,7 @@ describe('useNewSessionDraftAutoPersist', () => {
         }
     });
 
-    it('defers large pending draft persistence on unmount instead of serializing synchronously', async () => {
+    it('flushes an idle pending large draft synchronously before its presentation unmounts', async () => {
         const persistDraftNow = vi.fn();
         const largeDraftTextLength = TEXT_INPUT_LARGE_TEXT_VALUE_LENGTH_LIMIT + 1;
         const delayMs = resolveNewSessionDraftAutoPersistDelayMs({
@@ -345,14 +345,12 @@ describe('useNewSessionDraftAutoPersist', () => {
 
             draftChangeKey = 'changed';
             await hook.rerender();
-            await hook.unmount();
-
-            expect(persistDraftNow).not.toHaveBeenCalled();
-
             await vi.advanceTimersByTimeAsync(delayMs);
             expect(persistDraftNow).not.toHaveBeenCalled();
             expect(idleCallbacks).toHaveLength(1);
 
+            await hook.unmount();
+            expect(persistDraftNow).toHaveBeenCalledTimes(1);
             idleCallbacks[0]?.();
         } finally {
             vi.useRealTimers();

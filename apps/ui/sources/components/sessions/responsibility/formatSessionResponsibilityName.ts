@@ -1,4 +1,4 @@
-import type { AccountDisplayProfileV1 } from '@happier-dev/protocol';
+import type { AccountDisplayProfileV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
 import { t } from '@/text';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 

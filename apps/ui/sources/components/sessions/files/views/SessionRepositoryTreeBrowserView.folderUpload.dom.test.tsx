@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { standardCleanup } from '@/dev/testkit';
 import { createRepositoryPickerInputHost } from '@/components/workspaces/files/repositoryTree/repositoryUploadBrowserTestFixture';
@@ -18,16 +18,15 @@ vi.mock('@/components/ui/popover', async importOriginal => (await import('@/dev/
 vi.mock('@/hooks/ui/useWebFileDropZone', () => import('@/hooks/ui/useWebFileDropZone.web'));
 vi.mock('@/utils/files/webDroppedEntries', () => import('@/utils/files/webDroppedEntries.web'));
 
+const { installWebLockManagerMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
+const restoreLocks = installWebLockManagerMock().restore;
+await prepareSessionFilesViewTestkit();
+const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
+afterAll(() => restoreLocks());
+
 describe('Session shared browser DOM picker boundary', () => {
     let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
-    let restoreLocks = () => {};
     let fixtureIndex = 0;
-    beforeAll(async () => {
-        const { installWebLockManagerMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
-        restoreLocks = installWebLockManagerMock().restore;
-        await prepareSessionFilesViewTestkit();
-    });
-    afterAll(() => restoreLocks());
     beforeEach(async () => {
         vi.stubGlobal('SharedWorker', class SharedWorker {});
         const rootPath = `/folder-picker-${++fixtureIndex}`;
@@ -40,7 +39,6 @@ describe('Session shared browser DOM picker boundary', () => {
     afterEach(async () => { standardCleanup(); await fixture.dispose(); vi.unstubAllGlobals(); });
 
     async function render() {
-        const { SessionRepositoryTreeBrowserView } = await import('./SessionRepositoryTreeBrowserView');
         const inputs: HTMLInputElement[] = [];
         let screen: Awaited<ReturnType<typeof fixture.render>> | undefined;
         const onOpenFile = () => {};

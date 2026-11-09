@@ -5,6 +5,7 @@ import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testk
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { PromptStackEntryV1 } from '@happier-dev/protocol/prompts/library/promptStacksV1';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { applyPromptLibraryCatalogSnapshot, resetPromptLibraryCatalogSnapshotsForTests } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
 import { resetPromptLibraryCatalogEngineForTests } from '@/sync/engine/settings/promptLibraryCatalogEngine';
 
@@ -38,6 +39,8 @@ beforeEach(async () => {
     home = await createPlainArtifactHomeFixture('https://work-context.test');
     serverId = home.home.id;
     storage.setState({ isDataReady: true, settingsVersion: 1 });
+    // Work's association owner distinguishes a known empty census from unknown membership.
+    applyProjectAccountRowsFixture(storage);
     storage.getState().applyArtifacts(['instructions-doc', 'memory-doc', 'notes-doc'].map(id => ({
         id, title: id, ownerAccountId: 'artifact-account', access: 'owner' as const,
         header: { kind: id === 'memory-doc' ? 'memory_doc.v1' : 'prompt_doc.v2', title: id },

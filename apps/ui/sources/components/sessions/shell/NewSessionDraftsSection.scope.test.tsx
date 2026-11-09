@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
-import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import {
     createSessionDraftPrivatePayloadV2, NewSessionDraftDocumentV2Schema,
     SESSION_DRAFT_V2_ROUTE_LIST, SESSION_DRAFT_V2_ROUTE_READ, SESSION_DRAFT_V2_ROUTE_MUTATE,

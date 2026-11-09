@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { SessionSpawnSourceContextV1 } from '@happier-dev/protocol';
+import type { SessionSpawnSourceContextV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnSourceContextV1';
 
 import type { AgentInputExtraActionPresentation } from '@/components/sessions/agentInput/agentInputContracts';
 import { createSessionSourceContextActionChip } from '@/components/sessions/agentInput/definitions/createSessionSourceContextActionChip';

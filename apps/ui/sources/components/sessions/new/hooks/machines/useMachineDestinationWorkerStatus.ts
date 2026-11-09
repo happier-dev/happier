@@ -1,6 +1,5 @@
 import * as React from 'react';
-import type { ProjectWorkerStatusInputV1, ProjectWorkerStatusResultV1 } from '@happier-dev/protocol';
-import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import type { ProjectWorkerStatusInputV1, ProjectWorkerStatusResultV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import type { MachineDestinationPurposeV1 } from '@happier-dev/protocol/machines/pools';
 
 import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDisplayRenderable';
@@ -13,10 +12,16 @@ import type { MachineDestinationPlacementFacts } from '@/components/sessions/new
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveManagedMachineWakeStateV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { useMachineListForServer } from '@/sync/domains/state/storage';
-import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
+import { subscribeMachineRequestReachability } from '@/sync/domains/machines/reachability/machineReachability';
+import { useProjectWorkerCopyStatusRevisions } from '@/sync/domains/workspaces/projectAccountRows';
 
 export type MachineDestinationWorkerPlacement = Readonly<Pick<ProjectWorkerStatusInputV1, 'workspace' | 'memoryDemand'>>;
 type WorkerStatusMachine = MachineDisplayRenderable & Partial<Pick<Machine, 'daemonStateVersion' | 'operationProtocolCapabilitiesRevision'>>;
+type WorkerStatusProjection = Readonly<{
+    demandKey: string;
+    worker?: ProjectWorkerStatusResultV1;
+    failed?: boolean;
+}>;
 
 /** List and dropdown share demand-local status, not a global load cache or an eligibility fallback. */
 export function useMachineDestinationWorkerStatus(params: Readonly<{
@@ -36,15 +41,39 @@ export function useMachineDestinationWorkerStatus(params: Readonly<{
     const request = purpose ? params.workerPlacement : undefined;
     const { binding } = useServerCredentialAccountScopeBinding(request?.workspace.serverId);
     const controllers = useMachineListForServer(request?.workspace.serverId ?? '');
-    const reachabilityRevision = useMachineReachabilityRevision();
     const scope = binding?.isCurrent() ? binding.scope : null;
+    const machines = params.groups.flatMap(group => request && group.serverId === request.workspace.serverId
+        && !group.loading && !group.signedOut && !group.error ? group.machines : []);
+    const machineIds = new Set(machines.map(machine => machine.id));
+    const controllerIds = new Set(purpose === 'finite'
+        ? params.managedMachines?.filter(managed => managed.enrolledMachineId
+            && machineIds.has(managed.enrolledMachineId) && managed.wakeOnAcceptedMessage)
+            .flatMap(managed => managed.controller ? [managed.controller.machineId] : []) : []);
+    const presenceMachines = new Map<string, MachineDisplayRenderable>([
+        ...machines.map(machine => [machine.id, machine] as const),
+        ...(controllers ?? []).filter(machine => controllerIds.has(machine.id)).map(machine => [machine.id, machine] as const),
+    ]);
+    const presenceIdsKey = JSON.stringify([...presenceMachines.keys()].sort());
+    const subscribePresence = React.useCallback((listener: () => void) => {
+        if (!scope || presenceIdsKey === '[]') return () => {};
+        const ids = new Set(JSON.parse(presenceIdsKey) as string[]);
+        return subscribeMachineRequestReachability(change => {
+            if (change && (change.scope.serverId !== scope.serverId || change.scope.accountId !== scope.accountId
+                || change.machineIds && !change.machineIds.some(id => ids.has(id)))) return;
+            listener();
+        });
+    }, [scope, presenceIdsKey]);
+    const readPresence = () => JSON.stringify([...presenceMachines].map(([id, machine]) => [id,
+        resolveMachinePickerPresence(machine, undefined, scope).selectable]));
+    // Request observations are qualified by this demand. A global revision is
+    // not a change to any candidate's admission facts.
+    React.useSyncExternalStore(subscribePresence, readPresence, readPresence);
     const wakes = new Map<string, 'asleep' | 'starting'>();
     if (purpose === 'finite' && binding?.isCurrent()) {
         for (const managed of params.managedMachines ?? []) {
             const controllerPair = managed.controller;
             if (!controllerPair || !managed.enrolledMachineId || !managed.wakeOnAcceptedMessage) continue;
-            const guest = params.groups.find(group => group.serverId === request?.workspace.serverId
-                && !group.loading && !group.signedOut && !group.error)?.machines.find(machine => machine.id === managed.enrolledMachineId);
+            const guest = machines.find(machine => machine.id === managed.enrolledMachineId);
             if (!guest || resolveMachinePickerPresence(guest, undefined, scope).selectable) continue;
             const controller = controllers?.find(machine => machine.id === controllerPair.machineId
                 && machine.installationId === controllerPair.installationId && !machine.revokedAt && !machine.replacedByMachineId
@@ -54,62 +83,65 @@ export function useMachineDestinationWorkerStatus(params: Readonly<{
             if (state) wakes.set(managed.enrolledMachineId, state);
         }
     }
-    const candidates = new Map(params.groups.flatMap(group => {
-        if (!request || group.serverId !== request.workspace.serverId || group.loading || group.signedOut || group.error) return [];
-        return group.machines.filter(machine => resolveMachinePickerPresence(machine, undefined, scope).selectable).map(machine => [machine.id, machine] as const);
-    }));
+    const candidates = new Map(machines.filter(machine => resolveMachinePickerPresence(machine, undefined, scope).selectable)
+        .map(machine => [machine.id, machine] as const));
     const candidateIds = [...candidates.keys()].sort();
-    const candidateHints = candidateIds.map(id => {
+    const candidateHints = new Map(candidateIds.map(id => {
         const machine = candidates.get(id)!;
         // These are admitted producer revisions/access hints, not load or
         // eligibility. Heartbeat activeAt never causes another status demand.
-        return [id, machine.metadataVersion, machine.daemonStateVersion ?? null,
+        return [id, [machine.metadataVersion, machine.daemonStateVersion ?? null,
             machine.operationProtocolCapabilitiesRevision ?? null, machine.isShared ?? false,
-            machine.access ?? null, machine.availability ?? null];
-    });
-    const readOperationHint = () => {
-        if (!purpose || !request || !binding || !binding.isCurrent()) return '';
-        const hints: string[] = [];
-        for (const operation of actionOperationStore.getSnapshot().operationsByKey.values()) {
-            const snapshot = operation.snapshot;
-            if (!Object.prototype.hasOwnProperty.call(PROJECT_FINITE_ACTION_RPC_METHODS_V1, snapshot.actionId)
-                || operation.serverId !== binding.serverId || snapshot.scope.accountId !== binding.accountId
-                || !candidates.has(snapshot.scope.machineId)) continue;
-            // Reserved preparation affects load before the OS-launch state changes.
-            // Labels, revisions and queue-position counters are not admission facts.
-            const preparing = snapshot.progress?.kind === 'phase' && snapshot.progress.phase === 'preparing';
-            hints.push(JSON.stringify([snapshot.scope.machineId, snapshot.operationId, snapshot.state, preparing]));
-        }
-        // A primitive scoped hint keeps unrelated pushes and label-only updates inert.
-        return JSON.stringify(hints.sort());
-    };
-    const operationHint = React.useSyncExternalStore(actionOperationStore.subscribe, readOperationHint, readOperationHint);
-    const demandKey = JSON.stringify([purpose, request ?? null, reachabilityRevision,
-        binding ? [binding.serverId, binding.accountId, binding.revision] : null, candidateHints, operationHint]);
-    const [projection, setProjection] = React.useState<Readonly<{
-        demandKey: string;
-        statuses: ReadonlyMap<string, ProjectWorkerStatusResultV1>;
-        failed?: ReadonlySet<string>;
-    }> | null>(null);
+            machine.access ?? null, machine.availability ?? null]] as const;
+    }));
+    const candidateIdsKey = JSON.stringify(candidateIds);
+    const hasRequest = Boolean(request);
+    const subscribeOperations = React.useCallback((listener: () => void) => scope && hasRequest
+        ? actionOperationStore.subscribeWorkerStatus(scope, JSON.parse(candidateIdsKey) as string[], listener) : () => {},
+    [scope, hasRequest, candidateIdsKey]);
+    const readOperationRevision = () => scope
+        ? candidateIds.reduce((sum, id) => sum + actionOperationStore.readWorkerStatusRevision(scope, id), 0) : 0;
+    React.useSyncExternalStore(subscribeOperations, readOperationRevision, readOperationRevision);
+    const copyRevisions = useProjectWorkerCopyStatusRevisions(scope, request?.workspace.refId ?? null, candidateIdsKey);
+    const demandKeys = new Map(candidateIds.map(id => [id, JSON.stringify([purpose, request ?? null,
+        binding ? [binding.serverId, binding.accountId, binding.revision] : null,
+        candidateHints.get(id), scope ? actionOperationStore.readWorkerStatusRevision(scope, id) : 0, copyRevisions.get(id) ?? 0])]));
+    const demandKey = JSON.stringify([...demandKeys]);
+    const [projection, setProjection] = React.useState<ReadonlyMap<string, WorkerStatusProjection>>(() => new Map());
+    const requests = React.useRef(new Map<string, { demandKey: string; cancel: () => void }>());
 
     React.useEffect(() => {
-        if (!purpose || !request || !binding || !binding.isCurrent()) return;
-        let current = true;
-        const retirement = binding.onRetire(() => {
-            current = false;
-            setProjection(null);
+        const cancel = () => {
+            for (const request of requests.current.values()) request.cancel();
+            requests.current.clear();
+        };
+        const retirement = binding?.onRetire(() => { cancel(); setProjection(new Map()); });
+        return () => { cancel(); retirement?.dispose(); };
+    }, [binding]);
+
+    React.useEffect(() => {
+        for (const [machineId, request] of requests.current) {
+            if (request.demandKey === demandKeys.get(machineId)) continue;
+            request.cancel();
+            requests.current.delete(machineId);
+        }
+        setProjection(previous => {
+            const retained = new Map([...previous].filter(([id, status]) => status.demandKey === demandKeys.get(id)));
+            return retained.size === previous.size ? previous : retained;
         });
-        for (const machineId of candidateIds) {
+        if (!purpose || !request || !binding || !binding.isCurrent()) return;
+        for (const [machineId, machineDemandKey] of demandKeys) {
+            if (requests.current.get(machineId)?.demandKey === machineDemandKey) continue;
+            let current = true;
+            requests.current.set(machineId, { demandKey: machineDemandKey, cancel: () => { current = false; } });
             void executeProjectWorkerActionV1('projects.worker.status', {
                 ...request, destination: { kind: 'machine', machineId }, purpose,
             }, { expectedAccountId: binding.accountId }).then(worker => {
                 if (!current || !binding.isCurrent()) return;
                 setProjection(previous => {
-                    const statuses = new Map(previous?.demandKey === demandKey ? previous.statuses : []);
-                    statuses.set(machineId, worker);
-                    const failed = new Set(previous?.demandKey === demandKey ? previous.failed : []);
-                    failed.delete(machineId);
-                    return { demandKey, statuses, failed };
+                    const statuses = new Map(previous);
+                    statuses.set(machineId, { demandKey: machineDemandKey, worker });
+                    return statuses;
                 });
             }).catch(() => {
                 // Failed reads establish neither eligibility nor zero load. The
@@ -117,29 +149,25 @@ export function useMachineDestinationWorkerStatus(params: Readonly<{
                 // stops saying it is still checking.
                 if (!current || !binding.isCurrent()) return;
                 setProjection(previous => {
-                    const statuses = previous?.demandKey === demandKey ? previous.statuses : new Map();
-                    const failed = new Set(previous?.demandKey === demandKey ? previous.failed : []);
-                    failed.add(machineId);
-                    return { demandKey, statuses, failed };
+                    const statuses = new Map(previous);
+                    statuses.set(machineId, { demandKey: machineDemandKey, failed: true });
+                    return statuses;
                 });
             });
         }
-        return () => {
-            current = false;
-            retirement.dispose();
-        };
         // Domain values and the exact credential revision, not wrapper identities, own a demand.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [demandKey, binding]);
 
     const wakeKey = JSON.stringify([...wakes]);
     return React.useCallback((machine: MachineDisplayRenderable, serverId: string): MachineDestinationPlacementFacts => {
-        const current = binding?.isCurrent() && request?.workspace.serverId === serverId && projection?.demandKey === demandKey
-            ? projection : null;
+        const status = projection.get(machine.id);
+        const current = binding?.isCurrent() && request?.workspace.serverId === serverId
+            && status?.demandKey === demandKeys.get(machine.id) ? status : null;
         const managedWake = binding?.isCurrent() && request?.workspace.serverId === serverId && !resolveMachinePickerPresence(machine, undefined, scope).selectable
             ? wakes.get(machine.id) : undefined;
-        const worker = current?.statuses.get(machine.id);
-        const failed = current?.failed?.has(machine.id) === true;
+        const worker = current?.worker;
+        const failed = current?.failed === true;
         return { ownership: machine.isShared === true ? 'shared' : 'owned', ...(managedWake ? { managedWake } : {}),
             ...(worker ? { worker } : failed ? { workerStatusFailed: true } : {}) };
         // Exact semantic power/controller changes, not inventory array identities, refresh the callback.

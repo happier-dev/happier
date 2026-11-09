@@ -1,11 +1,14 @@
 import type {
-    AccountDisplayProfileV1,
-    PrincipalRefV1,
+    AccountDisplayProfileV1} from '@happier-dev/protocol/account/accountDisplayProfileV1';
+import type {
+    PrincipalRefV1} from '@happier-dev/protocol/teams/principal';
+import type {
     SessionAccessGrantsListResponseV1,
     SessionAccessPrincipalSummaryV1,
-    SessionAccessSourceV1,
     SessionTeamCredentialBindingConsequenceV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
+import type {
+    SessionAccessSourceV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { t } from '@/text';
 import { presentSharePrincipal, sharePrincipalKey } from '@/components/sharing/sharePrincipalPresentation';
 import { projectSessionAccessChipSummary } from './projectSessionAccessChipSummary';

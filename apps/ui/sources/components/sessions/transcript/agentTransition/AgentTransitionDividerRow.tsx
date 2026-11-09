@@ -5,7 +5,7 @@ import { useSessionTranscriptSource } from '@/components/sessions/transcript/sou
 import { useTranscriptMachineId } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 
-import type { SessionAgentTransitionDividerV1 } from '@happier-dev/protocol';
+import type { SessionAgentTransitionDividerV1 } from '@happier-dev/protocol/sessions/agentTransitionDivider';
 
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { Icon } from '@/components/ui/icons/Icon';

@@ -5,7 +5,7 @@ import type { Message } from '@happier-dev/session-core/messages';
 import { buildMessageRouteId } from '@happier-dev/session-core/messages';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { SessionMessagesPageV1Schema } from '@happier-dev/protocol';
+import { SessionMessagesPageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import type { ExternalSessionTranscriptRawMessageV1 } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import type { ChatTranscriptListItem, TranscriptViewportChangeState } from '../../../chatListTypes';
 import type { TranscriptJumpHostDeps } from './useTranscriptJumpHost';

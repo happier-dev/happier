@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { PluginAvailabilityDescriptorV2, PluginProjectedActionV2, PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginAvailabilityDescriptorV2} from '@happier-dev/protocol/plugins/contributions/public-types';
+import type { PluginProjectedActionV2, PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
     type PluginUiResolvedSemanticCommandV1,
 } from '@happier-dev/protocol/plugins/ui';
@@ -72,8 +73,6 @@ function createProjectedHeaderAction(params?: Readonly<{
             },
             ...(params?.extraActions ?? {}),
         },
-
-
         resourcesById: {},
         settingsById: {},
         familiesById: {
@@ -593,8 +592,6 @@ function createOrderedHeaderActions(): PluginProjectionV2 {
             'acme.plugin/zzz-first': action('zzz-first'),
             'acme.plugin/mmm-second': action('mmm-second'),
         },
-
-
         resourcesById: {},
         settingsById: {},
         familiesById: {

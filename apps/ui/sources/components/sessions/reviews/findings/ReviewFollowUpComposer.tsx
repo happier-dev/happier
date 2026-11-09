@@ -1,4 +1,3 @@
-import { t } from '@/text';
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
@@ -21,6 +20,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { t } from '@/text';
 
 /** Who a follow-up goes to: the reviewers' marks and the words for them ("Sonnet 5", "Both"). */
 export type ReviewFollowUpRecipient = Readonly<{
@@ -38,6 +38,7 @@ function createRecipientChip(recipient: ReviewFollowUpRecipient, testID: string,
     return {
         key: RECIPIENT_CHIP_KEY,
         controlId: 'recipient',
+        // The follow-up's reviewer address is fixed by this review, so its retained target stays visible.
         placement: { id: 'recipient', title: t('session.participants.sendToTitle'), defaultPlacement: 'overflow', pending: true },
         stabilityKey: `${recipient.label}:${recipient.backendIds.join(',')}`,
         render: (ctx: AgentInputExtraActionChipRenderContext) => (
@@ -89,7 +90,7 @@ export function ReviewFollowUpComposer(props: Readonly<{
         [props.draftRunId, sessionId],
     );
     const owner = useRepositoryComposerDocumentOwner({
-        scope: address ? binding?.scope ?? null : null,
+        scopeLifetime: address ? binding : null,
         ref,
         address,
         capabilities: { text: true, references: true, attachments: false, submit: true },

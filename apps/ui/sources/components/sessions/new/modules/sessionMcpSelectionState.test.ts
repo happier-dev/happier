@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import type {
     DaemonMcpServersPreviewResponse,
-    ManagedMcpPreviewEntryV1,
+    ManagedMcpPreviewEntryV1} from '@happier-dev/protocol/mcp/servers/previewV1';
+import type {
     SessionMcpSelectionV1,
-} from '@happier-dev/protocol';
-import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol';
+} from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
+import { SessionMcpSelectionV1Schema } from '@happier-dev/protocol/mcp/servers/sessionSelectionV1';
 
 import {
     countSelectedSessionMcpPreviewEntries,

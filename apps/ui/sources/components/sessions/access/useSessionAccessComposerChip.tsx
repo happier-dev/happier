@@ -95,6 +95,9 @@ export function useSessionAccessComposerChip(input: Readonly<{
         requiredByTeamPolicy,
         ...(contextLabel ? { contextLabel } : {}),
     });
+    // This compact projection holds neither the audience nor its default grants.
+    // Keep ordinary placement rather than inferring differing access from the
+    // viewer's role, Team label or policy lock; the opened editor owns the roster.
     const label = summary.label;
     const accessibilityLabel = summary.accessibilityLabel;
 

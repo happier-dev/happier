@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Animated, ScrollView, useWindowDimensions, View, type LayoutChangeEvent } from 'react-native';
+import { Animated, Platform, ScrollView, useWindowDimensions, View, type LayoutChangeEvent } from 'react-native';
 import { useSharedValue } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -38,12 +38,10 @@ import { resolveSessionSurfaceKeyboardDestination } from './sessionSurfaceKeyboa
 import { useWidgetMovementAdmission } from '@/components/widgets/surface/useWidgetMovementAdmission';
 import {
     isSessionBoardEmpty,
-    resolveSessionBoardExecutableCurrentness,
     resolveSessionBoardReferenceProjection,
     resolveSessionBoardRetainedFreshness,
     type SessionBoardItemProjection,
     type SessionBoardMountHost,
-    type SessionBoardPrimaryMountResolver,
     type SessionBoardSnapshot,
 } from '@/sync/domains/session/board';
 
@@ -69,7 +67,6 @@ import type { SessionVisualNetworkChoice } from './sessionBoardVisualNetwork';
 import { useSessionBoardArrivals } from './useSessionBoardArrivals';
 import { BoardWidgetAddPopover } from '@/components/widgets/add/BoardWidgetAddPopover';
 import type { WidgetCandidate } from '@/components/widgets/widgetCatalog';
-import type { SessionBoardBodyEligibilityReporter } from './sessionBoardHostVisibility';
 import type { CallerHostedHtmlRuntime } from '@/components/ui/surfaces/hostedHtml/HostedHtmlSurfaceAdapter';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionBoardHostActionBinding } from './sessionBoardHostActions';
@@ -82,6 +79,7 @@ import {
     resolveSessionBoardPresentationOffset,
 } from './sessionBoardPresentationContinuity';
 import { resolveSessionBoardFailurePresentation } from './sessionBoardFailurePresentation';
+
 
 /**
  * One Board implementation for every host.
@@ -204,8 +202,6 @@ export type SessionBoardSurfaceProps = Readonly<{
     controller: SessionBoardController;
     host: SessionBoardMountHost;
     /** Resolves the executable placement for each exact item. */
-    resolvePrimaryHost: SessionBoardPrimaryMountResolver;
-    onBodyEligibilityChange?: SessionBoardBodyEligibilityReporter;
     density: SessionWidgetDensity;
     /** One column on mobile and in the compact sidebar; the semantic grid elsewhere. */
     layout: 'grid' | 'single';
@@ -256,20 +252,6 @@ export type SessionBoardSurfaceProps = Readonly<{
 
 const DEFAULT_HEIGHT_BOUNDS = Object.freeze({ min: 96, max: 720 });
 const NO_ADD_CANDIDATES: readonly WidgetCandidate[] = Object.freeze([]);
-
-function BodyEligibility(props: Readonly<{
-    host: SessionBoardMountHost;
-    viewId: string;
-    itemIdsKey: string;
-    report: SessionBoardBodyEligibilityReporter;
-}>): null {
-    React.useLayoutEffect(() => props.report(
-        props.host,
-        props.viewId,
-        new Set(props.itemIdsKey ? props.itemIdsKey.split('\u001f') : []),
-    ), [props.host, props.viewId, props.itemIdsKey, props.report]);
-    return null;
-}
 
 function boardStateCard(
     snapshot: SessionBoardSnapshot,
@@ -970,6 +952,7 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
         })),
     ]);
 
+
     // Item recovery navigation comes from the same controller that answers for the
     // Board-level card above, so an item and its Board can never disagree about
     // whether a way out of a locked or retired source exists.
@@ -1097,16 +1080,12 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
                 {...(props.session ? { session: props.session } : {})}
                 item={projected}
                 host={props.host}
-                primaryHost={props.resolvePrimaryHost(itemId)}
+                bodyActive={!props.retained}
                 // Navigation-only withholds authoring chrome (every mutating handler below
                 // is gated on `mutationControls`); it does not decide executability.
                 density={props.density}
                 canEdit={mutationControls ? snapshot.canEdit : false}
-                executableCurrentness={resolveSessionBoardExecutableCurrentness(
-                    snapshot,
-                    projected,
-                    props.pluginRuntime,
-                )}
+
                 width={width}
                 frameStyle={resolveWidgetFrameStyle({ placement: 'board', surfaceDefault: boardFrameDefault, override: frameOverride })}
                 {...(arrivals.has(itemId) ? { fresh: true } : {})}
@@ -1229,7 +1208,9 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
                         />
                     </View>
                 ) : null}
-                <ScrollView style={styles.scroll} testID={`${testID}-focused-scroll`}>
+
+                <ScrollView ref={scrollRef} style={styles.scroll} testID={`${testID}-focused-scroll`}
+                    scrollEventThrottle={16}>
                     <BoardItemArrival>
                         <View style={styles.single}>
                             {props.editor ? (
@@ -1239,17 +1220,14 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
                         </View>
                     </BoardItemArrival>
                 </ScrollView>
+
             </View>
         );
     }
 
     return (
         <View style={styles.root} testID={testID}>
-            {!props.retained && !layoutCard && activeView && props.onBodyEligibilityChange ? (
-                <BodyEligibility host={props.host} viewId={activeView.id}
-                    itemIdsKey={[...bodyEligibleItemIds].join('\u001f')}
-                    report={props.onBodyEligibilityChange} />
-            ) : null}
+
             {props.header}
             {mutationControls ? <MutationRecoveryNotice controller={controller} testID={testID} /> : null}
             {inlineLine && stripVisible ? <View style={styles.viewsLine}><PaneHeaderLineView line={inlineLine} testID={`${testID}-line`} /></View> : null}
@@ -1321,6 +1299,7 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
                 </View>
             ) : null}
             {layoutCard ?? offlineEmptyCard ?? (
+
                 <ScrollView
                     ref={scrollRef}
                     {...(snapshot.views.length > 1
@@ -1342,6 +1321,7 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
                         measureDragViewport();
                         scrollViewportHeight.value = event.nativeEvent.layout.height;
                         setMeasuredViewportHeight(event.nativeEvent.layout.height);
+
                     }}
                     onContentSizeChange={(_width, height) => {
                         scrollContentHeight.value = height;
@@ -1356,6 +1336,7 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
                         // body window once per card rather than once per frame.
                         const nextWindowTop = quantizeScrollOffset(event.nativeEvent.contentOffset.y, bodyWindowQuantum);
                         setBodyWindowTopOffset((current) => (current === nextWindowTop ? current : nextWindowTop));
+
                     }}
                 >
                     {/* The sidebar's Open board lives in the pane header, not in a body row. */}
@@ -1498,6 +1479,7 @@ export function SessionBoardSurface(props: SessionBoardSurfaceProps): React.Reac
                         </>
                     )}
                 </ScrollView>
+
             )}
             <SessionSurfaceEntityFeedback kind="session-board-item" scope={dragScope?.scope ?? null} address={dragAddress} testID={`${testID}-move`} />
         </View>

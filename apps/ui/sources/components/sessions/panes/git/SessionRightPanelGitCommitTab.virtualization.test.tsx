@@ -3,46 +3,27 @@ import renderer from 'react-test-renderer';
 import { VirtualizedList } from '@/components/ui/lists/virtualized/VirtualizedList';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { createThemeFixture } from '@/dev/testkit/fixtures/themeFixtures';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
-import { installSessionGitPaneCommonModuleMocks } from './sessionGitPaneTestHelpers';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).requestAnimationFrame ??= vi.fn(() => 0);
 (globalThis as any).cancelAnimationFrame ??= vi.fn();
 
-installSessionGitPaneCommonModuleMocks();
+vi.mock('react-native', async () => (
+    (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock()
+));
+vi.mock('@expo/vector-icons', async () => (
+    (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock()
+));
+vi.mock('@/text', async () => (
+    (await import('@/dev/testkit/mocks/text')).createTextModuleMock({ translate: key => key })
+));
 // The recycler depends on native layout; render its rows deterministically at that boundary.
 vi.mock('@legendapp/list/react-native', async () => {
-    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
-    return createCapturingLegendListMock({ renderItems: true }).module;
-});
-vi.mock('@/components/workspaces/scm/commitComposer/ScmCommitComposerCard', () => ({
-    ScmCommitComposerCard: (props: any) => React.createElement('ScmCommitComposerCard', props),
-}));
-vi.mock('@/components/workspaces/scm/changes/ScmChangeRow', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@/components/workspaces/scm/changes/ScmChangeRow')>(),
-    ScmChangeRow: (props: any) => React.createElement('ScmChangeRow', props),
-}));
-vi.mock('@/components/ui/popover/Popover', () => ({
-    Popover: () => null,
-}));
-vi.mock('@/components/ui/forms/dropdown/DropdownMenu', async () => {
-    const React = await import('react');
-    return {
-        DropdownMenu: (props: any) => React.createElement(
-            'DropdownMenu',
-            props,
-            typeof props.trigger === 'function'
-                ? props.trigger({
-                    open: false,
-                    toggle: vi.fn(),
-                    openMenu: vi.fn(),
-                    closeMenu: vi.fn(),
-                    selectedItem: props.items.find((item: any) => item.id === props.selectedId) ?? null,
-                })
-                : props.trigger,
-        ),
-    };
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({ renderItems: true });
 });
 
 function flattenStyle(style: unknown): Record<string, unknown> {
@@ -56,27 +37,17 @@ function flattenStyle(style: unknown): Record<string, unknown> {
 }
 
 function makeGitTheme() {
-    return {
-        colors: {
-            border: {
-                default: '#ddd',
-            },
-            divider: '#ddd',
-            surface: {
-                base: '#fff',
-                inset: '#f6f6f6',
-            },
-            surfaceHigh: '#f6f6f6',
-            text: {
-                primary: '#000',
-                secondary: '#666',
-            },
-            textSecondary: '#666',
-            success: '#0a0',
-            warning: '#f90',
-            textLink: '#09f',
-        },
-    };
+    return createThemeFixture();
+}
+
+// React Test Renderer unwraps memoized components. Match the row's public
+// props rather than relying on the wrapper identity or substituting its logic.
+function isScmRow(node: renderer.ReactTestInstance) {
+    return Boolean(node.props.file) && Object.hasOwn(node.props, 'statsColumnWidth');
+}
+
+function findScmRow(tree: renderer.ReactTestInstance) {
+    return tree.find(isScmRow);
 }
 
 // Prepare the real component graph before any renderer is opened. A cold module transform is setup,
@@ -200,7 +171,7 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
 
         const flatList = screen.tree.findByType(VirtualizedList);
         const headerScreen = await renderScreen(flatList.props.ListHeaderComponent);
-        const menu = headerScreen.tree.findByType('DropdownMenu' as any);
+        const menu = headerScreen.tree.findByType(DropdownMenu);
         expect(menu.props.selectedId).toBe('repository');
         expect(menu.props.items.map((item: { id: string }) => item.id)).toEqual([
             'repository',
@@ -334,7 +305,7 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
         });
         const row = await renderScreen(flatList.props.renderItem({ item: flatList.props.data[0], index: 0 }));
         expect(row.findByTestId('changed-file-evidence-trigger')).not.toBeNull();
-        expect(row.tree.findByType('ScmChangeRow' as any).props.accessibilityQualification).toContain(
+        expect(findScmRow(row.tree).props.accessibilityQualification).toContain(
             'changedFileEvidence.attribution.session_possible',
         );
         expect(flatList.props.data).toHaveLength(200);
@@ -401,15 +372,15 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
         const list = screen.tree.findByType(VirtualizedList);
         const row = await renderScreen(list.props.renderItem({ item: list.props.data[0], index: 0 }));
         expect(row.findByTestId('changed-file-evidence-trigger')).not.toBeNull();
-        expect(row.tree.findByType('ScmChangeRow' as any).props.leadingElement).toBeNull();
-        expect(row.tree.findByType('ScmChangeRow' as any).props.onToggleSelection).toBeUndefined();
+        expect(findScmRow(row.tree).props.leadingElement).toBeNull();
+        expect(findScmRow(row.tree).props.onToggleSelection).toBeUndefined();
         expect(renderFileActions).not.toHaveBeenCalledWith(historicalFile);
         expect(onToggleSelectionForFile).not.toHaveBeenCalled();
 
         const currentRow = await renderScreen(list.props.renderItem({ item: list.props.data[1], index: 1 }));
-        expect(currentRow.tree.findByType('ScmChangeRow' as any).props.leadingElement).not.toBeNull();
+        expect(findScmRow(currentRow.tree).props.leadingElement).not.toBeNull();
         expect(renderFileActions).toHaveBeenCalledWith(currentFile);
-        currentRow.tree.findByType('ScmChangeRow' as any).props.onToggleSelection();
+        findScmRow(currentRow.tree).props.onToggleSelection();
         expect(onToggleSelectionForFile).toHaveBeenCalledWith(currentFile);
     });
 
@@ -526,8 +497,8 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
                 />);
 
         const flatList = screen.tree.findByType(VirtualizedList);
-        const firstRow = (await renderScreen(flatList.props.renderItem({ item: files[0], index: 0 }))).tree.findByType('ScmChangeRow');
-        const secondRow = (await renderScreen(flatList.props.renderItem({ item: files[1], index: 1 }))).tree.findByType('ScmChangeRow');
+        const firstRow = findScmRow((await renderScreen(flatList.props.renderItem({ item: files[0], index: 0 }))).tree);
+        const secondRow = findScmRow((await renderScreen(flatList.props.renderItem({ item: files[1], index: 1 }))).tree);
 
         expect(firstRow.props.statsColumnWidth).toBe(secondRow.props.statsColumnWidth);
         expect(firstRow.props.statsColumnWidth).toBeGreaterThan(38);
@@ -804,11 +775,11 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
             showCommitComposer={false}
             {...extra}
         />);
-        const order = screen.tree.root.findAll((node: any) => (
-            node.type === 'ScmChangeRow'
+        const order = screen.tree.root.findAll((node) => (
+            isScmRow(node)
             || (typeof node.props?.testID === 'string' && typeof node.type === 'string'
                 && node.props.testID.startsWith('scm-change-group:'))
-        )).map((node: any) => (node.type === 'ScmChangeRow' ? node.props.file.fullPath : node.props.testID));
+        )).map((node) => (isScmRow(node) ? node.props.file.fullPath : node.props.testID));
         return { screen, order };
     }
 
@@ -868,7 +839,7 @@ describe('SessionRightPanelGitCommitTab (virtualization)', () => {
         const onFilePress = vi.fn();
         const renderFileActions = vi.fn(() => React.createElement('View', { testID: 'commit-select' }));
         const { screen } = await renderGroupedCommitTab({ allRepositoryChangedFiles: [conflict], sessionAttributedFiles: [], hasConflicts: true, renderFileActions, onFilePress });
-        const row = screen.tree.findByType('ScmChangeRow');
+        const row = findScmRow(screen.tree);
         expect(row.props.leadingElement).toBeNull();
         expect(row.props.onToggleSelection).toBeUndefined();
         const action = await renderScreen(row.props.trailingElement);

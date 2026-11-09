@@ -64,7 +64,7 @@ export function useSessionListStagedMove(input: Readonly<{
     const stage = React.useCallback((staged: Staged) => {
         const result = resolveSessionListStagedMoveResult({ tree: staged.tree, source: staged.source, state: staged.state });
         staged.carry.choose(result
-            ? buildSessionListDragIntent({
+            ? 'kind' in result ? result : buildSessionListDragIntent({
                 result,
                 sourceRowId: staged.snapshot.source.sourceRowId,
                 sourceKind: staged.snapshot.source.kind,

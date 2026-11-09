@@ -1,9 +1,8 @@
 import React from 'react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
 
 import { makeToolCall, renderScreen } from '@/dev/testkit';
-import { createTestSessionTranscriptSource, wrapWithSessionTranscriptSource } from '@/dev/testkit/sessionTranscriptSource';
+import { createTestSessionTranscriptSource, renderWithSessionTranscriptSource, wrapWithSessionTranscriptSource } from '@/dev/testkit/sessionTranscriptSource';
 import type { Message } from "@happier-dev/session-core/messages";
 import {
     installTranscriptCommonModuleMocks,
@@ -140,6 +139,10 @@ function createChainTestRoot(Content: typeof import('./ChainTranscriptList')['Ch
     };
 }
 
+// Collect the real Chain graph before any timed test or renderer/act lifetime.
+const { ChainTranscriptList } = await import('./ChainTranscriptList');
+const ChainTestRoot = createChainTestRoot(ChainTranscriptList);
+
 describe('ChainTranscriptList presentation parity', () => {
     beforeEach(() => {
         resetTranscriptCommonModuleMockState();
@@ -150,6 +153,7 @@ describe('ChainTranscriptList presentation parity', () => {
         settings.sessionThinkingDisplayMode = 'inline';
         settings.sessionThinkingInlinePresentation = 'summary';
         settings.transcriptThinkingPulseStaleMs = 30_000;
+        delete settings.transcriptMessageTimestampDisplayMode;
         turnViewSpy.mockReset();
         turnViewWithCommonSpy.mockReset();
         toolCallsGroupRowSpy.mockReset();
@@ -163,8 +167,6 @@ describe('ChainTranscriptList presentation parity', () => {
 
     it('keeps sidechain snapshots isolated and never elevates a read-only parent capability', async () => {
         settings.transcriptGroupToolCalls = false;
-        const { ChainTranscriptList } = await import('./ChainTranscriptList');
-        const { createTestSessionTranscriptSource, renderWithSessionTranscriptSource } = await import('@/dev/testkit/sessionTranscriptSource');
         const message: Message = { kind: 'agent-text', id: 'snapshot-child', localId: null, createdAt: 1, text: 'Shared child', isThinking: false };
         const source = createTestSessionTranscriptSource({ sessionId: 's1', messages: [] });
         const loadOlder = vi.fn(async () => ({ loaded: 0, hasMore: false, status: 'not_ready' as const }));
@@ -181,9 +183,6 @@ describe('ChainTranscriptList presentation parity', () => {
         settings.toolViewTimelineChromeMode = 'cards';
         settings.transcriptMessageTimestampDisplayMode = 'always';
 
-        const { ChainTranscriptList: ChainContent } = await import('./ChainTranscriptList');
-        const ChainTranscriptList = createChainTestRoot(ChainContent);
-
         const agentMessage: Message = {
             kind: 'agent-text',
             id: 'agent-1',
@@ -193,7 +192,7 @@ describe('ChainTranscriptList presentation parity', () => {
             isThinking: false,
         };
 
-        await renderScreen(React.createElement(ChainTranscriptList, {
+        await renderScreen(React.createElement(ChainTestRoot, {
             sessionId: 's1',
             datasetKey: JSON.stringify(['s1', 'test-sidechain']),
             messages: [agentMessage],
@@ -217,9 +216,6 @@ describe('ChainTranscriptList presentation parity', () => {
     });
 
     it('groups consecutive tool calls the same way as the main transcript when grouping is enabled', async () => {
-        const { ChainTranscriptList: ChainContent } = await import('./ChainTranscriptList');
-        const ChainTranscriptList = createChainTestRoot(ChainContent);
-
         const toolMessageOne: Message = {
             kind: 'tool-call',
             id: 'tool-msg-1',
@@ -237,14 +233,13 @@ describe('ChainTranscriptList presentation parity', () => {
             children: [],
         };
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(ChainTranscriptList, {
+        await renderScreen(React.createElement(ChainTestRoot, {
                     sessionId: 's1',
                     datasetKey: JSON.stringify(['s1', 'test-sidechain']),
                     messages: [toolMessageOne, toolMessageTwo],
                     metadata: null,
                     interaction: { canSendMessages: true, canApprovePermissions: true },
-                }))).tree;
+                }));
 
         expect(toolCallsGroupRowSpy).not.toHaveBeenCalled();
         expect(toolCallsGroupRowWithCommonSpy).toHaveBeenCalledWith(
@@ -262,9 +257,6 @@ describe('ChainTranscriptList presentation parity', () => {
     it('keeps a long turn-level tool run as one semantic group in turn layout', async () => {
         settings.transcriptGroupingMode = 'turns';
         settings.transcriptTurnToolCallsGroupStrategy = 'all_tools_in_turn';
-
-        const { ChainTranscriptList: ChainContent } = await import('./ChainTranscriptList');
-        const ChainTranscriptList = createChainTestRoot(ChainContent);
 
         const userMessage: Message = {
             kind: 'user-text',
@@ -287,7 +279,7 @@ describe('ChainTranscriptList presentation parity', () => {
             children: [],
         }));
 
-        await renderScreen(React.createElement(ChainTranscriptList, {
+        await renderScreen(React.createElement(ChainTestRoot, {
                     sessionId: 's1',
                     datasetKey: JSON.stringify(['s1', 'test-sidechain']),
                     messages: [userMessage, ...toolMessages],
@@ -307,9 +299,6 @@ describe('ChainTranscriptList presentation parity', () => {
     it('uses turn layout in tool transcripts when transcript layout is set to turns', async () => {
         settings.transcriptGroupingMode = 'turns';
 
-        const { ChainTranscriptList: ChainContent } = await import('./ChainTranscriptList');
-        const ChainTranscriptList = createChainTestRoot(ChainContent);
-
         const userMessage: Message = {
             kind: 'user-text',
             id: 'user-1',
@@ -326,14 +315,13 @@ describe('ChainTranscriptList presentation parity', () => {
             children: [],
         };
 
-        let tree!: renderer.ReactTestRenderer;
-        tree = (await renderScreen(React.createElement(ChainTranscriptList, {
+        await renderScreen(React.createElement(ChainTestRoot, {
                     sessionId: 's1',
                     datasetKey: JSON.stringify(['s1', 'test-sidechain']),
                     messages: [userMessage, toolMessage],
                     metadata: null,
                     interaction: { canSendMessages: true, canApprovePermissions: true },
-                }))).tree;
+                }));
 
         expect(turnViewSpy).not.toHaveBeenCalled();
         // N2c: the turn decomposes into per-unit rows — the user message renders as a
@@ -357,9 +345,6 @@ describe('ChainTranscriptList presentation parity', () => {
     it('passes forced transcript permission prompts through to turn layouts', async () => {
         settings.transcriptGroupingMode = 'turns';
 
-        const { ChainTranscriptList: ChainContent } = await import('./ChainTranscriptList');
-        const ChainTranscriptList = createChainTestRoot(ChainContent);
-
         const userMessage: Message = {
             kind: 'user-text',
             id: 'user-1',
@@ -377,7 +362,7 @@ describe('ChainTranscriptList presentation parity', () => {
             children: [],
         };
 
-        await renderScreen(React.createElement(ChainTranscriptList, {
+        await renderScreen(React.createElement(ChainTestRoot, {
                     sessionId: 's1',
                     datasetKey: JSON.stringify(['s1', 'test-sidechain']),
                     messages: [userMessage, toolMessage],

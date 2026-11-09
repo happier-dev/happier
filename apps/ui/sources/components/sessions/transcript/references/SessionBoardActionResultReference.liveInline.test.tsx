@@ -3,14 +3,18 @@ import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessi
 import { View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import { SessionSystemRecordStoredSchema, tryWriteServerEnabledBitInPlace, type SessionSystemRecordStored } from '@happier-dev/protocol';
+import { ApprovalRequestV2Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { SessionSystemRecordStoredSchema, type SessionSystemRecordStored } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
+import { tryWriteServerEnabledBitInPlace} from '@happier-dev/protocol/features/serverEnabledBit';
 import { SessionBoardMutationV1Schema, SessionBoardMutationResultV1Schema } from '@happier-dev/protocol/sessions/board';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { SessionEffectiveAccessV1Schema } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 
-import { makeToolCall, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createTestSessionTranscriptSource, flushHookEffects, makeToolCall, renderScreen, standardCleanup } from '@/dev/testkit';
 import {
   createSessionSystemRecordHttpFixture,
   installDisconnectedServerSocketBoundary,
@@ -18,12 +22,9 @@ import {
 } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { SessionBoardContinuityProvider } from '@/components/sessions/board/SessionBoardContinuity';
-import { SessionBoardControllerOwner, useMountedSessionBoardController } from '@/components/sessions/board/SessionBoardControllerProvider';
-import {
-  resolveSessionBoardHostVisibility,
-  resolveSessionBoardItemPrimaryMountHost,
-  type SessionBoardPlacementPrimaryMountResolver,
-} from '@/components/sessions/board/sessionBoardHostVisibility';
+import { SessionBoardControllerOwner, SessionBoardControllerProvider, useMountedSessionBoardController } from '@/components/sessions/board/SessionBoardControllerProvider';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
+import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { useSessionCallerHostedHtmlRuntime } from '@/components/ui/surfaces/hostedHtml/useSessionCallerHostedHtmlRuntime';
 import {
   createSessionBoardActionsPort,
@@ -42,7 +43,14 @@ import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtur
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
-import { useSessionBoardPrimaryMountResolver } from '@/components/sessions/board/useSessionBoardPrimaryMountHost';
+import { SessionCompanionPresentationBridge, type SessionPresentationIntentApplier } from '@/components/sessions/companion/presentation/SessionCompanionPresentationBridge';
+import { SessionCompanionRevealPortProvider } from '@/components/sessions/companion/presentation/SessionCompanionRevealPort';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { ToolView } from '@/components/tools/shell/views/ToolView';
+import { SessionTranscriptSourceProvider } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
+import { createTranscriptRendererContentDemand, TranscriptRendererContentDemandProvider, TranscriptRendererRowContentDemandProvider } from '@/components/sessions/transcript/viewport/visibility/TranscriptRowContentDemand';
+import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import { TranscriptRowSeqProvider } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
 
 vi.mock('socket.io-client', async (importOriginal) =>
   (
@@ -58,6 +66,7 @@ vi.mock('@/modal', async () => {
 const frames = vi.hoisted(() => ({ active: 0, maximum: 0 }));
 vi.mock('@/components/browser/frame/BrowserViewFrame.web', () => ({
   BrowserViewFrame: (props: Readonly<{ engine: BrowserFrameEngineConfig }>) => {
+    const [document] = React.useState(() => ({}));
     // An unavailable/error renderer is not a live HTML body.
     expect(props.engine).toMatchObject({ kind: 'webIframe', html: expect.any(String) });
     React.useEffect(() => {
@@ -67,11 +76,12 @@ vi.mock('@/components/browser/frame/BrowserViewFrame.web', () => ({
         frames.active -= 1;
       };
     }, []);
-    return React.createElement('BrowserViewFrame');
+    return React.createElement('BrowserViewFrame', { document });
   },
 }));
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
+const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
 
 const revision = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
 // The shell's renderer-presence answer: this client can mount caller HTML.
@@ -87,31 +97,9 @@ const pluginRuntime = {
   platform: 'web' as const,
 };
 // A desktop shell with no Board host on screen: Details closed, no Board sidebar, no Companion rail.
-const noBoardOnScreen = resolveSessionBoardHostVisibility({
-  foreground: true,
-  panes: {
-    detailsOpen: false,
-    mainHidden: false,
-    rightOpen: false,
-    rightActiveTabId: null,
-  },
-  companionPlacement: { kind: 'hidden' },
-  mobileSurface: null,
-});
-const shellResolver: SessionBoardPlacementPrimaryMountResolver = (
-  itemId,
-  destination,
-  boardView,
-) =>
-  resolveSessionBoardItemPrimaryMountHost({
-    visibility: noBoardOnScreen,
-    itemVisibleInCompanion: false,
-    itemId,
-    ...(destination ? { detailsDestination: destination } : {}),
-    ...(boardView ? { boardView } : {}),
-  });
-
 async function prepare(height: Readonly<Record<string, string>>, viewer: 'owner' | 'view' = 'view') {
+  // Await the real physical frame's cold generated module outside mount assertions.
+  await import('@/components/plugins/hostedWeb/guestBootstrap.generated');
   // The browser's Location is the platform boundary; runtime admission and its request controller stay real.
   vi.stubGlobal('location', { origin: 'https://app.example.test', href: 'https://app.example.test/' });
   const item = {
@@ -156,6 +144,11 @@ async function prepare(height: Readonly<Record<string, string>>, viewer: 'owner'
     }),
   };
   const fixture = createSessionSystemRecordHttpFixture(boundary);
+  const mutations: Array<ReturnType<typeof SessionBoardMutationV1Schema.parse>> = [];
+  // Board inventory reads (the host list route), as distinct from a reply's exact item read.
+  const listReads: string[] = [];
+  // The exact Session's by-id read; a test may make it fail transiently after the reply loaded.
+  const sessionReads = { count: 0, fail: false };
   const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'reader', encryptionMode: 'plain' });
   const features = createRootLayoutFeaturesResponse();
   if (!tryWriteServerEnabledBitInPlace(features, 'sessions.board', true)) throw new Error('Missing Board feature declaration');
@@ -172,6 +165,12 @@ async function prepare(height: Readonly<Record<string, string>>, viewer: 'owner'
         signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
       if (new URL(String(url)).pathname === '/v2/sessions/session-1/board' && init?.method === 'PUT') {
         const mutation = SessionBoardMutationV1Schema.parse(JSON.parse(String(init.body)));
+        mutations.push(mutation);
+        if (mutation.operation === 'remove_item') {
+          records.splice(records.findIndex(row => row.address.kind === 'item.v1' && row.address.localId === mutation.itemId), 1);
+          return Response.json(SessionBoardMutationResultV1Schema.parse({ operation: mutation.operation,
+            itemId: mutation.itemId, outcome: 'removed' }));
+        }
         if (mutation.operation === 'update_layout') {
           const layoutIndex = records.findIndex(row => row.address.kind === 'layout.v1');
           records[layoutIndex] = SessionSystemRecordStoredSchema.parse({ ...records[layoutIndex], content: mutation.layoutContent });
@@ -184,6 +183,11 @@ async function prepare(height: Readonly<Record<string, string>>, viewer: 'owner'
           itemId: mutation.itemId, outcome: 'created', itemRevision: record.revision }));
       }
       if (path.endsWith('/turns')) return Response.json({ error: 'not_found' }, { status: 404 });
+      if (path === '/v2/sessions/session-1' && (init?.method ?? 'GET') === 'GET') {
+        sessionReads.count += 1;
+        if (sessionReads.fail) return Response.json({ error: 'server_unavailable' }, { status: 503 });
+      }
+      if (path.endsWith('/system-records')) listReads.push(new URL(String(url)).search);
       return await artifacts.handle(`${path}${new URL(String(url)).search}`, init) ?? fixture.request(url);
     }),
   });
@@ -219,7 +223,20 @@ async function prepare(height: Readonly<Record<string, string>>, viewer: 'owner'
     input: actionInput,
     result: acknowledged,
   });
-  return { tool, serverId: connection.home.id, records, artifacts, executor: createDefaultActionExecutor() };
+  const credentials = await TokenStorage.getCredentialsForServerUrl(connection.home.serverUrl, { serverId: connection.home.id });
+  return { tool, serverId: connection.home.id, records, artifacts, fixture, credentials, mutations, listReads, sessionReads, executor: createDefaultActionExecutor() };
+}
+
+function TranscriptBoardOwner(props: React.ComponentProps<typeof SessionBoardControllerOwner>) {
+  const mounted = useMountedSessionBoardController(props.address);
+  return mounted ? <SessionBoardControllerProvider {...props.address}>
+    {props.children}
+  </SessionBoardControllerProvider> : <SessionBoardControllerOwner {...props} />;
+}
+
+function bodiesInReply(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string): number {
+  const reply = screen.findByTestId(testID)!;
+  return reply.findAll(node => String(node.type) === 'BrowserViewFrame').length;
 }
 
 /** One Session shell with the transcript repeating the same acknowledged visual in two replies. */
@@ -230,7 +247,7 @@ function Transcript(
     demand: readonly [boolean, boolean];
     canEdit?: boolean;
     actions?: ReturnType<typeof createSessionBoardActionsPort>;
-    resolvePrimaryHost?: SessionBoardPlacementPrimaryMountResolver;
+    onPresentation?: (result: ActionExecuteResult) => void;
     children?: React.ReactNode;
   }>,
 ) {
@@ -264,85 +281,218 @@ function Transcript(
     () => props.actions ?? createSessionBoardActionsPort(address),
     [address, props.actions],
   );
+  const applierRef = React.useRef<SessionPresentationIntentApplier | null>(null);
+  const accountId = storage.getState().profileScope!.accountId;
+  // Compose the shell's current-client Action port with the real bridge below.
+  const executor = React.useMemo(() => createDefaultActionExecutor({ currentSessionPresentationApply: {
+    ...address, accountId,
+    isCurrent: () => {
+      const scope = storage.getState().profileScope;
+      return !!scope && areServerProfileIdentifiersEquivalent(scope.serverId, address.serverId) && scope.accountId === accountId;
+    },
+    apply: async ({ input }) => {
+      const result = applierRef.current?.(input.intent) ?? { status: 'unavailable' as const };
+      return result.status === 'applied' || result.status === 'unchanged'
+        ? { status: result.status, revision: 'mounted-transcript' }
+        : { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+    },
+  } }), [accountId, address]);
   return (
     <SessionBoardContinuityProvider
       sessionId={address.sessionId}
       serverId={address.serverId}
     >
-      <SessionBoardControllerOwner
+      <TranscriptBoardOwner
         address={address}
         input={{ ...address, binding, actions, resolveSourceAvailability: available }}
         binding={binding}
         actions={actions}
         pluginRuntime={{ ...pluginRuntime, serverId: address.serverId }}
         callerHostedHtmlRuntime={callerRuntime}
-        resolvePrimaryHost={props.resolvePrimaryHost ?? shellResolver}
       >
+        <SessionCompanionPresentationBridge {...address} applierRef={applierRef}
+          openBoard={() => ({ status: 'unavailable' })} revealBoardItem={() => ({ status: 'applied' })}
+          returnToChat={() => ({ status: 'unchanged' })} openFullSurface={() => ({ status: 'unavailable' })} />
+        <SessionCompanionRevealPortProvider address={address} openFullSurface={() => {}}
+          revealAfterMutation={() => {}} revealBoardItem={widgetId => {
+            void executor.execute('session.presentation.apply', { intent: { kind: 'board.item.reveal', widgetId } },
+              { surface: 'ui', authority: 'present_user', serverId: props.serverId, expectedAccountId: accountId, defaultSessionId: address.sessionId })
+              .then(result => { props.onPresentation?.(result); });
+          }}
+          showItemInChat={async (widgetId, occurrenceId) => {
+            const result = await executor.execute('session.presentation.apply', { intent: { kind: 'chat.item.show', widgetId, occurrenceId } },
+              { surface: 'ui', authority: 'present_user', serverId: props.serverId, expectedAccountId: accountId, defaultSessionId: address.sessionId });
+            props.onPresentation?.(result);
+          }}>
         <View testID="reply-1">
+          <TranscriptRowSeqProvider value={1}>
           <SessionBoardActionResultReference
             tool={props.tool}
             serverId={props.serverId}
             sessionId="session-1"
             contentDemand={props.demand[0]}
           />
+          </TranscriptRowSeqProvider>
         </View>
         <View testID="reply-2">
+          <TranscriptRowSeqProvider value={2}>
           <SessionBoardActionResultReference
             tool={props.tool}
             serverId={props.serverId}
             sessionId="session-1"
             contentDemand={props.demand[1]}
           />
+          </TranscriptRowSeqProvider>
         </View>
         {props.children}
-      </SessionBoardControllerOwner>
+        </SessionCompanionRevealPortProvider>
+      </TranscriptBoardOwner>
     </SessionBoardContinuityProvider>
   );
 }
 
-function WorkspaceTranscriptBody(props: React.ComponentProps<typeof Transcript>) {
-  const resolvePrimaryHost = useSessionBoardPrimaryMountResolver({
-    address: { serverId: props.serverId, sessionId: 'session-1' },
-    paneScopeId: 'session:visual-election',
-  });
-  return <Transcript {...props} resolvePrimaryHost={resolvePrimaryHost} />;
+/** One reply in the production Session owner, with no Board or Companion host on screen. */
+function RuntimeTranscript(props: Readonly<{ tool: ToolCall; serverId: string; credentials: AuthCredentials | null }>) {
+  const navigation = { push: () => {}, replace: () => {}, back: () => {} };
+  const address = React.useMemo(() => ({ serverId: props.serverId, sessionId: 'session-1' }), [props.serverId]);
+  return <InjectedAuthProvider credentials={props.credentials}><AppPaneProvider>
+    <DestinationInstanceHost tabId="visual-session" ref={{ kind: 'session', params: { id: 'session-1', serverId: props.serverId } }}
+      pathname="/session/session-1" focused visible navigation={navigation}>
+      <SessionBoardControllerProvider {...address}>
+        <SessionCompanionRevealPortProvider address={address} openFullSurface={() => {}}
+          revealAfterMutation={() => {}} revealBoardItem={() => {}}>
+          <TranscriptRowSeqProvider value={1}>
+            <SessionBoardActionResultReference tool={props.tool} serverId={props.serverId} sessionId="session-1" contentDemand />
+          </TranscriptRowSeqProvider>
+        </SessionCompanionRevealPortProvider>
+      </SessionBoardControllerProvider>
+    </DestinationInstanceHost>
+  </AppPaneProvider></InjectedAuthProvider>;
 }
 
-function WorkspaceTranscript(props: React.ComponentProps<typeof Transcript> & Readonly<{ focused: boolean; visible: boolean }>) {
-  return <AppPaneProvider>
+function WorkspaceTranscript(props: React.ComponentProps<typeof Transcript> & Readonly<{ focused: boolean; visible: boolean; credentials: AuthCredentials | null }>) {
+  const navigation = { push: () => {}, replace: () => {}, back: () => {} };
+  return <InjectedAuthProvider credentials={props.credentials}><AppPaneProvider>
     <DestinationInstanceHost tabId="visual-session" ref={{ kind: 'session', params: { id: 'session-1', serverId: props.serverId } }}
-      pathname="/session/session-1" focused={props.focused} visible={props.visible}>
-      <WorkspaceTranscriptBody {...props} />
+      pathname="/session/session-1" focused={props.focused} visible={props.visible} navigation={navigation}>
+      <Transcript {...props} />
     </DestinationInstanceHost>
     <DestinationInstanceHost tabId="other-tab" ref={{ kind: 'session', params: { id: 'session-2', serverId: props.serverId } }}
-      pathname="/session/session-2" focused={!props.focused} visible>
+      pathname="/session/session-2" focused={!props.focused} visible navigation={navigation}>
       <View />
     </DestinationInstanceHost>
-  </AppPaneProvider>;
+  </AppPaneProvider></InjectedAuthProvider>;
 }
 
 describe('live inline transcript visuals', () => {
-  it('keeps one runner in a visible unfocused workspace tab, moves it on Show here, and retires hidden tabs', async () => {
-    frames.active = 0;
-    frames.maximum = 0;
+  it('keeps the newest occurrence when an older row becomes demanded later', async () => {
     const { tool, serverId } = await prepare({ mode: 'auto', fallback: 'regular' });
-    const view = (focused: boolean, visible: boolean) => <WorkspaceTranscript
-      tool={tool} serverId={serverId} demand={[true, true]} focused={focused} visible={visible} />;
-    const screen = await renderScreen(view(false, true));
+    const screen = await renderScreen(<Transcript tool={tool} serverId={serverId} demand={[false, true]} />);
     await act(async () => { await loadPluginUiHostSupport(); });
-    const framesIn = (testID: string) => screen.findByTestId(testID)!
-      .findAll((node) => String(node.type) === 'BrowserViewFrame').length;
     await vi.waitFor(async () => {
       await act(async () => { await Promise.resolve(); });
-      expect(framesIn('reply-1')).toBe(1);
+      expect(bodiesInReply(screen, 'reply-2')).toBe(1);
     });
-    const showHere = screen.findByTestId('reply-2')!.findAll((node) =>
+    await screen.update(<Transcript tool={tool} serverId={serverId} demand={[true, true]} />);
+    await vi.waitFor(async () => {
+      await act(async () => { await Promise.resolve(); });
+      expect(bodiesInReply(screen, 'reply-2')).toBe(1);
+    });
+    expect(bodiesInReply(screen, 'reply-1')).toBe(0);
+  });
+
+  it('releases an approved cards-mode visual read and execution candidacy when row demand withdraws', async () => {
+    const { tool, serverId, fixture } = await prepare({ mode: 'auto', fallback: 'regular' });
+    const approval = ApprovalRequestV2Schema.parse({
+      v: 2, status: 'executed', createdAtMs: 1, updatedAtMs: 3,
+      createdBy: { surface: 'agent', sessionId: 'session-1' }, requestedSurface: 'agent',
+      origin: { kind: 'transcript_tool_call', sessionId: 'session-1', messageId: 'asked-row', toolCallId: 'asked-tool',
+        toolName: 'session_board_item_upsert', toolInput: tool.input },
+      executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent',
+        caller: { kind: 'session', sessionId: 'session-1', starterDepth: 0, turnDepth: 0 },
+        serverId, sessionId: 'session-1', machineId: 'machine-1', actionId: 'session.board.item.upsert', requestId: 'asked-visual' },
+      actionId: 'session.board.item.upsert', actionArgs: tool.input, summary: 'Show experiment',
+      decision: { kind: 'approve', decidedAtMs: 2 },
+      execution: { executedAtMs: 3, effectAttempted: true, ok: true, result: tool.result },
+    });
+    const requests = [{ artifact: { id: 'asked-visual', header: buildApprovalRequestArtifactHeaderV1(approval) }, approval }];
+    const pendingTool = { ...tool, id: 'asked-tool', result: {
+      kind: 'approval_request_created', artifactId: 'asked-visual', actionId: 'session.board.item.upsert',
+    } };
+    const source = createTestSessionTranscriptSource({ serverId, sessionId: 'session-1' });
+    const demand = createTranscriptRendererContentDemand();
+    demand.publish(['asked-row']);
+    const address = { serverId, sessionId: 'session-1' };
+    let mounted: ReturnType<typeof useMountedSessionBoardController> = null;
+    const Probe = () => { mounted = useMountedSessionBoardController(address); return null; };
+    const screen = await renderScreen(<Transcript tool={tool} serverId={serverId} demand={[false, false]}>
+      <SessionTranscriptSourceProvider source={source}>
+        <TranscriptRendererContentDemandProvider demand={demand}>
+          <TranscriptRendererRowContentDemandProvider itemKey="asked-row">
+            <View testID="cards-reply">
+            <ToolView tool={pendingTool} metadata={null} serverId={serverId} sessionId="session-1"
+              messageId="asked-row" approvalRequests={requests} />
+            </View>
+          </TranscriptRendererRowContentDemandProvider>
+        </TranscriptRendererContentDemandProvider>
+      </SessionTranscriptSourceProvider>
+      <Probe />
+    </Transcript>);
+    await act(async () => { await loadPluginUiHostSupport(); });
+    await vi.waitFor(async () => {
+      await act(async () => { await Promise.resolve(); });
+      expect(mounted?.resolveInlineTranscriptOccurrence('visual')).toEqual(expect.any(String));
+    });
+    const occurrence = mounted!.resolveInlineTranscriptOccurrence('visual');
+    expect(occurrence).not.toBeNull();
+    expect(screen.findByTestId('approval-prompt-card')).toBeNull();
+    const repository = getSyncSingleton().readSessionSystemRecordObservation(address)!.repository;
+    const itemAddress = { owner: 'host', namespace: 'surface', kind: 'item.v1', localId: 'visual' } as const;
+    const query = { type: 'read', address: itemAddress } as const;
+    const reads = fixture.recordReads.length;
+
+    await act(async () => { demand.publish([]); });
+    expect(mounted!.resolveInlineTranscriptOccurrence('visual')).toBeNull();
+    // The retained row is not read demand. An addressed change stays stale until it is visible again.
+    await act(async () => { repository.invalidate(address, [itemAddress]); });
+    expect(repository.getSnapshot(address, query).freshness).toBe('stale');
+    expect(fixture.recordReads).toHaveLength(reads);
+
+    await act(async () => { demand.publish(['asked-row']); });
+    await vi.waitFor(async () => {
+      await act(async () => { await Promise.resolve(); });
+      expect(mounted!.resolveInlineTranscriptOccurrence('visual')).toBe(occurrence);
+      expect(repository.getSnapshot(address, query).freshness).toBe('fresh');
+    });
+    expect(fixture.recordReads.length).toBeGreaterThan(reads);
+  });
+
+  it('keeps one runner in a visible unfocused workspace tab, reloads it on Show here, and retires hidden tabs', async () => {
+    frames.active = 0;
+    frames.maximum = 0;
+    const { tool, serverId, credentials } = await prepare({ mode: 'auto', fallback: 'regular' });
+    let presentation: ActionExecuteResult | undefined;
+    const view = (focused: boolean, visible: boolean) => <WorkspaceTranscript
+      tool={tool} serverId={serverId} credentials={credentials} demand={[true, true]} focused={focused} visible={visible}
+      onPresentation={result => { presentation = result; }} />;
+    const screen = await renderScreen(view(false, true));
+    await act(async () => { await loadPluginUiHostSupport(); });
+    const framesIn = (testID: string) => bodiesInReply(screen, testID);
+    await vi.waitFor(async () => {
+      await act(async () => { await Promise.resolve(); });
+      expect(framesIn('reply-2')).toBe(1);
+    });
+    const document = screen.tree.root.findByType('BrowserViewFrame').props.document;
+    const showHere = screen.findByTestId('reply-1')!.findAll((node) =>
       node.props.testID === 'transcript-board-widget-visual-open-here')[0]!;
     await act(async () => { showHere.props.onPress(); });
-    await vi.waitFor(() => expect(framesIn('reply-2')).toBe(1));
-    expect(framesIn('reply-1')).toBe(0);
+    await vi.waitFor(() => expect(presentation).toBeDefined());
+    expect(presentation, JSON.stringify(presentation)).toMatchObject({ ok: true, result: { status: 'applied' } });
+    await vi.waitFor(() => expect(framesIn('reply-1')).toBe(1));
+    expect(screen.tree.root.findByType('BrowserViewFrame').props.document).not.toBe(document);
+    expect(framesIn('reply-2')).toBe(0);
     await screen.update(view(true, true));
-    expect(framesIn('reply-2')).toBe(1);
+    expect(framesIn('reply-1')).toBe(1);
     await screen.update(view(false, false));
     expect(frames.active).toBe(0);
     await screen.update(view(false, true));
@@ -350,7 +500,7 @@ describe('live inline transcript visuals', () => {
     expect(frames.maximum).toBe(1);
   });
 
-  it('runs one live body for a transcript visual and hands it to the reply still on screen', async () => {
+  it('runs the latest demanded occurrence and releases it when demand leaves', async () => {
     frames.active = 0;
     frames.maximum = 0;
     const { tool, serverId } = await prepare({
@@ -360,11 +510,7 @@ describe('live inline transcript visuals', () => {
     const screen = await renderScreen(
       <Transcript tool={tool} serverId={serverId} demand={[true, true]} />,
     );
-    const framesIn = (testID: string) =>
-      screen.tree.root
-        .findAll((node) => node.props.testID === testID)
-        .at(0)!
-        .findAll((node) => String(node.type) === 'BrowserViewFrame').length;
+    const framesIn = (testID: string) => bodiesInReply(screen, testID);
 
     // Keep cold SDK transformation outside the frame assertion's polling budget,
     // while exercising the real async preparation and React publication path.
@@ -374,8 +520,8 @@ describe('live inline transcript visuals', () => {
       await act(async () => { await Promise.resolve(); });
       expect(frames.active).toBe(1);
     });
-    expect(framesIn('reply-1')).toBe(1);
-    expect(framesIn('reply-2')).toBe(0);
+    expect(framesIn('reply-2')).toBe(1);
+    expect(framesIn('reply-1')).toBe(0);
     // The other reply says where the visual runs instead of drawing an empty card.
     expect(
       screen.findByTestId('transcript-board-widget-visual-elsewhere'),
@@ -383,11 +529,11 @@ describe('live inline transcript visuals', () => {
 
     // The live reply scrolls away: its body is released and the reply still on screen takes it.
     await screen.update(
-      <Transcript tool={tool} serverId={serverId} demand={[false, true]} />,
+      <Transcript tool={tool} serverId={serverId} demand={[true, false]} />,
     );
     await vi.waitFor(async () => {
       await act(async () => { await Promise.resolve(); });
-      expect(framesIn('reply-2')).toBe(1);
+      expect(framesIn('reply-1')).toBe(1);
     });
     expect(frames.active).toBe(1);
     expect(frames.maximum).toBe(1);
@@ -404,37 +550,37 @@ describe('live inline transcript visuals', () => {
     frames.active = 0;
     frames.maximum = 0;
     const { tool, serverId } = await prepare({ mode: 'fixed', size: 'tall' });
-    const screen = await renderScreen(<Transcript tool={tool} serverId={serverId} demand={[true, true]} />);
-    const framesIn = (testID: string) =>
-      screen.tree.root
-        .findAll((node) => node.props.testID === testID)
-        .at(0)!
-        .findAll((node) => String(node.type) === 'BrowserViewFrame').length;
+    let presentation: ActionExecuteResult | undefined;
+    const screen = await renderScreen(<Transcript tool={tool} serverId={serverId} demand={[true, true]}
+      onPresentation={result => { presentation = result; }} />);
+    const framesIn = (testID: string) => bodiesInReply(screen, testID);
     await act(async () => { await loadPluginUiHostSupport(); });
     await vi.waitFor(async () => {
       await act(async () => { await Promise.resolve(); });
-      expect(framesIn('reply-1')).toBe(1);
+      expect(framesIn('reply-2')).toBe(1);
     });
     // The reply that does not run it is a compact line that offers the move, not a box of the
     // declared height around one sentence.
     const elsewhereBody = () => screen.tree.root
-      .findAll((node) => node.props.testID === 'reply-2')
+      .findAll((node) => node.props.testID === 'reply-1')
       .at(0)!
       .findAll((node) => node.props.testID === 'transcript-board-widget-visual-body')[0];
     const bodyHeight = () => Object.assign({}, ...[elsewhereBody()?.props.style].flat(Infinity).filter(Boolean)).height;
     expect(bodyHeight()).toBeUndefined();
     const showHere = () => screen.tree.root
-      .findAll((node) => node.props.testID === 'reply-2')
+      .findAll((node) => node.props.testID === 'reply-1')
       .at(0)!
       .findAll((node) => node.props.testID === 'transcript-board-widget-visual-open-here')[0];
     expect(showHere()).toBeTruthy();
 
     await act(async () => { showHere()!.props.onPress?.(); });
+    await vi.waitFor(() => expect(presentation).toBeDefined());
+    expect(presentation, JSON.stringify(presentation)).toMatchObject({ ok: true, result: { status: 'applied' } });
     await vi.waitFor(async () => {
       await act(async () => { await Promise.resolve(); });
-      expect(framesIn('reply-2')).toBe(1);
+      expect(framesIn('reply-1')).toBe(1);
     });
-    expect(framesIn('reply-1')).toBe(0);
+    expect(framesIn('reply-2')).toBe(0);
     expect(frames.maximum).toBe(1);
     expect(screen.findByTestId('transcript-board-widget-visual-elsewhere')).not.toBeNull();
   });
@@ -452,13 +598,25 @@ describe('live inline transcript visuals', () => {
     );
     await vi.waitFor(() => expect(mounted!.resolveInlineTranscriptOccurrence('visual')).not.toBeNull());
     const first = mounted!.resolveInlineTranscriptOccurrence('visual');
-    // The reply on screen longest already runs it, but the request is new: it is recorded once.
+    // Selecting the latest demanded occurrence is explicit and becomes unchanged on repetition.
     expect(mounted!.showInlineTranscriptItem('visual')).toBe('applied');
     await vi.waitFor(() => expect(mounted!.showInlineTranscriptItem('visual')).toBe('unchanged'));
     expect(mounted!.resolveInlineTranscriptOccurrence('visual')).toBe(first);
-    // Opening it on a Board host takes the request back.
-    await act(async () => { mounted!.releaseInlineTranscriptItem('visual'); });
-    await vi.waitFor(() => expect(mounted!.showInlineTranscriptItem('visual')).toBe('applied'));
+
+  });
+
+  it('opens the current readable hosted-HTML transcript item before the bulk Board inventory catches up', async () => {
+    const { tool, serverId } = await prepare({ mode: 'auto', fallback: 'regular' });
+    let presentation: ActionExecuteResult | undefined;
+    const screen = await renderScreen(
+      <Transcript tool={tool} serverId={serverId} demand={[true, false]}
+        onPresentation={result => { presentation = result; }} />,
+    );
+    await act(async () => { await loadPluginUiHostSupport(); });
+    await vi.waitFor(() => expect(screen.findByTestId('transcript-board-item-visual-open')).not.toBeNull());
+    await screen.pressByTestIdAsync('transcript-board-item-visual-open');
+    await vi.waitFor(() => expect(presentation).toBeDefined());
+    expect(presentation, JSON.stringify(presentation)).toMatchObject({ ok: true, result: { status: 'applied' } });
   });
 
   it("sizes a reply by the item's declared height, not a transcript-local clamp", async () => {
@@ -501,5 +659,52 @@ describe('live inline transcript visuals', () => {
     }));
     expect(artifacts.list().some(row => !priorApprovals.has(row.id))).toBe(false);
     expect(records.filter(row => row.address.kind === 'item.v1')).toEqual([itemBefore]);
+  });
+
+  it('starts the Board read on the first menu open from the Session authority the reply already holds', async () => {
+    const { tool, serverId, credentials, listReads, sessionReads } = await prepare({ mode: 'auto', fallback: 'regular' }, 'owner');
+    const screen = await renderScreen(<RuntimeTranscript tool={tool} serverId={serverId} credentials={credentials} />);
+    await act(async () => { await loadPluginUiHostSupport(); });
+    await vi.waitFor(() => expect(screen.findByTestId('transcript-board-widget-visual-body')).not.toBeNull());
+    await flushHookEffects({ cycles: 6 });
+    // The reply is on screen, so this Session's record authority is current. Live, a list-only
+    // publication then leaves the stored Session display-only (route hydration owed) and its by-id
+    // read fails transiently on a loaded Home: the menu's Board facts must not wait on that hydration.
+    const readsBefore = sessionReads.count;
+    sessionReads.fail = true;
+    const stored = storage.getState().sessions['session-1']!;
+    act(() => { storage.setState(state => ({ sessions: { ...state.sessions, 'session-1': { ...stored, metadataProjection: 'displayOnly' } } })); });
+    const readMenu = () => screen.tree.root.findAllByType(ItemRowActions)
+      .find((node) => node.props.overflowTriggerTestID === 'transcript-board-widget-visual-actions')
+      ?.props.actions as ReadonlyArray<{ id: string; disabled?: boolean; destructive?: boolean }> | undefined;
+    await screen.pressByTestIdAsync('transcript-board-widget-visual-actions');
+    await vi.waitFor(() => expect(readMenu()?.find(action => action.id === 'remove')).toMatchObject({ destructive: true }));
+    expect(readMenu()?.find(action => action.id === 'remove')?.disabled).not.toBe(true);
+    expect(listReads).toHaveLength(1);
+    expect(sessionReads.count).toBe(readsBefore);
+  });
+
+  it('deletes a transcript-only visual and opens its network editor from the reply with no Board open (B-01)', async () => {
+    const { tool, serverId, records, credentials, mutations, listReads } = await prepare({ mode: 'auto', fallback: 'regular' }, 'owner');
+    // The production Session owner: its Board binding is observed from the same Home, not a fixture snapshot.
+    const screen = await renderScreen(<RuntimeTranscript tool={tool} serverId={serverId} credentials={credentials} />);
+    await act(async () => { await loadPluginUiHostSupport(); });
+    const menuNode = () => screen.tree.root.findAllByType(ItemRowActions)
+      .find((node) => node.props.overflowTriggerTestID === 'transcript-board-widget-visual-actions');
+    const readMenu = () => menuNode()?.props.actions as ReadonlyArray<{ id: string; destructive?: boolean; onPress?: () => void }> | undefined;
+    await vi.waitFor(() => expect(screen.findByTestId('transcript-board-widget-visual-body')).not.toBeNull());
+    await flushHookEffects({ cycles: 6 });
+    // A reply merely on screen reads only its own item: the Board's inventory waits for its menu.
+    expect(listReads).toEqual([]);
+    await screen.pressByTestIdAsync('transcript-board-widget-visual-actions');
+    await vi.waitFor(() => expect(readMenu()?.find(action => action.id === 'remove')).toMatchObject({ destructive: true }));
+    expect(listReads.length).toBeGreaterThan(0);
+    await act(async () => { readMenu()?.find(action => action.id === 'network')?.onPress?.(); });
+    await vi.waitFor(() => expect(screen.findByTestId('transcript-board-widget-visual.network')).not.toBeNull());
+    await act(async () => { readMenu()?.find(action => action.id === 'remove')?.onPress?.(); });
+    await vi.waitFor(() => expect(mutations.filter(mutation => mutation.operation === 'remove_item')).toMatchObject([
+      { operation: 'remove_item', itemId: 'visual', expectedItemRevision: revision },
+    ]));
+    expect(records.some(row => row.address.kind === 'item.v1')).toBe(false);
   });
 });

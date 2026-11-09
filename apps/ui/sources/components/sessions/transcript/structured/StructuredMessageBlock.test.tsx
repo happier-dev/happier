@@ -3,7 +3,7 @@ import renderer from 'react-test-renderer';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createMessageStructuredPresentationV1 } from '@happier-dev/protocol';
+import { createMessageStructuredPresentationV1 } from '@happier-dev/protocol/sessions/messages/messageStructuredPresentationV1';
 import { ScmDiffSummaryGenerateOutputSchema, ScmDiffSummaryGenerateSuccessSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { ScmDiffSummaryPublicationReceiptSchema } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';

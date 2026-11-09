@@ -373,39 +373,24 @@ describe('sessionListFilterEditorModel', () => {
         });
         const section = (model: ReturnType<typeof build>, id: string) => model.rootStep.sections.find((candidate) => candidate.id === id);
 
-        it('builds "failing sessions in payments" from Project and Work-status choices', () => {
+        it('builds "sessions in payments" from Project choices; Status is the shared editor\'s grouped field', () => {
             const defaults = createSessionListViewFilterDefaults({ homeServerIds: ['home-a'] });
             const model = build(defaults);
-            const status = section(model, 'status');
             const projects = section(model, 'projects');
-            expect(status?.kind === 'static' && status.options.map((option) => option.label))
-                .toEqual(['Working', 'Needs you', 'Failed', 'Idle', 'Offline']);
+            expect(section(model, 'status')).toBeUndefined();
             // Only the selected Homes' projects are choices.
             expect(projects?.kind === 'static' && projects.options.map((option) => option.label))
                 .toEqual(['payments', 'happier']);
 
             const projectOption = projects?.kind === 'static' ? projects.options[0]!.id : '';
             const withProject = reduceSessionListFilterEditorSelection(defaults, projectOption);
-            const failing = reduceSessionListFilterEditorSelection(withProject, 'status:failed');
-            expect(failing.projects).toEqual({ include: [payments], exclude: [] });
-            expect(failing.statuses).toEqual(['failed']);
-            expect(build(failing).selection.selectedIds.has('status:failed')).toBe(true);
-            expect(build(failing).selection.selectedIds.has(projectOption)).toBe(true);
-            expect(build(failing).selection.selectedIds.has('project-mode:include')).toBe(true);
+            expect(withProject.projects).toEqual({ include: [payments], exclude: [] });
+            expect(build(withProject).selection.selectedIds.has(projectOption)).toBe(true);
+            expect(build(withProject).selection.selectedIds.has('project-mode:include')).toBe(true);
 
-            // Toggling the same choices off leaves no empty facet behind.
-            const cleared = reduceSessionListFilterEditorSelection(
-                reduceSessionListFilterEditorSelection(failing, 'status:failed'), projectOption);
-            expect(cleared.statuses).toBeUndefined();
+            // Toggling the same choice off leaves no empty facet behind.
+            const cleared = reduceSessionListFilterEditorSelection(withProject, projectOption);
             expect(cleared.projects).toBeUndefined();
-        });
-
-        it('selects every presentation state of a Work status, so Needs you excludes Failed', () => {
-            const defaults = createSessionListViewFilterDefaults({ homeServerIds: ['home-a'] });
-            const needsYou = reduceSessionListFilterEditorSelection(defaults, 'status:needs_you');
-            expect([...(needsYou.statuses ?? [])].sort()).toEqual(['action_required', 'permission_required']);
-            const offline = reduceSessionListFilterEditorSelection(defaults, 'status:offline');
-            expect([...(offline.statuses ?? [])].sort()).toEqual(['disconnected', 'recoverable_unservable']);
         });
 
         it('switches the chosen projects between Is and Isn\'t, and keeps an unknown retained project removable', () => {
@@ -428,9 +413,8 @@ describe('sessionListFilterEditorModel', () => {
             expect(removed.projects?.exclude.map((project) => project.projectKey)).toEqual(['payments']);
         });
 
-        it('offers neither facet for Runs, which carry no Session status or project', () => {
+        it('offers no Session Project facts for Runs', () => {
             const model = build(createSessionListViewFilterDefaults({ homeServerIds: ['home-a'], show: 'runs' }));
-            expect(section(model, 'status')).toBeUndefined();
             expect(section(model, 'projects')).toBeUndefined();
         });
     });

@@ -629,6 +629,20 @@ describe('structured input mentions', () => {
         });
     });
 
+    it('retains issued Session attachments from both producers alongside composer context', () => {
+        const first = { v: 1, sessionId: 's1', id: 'first-upload' } as const;
+        const second = { v: 1, sessionId: 's1', id: 'second-upload' } as const;
+        const mention = { kind: MENTION_KIND_V1.file, ref: 'file:src/index.ts', token: '@src/index.ts' };
+        const merged = mergeMessageMetaOverrides(
+            { happierStructuredInputV1: { v: 1, sessionAttachments: [first] } },
+            { happierStructuredInputV1: { v: 1, sessionAttachments: [second], mentions: [mention] } },
+        );
+
+        expect(sanitizeSessionUserMessageSendMeta(merged ?? {})).toEqual({
+            happierStructuredInputV1: { v: 1, sessionAttachments: [first, second], mentions: [mention] },
+        });
+    });
+
     it('retains the exact Discussion selection source while composing other structured input', () => {
         const source = {
             kind: 'session_discussion' as const,

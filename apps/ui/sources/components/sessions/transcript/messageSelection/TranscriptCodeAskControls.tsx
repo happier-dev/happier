@@ -6,6 +6,12 @@ import { usePaneMainColumn } from '@/components/appShell/panes/mainColumn/usePan
 import { AskSelectionControls } from '@/components/ui/code/selection/AskSelectionControls';
 import type { AskSelection } from '@/components/ui/code/selection/useAskSelection';
 import { useWorkspaceScopeForSession } from '@/sync/domains/session/resolveWorkspaceScopeForSession';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { Modal } from '@/modal';
+import { t } from '@/text';
+import { readTranscriptPassageSelection, type TranscriptPassageSelection } from './transcriptPassageSelection';
+import { annotateTranscriptPassage, captureTranscriptPassage, quoteTranscriptPassage, type CapturedTranscriptPassage } from './transcriptPassageActions';
+import { TranscriptAnnotationPopover } from './TranscriptAnnotationPopover';
 
 import { buildChatListNativeId } from '../chatListNativeId';
 
@@ -33,8 +39,8 @@ function closestElement(
 }
 
 /**
- * Ask about a selection inside a code block of this Session's transcript (web, lab AS1): the fenced
- * quote goes to this Session's composer through the canonical append. One instance per Session view.
+ * The sole web selection owner for a Session: code keeps Ask, completed prose offers Quote/Annotate.
+ * Both append through the mounted composer owner. One instance per Session view.
  */
 export function TranscriptCodeAskControls(
   props: Readonly<{
@@ -48,7 +54,7 @@ export function TranscriptCodeAskControls(
     Platform.OS === 'web' ? props.sessionId : '',
     props.serverId,
   );
-  if (Platform.OS !== 'web' || typeof document === 'undefined' || !workspaceScope) return null;
+  if (Platform.OS !== 'web' || typeof document === 'undefined') return null;
   return (
     <TranscriptCodeAskControlsContent
       {...props}
@@ -62,11 +68,14 @@ function TranscriptCodeAskControlsContent(
     sessionId: string;
     scopeId: string;
     active: boolean;
-    workspaceScope: NonNullable<ReturnType<typeof useWorkspaceScopeForSession>>;
+    workspaceScope: ReturnType<typeof useWorkspaceScopeForSession>;
   }>,
 ): React.ReactElement {
   const pane = useAppPaneScope(props.scopeId);
   const mainColumn = usePaneMainColumn();
+  const accountLifetime = captureActiveServerAccountScopeLifetime();
+  const [annotation, setAnnotation] = React.useState<Readonly<{ passage: CapturedTranscriptPassage;
+    rect: AskSelection['rect'] }> | null>(null);
   // The transcript list's DOM id starts with this prefix (`buildChatListNativeId`).
   const listIdPrefix = buildChatListNativeId(props.sessionId, '').replace(
     /instance$/u,
@@ -85,7 +94,8 @@ function TranscriptCodeAskControlsContent(
       !block ||
       block !== closestElement(range.endContainer as DomNode, isBlock)
     )
-      return null;
+      return readTranscriptPassageSelection(selection, listIdPrefix);
+    if (!props.workspaceScope) return null;
     if (
       !closestElement(
         block,
@@ -111,7 +121,7 @@ function TranscriptCodeAskControlsContent(
         height: start.height,
       },
     };
-  }, [listIdPrefix]);
+  }, [listIdPrefix, props.workspaceScope]);
   const subscribeSelection = React.useCallback((listener: () => void) => {
     document.addEventListener('selectionchange', listener);
     return () => document.removeEventListener('selectionchange', listener);
@@ -123,7 +133,29 @@ function TranscriptCodeAskControlsContent(
     () => ({ sessionId: props.sessionId, revealSessionColumn }),
     [props.sessionId, revealSessionColumn],
   );
+  const captured = React.useCallback((selection: AskSelection) => {
+    if (!('source' in selection) || !accountLifetime?.isCurrent()) return null;
+    return captureTranscriptPassage(selection.text, (selection as TranscriptPassageSelection).source,
+      { kind: 'session', sessionId: props.sessionId });
+  }, [accountLifetime, props.sessionId]);
+  const quote = React.useCallback(async (selection: AskSelection) => {
+    const passage = captured(selection);
+    const ok = passage ? await quoteTranscriptPassage(passage) : false;
+    if (ok) revealSessionColumn();
+    else Modal.alert(t('common.error'), t('transcriptPassage.quoteError'));
+    return ok;
+  }, [captured, revealSessionColumn]);
+  const actionsForSelection = React.useCallback((selection: AskSelection) => 'source' in selection ? [
+    // Quote is what the selection's Ask shortcut runs on prose (`onAskSelection` below).
+    { id: 'quote', label: t('transcriptPassage.quote'), icon: 'quotes' as const, primary: true, onPress: () => quote(selection) },
+    { id: 'annotate', label: t('transcriptPassage.annotate'), icon: 'chat' as const, onPress: () => {
+      const passage = captured(selection);
+      if (passage) setAnnotation({ passage, rect: selection.rect });
+      else Modal.alert(t('common.error'), t('transcriptPassage.quoteError'));
+    } },
+  ] : null, [captured, quote]);
   return (
+    <>
     <AskSelectionControls
       scopeId={props.scopeId}
       workspaceScope={props.workspaceScope}
@@ -133,7 +165,18 @@ function TranscriptCodeAskControlsContent(
       sessionTarget={sessionTarget}
       openDetailsTab={pane.openDetailsTab}
       active={props.active}
+      accountLifetime={accountLifetime}
+      onAskSelection={(selection) => 'source' in selection ? quote(selection) : null}
+      actionsForSelection={actionsForSelection}
       testID="transcript-code-selection-toolbar"
     />
+    {annotation ? <TranscriptAnnotationPopover quote={annotation.passage.quote} anchor={annotation.rect}
+      onSave={async (note) => {
+        if (!props.active) return false;
+        const ok = await annotateTranscriptPassage(annotation.passage, note);
+        if (ok) revealSessionColumn();
+        return ok;
+      }} onCancel={() => setAnnotation(null)} /> : null}
+    </>
   );
 }

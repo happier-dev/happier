@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { Platform, Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { WorkspaceRepositoryTreeList } from '@/components/projects/files/WorkspaceRepositoryTreeList';
@@ -10,7 +10,7 @@ import { useSessionFileTabFront } from '@/components/appShell/panes/details/useF
 import { DiffStat } from '@/components/workspaces/scm/DiffStat';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -25,6 +25,7 @@ import {
     TURN_CHANGES_PAGE_ROWS,
     nextTurnChangesVisibleCount,
 } from './turnChangesCardModel';
+import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 
 export type TurnChangesCardWorkspace = Readonly<{
     serverId?: string | null;
@@ -83,7 +84,7 @@ export const TurnChangesCard = React.memo(function TurnChangesCard(props: TurnCh
                 accessibilityLabel={titleLabel}
                 style={styles.title}
             >
-                <Icon name={state.expanded ? 'caret-down' : 'caret-right'} size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
+                <DisclosureCaret expanded={state.expanded} size={ICON_SIZE.xs} />
                 {/* The counts are a smaller step than the title: they share its baseline, not its centre. */}
                 <View style={styles.titleLine}>
                     <ToolFindText text={titleLabel} blockId="tool-turn-changes-title" messageId={props.messageId} style={styles.titleText} numberOfLines={1} />
@@ -150,7 +151,7 @@ const TurnChangesCardBody = React.memo(function TurnChangesCardBody(props: Reado
     countLabel: string;
 }>) {
     const display = useGitDisplaySettings();
-    const pageRows = isTouchPrimaryPointer() ? TURN_CHANGES_PAGE_ROWS.touch : TURN_CHANGES_PAGE_ROWS.precise;
+    const pageRows = useHappierTouchPrimaryPointer(Platform.OS) ? TURN_CHANGES_PAGE_ROWS.touch : TURN_CHANGES_PAGE_ROWS.precise;
     const [visibleCount, setVisibleCount] = React.useState(() => nextTurnChangesVisibleCount({ visible: 0, total: props.files.length, pageRows }));
     const shownCount = props.findBodyActive ? props.files.length : Math.min(visibleCount, props.files.length);
     const showMore = React.useCallback(() => {

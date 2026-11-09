@@ -1,4 +1,4 @@
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 
 import type { AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
 import {

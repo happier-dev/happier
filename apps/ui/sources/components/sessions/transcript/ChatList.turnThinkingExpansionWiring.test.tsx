@@ -56,9 +56,6 @@ vi.mock('@/components/sessions/pending/PendingMessagesTranscriptBlock', () => ({
   PendingMessagesTranscriptBlock: () => React.createElement('PendingMessagesTranscriptBlock'),
 }));
 
-vi.mock('@/components/sessions/actions/SessionActionDraftCard', () => ({
-  SessionActionDraftCard: () => React.createElement('SessionActionDraftCard'),
-}));
 
 vi.mock('@/sync/domains/state/agentStateCapabilities', () => ({
   getPermissionsInUiWhileLocal: () => ({}),
@@ -219,7 +216,7 @@ describe('ChatList (turn thinking expansion wiring)', () => {
       transcriptToolCallsCollapsedPreviewCount: 1,
     }));
     expect(firstTurnProps?.toolRouteCommon).toEqual(expect.objectContaining({
-      messagesById: expect.any(Object),
+      reducerState: expect.any(Object),
     }));
 
     await screen.unmount();

@@ -2,6 +2,7 @@ import { useSessionTranscriptSource } from '@/components/sessions/transcript/sou
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -13,6 +14,7 @@ import type { TranscriptStructuredReference } from './messageStructuredReference
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useTranscriptFileLinks } from '../useTranscriptFileLinks';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 
 /**
  * The transcript's structured-references row (D-6). It presents every reference a message
@@ -52,7 +54,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         minWidth: 0,
         borderWidth: 1,
         borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
+        backgroundColor: glassContentFill(theme.colors.surface.inset, theme.colors),
         paddingHorizontal: theme.space.s10,
         paddingVertical: theme.space.s6,
         borderRadius: 999,
@@ -88,6 +90,7 @@ const SessionReferenceChip = React.memo((props: Readonly<{
     const { theme } = useUnistyles();
     const transcriptSource = useSessionTranscriptSource();
     const target = useSessionReferenceTarget(props.sessionId, props.serverId);
+    const isSessionVisible = useSessionRecordingVisibility();
 
     // The live title wins over the label captured when the reference was composed, so a renamed
     // session reads correctly without the reference changing — identity is the id, and the
@@ -100,7 +103,8 @@ const SessionReferenceChip = React.memo((props: Readonly<{
     const liveTitle = target.metadata
         ? getSessionName({ id: props.sessionId, metadata: target.metadata }, props.serverId)
         : null;
-    const title = liveTitle ?? props.label;
+    const title = isSessionVisible({ sessionId: props.sessionId, serverId: props.serverId })
+        ? liveTitle ?? props.label : t('message.provenanceSession');
 
     const openSession = React.useCallback(() => {
         transcriptSource.navigate?.(buildScopedSessionRouteHref({

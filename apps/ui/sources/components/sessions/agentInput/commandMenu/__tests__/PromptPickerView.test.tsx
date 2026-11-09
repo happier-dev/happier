@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { PromptLibraryListItem } from '@happier-dev/protocol';
+import type { PromptLibraryListItem } from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import type { UserMessageHistoryEntriesSnapshot } from '@/hooks/session/useUserMessageHistoryEntries';
 import type { PromptPickerViewProps } from '../AgentInputPromptPicker';
@@ -41,10 +41,10 @@ const DOCUMENTS: readonly PromptLibraryListItem[] = [
 function history(): UserMessageHistoryEntriesSnapshot {
     return { entries: [], coverage: 'partial', hasMore: false, isLoading: false, error: false,
         progress: { pagesLoaded: 0, sessionsSearched: 0, totalSessions: 0 },
-        loadMore: async () => {}, retry: async () => {}, stop: () => {} };
+        loadMore: async () => history(), retry: async () => history(), stop: () => history() };
 }
 
-async function mount(options: Readonly<{ hardwareKeyboard?: boolean; initialQuery?: string }> = {}) {
+async function mount(options: Readonly<{ hardwareKeyboard?: boolean; initialQuery?: string; library?: Partial<PromptPickerViewProps['library']> }> = {}) {
     const outcomes = {
         applied: [] as Array<{ text: string; mode: 'insert' | 'send' }>,
         favorites: [] as Array<{ artifactId: string; favorite: boolean }>,
@@ -60,7 +60,7 @@ async function mount(options: Readonly<{ hardwareKeyboard?: boolean; initialQuer
         anchor={{ kind: 'view', ref: { current: null } }} serverId="home" sessionId="s1" canSend
         onRequestClose={onRequestClose} onApply={onApply}
         library={{ documents: DOCUMENTS, invocations: [], coverage: 'complete', isLoading: false, error: false,
-            read: async () => 'body', setFavorite, adopt: () => {}, retry: () => {} }}
+            read: async () => 'body', setFavorite, adopt: () => {}, retry: () => {}, ...options.library }}
         history={history()} folderNames={new Map()} sessionNames={new Map()} nowMs={0}
         hardwareKeyboard={options.hardwareKeyboard ?? true} initialQuery={options.initialQuery} /></KeyboardShortcutProvider>);
     return { screen, outcomes };
@@ -77,7 +77,7 @@ describe('prompt picker presentation controls', () => {
 
     it.each(['', 'kubernetes'])('keeps partial coverage visible with results or no match (query=%s)', async (initialQuery) => {
         const { screen } = await mount({ hardwareKeyboard: false, initialQuery });
-        expect(screen.findByTestId('prompt-picker-history-coverage')).not.toBeNull();
+        expect(screen.findByTestId('prompt-picker-history-status')).not.toBeNull();
         expect(screen.getTextContent()).toContain('agentInput.promptPicker.partialHistory');
     });
     it('inserts from native soft submit and sends from the focused modifier bridge', async () => {
@@ -112,9 +112,22 @@ describe('prompt picker presentation controls', () => {
         expect(screen.findByTestId('prompt-picker-row:doc:e2e')).not.toBeNull();
     });
 
+    it('says its list states through the shared state line, announcing a failed library and retrying it', async () => {
+        let retried = 0;
+        const { screen } = await mount({ initialQuery: 'kubernetes', library: { error: true, retry: () => { retried += 1; } } });
+        const announced = (role: string) => screen.tree.root.findAll((node) => typeof node.type === 'string' && node.props.role === role)
+            .map(function text(node: { children: ReadonlyArray<unknown> }): string {
+                return node.children.map((child) => typeof child === 'string' ? child : text(child as typeof node)).join('');
+            });
+        expect(announced('alert').join(' ')).toContain('agentInput.promptPicker.libraryError');
+        expect(announced('status').join(' ')).toContain('agentInput.promptPicker.noMatchesFor');
+        await screen.pressByTestIdAsync('prompt-picker-library-error:action');
+        expect(retried).toBe(1);
+    });
+
     it('drops keyboard hints without a hardware keyboard and closes from its own button', async () => {
         const { screen, outcomes } = await mount({ hardwareKeyboard: false });
-        expect(screen.findByTestId('prompt-picker-history-coverage')).not.toBeNull();
+        expect(screen.findByTestId('prompt-picker-history-status')).not.toBeNull();
         await screen.pressByTestIdAsync('prompt-picker-close');
         expect(outcomes.closed).toBe(true);
     });

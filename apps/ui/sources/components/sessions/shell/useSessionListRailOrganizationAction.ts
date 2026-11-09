@@ -39,12 +39,9 @@ export function useSessionListRailOrganizationAction(serverIds: readonly string[
           .filter(sessionId => readSessionBotV1(rows?.[sessionId]?.metadata?.bot)?.kind === 'bot')
           .map(sessionId => treeRowId.session(serverId, sessionId)),
       },
-      sessionFoldersV1: { v: 1, folders: [] },
       sessionListGroupOrderV1: { [PINNED_GROUP_KEY_V1]: orderedKeys },
       // This projection is personal pin order, not a date/project-sorted list view.
-      manualSessionOrderingEnabled: true, sessionListOrderingModeV1: 'custom', now: Date.now,
-      setSessionFoldersV1: async () => { throw new Error('unsupported_operation'); },
-      setSessionFolderAssignment: async () => { throw new Error('unsupported_operation'); },
+      sessionListLayoutV1: 'projects',
       setSessionListGroupOrderV1: next => writeSessionOrganizationGroupOrder({ scope: mutationScope, next, orderItemAddressByItemKey: addresses }),
     };
   }), 'rail'), []);

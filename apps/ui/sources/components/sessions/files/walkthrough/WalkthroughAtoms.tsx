@@ -11,6 +11,8 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { ScmComparisonFact, ScmComparisonFactSentence, ScmComparisonFactText } from '@/components/sessions/files/comparison/ScmComparisonHeader';
 import { t } from '@/text';
 import type { ScmDiffSummaryAnalysisCoverage } from '@happier-dev/protocol/scm';
+import type { WalkthroughReviewedSource } from './walkthroughReviewedProjection';
+import { useWalkthroughReviewedCount } from './useWalkthroughReviewed';
 
 /**
  * A stop's number, and its reviewed state. The signature moment of the Walkthrough (lab WT1 Motion): when
@@ -60,7 +62,7 @@ export function WalkthroughGeneratedMark(props: Readonly<{ model?: string | null
     return (
         <View testID={props.testID} accessibilityLabel={t('walkthrough.generatedA11y')} style={styles.generated}>
             <Icon name="sparkle" size={12} color={theme.colors.text.tertiary} />
-            <Text style={styles.generatedText}>
+            <Text style={styles.generatedText} numberOfLines={1}>
                 {props.model ? t('walkthrough.generatedBy', { model: props.model }) : t('walkthrough.generated')}
             </Text>
         </View>
@@ -88,23 +90,31 @@ export function WalkthroughAnalysisFact(props: Readonly<{
     return (
         <ScmComparisonFact testID="walkthrough-analysis-fact" icon={icon} tone={amber ? 'warning' : 'neutral'}>
             <ScmComparisonFactSentence sentence={sentence} counts={[props.analysed, props.total]} after={who} />
-            {props.parts ? <ScmComparisonFactText testID="walkthrough-parts-progress" accessibilityLiveRegion="polite">
-                {` · ${t('walkthrough.progress.parts', props.parts)}${props.parts.phase === 'merge' ? ` · ${t('walkthrough.progress.merge')}` : ''}`}
+            {/* Parts are progress: once reading has stopped, "read x of y" is the whole coverage. The row's gap spaces each fact. */}
+            {props.parts && !props.stopped ? <ScmComparisonFactText testID="walkthrough-parts-progress" accessibilityLiveRegion="polite">
+                {`· ${t('walkthrough.progress.parts', props.parts)}${props.parts.phase === 'merge' ? ` · ${t('walkthrough.progress.merge')}` : ''}`}
             </ScmComparisonFactText> : null}
             {(props.unavailableCount ?? 0) > 0 ? (
-                <ScmComparisonFactText>{` · ${t('walkthrough.unavailableCount', { count: props.unavailableCount ?? 0 })}`}</ScmComparisonFactText>
+                <ScmComparisonFactText>{`· ${t('walkthrough.unavailableCount', { count: props.unavailableCount ?? 0 })}`}</ScmComparisonFactText>
             ) : null}
         </ScmComparisonFact>
     );
 }
 
-/** The person's explicit marks, the third notion ("You reviewed 2 of 5"). */
-export function WalkthroughReviewedFact(props: Readonly<{ count: number; total: number }>) {
-    return (
+/**
+ * The person's explicit marks, the third notion ("You reviewed 2 of 5"). While the marks are still being read it holds its
+ * room, unseen, so the content below does not move when they arrive.
+ */
+export function WalkthroughReviewedFact(props: Readonly<{ count: number; total: number; pending?: boolean; source?: WalkthroughReviewedSource }>) {
+    const count = useWalkthroughReviewedCount(props.source, props.count);
+    const fact = (
         <ScmComparisonFact testID="walkthrough-reviewed-fact" icon="check-circle" tone="success">
-            <ScmComparisonFactSentence sentence={t('walkthrough.youReviewed', { count: props.count, total: props.total })} counts={[props.count, props.total]} />
+            <ScmComparisonFactSentence sentence={t('walkthrough.youReviewed', { count, total: props.total })} counts={[count, props.total]} />
         </ScmComparisonFact>
     );
+    return props.pending
+        ? <View style={styles.reserved} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">{fact}</View>
+        : fact;
 }
 
 const styles = StyleSheet.create((theme) => ({
@@ -135,6 +145,10 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    generated: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, flexShrink: 0, maxWidth: '100%' },
+    // On a narrow eyebrow the model label yields first: what is compared (the scope) outranks who wrote it. The mark
+    // claims only the room left after the scope (no basis of its own, right-aligned), so even a hair of shortfall
+    // ellipsizes the model, never the scope.
+    reserved: { opacity: 0 },
+    generated: { flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: theme.space.s4, flexGrow: 1000, flexShrink: 1, flexBasis: 0, minWidth: 0 },
     generatedText: { ...Typography.variant('meta', 'medium'), color: theme.colors.text.tertiary, flexShrink: 1, minWidth: 0,  },
 }));

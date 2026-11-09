@@ -6,9 +6,11 @@ import type { PlatformOSType } from 'react-native';
  * action, so a single row cannot end up with two competing reveal rules.
  *
  * Fine-pointer web hides the actions until the row is hovered, an action is
- * hovered, or keyboard focus enters the action group. Touch platforms and web
- * hosts whose PRIMARY pointer is coarse have no hover, so the actions stay
- * visible there.
+ * hovered, or keyboard focus enters the action group. Touch hosts (native, and
+ * web whose PRIMARY pointer is coarse) have no hover: a row that can be opened
+ * by tap or long-press (a message; `touchOpened` is set) shows its actions only
+ * while it is opened, and a row without that gesture (a tool row) keeps them
+ * visible.
  */
 export type TranscriptRowActionVisibilityInput = Readonly<{
     platformOS: PlatformOSType;
@@ -17,14 +19,17 @@ export type TranscriptRowActionVisibilityInput = Readonly<{
     isRowFocused?: boolean;
     coarsePrimaryPointer?: boolean;
     selectionModeActive?: boolean;
+    /** Touch only: whether this row is opened by tap or long-press. Undefined: the row has no such gesture. */
+    touchOpened?: boolean;
     /** Pinned rows keep their pin visible without revealing the rest of the row. */
     pinned?: boolean;
 }>;
 
 export function shouldShowTranscriptRowActions(input: TranscriptRowActionVisibilityInput): boolean {
     if (input.selectionModeActive === true) return true;
-    if (input.platformOS !== 'web') return true;
-    if (input.coarsePrimaryPointer === true) return true;
+    if (input.platformOS !== 'web' || input.coarsePrimaryPointer === true) {
+        return input.touchOpened === undefined || input.touchOpened || input.isRowFocused === true;
+    }
     return input.isRowHovered || input.isActionHovered || input.isRowFocused === true;
 }
 

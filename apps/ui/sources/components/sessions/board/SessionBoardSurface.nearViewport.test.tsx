@@ -104,7 +104,6 @@ function Harness(props: Readonly<{
             sessionId="session-1"
             controller={controller}
             host="details"
-            resolvePrimaryHost={() => 'details'}
             density="full"
             layout={props.layout ?? 'single'}
         />

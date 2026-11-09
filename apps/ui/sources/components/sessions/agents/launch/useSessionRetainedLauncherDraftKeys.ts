@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { readExecutionRunLauncherComparisonReview } from '@/components/sessions/runs/launcher/useExecutionRunLauncherDraft';
 
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import {
@@ -55,4 +56,11 @@ export function useSessionLauncherDraftPreview(input: Readonly<{ sessionId: stri
         scope ? readSessionLauncherDraftPreviewFromDraft(getSessionDraftSnapshot(scope, address)?.document, input.draftKey) : ''
     ), [address, input.draftKey, scope]);
     return React.useSyncExternalStore(subscribe, read, read);
+}
+
+/** Read on open, from the current Account's same retained draft; no second context store. */
+export function useReadRetainedComparisonReviewDraft(input: Readonly<{ sessionId: string; serverId?: string | null }>) {
+    const { scope, address } = useSessionLauncherDraftSource(input);
+    return React.useCallback((draftKey: string) => scope ? readExecutionRunLauncherComparisonReview(
+        getSessionDraftSnapshot(scope, address)?.document ?? null, draftKey) : null, [address, scope]);
 }

@@ -2,6 +2,7 @@ import * as React from 'react';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import {
     installTranscriptCommonModuleMocks,
     resetTranscriptCommonModuleMockState,
@@ -68,16 +69,15 @@ describe('ThinkingTimelineRow', () => {
 
         const summaryNode = tree!.findByProps({ testID: 'transcript-thinking-summary-inline' });
         expect(String(summaryNode.props.children)).toBe('Hello world…');
-        const iconCollapsed = tree!.findAllByType('Icon').at(-1) as any;
-        expect(iconCollapsed?.props?.name).toBe('caret-down');
+        // The header is a disclosure: the one shared caret, turned by its state.
+        expect(tree!.findByType(DisclosureCaret).props.expanded).toBe(false);
 
         await act(async () => {
             await tree!.pressByTestIdAsync('transcript-thinking-header');
         });
 
         expect(tree!.findAllByTestId('transcript-thinking-summary-inline')).toHaveLength(0);
-        const iconExpanded = tree!.findAllByType('Icon').at(-1) as any;
-        expect(iconExpanded?.props?.name).toBe('caret-up');
+        expect(tree!.findByType(DisclosureCaret).props.expanded).toBe(true);
         expect(tree!.findAllByTestId('body')).toHaveLength(1);
     });
 });

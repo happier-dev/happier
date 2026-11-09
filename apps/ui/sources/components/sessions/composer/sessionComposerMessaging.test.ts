@@ -79,7 +79,7 @@ describe('Session composer messaging handoff', () => {
         homes.answer(serverId, '/v2/sessions/source', { body: { session: createPlainSessionCurrentProjectionRecordFixture({ id: 'source' }) } });
         const values = new Map<string, string>();
         const createRepository = () => createSessionDraftRepository({ syncEnabled: false,
-            storage: { getString: key => values.get(key), set: (key, value) => { values.set(key, value); }, delete: key => { values.delete(key); } },
+            storage: { getString: key => values.get(key), getAllKeys: () => [...values.keys()], set: (key, value) => { values.set(key, value); }, delete: key => { values.delete(key); } },
             cipher: { seal: async (address, document) => ({ t: 'plain', v: createSessionDraftPrivatePayloadV2(address, document) }),
                 open: async (_address, content) => content.t === 'plain' ? content.v.document : null },
         });

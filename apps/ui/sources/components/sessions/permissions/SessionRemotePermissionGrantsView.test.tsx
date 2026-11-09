@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SessionPermissionRemoteGrantSummaryV1Schema } from '@happier-dev/protocol';
+import { SessionPermissionRemoteGrantSummaryV1Schema } from '@happier-dev/protocol/sessions/permissions/v1';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';

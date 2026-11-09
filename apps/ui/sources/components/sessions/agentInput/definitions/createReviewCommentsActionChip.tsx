@@ -1,7 +1,7 @@
-import { getReviewCommentsActionChipPlacement } from './agentInputActionChipPlacements';
 import * as React from 'react';
 import type { WorkspaceFileOpen } from '@/components/workspaces/files/useWorkspaceFileOpener';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
+import { AgentInputRailChip } from './agentInputChipRowReach';
 
 import type {
     AgentInputExtraActionChip,
@@ -18,6 +18,8 @@ import { formatReviewCommentAnchorLines } from '@/sync/domains/input/reviewComme
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { t } from '@/text';
+import { getReviewCommentsActionChipPlacement } from './agentInputActionChipPlacements';
+export { getReviewCommentsActionChipPlacement } from './agentInputActionChipPlacements';
 
 import { ReviewCommentsDraftsModal } from './ReviewCommentsDraftsModal';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -106,6 +108,8 @@ export function createReviewCommentsActionChip(params: Readonly<{
     onUpdateDraft: (draft: ReviewCommentDraft) => void;
     onDeleteDraft: (draftId: string) => void;
     onClearDrafts: () => void;
+    /** A launching composer keeps its captured review comments as submitted. */
+    disabled?: boolean;
 }>): AgentInputExtraActionPresentation | undefined {
     const reviewCommentDraftCount = params.reviewCommentDrafts.length;
     if (reviewCommentDraftCount <= 0) return undefined;
@@ -150,16 +154,22 @@ export function createReviewCommentsActionChip(params: Readonly<{
         collapsedAction: ({ tint, dismiss }) => ({
             id: 'review-comments',
             label,
+            disabled: params.disabled === true,
             icon: <Icon name="chat-dots" size={AGENT_INPUT_MENU_ICON_SIZE_PX} color={tint} />,
             onPress: () => {
+                if (params.disabled === true) return;
                 dismiss();
                 openDraftsModal();
             },
         }),
         render: (ctx: AgentInputExtraActionChipRenderContext) => (
-            <Pressable
-                onPress={openDraftsModal}
-                style={({ pressed }) => ctx.chipStyle(Boolean(pressed))}
+            <AgentInputRailChip
+                onPress={() => {
+                    if (params.disabled === true) return;
+                    openDraftsModal();
+                }}
+                disabled={params.disabled === true}
+                style={ctx.chipStyle}
             >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                     <Icon name="chat-dots" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={ctx.iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />
@@ -167,7 +177,7 @@ export function createReviewCommentsActionChip(params: Readonly<{
                         <Text style={ctx.textStyle}>{label}</Text>
                     ) : null}
                 </View>
-            </Pressable>
+            </AgentInputRailChip>
         ),
     };
 

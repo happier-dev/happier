@@ -21,7 +21,10 @@ import {
     SESSION_ACTION_COORDINATOR_EDIT_ID,
     SESSION_ACTION_COORDINATOR_ANSWERS_ID,
     SESSION_ACTION_COORDINATOR_STOP_ID,
+    SESSION_ACTION_PIN_ID,
+    SESSION_ACTION_UNPIN_ID,
     SESSION_ACTION_RENAME_ID,
+    SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
     SESSION_ACTION_RESUME_ID,
     SESSION_ACTION_SET_ATTENTION_STANDING_ID,
     SESSION_ACTION_STOP_ID,
@@ -58,6 +61,11 @@ export function resolveSessionAttentionStandingActionId(target: SessionActionTar
 export function listVisibleSessionActionIds(params: Readonly<{
     target: SessionActionTarget;
     surface: SessionActionSurface;
+    /**
+     * Whether the session's server stores per-session colours (`useSessionAppearancesSupported`).
+     * Read by menus only while open; the colour action's whole gate is decided here.
+     */
+    sessionAppearancesSupported?: boolean;
 }>): SessionActionId[] {
     const { target, surface } = params;
     const ids: SessionActionId[] = [];
@@ -108,8 +116,19 @@ export function listVisibleSessionActionIds(params: Readonly<{
             ids.push(marker?.kind === 'bot' ? SESSION_ACTION_MAKE_REGULAR_ID : SESSION_ACTION_MAKE_BOT_ID);
         }
     }
+    // A colour is the person's own organization (like a pin): the session needs a server that stores
+    // session colours. The info screen lists lifecycle and details, not organization.
+    if ((surface === 'rowMenu' || surface === 'nativeContextMenu' || surface === 'sessionHeader')
+        && target.serverId
+        && params.sessionAppearancesSupported === true) {
+        ids.push(SESSION_ACTION_SET_APPEARANCE_COLOR_ID);
+    }
     if (surface !== 'selectionActionBar' && target.canWriteOwnerMetadata) {
         ids.push(SESSION_ACTION_TOOL_CALLS_TOGGLE_ID, SESSION_ACTION_TOOL_CALLS_USE_DEFAULT_ID);
+    }
+
+    if (surface === 'sessionHeader' && target.serverId && !target.isArchived) {
+        ids.push(target.isPinned ? SESSION_ACTION_UNPIN_ID : SESSION_ACTION_PIN_ID);
     }
 
     if (surface === 'sessionHeader' && target.canResume) {
@@ -149,8 +168,8 @@ export function listVisibleSessionActionIds(params: Readonly<{
         ids.push(SESSION_ACTION_UNARCHIVE_ID);
     }
 
-    if (target.canDelete && (surface === 'sessionInfo'
-        || (target.isArchived && (surface === 'rowMenu' || surface === 'nativeContextMenu')))) {
+    if ((target.canDelete || target.canStopAndDelete)
+        && (surface === 'sessionInfo' || surface === 'sessionHeader' || surface === 'rowMenu' || surface === 'nativeContextMenu')) {
         ids.push(SESSION_ACTION_DELETE_ID);
     }
 

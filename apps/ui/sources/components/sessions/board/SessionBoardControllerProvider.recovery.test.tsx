@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createSessionFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createSessionFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -12,8 +12,13 @@ import { getActiveServerSnapshot, setActiveServer } from '@/sync/domains/server/
 import { removeServerProfile, upsertServerProfile } from '@/sync/domains/server/serverProfiles';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 import { disconnectActiveServerConnection } from '@/sync/runtime/orchestration/connectionManager';
-import { SessionCurrentProjectionRecordV1Schema, SessionSystemRecordStoredSchema, type SessionSystemRecordStored } from '@happier-dev/protocol';
+import { SessionCurrentProjectionRecordV1Schema} from '@happier-dev/protocol/sessions/listing/response';
+import { SessionSystemRecordStoredSchema, type SessionSystemRecordStored } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import { SessionBoardLayoutV1Schema, SessionSurfaceItemV1Schema } from '@happier-dev/protocol/sessions/board';
+import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { useAppPaneScope, type AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { SessionCompanionPresentationBridge, type SessionPresentationIntentApplier } from '../companion/presentation/SessionCompanionPresentationBridge';
+import { createSessionCompanionPanePresentation } from '../companion/presentation/sessionCompanionPanePresentation';
 
 installDisconnectedServerSocketBoundary();
 
@@ -41,6 +46,9 @@ const harness = vi.hoisted(() => ({
     replace: vi.fn(),
     alert: vi.fn(),
     show: vi.fn(),
+    presentationNote: false,
+    recordLists: 0,
+    recordListGate: null as Promise<void> | null,
 }));
 
 function nodeHasTestId(element: unknown, testID: string): boolean {
@@ -97,6 +105,8 @@ async function request(input: RequestInfo | URL): Promise<Response> {
         features: { sessions: { board: { enabled: true } } },
     }));
     if (path.endsWith('/system-records')) {
+        harness.recordLists += 1;
+        await harness.recordListGate;
         // A lone Board view has no tab strip; focus-return tests need a real multi-view Board.
         const layout = record('layout', 'layout.v1', SessionBoardLayoutV1Schema.parse({ v: 1, tabs: harness.removalMode === 'none' ? [] : [
             { id: 'overview', title: 'Overview', items: [] }, {
@@ -106,10 +116,11 @@ async function request(input: RequestInfo | URL): Promise<Response> {
         if (harness.layoutLocked) layout.content = { t: 'encrypted', c: 'encrypted-layout' };
         return Response.json({ records: [layout, record('item-1', 'item.v1', SessionSurfaceItemV1Schema.parse({
             v: 1, title: 'Status', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
-            source: { kind: 'widget', instance: { v: 1, id: 'instance-1', definition: {
+            source: harness.presentationNote ? { kind: 'declarative', document: { version: 1,
+                root: { kind: 'markdown', text: 'Release checklist' } } } : { kind: 'widget', instance: { v: 1, id: 'instance-1', definition: {
                 kind: 'installed', surface: { pluginId: 'acme.board', localId: 'status' },
             }, bindings: {} } },
-        }))], nextCursor: null, hasNext: false });
+        })), ...(harness.presentationNote ? [record('unreadable', 'item.v1', { v: 1 })] : [])], nextCursor: null, hasNext: false });
     }
     if (path === '/v1/account/encryption/currentness') return Response.json({
         mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
@@ -175,12 +186,31 @@ async function mountBoard(): Promise<Awaited<ReturnType<typeof renderScreen>>> {
                 sessionId="session-1"
                 serverId={harness.homeId}
                 host="details"
-                resolvePrimaryHost={() => 'details'}
                 density="full"
                 layout="grid"
             />
         </AuthorizedBoard>,
     );
+}
+
+function PresentedBoard(props: Readonly<{
+    applierRef: React.MutableRefObject<SessionPresentationIntentApplier | null>;
+    paneRef: React.MutableRefObject<AppPaneScopeApi | null>;
+    bridgeSessionId?: string;
+}>): React.ReactElement {
+    const pane = useAppPaneScope('board-presentation');
+    props.paneRef.current = pane;
+    const paneRef = props.paneRef;
+    const presentation = React.useMemo(() => createSessionCompanionPanePresentation({
+        readPane: () => paneRef.current!, readMainColumn: () => null, isUndoCurrent: () => true,
+    }), [paneRef]);
+    return <>
+        <ControllerProbe />
+        <SessionCompanionPresentationBridge sessionId={props.bridgeSessionId ?? 'session-1'} serverId={harness.homeId}
+            applierRef={props.applierRef} {...presentation} openFullSurface={() => ({ status: 'unavailable' })} />
+        {pane.scopeState?.details.isOpen ? <SessionBoardPane sessionId="session-1" serverId={harness.homeId}
+            host="details" density="full" layout="grid" /> : null}
+    </>;
 }
 
 describe('mounted Board recovery navigation', () => {
@@ -190,6 +220,9 @@ describe('mounted Board recovery navigation', () => {
         observedBoard = null;
         harness.layoutLocked = false;
         harness.removalMode = 'none';
+        harness.presentationNote = false;
+        harness.recordLists = 0;
+        harness.recordListGate = null;
         harness.push.mockReset();
         harness.replace.mockReset();
         harness.alert.mockReset();
@@ -206,6 +239,74 @@ describe('mounted Board recovery navigation', () => {
         storage.setState({ sessions: Object.fromEntries(['session-1', 'session-2'].map(id => [id, createSessionFixture({
             id, serverId: harness.homeId, metadata: { path: '/repo', host: 'test' },
         })])) });
+    });
+
+    it('opens a closed Board without eager reads, then reveals its populated Note through the mounted presentation owner', async () => {
+        harness.presentationNote = true;
+        harness.removalMode = 'populated';
+        const inventory = createDeferred<void>();
+        harness.recordListGate = inventory.promise;
+        const applierRef: React.MutableRefObject<SessionPresentationIntentApplier | null> = { current: null };
+        const paneRef: React.MutableRefObject<AppPaneScopeApi | null> = { current: null };
+        const screen = await renderScreen(<AppPaneProvider><AuthorizedBoard>
+            <PresentedBoard applierRef={applierRef} paneRef={paneRef} />
+        </AuthorizedBoard></AppPaneProvider>);
+        await flushHookEffects({ cycles: 30 });
+        expect(applierRef.current).not.toBeNull();
+        expect(screen.findByTestId('session-board-pane')).toBeNull();
+        expect(harness.recordLists).toBe(0);
+
+        await act(async () => {
+            expect(applierRef.current?.({ kind: 'board.open', mode: 'beside_chat' })).toEqual({ status: 'applied' });
+        });
+        try {
+            await vi.waitFor(() => expect(harness.recordLists).toBeGreaterThan(0));
+            await act(async () => {
+                expect(applierRef.current?.({ kind: 'board.item.reveal', widgetId: 'item-1', viewId: 'research' }))
+                    .toEqual({ status: 'unavailable' });
+                expect(applierRef.current?.({ kind: 'board.view.select', viewId: 'research' }))
+                    .toEqual({ status: 'unavailable' });
+            });
+            expect(paneRef.current?.scopeState?.details.tabs.some(tab => tab.key === 'board:item-1')).toBe(false);
+        } finally {
+            inventory.resolve(undefined);
+        }
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(observedBoard?.binding).toMatchObject({ status: 'ready', snapshot: {
+                reachability: 'reachable', loading: 'idle',
+            } });
+            expect(observedBoard?.binding.status === 'ready'
+                && observedBoard.binding.snapshot.itemsById.get('item-1')?.state.kind).toBe('ready');
+        });
+        expect(screen.findByTestId('session-board-pane')).toBeTruthy();
+        const readsAfterOpen = harness.recordLists;
+        expect(readsAfterOpen).toBeGreaterThan(0);
+        await act(async () => {
+            expect(applierRef.current?.({ kind: 'board.item.reveal', widgetId: 'item-1', viewId: 'research' }))
+                .toEqual({ status: 'applied' });
+        });
+        expect(paneRef.current?.scopeState?.details.tabs.find(tab => tab.key === 'board:item-1')?.resource)
+            .toMatchObject({ kind: 'board', focusTarget: { kind: 'item', itemId: 'item-1' } });
+        expect(applierRef.current?.({ kind: 'board.item.reveal', widgetId: 'missing', viewId: 'research' }))
+            .toEqual({ status: 'invalidTarget' });
+        expect(applierRef.current?.({ kind: 'board.item.reveal', widgetId: 'unreadable' }))
+            .toEqual({ status: 'invalidTarget' });
+        expect(applierRef.current?.({ kind: 'board.item.reveal', widgetId: 'item-1', viewId: 'missing' }))
+            .toEqual({ status: 'invalidTarget' });
+        expect(harness.recordLists).toBe(readsAfterOpen);
+    });
+
+    it('does not use a different mounted Session to reveal an item', async () => {
+        const applierRef: React.MutableRefObject<SessionPresentationIntentApplier | null> = { current: null };
+        const paneRef: React.MutableRefObject<AppPaneScopeApi | null> = { current: null };
+        const screen = await renderScreen(<AppPaneProvider><AuthorizedBoard>
+            <PresentedBoard applierRef={applierRef} paneRef={paneRef} bridgeSessionId="session-2" />
+        </AuthorizedBoard></AppPaneProvider>);
+        expect(applierRef.current?.({ kind: 'board.item.reveal', widgetId: 'item-1', viewId: 'research' }))
+            .toEqual({ status: 'unavailable' });
+        expect(screen.findByTestId('session-board-pane')).toBeNull();
+        expect(harness.recordLists).toBe(0);
     });
 
     it('gives a locked shared layout a reachable encryption recovery in the mounted Board', async () => {
@@ -295,7 +396,7 @@ describe('mounted Board recovery navigation', () => {
             <AuthorizedBoard sessionId="session-1" serverId={serverId}>
                 <Probe serverId={serverId} />
                 <SessionBoardPane sessionId="session-1" serverId={serverId} host="details"
-                    resolvePrimaryHost={() => 'details'} density="full" layout="grid" />
+                    density="full" layout="grid" />
             </AuthorizedBoard>
         );
         const screen = await renderScreen(renderOwner(harness.homeId));
@@ -322,7 +423,6 @@ describe('mounted Board recovery navigation', () => {
                     sessionId="session-1"
                     serverId={harness.homeId}
                     host="details"
-                    resolvePrimaryHost={() => 'details'}
                     density="full"
                     layout="grid"
                 />

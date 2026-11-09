@@ -6,6 +6,7 @@ import { SessionCapabilitySelectionV1Schema, type SessionCapabilitySelectionV1 }
 import type { AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
 import { AgentInputContentPopover } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
 import { useNewSessionCapabilitiesChip } from '@/components/sessions/capabilities/useSessionCapabilitiesChip';
+import { getCapabilitiesActionChipPlacement } from '@/components/sessions/capabilities/createCapabilitiesActionChip';
 
 import type { SessionAuthoringMcpContext } from './sessionAuthoringFieldControls';
 
@@ -38,6 +39,7 @@ export function SessionAuthoringCapabilitiesField(props: Readonly<{
     }, [onChange]);
 
     const { chip } = useNewSessionCapabilitiesChip({
+        placementId: getCapabilitiesActionChipPlacement({ scoped: true }).id,
         draft: {
             machineId: props.context.machineId,
             directory: props.context.directory,

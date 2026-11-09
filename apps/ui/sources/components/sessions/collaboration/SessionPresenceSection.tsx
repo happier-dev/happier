@@ -28,7 +28,6 @@ const styles = StyleSheet.create((theme) => ({
     // treatment never relies on color alone.
     stale: { opacity: STALE_PRESENCE_OPACITY },
     presenceDot: { position: 'absolute', right: -1, bottom: -1 },
-    glyph: { width: AVATAR_PX, height: AVATAR_PX, alignItems: 'center', justifyContent: 'center' },
     title: {
         ...Typography.default('semiBold'),
         ...ITEM_TITLE_TEXT_METRICS.compact,
@@ -112,8 +111,10 @@ export function SessionPresenceSection(target: SessionAddress) {
                     ) : null}
                 </View>,
         }))} />
-    ) : (
-        <View style={styles.glyph} accessible={false} importantForAccessibility="no-hide-descendants">
+    ) : null;
+    // Alone, the line's glyph takes the pane's icon slot, so its words start on the rows' text edge.
+    const glyph = hasViewers ? undefined : (
+        <View accessible={false} importantForAccessibility="no-hide-descendants">
             {presence.status === 'connecting'
                 ? <ActivitySpinner size="small" />
                 : <Icon name={presence.status === 'unsupported' || presence.status === 'unavailable' ? 'cloud-slash' : 'users'} size={18} color={theme.colors.text.tertiary} />}
@@ -133,7 +134,8 @@ export function SessionPresenceSection(target: SessionAddress) {
                 density="compact"
                 showChevron={false}
                 showDivider={false}
-                leftElement={lead}
+                leftElement={lead ?? undefined}
+                icon={glyph}
                 title={<Text testID="session-presence-title" style={[styles.title, hasViewers ? null : styles.titleQuiet]} numberOfLines={1}>{title}</Text>}
                 subtitle={subtitle ? <Text testID="session-presence-status" style={styles.subtitle} numberOfLines={1}>{subtitle}</Text> : undefined}
             />

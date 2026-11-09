@@ -1,11 +1,11 @@
 import * as React from 'react';
-import { Pressable } from 'react-native';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE } from './agentInputChipIconMetrics';
+import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
 
 /**
  * New Session's Automation entry.
@@ -24,15 +24,15 @@ export function createAutomationEditorActionChip(params: Readonly<{
         key: 'new-session-automate',
         controlId: 'automation',
         placement: { id: 'automation', title: params.label, icon: 'lightning', defaultPlacement: 'overflow' },
+        collapsedAction: ({ dismiss }) => ({ id: 'new-session-automate', label: params.label, onPress: () => { dismiss(); params.onPress(); } }),
         render: ({ chipStyle, iconColor, showLabel, textStyle, chipAnchorRef }) => (
-            <Pressable
+            <AgentInputRailChip
                 ref={chipAnchorRef}
                 testID="new-session-automation-chip"
                 accessibilityRole="button"
                 accessibilityLabel={params.label}
                 onPress={params.onPress}
-                hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                style={({ pressed }) => chipStyle(pressed)}
+                style={chipStyle}
             >
                 {normalizeNodeForView(
                     <Icon
@@ -47,7 +47,7 @@ export function createAutomationEditorActionChip(params: Readonly<{
                         {params.label}
                     </Text>
                 ) : null}
-            </Pressable>
+            </AgentInputRailChip>
         ),
     };
 }

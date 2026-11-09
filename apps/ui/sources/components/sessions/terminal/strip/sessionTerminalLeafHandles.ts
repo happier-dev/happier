@@ -18,23 +18,33 @@ export type SessionTerminalLeafHandles = Readonly<{
     get: (terminalId: string) => SessionTerminalLeafHandle | null;
 }>;
 
-const handlesByScope = new Map<string, Map<string, Set<SessionTerminalLeafHandle>>>();
+type MountedLeafHandle = Readonly<{ presentationId: string | undefined; handle: SessionTerminalLeafHandle }>;
 
-export function createSessionTerminalLeafHandles(scopeId: string): SessionTerminalLeafHandles {
+const handlesByScope = new Map<string, Map<string, Set<MountedLeafHandle>>>();
+
+/** Bind local view commands to their presentation; process-level Actions may use any mounted view. */
+export function createSessionTerminalLeafHandles(scopeId: string, presentationId?: string): SessionTerminalLeafHandles {
     const read = () => handlesByScope.get(scopeId);
     return {
         register: (terminalId, handle) => {
-            const handles = read() ?? new Map<string, Set<SessionTerminalLeafHandle>>();
+            const handles = read() ?? new Map<string, Set<MountedLeafHandle>>();
             handlesByScope.set(scopeId, handles);
-            const views = handles.get(terminalId) ?? new Set<SessionTerminalLeafHandle>();
-            views.add(handle);
+            const views = handles.get(terminalId) ?? new Set<MountedLeafHandle>();
+            const mounted = { presentationId, handle };
+            views.add(mounted);
             handles.set(terminalId, views);
             return () => {
-                views.delete(handle);
+                views.delete(mounted);
                 if (views.size === 0 && handles.get(terminalId) === views) handles.delete(terminalId);
                 if (handles.size === 0 && handlesByScope.get(scopeId) === handles) handlesByScope.delete(scopeId);
             };
         },
-        get: (terminalId) => Array.from(read()?.get(terminalId) ?? []).at(-1) ?? null,
+        get: (terminalId) => {
+            let selected: SessionTerminalLeafHandle | null = null;
+            for (const view of read()?.get(terminalId) ?? []) {
+                if (presentationId === undefined || view.presentationId === presentationId) selected = view.handle;
+            }
+            return selected;
+        },
     };
 }

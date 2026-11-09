@@ -27,9 +27,8 @@ describe('created Session authoring origin', () => {
         const { createLegacyAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
         const { sealSessionOwnerMetadataEnvelopeV1, openSessionOwnerMetadataEnvelopeV1 } =
             await import('@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1');
-        const { SessionCurrentProjectionRecordV1Schema } = await import('@happier-dev/protocol');
-        const { projectSessionDisplayV1, sealSessionOwnerDisplayEnvelopeV1, sealSessionSharedDisplayEnvelopeV1,
-            SessionSharedMetadataV1Schema } = await import('@happier-dev/protocol');
+        const { SessionCurrentProjectionRecordV1Schema} = await import('@happier-dev/protocol/sessions/listing/response');
+        const [{ projectSessionDisplayV1, sealSessionOwnerDisplayEnvelopeV1, sealSessionSharedDisplayEnvelopeV1}, { SessionSharedMetadataV1Schema}] = await Promise.all([import('@happier-dev/protocol/sessions'), import('@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1')]);
         const { createSessionAccessFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
         const { SessionMetadataTuplePatchV1Schema, SessionMetadataVersionConflictV1Schema } =
             await import('@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1');

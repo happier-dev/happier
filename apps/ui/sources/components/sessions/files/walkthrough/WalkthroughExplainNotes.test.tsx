@@ -5,7 +5,7 @@ import { SPECIMEN_ANALYSIS_COMPLETE, SPECIMEN_COMPARISON, SPECIMEN_WALKTHROUGH }
 import { buildWalkthroughReading } from './walkthroughReading';
 import { buildCodeLinesFromUnifiedDiff } from '@/components/ui/code/model/buildCodeLinesFromUnifiedDiff';
 import { buildDiffHunkTable } from '@/components/ui/code/diff/hunks/buildDiffHunkTable';
-import type { ScmComparison } from '@happier-dev/protocol';
+import type { ScmComparison } from '@happier-dev/protocol/scm/comparison';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());

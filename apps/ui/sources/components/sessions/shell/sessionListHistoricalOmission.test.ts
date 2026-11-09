@@ -4,12 +4,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({ splitStreamingRevealTextParts: () => [] }));
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import {
-    projectLegacySessionAccessCapabilitiesV1,
-    type AccountEncryptionCurrentnessResponse,
-    type SessionListQueryV1,
-    type V2SessionRecord,
-} from '@happier-dev/protocol';
+import { createPlainSessionCurrentProjectionRecordFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createCompactSessionListFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
+import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 
 import { fetchAndApplySessions } from '@/sync/engine/sessions/sessionSnapshot';
 import {
@@ -59,39 +57,13 @@ const DEFAULTS = {
     searchQuery: '',
 } as const;
 
-function readableRow(id: string): V2SessionRecord {
-    return {
+function readableRow(id: string) {
+    return { ...createPlainSessionCurrentProjectionRecordFixture({
         id,
-        seq: 1,
-        createdAt: 1,
-        updatedAt: 1,
         active: true,
         activeAt: 1,
-        archivedAt: null,
-        metadata: JSON.stringify({ path: `/${id}`, host: 'test' }),
-        metadataVersion: 1,
-        agentState: JSON.stringify({}),
-        agentStateVersion: 1,
-        dataEncryptionKey: null,
-        encryptionMode: 'plain',
-        share: null,
-        effectiveAccess: {
-            v: 1,
-            level: 'owner',
-            sources: [{ kind: 'owner' }],
-            capabilities: projectLegacySessionAccessCapabilitiesV1({ level: 'owner' }),
-        },
-        viewer: {
-            latestFailureSeq: null,
-            readState: { state: 'not_started' },
-            relevance: { relevant: false, reasons: [] },
-            attention: { needsAttention: false, reasons: [], primary: null, presentation: 'full' },
-            follow: { follows: false, notificationLevel: 'none' },
-            notification: { level: 'none', source: 'preference' },
-        },
-        responsibleAccountId: null,
-        responsibleAccount: null,
-    };
+        metadata: { path: `/${id}`, host: 'test' },
+    }), viewer: createSessionViewerFixture() };
 }
 
 /**
@@ -109,7 +81,10 @@ function fetchPage(body: unknown, source: 'query' | 'ordinary') {
         accountCurrentness: PLAIN_ACCOUNT_CURRENTNESS,
         encryption: null,
         sessionDataKeys: new Map(),
-        request: async () => Response.json(body),
+        request: createCompactSessionListFetchBoundary(async path => (
+            new URL(path, 'https://home-a.example.test').pathname === '/v2/sessions/read-batch'
+                ? undefined : Response.json(body)
+        )),
         applySessions: () => {},
         log: { log: () => {} },
     });
@@ -255,14 +230,16 @@ describe('historical shares withheld by the Home', () => {
                 metadataUpgradeRequiredCount: 1,
             }, 'query'),
         });
-        await controller.update({ query: QUERY, selected: true, online: true, supported: true });
+        const query = { ...QUERY, limit: 1 };
+        await controller.update({ query, selected: true, online: true, supported: true });
         const state = controller.getSnapshot();
-        expect(state.hasNext).toBe(true);
+        expect({ phase: state.phase, failureCode: state.failureCode, hasNext: state.hasNext, addresses: state.addresses })
+            .toEqual({ phase: 'ready', failureCode: null, hasNext: true, addresses: [{ serverId: 'home-a', sessionId: 'readable' }] });
         const presentation = resolveSessionListQueryPresentation({
             selectedServerIds: ['home-a'],
             statesByServerId: { 'home-a': state },
             coverageComplete: isSessionListQueryHomeCoverageComplete({
-                state, requestedQueryKey: buildSessionListQueryKey('home-a', QUERY),
+                state, requestedQueryKey: buildSessionListQueryKey('home-a', query),
             }),
             retainedRowCount: 1,
         });
@@ -282,9 +259,13 @@ describe('historical shares withheld by the Home', () => {
             encryption: null,
             sessionDataKeys: new Map(),
             includeActiveSessionRows: true,
-            request: async (path) => Response.json(path.startsWith('/v2/sessions/active')
-                ? { sessions: [], nextCursor: null, hasNext: false, metadataUpgradeRequiredCount: 1 }
-                : { sessions: [readableRow('readable')], nextCursor: null, hasNext: false }),
+            request: createCompactSessionListFetchBoundary(async path => {
+                const pathname = new URL(path, 'https://home-a.example.test').pathname;
+                if (pathname === '/v2/sessions/read-batch') return undefined;
+                return Response.json(pathname === '/v2/sessions/active'
+                    ? { sessions: [], nextCursor: null, hasNext: false, metadataUpgradeRequiredCount: 1 }
+                    : { sessions: [readableRow('readable')], nextCursor: null, hasNext: false });
+            }),
             applySessions: () => {},
             log: { log: () => {} },
         });

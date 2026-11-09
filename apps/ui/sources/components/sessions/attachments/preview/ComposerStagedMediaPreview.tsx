@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { Image } from 'expo-image';
 import { useUnistyles } from 'react-native-unistyles';
-import type { ComposerContentHandleV1 } from '@happier-dev/protocol';
+import type { ComposerContentHandleV1 } from '@happier-dev/protocol/runtime/input/composerContentV1';
 
 import { useFilePreviewSource } from '@/components/ui/media/useFilePreviewSource';
 import { SessionMediaVideoPreview } from '@/components/sessions/media/SessionMediaVideoPreview';

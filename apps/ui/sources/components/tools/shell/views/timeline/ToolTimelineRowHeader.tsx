@@ -5,8 +5,8 @@ import { Typography } from '@/constants/Typography';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
-import { RowActionRevealSlot } from '@/components/ui/lists/RowActionRevealSlot';
-import { readCoarsePrimaryPointer, useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
+import { RowActionDeferredIcon, RowActionRevealSlot } from '@/components/ui/lists/RowActionRevealSlot';
+import { useCoarsePrimaryPointer, useRowActionHoverHost } from '@/components/sessions/transcript/messageActions/rowActionRevealHost';
 import {
     shouldShowTranscriptRowActions,
     shouldShowTranscriptRowPinAction,
@@ -92,7 +92,7 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
         platformOS: Platform.OS,
         isRowHovered: isHovered,
         isActionHovered: false,
-        coarsePrimaryPointer: readCoarsePrimaryPointer(),
+        coarsePrimaryPointer: useCoarsePrimaryPointer(),
     } as const;
     // A pinned row keeps its pin visible; the open-details icon still waits for
     // hover, so pinning a row does not permanently add chrome to it.
@@ -205,7 +205,9 @@ export const ToolTimelineRowHeader = React.memo(function ToolTimelineRowHeader(p
                                 accessibilityLabel={t('toolView.open')}
                                 style={({ pressed }) => [styles.open, pressed && styles.openPressed]}
                             >
-                                <Icon name="arrow-square-out" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
+                                <RowActionDeferredIcon size={ICON_SIZE.xs}>
+                                    <Icon name="arrow-square-out" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
+                                </RowActionDeferredIcon>
                             </Pressable>
                         </RowActionRevealSlot>
                     ) : null}

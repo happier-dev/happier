@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { MetadataSchema } from '@happier-dev/session-core/state';
-import { createProviderBindingSecurityFingerprintV1 } from '@happier-dev/protocol';
+import { createProviderBindingSecurityFingerprintV1 } from '@happier-dev/protocol/providers/securityFingerprintsV1';
 
 import { resolveContextWarningWindowTokens, resolveContextWindowTokens } from './resolveContextWarningWindowTokens';
 

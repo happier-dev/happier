@@ -1,17 +1,13 @@
-import { renderHook } from '@/dev/testkit';
-import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import { useSessionMachineControlTarget, useSessionMachineControlTargetState } from '@/components/sessions/model/useSessionMachineTarget';
-import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
-import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { router } from 'expo-router';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { NormalizedMessage } from '@happier-dev/session-core/raw';
 import { SessionReadStateSetResultV1Schema } from '@happier-dev/protocol/sessions/readState/actions';
 
-import { createMachineFixture, createSessionFixture, createRootLayoutFeaturesResponse, flushHookEffects, renderScreen, standardCleanup, withPopoverWebGlobals } from '@/dev/testkit';
+import { createMachineFixture, createSessionFixture, createSessionAccessFixture, createRootLayoutFeaturesResponse, flushHookEffects, renderHook, renderScreen, standardCleanup, withPopoverWebGlobals } from '@/dev/testkit';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSocketIoBoundaryStub } from '@/dev/testkit/mocks/socketIo';
@@ -24,11 +20,17 @@ import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projectio
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SESSION_ACTION_MARK_READ_ID, SESSION_ACTION_MARK_UNREAD_ID, SESSION_ACTION_STOP_ID } from './sessionActionIds';
 import { SessionHeaderActionMenu } from './SessionHeaderActionMenu';
-import { WorkspaceNavigationProvider, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
-import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
 import { resolvePluginSessionHeaderActionPresentations } from './pluginHeaderActions';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
+import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { resetVoiceSessionStoreForTests } from '@/voice/session/voiceSessionStore';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
+import { useSessionMachineControlTarget, useSessionMachineControlTargetState } from '@/components/sessions/model/useSessionMachineTarget';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { WorkspaceNavigationProvider, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
 
 vi.hoisted(async () => {
     const { mkdirSync, realpathSync } = await import('node:fs');
@@ -73,7 +75,7 @@ function createProjection() {
                 dangerLevel: 'safe', available: true,
             },
         },
-          resourcesById: {}, settingsById: {},
+        resourcesById: {}, settingsById: {},
         familiesById: {
             pluginUi: {
                 family: 'pluginUi',
@@ -160,6 +162,73 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         modalAlert.mockClear();
     });
 
+    // F-JOURNEY-UI live (390): Share pushed ?mobileSurface=collaboration but the mounted phone cockpit stayed on chat,
+    // because the menu opened People through its own pane-less opener. The host Session owns that opener.
+    it('keeps Share beside Give a copy and hands it to the host Session, which owns the Access destination', async () => {
+        const serverId = homes.homes.projection!.id;
+        const session = createSessionFixture({ ...storage.getState().sessions.sess_1!,
+            metadata: { machineId: MACHINE_ID, path: '/workspace', host: 'projection.local', bot: { kind: 'bot' } },
+        });
+        storage.setState({ sessions: { [session.id]: session } });
+        const target = { serverId, sessionId: session.id };
+        const selectedByHost: string[] = [];
+        const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session}
+            collaborationHeader={{ target, compact: false }} destinationsInMenu
+            onSelectExtraItem={(actionId) => { selectedByHost.push(actionId); return actionId === 'header.share'; }} />);
+        const menu = screen.findByType(DropdownMenu);
+        const rows: ReadonlyArray<{ id: string; category?: string; subtitle?: string }> = menu.props.items;
+        const shareIndex = rows.findIndex(row => row.id === 'header.share');
+        expect(shareIndex).toBeGreaterThanOrEqual(0);
+        expect(rows[shareIndex + 1]?.id).toBe('header.giveBotCopy');
+        expect(rows[shareIndex + 1]?.category).toBe(rows[shareIndex]?.category);
+        expect(rows[shareIndex + 1]?.subtitle).toBeTruthy();
+        expect(rows.some(row => row.id === 'header.openCollaboration')).toBe(true);
+        await act(async () => { menu.props.onSelect('header.share'); });
+        expect(selectedByHost).toEqual(['header.share']);
+        expect(vi.mocked(router.push)).not.toHaveBeenCalled();
+    });
+
+    // REAL-USER-PASS-2 G9: Give a copy… closed the menu and showed nothing for 5–10 s while the draft was made.
+    it('keeps Give a copy… open with its pending row until the template draft settles', async () => {
+        const serverId = homes.homes.projection!.id;
+        const session = createSessionFixture({ ...storage.getState().sessions.sess_1!,
+            metadata: { machineId: MACHINE_ID, path: '/workspace', host: 'projection.local', bot: { kind: 'bot' } },
+        });
+        storage.setState({ sessions: { [session.id]: session } });
+        const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session}
+            collaborationHeader={{ target: { serverId, sessionId: session.id }, compact: false }} destinationsInMenu />);
+        const giveCopy = () => (screen.findByType(DropdownMenu).props.items as ReadonlyArray<{ id: string; loading?: boolean;
+            keepMenuOpen?: boolean }>).find(row => row.id === 'header.giveBotCopy');
+        expect(giveCopy()?.keepMenuOpen).toBe(true);
+        act(() => { screen.findByType(DropdownMenu).props.onSelect('header.giveBotCopy'); });
+        expect(giveCopy()?.loading).toBe(true);
+        await vi.waitFor(() => expect(giveCopy()?.loading).toBeUndefined());
+        await screen.unmount();
+    });
+
+    it('offers the shared window presentation from the Session header menu', async () => {
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: async () => ({
+            activity: { kind: 'available' }, pet: { kind: 'available' }, windows: { kind: 'available' },
+        }) });
+        const session = storage.getState().sessions.sess_1!;
+        const state = createWorkspaceState({ id: 'session-tab', target: { kind: 'session', params: { id: session.id } }, pinned: false, preview: false });
+        const workspace = {
+            active: true, state, canGoBack: false, canGoForward: false,
+            desktopPresentation: { serverId: homes.homes.projection!.id, accountId: 'header-account', layoutId: 'main' },
+            openHref: () => false, activateTab: () => {}, closeTab: () => {}, closeTabs: () => {}, dispatch: () => {},
+            navigationForTab: () => ({ push: () => {}, replace: () => {}, back: () => {} }),
+            registerBackStep: () => () => {}, back: () => {}, forward: () => {},
+        } satisfies WorkspaceNavigationContextValue;
+        try {
+            const screen = await renderScreen(<WorkspaceNavigationProvider value={workspace}>
+                <SessionHeaderActionMenu sessionId={session.id} session={session} />
+            </WorkspaceNavigationProvider>);
+            await vi.waitFor(() => {
+                expect(screen.findByType(DropdownMenu).props.items.map((item: { id: string }) => item.id)).toContain('workspace.open.window');
+            });
+        } finally { vi.unstubAllGlobals(); }
+    });
+
     it('updates mounted Machine controls through presence alone without replacing inventory', async () => {
         const serverId = homes.homes.projection!.id;
         const machine = storage.getState().machines[MACHINE_ID]!;
@@ -204,6 +273,58 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         } finally { await targets.unmount(); }
     });
 
+    it('loads the routed Session machine when the focused Home has the same Session id', async () => {
+        const serverId = homes.homes.projection!.id;
+        const focusedServerId = homes.homes.focused!.id;
+        const machine = storage.getState().machines[MACHINE_ID]!;
+        const focusedMachine = createMachineFixture({ id: 'focused-machine', active: true });
+        const session = createSessionFixture({ ...storage.getState().sessions.sess_1!, active: false,
+            metadata: { machineId: MACHINE_ID, path: '/projection', host: 'projection.local', flavor: 'codex' } });
+        const focusedSession = createSessionFixture({ id: session.id, serverId: focusedServerId, active: false,
+            metadata: { machineId: focusedMachine.id, path: '/focused', host: 'focused.local', flavor: 'codex' } });
+        storage.setState({ sessions: { [session.id]: focusedSession }, machines: { [focusedMachine.id]: focusedMachine },
+            machineListByServerId: { [serverId]: [machine], [focusedServerId]: [focusedMachine] },
+            ordinarySessionListMembershipByServerId: { [serverId]: [session.id], [focusedServerId]: [session.id] },
+            sessionListRowsByServerId: {
+                [serverId]: { [session.id]: buildSessionListRenderableFromSession(session) },
+                [focusedServerId]: { [session.id]: buildSessionListRenderableFromSession(focusedSession) },
+            } });
+        observeMachinePresenceForTest({ serverId, accountId: 'header-account' }, [machine.id]);
+        observeMachinePresenceForTest({ serverId: focusedServerId, accountId: 'header-account' }, [focusedMachine.id]);
+        const targets = await renderHook(() => ({ bare: useSessionReachableMachineTarget(session.id),
+            routed: useSessionReachableMachineTarget(session.id, serverId),
+            control: useSessionMachineControlTarget(session.id, serverId) }));
+        expect(targets.getCurrent()).toMatchObject({ bare: { machineId: focusedMachine.id, basePath: '/focused' },
+            routed: { machineId: machine.id, basePath: '/projection' }, control: { machineId: machine.id, basePath: '/projection' } });
+        await targets.unmount();
+        const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
+        try {
+            const reads = () => boundary.socket.emitWithAck.mock.calls.filter(([event]) => event === SOCKET_RPC_EVENTS.CALL);
+            await vi.waitFor(() => expect(reads().length).toBeGreaterThan(0));
+            expect(reads().map(([, request]) => request)).toEqual(expect.arrayContaining([
+                expect.objectContaining({ method: expect.stringMatching(new RegExp(`^${MACHINE_ID}:`)) }),
+            ]));
+            expect(reads().map(([, request]) => request)).not.toEqual(expect.arrayContaining([
+                expect.objectContaining({ method: expect.stringMatching(new RegExp(`^${focusedMachine.id}:`)) }),
+            ]));
+        } finally { await screen.unmount(); }
+    });
+
+    it('opens reports for read-only offline sessions with their scoped account and no public prefill', async () => {
+        const serverId = homes.homes.projection!.id;
+        const session = createSessionFixture({ ...storage.getState().sessions.sess_1!,
+            active: false, presence: 0, access: createSessionAccessFixture('view'),
+        });
+        storage.setState({ sessions: { [session.id]: session } });
+        vi.mocked(router.push).mockClear();
+        const screen = await renderScreen(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
+        const dropdown = screen.findByType(DropdownMenu);
+        expect(dropdown.props.items).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'header.reportIssue' })]));
+        await act(async () => { dropdown.props.onSelect('header.reportIssue'); });
+        await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith({
+            pathname: '/settings/report-issue', params: { sessionId: session.id, serverId, accountId: 'header-account' },
+        }));
+    });
 
     // Moved from the legacy handoff suite: one normalized descriptor must have
     // the same admitted occurrence and omitted input through both UI arms.
@@ -377,6 +498,35 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         expect(hasAction(SESSION_ACTION_MARK_READ_ID)).toBe(false);
     });
 
+    it('keeps the closed header uncommitted while a streaming turn rewrites its Session row', async () => {
+        const session = createSessionFixture({
+            ...storage.getState().sessions.sess_1!, active: true, thinking: true, seq: 1, lastViewedSessionSeq: 1,
+        });
+        storage.getState().applySessions([session]);
+        let commits = 0;
+        const screen = await renderScreen(<React.Profiler id="header" onRender={() => { commits += 1; }}>
+            <SessionHeaderActionMenu sessionId={session.id} session={session} />
+        </React.Profiler>);
+        await flushHookEffects({ cycles: 5, turns: 2 });
+        const hasAction = (id: string) => screen.findByType(DropdownMenu).props.items
+            .some((item: { id: string }) => item.id === id);
+        expect(storage.getState().sessionListRowsByServerId[homes.homes.projection!.id]?.[session.id]).toBeDefined();
+        commits = 0;
+        // Each streamed checkpoint advances the row's activity facts without changing any Action.
+        for (let index = 2; index <= 6; index += 1) {
+            await act(async () => {
+                storage.getState().applySessions([{ ...session, thinking: index % 2 === 0, thinkingAt: index, activeAt: index, updatedAt: index }]);
+            });
+        }
+        expect(commits).toBe(0);
+        expect(hasAction(SESSION_ACTION_STOP_ID)).toBe(true);
+        await act(async () => { storage.getState().applySessions([{ ...session, updatedAt: 7,
+            access: { ...session.access!, capabilities: { ...session.access!.capabilities, stopSession: false } },
+        }]); });
+        expect(hasAction(SESSION_ACTION_STOP_ID)).toBe(false);
+        await screen.unmount();
+    });
+
     it('does not infer a global voice conversation from a local binding alone', async () => {
         const voice = {
             providerId: 'local_conversation',
@@ -414,10 +564,21 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         const teleportItem = () => screen.findByType(DropdownMenu).props.items.find((item: { id: string }) => item.id === 'voice.teleport');
         expect(teleportItem()).toBeUndefined();
 
-        // Sensitivity: the same settings and binding must permit discoverability
-        // once the real persisted carrier becomes eligible for global reuse.
+        // A reusable carrier alone is not the retained global conversation.
         await act(async () => {
             storage.setState({ sessions: { [session.id]: session, [carrier.id]: { ...carrier, active: true } } });
+        });
+        await flushHookEffects();
+        expect(teleportItem()).toBeUndefined();
+        // The exact retained global admission owns teleport discoverability.
+        await act(async () => {
+            voiceSessionBindingStore.getState().bind({
+                adapterId: 'local_conversation', controlSessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+                conversationSessionId: carrier.id,
+                conversationSessionAddress: { serverId: carrierHome, sessionId: carrier.id },
+                transcriptMode: 'synthetic',
+                targetSessionAddress: { serverId: session.serverId!, sessionId: session.id }, updatedAt: 2,
+            });
         });
         await flushHookEffects();
         expect(teleportItem()).toBeDefined();
@@ -425,34 +586,4 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
         // Voice action must not dispatch an RPC to the Agent.
         expect(boundary.socket.emitWithAck.mock.calls.filter(([event]) => event === SOCKET_RPC_EVENTS.CALL)).toEqual([]);
     });
-    // REAL-USER-PASS-2 G9: Give a copy… closed the menu and showed nothing for 5–10 s while the draft was made.
-    it('keeps Give a copy… open with its pending row until the template draft settles', async () => {
-        const serverId = homes.homes.projection!.id;
-        const session = createSessionFixture({ ...storage.getState().sessions.sess_1!,
-            metadata: { machineId: MACHINE_ID, path: '/workspace', host: 'projection.local', bot: { kind: 'bot' } },
-        });
-
-    it('offers the shared window presentation from the Session header menu', async () => {
-        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: async () => ({
-            activity: { kind: 'available' }, pet: { kind: 'available' }, windows: { kind: 'available' },
-        }) });
-        const session = storage.getState().sessions.sess_1!;
-        const state = createWorkspaceState({ id: 'session-tab', target: { kind: 'session', params: { id: session.id } }, pinned: false, preview: false });
-        const workspace = {
-            active: true, state, canGoBack: false, canGoForward: false,
-            desktopPresentation: { serverId: homes.homes.projection!.id, accountId: 'header-account', layoutId: 'main' },
-            openHref: () => false, activateTab: () => {}, closeTab: () => {}, closeTabs: () => {}, dispatch: () => {},
-            navigationForTab: () => ({ push: () => {}, replace: () => {}, back: () => {} }),
-            registerBackStep: () => () => {}, back: () => {}, forward: () => {},
-        } satisfies WorkspaceNavigationContextValue;
-        try {
-            const screen = await renderScreen(<WorkspaceNavigationProvider value={workspace}>
-                <SessionHeaderActionMenu sessionId={session.id} session={session} />
-            </WorkspaceNavigationProvider>);
-            await vi.waitFor(() => {
-                expect(screen.findByType(DropdownMenu).props.items.map((item: { id: string }) => item.id)).toContain('workspace.open.window');
-            });
-        } finally { vi.unstubAllGlobals(); }
-    });
-
 });

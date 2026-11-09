@@ -171,13 +171,16 @@ describe('retained Session source lifetime', () => {
             const { binding } = useServerCredentialAccountScopeBinding(homeB.id);
             return <RetainedPresentationSlotsProvider store={store}>
                 {React.createElement('HomeBindingProbe', { account: binding?.scope.accountId ?? null })}
-                <RetainedSessionViewerSource sessionId="session-a" slotId="home-a-source" serverId={homeA.id} accountLifetime={homeALifetime}>
+                <RetainedSessionViewerSource sessionId="session-a" slotId="home-a-source" serverId={homeA.id} accountLifetime={homeALifetime}
+                    windowGeometry={{ x: 0, y: 0, width: 640, height: 360 }}>
                     <SourceBody home={homeA.id} />
                 </RetainedSessionViewerSource>
                 <SessionViewerSourceAccountScopeProvider accountLifetime={binding}>
                     {props.showPane && binding ? <RetainedSessionViewerSource
                         sessionId="session-a"
                         slotId="home-b-source" serverId={props.nullableHome ? null : homeB.id}
+                        // Browser/native layout is the boundary: an unmeasured portal is correctly parked.
+                        windowGeometry={{ x: 640, y: 0, width: 640, height: 360 }}
                     >
                         <SourceBody home={homeB.id} />
                     </RetainedSessionViewerSource> : null}

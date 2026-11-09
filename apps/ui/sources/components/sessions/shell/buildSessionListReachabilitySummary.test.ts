@@ -18,6 +18,20 @@ import { buildSessionListIndexWithServerScope } from '@/sync/store/sessionListIn
 import { t } from '@/text';
 
 describe('buildSessionListReachabilitySummary', () => {
+    it('updates workspace appearance without replacing unrelated displays or borrowing another Home', () => {
+        const project = { serverId: 'appearance-a', projectKey: 'shared-project' };
+        const item = { type: 'session' as const, serverId: 'appearance-a', sessionId: 'one', projectKey: project };
+        const other = { ...item, serverId: 'appearance-b', sessionId: 'two', projectKey: { ...project, serverId: 'appearance-b' } };
+        const key = JSON.stringify(['project', 'appearance-a', 'shared-project']);
+        const color = { kind: 'accent', key: 'blue' } as const;
+        const input = { cache: createSessionListReachabilitySummaryCache(), listItems: [item, other], machinesById: {}, workspaceRefs: [],
+            workspaceColorsByServerId: { 'appearance-a': { [key]: color } }, resolveSessionRenderable: () => null };
+        const first = buildSessionListReachabilitySummary(input);
+        expect(first.displayByKey.get(sessionAddressKey({ serverId: 'appearance-a', sessionId: 'one' }))).toHaveProperty('appearanceColor', color);
+        const second = buildSessionListReachabilitySummary({ ...input, workspaceColorsByServerId: {} });
+        expect(second.displayByKey.get(sessionAddressKey({ serverId: 'appearance-a', sessionId: 'one' }))).toHaveProperty('appearanceColor', null);
+        expect(second.displayByKey.get(sessionAddressKey({ serverId: 'appearance-b', sessionId: 'two' }))).toBe(first.displayByKey.get(sessionAddressKey({ serverId: 'appearance-b', sessionId: 'two' })));
+    });
     let previousState: ReturnType<typeof storage.getState>;
     beforeEach(() => {
         previousState = storage.getState();
@@ -52,7 +66,7 @@ describe('buildSessionListReachabilitySummary', () => {
             const derive = vi.spyOn(workspaceDisplay, 'resolveSessionWorkspaceDisplayPresentation');
             input.listItems = [...input.listItems].reverse().map(item => ({ ...item }));
             const reordered = buildSessionListReachabilitySummary(input);
-            expect([...reordered.displayById.keys()]).toEqual([...rows].reverse().map(session => session.id));
+            expect(reordered).toBe(initial);
             expect(reordered.displayById.get(rows[0]!.id)).toBe(initial.displayById.get(rows[0]!.id));
             expect(derive).toHaveBeenCalledTimes(0);
 
@@ -269,6 +283,7 @@ describe('buildSessionListReachabilitySummary', () => {
         expect(first).toBe(second);
         expect(first.hasMultipleMachines).toBe(true);
         expect(first.displayById.get('sess-a')).toEqual({
+            appearanceColor: null,
             machineId: 'machine-a',
             machineLabel: 'machine-a.local',
             workspaceSubtitle: 'repo-a',
@@ -340,6 +355,31 @@ describe('buildSessionListReachabilitySummary', () => {
         });
     });
 
+    it('keeps the summary when a Session update only moves rows', () => {
+        // The summary feeds every mounted row's redraw key: a row that moves to the top of its group
+        // after an agent-state update changes no display, so no other row may redraw for it.
+        const renderable = (path: string) => ({ metadata: { machineId: 'machine-a', host: 'machine-a.local', path, homeDir: '/home/user' } }) as any;
+        const renderablesById: Record<string, any> = { one: renderable('/repo-one'), two: renderable('/repo-two'), three: renderable('/repo-three') };
+        const item = (sessionId: string) => ({ type: 'session' as const, sessionId, serverId: 'server-a' });
+        const input = {
+            cache: createSessionListReachabilitySummaryCache(),
+            listItems: [item('one'), item('two'), item('three')],
+            machinesById: new Map([['machine-a', { id: 'machine-a', metadata: { host: 'machine-a.local' } }]]) as any,
+            workspaceRefs: [],
+            resolveSessionRenderable: (row: { sessionId: string }) => renderablesById[row.sessionId] ?? null,
+        };
+        const first = buildSessionListReachabilitySummary(input);
+        const moved = buildSessionListReachabilitySummary({ ...input, listItems: [item('three'), item('one'), item('two')] });
+
+        expect(moved).toBe(first);
+        renderablesById.three = renderable('/repo-renamed');
+        const changed = buildSessionListReachabilitySummary({ ...input, listItems: [item('one'), item('three'), item('two')] });
+        expect(changed).not.toBe(first);
+        expect(changed.displayByKey.get(sessionAddressKey({ serverId: 'server-a', sessionId: 'three' }))?.workspaceSubtitle).toBe('repo-renamed');
+        expect(changed.displayByKey.get(sessionAddressKey({ serverId: 'server-a', sessionId: 'one' })))
+            .toBe(first.displayByKey.get(sessionAddressKey({ serverId: 'server-a', sessionId: 'one' })));
+    });
+
     it('keeps delimiter-bearing qualified Session addresses distinct in cache and display maps', () => {
         const addresses = [
             { serverId: 'https://home.example/a', sessionId: 'b:c' },
@@ -386,6 +426,7 @@ describe('buildSessionListReachabilitySummary', () => {
         });
 
         expect(summary.displayById.get('sess-path-only')).toEqual({
+            appearanceColor: null,
             machineId: null,
             machineLabel: '',
             workspaceSubtitle: 'repo-only',
@@ -430,6 +471,7 @@ describe('buildSessionListReachabilitySummary', () => {
         });
 
         expect(summary.displayById.get('sess-renamed')).toEqual({
+            appearanceColor: null,
             machineId: 'machine-stale',
             machineLabel: 'stale.local',
             workspaceSubtitle: 'Renamed Workspace',
@@ -495,6 +537,7 @@ describe('buildSessionListReachabilitySummary', () => {
         });
 
         expect(summary.displayById.get('sess-replaced')).toEqual({
+            appearanceColor: null,
             machineId: 'machine-current',
             machineLabel: 'Current machine',
             workspaceSubtitle: 'repo',

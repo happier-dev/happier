@@ -1,4 +1,7 @@
 import { Modal } from '@/modal';
+import { t } from '@/text';
+import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
+import type { PopoverAnchor } from '@/components/ui/popover';
 
 import type {
     SessionServerStartDraftPresentation,
@@ -9,12 +12,13 @@ import { SessionServerStartDraftComposerModal } from './SessionServerStartDraftC
 
 /**
  * The one transient UI presentation for the literal host Session draft arm.
- * It owns only modal completion; Session draft construction remains in the
- * modal and the outer composer owns cancellation/currentness settlement.
+ * It owns only modal completion; Session draft construction remains with U1's
+ * shared recipe model and the outer composer owns cancellation/currentness settlement.
  */
 export function presentSessionServerStartDraftComposer(params: Readonly<{
     seed: SessionServerStartDraftSeed;
     target: SessionServerStartDraftTarget;
+    anchor?: PopoverAnchor;
 }>): SessionServerStartDraftPresentation {
     let modalId = '';
     let settled = false;
@@ -42,11 +46,13 @@ export function presentSessionServerStartDraftComposer(params: Readonly<{
         props: {
             seed: params.seed,
             target: params.target,
+            anchor: params.anchor,
             onResolve: settle,
         },
         onRequestClose: close,
         onHostUnmount: close,
         closeOnBackdrop: true,
+        chrome: createAnchoredSheetChrome({ title: t('newSession.recipeComposerTitle'), anchor: params.anchor }),
     });
     if (!modalId) {
         if (!settled) {

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { act, renderHook } from '@/dev/testkit';
 
 type MediaChangeListener = () => void;
 
@@ -14,58 +15,48 @@ vi.mock('react-native', async () => {
 });
 
 function installPointerMatchMedia(): () => void {
-    const previousWindow = (globalThis as { window?: unknown }).window;
-    (globalThis as { window?: unknown }).window = {
-        matchMedia: (query: string) => {
+    vi.stubGlobal('matchMedia', (query: string) => {
             pointerState.matchMediaCalls.push(query);
-            const matches =
+            return {
+                get matches() { return (
                 query === '(pointer: coarse)' || query === '(hover: none)'
                     ? pointerState.coarse
                     : query === '(pointer: fine)' || query === '(hover: hover)'
                         ? !pointerState.coarse
-                        : false;
-            return {
-                matches,
+                        : false); },
                 addEventListener: (event: string, listener: MediaChangeListener) => {
                     if (event === 'change') pointerState.changeListeners.push(listener);
                 },
+                removeEventListener: (_event: string, listener: MediaChangeListener) => {
+                    pointerState.changeListeners = pointerState.changeListeners.filter(value => value !== listener);
+                },
             };
-        },
-    };
-    return () => {
-        (globalThis as { window?: unknown }).window = previousWindow;
-    };
+    });
+    return () => vi.unstubAllGlobals();
 }
 
-describe('readCoarsePrimaryPointer', () => {
+describe('transcript primary pointer', () => {
     afterEach(() => {
         pointerState.coarse = false;
         pointerState.changeListeners.length = 0;
         pointerState.matchMediaCalls.length = 0;
     });
 
-    it('caches per host capability and re-resolves after the primary pointer changes', async () => {
+    it('updates the mounted transcript fact in both directions without another render trigger', async () => {
         const restoreWindow = installPointerMatchMedia();
+        const { useCoarsePrimaryPointer } = await import('./rowActionRevealHost');
+        const hook = await renderHook(useCoarsePrimaryPointer);
         try {
-            const { readCoarsePrimaryPointer } = await import('./rowActionRevealHost');
-
-            expect(readCoarsePrimaryPointer()).toBe(false);
-            const callsAfterFirstRead = pointerState.matchMediaCalls.length;
-            // Cached: a second read must not re-evaluate the media queries, or every
-            // row of a long transcript pays for a host-level property on every render.
-            expect(readCoarsePrimaryPointer()).toBe(false);
-            expect(pointerState.matchMediaCalls).toHaveLength(callsAfterFirstRead);
-
-            // One module-scope listener, not one per row.
-            expect(pointerState.changeListeners).toHaveLength(1);
-
-            pointerState.coarse = true;
-            for (const listener of [...pointerState.changeListeners]) {
-                listener();
+            expect(hook.getCurrent()).toBe(false);
+            for (const coarse of [true, false]) {
+                await act(async () => {
+                    pointerState.coarse = coarse;
+                    for (const listener of [...pointerState.changeListeners]) listener();
+                });
+                expect(hook.getCurrent()).toBe(coarse);
             }
-
-            expect(readCoarsePrimaryPointer()).toBe(true);
         } finally {
+            await hook.unmount();
             restoreWindow();
         }
     });

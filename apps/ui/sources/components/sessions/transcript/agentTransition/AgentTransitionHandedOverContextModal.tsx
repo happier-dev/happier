@@ -3,7 +3,7 @@ import { View } from 'react-native';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import type { SessionAgentTransitionBriefPreviewV1 } from '@happier-dev/protocol';
+import type { SessionAgentTransitionBriefPreviewV1 } from '@happier-dev/protocol/sessions/agentTransition';
 
 import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';

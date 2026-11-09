@@ -162,4 +162,80 @@ describe('MessageActionRow', () => {
             marginRight: 0,
         }));
     });
+
+    describe('closed row mounts no action controls', () => {
+        const renderRow = async (showActions: boolean) => {
+            const { MessageActionRow } = await import('./MessageActionRow');
+            const element = (show: boolean) => (
+                <MessageActionRow
+                    messageId="lazy"
+                    timestampText={null}
+                    showActions={show}
+                    isWeb
+                    invertTimestampAndActions={false}
+                >
+                    <View testID="lazy-action" />
+                </MessageActionRow>
+            );
+            const screen = await renderScreen(element(showActions));
+            return { screen, update: async (show: boolean) => { await act(async () => { screen.update(element(show)); }); } };
+        };
+
+        it('mounts the controls only once the row is revealed, then keeps them mounted', async () => {
+            const { screen, update } = await renderRow(false);
+
+            expect(screen.findAllByTestId('lazy-action')).toHaveLength(0);
+            expect(screen.findAllByTestId('transcript-message-actions-opener:lazy')).not.toHaveLength(0);
+
+            await update(true);
+            expect(screen.findAllByTestId('lazy-action')).toHaveLength(1);
+            expect(screen.findAllByTestId('transcript-message-actions-opener:lazy')).toHaveLength(0);
+
+            await update(false);
+            expect(screen.findAllByTestId('lazy-action')).toHaveLength(1);
+        });
+
+        it('keeps the row keyboard-reachable: focusing the stand-in mounts the controls', async () => {
+            const { MessageActionRow } = await import('./MessageActionRow');
+            const screen = await renderScreen(
+                <MessageActionRow messageId="focus-lazy" timestampText={null} showActions={false} isWeb invertTimestampAndActions={false}>
+                    <View testID="focus-lazy-action" />
+                </MessageActionRow>,
+            );
+
+            const opener = screen.findByTestId('transcript-message-actions-opener:focus-lazy');
+            await act(async () => { opener?.props.onFocus?.({ currentTarget: null }); });
+            expect(screen.findAllByTestId('focus-lazy-action')).toHaveLength(1);
+            expect(screen.findAllByTestId('transcript-message-actions-opener:focus-lazy')).toHaveLength(0);
+        });
+
+        it('hands focus to the last control on reverse entry and the first on forward entry', async () => {
+            const { MessageActionRow } = await import('./MessageActionRow');
+            const enter = async (messageId: string, relatedFollowsStandIn: boolean) => {
+                const first = { focus: vi.fn() };
+                const last = { focus: vi.fn() };
+                const slot = { querySelectorAll: () => [first, last] };
+                const standIn = {
+                    parentElement: slot,
+                    compareDocumentPosition: () => (relatedFollowsStandIn ? 4 : 2),
+                };
+                const screen = await renderScreen(
+                    <MessageActionRow messageId={messageId} timestampText={null} showActions={false} isWeb invertTimestampAndActions={false}>
+                        <View testID={`${messageId}-action`} />
+                    </MessageActionRow>,
+                );
+                const opener = screen.findByTestId(`transcript-message-actions-opener:${messageId}`);
+                await act(async () => { opener?.props.onFocus?.({ currentTarget: standIn, relatedTarget: {} }); });
+                return { first, last };
+            };
+
+            const reverse = await enter('reverse', true);
+            expect(reverse.last.focus).toHaveBeenCalledTimes(1);
+            expect(reverse.first.focus).not.toHaveBeenCalled();
+
+            const forward = await enter('forward', false);
+            expect(forward.first.focus).toHaveBeenCalledTimes(1);
+            expect(forward.last.focus).not.toHaveBeenCalled();
+        });
+    });
 });

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ApprovalRequest } from '@happier-dev/protocol';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { MetadataSchema } from '@happier-dev/session-core/state';
 import type { ReachDecisionV1 } from '@happier-dev/protocol/reach/resolveReachV1';

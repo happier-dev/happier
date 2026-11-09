@@ -7,6 +7,8 @@ import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/m
 import { storage } from '@/sync/domains/state/storageStore';
 import { renderScreen } from '@/dev/testkit';
 import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
+import { isMachineOnline } from '@/utils/sessions/machineUtils';
+import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -65,6 +67,37 @@ function createMachine(id: string): Machine {
 }
 
 describe('useServerScopedMachineOptions', () => {
+    it('keeps a retained scoped picker row on its admitted Machine clock after continuing heartbeats', async () => {
+        vi.stubEnv('EXPO_PUBLIC_HAPPIER_MACHINE_ONLINE_GRACE_MS', '60000');
+        const initialState = storage.getState();
+        const machine = createMachine('scoped-clock');
+        const allowedServerIds = ['server-b'];
+        const activeMachines: Machine[] = [];
+        let current: ReturnType<typeof useServerScopedMachineOptions> = [];
+        storage.setState({ machineListByServerId: { 'server-b': [machine] },
+            machineListStatusByServerId: { 'server-b': 'idle' } });
+        const screen = await renderScreen(<Probe allowedServerIds={allowedServerIds} activeServerId="server-a"
+            activeMachines={activeMachines} onGroups={groups => { current = groups; }} />);
+        try {
+            const projected = current[0]!.machines[0]!;
+            const root = storage.getState();
+            await act(async () => storage.getState().applyMachineActivityUpdates([
+                { id: machine.id, active: true, activeAt: machine.activeAt + 30_000 },
+            ], { sourceServerId: 'server-b' }));
+            expect(storage.getState()).toBe(root);
+            expect(current[0]!.machines[0]).toBe(projected);
+            // The old structural timestamp has expired, but this retained row
+            // must see the same still-current clock as its admitted Machine.
+            expect(isMachineOnline(machine, machine.activeAt + 60_001)).toBe(true);
+            expect(isMachineOnline(projected, machine.activeAt + 60_001)).toBe(true);
+            expect(projected.activeAt).toBe(machine.activeAt);
+        } finally {
+            await screen.unmount();
+            storage.setState(initialState, true);
+            vi.unstubAllEnvs();
+        }
+    });
+
     it('retains unaffected scoped rows across unrelated Machine arrivals', async () => {
         const fleet = Array.from({ length: 100 }, (_, index) => createMachine(`picker-${index}`));
         const allowedServerIds = ['server-b'];
@@ -108,6 +141,25 @@ describe('useServerScopedMachineOptions', () => {
         } finally {
             await screen.unmount();
         }
+    });
+
+    it('keeps the same groups when a refreshed inventory leaves every row unchanged', async () => {
+        const initialState = storage.getState();
+        const machine = createMachine('stable-row');
+        let current: ReturnType<typeof useServerScopedMachineOptions> = [];
+        act(() => storage.setState({
+            machineListByServerId: { 'server-b': [machine] },
+            machineListStatusByServerId: { 'server-b': 'idle' },
+        }));
+        const allowedServerIds = ['server-b'];
+        const screen = await renderScreen(<Probe allowedServerIds={allowedServerIds} activeServerId="server-a" activeMachines={[]} onGroups={(next) => { current = next; }} />);
+        const before = current;
+        // A refresh republishes the list with the identical Machine objects.
+        act(() => storage.setState({ machineListByServerId: { 'server-b': [machine] } }));
+        await screen.update(<Probe allowedServerIds={allowedServerIds} activeServerId="server-a" activeMachines={[]} onGroups={(next) => { current = next; }} />);
+        expect(current).toBe(before);
+        await screen.unmount();
+        storage.setState(initialState, true);
     });
 
     it('publishes changed launch metadata without a consumer-owned field signature', async () => {
@@ -268,19 +320,9 @@ describe('useServerScopedMachineOptions', () => {
                 />);
         const firstGroups = captured.at(-1);
 
-        act(() => {
-            storage.setState((state) => ({
-                ...state,
-                machineListByServerId: {
-                    ...state.machineListByServerId,
-                    'server-b': [{ ...remoteMachine, activeAt: 200 }],
-                },
-                machineListStatusByServerId: {
-                    ...state.machineListStatusByServerId,
-                    'server-b': 'idle',
-                },
-            }));
-        });
+        act(() => storage.getState().applyMachineActivityUpdates([
+            { id: remoteMachine.id, active: remoteMachine.active, activeAt: 200 },
+        ], { sourceServerId: 'server-b' }));
 
         await act(async () => {
             screen.tree.update(<Probe
@@ -293,7 +335,10 @@ describe('useServerScopedMachineOptions', () => {
         const secondGroups = captured.at(-1);
 
         expect(secondGroups).not.toBe(firstGroups);
-        expect(secondGroups?.find((group) => group.serverId === 'server-b')?.machines[0]?.activeAt).toBe(200);
+        expect(firstGroups?.find((group) => group.serverId === 'server-b')?.machines[0]?.activeAt).toBe(100);
+        const currentRow = secondGroups?.find((group) => group.serverId === 'server-b')?.machines[0];
+        expect(currentRow?.activeAt).toBe(100);
+        expect(currentRow && readMachineActivity(currentRow).activeAt).toBe(200);
     });
 
     it('keeps active server machines and uses server-scoped machine cache for non-active servers', async () => {

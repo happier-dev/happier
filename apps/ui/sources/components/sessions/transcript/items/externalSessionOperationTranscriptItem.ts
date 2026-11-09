@@ -1,7 +1,7 @@
 import type {
     ExternalSessionOperationProgressV1,
     ExternalSessionOperationSharedPresentationV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/operationV1';
 
 import type { ChatTranscriptListItem } from '@/components/sessions/transcript/chatListTypes';
 import {

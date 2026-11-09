@@ -26,7 +26,7 @@ import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layou
 import { PopoverScope } from '@/components/ui/popover';
 import { Modal } from '@/modal';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
-import { useMachineListForServer, useSetting } from '@/sync/domains/state/storage';
+import { storage, useSetting, useMachineListForServer } from '@/sync/domains/state/storage';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
 import {
@@ -39,7 +39,7 @@ import {
 } from '@/sync/ops/machineExternalSessions';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileForPortableIdentity } from '@/sync/domains/server/serverProfiles';
-import { useProfile, useSettingsVersion, useActiveServerAccountScope } from '@/sync/store/hooks';
+import { useProfile, useActiveServerAccountScope } from '@/sync/store/hooks';
 import { requireOneShotAccountSettingsMutationApplied } from '@/sync/engine/settings/syncSettings';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
@@ -100,7 +100,6 @@ const stylesheet = StyleSheet.create((theme: AppTheme) => ({
     root: {
         flex: 1,
         minHeight: 0,
-        backgroundColor: theme.colors.surface.base,
     },
     // The ⋯ menu and close trail the search band, as in Search / ⌘K: the band is the top of the card.
     bandTrailing: {
@@ -140,7 +139,6 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
     const styles = stylesheet;
     const profile = useProfile();
     const profileScope = useActiveServerAccountScope();
-    const settingsVersion = useSettingsVersion();
     const expectedSettingsScope = useAccountSettingsScope();
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const labelsByKey = useConnectedMetadataCatalog(props.accountLifetime
@@ -588,9 +586,10 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
         autoLinkMutationPendingRef.current = true;
         setAutoLinkMutationPending(true);
         try {
-            if (settingsVersion === null) throw new Error('Account settings version is unavailable');
             const enabledAtMs = Date.now();
             const { sync } = await import('@/sync/sync');
+            const settingsVersion = storage.getState().settingsVersion;
+            if (settingsVersion === null) throw new Error('Account settings version is unavailable');
             requireOneShotAccountSettingsMutationApplied(
                 await sync.mutateAccountSettingsOnce({
                     expectedSettingsScope,
@@ -630,7 +629,7 @@ export const ExternalSessionsBrowseScreen = React.memo((props: Readonly<{
             autoLinkMutationPendingRef.current = false;
             setAutoLinkMutationPending(false);
         }
-    }, [accountSettingsTargetAvailable, autoLinkPolicyScope, expectedSettingsScope, resolveCurrentOperationTarget, settingsVersion]);
+    }, [accountSettingsTargetAvailable, autoLinkPolicyScope, expectedSettingsScope, resolveCurrentOperationTarget]);
     const selectedMachinePresence = useMachinePresenceSummary(effectiveSelectedServerId, effectiveSelectedMachineId);
     const selectedMachineIsOffline = selectedMachinePresence.reachability === 'unreachable';
     const selectedMachineLabel = React.useMemo(() => {

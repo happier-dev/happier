@@ -1,13 +1,16 @@
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createPromptDocInLibrary, decodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { createPromptDocInLibrary, updatePromptDocInLibrary} from '@happier-dev/protocol/prompts/library/promptLibraryActionOperations';
+import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
-import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryCatalogKeyV1Schema, buildPromptLibraryPhysicalKeyV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+import { readPromptLibraryCatalogRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
@@ -53,7 +56,7 @@ async function seed(organize = true) {
 
 describe('active prompt picker Account library', () => {
     it('shares the catalog read and shows usable prompts while retained Settings cleanup is pending', async () => {
-        const { serverId } = await seed(false);
+        const { serverId, catalog } = await seed(false);
         resetPromptLibraryCatalogEngineForTests();
         resetPromptLibraryCatalogSnapshotsForTests();
         // Sign-in already hydrated Action policy; only the catalog's retained-source read is held.
@@ -74,6 +77,26 @@ describe('active prompt picker Account library', () => {
                 expect(hook.getCurrent().folders).toMatchObject([{ id: 'folder', name: 'Personal' }]);
             });
             expect(harness.requests.filter(request => request.path === PROMPT_LIBRARY_ROWS_ROUTE_V1).length - before).toBe(1);
+            publishHomeAccountChange(serverId, ['unrelated-session'], { changeKinds: ['session'] });
+            await flushHookEffects();
+            expect(harness.requests.filter(request => request.path === PROMPT_LIBRARY_ROWS_ROUTE_V1).length - before).toBe(1);
+            const folders = catalog.read('folders');
+            if (folders.key !== 'folders') throw new Error('Expected folder record');
+            const updated = await catalog.handle(`${PROMPT_LIBRARY_ROWS_ROUTE_V1}/folders`, {
+                method: 'POST', body: JSON.stringify({ expectedRevision: catalog.revision('folders'),
+                    content: { t: 'plain', v: { ...folders, value: { ...folders.value,
+                        folders: [{ id: 'folder', name: 'Updated personal' }] } } } }),
+            });
+            expect(await updated!.json()).toMatchObject({ status: 'updated' });
+            publishHomeAccountChange(serverId, [buildPromptLibraryPhysicalKeyV1('folders')]);
+            const account = await captureLazyActionAccountContext(serverId);
+            try {
+                const projection = await createUiPromptLibraryArtifactStore(account.workflowArtifacts, account).organization!.readCatalog();
+                expect(readPromptLibraryCatalogRecordV1({ ...projection, key: 'folders' })).toMatchObject({
+                    status: 'ready', record: { value: { folders: [{ id: 'folder', name: 'Updated personal' }] } },
+                });
+            } finally { account.dispose(); }
+            expect(harness.requests.filter(request => request.path === PROMPT_LIBRARY_ROWS_ROUTE_V1).length - before).toBe(2);
         } finally {
             held.resolve();
             await hook.unmount();
@@ -95,17 +118,24 @@ describe('active prompt picker Account library', () => {
         expect(insertion).toBe(preview);
         held.resolve();
         await expect(preview).resolves.toBe('Test $ARGUMENTS');
+        harness.answer(serverId, `GET /v1/artifacts/${artifactId}`, { select: () => ({ body: harness.artifacts(serverId).read(artifactId) }) });
+        // Another editor commits newer body and organization after the picker took its snapshot.
+        const editor = await captureLazyActionAccountContext(serverId);
+        try {
+            await updatePromptDocInLibrary({ store: createUiPromptLibraryArtifactStore(editor.workflowArtifacts, editor),
+                request: { artifactId, title: 'Updated elsewhere', markdown: 'Newer body', folderId: null, tags: ['newer'] } });
+        } finally { editor.dispose(); }
         await act(async () => { await hook.getCurrent().setFavorite(artifactId, true); });
         expect(hook.getCurrent().documents[0]?.favorite).toBe(true);
         const stored = harness.artifacts(serverId).read(artifactId)!;
-        expect(decodePlainArtifactStoredContent(stored.header)).toMatchObject({ favorite: true });
+        expect(decodePlainArtifactStoredContent(stored.header)).toMatchObject({ favorite: true, title: 'Updated elsewhere' });
         expect(decodePlainArtifactStoredContent(stored.header)).not.toHaveProperty('folderId');
         expect(decodePlainArtifactStoredContent(stored.header)).not.toHaveProperty('tags');
         expect(catalog.read('folders').value).toMatchObject({ artifactHeadersById: {
-            [artifactId]: { folderId: 'folder', tags: ['debug'] },
+            [artifactId]: { folderId: null, tags: ['newer'] },
         } });
         expect(hook.getCurrent().documents[0]).toMatchObject({ folderId: 'folder', tags: ['debug'] });
-        expect(harness.artifacts(serverId).readPlainBody(artifactId)).toContain('Test $ARGUMENTS');
+        expect(harness.artifacts(serverId).readPlainBody(artifactId)).toContain('Newer body');
         await hook.unmount();
         await expect(hook.getCurrent().read(artifactId)).rejects.toThrow('prompt_picker_closed');
     });
@@ -123,5 +153,22 @@ describe('active prompt picker Account library', () => {
         await hook.unmount();
         held.resolve();
         await rejected;
+    });
+
+    it('retires an in-flight favourite before a delayed read can write or update the picker', async () => {
+        const { serverId, artifactId } = await seed();
+        const hook = await renderHook(() => usePromptPickerLibrary(serverId));
+        await vi.waitFor(async () => { await flushHookEffects(); expect(hook.getCurrent().documents).toHaveLength(1); });
+        const before = harness.artifacts(serverId).read(artifactId);
+        const held = createDeferred<void>();
+        harness.answer(serverId, `GET /v1/artifacts/${artifactId}`, { body: before, respondAfter: held.promise });
+        const pending = hook.getCurrent().setFavorite(artifactId, true);
+        const rejected = expect(pending).rejects.toBeDefined();
+        await act(async () => { await harness.switchAccount(serverId, 'other-account'); });
+        held.resolve();
+        await rejected;
+        expect(hook.getCurrent().documents).toEqual([]);
+        expect(harness.artifacts(serverId).read(artifactId)).toEqual(before);
+        await hook.unmount();
     });
 });

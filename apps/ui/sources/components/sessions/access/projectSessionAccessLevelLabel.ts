@@ -1,4 +1,4 @@
-import type { EffectiveSessionAccessLevelV1 } from '@happier-dev/protocol';
+import type { EffectiveSessionAccessLevelV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 
 import { t } from '@/text';
 

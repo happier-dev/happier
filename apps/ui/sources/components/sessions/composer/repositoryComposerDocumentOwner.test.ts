@@ -22,6 +22,37 @@ afterEach(() => {
 });
 
 describe('repositoryComposerDocumentOwner', () => {
+    it('settles accepted fields after its view closes but never after the captured Account retires', async () => {
+        const { activateStorageAccountScope } = await import('@/dev/testkit/runtime/storageRuntime');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const fixture = await activateStorageAccountScope(scope);
+        try {
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            if (!lifetime) throw new Error('Expected the active Account lifetime');
+            let presented = true;
+            const owner = createRepositoryComposerDocumentOwner({
+                scope, scopeLifetime: lifetime, ref: { kind: 'session', sessionId: 'accepted-after-navigation' },
+                isCurrent: () => presented && lifetime.isCurrent(),
+            });
+            owner.replaceDocument({ text: 'accepted input', structuredInputMentions: [], composerAttachments: [] });
+            const accepted = owner.captureCurrentness();
+            presented = false;
+            expect(owner.apply(owner.read().revision, { text: 'stale view edit', references: [], attachments: [] }))
+                .toEqual({ status: 'composerUnavailable' });
+            expect(owner.clearAccepted(accepted).changed).toBe(true);
+            expect(composerValue(getSessionDraftSnapshot(scope, { kind: 'session', sessionId: 'accepted-after-navigation' }), 'text') ?? '').toBe('');
+
+            presented = true;
+            owner.replaceDocument({ text: 'owned by the captured Account', structuredInputMentions: [], composerAttachments: [] });
+            const retiredAcceptance = owner.captureCurrentness();
+            fixture.dispose();
+            expect(owner.clearAccepted(retiredAcceptance).changed).toBe(false);
+            expect(composerValue(getSessionDraftSnapshot(scope, { kind: 'session', sessionId: 'accepted-after-navigation' }), 'text'))
+                .toBe('owned by the captured Account');
+        } finally {
+            fixture.dispose();
+        }
+    });
     it('hydrates legacy positioned tokens into inline text without losing later occurrences', () => {
         const sessionId = 'legacy-positioned';
         writeExistingSessionDraft({ scope, sessionId, patch: {

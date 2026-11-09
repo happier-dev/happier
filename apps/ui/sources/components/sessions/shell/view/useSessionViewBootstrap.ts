@@ -48,7 +48,7 @@ export function useSessionViewBootstrap(input: UseSessionViewBootstrapInput): Us
         machineReachable,
         machineOnline,
         machineReachability: observedMachineReachability,
-    } = useSessionMachineReachability(input.sessionId);
+    } = useSessionMachineReachability(input.sessionId, input.serverId);
     const machineReachability = observedMachineReachability
         ?? (machineReachable ? 'reachable' : 'unreachable');
 

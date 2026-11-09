@@ -21,12 +21,7 @@ export type ToolFindTextContext = ToolDisplayTextContext & Readonly<{
 
 /** Project the transcript display owner: a turn recap, or the normalized tool shell and body. */
 export function projectToolFindText(tool: ToolCall, context: ToolFindTextContext = {}): readonly ToolDisplayTextBlock[] {
-    const { turnChanges } = deriveToolMessageDisplay({
-        tool,
-        hasStructuredNode: false,
-        toolViewTimelineChromeMode: context.toolViewTimelineChromeMode,
-        permissionDisabledReason: context.permissionDisabledReason,
-    });
+    const { turnChanges } = deriveToolMessageDisplay({ tool });
     if (turnChanges) return projectTurnChangesCardDisplayText(turnChanges.files);
     const normalized = normalizeToolCallForRendering(tool);
     const header = resolveToolHeaderTextPresentation({ tool: normalized, metadata: context.metadata ?? null });

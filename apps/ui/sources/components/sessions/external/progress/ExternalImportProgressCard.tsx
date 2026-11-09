@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 
-import type { ExternalSessionOperationProgressV1 } from '@happier-dev/protocol';
+import type { ExternalSessionOperationProgressV1 } from '@happier-dev/protocol/sessions/external/operationV1';
 
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';

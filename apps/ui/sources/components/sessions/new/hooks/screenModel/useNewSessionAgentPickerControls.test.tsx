@@ -5,7 +5,7 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import { createResolvedAgentCatalogEntryFixture } from '@/dev/testkit/fixtures/agentCatalogFixtures';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { renderScreen } from '@/dev/testkit';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storageStore';
 import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScreenModelTestHelpers';
 
@@ -17,7 +17,8 @@ import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogPr
 import { t } from '@/text';
 import type { AgentId } from '@/agents/catalog/catalog';
 import { FavoriteModelSelectionV1Schema } from '@/sync/domains/models/favoriteModelSelections';
-import { SessionModelSelectionV1Schema, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
+import { SessionModelSelectionV1Schema} from '@happier-dev/protocol/providers/selection/v1';
+import { type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 function favoriteModel(backendTargetKey: string, modelId: string, extra: Record<string, unknown> = {}) {
     return FavoriteModelSelectionV1Schema.parse({ backendTargetKey, modelId, ...extra });
@@ -50,30 +51,6 @@ vi.mock('@/agents/registry/AgentIcon', () => ({
 vi.mock('@/agents/registry/registryUi', () => ({
     getAgentPickerIconScale: () => 1,
 }));
-
-vi.mock('@/agents/registry/registryUiBehavior', async () => {
-    const { createRegistryUiBehaviorModuleMock } = await import('@/dev/testkit/mocks/registryUiBehavior');
-    return createRegistryUiBehaviorModuleMock({
-        resolveAgentUiBehavior: () => ({
-            permissions: {
-                footer: {
-                    usePermissionUpdates: false,
-                    forceReadOnlyAfterStop: true,
-                    supportsExecPolicyAmendment: false,
-                    stopHandling: 'denyAndAbortRun',
-                },
-            },
-            newSession: {
-                supportsTranscriptStorageMode: () => false,
-            },
-        }),
-        resolveAgentUiBehaviorFromFlavor: () => null,
-        buildResumeCapabilityOptionsFromUiState: (opts) => ({ accountSettings: opts.settings }),
-        buildNewSessionOptionsFromUiState: () => null,
-        getNewSessionAgentInputExtraActionChips: () => undefined,
-        buildSpawnEnvironmentVariablesFromUiState: (opts) => opts.environmentVariables,
-    });
-});
 
 vi.mock('@/components/sessions/new/components/NewSessionEngineOptionDetail', () => ({
     NewSessionEngineOptionDetail: (props: Record<string, unknown>) => React.createElement('NewSessionEngineOptionDetail', props),
@@ -153,13 +130,11 @@ describe('useNewSessionAgentPickerControls', () => {
         vi.clearAllMocks();
     });
 
-    it('retains local picker intent across Account echoes and reads current full Settings only in mounted details', async () => {
+    it('retains local picker intent across Account echoes and subscribes mounted details to their Agent keys', async () => {
         const previous = storage.getState().settings;
-        storage.setState({ settings: { ...settingsDefaults, experiments: false,
-            lastNewSessionAgentPickerViewV1: { kind: 'favoriteModels' } } });
+        storage.setState({ settings: { ...settingsDefaults, experiments: false } });
         const claude = createBuiltInBackendEntry('claude', 'Claude', null);
         const codex = createBuiltInBackendEntry('codex', 'Codex', null);
-        const readSettings = vi.fn(() => storage.getState().settings);
         let commits = 0;
         const hook = await renderHook(() => {
             React.useLayoutEffect(() => { commits++; });
@@ -173,7 +148,7 @@ describe('useNewSessionAgentPickerControls', () => {
                 modelMode: 'default', setModelMode: vi.fn(), acpSessionModeId: null, setAcpSessionModeId: vi.fn(),
                 sessionConfigOptionOverrides: null, setSessionConfigOptionOverrides: vi.fn(),
                 selectedMachineId: null, capabilityServerId: 'server-1', selectedPath: '/repo',
-                readSettings,
+                initialAgentPickerView: { kind: 'favoriteModels' },
                 favoriteModelSelections: [favoriteModel(codex.backendTargetKey, 'gpt-5.4', { builtInAgentId: 'codex' })],
                 setFavoriteModelSelections: vi.fn(),
             });
@@ -181,22 +156,21 @@ describe('useNewSessionAgentPickerControls', () => {
         let detail: Awaited<ReturnType<typeof renderScreen>> | undefined;
         try {
             expect(hook.getCurrent().agentPickerSelectedOptionId).toBe('favorite-models');
-            const seededReads = readSettings.mock.calls.length;
             await act(async () => hook.getCurrent().handleAgentPickerSelect(codex.backendTargetKey));
             const before = commits;
-            await act(async () => storage.setState({ settings: { ...storage.getState().settings, experiments: true,
-                lastNewSessionAgentPickerViewV1: { kind: 'favoriteModels' } } }));
+            await act(async () => storage.setState({ settings: { ...storage.getState().settings, experiments: true } }));
             expect(commits).toBe(before);
             expect(hook.getCurrent().agentPickerSelectedOptionId).toBe(codex.backendTargetKey);
-            expect(readSettings.mock.calls.length).toBe(seededReads);
             const renderDetail = hook.getCurrent().agentPickerOptions?.find(option => option.id === 'favorite-models')?.renderDetailContent;
             if (!renderDetail) throw new Error('Missing favorite detail');
             detail = await renderScreen(<>{renderDetail({ onRequestClose: vi.fn() })}</>);
-            expect(detail.tree.root.findByType('NewSessionFavoriteModelsDetail').props.settings).toBe(storage.getState().settings);
+            const selectedSettings = detail.tree.root.findByType('NewSessionFavoriteModelsDetail').props.settings;
+            expect(selectedSettings).toEqual({ codexBackendMode: undefined });
             const openedAt = commits;
             await act(async () => storage.setState({ settings: { ...storage.getState().settings, experiments: false } }));
-            expect(detail.tree.root.findByType('NewSessionFavoriteModelsDetail').props.settings).toBe(storage.getState().settings);
-            expect(readSettings.mock.results.at(-1)?.value).toBe(storage.getState().settings);
+            expect(detail.tree.root.findByType('NewSessionFavoriteModelsDetail').props.settings).toBe(selectedSettings);
+            await act(async () => storage.setState({ settings: settingsParse({ ...storage.getState().settings, codexBackendMode: 'acp' }) }));
+            expect(detail.tree.root.findByType('NewSessionFavoriteModelsDetail').props.settings).toEqual({ codexBackendMode: 'acp' });
             expect(commits).toBe(openedAt);
         } finally {
             await detail?.unmount(); await hook.unmount(); storage.setState({ settings: previous });
@@ -231,7 +205,6 @@ describe('useNewSessionAgentPickerControls', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
         }));
 
         expect(modalMockState.alert).not.toHaveBeenCalled();
@@ -274,7 +247,6 @@ describe('useNewSessionAgentPickerControls', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
             favoriteBackendTargetKeys: [codexEntry.backendTargetKey],
             setFavoriteBackendTargetKeys,
         }));
@@ -331,7 +303,7 @@ describe('useNewSessionAgentPickerControls', () => {
                 favoriteModel(codexEntry.backendTargetKey, 'gpt-5.4', { builtInAgentId: 'codex' }),
             ],
             setFavoriteModelSelections: vi.fn(),
-            readSettings: () => ({ ...settingsDefaults, lastNewSessionAgentPickerViewV1: { kind: 'favoriteModels' } }),
+            initialAgentPickerView: { kind: 'favoriteModels' },
             onRememberAgentPickerView,
         }));
 
@@ -375,7 +347,6 @@ describe('useNewSessionAgentPickerControls', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
             favoriteModelSelections: [
                 favoriteModel(codexEntry.backendTargetKey, 'gpt-5.4', { builtInAgentId: 'codex' }),
             ],
@@ -418,7 +389,6 @@ describe('useNewSessionAgentPickerControls', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
             favoriteModelSelections: [
                 favoriteModel(codexEntry.backendTargetKey, 'gpt-5.5', {
                     catalogAgentId: 'codex',
@@ -506,7 +476,6 @@ describe('useNewSessionAgentPickerControls', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
             favoriteModelSelections: [{ selection: providerSelection }],
             setFavoriteModelSelections: vi.fn(),
         }));
@@ -556,7 +525,7 @@ describe('useNewSessionAgentPickerControls', () => {
                 canRetainModelSelection: () => source.current === null,
                 onRememberEngineSelection: (_target, selection) => setRemembered(selection.modelSelection),
                 selectedMachineId: 'machine-1', capabilityServerId: 'server-1', selectedPath: '/repo',
-                readSettings: () => settingsDefaults, favoriteModelSelections: [{ selection: nativeSelection }],
+                favoriteModelSelections: [{ selection: nativeSelection }],
                 teamModels: { selectedTeamCredentialModel: selectedTeam, onSelectOtherModel: () => {
                     source.current = null;
                     setSelectedTeam(null);
@@ -607,7 +576,6 @@ describe('useNewSessionAgentPickerControls', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
             favoriteModelSelections: [
                 favoriteModel(codexEntry.backendTargetKey, 'gpt-5.4', {
                     catalogAgentId: 'codex',
@@ -651,7 +619,6 @@ describe('useNewSessionAgentPickerControls', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
         }));
 
         const options = hook.getCurrent().agentPickerOptions ?? [];
@@ -706,7 +673,6 @@ describe('useNewSessionAgentPickerControls', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
         }));
 
         expect(hook.getCurrent().agentPickerOptions?.map((option) => option.id) ?? []).not.toContain(
@@ -738,7 +704,6 @@ describe('useNewSessionAgentPickerControls', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
         }));
 
         expect(hook.getCurrent().agentPickerOptions?.map((option) => option.id)).toEqual([configuredEntry.backendTargetKey]);
@@ -774,7 +739,6 @@ describe('useNewSessionAgentPickerControls', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
         }));
 
         const detailElement = hook.getCurrent().agentPickerOptions?.[0]
@@ -808,7 +772,6 @@ describe('useNewSessionAgentPickerControls', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
         }));
 
         hook.getCurrent().handleAgentClick();
@@ -840,9 +803,9 @@ describe('useNewSessionAgentPickerControls', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => ({ ...settingsDefaults, lastNewSessionAgentPickerViewV1: {
+            initialAgentPickerView: {
                 kind: 'backend', backendTargetKey: claudeEntry.backendTargetKey,
-            } }),
+            },
         }));
 
         expect(hook.getCurrent().agentPickerSelectedOptionId).toBe(codexEntry.backendTargetKey);
@@ -878,7 +841,6 @@ describe('useNewSessionAgentPickerControls', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
             refreshProbe,
             onRememberEngineSelection,
         }));
@@ -965,7 +927,6 @@ describe('useNewSessionAgentPickerControls', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
         }));
 
         const codexOption = hook.getCurrent().agentPickerOptions?.find((option) => option.id === codexEntry.backendTargetKey);
@@ -997,7 +958,6 @@ describe('useNewSessionAgentPickerControls', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
         }));
 
         const codexOption = hook.getCurrent().agentPickerOptions?.find((option) => option.id === codexEntry.backendTargetKey);
@@ -1036,7 +996,6 @@ describe('useNewSessionAgentPickerControls', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
         }));
 
         const codexOption = hook.getCurrent().agentPickerOptions?.find((option) => option.id === codexEntry.backendTargetKey);
@@ -1111,8 +1070,7 @@ describe('useNewSessionAgentPickerControls', () => {
                 selectedMachineId: 'machine-1',
                 capabilityServerId: 'server-1',
                 selectedPath: '/repo',
-                readSettings: () => settingsDefaults,
-            });
+                });
 
             return {
                 selectedEntry,

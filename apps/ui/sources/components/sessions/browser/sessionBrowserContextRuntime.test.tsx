@@ -4,6 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { startBrowserAnnotationDraft } from '@/sync/domains/browser/context/annotationDraft';
+import { BrowserSessionContextSeed } from '@/components/onboarding/tour/stage/surfaces/BrowserSessionContextSeed';
+import { createBrowserContextActionChip } from '@/components/sessions/agentInput/definitions/createBrowserContextActionChip';
 import {
     SessionBrowserContextRuntimeProvider,
     useSessionBrowserContextRuntime,
@@ -90,6 +92,21 @@ function RuntimeProbe(): React.ReactElement {
 }
 
 describe('session browser context runtime', () => {
+    it('stages a real attached browser page through the mounted runtime and removes it through the composer', async () => {
+        function StageProbe() {
+            const runtime = useSessionBrowserContextRuntime({ enabled: true });
+            const presentation = runtime ? createBrowserContextActionChip(runtime.composerContext) : null;
+            return <SessionBrowserContextRuntimeProvider runtime={runtime}>
+                <BrowserSessionContextSeed />
+                <Text testID="staged-browser-page">{presentation?.attachmentRowItem?.label ?? ''}</Text>
+                <Pressable testID="remove-staged-page" onPress={presentation?.attachmentRowItem?.onRemove} />
+            </SessionBrowserContextRuntimeProvider>;
+        }
+        const screen = await renderScreen(<StageProbe />);
+        expect(screen.findByTestId('staged-browser-page')?.props.children).toContain('Storefront · Checkout');
+        await screen.pressByTestIdAsync('remove-staged-page');
+        expect(screen.findByTestId('staged-browser-page')?.props.children).toBe('');
+    });
     it('refuses annotation delivery without the invoking Session Account scope', async () => {
         let outcome: unknown;
         function UnboundSession(): React.ReactElement {

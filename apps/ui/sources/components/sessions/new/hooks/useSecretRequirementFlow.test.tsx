@@ -79,7 +79,6 @@ describe('useSecretRequirementFlow', () => {
                 refresh: vi.fn(),
             },
             secrets: [],
-            setSecrets: vi.fn(),
             secretBindingsByProfileId: {},
             setSecretBindingsByProfileId: vi.fn(),
             selectedSecretIdByProfileIdByEnvVarName: {},

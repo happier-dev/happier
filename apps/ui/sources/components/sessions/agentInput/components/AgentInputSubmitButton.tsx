@@ -8,6 +8,7 @@ import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { PrimaryCircleIconButton } from '@/components/ui/buttons/PrimaryCircleIconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { Shaker, type ShakeInstance } from '@/components/ui/feedback/Shaker';
 import { reanimatedMotionTokens } from '@/components/ui/motion/reanimatedMotionTokens';
 import { hapticsLight } from '@/components/ui/theme/haptics';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
@@ -16,11 +17,13 @@ import type { VoiceDictationSnapshot } from '@/voice/dictation/VoiceDictationCon
 import { Icon } from '@/components/ui/icons/Icon';
 import { DeferredAnchoredTooltip } from '@/components/ui/overlays/DeferredAnchoredTooltip';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
-import type { MessageSendMode } from '@/sync/domains/session/control/submitMode';
-import type { AgentInputSendIntentOptions } from '../agentInputSendOptions';
+import type { AgentInputSendIntentOptions, AgentInputSendMenuItem } from '../agentInputSendOptions';
 import type { Theme } from '@/theme';
 
 import { readArmedRouteContinuationLabel, resolveArmedSubmitPresentation, type ArmedRouteContinuation } from './agentContinuationSubmitPresentation';
+
+/** The composer's Stop control, shared with the rail chip (`createAbortActionButton`). */
+const STOP_TEST_ID = 'agent-input-abort';
 
 /**
  * How far the submit control's hit area may reach above and below it. Stacked, Send sits above Voice
@@ -107,11 +110,6 @@ function AgentInputSubmitShape(props: Readonly<{ children: React.ReactNode }>) {
     );
 }
 
-function getSendModeTitle(mode: MessageSendMode): string {
-    return mode === 'agent_queue' ? t('session.pendingMessages.actions.steerNow')
-        : mode === 'interrupt' ? t('session.pendingMessages.actions.sendNowInterrupt') : t('agentInput.sendOptions.queue');
-}
-
 export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton(props: Readonly<{
     testID: string;
     /** Resolved appearance for static composer previews; live inputs use the current theme. */
@@ -122,18 +120,14 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
     isSending?: boolean;
     isStopping?: boolean;
     hasSendableContent: boolean;
-    canStop?: boolean;
     /**
-     * Whether Stop is reachable elsewhere in the composer.
-     *
-     * The action bar renders a dedicated abort chip whenever
-     * `onAbort && showAbortButton && !actionBarIsCollapsed`
-     * (`controls/buildCoreAgentInputControlNodes.tsx:184`). When that chip is on
-     * screen, taking this button for a second Stop costs the microphone and buys
-     * a duplicate — so the empty-composer stop only claims the button when Stop
-     * genuinely has nowhere else to go.
+     * The composer placed its one Stop on this button (`resolveComposerStopPlacement` → `trailing`).
+     * The composer decides; the button only renders it, so the rail's stop chip and this button
+     * can never both be Stop.
      */
-    hasDedicatedStopControl?: boolean;
+    holdsStop?: boolean;
+    /** Shakes the disc when a Stop from this button fails, as the rail chip does. */
+    stopShakerRef?: React.Ref<ShakeInstance>;
     dictationPressHandler?: (() => void) | undefined;
     dictationAvailable?: boolean;
     dictationStatus: VoiceDictationSnapshot['status'];
@@ -159,18 +153,18 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
     /** Exact selected picker mark for an external/machine-qualified target. */
     armedContinuationIdentityMark?: React.ReactNode;
     onSend: (options?: AgentInputSendIntentOptions) => void;
-    sendMenuModes?: readonly MessageSendMode[];
-    sendMenuShortcuts?: Partial<Record<MessageSendMode, string>>;
+    sendMenuItems?: readonly AgentInputSendMenuItem[];
     onStop?: () => void;
 }>) {
     const { theme: currentTheme } = useUnistyles();
     const theme = props.appearance ?? currentTheme;
     const dictationActive = props.dictationStatus !== 'idle';
+    const hasSendIntent = props.hasSendableContent || props.armedContinuationTarget != null || props.armedRouteContinuation != null;
     const sendMenuAnchorRef = React.useRef<View>(null);
     const [sendMenuOpen, setSendMenuOpen] = React.useState(false);
     const sendMenuEnabled = props.hasSendableContent && !props.disabled && !props.isSending
         && !dictationActive && !props.armedContinuationTarget && !props.armedRouteContinuation
-        && Boolean(props.sendMenuModes?.length);
+        && Boolean(props.sendMenuItems?.length);
     const openSendMenu = () => {
         if (!sendMenuEnabled) return;
         hapticsLight();
@@ -178,36 +172,18 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
     };
     React.useEffect(() => { setSendMenuOpen(false); }, [props.sessionId, sendMenuEnabled]);
     const dictationTranscribing = props.dictationStatus === 'transcribing';
-    /*
-     * Stopping a running turn outranks *starting* Dictation on an empty composer —
-     * but only when claiming the button actually costs something.
-     *
-     * Three cases, and the middle one is the whole point:
-     *  - No mic on this button at all (`submitDictation={false}`, so no
-     *    `dictationPressHandler`): Stop takes it. Nothing is displaced.
-     *  - Mic present AND the dedicated abort chip is on screen
-     *    (`buildCoreAgentInputControlNodes.tsx:184`): leave the mic. Taking the
-     *    button here buys a duplicate Stop and pays for it with the microphone.
-     *  - Mic present and no chip (collapsed action bar): Stop takes it, because
-     *    otherwise the stop is genuinely unreachable.
-     *
-     * An in-flight Dictation always keeps the button, or the user cannot end it.
-     */
-    const stopWouldDisplaceDictation = Boolean(props.dictationPressHandler)
-        && props.hasDedicatedStopControl === true;
-    const showStopWhenEmpty = !props.hasSendableContent
-        && !dictationActive
-        && props.canStop === true
-        && !stopWouldDisplaceDictation;
+    // In-flight Dictation keeps the button so it can be ended; the composer never places Stop here then.
+    const showStopWhenEmpty = props.holdsStop === true && !dictationActive;
     const showDictation = Boolean(props.dictationPressHandler)
-        && (dictationActive || (!props.hasSendableContent && !showStopWhenEmpty));
-    const disabled = props.disabled || (showDictation && props.dictationAvailable === false);
+        && (dictationActive || (!hasSendIntent && !showStopWhenEmpty));
+    const disabled = props.disabled || (showDictation && props.dictationAvailable === false)
+        || (!hasSendIntent && !showDictation && !showStopWhenEmpty);
 
     // The armed switch only reaches the button while the button is actually a
     // send. Dictation and Stop are other actions, and labelling either
     // "Continue with {Agent}" would promise something that press does not do.
-    // An empty composer is NOT one of those: the control is still the send, just
-    // an inert one, so it keeps naming the switch it would take.
+    // An armed continuation is sendable without text. Active dictation keeps
+    // its stop action until it finishes; idle dictation yields to the continuation.
     // The composer's engine chip reads the SAME armed target and only skips this
     // narrowing, so the two cannot name different Agents.
     const canonicalIdentityMark = React.isValidElement<Record<string, unknown>>(
@@ -226,7 +202,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
         hapticsLight();
         if (dictationActive && showDictation) {
             props.dictationPressHandler?.();
-        } else if (props.hasSendableContent) {
+        } else if (hasSendIntent) {
             props.onSend();
         } else if (showDictation) {
             props.dictationPressHandler?.();
@@ -237,7 +213,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
         dictationActive,
         dictationTranscribing,
         props.dictationPressHandler,
-        props.hasSendableContent,
+        hasSendIntent,
         props.onSend,
         props.onStop,
         showDictation,
@@ -294,11 +270,6 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
                     // The full sentence, always in words: this press commits an Agent
                     // switch, and a glyph reads as nothing to a screen reader.
                     accessibilityLabel={armedContinuation.accessibilityLabel}
-                    // Named but not yet pressable. The circular send explains that
-                    // same state with this exact hint, and the armed shape is the
-                    // same control, so it says the same thing rather than leaving a
-                    // screen reader with a disabled button and no reason.
-                    accessibilityHint={props.hasSendableContent ? undefined : t('session.inputPlaceholder')}
                     style={ARMED_SUBMIT_SHRINKABLE_STYLE}
                     leading={armedContinuation.markPlacement === 'leading' ? mark : undefined}
                     trailing={armedContinuation.markPlacement === 'trailing' ? mark : undefined}
@@ -329,9 +300,11 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
         >
           <AgentInputSubmitShape>
         {unarmRoute}
+        <Shaker ref={props.stopShakerRef}>
         <PrimaryCircleIconButton
             appearance={props.appearance}
-            testID={props.testID}
+            // The Stop keeps its one id wherever the composer places it (device flows tap it).
+            testID={showStopWhenEmpty && !props.hasSendableContent && !showDictation ? STOP_TEST_ID : props.testID}
             active={!disabled && (props.hasSendableContent || props.isSending || showDictation || showStopWhenEmpty)}
             loading={props.isSending || dictationTranscribing || (showStopWhenEmpty && props.isStopping)}
             disabled={disabled}
@@ -366,10 +339,9 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
             overlay={sendMenuEnabled ? ({ hovered, focused }) => (
                 Platform.OS === 'web' && (hovered || focused) && !sendMenuOpen ? (
                     <DeferredAnchoredTooltip activationKey={`${hovered}:${focused}`} anchorRef={sendMenuAnchorRef} placement="top"
-                        label={(props.sendMenuModes ?? []).map((mode) => {
-                            const title = getSendModeTitle(mode);
-                            return props.sendMenuShortcuts?.[mode] ? `${title} (${props.sendMenuShortcuts[mode]})` : title;
-                        }).join('\n')} />
+                        label={(props.sendMenuItems ?? []).map((item) => (
+                            item.shortcut ? `${item.title} (${item.shortcut})` : item.title
+                        )).join('\n')} />
                 ) : null
             ) : undefined}
             accessibilityActions={sendMenuEnabled ? [{ name: 'longpress', label: t('agentInput.sendOptions.title') }] : undefined}
@@ -403,6 +375,7 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
                 />
             )}
         </PrimaryCircleIconButton>
+        </Shaker>
           </AgentInputSubmitShape>
           {sendMenuOpen && sendMenuEnabled ? (
             <DropdownMenu
@@ -413,17 +386,17 @@ export const AgentInputSubmitButton = React.memo(function AgentInputSubmitButton
                 popoverAnchorAlign="end"
                 matchTriggerWidth={false}
                 closeOnSelect={false}
-                items={(props.sendMenuModes ?? []).map((mode) => ({
-                    id: mode,
-                    shortcut: props.sendMenuShortcuts?.[mode],
-                    testID: `agent-input-send-option-${mode}`,
-                    title: getSendModeTitle(mode),
+                items={(props.sendMenuItems ?? []).map((item) => ({
+                    id: item.id,
+                    shortcut: item.shortcut,
+                    testID: `agent-input-send-option-${item.id}`,
+                    title: item.title,
                 }))}
                 onSelect={(id) => {
-                    const mode = props.sendMenuModes?.find((mode) => mode === id);
-                    if (!mode) return;
+                    const item = props.sendMenuItems?.find((candidate) => candidate.id === id);
+                    if (!item) return;
                     setSendMenuOpen(false);
-                    props.onSend({ deliveryIntent: mode });
+                    props.onSend(item.options);
                 }}
             />
           ) : null}

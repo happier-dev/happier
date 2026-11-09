@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { Pressable, StyleSheet, View, type View as ViewInstance } from 'react-native';
+import { StyleSheet, View, type View as ViewInstance } from 'react-native';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { getAgentPickerIconScale } from '@/agents/registry/registryUi';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 import { ICON_LABEL_OPTICAL_NUDGE_STYLE } from '@/components/ui/icons/iconOpticalAlignment';
+import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
 
 const AGENT_CHIP_LOGO_SLOT_SIZE = 16;
 const AGENT_CHIP_LOGO_SIZE = 16;
@@ -36,17 +37,15 @@ export function createAgentSelectionActionChip(params: Readonly<{
     const testID = 'agent-input-agent-chip';
     const iconScale = getAgentPickerIconScale(params.agentId);
     return (
-        <Pressable
+        <AgentInputRailChip
             ref={params.anchorRef}
             key="agent"
             testID={testID}
             accessibilityRole="button"
             accessibilityLabel={params.label}
             disabled={params.readOnly}
-            accessibilityState={{ disabled: params.readOnly === true }}
-            onPress={params.readOnly ? undefined : params.onPress}
-            hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-            style={(state) => [params.chipStyle(state.pressed), styles.chip]}
+            onPress={params.onPress}
+            style={(pressed) => [params.chipStyle(pressed), styles.chip]}
         >
             <View style={AGENT_CHIP_LOGO_SLOT_STYLE}>
                 {normalizeNodeForView(
@@ -64,6 +63,6 @@ export function createAgentSelectionActionChip(params: Readonly<{
             {params.showLabel ? (
                 <Text numberOfLines={1} style={[params.textStyle, styles.label]}>{params.label}</Text>
             ) : null}
-        </Pressable>
+        </AgentInputRailChip>
     );
 }

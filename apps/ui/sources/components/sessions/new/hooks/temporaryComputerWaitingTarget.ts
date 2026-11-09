@@ -1,4 +1,4 @@
-import type { SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol';
+import type { SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
 import type { RunnerActivationProjectionV1 } from '@happier-dev/protocol/ephemeralRunner/projection';
 
 type TemporaryComputerAuthoringTarget = Extract<

@@ -1,4 +1,4 @@
-import type { SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol';
+import type { SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
 import {
     RUNNER_ARTIFACT_TARGETS,
     runnerArtifactTargetPlatform,

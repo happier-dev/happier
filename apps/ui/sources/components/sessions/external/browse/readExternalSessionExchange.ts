@@ -29,7 +29,8 @@ export async function readExternalSessionExchange(input: Readonly<{
     };
     while (true) {
         checkCurrent();
-        const page = await machineExternalSessionTranscriptPage({ ...input.request, direction: 'older', ...(cursor ? { cursor } : {}) }, {
+        const page = await machineExternalSessionTranscriptPage({ ...input.request, sourceItemId: input.sourceItemId,
+            direction: 'older', ...(cursor ? { cursor } : {}) }, {
             ...input.accountLifetime.scope, signal: input.signal,
         });
         checkCurrent();

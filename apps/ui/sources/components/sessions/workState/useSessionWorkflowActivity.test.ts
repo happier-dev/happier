@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ActionsSettingsV1Schema, FeaturesResponseSchema, projectSessionAccessCapabilitiesV1, setActionApprovalOverride, type SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema, setActionApprovalOverride} from '@happier-dev/protocol/actions/actionSettings';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { projectSessionAccessCapabilitiesV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import { type SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 import { createSessionBoardOutcomeUnknownFailureV1, parseSessionBoardActionPortResultV1, SessionBoardMutationV1Schema } from '@happier-dev/protocol/sessions/board';
 
 import {

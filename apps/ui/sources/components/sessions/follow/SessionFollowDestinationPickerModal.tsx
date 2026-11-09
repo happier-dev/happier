@@ -1,6 +1,7 @@
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
-import type { SessionListQueryV1 } from '@happier-dev/protocol';
+import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 import * as React from 'react';
 import { View } from 'react-native';
 
@@ -17,7 +18,7 @@ import { useSessionListQuerySourceState } from '@/sync/domains/session/listing/u
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
-import { useMachineListByServerId, useSessionListRowRenderablesForItems } from '@/sync/domains/state/storage';
+import { useServerScopedMachine, useSessionListRowRenderablesForItems } from '@/sync/domains/state/storage';
 import {
     isServerReachabilityNetworkAllowed,
     subscribeServerReachabilityNetworkAllowed,
@@ -26,6 +27,7 @@ import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 import { getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
+import { useMachineActivity } from '@/hooks/machine/useMachineActivity';
 
 import {
     resolveSessionFollowDestinationTargets,
@@ -70,6 +72,7 @@ export const SessionFollowDestinationPickerModal = React.memo(function SessionFo
     props: SessionFollowDestinationPickerModalProps,
 ) {
     const fixedAddress: SessionAddress = props.source ?? props.destination;
+    const isSessionVisible = useSessionRecordingVisibility();
     const choosingDestination = props.source !== undefined;
     const title = choosingDestination
         ? t('session.follow.sources.chooseDestinationTitle')
@@ -91,7 +94,6 @@ export const SessionFollowDestinationPickerModal = React.memo(function SessionFo
         [fixedAddress.serverId, itemsByServerId],
     );
     const renderables = useSessionListRowRenderablesForItems(items);
-    const machinesByServerId = useMachineListByServerId();
     const online = React.useSyncExternalStore(
         React.useCallback((listener) => subscribeServerReachabilityNetworkAllowed(() => listener()), []),
         isServerReachabilityNetworkAllowed,
@@ -109,13 +111,14 @@ export const SessionFollowDestinationPickerModal = React.memo(function SessionFo
             ? resolveSessionFollowDestinationTargets({ source: fixedAddress, sessions: candidates })
             : resolveSessionFollowSourceTargets({ destination: fixedAddress, sessions: candidates });
         const eligibleIds = new Set(eligible.map((candidate) => candidate.id));
-        return candidates.filter((candidate) => eligibleIds.has(candidate.id));
-    }, [candidates, choosingDestination, fixedAddress]);
+        return candidates.filter((candidate) => eligibleIds.has(candidate.id)
+            && isSessionVisible({ serverId: fixedAddress.serverId, sessionId: candidate.id }));
+    }, [candidates, choosingDestination, fixedAddress, isSessionVisible]);
     const fixedSession = candidates.find((candidate) => candidate.id === fixedAddress.sessionId) ?? null;
     const homeProfile = getServerProfileById(fixedAddress.serverId);
     const contextTitle = buildSessionFollowPickerContextTitle({
         actionTitle: title,
-        sessionTitle: fixedSession ? getSessionName(fixedSession) : null,
+        sessionTitle: fixedSession && isSessionVisible(fixedAddress) ? getSessionName(fixedSession) : null,
         homeName: resolveHomeDisplayLabel(homeProfile, fixedAddress.serverId),
     });
     const [saving, setSaving] = React.useState(false);
@@ -137,16 +140,20 @@ export const SessionFollowDestinationPickerModal = React.memo(function SessionFo
         preparationRequestRef.current = null;
         setPreparation(current => current === 'preparing' ? 'queued' : current);
     }, [fixedAddress.serverId, fixedAddress.sessionId, destinationMachineId]);
-    const destinationMachine = destinationMachineId
-        ? (machinesByServerId[fixedAddress.serverId] ?? []).find((machine) => machine.id === destinationMachineId) ?? null
-        : null;
+    const destinationMachine = useServerScopedMachine(fixedAddress.serverId, destinationMachineId ?? '');
     const destinationMachinePresence = useMachinePresenceSummary(fixedAddress.serverId, destinationMachineId);
+    const preparationNeedsActivity = committedRelation !== null && (preparation === null
+        || typeof preparation === 'string' || preparation.kind === 'waiting');
+    // A heartbeat is readiness evidence only for an unsettled key recovery.
+    // Keep the same subscription while preparing so completion cannot itself
+    // manufacture a changed readiness signature and another attempt.
+    const destinationActivity = useMachineActivity(preparationNeedsActivity ? destinationMachine : null);
     const retryReadinessSignature = committedRelation ? [
         online ? 'online' : 'offline',
         destinationMachinePresence.reachability,
         destinationMachineId ?? '',
         destinationMachine?.active === true ? 'active' : 'inactive',
-        String(destinationMachine?.activeAt ?? ''),
+        String(destinationActivity?.activeAt ?? ''),
         String(destinationMachine?.operationProtocolCapabilitiesRevision ?? ''),
     ].join('\u0000') : '';
     const retryReadinessSignatureRef = React.useRef(retryReadinessSignature);
@@ -208,8 +215,15 @@ export const SessionFollowDestinationPickerModal = React.memo(function SessionFo
     }, [fixedAddress.serverId, props]);
 
     React.useEffect(() => {
-        if (!online || !committedRelation || !preparation || preparation === 'preparing') return;
+        if (!committedRelation || !preparation || preparation === 'preparing') return;
         if (preparation !== 'queued' && preparation.kind !== 'waiting') return;
+        // The Action already made the first attempt. Capture its readiness so
+        // only a later readiness change or the existing Retry prepares again.
+        if (lastAttemptReadinessSignatureRef.current === null && preparation !== 'queued') {
+            lastAttemptReadinessSignatureRef.current = retryReadinessSignature;
+            return;
+        }
+        if (!online) return;
         if (lastAttemptReadinessSignatureRef.current === retryReadinessSignature) return;
         void prepareCommittedRelation(committedRelation);
     }, [committedRelation, online, preparation, prepareCommittedRelation, retryReadinessSignature]);
@@ -269,18 +283,22 @@ export const SessionFollowDestinationPickerModal = React.memo(function SessionFo
                     destinationSessionId: choosingDestination ? destinationSessionId : fixedAddress.sessionId,
                     policy: { preset: 'important' as const },
                 };
-                void setSessionFollowSource(relation).then((result) => {
-                    if (result.kind === 'ok') {
+                void setSessionFollowSource(relation).then(async (result) => {
+                    if (result.kind === 'ok' || result.committedSource) {
                         const committed = {
                             sourceSessionId: relation.sourceSessionId,
                             destinationSessionId: relation.destinationSessionId,
                         };
                         setCommittedRelation(committed);
-                        setPreparation('queued');
                         setSaving(false);
-                        void props.onChanged?.({ ...committed, preparation: 'waiting' });
-                        // The readiness effect starts the first attempt from current
-                        // hydrated state and owns subsequent reconnect/readiness retries.
+                        if (result.preparation) {
+                            setPreparation(result.preparation);
+                            await props.onChanged?.({ ...committed, preparation: 'waiting', reason: result.preparation.reason });
+                        } else {
+                            setPreparation({ kind: 'prepared' });
+                            await props.onChanged?.({ ...committed, preparation: 'prepared' });
+                            props.onClose();
+                        }
                         return;
                     }
                     setSaving(false);

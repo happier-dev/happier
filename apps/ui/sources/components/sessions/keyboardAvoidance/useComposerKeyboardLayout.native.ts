@@ -345,6 +345,16 @@ export function useComposerKeyboardLayout(options: ComposerKeyboardLayoutOptions
 
     React.useEffect(() => cancelRetainedKeyboardHideDrop, [cancelRetainedKeyboardHideDrop]);
 
+    const initialKeyboardFrameAdoptedRef = React.useRef(false);
+    React.useEffect(() => {
+        if (initialKeyboardFrameAdoptedRef.current) return;
+        initialKeyboardFrameAdoptedRef.current = true;
+        // A floating composer can mount while another input already has the keyboard open.
+        // No new frame event is guaranteed, so adopt the keyboard owner's current frame once.
+        const height = Math.max(0, Math.abs(keyboardAnimation.height.value));
+        if (height > 0) applyFinalKeyboardHeightFromJS(height);
+    }, [applyFinalKeyboardHeightFromJS, keyboardAnimation.height]);
+
     React.useEffect(() => {
         if (Platform.OS === 'android') return undefined;
 

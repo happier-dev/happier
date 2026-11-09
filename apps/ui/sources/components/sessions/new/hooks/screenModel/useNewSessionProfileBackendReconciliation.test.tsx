@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SessionModelSelectionV1Schema, type PersistedBackendTargetRefV2, type SessionModelSelectionV1 } from '@happier-dev/protocol';
+import { SessionModelSelectionV1Schema, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
+import { type PersistedBackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { AIBackendProfileSchema, type AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
@@ -215,7 +216,7 @@ describe('useNewSessionProfileBackendReconciliation', () => {
         expect(applyPermissionModeSpy).not.toHaveBeenCalledWith('read-only', 'auto');
     });
 
-    it.each([false, true])('applies the exact model intent and selects the preferred Agent only while current (stale=%s)', async (stale) => {
+    it.each([false, true])('applies the exact model intent without treating stale inventory as unavailable (stale=%s)', async (stale) => {
         const applyPermissionModeSpy = vi.fn<(mode: PermissionMode, source: 'user' | 'auto') => void>();
         const prepareSecretPromptForProfileSelectionSpy = vi.fn<(prevProfileId: string | null) => void>();
         const setModelSelectionForBackendTargetSpy = vi.fn<(backendTargetKey: string, selection: SessionModelSelectionV1 | null) => void>();
@@ -262,7 +263,7 @@ describe('useNewSessionProfileBackendReconciliation', () => {
         await flushHookEffects({ cycles: 1, turns: 2 });
         await flushNextInteractionTask();
 
-        expect(hook.getCurrent().backendTarget).toEqual({ kind: 'backend', backendId: stale ? 'codex' : 'claude' });
+        expect(hook.getCurrent().backendTarget).toEqual({ kind: 'backend', backendId: 'claude' });
         expect(setModelSelectionForBackendTargetSpy).toHaveBeenCalledWith(claudeTargetKey, selection);
     });
 

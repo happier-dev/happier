@@ -5,19 +5,18 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { presentSessionReadiness } from '@/components/sessions/model/sessionReadinessPresentation';
 import { useSessionReadiness } from '@/components/sessions/model/useSessionReadiness';
 import { SessionReadinessChecklist } from '@/components/sessions/readiness/SessionReadinessChecklist';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
-import { PaneSectionHeader } from '@/components/ui/lists/PaneSectionHeader';
 import { areServerAccountScopesEqual, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 /**
- * Configured vs ready for this Session (C7, lab K3-R), in the People pane beside who follows it. The
- * pane being open is the demand: one status read, an explicit Check again, no polling. Healthy is one
- * quiet line; a cause speaks once with its repair, or says who can fix it.
+ * Whether asking this Session can work now (C7 configured vs ready), in the People pane where people
+ * mention it in conversations. The pane being open is the demand: one status read, no polling. It
+ * speaks only when asking can't work now: one amber cause with its repair, or who can fix it. Ready,
+ * still reading or an unreadable status say nothing, because none of them asks anything of the person.
  */
 export const SessionPeopleReadinessSection = React.memo(function SessionPeopleReadinessSection(props: Readonly<{
   scope: ServerAccountScope;
@@ -55,20 +54,17 @@ function SessionPeopleReadinessRows(
     () => fireAndForget(refresh(), { tag: 'SessionPeopleReadiness.refresh' }),
     [refresh],
   );
-  const failed =
-    !state.readiness && !state.loading && state.unavailableReason !== null;
-  // Healthy stays one quiet line; anything short of ready opens into its prerequisites.
-  const checklist = state.readiness && presentation.tone !== 'ready' ? (
+  if (!state.readiness || presentation.tone !== 'attention') return null;
+  const checklist = (
     <SessionReadinessChecklist
       readiness={state.readiness}
       presentation={presentation}
       scope={props.accountLifetime.scope}
       sessionId={props.sessionId}
     />
-  ) : undefined;
+  );
   return (
     <View testID="session-people-readiness" style={styles.section}>
-      <PaneSectionHeader title={t('session.collaboration.readiness.title')} />
       <Item
         testID="session-people-readiness-row"
         density="compact"
@@ -80,24 +76,11 @@ function SessionPeopleReadinessRows(
         title={presentation.title}
         subtitle={presentation.cause ?? undefined}
         subtitleLines={2}
-        subtitleStyle={
-          presentation.tone === 'attention' ? styles.attention : undefined
-        }
-        loading={state.loading && !state.readiness}
+        subtitleStyle={styles.attention}
         accessibilityLiveRegion="polite"
         bottomElement={checklist}
         bottomElementInset="text"
-        rightElement={
-          failed ? (
-            <RoundButton
-              testID="session-people-readiness-retry"
-              size="small"
-              display="secondary"
-              title={t('common.retry')}
-              onPress={checkAgain}
-            />
-          ) : undefined
-        }
+        bottomElementOutsidePressable
         onPress={state.loading ? undefined : checkAgain}
         accessibilityHint={t('session.collaboration.readiness.check')}
       />

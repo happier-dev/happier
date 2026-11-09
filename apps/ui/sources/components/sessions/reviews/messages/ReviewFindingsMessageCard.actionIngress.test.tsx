@@ -1,7 +1,8 @@
 import * as React from 'react';
+import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema, SessionConsumptionReplaceAckV1Schema } from '@happier-dev/protocol/sessions/sessionConsumptionV1';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ReviewFindingsV2 } from '@happier-dev/protocol';
+import type { ReviewFindingsV2 } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 import { ExecutionRunPublicStateSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
@@ -20,6 +21,8 @@ import { resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/se
 import { prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
 import { disconnectActiveServerConnection, restoreConnectionToActiveServer } from '@/sync/runtime/orchestration/connectionManager';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
+import { AgentInput } from '@/components/sessions/agentInput';
+import { readComposerText } from '@/dev/testkit/readComposerText';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -42,6 +45,9 @@ vi.mock('socket.io-client', async () => {
     return { io: (serverUrl: string) => {
         const { socket } = createSocketIoBoundaryStub();
         socket.emitWithAck.mockImplementation(async (event, raw) => {
+            if (event === SESSION_CONSUMPTION_REPLACE_EVENT) {
+                return SessionConsumptionReplaceAckV1Schema.parse({ ok: true, ...SessionConsumptionReplaceV1Schema.parse(raw) });
+            }
             if (event !== 'rpc-call') return { v: 1, ok: true, admittedSessionIds: ['review-session'] };
             if (!raw || typeof raw !== 'object' || !('method' in raw) || typeof raw.method !== 'string' || !('params' in raw)) {
                 throw new Error('Malformed Socket RPC request');
@@ -148,7 +154,7 @@ async function send(screen: Screen, container: string, text: string) {
 }
 function actionRequests() { return boundary.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ACTION); }
 function composerText(screen: Screen, container = 'review-findings-follow-up') {
-    return composerPart(screen, container, 'new-session-composer-input', 'onChangeText').props.value;
+    return readComposerText(screen.findByTestId(container)!.findByType(AgentInput));
 }
 
 describe('review follow-up Action ingress', () => {

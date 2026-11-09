@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
 import { installSessionMessageCardCommonModuleMocks } from '@/components/sessions/sessionMessageCardTestHelpers';
-import type { PlanOutputV1 } from '@happier-dev/protocol';
+import type { PlanOutputV1 } from '@happier-dev/protocol/messages/structured/planOutputV1';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;

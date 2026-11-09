@@ -140,10 +140,10 @@ describe('Work › Instructions', () => {
       expect(sessionHttp.writes).toEqual([]);
       expect(navigation.push).not.toHaveBeenCalled();
       const approvalId = rowsOfKind('approval_request.v1')[0]!.id;
-      // The mounted writer retains this invocation: Inbox records consent and
-      // wakes it, while the original caller owns execution and attachment.
+      // Inbox decides and replays the approved create through the shared
+      // lifecycle; the mounted writer resumes attachment from its terminal result.
       expect(await decideApprovalAsInbox(fixture.home.id, approvalId, decision))
-        .toMatchObject({ ok: true, result: { status: decision === 'approve' ? 'approved' : 'rejected' } });
+        .toMatchObject({ ok: true, result: { status: decision === 'approve' ? 'executed' : 'rejected' } });
       if (decision === 'approve') {
         await vi.waitFor(() => expect(ApprovalRequestV2Schema.parse(JSON.parse(
           fixture.boundary.readPlainBody(approvalId)!,
@@ -343,6 +343,69 @@ describe('Work › Instructions', () => {
       expect(readSessionOwnerMetadataView(storage.getState().sessions.bot!)?.work).toMatchObject({ promptStack: stack });
       expect(sessionHttp.writes).toEqual(['bot']);
       expect(Modal.confirm).not.toHaveBeenCalled();
+    } finally { standardCleanup(); await fixture.dispose(); }
+  });
+
+  it('holds a Detach that arrived on a stale Session as a quiet conflict, then applies it to the current version or drops it', async () => {
+    const sessionHttp = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
+    const sessionRequest = createSessionReadBatchFetchBoundary(async (input, init) => sessionHttp.handle(input, init));
+    const fixture = await createPlainArtifactHomeFixture('https://work-instructions-stale.test', {
+      handleRequest: async (path, init) => sessionRequest(`https://work-instructions-stale.test${path}`, init),
+    });
+    try {
+      await loadSyncSingletonForTests();
+      const serverId = fixture.home.id;
+      const attachedRef = { ...ref, serverId };
+      const stack = [{ id: 'session.instructions', ref: attachedRef, enabled: true, placement: 'system_append' as const }];
+      // Another client already moved the Session to revision 3; this tab still reviewed revision 2.
+      const current = createSessionFixture({ id: 'bot', serverId, metadataVersion: 3,
+        metadata: { path: '/worktree', host: 'localhost', work: { promptStack: stack } } });
+      storage.setState({ sessions: { ...storage.getState().sessions, bot: current } });
+      const attached = source({ status: 'ready', ref: attachedRef, document: documentOf('Current instructions') });
+      const body = (session: typeof current) => <SessionInstructionsBody session={session} serverId={serverId} source={attached} />;
+      const screen = await renderScreen(body({ ...current, metadataVersion: 2 }));
+      await screen.pressByTestIdAsync('session-work-instructions.detach');
+      await vi.waitFor(() => expect(screen.findByTestId('session-work-instructions.conflict')).toBeTruthy());
+      // The document stays, nothing was written, the line names the current document, and says no failure.
+      expect(sessionHttp.writes).toEqual([]);
+      expect(screen.findByTestId('session-work-instructions.body')).toBeTruthy();
+      expect(screen.findByTestId('session-work-instructions.failed')).toBeNull();
+      expect(screen.findByTestId('session-work-instructions.refused')).toBeNull();
+      expect(screen.getTextContent()).toContain('sessionIntentConflict.changedNow');
+      expect(screen.getTextContent()).toContain('Release captain');
+      // Apply mine re-sends the same change on the fresh basis the Session now has.
+      await act(async () => { screen.update(body(current)); });
+      await screen.pressByTestIdAsync('session-work-instructions.conflict.apply');
+      await vi.waitFor(() => expect(sessionHttp.writes).toEqual(['bot']));
+      await vi.waitFor(() => expect(screen.findByTestId('session-work-instructions.conflict')).toBeNull());
+      const { readSessionOwnerMetadataView } = await import('@/sync/domains/session/readSessionOwnerMetadataView');
+      expect(readSessionOwnerMetadataView(storage.getState().sessions.bot!)?.work).toMatchObject({ promptStack: [] });
+      await screen.unmount();
+    } finally { standardCleanup(); await fixture.dispose(); }
+  });
+
+  it('drops a held stale change on Keep current and writes nothing', async () => {
+    const sessionHttp = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
+    const sessionRequest = createSessionReadBatchFetchBoundary(async (input, init) => sessionHttp.handle(input, init));
+    const fixture = await createPlainArtifactHomeFixture('https://work-instructions-keep.test', {
+      handleRequest: async (path, init) => sessionRequest(`https://work-instructions-keep.test${path}`, init),
+    });
+    try {
+      await loadSyncSingletonForTests();
+      const serverId = fixture.home.id;
+      const attachedRef = { ...ref, serverId };
+      const stack = [{ id: 'session.instructions', ref: attachedRef, enabled: true, placement: 'system_append' as const }];
+      const current = createSessionFixture({ id: 'bot', serverId, metadataVersion: 3,
+        metadata: { path: '/worktree', host: 'localhost', work: { promptStack: stack } } });
+      storage.setState({ sessions: { ...storage.getState().sessions, bot: current } });
+      const screen = await renderScreen(<SessionInstructionsBody session={{ ...current, metadataVersion: 2 }} serverId={serverId}
+        source={source({ status: 'ready', ref: attachedRef, document: documentOf('Current instructions') })} />);
+      await screen.pressByTestIdAsync('session-work-instructions.detach');
+      await vi.waitFor(() => expect(screen.findByTestId('session-work-instructions.conflict')).toBeTruthy());
+      await screen.pressByTestIdAsync('session-work-instructions.conflict.keep');
+      expect(screen.findByTestId('session-work-instructions.conflict')).toBeNull();
+      expect(sessionHttp.writes).toEqual([]);
+      await screen.unmount();
     } finally { standardCleanup(); await fixture.dispose(); }
   });
 

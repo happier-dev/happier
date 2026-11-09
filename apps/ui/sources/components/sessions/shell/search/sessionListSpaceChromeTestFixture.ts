@@ -7,7 +7,7 @@ import type { SessionListSpaceChrome } from './useSessionListSpaceChrome';
 export function createSessionListSpaceChromeFixture(overrides: Partial<SessionListSpaceChrome> = {}): SessionListSpaceChrome {
     return {
         navigation: {
-            selectSpace: vi.fn(async () => true),
+            selectSpace: vi.fn(() => true),
             selectOrdinal: vi.fn(() => true),
             selectRelative: vi.fn(() => true),
             filterOpenRequested: false,

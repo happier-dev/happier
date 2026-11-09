@@ -1,5 +1,4 @@
 import * as React from 'react';
-import type { SessionListStorageFilter } from '@/sync/domains/session/sessionStorageKind';
 import type { PlaceableAppShellColumnId } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { ColumnDestinationRows } from '@/components/appShell/destinations/ColumnDestinationRows';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -7,9 +6,8 @@ import { BoardsInboxBoundary } from '@/components/boards/BoardsInboxBoundary';
 import { usePinnedBoardRows } from '@/components/boards/usePinnedBoardRows';
 
 export type SessionsListStorageChromeProps = Readonly<{
-    storageKind: SessionListStorageFilter;
-    /** The column these rows stand in; absent: the phone launcher. */
-    column?: PlaceableAppShellColumnId;
+    /** The column these rows stand in. */
+    column: PlaceableAppShellColumnId;
 }>;
 
 export const SessionsListStorageChrome = React.memo((props: SessionsListStorageChromeProps) => {

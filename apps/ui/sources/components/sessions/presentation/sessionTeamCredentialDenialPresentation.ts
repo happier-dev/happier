@@ -1,4 +1,4 @@
-import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 import {
     credentialApprovalFailureMessage,
@@ -6,6 +6,7 @@ import {
     limitMetricLabel,
 } from '@/components/settings/teams/credentials/teamCredentialPresentation';
 import { t } from '@/text';
+import { teamCredentialReconnectPresentation } from '@/components/settings/teams/credentials/sourceHealthPresentation';
 
 export type SessionTeamCredentialDenialPresentation = Readonly<{
     kind: 'team-credential-denied';
@@ -53,7 +54,7 @@ export function presentSessionTeamCredentialDenial(input: Readonly<{
         kind: 'team-credential-denied',
         action: 'choose-model',
         resourceId,
-        title: t('teams.credentials.sessionDeniedTitle'),
+        title: teamCredentialReconnectPresentation(denial?.reasonCode)?.title ?? t('teams.credentials.sessionDeniedTitle'),
         ...(details.length > 0 ? { body: details.join(' · ') } : {}),
         actionLabel: t('teams.credentials.recovery.chooseAnother'),
     };

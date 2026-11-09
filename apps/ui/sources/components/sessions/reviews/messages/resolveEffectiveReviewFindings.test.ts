@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Message } from '@happier-dev/session-core/messages';
-import type { ReviewFinding, ReviewFollowUpV1 } from '@happier-dev/protocol';
+import type { ReviewFinding} from '@happier-dev/protocol/reviews/ReviewFinding';
+import type { ReviewFollowUpV1 } from '@happier-dev/protocol/messages/structured/reviewFollowUpV1';
 import { resolveEffectiveReviewFindings } from './resolveEffectiveReviewFindings';
 import { readReviewPayload } from '../findings/readReviewPayload';
 

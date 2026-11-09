@@ -1,12 +1,14 @@
-import { getExecutionRunRequestedActionChipPlacement } from '../definitions/agentInputActionChipPlacements';
 import * as React from 'react';
 
-import type { ParticipantRecipientV1, PendingRequestedActionV1 } from '@happier-dev/protocol';
+import type { ParticipantRecipientV1} from '@happier-dev/protocol/messages/structured/participantMessageV1';
+import type { PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 
 import type { AgentInputExtraActionChip, AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
 import type { SelectionListStep } from '@/components/ui/selectionList';
 import { Icon } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
+import { getExecutionRunRequestedActionChipPlacement } from '../definitions/agentInputActionChipPlacements';
+export { getExecutionRunRequestedActionChipPlacement } from '../definitions/agentInputActionChipPlacements';
 
 import { ExecutionRunRequestedActionChip } from './ExecutionRunRequestedActionChip';
 import { buildExecutionRunRequestedActionPickerOptions, resolveExecutionRunRequestedActionLabel, type ExecutionRunRequestedActionKind } from './executionRunRequestedActionOptions';

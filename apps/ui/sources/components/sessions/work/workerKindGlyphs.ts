@@ -1,4 +1,4 @@
-import type { WorkerUpdateV1 } from '@happier-dev/protocol';
+import type { WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 import { HAPPIER_WORK_KIND_GLYPHS, resolveHappierWorkKindPresentation } from '@happier-dev/plugin-ui/presentation';
 import { t } from '@/text';
 

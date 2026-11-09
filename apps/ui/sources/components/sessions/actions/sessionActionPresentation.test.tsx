@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ACTION_IDS } from '@happier-dev/protocol';
+import { ACTION_IDS } from '@happier-dev/protocol/actions/actionIds';
 
 import { t } from '@/text';
 import { getTranslationValue } from '@/text/i18n';

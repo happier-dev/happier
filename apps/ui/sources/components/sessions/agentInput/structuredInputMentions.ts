@@ -504,6 +504,7 @@ export function mergeMessageMetaOverrides(
     const vendorPluginMentions = mergeArrays(leftEnvelope.vendorPluginMentions, rightEnvelope.vendorPluginMentions);
     const skillMentions = mergeArrays(leftEnvelope.skillMentions, rightEnvelope.skillMentions);
     const composerAttachments = mergeArrays(leftEnvelope.composerAttachments, rightEnvelope.composerAttachments);
+    const sessionAttachments = mergeArrays(leftEnvelope.sessionAttachments, rightEnvelope.sessionAttachments);
     const sessionDiscussionSelectionSourceV1 = rightEnvelope.sessionDiscussionSelectionSourceV1
         ?? leftEnvelope.sessionDiscussionSelectionSourceV1;
     const imageInputs = mergeArrays(
@@ -511,7 +512,7 @@ export function mergeMessageMetaOverrides(
         [...(Array.isArray(rightEnvelope.imageInputs) ? rightEnvelope.imageInputs : []), ...(Array.isArray(rightEnvelope.attachments) ? rightEnvelope.attachments : [])],
     );
 
-    if (mentions || vendorPluginMentions || skillMentions || imageInputs || composerAttachments || sessionDiscussionSelectionSourceV1) {
+    if (mentions || vendorPluginMentions || skillMentions || imageInputs || composerAttachments || sessionAttachments || sessionDiscussionSelectionSourceV1) {
         merged.happierStructuredInputV1 = {
             v: 1,
             ...(mentions ? { mentions } : {}),
@@ -519,6 +520,7 @@ export function mergeMessageMetaOverrides(
             ...(skillMentions ? { skillMentions } : {}),
             ...(imageInputs ? { imageInputs } : {}),
             ...(composerAttachments ? { composerAttachments } : {}),
+            ...(sessionAttachments ? { sessionAttachments } : {}),
             ...(sessionDiscussionSelectionSourceV1 ? { sessionDiscussionSelectionSourceV1 } : {}),
         };
     }

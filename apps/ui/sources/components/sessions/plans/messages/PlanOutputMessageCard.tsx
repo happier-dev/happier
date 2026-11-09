@@ -2,7 +2,7 @@ import React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import type { PlanOutputV1 } from '@happier-dev/protocol';
+import type { PlanOutputV1 } from '@happier-dev/protocol/messages/structured/planOutputV1';
 import {
     ExecutionRunResultLayout,
     type ExecutionRunResultPresentation,

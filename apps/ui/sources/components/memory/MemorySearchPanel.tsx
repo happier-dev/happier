@@ -2,9 +2,11 @@ import { happierPageTextMetrics, HAPPIER_WORK_PANE_METRICS } from '@happier-dev/
 import {
     isMemoryDocumentSearchHitV1,
     isMemorySessionSearchHitV1,
+    MemorySearchResultV1Schema,
     type MemoryDocumentSearchCoverageV1,
     type MemoryDocumentSearchHitV1,
     type MemorySearchCorpusV1,
+    type MemorySearchErrorCode,
     type MemorySearchHitV1,
     type MemorySearchResultV1,
     type MemorySearchScope,
@@ -16,7 +18,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { Item } from '@/components/ui/lists/Item';
 import { SessionListIdentity, useSessionListIdentityDisplay } from '@/components/sessions/shell/SessionListIdentity';
@@ -26,15 +28,16 @@ import { queryRanges } from '@/components/ui/text/queryRanges';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
-import { searchDaemonMemory } from '@/sync/domains/memory/searchDaemonMemory';
 import { useMemorySearchProvider } from '@/sync/domains/memory/useMemorySearchProvider';
 import { MemoryMachineChoice } from './MemoryMachineChoice';
+import { useMemoryOffline } from './useMemoryOffline';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
-import { useMachine, useSession } from '@/sync/store/hooks';
+import { useServerScopedMachine, useSession } from '@/sync/store/hooks';
 import { getMachineDisplayName, getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { t } from '@/text';
 import { stripMarkdown } from '@/utils/sessions/messageUtils';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { formatMemoryDate, memoryTopicLabel } from './MemoryDocumentBody';
@@ -47,6 +50,8 @@ const GLOBAL_SCOPE: MemorySearchScope = { type: 'global' };
 
 type Results = Readonly<{
     contextKey: string;
+    /** The exact peer these results came from; a Machine id is only meaningful inside its Home. */
+    serverId: string;
     machineId: string;
     query: string;
     status: 'searching' | 'ready' | 'failed';
@@ -75,8 +80,8 @@ export function useMemorySearchPanelModel(props: Readonly<{
     retry: () => void;
     results: Results | null;
     target: ReturnType<typeof useMemorySearchProvider>['daemonTarget'];
-    /** The Machine the person chose to search, kept while it cannot answer; it never authorizes a request. */
-    selectedMachineId: string | null;
+    /** The Machine the person chose to search (with its Home), kept while it cannot answer; it never authorizes a request. */
+    selectedTarget: Readonly<{ serverId: string; machineId: string }> | null;
     /** No Memory Machine is chosen for this Home: choosing one is what search needs. */
     machineChoiceNeeded: boolean;
     normalized: string;
@@ -111,20 +116,23 @@ export function useMemorySearchPanelModel(props: Readonly<{
         const controller = new AbortController();
         const timer = setTimeout(() => {
             // The last results stay on screen while the next query runs.
-            setResults((previous) => ({ contextKey, machineId, query: normalized, status: 'searching', failure: null,
+            setResults((previous) => ({ contextKey, serverId: targetServerId, machineId, query: normalized, status: 'searching', failure: null,
                 documentsCoverage: previous?.contextKey === contextKey && previous.machineId === machineId ? previous.documentsCoverage : null,
                 documents: previous?.contextKey === contextKey && previous.machineId === machineId ? previous.documents : [],
                 sessions: previous?.contextKey === contextKey && previous.machineId === machineId ? previous.sessions : [] }));
             void (async () => {
                 try {
-                    const result = await searchDaemonMemory({
-                        serverId: targetServerId, accountId, machineId, query: normalized,
-                        scope: stableScope, mode: 'auto', corpora: CORPORA, signal: controller.signal,
-                    });
+                    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+                    const outcome = await createDefaultActionExecutor().execute('memory.search', {
+                        machineId,
+                        query: { v: 1, query: normalized, scope: stableScope, mode: 'auto', corpora: CORPORA },
+                    }, { serverId: targetServerId, expectedAccountId: accountId, surface: 'ui',
+                        authority: 'present_user', signal: controller.signal });
                     if (controller.signal.aborted) return;
+                    const result = MemorySearchResultV1Schema.parse(outcome.ok ? outcome.result : { v: 1, ...outcome });
                     if (!result.ok) {
                         if (result.errorCode === 'memory_project_scope_unsupported') {
-                            setResults(previous => ({ contextKey, machineId,
+                            setResults(previous => ({ contextKey, serverId: targetServerId, machineId,
                                 query: previous?.contextKey === contextKey && previous.machineId === machineId ? previous.query : normalized,
                                 status: 'ready', documentsCoverage: { state: 'unavailable' },
                                 failure: { error: result, target: { serverId: targetServerId, machineId } },
@@ -134,12 +142,13 @@ export function useMemorySearchPanelModel(props: Readonly<{
                         }
                         const failure = { error: result, target: { serverId: targetServerId, machineId } };
                         setResults(previous => previous?.contextKey === contextKey && previous.machineId === machineId ? { ...previous, status: 'failed', failure } : {
-                            contextKey, machineId, query: normalized, status: 'failed', failure, documentsCoverage: null, documents: [], sessions: [],
+                            contextKey, serverId: targetServerId, machineId, query: normalized, status: 'failed', failure, documentsCoverage: null, documents: [], sessions: [],
                         });
                         return;
                     }
                     setResults({
                         contextKey,
+                        serverId: targetServerId,
                         machineId,
                         query: normalized,
                         status: 'ready',
@@ -151,7 +160,7 @@ export function useMemorySearchPanelModel(props: Readonly<{
                     });
                 } catch {
                     if (!controller.signal.aborted) setResults(previous => previous?.contextKey === contextKey && previous.machineId === machineId ? { ...previous, status: 'failed', failure: null } : {
-                        contextKey, machineId, query: normalized, status: 'failed', failure: null, documentsCoverage: null, documents: [], sessions: [],
+                        contextKey, serverId: targetServerId, machineId, query: normalized, status: 'failed', failure: null, documentsCoverage: null, documents: [], sessions: [],
                     });
                 }
             })();
@@ -162,7 +171,7 @@ export function useMemorySearchPanelModel(props: Readonly<{
         };
     }, [accountId, attempt, machineId, normalized, targetServerId, stableScope, contextKey]);
 
-    return { query, setQuery, retry, results, target, selectedMachineId: provider.selectedDaemonTarget?.machineId ?? null,
+    return { query, setQuery, retry, results, target, selectedTarget: provider.selectedDaemonTarget ?? null,
         machineChoiceNeeded: provider.machineChoiceNeeded === true, normalized };
 }
 
@@ -170,6 +179,8 @@ export const MemorySearchPanel = React.memo(function MemorySearchPanel(props: Re
     testID: string;
     serverId: string;
     scope?: MemorySearchScope;
+    /** The Project's name when `scope` is a Project: a search that finds nothing there says where it looked. */
+    scopeName?: string;
     /** Opened on demand the field takes focus; a field that always heads a list waits to be chosen. */
     autoFocus?: boolean;
     placeholder?: string;
@@ -188,9 +199,12 @@ export const MemorySearchPanel = React.memo(function MemorySearchPanel(props: Re
     // Searching wider than the Project is the person's explicit choice, never a silent fallback.
     const [widened, setWidened] = React.useState(false);
     const projectScoped = props.scope?.type === 'project';
-    const { query, setQuery, retry, results, target, selectedMachineId, machineChoiceNeeded, normalized } = useMemorySearchPanelModel({
+    const { query, setQuery, retry, results, target, selectedTarget, machineChoiceNeeded, normalized } = useMemorySearchPanelModel({
         serverId, scope: widened ? GLOBAL_SCOPE : props.scope,
     });
+    const isSessionVisible = useSessionRecordingVisibility();
+    const sessionHits = React.useMemo(() => results?.sessions.filter(hit => isSessionVisible({ sessionId: hit.sessionId, serverId })) ?? [],
+        [results?.sessions, isSessionVisible, serverId]);
     const unsupported = results?.failure?.error.errorCode === 'memory_project_scope_unsupported' ? results.failure.target : null;
     const openDocument = React.useCallback((hit: MemoryDocumentSearchHitV1) => {
         router.push(memoryDocumentSearchHitHref(hit) as never);
@@ -199,8 +213,10 @@ export const MemorySearchPanel = React.memo(function MemorySearchPanel(props: Re
         fireAndForget(navigateToSession(hit.sessionId, { serverId, query: { jumpSeq: hit.seqFrom } }), { tag: 'MemorySearchPanel.session' });
     }, [navigateToSession, serverId]);
 
-    const count = (results?.documents.length ?? 0) + (results?.sessions.length ?? 0);
+    const count = (results?.documents.length ?? 0) + sessionHits.length;
     const searching = normalized.length > 0;
+    // A Home that is offline is the page's one line to say; until something is typed the Machine is not blamed for it.
+    const homeOffline = useMemoryOffline(serverId).offline && !searching;
     return (
         <View testID={testID}>
             <View style={props.placement === 'page' ? undefined : styles.field}>
@@ -213,7 +229,10 @@ export const MemorySearchPanel = React.memo(function MemorySearchPanel(props: Re
                     accessibilityLabel={t('memoryContext.memory.search')}
                     editable={target !== null}
                     autoFocus={props.autoFocus ?? true}
-                    trailing={results && results.status !== 'failed' && searching ? (
+                    // With nothing found and remembered facts unsearchable, the notice below speaks alone (no "0 results").
+                    trailing={results && results.status !== 'failed' && searching
+                        && (count > 0 || results.status === 'searching' || results.documentsCoverage?.state === 'ready'
+                            || results.documentsCoverage?.state === 'pending') ? (
                         <Text style={styles.count}>{results.status === 'searching'
                             ? t('universalSearch.searchingGroup')
                             : t('memoryContext.memory.resultCount', { count })}</Text>
@@ -222,26 +241,24 @@ export const MemorySearchPanel = React.memo(function MemorySearchPanel(props: Re
             </View>
             {target === null && machineChoiceNeeded ? (
                 <MemoryMachineChoice testID={`${testID}.machine`} invitation={t('memoryContext.memory.searchNeedMachine')} />
-            ) : target === null ? (
-                <SearchUnavailableNotice testID={`${testID}.unavailable`} machineId={selectedMachineId}
+            ) : target === null && !homeOffline ? (
+                <SearchUnavailableNotice testID={`${testID}.unavailable`} serverId={selectedTarget?.serverId ?? null} machineId={selectedTarget?.machineId ?? null}
                     onTurnOn={() => router.push(SETTINGS_ROUTES.search as never)} />
             ) : null}
             {props.idle !== undefined && !searching ? props.idle : <>
             {target === null ? null : results?.status === 'failed' ? (
-                <SearchNotice testID={`${testID}.failed`} kind="error" title={t('memoryContext.memory.offline')} onRetry={retry} />
+                <SearchFailedNotice testID={testID} serverId={results.serverId} machineId={results.machineId} cause={results.failure?.error.errorCode ?? null}
+                    onRetry={retry} onTurnOn={() => router.push(SETTINGS_ROUTES.search as never)} />
             ) : unsupported ? (
-                <ProjectScopeUnsupportedNotice testID={`${testID}.projectUnsupported`} machineId={unsupported.machineId}
+                <ProjectScopeUnsupportedNotice testID={`${testID}.projectUnsupported`} serverId={unsupported.serverId} machineId={unsupported.machineId}
                     onSearchEverything={() => setWidened(true)} />
             ) : projectScoped && widened ? (
                 <SearchNotice testID={`${testID}.widened`} kind="warning" title={t('memoryContext.memory.searchingEverything')}
                     action={{ label: t('memoryContext.memory.searchOnlyProject'), onPress: () => setWidened(false) }} />
             ) : null}
             {!unsupported && results?.documentsCoverage && results.documentsCoverage.state !== 'ready' ? (
-                <SearchNotice testID={`${testID}.documentsCoverage`}
-                    kind={results.documentsCoverage.state === 'pending' ? 'loading' : 'warning'}
-                    title={results.documentsCoverage.state === 'pending'
-                        ? `${t('memoryContext.memory.remembered')} · ${t('common.loading')}`
-                        : t('memoryContext.memory.documentSearchUnavailable')} />
+                <DocumentsCoverageNotice testID={`${testID}.documentsCoverage`} pending={results.documentsCoverage.state === 'pending'}
+                    serverId={results.serverId} machineId={results.machineId} />
             ) : null}
             {results && results.documents.length > 0 ? (
                 <>
@@ -268,10 +285,10 @@ export const MemorySearchPanel = React.memo(function MemorySearchPanel(props: Re
                     })}
                 </>
             ) : null}
-            {results && results.sessions.length > 0 ? (
+            {results && sessionHits.length > 0 ? (
                 <>
-                    <CollectionListGroupLabel title={t('memoryContext.memory.pastSessions')} count={results.sessions.length} first={results.documents.length === 0} />
-                    {results.sessions.map((hit, index) => (
+                    <CollectionListGroupLabel title={t('memoryContext.memory.pastSessions')} count={sessionHits.length} first={results.documents.length === 0} />
+                    {sessionHits.map((hit, index) => (
                         <SessionHitRow
                             key={`${hit.sessionId}:${hit.seqFrom}`}
                             testID={`${testID}.session.${index}`}
@@ -284,7 +301,14 @@ export const MemorySearchPanel = React.memo(function MemorySearchPanel(props: Re
                 </>
             ) : null}
             {results?.status === 'ready' && results.documentsCoverage?.state === 'ready' && count === 0 ? (
-                <Text testID={`${testID}.empty`} style={styles.hint}>{t('memoryContext.memory.noResults', { query: results.query })}</Text>
+                // A Project search that found nothing says it searched only that Project; widening is the person's choice.
+                projectScoped && !widened && props.scopeName ? (
+                    <SearchNotice testID={`${testID}.empty`} kind="empty"
+                        title={t('memoryContext.memory.noResultsInProject', { query: results.query, project: props.scopeName })}
+                        action={{ label: t('memoryContext.memory.searchEverything'), onPress: () => setWidened(true) }} />
+                ) : (
+                    <Text testID={`${testID}.empty`} style={styles.hint}>{t('memoryContext.memory.noResults', { query: results.query })}</Text>
+                )
             ) : null}
             </>}
         </View>
@@ -293,7 +317,8 @@ export const MemorySearchPanel = React.memo(function MemorySearchPanel(props: Re
 
 /** One quiet state line inside the section's gutters: what is wrong, and Retry when asking again can help. */
 function SearchNotice(props: Readonly<{
-    testID: string; kind: 'loading' | 'warning' | 'error'; title: string; onRetry?: () => void;
+    testID: string; kind: 'loading' | 'warning' | 'error' | 'empty' | 'unavailable'; title: string; onRetry?: () => void;
+    iconName?: IconName;
     action?: Readonly<{ label: string; onPress: () => void }>;
 }>) {
     const styles = stylesheet;
@@ -303,6 +328,7 @@ function SearchNotice(props: Readonly<{
                 testID={props.testID}
                 size="line"
                 kind={props.kind}
+                iconName={props.iconName}
                 title={props.title}
                 action={props.action ?? (props.onRetry ? { label: t('common.retry'), onPress: props.onRetry } : undefined)}
             />
@@ -314,9 +340,13 @@ function SearchNotice(props: Readonly<{
  * Search cannot run: name the Machine the person chose when there is one (it is away or has memory
  * search off), otherwise say what a search needs; either way lead to the setting that provides it.
  */
-function SearchUnavailableNotice(props: Readonly<{ testID: string; machineId: string | null; onTurnOn: () => void }>) {
-    const machine = useMachine(props.machineId ?? '', props.machineId !== null);
-    return <SearchNotice testID={props.testID} kind="warning"
+function SearchUnavailableNotice(props: Readonly<{
+    testID: string; serverId: string | null; machineId: string | null; onTurnOn: () => void;
+}>) {
+    const machine = useServerScopedMachine(props.serverId, props.machineId);
+    // A Machine that cannot answer is said quietly beside its name (lab L9 partial search); only a search with no Machine at all needs the person.
+    return <SearchNotice testID={props.testID}
+        kind={props.machineId === null ? 'warning' : 'unavailable'} iconName={props.machineId === null ? undefined : 'laptop'}
         title={props.machineId === null
             ? t('memoryContext.memory.searchUnavailable')
             : t('memoryContext.memory.searchUnavailableOn', { machine: getMachineSentenceName(machine) })}
@@ -324,11 +354,42 @@ function SearchUnavailableNotice(props: Readonly<{ testID: string; machineId: st
 }
 
 /**
+ * A search the selected Machine could not answer: name that Machine and the cause when the Machine
+ * said it. A search turned off after selection leads to the same setting as an unavailable Machine
+ * (Retry cannot repair it); a missing index and an unknown failure keep Retry.
+ */
+function SearchFailedNotice(props: Readonly<{
+    testID: string; serverId: string; machineId: string; cause: MemorySearchErrorCode | null; onRetry: () => void; onTurnOn: () => void;
+}>) {
+    const machine = useServerScopedMachine(props.serverId, props.machineId);
+    if (props.cause === 'memory_disabled') {
+        return <SearchUnavailableNotice testID={`${props.testID}.unavailable`} serverId={props.serverId} machineId={props.machineId} onTurnOn={props.onTurnOn} />;
+    }
+    const indexMissing = props.cause === 'memory_index_missing';
+    return <SearchNotice testID={`${props.testID}.${indexMissing ? 'indexMissing' : 'failed'}`}
+        kind={indexMissing ? 'warning' : 'error'}
+        title={t(indexMissing ? 'memoryContext.memory.searchIndexMissingOn' : 'memoryContext.memory.searchFailedOn',
+            { machine: getMachineSentenceName(machine) })}
+        onRetry={props.onRetry} />;
+}
+
+/** Remembered facts are still indexing, or the selected Machine cannot search them: say which Machine. */
+function DocumentsCoverageNotice(props: Readonly<{ testID: string; pending: boolean; serverId: string; machineId: string }>) {
+    const machine = useServerScopedMachine(props.serverId, props.machineId);
+    return <SearchNotice testID={props.testID} kind={props.pending ? 'loading' : 'unavailable'} iconName={props.pending ? undefined : 'laptop'}
+        title={props.pending
+            ? `${t('memoryContext.memory.remembered')} · ${t('common.loading')}`
+            : t('memoryContext.memory.documentSearchUnavailableOn', { machine: getMachineSentenceName(machine) })} />;
+}
+
+/**
  * The selected machine cannot search by Project yet: say which machine, and offer the wider search
  * as the person's own choice (lab K2 `Q`, C6 §5).
  */
-function ProjectScopeUnsupportedNotice(props: Readonly<{ testID: string; machineId: string; onSearchEverything: () => void }>) {
-    const machine = useMachine(props.machineId);
+function ProjectScopeUnsupportedNotice(props: Readonly<{
+    testID: string; serverId: string; machineId: string; onSearchEverything: () => void;
+}>) {
+    const machine = useServerScopedMachine(props.serverId, props.machineId);
     const name = getMachineDisplayName(machine) ?? t('memoryContext.memory.thisMachine');
     return <SearchNotice testID={props.testID} kind="warning"
         title={t('memoryContext.memory.projectSearchUnsupported', { machine: name })}

@@ -1,7 +1,10 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import type { WorkflowDefinitionListResultV1 } from '@happier-dev/protocol';
+import { WorkflowStartPicker } from '@/components/workflows/run/WorkflowStartPicker';
+import { SelectionList } from '@/components/ui/selectionList';
+import type { DropdownMenuProps } from '@/components/ui/forms/dropdown/DropdownMenu';
+import type { WorkflowDefinitionListResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
 
 import { SessionAgentsLaunchMenu } from './SessionAgentsLaunchMenu';
 import type { SessionAgentLauncher } from './useSessionAgentLauncher';
@@ -16,8 +19,13 @@ vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).
     router: { push: routerPush, navigate: routerPush },
 }).module);
 
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeNativeMock({ platformOS: 'ios' }));
+
 vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
-    DropdownMenu: (props: Record<string, unknown>) => React.createElement('DropdownMenu', props),
+    DropdownMenu: (props: DropdownMenuProps) => React.createElement('DropdownMenu', props,
+        props.open ? props.header : null,
+        props.open && props.renderContent ? props.renderContent({ maxHeight: 500, maxWidth: 400, placement: 'bottom', presentation: 'anchored', requestClose: () => props.onOpenChange(false) }) : null,
+        props.open ? props.footer : null),
 }));
 
 vi.mock('@/components/ui/buttons/IconButton', () => ({
@@ -38,6 +46,7 @@ vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks
 const executeMock = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
     createFrontDoorActionExecute: () => executeMock,
+    createFrontDoorUiActionExecutor: () => executeMock,
 }));
 let accountScope: Awaited<ReturnType<typeof activateStorageAccountScope>>;
 beforeEach(async () => {
@@ -56,9 +65,12 @@ function launcher(): SessionAgentLauncher {
         openConversation: vi.fn(),
         openRun: vi.fn(),
         openDetails: vi.fn(),
+        openStartDraft: vi.fn(),
         providerLaunch: null,
         startBuiltinWorkflow: vi.fn(),
-    } as unknown as SessionAgentLauncher;
+        startPluginWorkflow: vi.fn(),
+        startWorkflow: vi.fn(),
+    };
 }
 
 function readMenu(tree: renderer.ReactTestRenderer) {
@@ -67,6 +79,7 @@ function readMenu(tree: renderer.ReactTestRenderer) {
             items: ReadonlyArray<{ id: string; category?: string; submenu?: { items: ReadonlyArray<{ id: string; category?: string }> } }>;
             onSelect: (id: string) => void;
             onOpenChange: (open: boolean) => void;
+            open: boolean;
         };
     };
 }
@@ -150,17 +163,6 @@ describe('SessionAgentsLaunchMenu — Second opinion and Run a workflow ›', ()
         } satisfies WorkflowDefinitionListResultV1['definitions'][number];
     }
 
-    function workflowItems(tree: renderer.ReactTestRenderer) {
-        return readMenu(tree).props.items.find((item) => item.id === 'run-workflow')?.submenu?.items ?? [];
-    }
-
-    async function open(tree: renderer.ReactTestRenderer) {
-        await act(async () => {
-            readMenu(tree).props.onOpenChange(true);
-        });
-        await act(async () => { await Promise.resolve(); });
-    }
-
     it('offers Second opinion with the asks, and opens a review start with the second_opinion role', () => {
         const start = launcher();
         let tree: renderer.ReactTestRenderer | undefined;
@@ -185,114 +187,70 @@ describe('SessionAgentsLaunchMenu — Second opinion and Run a workflow ›', ()
         act(() => tree?.unmount());
     });
 
-    it('asks the workflow library only once the menu opens, and lists Built-in beside Your library', async () => {
-        executeMock.mockResolvedValue({ ok: true, result: { definitions: [definition('wf-1')] } });
-        let tree: renderer.ReactTestRenderer | undefined;
-        act(() => {
-            tree = renderer.create(<SessionAgentsLaunchMenu launcher={launcher()} />);
-        });
-        expect(executeMock).not.toHaveBeenCalled();
+    async function openWorkflowPicker(tree: renderer.ReactTestRenderer) {
+        await act(async () => { readMenu(tree).props.onOpenChange(true); });
+        await act(async () => { readMenu(tree).props.onSelect('run-workflow'); });
+        await act(async () => { await Promise.resolve(); });
+    }
 
-        await open(tree!);
-
-        expect(executeMock.mock.calls.filter(([actionId]) => actionId === 'workflow.definition.list')).toHaveLength(1);
-        const items = workflowItems(tree!);
-        const builtIn = items.filter((item) => item.id.startsWith('builtin:'));
-        // Session launches now carry their origin, including the scoped built-ins.
-        expect(builtIn.map((item) => item.id)).toEqual(expect.arrayContaining([
-            'builtin:builtin:keep-going', 'builtin:builtin:review-and-converge',
-            'builtin:builtin:plan-with-a-panel', 'builtin:builtin:open-a-pull-request',
-        ]));
-        const saved = items.find((item) => item.id === 'workflow:wf-1');
-        expect(saved).toBeTruthy();
-        expect(saved?.category).not.toBe(builtIn[0]?.category);
-        act(() => tree?.unmount());
-    });
-
-    it('starts a built-in through the launcher and opens a saved workflow at its run entry', async () => {
+    it('demands the shared chooser only after Workflow is chosen and Back returns without starting', async () => {
         executeMock.mockResolvedValue({ ok: true, result: { definitions: [definition('wf-1')] } });
         const start = launcher();
         let tree: renderer.ReactTestRenderer | undefined;
-        act(() => {
-            tree = renderer.create(<SessionAgentsLaunchMenu launcher={start} />);
-        });
-        await open(tree!);
-
-        act(() => readMenu(tree!).props.onSelect('builtin:builtin:plan-with-a-panel'));
-        expect(start.startBuiltinWorkflow).toHaveBeenCalledWith('builtin:plan-with-a-panel');
-        // Selection closes the menu. Reopen before choosing its saved-workflow
-        // row so the real demand-scoped library can publish that choice again.
-        await open(tree!);
-        act(() => readMenu(tree!).props.onSelect('workflow:wf-1'));
-        expect(routerPush).toHaveBeenCalledWith({ pathname: '/workflows/[id]', params: { id: 'wf-1', intent: 'run' } });
+        act(() => { tree = renderer.create(<SessionAgentsLaunchMenu launcher={start} />); });
+        expect(executeMock).not.toHaveBeenCalled();
+        await act(async () => { readMenu(tree!).props.onOpenChange(true); });
+        expect(executeMock).not.toHaveBeenCalled();
+        expect(tree!.root.findAllByType(WorkflowStartPicker)).toHaveLength(0);
+        await act(async () => { readMenu(tree!).props.onSelect('run-workflow'); });
+        expect(readMenu(tree!).props.open).toBe(true);
+        expect(tree!.root.findAllByType(WorkflowStartPicker)).toHaveLength(1);
+        expect(executeMock.mock.calls.filter(([actionId]) => actionId === 'workflow.definition.list')).toHaveLength(1);
+        await act(async () => { tree!.root.findByProps({ testID: 'session-agents-launch:workflow-back' }).props.onPress(); });
+        expect(tree!.root.findAllByType(WorkflowStartPicker)).toHaveLength(0);
+        expect(readMenu(tree!).props.items.map(item => item.id)).toContain('conversation');
+        expect(start.startWorkflow).not.toHaveBeenCalled();
+        expect(routerPush).not.toHaveBeenCalled();
         act(() => tree?.unmount());
     });
 
-    it('pages through the whole library while open, so a workflow on a later page can be found and run', async () => {
-        executeMock
-            .mockResolvedValueOnce({ ok: true, result: { definitions: [definition('wf-1')], nextCursor: 'page-2' } })
-            .mockResolvedValueOnce({ ok: true, result: { definitions: [definition('wf-2')] } });
+    it('passes the chosen saved revision to contextual Start without visiting the library', async () => {
+        const saved = { ...definition('wf-1'), revision: { headerVersion: 3, bodyVersion: 7 } };
+        executeMock.mockResolvedValue({ ok: true, result: { definitions: [saved] } });
+        const start = launcher();
         let tree: renderer.ReactTestRenderer | undefined;
-        act(() => {
-            tree = renderer.create(<SessionAgentsLaunchMenu launcher={launcher()} />);
-        });
-        await open(tree!);
-        await act(async () => { await Promise.resolve(); });
-
-        const listCalls = executeMock.mock.calls.filter(([actionId]) => actionId === 'workflow.definition.list');
-        expect(listCalls).toHaveLength(2);
-        expect(listCalls[1]?.[1]).toEqual(expect.objectContaining({ cursor: 'page-2' }));
-        const ids = workflowItems(tree!).map((item) => item.id);
-        expect(ids).toEqual(expect.arrayContaining(['workflow:wf-1', 'workflow:wf-2']));
-        expect(ids).not.toContain('workflow-library-status');
-
-        act(() => readMenu(tree!).props.onSelect('workflow:wf-2'));
-        expect(routerPush).toHaveBeenCalledWith({ pathname: '/workflows/[id]', params: { id: 'wf-2', intent: 'run' } });
+        act(() => { tree = renderer.create(<SessionAgentsLaunchMenu launcher={start} />); });
+        await openWorkflowPicker(tree!);
+        await act(async () => { await tree!.root.findByType(SelectionList).props.onSelect('wf-1'); });
+        expect(executeMock.mock.calls.filter(([actionId]) => actionId === 'workflow.definition.get')).toHaveLength(0);
+        // The Start tab is named after the chosen workflow, never a generic "Workflow".
+        expect(start.startWorkflow).toHaveBeenCalledWith({ source: { kind: 'saved', definitionId: 'wf-1', revision: saved.revision }, name: 'Workflow wf-1' });
+        expect(readMenu(tree!).props.open).toBe(false);
+        expect(routerPush).not.toHaveBeenCalled();
+        expect(executeMock.mock.calls.filter(([actionId]) => actionId === 'workflow.run.start')).toHaveLength(0);
         act(() => tree?.unmount());
     });
 
-    it('offers the Workflows destination when a later page cannot be read', async () => {
-        executeMock
-            .mockResolvedValueOnce({ ok: true, result: { definitions: [definition('wf-1')], nextCursor: 'page-2' } })
-            .mockRejectedValueOnce(new Error('offline'));
+    it('passes built-in choices to that same reference-only contextual start', async () => {
+        executeMock.mockResolvedValue({ ok: true, result: { definitions: [] } });
+        const start = launcher();
         let tree: renderer.ReactTestRenderer | undefined;
-        act(() => {
-            tree = renderer.create(<SessionAgentsLaunchMenu launcher={launcher()} />);
-        });
-        await open(tree!);
-        await act(async () => { await Promise.resolve(); });
+        act(() => { tree = renderer.create(<SessionAgentsLaunchMenu launcher={start} />); });
+        await openWorkflowPicker(tree!);
+        await act(async () => { await tree!.root.findByType(SelectionList).props.onSelect('builtin:plan-with-a-panel'); });
+        expect(start.startWorkflow).toHaveBeenCalledWith(expect.objectContaining({ source: { kind: 'catalog', workflow: 'builtin:plan-with-a-panel' }, name: expect.any(String) }));
+        expect(routerPush).not.toHaveBeenCalled();
+        act(() => tree?.unmount());
+    });
 
-        expect(workflowItems(tree!).at(-1)?.id).toBe('workflow-all');
-        act(() => readMenu(tree!).props.onSelect('workflow-all'));
+    it('keeps All workflows as explicit library navigation', async () => {
+        const start = launcher();
+        let tree: renderer.ReactTestRenderer | undefined;
+        act(() => { tree = renderer.create(<SessionAgentsLaunchMenu launcher={start} />); });
+        await openWorkflowPicker(tree!);
+        await act(async () => { tree!.root.findByProps({ testID: 'session-agents-launch:workflow-all' }).props.onPress(); });
         expect(routerPush).toHaveBeenCalledWith('/workflows');
-        act(() => tree?.unmount());
-    });
-
-    it('shows what a read settled after the menu closed mid-read and opened again', async () => {
-        const { createDeferred } = await import('@/dev/testkit');
-        const firstPage = createDeferred<unknown>();
-        executeMock.mockReturnValueOnce(firstPage.promise)
-            .mockResolvedValue({ ok: true, result: { definitions: [definition('wf-1')] } });
-        let tree: renderer.ReactTestRenderer | undefined;
-        act(() => {
-            tree = renderer.create(<SessionAgentsLaunchMenu launcher={launcher()} />);
-        });
-        await open(tree!);
-        expect(workflowItems(tree!).map((item) => item.id)).toContain('workflow-library-status');
-
-        // Closed before the first page arrived; the read settles with its owner.
-        await act(async () => {
-            readMenu(tree!).props.onOpenChange(false);
-        });
-        await act(async () => {
-            firstPage.resolve({ ok: true, result: { definitions: [definition('wf-1')] } });
-            await firstPage.promise;
-        });
-        await open(tree!);
-
-        const ids = workflowItems(tree!).map((item) => item.id);
-        expect(ids).toContain('workflow:wf-1');
-        expect(ids).not.toContain('workflow-library-status');
+        expect(start.startWorkflow).not.toHaveBeenCalled();
         act(() => tree?.unmount());
     });
 });

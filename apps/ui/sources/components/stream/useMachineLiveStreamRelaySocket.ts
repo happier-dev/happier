@@ -19,12 +19,15 @@ export function useMachineLiveStreamRelaySocket(input: Readonly<{
     accountLifetime?: ServerAccountScopeLifetime | null;
     enabled?: boolean;
     disconnectTag: string;
+    /** A local carrier may supply the same socket lifecycle without opening a network connection. */
+    resolveSocket?: typeof resolveServerScopedMachineLiveStreamRelaySocket;
 }>): ServerScopedMachineLiveStreamRelaySocket | null {
     const enabled = input.enabled ?? true;
     const machineId = String(input.machineId ?? '').trim();
     const serverId = String(input.serverId ?? '').trim();
     const tag = input.disconnectTag;
     const accountLifetime = input.accountLifetime;
+    const resolveSocket = input.resolveSocket ?? resolveServerScopedMachineLiveStreamRelaySocket;
     const [socket, setSocket] = React.useState<ServerScopedMachineLiveStreamRelaySocket | null>(null);
     const previousDisconnect = React.useRef<Readonly<{
         accountLifetime: typeof accountLifetime;
@@ -49,7 +52,7 @@ export function useMachineLiveStreamRelaySocket(input: Readonly<{
         const acquire = async () => {
             if (closing && closing.accountLifetime === accountLifetime) await closing.completion;
             if (disposed) return null;
-            return await resolveServerScopedMachineLiveStreamRelaySocket({ machineId, serverId: serverId || null, accountLifetime });
+            return await resolveSocket({ machineId, serverId: serverId || null, accountLifetime });
         };
         void acquire()
             .then((next) => {
@@ -69,7 +72,7 @@ export function useMachineLiveStreamRelaySocket(input: Readonly<{
             if (resolved) disconnect(resolved);
             setSocket(null);
         };
-    }, [accountLifetime, enabled, machineId, serverId, tag]);
+    }, [accountLifetime, enabled, machineId, resolveSocket, serverId, tag]);
 
     const subscribe = React.useCallback((listener: () => void) => socket ? socket.onSocketIdChange(listener) : () => {}, [socket]);
     const readSocketId = React.useCallback(() => socket?.socketId ?? '', [socket]);

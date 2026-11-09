@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import type { ScmCommitPlanApplication, ScmComparison, ScmDiffSummaryCommitPlan } from '@happier-dev/protocol';
+import type { ScmCommitPlanApplication} from '@happier-dev/protocol/scm/diffSummaryCommitPlan';
+import type { ScmComparison} from '@happier-dev/protocol/scm/comparison';
+import type { ScmDiffSummaryCommitPlan } from '@happier-dev/protocol/scm/diffSummary';
 
 import { SPECIMEN_COMPARISON } from '@/components/dev/changes/walkthroughSpecimenFixture';
 

@@ -17,20 +17,27 @@ import {
 import { getStorage } from '@/sync/domains/state/storage';
 import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 
-/** Session edits use the store; presence observes only the target owner's candidate rows. */
+/**
+ * Session edits use the store; presence observes only the target owner's candidate rows.
+ * The reader subscribes to the candidate machine ids, not their records: a daemon heartbeat
+ * (state, version, timestamps) re-renders it only through the presence owner, when the target changes.
+ */
 function useSessionTargetSnapshot<T>(
     target: SessionMachineTargetIdentity | null,
     read: (state: SessionMachineTargetState) => T,
 ): T {
     const store = getStorage();
     const rooted = store(useShallow(read));
-    const machines = store(useShallow((state) => target === null ? [] : readSessionMachineTargetActivityInputs(state, target)));
-    const readMachines = React.useCallback(() => machines, [machines]);
+    const machineIds = store(useShallow((state) => target === null ? []
+        : readSessionMachineTargetActivityInputs(state, target).map(machine => machine.id)));
+    // The presence owner reads the current records when its inputs move.
+    const readMachines = React.useCallback(() => target === null ? []
+        : readSessionMachineTargetActivityInputs(store.getState(), target), [store, target]);
     // The existing presence owner does not subscribe to Session metadata. A changed
     // rooted result renews its read closure after the Session store publishes it.
     const readSnapshot = React.useCallback(() => read(store.getState()), [read, rooted, store]);
     const targets = React.useMemo(() => [{ serverId: typeof target === 'object' ? target?.serverId : undefined,
-        machineIds: machines.map(machine => machine.id) }], [machines, target]);
+        machineIds }], [machineIds, target]);
     return useMachinePresenceSnapshot(readMachines, readSnapshot, targets, shallow);
 }
 

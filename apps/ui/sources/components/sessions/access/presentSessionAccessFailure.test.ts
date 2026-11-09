@@ -1,10 +1,53 @@
 import { describe, expect, it } from 'vitest';
+import { t } from '@/text';
 
 import { createSessionAccessApiErrorFromResponse, SessionAccessApiError } from '@/sync/api/session/sessionAccessApi';
 
 import { presentSessionAccessFailure, presentSessionAccessReason } from './presentSessionAccessFailure';
 
 describe('session access failure presentation', () => {
+    it('preserves the confirmed transaction rollback through the HTTP adapter and presenter', () => {
+        const failure = presentSessionAccessFailure(createSessionAccessApiErrorFromResponse({
+            error: 'database_transaction_conflict_exhausted', statusCode: 503,
+        }, 503), { outcomeUnknown: true });
+        expect(failure).toEqual({
+            code: 'database_transaction_conflict_exhausted',
+            message: t('approvals.transientFailure'),
+            retryable: true,
+        });
+    });
+
+    it.each([
+        { error: 'database_transaction_conflict_exhausted' },
+        { error: 'database_transaction_conflict_exhausted', statusCode: 500 },
+        { error: 'database_transaction_conflict_exhausted', statusCode: 503, unexpected: true },
+    ])('requires the canonical strict rollback envelope before claiming no effect: %j', (payload) => {
+        const failure = presentSessionAccessFailure(createSessionAccessApiErrorFromResponse(payload, 503));
+        expect(failure.code).toBe('session_access_request_failed');
+        expect(failure.message).not.toBe(t('approvals.transientFailure'));
+    });
+
+    it('keeps connection loss and lost mutation acknowledgement ambiguous', () => {
+        const connectionLoss = presentSessionAccessFailure(createSessionAccessApiErrorFromResponse({
+            error: 'database_connection_unavailable', statusCode: 503,
+        }, 503), { outcomeUnknown: true });
+        expect(connectionLoss).toEqual({
+            code: 'database_connection_unavailable', message: t('session.access.outcomeUnknown'), retryable: true,
+        });
+        expect(presentSessionAccessFailure(new Error('response lost'), { outcomeUnknown: true })).toEqual({
+            code: 'outcome_unknown', message: t('session.access.outcomeUnknown'), retryable: true,
+        });
+    });
+
+    it.each([
+        { status: 500, error: 'database_transaction_conflict_exhausted' },
+        { status: 503, error: 'unrecognized_failure' },
+    ])('does not promise rollback without a recognized availability refusal: $status/$error', ({ status, error }) => {
+        const failure = presentSessionAccessFailure(createSessionAccessApiErrorFromResponse({ error }, status));
+        expect(failure.code).toBe('session_access_request_failed');
+        expect(failure.message).not.toBe(t('approvals.transientFailure'));
+    });
+
     it.each([
         ['session_access_subject_ineligible', 'This person, group, or team can no longer receive access.'],
         ['session_access_team_policy_required', 'Team policy requires this access.'],

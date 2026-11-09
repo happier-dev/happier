@@ -10,7 +10,7 @@ import { buildSessionScmSummary } from '@/components/sessions/sourceControl/stat
 import { buildLocalServiceRows, selectLocalServiceRunningCount } from '@/sync/domains/local/services/serviceRow';
 
 import { ChangesGlanceView } from './ChangesGlance';
-import { resolveLocalServicesGlanceRows } from './glanceModels';
+import { resolveChangesGlanceFiles, resolveLocalServicesGlanceRows } from './glanceModels';
 import { LocalServicesGlance, LocalServicesGlanceView } from './LocalServicesGlance';
 import { PaneLinkRowView } from './PaneLinkRow';
 import { SessionAgentPlanCard } from '../plan/SessionAgentPlanCard';
@@ -48,6 +48,19 @@ afterEach(() => {
 });
 
 describe('Sized agent plan', () => {
+    it('retains every media Changes glance row without its line counts', () => {
+        const files = ['a.pdf', 'b.png', 'c.mp4', 'd.mp3', 'e.dat', 'f.ts'].map(path => {
+            const file = entry(path, 'modified', 12, 4);
+            return { ...file, stats: { ...file.stats, isBinary: path === 'e.dat' } };
+        });
+        const summary = buildSessionScmSummary(snapshot({ entries: files }))!;
+        const result = resolveChangesGlanceFiles(summary, files.length);
+        expect(result.remaining).toBe(0);
+        expect(result.rows.map(row => [row.name, row.linesAdded, row.linesRemoved])).toEqual([
+            ['a.pdf', 0, 0], ['b.png', 0, 0], ['c.mp4', 0, 0], ['d.mp3', 0, 0], ['e.dat', 0, 0], ['f.ts', 12, 4],
+        ]);
+    });
+
     it('leads a compact body with the current step and restores source order in a tall body without dropping steps', async () => {
         const plan = projectSessionAgentPlan([
             { id: 'done', content: 'Prepared', status: 'completed', priority: 'medium' },
@@ -222,32 +235,6 @@ describe('Changes glance', () => {
 });
 
 describe('Local services glance', () => {
-    it('gives the Home (App) glance a designed empty state, and says honestly which machine it could not list', async () => {
-        const app = (degraded: Extract<React.ComponentProps<typeof LocalServicesGlanceView>['state'], { scope: 'app' }>['degraded'], listedMachineCount = 0) => ({
-            kind: 'ready' as const, scope: 'app' as const, rows: [], runningCount: 0, degraded, listedMachineCount });
-        const empty = await renderScreen(<LocalServicesGlanceView testID="services" frameStyle="plain" machineName={null} state={app([])} />);
-        await flushHookEffects({ cycles: 2 });
-        expect(empty.findByTestId('services.empty')).toBeTruthy();
-        expect(empty.getTextContent()).toContain('widgetGlances.appEmptyReason');
-        expect(empty.getTextContent()).not.toContain('widgetGlances.nothingRunning');
-        // An offline machine replaces the promise with the reason, said once.
-        const offline = await renderScreen(<LocalServicesGlanceView testID="offline" frameStyle="plain" machineName={null}
-            state={app([{ kind: 'offline', machineId: 'm1', machineName: 'leeroy-mbp' }])} />);
-        await flushHookEffects({ cycles: 2 });
-        expect(offline.getTextContent()).not.toContain('widgetGlances.appEmptyReason');
-        // With no machine listed, the title says what is known, never "Nothing running", and the reason only why.
-        expect(offline.getTextContent()).toContain('widgetGlances.appUnlistedTitle');
-        expect(offline.getTextContent()).toContain('widgetGlances.appUnlistedOffline');
-        expect(offline.getTextContent()).not.toContain('widgetGlances.appEmptyTitle');
-        // Another machine answered with nothing running: that stays the title, the missing one its reason.
-        const partial = await renderScreen(<LocalServicesGlanceView testID="partial" frameStyle="plain" machineName={null}
-            state={app([{ kind: 'offline', machineId: 'm1', machineName: 'leeroy-mbp' }], 1)} />);
-        await flushHookEffects({ cycles: 2 });
-        expect(partial.getTextContent()).toContain('widgetGlances.appEmptyTitle');
-        expect(partial.getTextContent()).toContain('widgetGlances.machineOffline');
-        expect(partial.getTextContent()).not.toContain('widgetGlances.appUnlistedTitle');
-    });
-
     it('counts the running services, offers Open on them, and lists a stopped script as Not running with no action', async () => {
         const rows = buildLocalServiceRows({
             inventoryRows: [inventoryRow('web', 8081), inventoryRow('relay', 3011)],
@@ -299,6 +286,32 @@ describe('Local services glance', () => {
         );
         await flushHookEffects({ cycles: 2 });
         expect(screen.getTextContent()).toContain('widgetGlances.nothingRunning');
+    });
+
+    it('gives the Home (App) glance a designed empty state, and says honestly which machine it could not list', async () => {
+        const app = (degraded: Extract<React.ComponentProps<typeof LocalServicesGlanceView>['state'], { scope: 'app' }>['degraded'], listedMachineCount = 0) => ({
+            kind: 'ready' as const, scope: 'app' as const, rows: [], runningCount: 0, degraded, listedMachineCount });
+        const empty = await renderScreen(<LocalServicesGlanceView testID="services" frameStyle="plain" machineName={null} state={app([])} />);
+        await flushHookEffects({ cycles: 2 });
+        expect(empty.findByTestId('services.empty')).toBeTruthy();
+        expect(empty.getTextContent()).toContain('widgetGlances.appEmptyReason');
+        expect(empty.getTextContent()).not.toContain('widgetGlances.nothingRunning');
+        // An offline machine replaces the promise with the reason, said once.
+        const offline = await renderScreen(<LocalServicesGlanceView testID="offline" frameStyle="plain" machineName={null}
+            state={app([{ kind: 'offline', machineId: 'm1', machineName: 'leeroy-mbp' }])} />);
+        await flushHookEffects({ cycles: 2 });
+        expect(offline.getTextContent()).not.toContain('widgetGlances.appEmptyReason');
+        // With no machine listed, the title says what is known, never "Nothing running", and the reason only why.
+        expect(offline.getTextContent()).toContain('widgetGlances.appUnlistedTitle');
+        expect(offline.getTextContent()).toContain('widgetGlances.appUnlistedOffline');
+        expect(offline.getTextContent()).not.toContain('widgetGlances.appEmptyTitle');
+        // Another machine answered with nothing running: that stays the title, the missing one its reason.
+        const partial = await renderScreen(<LocalServicesGlanceView testID="partial" frameStyle="plain" machineName={null}
+            state={app([{ kind: 'offline', machineId: 'm1', machineName: 'leeroy-mbp' }], 1)} />);
+        await flushHookEffects({ cycles: 2 });
+        expect(partial.getTextContent()).toContain('widgetGlances.appEmptyTitle');
+        expect(partial.getTextContent()).toContain('widgetGlances.machineOffline');
+        expect(partial.getTextContent()).not.toContain('widgetGlances.appUnlistedTitle');
     });
 
     it('starts no machine feed while the Companion only measures its cards', async () => {

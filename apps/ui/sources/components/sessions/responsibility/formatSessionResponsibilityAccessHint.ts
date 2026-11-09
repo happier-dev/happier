@@ -1,4 +1,4 @@
-import type { SessionResponsibilityCandidateV1 } from '@happier-dev/protocol';
+import type { SessionResponsibilityCandidateV1 } from '@happier-dev/protocol/sessions/access/sessionResponsibilityV1';
 
 import { t } from '@/text';
 

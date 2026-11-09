@@ -6,6 +6,9 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 
 import { createSessionActionTarget } from './sessionActionContext';
 import {
+    SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
+    SESSION_ACTION_PIN_ID,
+    SESSION_ACTION_UNPIN_ID,
     SESSION_ACTION_ARCHIVE_ID,
     SESSION_ACTION_DELETE_ID,
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
@@ -45,6 +48,21 @@ function createOwnedRawSession(overrides: Partial<Session> = {}): Session {
 }
 
 describe('session action availability', () => {
+    it.each(['sessionInfo', 'sessionHeader', 'rowMenu', 'nativeContextMenu'] as const)(
+        'offers the stop-and-delete intent separately from immediate deletion on %s', surface => {
+        const session = createOwnedRawSession({ active: true });
+        const target = createSessionActionTarget({ session, serverId: 'home', isConnected: true });
+        expect(target).toMatchObject({ canDelete: false, canStopAndDelete: true });
+        expect(listVisibleSessionActionIds({ target, surface })).toContain(SESSION_ACTION_DELETE_ID);
+        expect(listVisibleSessionActionIds({ target, surface: 'selectionActionBar' })).not.toContain(SESSION_ACTION_DELETE_ID);
+        const noStop = createSessionActionTarget({ session: { ...session,
+            access: createSessionAccessFixture('owner', { stopSession: false }) }, serverId: 'home', isConnected: true });
+        expect(listVisibleSessionActionIds({ target: noStop, surface })).not.toContain(SESSION_ACTION_DELETE_ID);
+        const shared = createSessionActionTarget({ session: { ...session, access: createSessionAccessFixture('admin') },
+            serverId: 'home', isConnected: true });
+        expect(listVisibleSessionActionIds({ target: shared, surface })).not.toContain(SESSION_ACTION_DELETE_ID);
+    });
+
     it('uses readable archived owner-row metadata without weakening explicit terminal preservation', () => {
         const row = createSessionListRenderableSessionFixture({ archivedAt: 42, active: false,
             metadataLayoutVersion: 1, metadata: { path: '/repo', host: 'tester.local' } });
@@ -56,13 +74,23 @@ describe('session action availability', () => {
         } }, serverId: 'home', isConnected: false }).canDelete).toBe(false);
     });
 
-    it.each(['rowMenu', 'nativeContextMenu'] as const)('offers Delete only for eligible archived sessions on %s', (surface) => {
+    it.each(['sessionInfo', 'sessionHeader', 'rowMenu', 'nativeContextMenu'] as const)('offers Delete for eligible stopped sessions on %s', (surface) => {
         const session = createOwnedRawSession({ archivedAt: 42 });
         const target = createSessionActionTarget({ session, serverId: 'home', isConnected: false });
         expect(listVisibleSessionActionIds({ target, surface })).toContain(SESSION_ACTION_DELETE_ID);
-        expect(listVisibleSessionActionIds({ target: { ...target, isArchived: false }, surface })).not.toContain(SESSION_ACTION_DELETE_ID);
+        expect(listVisibleSessionActionIds({ target: { ...target, isArchived: false }, surface })).toContain(SESSION_ACTION_DELETE_ID);
         expect(listVisibleSessionActionIds({ target: { ...target, canDelete: false }, surface })).not.toContain(SESSION_ACTION_DELETE_ID);
     });
+
+    it.each([false, true])('offers the current list pin action in the session header (pinned=%s)', (isPinned) => {
+        const target = createSessionActionTarget({ session: createOwnedRawSession(), serverId: 'home', isConnected: true, isPinned });
+        const ids = listVisibleSessionActionIds({ target, surface: 'sessionHeader' });
+        expect(ids).toContain(isPinned ? SESSION_ACTION_UNPIN_ID : SESSION_ACTION_PIN_ID);
+        expect(ids).not.toContain(isPinned ? SESSION_ACTION_PIN_ID : SESSION_ACTION_UNPIN_ID);
+        expect(listVisibleSessionActionIds({ target: { ...target, isArchived: true }, surface: 'sessionHeader' }))
+            .not.toContain(isPinned ? SESSION_ACTION_UNPIN_ID : SESSION_ACTION_PIN_ID);
+    });
+
     it('offers Make coordinator on a plain session, and Edit/Stop greyed with reasons on one that only manages', () => {
         const coordinatorIds = (session: Session) => listVisibleSessionActionIds({
             target: createSessionActionTarget({ session, serverId: 'home', isConnected: true }), surface: 'rowMenu',
@@ -310,6 +338,7 @@ describe('session action availability', () => {
             SESSION_ACTION_RENAME_ID,
             SESSION_ACTION_STOP_ID,
             SESSION_ACTION_ARCHIVE_ID,
+            SESSION_ACTION_DELETE_ID,
         ]);
         expect(infoActionIds).toEqual(expect.arrayContaining(rowLifecycleActionIds));
     });
@@ -573,5 +602,19 @@ describe('session action availability', () => {
             currentUserId: 'current_user',
             isConnected: false,
         }).canDelete).toBe(false);
+    });
+
+    it('offers a session colour on the row and header menus only where the session\'s server stores it', () => {
+        const target = createSessionActionTarget({ session: createOwnedRawSession(), serverId: 'home', isConnected: false });
+        for (const surface of ['rowMenu', 'nativeContextMenu', 'sessionHeader'] as const) {
+            expect(listVisibleSessionActionIds({ target, surface, sessionAppearancesSupported: true })).toContain(SESSION_ACTION_SET_APPEARANCE_COLOR_ID);
+            expect(listVisibleSessionActionIds({ target, surface, sessionAppearancesSupported: false })).not.toContain(SESSION_ACTION_SET_APPEARANCE_COLOR_ID);
+            expect(listVisibleSessionActionIds({ target, surface })).not.toContain(SESSION_ACTION_SET_APPEARANCE_COLOR_ID);
+        }
+        expect(listVisibleSessionActionIds({ target, surface: 'sessionInfo', sessionAppearancesSupported: true }))
+            .not.toContain(SESSION_ACTION_SET_APPEARANCE_COLOR_ID);
+        const unscoped = createSessionActionTarget({ session: createOwnedRawSession(), serverId: null, isConnected: false });
+        expect(listVisibleSessionActionIds({ target: unscoped, surface: 'rowMenu', sessionAppearancesSupported: true }))
+            .not.toContain(SESSION_ACTION_SET_APPEARANCE_COLOR_ID);
     });
 });

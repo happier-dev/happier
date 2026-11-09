@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ScmComparison, ScmDiffSummaryCommitPlan } from '@happier-dev/protocol';
+import type { ScmComparison} from '@happier-dev/protocol/scm/comparison';
+import type { ScmDiffSummaryCommitPlan } from '@happier-dev/protocol/scm/diffSummary';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');

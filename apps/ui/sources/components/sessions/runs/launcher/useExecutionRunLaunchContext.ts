@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
-import type { ActionId } from '@happier-dev/protocol';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { buildBackendTargetKeyV2, readBackendTargetRefV2, PersistedBackendTargetRefV2Schema, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { ExecutionRunLaunchOrigin } from '@happier-dev/protocol/execution/runs/startRequest';
 import { resolveReviewEngineTarget } from '@/sync/domains/reviews/reviewEngineCatalog';
@@ -11,9 +11,9 @@ import { useMachinePresenceSummary } from '@/components/sessions/model/useMachin
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
 import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTarget } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
-import { useSettings } from '@/sync/domains/state/storage';
+import { storage } from '@/sync/domains/state/storage';
+import { useSettingsValues } from '@/sync/store/settingsReadHooks';
 import { loadAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
 import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
@@ -41,7 +41,7 @@ export function useExecutionRunLaunchContext(sessionId: string | null, serverId:
     workspace?: Readonly<{ machineId: string; cwd: string }>) {
     const storedSession = useSessionViewShellSession(sessionId ?? '', serverId);
     const session = sessionId ? storedSession : null;
-    const activeSettings = useSettings();
+    const activeSettings = useSettingsValues(['backendEnabledByTargetKey', 'secrets', 'executionRunsNotifyParentOnCompletionDefault']);
     const activeSettingsScope = useAccountSettingsScope();
     const requestedServerIds = React.useMemo(() => [serverId], [serverId]);
     const accountBindings = useServerCredentialAccountScopeBindings(requestedServerIds);
@@ -51,6 +51,13 @@ export function useExecutionRunLaunchContext(sessionId: string | null, serverId:
     const { snapshot: acpCatalog } = useAcpCatalog(accountBinding?.scope ?? null);
     const acpCatalogReady = acpCatalog?.catalog.status === 'ready' && !acpCatalog.stale;
     const acpCatalogSnapshot = acpCatalogReady ? acpCatalog.catalog : undefined;
+    const readExactSettings = React.useCallback(() => {
+        if (!accountBinding?.isCurrent()) return null;
+        const current = storage.getState();
+        if (current.settingsScope && areAccountSettingsScopesEqual(current.settingsScope, accountBinding.scope)) return current.settings;
+        const persisted = loadAccountSettings(accountBinding.scope);
+        return persisted.version === null ? null : settingsParse(persisted.settings);
+    }, [accountBinding]);
     const exactSettings = React.useMemo(() => {
         if (!accountBinding?.isCurrent()) return null;
         if (activeSettingsScope && areAccountSettingsScopesEqual(activeSettingsScope, accountBinding.scope)) return activeSettings;
@@ -73,7 +80,7 @@ export function useExecutionRunLaunchContext(sessionId: string | null, serverId:
         if (metadata?.sessionModelsV1?.activeSelectionV1 !== undefined) return {
             model: disposition.lastAppliedSelection, route: disposition.lastAppliedRouteSelection,
         };
-        // Older metadata carries only the last accepted turn's model; it cannot assert a Team source.
+        // Retained 0.2 metadata can carry only its legacy applied model; it cannot assert a Team source.
         const model = readAppliedModelSelection(target);
         return { model, route: model };
     }, [session, backendTarget, defaultBackend?.defaultAgentId]);
@@ -127,22 +134,19 @@ export function useExecutionRunLaunchContext(sessionId: string | null, serverId:
         machineId, serverId, accountScope: accountBinding?.scope ?? null, settings, enabled: session?.active === false });
     const sessionReachability = useSessionMachineReachability(sessionId ?? '', serverId);
     const machineReachable = sessionId ? sessionReachability.machineReachable : workspaceMachine.reachability === 'reachable';
-    const accountLifetime = React.useMemo(() => {
-        if (!accountBinding) return null;
-        const scope = createServerAccountScope(accountBinding.serverId, accountBinding.accountId);
-        return scope ? { scope, isCurrent: accountBinding.isCurrent, onRetire: accountBinding.onRetire } : null;
-    }, [accountBinding]);
+    const accountLifetime = accountBinding;
     const executorOptions = React.useMemo(() => ({ resolveServerIdForSessionId: () => serverId }), [serverId]);
     const executor = useMountedActionExecution(accountBinding?.scope, { executorOptions });
     const admitExactTarget = React.useCallback(async (requires: Readonly<{
         secretReferenceOverlay: boolean; teamCredentialModel: boolean; roleBinding?: boolean;
     }>, readinessOperationId: string, runBackendTargets?: readonly PersistedBackendTargetRefV2[]) => {
-        await admitExecutionRunLaunchTarget({ sessionId, serverId, session, exactSettings, settings, accountLifetime,
+        const currentSettings = readExactSettings();
+        await admitExecutionRunLaunchTarget({ sessionId, serverId, session, exactSettings: currentSettings, settings: currentSettings ?? settingsDefaults, accountLifetime,
             signal: executor.getSignal(),
             ...(workspace ? { cwd: workspace.cwd } : {}),
             machineId, ...(machineTarget ? { machineTarget } : {}), machineReachable, resumeCapabilityOptions,
             defaultBackend, runBackendTargets, requirements: requires, readinessOperationId });
-    }, [session, exactSettings, accountLifetime, sessionId, serverId, machineId, machineTarget, machineReachable, resumeCapabilityOptions, defaultBackend, settings, workspace?.cwd, executor.getSignal]);
+    }, [session, readExactSettings, accountLifetime, sessionId, serverId, machineId, machineTarget, machineReachable, resumeCapabilityOptions, defaultBackend, workspace?.cwd, executor.getSignal]);
     const startAction = React.useCallback(async (actionId: ActionId, input: Record<string, unknown>, readinessOperationId: string,
         launchOrigin?: ExecutionRunLaunchOrigin) => {
         const rawTargets = actionId === 'execution.run.start' ? [input.backendTarget]

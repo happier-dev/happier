@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useSessionVisualPresentationActive } from './useSessionVisualPresentationActive';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -8,7 +9,6 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import {
     type SessionBoardMountHost,
-    type SessionBoardPrimaryMountResolver,
     type SessionBoardSnapshot,
 } from '@/sync/domains/session/board';
 
@@ -48,7 +48,6 @@ const stylesheet = StyleSheet.create(() => ({
 }));
 
 const NOOP_OPEN_COMPANION = () => {};
-const NO_PRIMARY_MOUNT: SessionBoardPrimaryMountResolver = () => null;
 
 export type SessionBoardPaneProps = Readonly<{
     sessionId: string;
@@ -56,7 +55,6 @@ export type SessionBoardPaneProps = Readonly<{
     /** The captured Home for this Session; Board never consults the focused Home. */
     serverId?: string | null;
     host: SessionBoardMountHost;
-    resolvePrimaryHost: SessionBoardPrimaryMountResolver;
     pluginRuntime?: SessionPluginRuntimeState;
     callerHostedHtmlRuntime?: CallerHostedHtmlRuntime;
     density: SessionWidgetDensity;
@@ -92,21 +90,13 @@ export function SessionBoardPane(props: SessionBoardPaneProps): React.ReactEleme
         [props.serverId, props.sessionId],
     );
     const mounted = useMountedSessionBoardController(boardAddress);
-    // Opening an item here is the person's latest placement, so a "Show here" request for its
-    // transcript reply is taken back and this host runs it.
-    const releaseInlineTranscriptItem = mounted?.releaseInlineTranscriptItem;
-    const onOpenItemHere = props.onOpenItemHere;
-    const openItemHere = React.useMemo(() => onOpenItemHere
-        ? (itemId: string) => {
-            releaseInlineTranscriptItem?.(itemId);
-            onOpenItemHere(itemId);
-        }
-        : undefined, [onOpenItemHere, releaseInlineTranscriptItem]);
+    const openItemHere = props.onOpenItemHere;
     const acquireContent = mounted?.acquireContent;
+    const presented = useSessionVisualPresentationActive();
     React.useEffect(() => {
-        if (props.retained) return;
+        if (props.retained || !presented) return;
         return acquireContent?.();
-    }, [acquireContent, props.retained]);
+    }, [acquireContent, presented, props.retained]);
     const binding = mounted?.binding ?? null;
     const controller = mounted?.controller ?? null;
     const actions = mounted?.actions ?? null;
@@ -304,13 +294,11 @@ export function SessionBoardPane(props: SessionBoardPaneProps): React.ReactEleme
                 controller={controller}
                 host={props.host}
                 // A host that cannot reach its Home runs nothing.
-                resolvePrimaryHost={snapshot.reachability === 'offline' ? NO_PRIMARY_MOUNT : props.resolvePrimaryHost}
                 density={props.density}
                 layout={props.layout}
                 resolveActionBinding={resolveActionBinding}
                 navigationOnly={navigationOnly}
                 retained={retained}
-                onBodyEligibilityChange={mounted?.onBodyEligibilityChange}
                 {...(interactive && mounted ? {
                     onViewFocusTargetChange: mounted.onViewFocusTargetChange,
                     onViewActionsFocusTargetChange: mounted.onViewActionsFocusTargetChange,

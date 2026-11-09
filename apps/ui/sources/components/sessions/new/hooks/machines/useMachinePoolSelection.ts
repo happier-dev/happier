@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { MachinePoolResolveInputV1, MachinePoolResolveResultV1 } from '@happier-dev/protocol';
+import type { MachinePoolResolveInputV1, MachinePoolResolveResultV1 } from '@happier-dev/protocol/machines/pools/v1';
 
 import type { ServerScopedMachinePoolSelection } from '@/components/sessions/new/components/machineSelection/useMachineSelectionListModel';
 import { randomUUID } from '@/platform/randomUUID';

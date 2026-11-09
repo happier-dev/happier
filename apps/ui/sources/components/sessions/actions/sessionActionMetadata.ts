@@ -21,6 +21,7 @@ import {
     SESSION_ACTION_MARK_READ_ID,
     SESSION_ACTION_MARK_UNREAD_ID,
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
+    SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
     SESSION_ACTION_PIN_ID,
     SESSION_ACTION_PUT_UNDER_ID,
     SESSION_ACTION_COORDINATOR_MAKE_ID,
@@ -146,6 +147,10 @@ const METADATA_BY_ACTION_ID: Readonly<Record<string, SessionActionMetadata>> = {
     [SESSION_ACTION_MOVE_TO_FOLDER_ID]: {
         titleKey: 'sessionsList.moveToFolder',
         icon: 'folder', group: 'session',
+    },
+    [SESSION_ACTION_SET_APPEARANCE_COLOR_ID]: {
+        titleKey: 'sessionsList.appearance.setColor',
+        icon: 'palette', group: 'session',
     },
     [SESSION_ACTION_SET_ATTENTION_STANDING_ID]: {
         titleKey: 'sessionInfo.keepInAttention',

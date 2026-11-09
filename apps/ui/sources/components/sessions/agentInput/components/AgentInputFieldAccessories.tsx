@@ -3,9 +3,9 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { t } from '@/text';
-import { AGENT_INPUT_FIELD_ACCESSORY_EDGES_PX } from './agentInputChromeStyles';
+import { AGENT_INPUT_FIELD_ACCESSORY_EDGES_PX, AGENT_INPUT_QUIET_ICON_SIZE_PX } from './agentInputChromeStyles';
 
-const VISUAL_SIZE = 24;
+const VISUAL_SIZE = AGENT_INPUT_QUIET_ICON_SIZE_PX;
 const FIELD_EDGE_INSET = 6;
 
 /** One reservation for the shared field corner, independent of voice availability. */

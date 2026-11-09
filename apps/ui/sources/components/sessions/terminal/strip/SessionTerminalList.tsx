@@ -38,6 +38,8 @@ export const SessionTerminalList = React.memo(function SessionTerminalList(props
     onActivateTab: (tabId: string) => void;
     onFocusTerminal: (terminalId: string) => void;
     onTabMenu: (tabId: string, event: unknown) => void;
+    /** One sentence above the rows when the list stands in for the terminal and needs saying why. */
+    note?: string;
     testIdPrefix?: string;
 }>) {
     const styles = stylesheet;
@@ -50,6 +52,7 @@ export const SessionTerminalList = React.memo(function SessionTerminalList(props
             accessibilityRole="list"
             accessibilityLabel={t('terminalWorkspace.stripA11y')}
         >
+            {props.note ? <Text testID={testId('note')} style={styles.note}>{props.note}</Text> : null}
             {props.tabs.map((tab) => tab.members.length === 1 ? (
                 <SessionTerminalListRow
                     key={tab.tabId}
@@ -100,7 +103,7 @@ const SessionTerminalListRow = React.memo(function SessionTerminalListRow(props:
     const { theme } = useUnistyles();
     const { descriptor } = props;
     const statusDot = descriptor.status ? resolveDocumentTabStatusDot(theme, SESSION_TERMINAL_STATUS_TONE[descriptor.status]) : null;
-    const statusLabel = descriptor.status ? describeSessionTerminalStatus(descriptor.status) : null;
+    const statusLabel = descriptor.status ? describeSessionTerminalStatus(descriptor.status, descriptor.title) : null;
     const openMenu = (event: unknown) => {
         (event as { preventDefault?: () => void } | null)?.preventDefault?.();
         props.onMenu(event);
@@ -141,7 +144,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexShrink: 0,
         borderLeftWidth: StyleSheet.hairlineWidth,
         borderLeftColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
     },
     content: {
         padding: 6,
@@ -154,6 +156,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 6,
+    },
+    note: {
+        ...M.tabSubtitle,
+        color: theme.colors.text.secondary,
+        ...Typography.default(),
+        paddingHorizontal: 8,
+        paddingTop: 4,
+        paddingBottom: 8,
     },
     groupLabel: {
         ...M.tabSubtitle,

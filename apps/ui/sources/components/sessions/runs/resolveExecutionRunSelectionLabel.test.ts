@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { describe, expect, it } from 'vitest';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 
 import { t } from '@/text';
 import { resolveExecutionRunSelectionLabel, resolveRunAnsweringEngine, resolveRunNativeModelLabel } from './resolveExecutionRunSelectionLabel';
@@ -116,6 +116,10 @@ describe('resolveExecutionRunSelectionLabel', () => {
     } } };
     const codex = { kind: 'builtInAgent' as const, agentId: 'codex' };
     expect(resolveRunAnsweringEngine({ backendTarget: codex, modelId: 'gpt-6-luna', sessionModels }))
+      .toEqual({ label: 'GPT-6-Luna', agentId: 'codex' });
+    expect(resolveRunAnsweringEngine({ backendTarget: codex, modelId: 'gpt-6-luna', sessionModels,
+      catalogProfiles: buildScmDiffSummaryModelProfiles({ backendTarget: { kind: 'backend', backendId: 'codex' },
+        models: [{ id: 'gpt-6-luna', name: 'Different Machine title' }] }) }))
       .toEqual({ label: 'GPT-6-Luna', agentId: 'codex' });
     expect(resolveRunAnsweringEngine({ backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, modelId: 'gpt-6-luna', sessionModels })?.label)
       .toBe('gpt-6-luna');

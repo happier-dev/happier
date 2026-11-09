@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getActionSpec } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createToolCallMessageFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { resolveTranscriptWorkflowDefinitionReference } from './transcriptWorkflowDefinitionReference';

@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/panels/ModalPaneBoundary';
 import type { FocusReturnTarget } from '@/keyboard/focusReturn';
 import { t } from '@/text';
-import type { SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol';
+import type { SessionAuthoringExecutionTargetV2 } from '@happier-dev/protocol/sessions/authoring/fieldCatalog';
 import type { RunnerActivationProjectionV1 } from '@happier-dev/protocol/ephemeralRunner/projection';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readAcceptedRunnerCreatorActivationBinding, RunnerCreatorLaunchCustodyUnavailableError } from '@/sync/domains/ephemeralRunner/runnerCreatorLaunchCustody';

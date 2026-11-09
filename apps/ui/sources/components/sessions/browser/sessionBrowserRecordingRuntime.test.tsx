@@ -1,9 +1,10 @@
 import 'fake-indexeddb/auto';
 import type {
-    BrowserRecordingCapabilities,
+    BrowserRecordingCapabilities} from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
+import type {
     BrowserRecordingSessionV1,
-} from '@happier-dev/protocol';
-import { browserViewKey } from '@happier-dev/protocol';
+} from '@happier-dev/protocol/browser/recording/v1';
+import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import * as React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -18,6 +19,7 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
 import { resetMmkvStoresForTests } from '@/dev/reactNativeMmkvStub';
+import { t } from '@/text';
 
 const machineRpcMock = vi.hoisted(() => ({
     start: vi.fn(),
@@ -322,9 +324,13 @@ describe('session browser recording runtime', () => {
         await waitForHomeGovernance(() => expect(machineRpcMock.start).toHaveBeenCalledTimes(1));
     });
 
-    it('does not mark a recording active when daemon start fails closed', async () => {
+    it.each(['transport', 'unavailable'] as const)('presents a failed %s start without creating an active recording', async (failure) => {
         await registerNativeCaptureHandler();
-        machineRpcMock.start.mockResolvedValueOnce({ ok: false, reason: 'request_failed' });
+        machineRpcMock.start.mockResolvedValueOnce(failure === 'transport'
+            ? { ok: false, reason: 'request_failed' }
+            : { ok: true, result: { status: 'unavailable', reason: {
+                code: 'browser_recording_capture_unavailable', message: 'Private capture adapter detail',
+            } } });
         const { useSessionBrowserRecordingRuntime } = await import('./sessionBrowserRecordingRuntime');
 
         function Probe(): React.ReactElement {
@@ -374,6 +380,57 @@ describe('session browser recording runtime', () => {
         await screen.pressByTestIdAsync('start-recording');
 
         expect(screen.findByTestId('active-recording-id')?.props.children).toBe('none');
+        expect(modalSpies.alert).toHaveBeenCalledTimes(1);
+        expect(String(modalSpies.alert.mock.calls[0]?.[1])).not.toContain('Private capture adapter detail');
+    });
+
+    it.each(['browser_recording_policy_denied', 'browser_recording_permission_denied'] as const)(
+        'projects daemon %s through the canonical UI policy refusal', async (code) => {
+            await registerNativeCaptureHandler();
+            machineRpcMock.start.mockResolvedValueOnce({ ok: true, result: {
+                status: 'unavailable', reason: { code, message: 'Private policy detail' },
+            } });
+            const onUnavailable = vi.fn();
+            const { useSessionBrowserRecordingRuntime } = await import('./sessionBrowserRecordingRuntime');
+            function Probe(): React.ReactElement {
+                const runtime = useSessionBrowserRecordingRuntime({
+                    enabled: true, sessionId: 'session_1', machineId: 'machine_1',
+                    serverId: 'srv_recording', recordingCapabilities, onUnavailable,
+                });
+                return <Pressable testID="start-recording" disabled={!runtime}
+                    onPress={() => runtime?.browserShellRecording.onStartRecording?.(nativeRecordingRequest)} />;
+            }
+            const screen = await renderRecordingScreen(<Probe />);
+            await screen.pressByTestIdAsync('start-recording');
+            expect(onUnavailable).toHaveBeenCalledWith({
+                reasonCode: 'browser_recording_policy_denied', policyState: 'permissionDenied',
+                message: 'Private policy detail',
+            });
+            expect(modalSpies.alert).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each([
+        ['browser_recording_policy_denied', 'browserRecording.status.notAllowed'],
+        ['browser_recording_disabled', 'browserRecording.status.turnedOff'],
+    ] as const)('presents shell-level %s without requiring daemon-only fields', async (reasonCode, bodyKey) => {
+        const { useSessionBrowserRecordingRuntime } = await import('./sessionBrowserRecordingRuntime');
+        function Probe(): React.ReactElement {
+            const runtime = useSessionBrowserRecordingRuntime({
+                enabled: true, sessionId: 'session_1', machineId: 'machine_1',
+                serverId: 'srv_recording', recordingCapabilities,
+            });
+            return <Pressable testID="start-recording" disabled={!runtime}
+                onPress={() => runtime?.browserShellRecording.onUnavailable?.({
+                    reasonCode, message: 'Private policy detail',
+                })} />;
+        }
+        const screen = await renderRecordingScreen(<Probe />);
+        await screen.pressByTestIdAsync('start-recording');
+        expect(modalSpies.alert).toHaveBeenCalledExactlyOnceWith(
+            t('browserRecording.failure.startTitle'), t(bodyKey),
+        );
+        expect(machineRpcMock.start).not.toHaveBeenCalled();
     });
 
     it('projects the daemon refusal when no stream-frame capture source is resolvable', async () => {

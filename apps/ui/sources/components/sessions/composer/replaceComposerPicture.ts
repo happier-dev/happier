@@ -1,11 +1,15 @@
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import type { AttachmentUploadSource } from '@/sync/domains/attachments/attachmentsUploadFileSource';
 import { Image } from 'react-native';
-import { isEmptyEdit, type ImageMarksDocumentV1 } from '@happier-dev/protocol/sessions/media/imageMarksV1';
+import { isEmptyEdit, type ImageMarksDocumentV1, type ImageMarksOperationV1 } from '@happier-dev/protocol/sessions/media/imageMarksV1';
+import { MediaAnnotationApplyResultV1Schema } from '@happier-dev/protocol/actions/mediaAnnotationAction';
 import { encodeBase64 } from '@/encryption/base64';
 import { flattenAnnotatedImage } from '@/components/ui/media/annotation/flattenImage';
 import type { ImageAnnotationSource } from '@/components/ui/media/annotation/annotatorStore';
 import type { FlattenImageResult } from '@/components/ui/media/annotation/flattenImage.types';
+import type { StagePictureEdit, StagePictureCommitResult } from '@/components/ui/media/stage/mediaStageItems';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 
 export type ComposerPictureOccurrence = Readonly<{
   kind: 'picked'; attachmentId: string;
@@ -78,4 +82,32 @@ export async function commitComposerPicture(occurrence: ComposerPictureOccurrenc
   const bytes = result.png;
   return replaceComposerPicture(occurrence, { source: { kind: 'memory', name: `${name.replace(/\.[^.]+$/, '')}.png`, mimeType: 'image/png', bytes, previewUri: `data:image/png;base64,${encodeBase64(bytes)}` }, edit: { original, document } })
     ? { ok: true, status: 'replaced' } : { ok: false, reason: 'annotation.targetUnavailable' };
+}
+
+export function composerPictureStageEdit(occurrence: ComposerPictureOccurrence, readAddress?: () => Readonly<{ scope: ServerAccountScope; ref: ComposerRefV1 }> | null): StagePictureEdit {
+  const draft = readComposerPicture(occurrence);
+  const execute = async (document?: ImageMarksDocumentV1): Promise<StagePictureCommitResult> => {
+    const address = readAddress?.();
+    if (!address) return { ok: false, reason: 'annotation.targetUnavailable' };
+    // The Action owns admission and resolves the mounted occurrence; this leaf retains no authority.
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const operations: ImageMarksOperationV1[] = document ? [
+      { kind: 'reset' }, ...document.marks.map(mark => ({ kind: 'mark.add' as const, mark })),
+      ...(document.crop ? [{ kind: 'crop.set' as const, rect: document.crop }] : []),
+    ] : [];
+    const outcome = await createDefaultActionExecutor().execute('media.annotation.apply', {
+      scope: address.scope, target: { kind: 'composerAttachment', ref: address.ref, attachmentId: occurrence.attachmentId },
+      ...(document ? { operations } : { reset: true }),
+    }, { surface: 'ui', authority: 'present_user', serverId: address.scope.serverId, expectedAccountId: address.scope.accountId });
+    if (!outcome.ok) return { ok: false, reason: outcome.errorCode };
+    const result = MediaAnnotationApplyResultV1Schema.parse(outcome.result);
+    if (result.status === 'unavailable') return { ok: false, reason: result.reason };
+    return result.status === 'appended' ? { ok: false, reason: 'annotation.targetUnavailable' } : { ok: true, status: result.status };
+  };
+  return {
+    document: draft?.edit?.document,
+    original: () => readComposerPictureSource(occurrence),
+    commit: ({ document }) => execute(document),
+    revert: () => execute(),
+  };
 }

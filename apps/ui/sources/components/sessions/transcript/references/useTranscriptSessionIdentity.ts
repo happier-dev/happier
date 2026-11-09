@@ -3,6 +3,7 @@ import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSession
 import { useSessionDisplayNameSource } from '@/sync/domains/state/storage';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { t } from '@/text';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 
 /**
  * Who another Session is, as a transcript names it: its title and its agent mark. One owner for every
@@ -11,8 +12,10 @@ import { t } from '@/text';
  */
 export function useTranscriptSessionIdentity(sessionId: string | null, serverId: string | null) {
   const session = useSessionDisplayNameSource(sessionId ?? '', serverId);
+  const isSessionVisible = useSessionRecordingVisibility();
+  const visibleSession = sessionId && isSessionVisible({ sessionId, serverId }) ? session : null;
   return {
-    name: session ? getSessionName(session, serverId) : t('message.provenanceSession'),
-    agentId: resolveAgentIdFromFlavor(session ? readSessionOwnerMetadataView(session)?.flavor ?? null : null),
+    name: visibleSession ? getSessionName(visibleSession, serverId) : t('message.provenanceSession'),
+    agentId: resolveAgentIdFromFlavor(visibleSession ? readSessionOwnerMetadataView(visibleSession)?.flavor ?? null : null),
   };
 }

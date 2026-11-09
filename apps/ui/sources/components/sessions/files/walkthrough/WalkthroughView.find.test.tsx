@@ -33,6 +33,9 @@ vi.mock('@/components/ui/code/diff/DiffViewer', () => ({
 vi.mock('@/components/markdown/MarkdownView', () => ({
   MarkdownView: () => null,
 }));
+// The web reading mounts code through the web lazy-mount owner; jsdom has no IntersectionObserver, so it mounts at once
+// unless a test drives intersection itself.
+vi.mock('@/components/ui/performance/LazyMountOnScreen', async () => await import('@/components/ui/performance/LazyMountOnScreen.web'));
 
 const { WalkthroughView } = await import('./WalkthroughView');
 
@@ -154,6 +157,92 @@ describe('Find in the walkthrough reading', () => {
       );
     } finally {
       await view.unmount();
+    }
+  });
+});
+
+describe('A large walkthrough reading', () => {
+  const FILE_COUNT = 215;
+  const pathOf = (index: number) => `src/gen/file-${String(index).padStart(4, '0')}.ts`;
+  const stops = reading.stops.map((stop, stopIndex) => stopIndex !== 0 ? stop : {
+      ...stop,
+      files: Array.from({ length: FILE_COUNT }, (_, index) => ({
+        path: pathOf(index),
+        previousPath: null,
+        changeKind: 'modified',
+        unifiedDiff: `@@ -1,1 +1,1 @@\n-old ${index}\n+needle-${String(index).padStart(4, '0')}\n`,
+        rangeLabel: 'L1',
+        added: 1,
+        removed: 1,
+        unavailableReason: null,
+      })),
+    });
+  const large = {
+    ...reading,
+    stops,
+    code: { stops, others: reading.others },
+  };
+
+  it('watches the whole reserved body, so a card in view mounts even when its top is scrolled away', async () => {
+    const previous = (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver;
+    const watched: Element[] = [];
+    // The browser boundary: a placeholder with no height of its own is clipped away by the scroller once its top
+    // is above the viewport, so only a placeholder that fills the card body can intersect while the body is in view.
+    class RecordingIntersectionObserver {
+      observe(node: Element) { watched.push(node); }
+      disconnect() {}
+    }
+    Object.assign(globalThis, { IntersectionObserver: RecordingIntersectionObserver });
+    const view = await mount(
+      <WalkthroughView reading={large} scopeLabel="This session" layout="wide" findSurfaceId="walkthrough:test" />,
+    );
+    try {
+      const card = view.container.querySelector(`[data-testid="walkthrough-hunk-${pathOf(0)}"]`);
+      const body = card?.children[1];
+      const cardPlaceholders = watched.filter((node) => node.closest('[data-testid^="walkthrough-hunk-src/gen/"]'));
+      expect(cardPlaceholders).toHaveLength(FILE_COUNT);
+      expect(body?.firstElementChild).toBe(cardPlaceholders[0]);
+      expect((cardPlaceholders[0] as HTMLElement).style.minHeight).toBe('inherit');
+    } finally {
+      await view.unmount();
+      Object.assign(globalThis, { IntersectionObserver: previous });
+    }
+  });
+
+  it('mounts code only for cards near the viewport, and mounts the card Find lands on', async () => {
+    const previous = (globalThis as { IntersectionObserver?: unknown }).IntersectionObserver;
+    const observed: Array<() => void> = [];
+    // The browser's viewport-intersection boundary: the test decides which placeholders are near the viewport.
+    class ControlledIntersectionObserver {
+      constructor(private readonly callback: (entries: readonly Readonly<{ isIntersecting: boolean }>[]) => void) {}
+      observe() { observed.push(() => this.callback([{ isIntersecting: true }])); }
+      disconnect() {}
+    }
+    Object.assign(globalThis, { IntersectionObserver: ControlledIntersectionObserver });
+    const view = await mount(
+      <WalkthroughView reading={large} scopeLabel="This session" layout="wide" findSurfaceId="walkthrough:test" />,
+    );
+    const cards = () => view.container.querySelectorAll('[data-testid^="walkthrough-hunk-src/gen/"]');
+    const mounted = () => view.container.querySelectorAll('[data-testid^="diff:src/gen/"]');
+    try {
+      // Every file's card (path, counts, Find count) is there; no code is drawn before it nears the viewport.
+      expect(cards()).toHaveLength(FILE_COUNT);
+      expect(mounted()).toHaveLength(0);
+      const VIEWPORT_CARDS = 3;
+      await act(async () => { observed.slice(0, VIEWPORT_CARDS).forEach((intersect) => intersect()); });
+      expect(Array.from(mounted(), (node) => node.getAttribute('data-testid'))).toEqual(
+        [0, 1, 2].map((index) => `diff:${pathOf(index)}`),
+      );
+      // Find reaches code that was never drawn and draws the card it lands on, aimed at the match.
+      let result: Awaited<ReturnType<typeof find>> | undefined;
+      await act(async () => { result = await find({ op: 'set', query: 'needle-0150' }); });
+      expect(result).toMatchObject({ ok: true, result: { status: 'results', total: 1, current: 1 } });
+      const target = view.container.querySelector(`[data-testid="diff:${pathOf(150)}"]`);
+      expect(target?.getAttribute('data-target')).not.toBe('');
+      expect(mounted()).toHaveLength(VIEWPORT_CARDS + 1);
+    } finally {
+      await view.unmount();
+      Object.assign(globalThis, { IntersectionObserver: previous });
     }
   });
 });

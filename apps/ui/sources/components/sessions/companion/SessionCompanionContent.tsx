@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { applySessionCompanionHumanIntent, showSessionCompanionItem } from './presentation/sessionCompanionHumanAction';
 import { buildSessionPresentationNoticeKeyPrefix } from './presentation/sessionCompanionPresentationAdapter';
+import { useSessionVisualPresentationActive } from '@/components/sessions/board/useSessionVisualPresentationActive';
 import { Dimensions, ScrollView, View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -27,9 +28,8 @@ import type { CallerHostedHtmlRuntime } from '@/components/ui/surfaces/hostedHtm
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { SessionBoardBinding } from '@/components/sessions/board/observeSessionBoard';
 import { useMountedSessionBoardController } from '@/components/sessions/board/SessionBoardControllerProvider';
+
 import { t } from '@/text';
-import type { SessionBoardPrimaryMountResolver } from '@/sync/domains/session/board';
-import { resolveSessionBoardExecutableCurrentness } from '@/sync/domains/session/board';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
@@ -177,8 +177,6 @@ export type SessionCompanionContentProps = Readonly<{
     controller: SessionCompanionController;
     /** Exact Board binding; Summary remains useful while this is unavailable. */
     boardBinding: SessionCompanionBoardBinding | null;
-    /** The ONE shell-derived executable placement resolver for every exact item. */
-    resolvePrimaryHost: SessionBoardPrimaryMountResolver;
     /** Exact Session-scoped plugin projection/currentness for installed items. */
     pluginRuntime?: SessionPluginRuntimeState;
     /** Canonical exact-Session caller-HTML authority from the mounted Session host. */
@@ -230,8 +228,8 @@ function inertSessionSummaryDestinations(
  * The ordered Companion body, shared by the wide rail and the mobile screen.
  *
  * Every widget renders through the sibling-owned `SessionWidgetHost` with the
- * exact Session id, the canonical Session plugin runtime and the shell-derived
- * primary mount. The Companion contains no renderer switch, Host API bridge,
+ * exact Session id, the canonical Session plugin runtime and local body demand.
+ * The Companion contains no renderer switch, Host API bridge,
  * widget repository or capability decision of its own.
  */
 export const SessionCompanionContent = React.memo(function SessionCompanionContent(
@@ -276,7 +274,8 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
     const { controller } = props;
     const contentAddress = React.useMemo(() => normalizeSessionAddress(props.serverId ?? null, props.session.id), [props.serverId, props.session.id]);
     const acquireBoardContent = useMountedSessionBoardController(contentAddress)?.acquireContent;
-    const needsBoardItems = !props.measurementOnly && controller.preference.items.some(item => item.kind === 'widget');
+    const presented = useSessionVisualPresentationActive();
+    const needsBoardItems = presented && !props.measurementOnly && controller.preference.items.some(item => item.kind === 'widget');
     React.useEffect(() => {
         if (!needsBoardItems) return;
         return acquireBoardContent?.();
@@ -620,21 +619,12 @@ export const SessionCompanionContent = React.memo(function SessionCompanionConte
                 frame="section"
                 frameStyle={frameStyle}
                 headerAccessory={headerAccessory}
-                // A cold sizing pass is deliberately not a visible-host
-                // candidate. `null` forces installed and hosted sources through
-                // their incumbent inert preview path, so no plugin frame, Host
-                // API subscription or hosted document is instantiated twice.
-                primaryHost={props.measurementOnly
-                    ? null
-                    : props.resolvePrimaryHost(entry.ref.widgetId)}
+                bodyActive={!props.measurementOnly}
                 density={full ? 'full' : 'compact'}
                 expanded={full}
                 // Editing and deleting the shared record happen on the Board; the
                 // Companion keeps a reference and offers only its own actions.
                 canEdit={false}
-                executableCurrentness={board
-                    ? resolveSessionBoardExecutableCurrentness(board, entry.item, pluginRuntime)
-                    : 'unverified'}
                 heightBounds={{ min: SESSION_COMPANION_WIDGET_BODY_MIN_HEIGHT_PX, max: 520 }}
                 {...(bodyPresented ? {} : { deferBody: true })}
                 resolveSourceAvailability={resolveSourceAvailability}

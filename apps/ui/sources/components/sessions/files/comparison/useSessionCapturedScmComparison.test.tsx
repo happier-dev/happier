@@ -457,7 +457,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
         const screen = await renderScreen(<KeyboardShortcutProvider handlers={{}}><Review /></KeyboardShortcutProvider>);
         const rows = () => screen.findAllByType(DiffViewer);
         await vi.waitFor(() => expect(rows()).toHaveLength(1));
-        expect(rows()[0]!.props.hunks.numberTotal).toBe(2);
+        expect(rows()[0]!.props.hunks.numbering.total()).toBe(2);
         await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'j', code: 'KeyJ', bubbles: true })); });
         // The recycler boundary has no viewport: report the rows revealed by the navigation scroll.
         const { DiffFilesListView } = await import('@/components/ui/code/diff/DiffFilesListView');
@@ -466,7 +466,7 @@ describe('Files reads the canonical captured comparison through authenticated RP
             changed: [],
         }));
         await vi.waitFor(() => expect(rows()).toHaveLength(2));
-        expect(rows().map(row => row.props.hunks.numberOffset)).toEqual([0, 1]);
+        expect(rows().map(row => row.props.hunks.numbering.offset())).toEqual([0, 1]);
         expect(rows().map(row => row.props.hunks.currentIndex)).toEqual([null, 0]);
         await act(async () => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', code: 'KeyR', bubbles: true })); });
         await vi.waitFor(() => expect(value).toMatchObject({ reviewedChangeKeys: [keys[1]] }));

@@ -1,17 +1,18 @@
-import { getMentionActionChipPlacement } from './agentInputActionChipPlacements';
 import * as React from 'react';
-import { Pressable } from 'react-native';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { AgentInputChipLabel } from '@/components/sessions/agentInput/components/AgentInputChipLabel';
 import { Icon } from '@/components/ui/icons/Icon';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
+import { getMentionActionChipPlacement } from './agentInputActionChipPlacements';
+export { getMentionActionChipPlacement } from './agentInputActionChipPlacements';
 
 import {
   AGENT_INPUT_CHIP_ICON_SIZE_PX,
   AGENT_INPUT_CHIP_ICON_STYLE,
   AGENT_INPUT_MENU_ICON_SIZE_PX,
 } from './agentInputChipIconMetrics';
+import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
 
 /**
  * `@` as a control (lab T2-A composer): the same mention the person can type, offered to someone who
@@ -53,15 +54,14 @@ export function createMentionActionChip(
       countTextStyle,
       chipAnchorRef,
     }) => (
-      <Pressable
+      <AgentInputRailChip
         ref={chipAnchorRef}
         testID="agent-input-mention-chip"
         accessibilityRole="button"
         accessibilityLabel={label}
         disabled={disabled}
-        onPress={disabled ? undefined : onMention}
-        hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-        style={({ pressed }) => chipStyle(Boolean(pressed))}
+        onPress={onMention}
+        style={chipStyle}
       >
         {normalizeNodeForView(
           <Icon
@@ -78,7 +78,7 @@ export function createMentionActionChip(
             countTextStyle={countTextStyle}
           />
         ) : null}
-      </Pressable>
+      </AgentInputRailChip>
     ),
   };
 }

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
 
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -68,7 +69,7 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: 10,
         borderWidth: 1,
         borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.base,
+        backgroundColor: glassContentFill(theme.colors.surface.base, theme.colors, { nested: true }),
         padding: theme.space.s12,
         gap: theme.space.s6,
     },

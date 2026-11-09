@@ -19,9 +19,10 @@ import {
     type DaemonPluginUiResourceWatchCloseResponse,
     type DaemonPluginUiResourceWatchNextResponse,
     type DaemonPluginUiResourceWatchOpenResponse,
-    PLUGIN_TRANSCRIPT_ACTIVITY_CONTENT_TYPE_V1,
     PluginProjectionV2Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+    PLUGIN_TRANSCRIPT_ACTIVITY_CONTENT_TYPE_V1} from '@happier-dev/protocol/plugins/contributions/ui/transcriptActivities';
 
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 
@@ -131,8 +132,6 @@ function channelsProjectionFromDaemonEntry(): PluginUiProjectionModel {
         installedPackagesById: {},
         agentsById: {},
         actionsById: {},
-
-
         resourcesById: {},
         settingsById: {},
         familiesById: {

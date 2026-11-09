@@ -70,7 +70,7 @@ describe('Session right-panel Browser source lifetime', () => {
             pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION,
             pluginBrowserProjection: EMPTY_PLUGIN_BROWSER_PROJECTION,
             accountLifetime,
-            phase: 'current', interactionEnabled: true, machineId: machine.id, serverId: null, platform: 'web',
+            phase: 'current', interactionEnabled: true, machineId: machine.id, serverId, platform: 'web',
         } satisfies PluginUiProjectionCurrentness;
         const tab = createBrowserViewDetailsTab({
             target: { kind: 'externalUrl', targetId: 'viewer-preview', url: 'https://preview.example.test/' },
@@ -83,7 +83,7 @@ describe('Session right-panel Browser source lifetime', () => {
             return null;
         }
         function Harness(props: Readonly<{ presentation: 'pane' | 'parked' | 'phone' }>): React.ReactElement {
-            const runtime = useSessionBrowserContextRuntime({ enabled: true, sessionId: session.id, scopeKey: session.id });
+            const runtime = useSessionBrowserContextRuntime({ enabled: true, sessionId: session.id, scopeKey: session.id, accountScope: accountLifetime?.scope });
             return <AppPaneProvider><BrowserPresentationRetentionProvider><SessionViewerSourceAccountScopeProvider accountLifetime={accountLifetime}>
                 <DestinationInstanceHost tabId="viewer-destination" ref={{ kind: 'session', params: { id: session.id } }} pathname={`/session/${session.id}`} focused visible navigation={navigation}>
                     <SessionBrowserContextRuntimeProvider runtime={runtime}>

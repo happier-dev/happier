@@ -45,8 +45,8 @@ export function resolveProjectGroupHeaderMenuItems(input: Readonly<{
         ...(input.canAddFolder ? [{
             id: 'addFolder',
             testID: 'session-folder-add-root',
-            title: t('sessionsList.addFolder'),
-            icon: <Icon name="folder-open" size={16} color={input.actionIconColor} />,
+            title: t('sessionsList.newSection'),
+            icon: <Icon name="plus" size={16} color={input.actionIconColor} />,
         } satisfies DropdownMenuItem] : []),
         ...(input.canRename ? [{
             id: 'rename',

@@ -2,17 +2,27 @@
 import 'fake-indexeddb/auto';
 import React from 'react';
 import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
-import { AccountApiTokenSelfV1Schema, ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1, FeaturesResponseSchema, PendingLocalIdSchema, PendingRequestedActionV1Schema, SessionCurrentProjectionRecordV1Schema, SessionStoredMessageContentSchema, SessionSpawnNewInputV2Schema, type SessionSpawnNewInputV2, type SessionSpawnNewResultV1 } from '@happier-dev/protocol';
+import { AccountApiTokenSelfV1Schema, ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1} from '@happier-dev/protocol/auth/accountApiTokens';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { PendingLocalIdSchema} from '@happier-dev/protocol/sessions/pending/pendingLocalId';
+import { PendingRequestedActionV1Schema} from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
+import { SessionCurrentProjectionRecordV1Schema} from '@happier-dev/protocol/sessions/listing/response';
+import { SessionStoredMessageContentSchema} from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { SessionSpawnNewInputV2Schema, type SessionSpawnNewInputV2} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { sealEncryptedDataKeyEnvelopeV1} from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { type SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { projectSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { createDeferred, flushHookEffects, renderHook } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 
 import type { SavedSecretReferenceResolution } from '@/sync/store/settings/savedSecretCatalogSnapshot';
 
@@ -54,7 +64,7 @@ vi.mock('@/sync/runtime/getSyncSingleton', () => ({
 
 type NewSessionHarnessStorageState = ReturnType<(typeof import('@/sync/domains/state/storageStore'))['storage']['getState']>;
 
-function spawnSuccess(sessionId: string): SessionSpawnNewResultV1 {
+function spawnSuccess(sessionId: string): Extract<SessionSpawnNewResultV1, { type: 'success' }> {
   return {
     type: 'success',
     disposition: 'created',
@@ -212,6 +222,16 @@ async function embeddedHost(input: Readonly<{
   };
 }
 
+// Link the real Session/Sync/presentation graph during collection, before timed
+// contracts and fake timers. Cold linking must not outlive a setup hook.
+restoreBrowserLocks = installWebLockManagerMock().restore;
+harness = await createHarness();
+await import('@/components/sessions/shell/embedded/EmbeddedSessionNewChat');
+await import('@/embed/runtime/createEmbedSessionRuntime');
+await import('@/embed/encryption/createEmbedEncryption');
+const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+await prepareSessionDraftPersistenceStorage();
+
 describe('useCreateNewSession (embedded new chat)', () => {
   it('keeps a CLI setup failure informational when the host presents the chat in place', async () => {
     const { useCreateNewSession, storageState, modalAlertSpy } = await setupHarness();
@@ -231,15 +251,6 @@ describe('useCreateNewSession (embedded new chat)', () => {
     expect(params.router.push).not.toHaveBeenCalled();
     await hook.unmount();
   });
-  beforeAll(async () => {
-    restoreBrowserLocks = installWebLockManagerMock().restore;
-    harness = await createHarness();
-    // This real presentation host is used by every case. Load its screen graph
-    // during canonical harness setup, not inside the first timed contract.
-    await import('@/components/sessions/shell/embedded/EmbeddedSessionNewChat');
-    const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
-    await prepareSessionDraftPersistenceStorage();
-  }, 180_000);
   afterAll(() => {
     restoreBrowserLocks?.();
     syncSingletonBridge.current = null;
@@ -254,10 +265,92 @@ describe('useCreateNewSession (embedded new chat)', () => {
     const { resetRuntimeFetch } = await import('@/sync/http/client');
     resetRuntimeFetch();
     vi.useRealTimers();
+    vi.unstubAllGlobals();
     vi.clearAllMocks();
   });
 
-  it('admits a host-bound machine without an Account record, then sends through canonical custody before handoff', async () => {
+  it('uses the spawn-only child projection for bound-machine admission and model choices', async () => {
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { createEmbedSessionRuntime } = await import('@/embed/runtime/createEmbedSessionRuntime');
+    const { createEmbedEncryption } = await import('@/embed/encryption/createEmbedEncryption');
+    const { setRuntimeFetch } = await import('@/sync/http/client');
+    const endpointUrl = 'https://server-a';
+    const agentTargetKey = 'agent:happier.agent.codex/codex';
+    storage.getState().applyMachines([], true, { sourceServerId: 'server-a' });
+    setRuntimeFetch(async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path === ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1) return new Response(JSON.stringify(AccountApiTokenSelfV1Schema.parse({
+        accountId: 'account-a', accountEncryptionMode: 'plain',
+        credentialId: '00000000-0000-4000-8000-000000000001', parentTokenId: null, expiresAt: null,
+        grant: { v: 1, actions: { families: [], ids: ['session.spawn_new'] },
+          targets: { sessions: [], machines: ['m1'] }, approve: false, origins: ['https://parent.example'],
+          models: [{ agentTargetKey, providerConnectionId: null, modelId: 'gpt-6-luna' }], permissionModes: null,
+          create: { machineId: 'm1', agentTargetKey, directory: 'managed',
+            placement: { folderId: null, tagIds: [] } } },
+        embedConfig: { v: 1, ui: { attachments: true }, newChat: { enabled: true },
+          organization: { folderId: null, tagIds: [] }, style: null },
+      })));
+      if (path === '/v1/actions/action.options.resolve') return new Response(JSON.stringify({ v: 1,
+        actionId: 'action.options.resolve', execution: { ok: true, result: { actionId: 'session.spawn_new',
+          fieldPath: 'modelSelection', optionsSourceId: 'agents.models.available', options: [
+            { value: 'gpt-6-luna', label: 'GPT-6 Luna', description: 'Fast model' },
+          ] } } }));
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    const runtime = createEmbedSessionRuntime({ encryption: await createEmbedEncryption(), endpointUrl });
+    runtimeCleanups.push(runtime.dispose);
+    runtime.attachBridge({ requestCredential: async () => { throw new Error('not used'); }, sessionCreated: () => {} });
+    await runtime.initialize({ parentOrigin: 'https://parent.example', credential: {
+      token: 'creation-child', expiresAt: '2100-01-01T00:00:00.000Z',
+    } });
+    const creation = runtime.getSnapshot().creationConfig;
+    if (!creation?.machineId || !creation.agentTargetKey) throw new Error('Missing admitted creation projection');
+    const host: NewSessionEmbeddedHost = {
+      params: { draftId: creation.draftId, machineId: creation.machineId,
+        backendTargetKey: creation.agentTargetKey, spawnServerId: endpointUrl },
+      setParams: () => undefined,
+      openDraft: () => undefined,
+      onHandedOff: () => undefined,
+      demanded: true,
+      executeSpawnAction: async () => ({ ok: true, result: { type: 'error', code: 'agent_cli_missing', agentId: 'codex', retryable: false } }),
+      createdSessionPresentation: 'inPlace',
+      creationProfile: { hostBindsMachine: true, draftScope: creation.draftScope, machineId: creation.machineId,
+        agentTargetKey: creation.agentTargetKey, allowedModels: creation.allowedModels,
+        modelCatalog: creation.modelCatalog, permissionModes: creation.permissionModes, attachments: creation.attachments },
+    };
+    const { NewSessionEmbeddedHostProvider } = await import('@/components/sessions/new/navigation/newSessionHost');
+    const { useNewSessionScreenModel } = await import('./useNewSessionScreenModel');
+    const hook = await renderHook(() => useNewSessionScreenModel({ draftId: creation.draftId, fixedDirectoryIntent: { kind: 'managed' } }), {
+      wrapper: ({ children }: React.PropsWithChildren) => React.createElement(NewSessionEmbeddedHostProvider, { host, children }),
+    });
+    await flushHookEffects({ cycles: 8, turns: 4 });
+    const model = hook.getCurrent();
+    expect(model.variant).toBe('simple');
+    if (model.variant !== 'simple') throw new Error('Expected embedded simple composer');
+    expect(model.simpleProps.connectionStatus).toBeUndefined();
+    expect(model.simpleProps.canCreate).toBe(true);
+    const picker = model.simpleProps.modelPickerProps;
+    expect(picker).toMatchObject({
+      nativeModels: [{ value: 'gpt-6-luna', label: 'GPT-6 Luna', description: 'Fast model' }],
+    });
+    expect(picker?.probe?.failed).not.toBe(true);
+    const { buildSessionModelPickerSections } = await import('@/components/sessions/modelPicker/buildSessionModelPickerSections');
+    if (!picker?.declarationContext) throw new Error('Expected the creation model picker declaration context');
+    const grantedOption = buildSessionModelPickerSections({
+      ...picker,
+      declarationContext: picker.declarationContext,
+      hiddenNativeModelKeys: picker.hiddenNativeModelKeys ?? new Set(),
+    }).flatMap((section) => section.options).find((option) => option.label === 'GPT-6 Luna');
+    expect(grantedOption).toBeDefined();
+    expect(grantedOption?.disabled).not.toBe(true);
+    await hook.unmount();
+  });
+
+  it.each([
+    { label: 'direct create result', createResult: 'direct', encryptionMode: 'plain' },
+    { label: 'recovered create result', createResult: 'recovered', encryptionMode: 'plain' },
+    { label: 'cold E2EE worker startup failure', createResult: 'direct', encryptionMode: 'e2ee' },
+  ] as const)('admits a host-bound machine and sends once through canonical custody ($label)', async ({ createResult, encryptionMode }) => {
     const { useCreateNewSession, sessionSpawnNewActionBoundarySpy, storageState, modalAlertSpy } = await setupHarness();
     const { createEmbedSessionRuntime } = await import('@/embed/runtime/createEmbedSessionRuntime');
     const { createEmbedEncryption } = await import('@/embed/encryption/createEmbedEncryption');
@@ -265,8 +358,43 @@ describe('useCreateNewSession (embedded new chat)', () => {
     const { storage } = await import('@/sync/domains/state/storageStore');
     storage.getState().applyMachines([], true, { sourceServerId: 'server-a' });
     const endpointUrl = 'https://server-a';
+    const embedEncryption = await createEmbedEncryption();
+    const sessionDataKey = new Uint8Array(32).fill(61);
+    const sessionKey = encryptionMode === 'e2ee' ? encodeBase64(sealEncryptedDataKeyEnvelopeV1({
+      dataKey: sessionDataKey,
+      recipientPublicKey: decodeBase64(embedEncryption.embedPublicKey, 'base64url'),
+      randomBytes: (length) => new Uint8Array(length).fill(62),
+    }), 'base64') : undefined;
+    const sessionMetadata = encryptionMode === 'plain'
+      ? JSON.stringify({ path: '/managed', host: 'test', machineId: 'm1', flavor: 'codex' })
+      : await (async () => {
+          const { Encryption } = await import('@/sync/encryption/encryption');
+          const writer = await Encryption.create(new Uint8Array(32).fill(63));
+          await writer.initializeSessions(new Map([['embed-created', sessionDataKey]]));
+          const ciphertext = await writer.getSessionEncryption('embed-created')!.encryptRaw({
+            path: '/managed', host: 'test', machineId: 'm1', flavor: 'codex',
+          });
+          writer.removeSessionEncryption('embed-created');
+          return ciphertext;
+        })();
+    const stalledWorkers: Array<{ terminated: boolean }> = [];
+    if (encryptionMode === 'e2ee') {
+      class StalledStartupWorker {
+        onmessage: ((event: MessageEvent) => void) | null = null;
+        onerror: ((event: ErrorEvent) => void) | null = null;
+        onmessageerror: (() => void) | null = null;
+        terminated = false;
+        constructor() { stalledWorkers.push(this); }
+        postMessage() {}
+        terminate() { this.terminated = true; }
+      }
+      vi.stubGlobal('Worker', StalledStartupWorker);
+      embedEncryption.encryption.configureNativeCryptoWorker({
+        routing: { mode: 'auto', minPayloadBytes: 0, timeoutMs: 100 },
+      });
+    }
     const creationSelf = AccountApiTokenSelfV1Schema.parse({
-      accountId: 'account-a', accountEncryptionMode: 'plain',
+      accountId: 'account-a', accountEncryptionMode: encryptionMode,
       credentialId: '00000000-0000-4000-8000-000000000001', parentTokenId: null, expiresAt: null,
       grant: { v: 1, actions: { families: [], ids: ['session.spawn_new'] },
         targets: { sessions: [], machines: ['m1'] }, approve: false, origins: ['https://parent.example'],
@@ -278,13 +406,16 @@ describe('useCreateNewSession (embedded new chat)', () => {
     });
     const sessionSelf = AccountApiTokenSelfV1Schema.parse({ ...creationSelf,
       credentialId: '00000000-0000-4000-8000-000000000002', parentTokenId: creationSelf.credentialId,
-      grant: { ...creationSelf.grant, create: null,
-        actions: { families: [], ids: ['session.transcript.get', 'session.message.send'] },
+      grant: { ...creationSelf.grant, create: null, approve: true,
+        actions: { families: [], ids: ['session.transcript.get', 'session.message.send', 'approval.request.list', 'approval.request.get'] },
         targets: { sessions: ['embed-created'], machines: [] } },
     });
     const spawnRequests: Record<string, unknown>[] = [];
+    let operationReads = 0;
     const pendingRequests: Readonly<Record<string, unknown>>[] = [];
     const pendingRows: Readonly<Record<string, unknown>>[] = [];
+    const approvalInventory = createDeferred<void>();
+    let approvalInventoryReads = 0;
     setRuntimeFetch(async (url, init) => {
       const path = new URL(String(url)).pathname;
       const json = (value: unknown) => new Response(JSON.stringify(value));
@@ -295,18 +426,51 @@ describe('useCreateNewSession (embedded new chat)', () => {
           optionsSourceId: null, options: [] } } });
       if (path === '/v1/actions/session.spawn_new') {
         spawnRequests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        // The HTTP Action boundary returns the public sectionId projection; the UI owner reads it back to folderId.
         return json({ v: 1, actionId: 'session.spawn_new', execution: { ok: true,
-          result: { ...spawnSuccess('embed-created'), initialInput: { status: 'notRequested' } } } });
+          result: createResult === 'direct'
+            ? projectSessionSpawnNewActionResultV1({ ...spawnSuccess('embed-created'), initialInput: { status: 'notRequested' } })
+            : { type: 'pending', outcome: 'accepted', retryWithSameCreationKey: true,
+              operation: { serverId: endpointUrl, machineId: 'm1', operationId: 'embed-spawn' } } } });
       }
-      if (path === '/v1/features/authenticated') return json(FeaturesResponseSchema.parse({ features: {},
+      if (path === '/v1/actions/action.operations.get') {
+        operationReads += 1;
+        return json({ v: 1, actionId: 'action.operations.get', execution: { ok: true, result: {
+          kind: 'found', operation: { version: 1, operationId: 'embed-spawn', revision: 2,
+            actionId: 'session.spawn_new', state: 'succeeded', scope: { accountId: 'account-a', machineId: 'm1' },
+            title: 'Create session', createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'supported',
+            result: projectSessionSpawnNewActionResultV1({ ...spawnSuccess('embed-created'), initialInput: { status: 'notRequested' } }),
+          },
+        } } });
+      }
+      // Session-bound credentials cannot read the Account-only descriptor.
+      // Public discovery still owns the pending-input protocol capability.
+      if (path === '/v1/features/authenticated') return new Response(null, { status: 403 });
+      if (path === '/v1/features') return json(FeaturesResponseSchema.parse({ features: {},
         capabilities: { session: { pendingInput: { protocolVersion: 3 } } } }));
+      if (path === '/v1/actions/approval.request.list') {
+        approvalInventoryReads += 1;
+        if (createResult === 'direct') await approvalInventory.promise;
+        return json({
+        v: 1,
+        actionId: 'approval.request.list',
+        execution: {
+          ok: true,
+          result: {
+            items: [],
+            nextCursor: null,
+            queryPlan: { kind: 'approval_artifact_header_scan', hydratedTranscripts: false },
+          },
+        },
+        });
+      }
       if (path === '/v2/cursor') return json({ cursor: 0 });
       // Frame hydration negotiates the current detail projection. Mirror that
       // HTTP contract rather than feeding the real reader a legacy detail row.
       if (path === '/v2/sessions/embed-created') return json({ session: SessionCurrentProjectionRecordV1Schema.parse({
         id: 'embed-created', createdAt: 1, updatedAt: 1, seq: 0, active: false, activeAt: 0,
-        encryptionMode: 'plain', dataEncryptionKey: null, metadataLayoutVersion: 0,
-        metadataVersion: 1, metadata: JSON.stringify({ path: '/managed', host: 'test', machineId: 'm1', flavor: 'codex' }),
+        encryptionMode, dataEncryptionKey: null, metadataLayoutVersion: 0,
+        metadataVersion: 1, metadata: sessionMetadata,
         agentStateVersion: 0, agentState: null, share: null,
         effectiveAccess: { v: 1, level: 'edit', sources: [],
           capabilities: createSessionAccessFixture('edit', { editSessionRecords: false }).capabilities },
@@ -318,9 +482,12 @@ describe('useCreateNewSession (embedded new chat)', () => {
         if (init?.method === 'POST') {
           const body = JSON.parse(String(init.body)) as Record<string, unknown>;
           pendingRequests.push(body);
+          const storedContent = body.content ?? (typeof body.ciphertext === 'string'
+            ? { t: 'encrypted', c: body.ciphertext }
+            : body.content);
           const pending = {
             localId: PendingLocalIdSchema.parse(body.localId),
-            content: SessionStoredMessageContentSchema.parse(body.content),
+            content: SessionStoredMessageContentSchema.parse(storedContent),
             messageRole: 'user', requestedAction: PendingRequestedActionV1Schema.parse(body.requestedAction),
             status: 'queued', deliveryState: null, position: pendingRows.length,
             createdAt: Date.now(), updatedAt: Date.now(), discardedAt: null, discardedReason: null,
@@ -332,9 +499,18 @@ describe('useCreateNewSession (embedded new chat)', () => {
       }
       throw new Error(`Unexpected request: ${path}`);
     });
-    const runtime = createEmbedSessionRuntime({ encryption: await createEmbedEncryption(), endpointUrl });
+    const runtimeNavigatePendingLocalIds: unknown[] = [];
+    const runtime = createEmbedSessionRuntime({
+      encryption: embedEncryption,
+      endpointUrl,
+      navigate: (sessionId) => {
+        if (sessionId) runtimeNavigatePendingLocalIds.push(...pendingRows.map((row) => row.localId));
+      },
+    });
     runtimeCleanups.push(runtime.dispose);
-    const requestCredential = vi.fn(async (_request: import('@happier-dev/protocol/embed').EmbedCredentialRequestV1) => ({ token: 'session-child', expiresAt: '2100-01-01T00:00:00.000Z' }));
+    const requestCredential = vi.fn(async (_request: import('@happier-dev/protocol/embed').EmbedCredentialRequestV1) => ({
+      token: 'session-child', expiresAt: '2100-01-01T00:00:00.000Z', ...(sessionKey ? { sessionKey } : {}),
+    }));
     runtime.attachBridge({ requestCredential, sessionCreated: () => {} });
     await runtime.initialize({ parentOrigin: 'https://parent.example', credential: {
       token: 'creation-child', expiresAt: '2100-01-01T00:00:00.000Z',
@@ -353,17 +529,29 @@ describe('useCreateNewSession (embedded new chat)', () => {
     const handedOffPendingLocalIds: unknown[] = [];
     vi.mocked(params.router.replace).mockImplementation(() => {
       handedOffPendingLocalIds.push(...pendingRows.map((row) => row.localId));
+      runtime.presentCreatedSession('embed-created');
     });
-    const host = await embeddedHost({ onCreate, onHandedOff: vi.fn() });
+    const host = await embeddedHost({
+      onCreate,
+      onHandedOff: () => undefined,
+    });
     const { NewSessionEmbeddedHostProvider } = await import('@/components/sessions/new/navigation/newSessionHost');
     const { useNewSessionAttachmentsController } = await import('@/components/sessions/new/attachments/useNewSessionAttachmentsController');
+    const { useServerCredentialAccountScopeResolution } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
     // The production Send controller intentionally has a void entrypoint and
     // defers creation on web. Observe its forwarded real promise and public
     // first-turn context; the controller's original callback still owns Send.
     const creationCompleted = createDeferred<void>();
     let firstTurnLocalId: string | undefined;
     const hook = await renderHook(() => {
-      const creation = useCreateNewSession(params);
+      // The real screen gains its target Account binding when the host admits
+      // the newly created Session. That is the same Account as the draft, not
+      // retirement of the Send already held by this launch.
+      React.useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot);
+      const targetScope = useServerCredentialAccountScopeResolution(endpointUrl);
+      const creation = useCreateNewSession({ ...params,
+        targetAccountScope: targetScope.kind === 'bound' ? targetScope.scope : null,
+      });
       const attachments = useNewSessionAttachmentsController({
         isCreating: false, promptStore: params.promptStore,
         handleCreateSession: (options) => {
@@ -384,9 +572,18 @@ describe('useCreateNewSession (embedded new chat)', () => {
     }, {
       wrapper: ({ children }: React.PropsWithChildren) => React.createElement(NewSessionEmbeddedHostProvider, { host, children }),
     });
+    if (encryptionMode === 'e2ee') vi.useRealTimers();
     await act(async () => {
       hook.getCurrent().handleSend();
-      await vi.advanceTimersByTimeAsync(0);
+      if (encryptionMode === 'plain') await vi.advanceTimersByTimeAsync(0);
+      if (createResult === 'direct') {
+        try {
+          // Approval inventory can remain in flight without withholding the
+          // authored first turn. No wall-clock performance assertion is needed.
+          await vi.waitFor(() => expect(pendingRequests).toHaveLength(1));
+          expect(approvalInventoryReads).toBe(1);
+        } finally { approvalInventory.resolve(); }
+      }
       await creationCompleted.promise;
     });
     await flushHookEffects({ cycles: 8, turns: 4 });
@@ -409,9 +606,16 @@ describe('useCreateNewSession (embedded new chat)', () => {
       expect.objectContaining({ text: 'Qualify this lead', localId: firstTurnLocalId }),
     ]));
     expect(spawnRequests).toHaveLength(1);
+    expect(operationReads).toBe(createResult === 'recovered' ? 1 : 0);
     expect(spawnRequests[0].input).not.toHaveProperty('initialInput');
     expect(pendingRequests).toEqual([expect.objectContaining({ localId: firstTurnLocalId })]);
+    if (encryptionMode === 'e2ee') {
+      expect(pendingRequests[0]).toEqual(expect.objectContaining({ ciphertext: expect.any(String) }));
+      expect(pendingRequests[0]?.ciphertext).not.toBe('');
+      expect(stalledWorkers).toEqual([expect.objectContaining({ terminated: true })]);
+    }
     expect(handedOffPendingLocalIds).toEqual([firstTurnLocalId]);
+    expect(runtimeNavigatePendingLocalIds).toEqual([firstTurnLocalId]);
     // The frame's admitted Account, not saved ambient credentials, binds the
     // reached existing-session composer repository and attachment owner.
     const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
@@ -439,7 +643,7 @@ describe('useCreateNewSession (embedded new chat)', () => {
     const retired = vi.fn();
     binding?.onRetire(retired);
     const admittedContext = sync.getEmbedSessionRequestContext();
-    const renewalCredential = createDeferred<{ token: string; expiresAt: string }>();
+    const renewalCredential = createDeferred<{ token: string; expiresAt: string; sessionKey?: string }>();
     requestCredential.mockImplementationOnce(async () => await renewalCredential.promise);
     const renewal = runtime.retry();
     await flushHookEffects({ cycles: 2, turns: 2 });
@@ -447,7 +651,7 @@ describe('useCreateNewSession (embedded new chat)', () => {
     expect(binding?.isCurrent()).toBe(true);
     expect(retired).not.toHaveBeenCalled();
     expect(successorText.getPrompt()).toBe('Newest successor draft');
-    renewalCredential.resolve({ token: 'session-child', expiresAt: '2100-01-01T00:00:00.000Z' });
+    renewalCredential.resolve({ token: 'session-child', expiresAt: '2100-01-01T00:00:00.000Z', ...(sessionKey ? { sessionKey } : {}) });
     await renewal;
     expect(admittedContext?.isCurrent()).toBe(false);
     expect(sync.getEmbedSessionRequestContext()?.isCurrent()).toBe(true);
@@ -483,7 +687,7 @@ describe('useCreateNewSession (embedded new chat)', () => {
     const { createEmbedSessionRuntime } = await import('@/embed/runtime/createEmbedSessionRuntime');
     const { createEmbedEncryption } = await import('@/embed/encryption/createEmbedEncryption');
     const { setRuntimeFetch, resetRuntimeFetch } = await import('@/sync/http/client');
-    const { AccountApiTokenSelfV1Schema, ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1 } = await import('@happier-dev/protocol');
+    const { AccountApiTokenSelfV1Schema, ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1} = await import('@happier-dev/protocol/auth/accountApiTokens');
     const spawnRequests: unknown[] = [];
     setRuntimeFetch(async (url, init) => {
       const path = new URL(String(url)).pathname;
@@ -503,8 +707,9 @@ describe('useCreateNewSession (embedded new chat)', () => {
           fieldPath: 'modelSelection', optionsSourceId: null, options: [] } } }));
       if (path === '/v1/actions/session.spawn_new') {
         spawnRequests.push(JSON.parse(String(init?.body)));
+        // Keep the lost-response fixture on the public Action result contract; retry identity is the behavior under test.
         return new Response(JSON.stringify({ v: 1, actionId: 'session.spawn_new', execution: { ok: true,
-          result: { ...spawnSuccess('embed-created'), initialInput: { status: 'notRequested' } } } }));
+          result: projectSessionSpawnNewActionResultV1({ ...spawnSuccess('embed-created'), initialInput: { status: 'notRequested' } }) } }));
       }
       throw new Error(`Unexpected request: ${path}`);
     });

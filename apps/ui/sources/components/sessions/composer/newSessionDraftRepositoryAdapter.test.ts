@@ -1,16 +1,19 @@
 import { buildNewSessionAuthoringDraftFromPersistedDraft, buildNewSessionAuthoringDraftFromTempData, buildNewSessionTempDataFromAuthoringDraft, buildPersistedNewSessionDraftFromAuthoringDraft, buildSessionSpawnNewInputV2FromAuthoringDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { StoredPluginUiNewSessionSeedOriginV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { seedNewSessionDraftV1 } from '@/components/sessions/new/newSessionDraftSeed';
+import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
 import { buildNewSessionDraftLocalState } from '@/sync/ops/sessionDrafts/newSessionDraftLocalState';
 import type { ManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 
-import { canonicalSessionDraftAddressV2, SessionInitialTriggerV1Schema, type ComposerAttachmentDraftV1, type SessionDraftDocumentV2 } from '@happier-dev/protocol';
+import { canonicalSessionDraftAddressV2, type SessionDraftDocumentV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import { SessionInitialTriggerV1Schema} from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { type ComposerAttachmentDraftV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
 import { array } from 'zod/mini';
 import { NewSessionDraftDocumentV2Schema } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { serverAccountScopedStorageKey } from '@/sync/domains/scope/serverAccountScope';
 import { getSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
-import { parseSerializedSessionDraftScope } from '@/sync/ops/sessionDrafts/sessionDraftSerializedScope';
+import { sessionDraftRowKey } from '@/sync/ops/sessionDrafts/sessionDraftSerializedScope';
 import { requireComposerDraftDocument } from '@/dev/testkit';
 import type {
     NewSessionComposerAttachmentSeedV1,
@@ -35,7 +38,9 @@ import {
     writeNewSessionNameToRepository,
     writeNewSessionInstructionsToRepository,
     writeNewSessionDraftToRepository,
+    writeNewSessionBotFaceToRepository,
 } from './newSessionDraftRepositoryAdapter';
+import { NEW_BOT_SEED, withNewBotDraftFaceSeed } from '@/components/sessions/bots/newBotDraft';
 
 const scope = { serverId: 'server-a', accountId: 'account-a' } as const;
 const attachment: ComposerAttachmentDraftV1 = {
@@ -82,6 +87,39 @@ function cataloguedNewSessionAuthoring(
 }
 
 describe('newSessionDraftRepositoryAdapter', () => {
+    it('carries a New Bot draft face into Session birth: the previewed seed, then reset to the draft seed', () => {
+        const requests = vi.spyOn(globalThis, 'fetch');
+        onTestFinished(() => { requests.mockRestore(); });
+        const draftId = '00000000-0000-4000-8000-00000000f4ce';
+        writeNewSessionDraftToRepository({ scope, draftId, draft: authoringDraft({
+            initialSessionFacts: NEW_BOT_SEED.initialSessionFacts,
+            executionTarget: { kind: 'machine', target: { serverId: scope.serverId, machineId: 'machine-b' } },
+        }) });
+        // Before any choice the draft draws (and is born with) its own seed, so the preview never jumps at birth.
+        const seeded = readNewSessionDraftFromRepository({ scope, draftId });
+        expect(withNewBotDraftFaceSeed(seeded?.initialSessionFacts, draftId)?.botFace).toEqual({ seed: draftId });
+        expect(withNewBotDraftFaceSeed({ createdAsBot: true }, draftId)).toEqual({ createdAsBot: true });
+
+        writeNewSessionBotFaceToRepository({ scope, draftId, botFace: { style: 'pixel', body: 'crab', seed: 'another-face-seed' } });
+        resetSessionDraftRepositoryForTests();
+        const chosen = readNewSessionDraftFromRepository({ scope, draftId });
+        expect(chosen?.initialSessionFacts).toEqual({ ...NEW_BOT_SEED.initialSessionFacts, botFace: { style: 'pixel', body: 'crab', seed: 'another-face-seed' } });
+        if (!chosen) throw new Error('Missing New Bot draft');
+        const spawn = buildSessionSpawnNewInputV2FromAuthoringDraft({
+            draft: { ...buildNewSessionAuthoringDraftFromPersistedDraft(chosen),
+                initialSessionFacts: withNewBotDraftFaceSeed(chosen.initialSessionFacts, draftId) },
+            creationKey: 'manual:new-bot-face', permissionMode: 'default', configurationUpdatedAtMs: 10,
+        });
+        expect(spawn.identity?.botFace).toEqual({ style: 'pixel', body: 'crab', seed: 'another-face-seed' });
+
+        writeNewSessionBotFaceToRepository({ scope, draftId, botFace: null });
+        const reset = readNewSessionDraftFromRepository({ scope, draftId });
+        expect(reset?.initialSessionFacts).toEqual(NEW_BOT_SEED.initialSessionFacts);
+        expect(withNewBotDraftFaceSeed(reset?.initialSessionFacts, draftId)?.botFace).toEqual({ seed: draftId });
+        expect(requests).not.toHaveBeenCalled();
+        console.info('LIVING_BOTS_DRAFT', JSON.stringify({ previewAndEdits: 3, requests: requests.mock.calls.length }));
+    });
+
     it.each(['prompt', 'ask', 'bot'] as const)('keeps a fresh %s seed unselected through repository projection', (kind) => {
         const draftId = '00000000-0000-4000-8000-000000000957';
         seedNewSessionDraftV1({
@@ -136,15 +174,11 @@ describe('newSessionDraftRepositoryAdapter', () => {
         const document = getSessionDraftSnapshot(scope, address)?.document;
         if (!document) throw new Error('Expected a genuine retained draft');
         const storage = getSessionDraftPersistenceStorage();
-        const key = serverAccountScopedStorageKey('session-drafts-repository-v1', scope);
-        const serialized = parseSerializedSessionDraftScope(storage.getString(key)!);
-        if (!serialized) throw new Error('Expected retained draft envelope');
-        const replica = serialized.replicas[canonicalSessionDraftAddressV2(address)];
+        const key = sessionDraftRowKey(serverAccountScopedStorageKey('session-drafts-repository-v1', scope), canonicalSessionDraftAddressV2(address));
+        const replica: unknown = JSON.parse(storage.getString(key)!);
         if (!replica || typeof replica !== 'object' || Array.isArray(replica)) throw new Error('Expected retained replica');
         const retainedDocument = malformation === 'invalid composer' ? { ...document, composer: null } : { ...document, v: 99 };
-        const retainedRaw = JSON.stringify({ ...serialized, replicas: { ...serialized.replicas,
-            [canonicalSessionDraftAddressV2(address)]: { ...replica, localRawDocument: retainedDocument },
-        } });
+        const retainedRaw = JSON.stringify({ ...replica, localRawDocument: retainedDocument });
         storage.set(key, retainedRaw);
         resetSessionDraftRepositoryForTests();
         expect(readNewSessionDraftProjectionFromRepository({ scope, draftId })).toBeNull();
@@ -217,9 +251,9 @@ describe('newSessionDraftRepositoryAdapter', () => {
             composerAttachments: [attachment],
         }) });
         const storage = getSessionDraftPersistenceStorage();
-        const key = serverAccountScopedStorageKey('session-drafts-repository-v1', scope);
-        const persisted = JSON.parse(storage.getString(key)!) as { replicas: Record<string, { localRawDocument: SessionDraftDocumentV2 }> };
-        const document = requireComposerDraftDocument(persisted.replicas[canonicalSessionDraftAddressV2({ kind: 'newSession', draftId })]!.localRawDocument);
+        const key = sessionDraftRowKey(serverAccountScopedStorageKey('session-drafts-repository-v1', scope), canonicalSessionDraftAddressV2({ kind: 'newSession', draftId }));
+        const persisted = JSON.parse(storage.getString(key)!) as { localRawDocument: SessionDraftDocumentV2 };
+        const document = requireComposerDraftDocument(persisted.localRawDocument);
         if (document.target.kind !== 'newSession') throw new Error('Expected retained draft');
         const fields = document.target.authoring;
         const execution = Reflect.get(fields, 'executionTarget') as { value: Record<string, unknown> };
@@ -576,17 +610,13 @@ describe('newSessionDraftRepositoryAdapter', () => {
         // An older writer could persist this retired field; seed that actual
         // storage boundary rather than sending it through the current author API.
         const storage = getSessionDraftPersistenceStorage();
-        const key = serverAccountScopedStorageKey('session-drafts-repository-v1', scope);
-        const serialized = parseSerializedSessionDraftScope(storage.getString(key)!);
-        if (!serialized) throw new Error('Expected retained draft envelope');
         const addressKey = canonicalSessionDraftAddressV2({ kind: 'newSession', draftId: draftId! });
-        const replica = serialized.replicas[addressKey];
+        const key = sessionDraftRowKey(serverAccountScopedStorageKey('session-drafts-repository-v1', scope), addressKey);
+        const replica: unknown = JSON.parse(storage.getString(key)!);
         if (!replica || typeof replica !== 'object' || Array.isArray(replica)) throw new Error('Expected retained replica');
         const retainedSnapshot = getSessionDraftSnapshot(scope, { kind: 'newSession', draftId: draftId! });
-        storage.set(key, JSON.stringify({ ...serialized, replicas: { ...serialized.replicas,
-            [addressKey]: { ...replica, localSupplement: { ...retainedSnapshot?.localSupplement,
-                newSessionLocalState: { ...retainedSnapshot?.localSupplement.newSessionLocalState, zenTaskSource },
-            } },
+        storage.set(key, JSON.stringify({ ...replica, localSupplement: { ...retainedSnapshot?.localSupplement,
+            newSessionLocalState: { ...retainedSnapshot?.localSupplement.newSessionLocalState, zenTaskSource },
         } }));
         resetSessionDraftRepositoryForTests();
         expect(draftId).toBe('00000000-0000-4000-8000-000000001012');
@@ -741,14 +771,16 @@ describe('newSessionDraftRepositoryAdapter', () => {
         expect(readNewSessionDraftFromRepository({ scope, draftId })?.primaryTeamId).toBeNull();
     });
 
-    it('round-trips every synchronized authoring field the writer persists, including organization placement', () => {
+    it('retains captured Space context with the editable draft while organization placement stays synchronized', () => {
         const draftId = 'organization-placement-draft';
         const organizationPlacement = { folderId: 'folder-a', tagIds: ['tag-a', 'tag-b'] };
+        const spaceMembership = { spaceId: 'captured-space', spaceSettingsTarget: scope };
         const runtimeDescriptorV1 = { v: 1 as const, agentId: 'codex', agent: { backendMode: 'appServer' } };
+        const draft = { ...authoringDraft({ organizationPlacement, runtimeDescriptorV1 }), spaceMembership };
         writeNewSessionDraftToRepository({
             scope,
             draftId,
-            draft: authoringDraft({ organizationPlacement, runtimeDescriptorV1 }),
+            draft,
         });
         const written = cataloguedNewSessionAuthoring(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId }));
         expect(written).toMatchObject({
@@ -759,10 +791,18 @@ describe('newSessionDraftRepositoryAdapter', () => {
         const recovered = readNewSessionDraftFromRepository({ scope, draftId });
         expect(recovered?.organizationPlacement).toEqual(organizationPlacement);
         expect(recovered?.runtimeDescriptorV1).toEqual(runtimeDescriptorV1);
+        expect(recovered).toMatchObject({ spaceMembership });
+        expect(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId })?.localSupplement.newSessionLocalState)
+            .toMatchObject({ spaceMembership });
+        expect(written).not.toHaveProperty('spaceMembership');
 
         // Reopening and autosaving the recovered draft must not revert the saved choice to defaults.
         writeNewSessionAuthoringDraftToRepository({ scope, draftId, draft: recovered! });
         expect(readNewSessionDraftFromRepository({ scope, draftId })?.organizationPlacement).toEqual(organizationPlacement);
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({ spaceMembership });
+        const cleared = { ...recovered!, spaceMembership: null };
+        writeNewSessionAuthoringDraftToRepository({ scope, draftId, draft: cleared });
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({ spaceMembership: null });
     });
 
     it('projects a clean conflict with per-field access and Team-context presence', () => {
@@ -1041,8 +1081,7 @@ describe('newSessionDraftRepositoryAdapter', () => {
             .toEqual([otherSeed]);
     });
 
-    it.each([false, true])('preserves pending screen attachment custody across ordinary Machine authoring edits (delayed=%s)', async (preserveLiveSessionName) => {
-        const { seedAndOpenNewSession } = await import('@/components/sessions/new/newSessionSeedComposer');
+    it.each([false, true])('preserves pending screen attachment custody across ordinary Machine authoring edits (delayed=%s)', (preserveLiveSessionName) => {
         const draftId = 'pending-screen-machine-edit';
         expect(seedAndOpenNewSession({
             scope, createDraftId: () => draftId, isCurrent: () => true, navigateToNewSession: () => {},
@@ -1061,8 +1100,7 @@ describe('newSessionDraftRepositoryAdapter', () => {
             .toMatchObject({ composer: { attachments: { value: [] } } });
     });
 
-    it.each([false, true])('does not resurrect settled attachment requests from stale authoring snapshots (delayed=%s)', async (preserveLiveSessionName) => {
-        const { seedAndOpenNewSession } = await import('@/components/sessions/new/newSessionSeedComposer');
+    it.each([false, true])('does not resurrect settled attachment requests from stale authoring snapshots (delayed=%s)', (preserveLiveSessionName) => {
         const draftId = 'settled-screen-stale-authoring';
         expect(seedAndOpenNewSession({
             scope, createDraftId: () => draftId, isCurrent: () => true, navigateToNewSession: () => {},

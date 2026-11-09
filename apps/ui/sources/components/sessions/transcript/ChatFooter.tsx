@@ -9,6 +9,8 @@ import type { SessionLocalControlState } from '@/sync/domains/session/control/se
 export type ChatFooterExternalAgentPresentation = Readonly<{
     state: ExternalSessionRuntimePresentation['externalAgent']['state'];
     labelKey: ExternalSessionRuntimePresentation['externalAgent']['labelKey'];
+    /** Decided by the external-Agent presentation owner: only these states tint the footer. */
+    needsAttention: boolean;
     agentLabel: string | null;
     machineLabel: string | null;
 }>;
@@ -50,7 +52,19 @@ interface ChatFooterProps {
 
 function resolveExternalAgentStatusBody(
     presentation: ChatFooterExternalAgentPresentation,
+    offersTakeover: boolean,
 ): string {
+    if (presentation.state === 'unknown') {
+        // An Agent that reports no status is not a problem: say where the session runs and,
+        // when Take over is offered, what it does.
+        const where = presentation.agentLabel && presentation.machineLabel
+            ? t('externalSessions.externalAgentRunsOnMachine', {
+                agent: presentation.agentLabel,
+                machine: presentation.machineLabel,
+            })
+            : t('externalSessions.externalAgentRunsOutsideHappier');
+        return offersTakeover ? `${where} ${t('externalSessions.externalAgentTakeOverHint')}` : where;
+    }
     const status = t(presentation.labelKey);
     if (!presentation.agentLabel || !presentation.machineLabel) {
         return status;
@@ -136,87 +150,105 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
         props.permissionsInUiWhileLocal,
     ]);
 
-    const materializeBanner = React.useMemo(() => {
-        if (!props.externalControl?.materialize) return null;
-        const materialize = props.externalControl.materialize;
-        const textKey = materialize.inFlight
-            ? 'externalSessions.operationComposerImporting'
-            : 'externalSessions.operationMaterializeAvailable';
-        const disabled = !materialize.requestEnabled || materialize.inFlight;
-
-        return (
-            <ComposerAuxiliaryFrame>
-                <WarningActionBanner
-                    testID="session-chatFooter-materialize"
-                    tone="neutral"
-                    iconName="cloud-arrow-up"
-                    body={t(textKey)}
-                    actionTestID="session-chatFooter-importIntoHappier"
-                    actionLabel={t('externalSessions.operationTitleMaterialize')}
-                    actionAccessibilityLabel={t('externalSessions.operationTitleMaterialize')}
-                    actionBusy={materialize.inFlight}
-                    disabled={disabled}
-                    onActionPress={materialize.onRequest}
-                />
-            </ComposerAuxiliaryFrame>
-        );
-    }, [props.externalControl]);
-
-    const directModeBanner = React.useMemo(() => {
+    // An external session gets one footer row and one primary: Take over (or Re-check) when offered,
+    // with Import into Happier as the secondary beside it; Import leads only when it is the sole action.
+    const externalControlBanner = React.useMemo(() => {
         if (!props.externalControl) return null;
+        const externalControl = props.externalControl;
 
-        const switchingToDirect = props.externalControl.takeoverInFlight === 'direct';
-        const switchingToPersisted = props.externalControl.takeoverInFlight === 'persisted';
-        const preflightInFlight = props.externalControl.takeoverPreflightInFlight;
+        const switchingToDirect = externalControl.takeoverInFlight === 'direct';
+        const switchingToPersisted = externalControl.takeoverInFlight === 'persisted';
+        const preflightInFlight = externalControl.takeoverPreflightInFlight;
         const hasTakeoverMode =
-            props.externalControl.canTakeOverDirect
-            || props.externalControl.canTakeOverPersist;
+            externalControl.canTakeOverDirect
+            || externalControl.canTakeOverPersist;
         const showTakeoverAction =
             !switchingToDirect
             && !switchingToPersisted
             && (
-                !props.externalControl.statusKnown
-                || props.externalControl.runnerActive
+                !externalControl.statusKnown
+                || externalControl.runnerActive
                 || hasTakeoverMode
             )
-            && typeof props.externalControl.onRequestTakeoverPreflight === 'function';
+            && typeof externalControl.onRequestTakeoverPreflight === 'function';
+        const materialize = externalControl.materialize ?? null;
+        const importIsPrimary = materialize !== null && !showTakeoverAction;
+        const importLabel = t('externalSessions.operationTitleMaterialize');
+        const importDisabled = materialize !== null && (!materialize.requestEnabled || materialize.inFlight);
         const externalAgentStatusBody = resolveExternalAgentStatusBody(
-            props.externalControl.externalAgentPresentation,
+            externalControl.externalAgentPresentation,
+            showTakeoverAction && !externalControl.runnerActive,
         );
+        const operationInFlight = switchingToDirect || switchingToPersisted || preflightInFlight
+            || materialize?.inFlight === true;
 
         const body = (() => {
             if (switchingToPersisted) return t('chatFooter.switchingToPersistedTakeover');
             if (switchingToDirect) return t('chatFooter.switchingToDirectTakeover');
             if (preflightInFlight) return t('chatFooter.checkingExternalSessionTakeover');
-            if (props.externalControl.runnerActive) {
+            if (materialize?.inFlight) return t('externalSessions.operationComposerImporting');
+            if (externalControl.runnerActive) {
                 const guidance = t('chatFooter.externalSessionTakeoverBlocked');
-                const safetyGuidance = props.externalControl.trustedPid === null
+                const safetyGuidance = externalControl.trustedPid === null
                     ? guidance
                     : `${guidance} ${t('runs.detail.pid', {
-                        pid: props.externalControl.trustedPid,
+                        pid: externalControl.trustedPid,
                     })}`;
                 return `${externalAgentStatusBody} ${safetyGuidance}`;
             }
+            if (importIsPrimary) {
+                return `${externalAgentStatusBody} ${t('externalSessions.operationMaterializeAvailable')}`;
+            }
             return externalAgentStatusBody;
         })();
-        const actionLabel = props.externalControl.runnerActive
+        const takeoverLabel = externalControl.runnerActive
             ? t('chatFooter.externalSessionRecheck')
             : t('chatFooter.takeOverDirect');
+        const primary = showTakeoverAction
+            ? {
+                testID: 'session-chatFooter-takeOverDirect',
+                label: takeoverLabel,
+                busy: preflightInFlight,
+                disabled: preflightInFlight,
+                onPress: externalControl.onRequestTakeoverPreflight,
+            }
+            : importIsPrimary && materialize
+                ? {
+                    testID: 'session-chatFooter-importIntoHappier',
+                    label: importLabel,
+                    busy: materialize.inFlight,
+                    disabled: importDisabled,
+                    onPress: materialize.onRequest,
+                }
+                : null;
+        const secondaryActions = materialize && !importIsPrimary
+            ? [{
+                key: 'import-into-happier',
+                testID: 'session-chatFooter-importIntoHappier',
+                label: importLabel,
+                accessibilityLabel: importLabel,
+                disabled: importDisabled,
+                variant: 'secondary' as const,
+                onPress: materialize.onRequest,
+            }]
+            : undefined;
 
         return (
             <ComposerAuxiliaryFrame>
                 <WarningActionBanner
                     testID="session-chatFooter-externalControl"
+                    tone={externalControl.externalAgentPresentation.needsAttention && !operationInFlight
+                        ? 'warning'
+                        : 'neutral'}
                     iconName="info"
                     body={body}
-                    actionTestID={showTakeoverAction ? 'session-chatFooter-takeOverDirect' : undefined}
-                    actionLabel={showTakeoverAction ? actionLabel : undefined}
-                    actionAccessibilityLabel={showTakeoverAction ? actionLabel : undefined}
-                    actionBusy={preflightInFlight}
-                    disabled={preflightInFlight}
-                    onActionPress={showTakeoverAction
-                        ? props.externalControl.onRequestTakeoverPreflight
-                        : undefined}
+                    actionTestID={primary?.testID}
+                    actionLabel={primary?.label}
+                    actionAccessibilityLabel={primary?.label}
+                    actionBusy={primary?.busy}
+                    disabled={primary?.disabled}
+                    onActionPress={primary?.onPress}
+                    secondaryActions={secondaryActions}
                 />
             </ComposerAuxiliaryFrame>
         );
@@ -224,8 +256,7 @@ export const ChatFooter = React.memo((props: ChatFooterProps) => {
 
     return (
         <View style={containerStyle}>
-            {materializeBanner}
-            {directModeBanner}
+            {externalControlBanner}
             {localControlBanner}
             {props.notice ? (
                 <ComposerAuxiliaryFrame>

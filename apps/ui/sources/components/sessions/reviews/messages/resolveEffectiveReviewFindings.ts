@@ -6,7 +6,7 @@ import type { Message } from '@happier-dev/session-core/messages';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { parseHappierMetaEnvelope } from '@/components/sessions/transcript/structured/happierMetaEnvelope';
 
-export type { EffectiveReviewFindings, ReviewFindingThreadEntry } from '@happier-dev/protocol';
+export type { EffectiveReviewFindings, ReviewFindingThreadEntry } from '@happier-dev/protocol/reviews/resolveEffectiveReviewFindings';
 
 /** Transcript adapter; host and UI share the same effective finding/thread decision owner. */
 export function resolveEffectiveReviewFindings(params: Readonly<{

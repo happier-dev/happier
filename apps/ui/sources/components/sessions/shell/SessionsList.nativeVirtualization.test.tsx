@@ -29,7 +29,7 @@ import { buildProjectAccountRowPhysicalKeyV1 } from '@happier-dev/protocol/proje
 import { buildMachineDisplayRenderableFromMachine } from '@/sync/domains/machines/machineDisplayRenderable';
 import { buildSessionListCollapseContextKey, buildSessionListCollapseKey } from '@/sync/domains/session/listing/sessionListCollapseState';
 import { CollectionSpacesV1Schema, type CollectionSpacesV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
-import { writeCollectionSpaceSelectionV1 } from '@/sync/domains/session/listing/sessionListSpaces';
+import { selectCollectionSpace } from '@/sync/domains/session/listing/sessionListSpaces';
 import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { projectGroupIdentityKey } from '@/sync/domains/workspaces/projectGroupDisplay';
 
@@ -96,6 +96,7 @@ let sessionListIdentityDisplay: 'avatar' | 'agentLogo' | 'none' | 'project' = 'a
 let sessionListStatusWords = false;
 let sessionListRowContextV1 = true;
 let collectionSpacesV1: CollectionSpacesV1 = { v: 1, spaces: [] };
+const virtualizedListCommits = vi.hoisted(() => ({ count: 0 }));
 const virtualizedListState = vi.hoisted(() => ({
     current: null as null | {
         props: any | null;
@@ -212,6 +213,7 @@ vi.mock('@legendapp/list/react-native', async () => {
     const legendListModule = (await import('@/dev/testkit/mocks/legendList')) as typeof import('@/dev/testkit/mocks/legendList');
     return legendListModule.createLegendListModuleMock({
         renderItems: true,
+        onCommit: () => { virtualizedListCommits.count += 1; },
     }, (state) => { virtualizedListState.current = state; });
 });
 
@@ -500,9 +502,7 @@ describe('SessionsList (native virtualization)', () => {
         sessionTagsV1 = {};
         replaceCollapsedGroupKeys({});
         collectionSpacesV1 = { v: 1, spaces: [] };
-        await writeCollectionSpaceSelectionV1({ scope: { serverId: 'srv_server_a', accountId: 'account-a' },
-            entityKind: 'sessionWork', spaceId: 'my-work', isCurrent: () => true,
-            readSettings: () => ({ collectionSpacesV1 }) });
+        await selectCollectionSpace({ serverId: 'srv_server_a', accountId: 'account-a' }, 'sessionWork', 'my-work');
         routerNavigateSpy.mockClear();
         routerPushSpy.mockClear();
         fetchMoreSessionsMock.mockClear();
@@ -1477,6 +1477,37 @@ describe('SessionsList (native virtualization)', () => {
         expect(nextExtraData, `Changed row inputs: ${changedKeys.join(', ')}`).toBe(initialExtraData);
     });
 
+    it('keeps mounted cells when a Session joins the list: each row reads its own reachable display', async () => {
+        // A joining Session adds an entry to the list-wide reachable-display and Project lookups. Mounted
+        // cells redraw whenever extraData changes, so those lookups must not ride on it.
+        const screen = await renderSessionsList();
+        const index = buildSessionListIndexFromViewData(mockVisibleSessionListViewData) ?? [];
+        const paneState = {
+            summary: { sessionsReady: true, sessionCount: 2 },
+            visibleSessionListIndex: index,
+            hasHiddenInactiveSessions: false,
+            folderFeatureEnabledServerIds: [], showLoading: false, showEmptyState: false,
+        } satisfies import('@/hooks/session/useVisibleSessionListPaneState').VisibleSessionListPaneState;
+        await screen.update(<NativeSessionsListView paneState={paneState} />);
+        await flushHookEffects();
+        const before = virtualizedListState.current?.props?.extraData;
+        expect(before).toBeTruthy();
+        const joined = createSessionListRenderableSessionFixture({ ...sessionB, id: 'joined-session' });
+        await act(async () => { realStorage.getState().applyServerScopedSessionListRows('srv_server_a', [joined],
+            { source: 'ordinary', mode: 'append' }); });
+        const joinedItems = buildSessionListIndexFromViewData([
+            { type: 'session', session: joined, groupKey: defaultProjectGroupKey, groupKind: 'project', serverId: 'srv_server_a' },
+        ]) ?? [];
+        await screen.update(<NativeSessionsListView paneState={{ ...paneState,
+            summary: { sessionsReady: true, sessionCount: 3 }, visibleSessionListIndex: [...index, ...joinedItems] }} />);
+        await flushHookEffects();
+
+        expect(findSessionItem(screen, joined.id)).toBeTruthy();
+        const after = virtualizedListState.current?.props?.extraData;
+        const changedKeys = Object.keys(before ?? {}).filter((key) => !Object.is(before[key], after?.[key]));
+        expect(after, `Changed row inputs: ${changedKeys.join(', ')}`).toBe(before);
+    });
+
     it('invalidates mounted native rows when a row presentation setting changes', async () => {
         const screen = await renderSessionsList();
         const initialExtraData = virtualizedListState.current?.props?.extraData;
@@ -1677,6 +1708,29 @@ describe('SessionsList (native virtualization)', () => {
         expect(hydrateSessionListRowsMock.mock.calls).toEqual([[addresses], [[secondAddress]], [[secondAddress]]]);
         await screen.unmount();
         expect(getVisibleSessionListSurfaces()).toEqual([]);
+    });
+
+    it('keeps the list pane out of a redraw when a scroll step only changes which rows are viewable', async () => {
+        // The viewport is row-local: rows and the demand leaf read it, the pane that owns the list does not.
+        nativeBoundary.platformOs = 'ios';
+        await renderSessionsList();
+        const listProps = expectPresent(virtualizedListState.current?.props, 'expected list props');
+        const nodeFor = (sessionId: string) => expectPresent(listProps.data.find((item: { id: string }) => (
+            item.id === buildSessionListIndexNodeId({ type: 'session', serverId: 'srv_server_a', sessionId })
+        )), `expected ${sessionId} node`);
+        const commitsBefore = virtualizedListCommits.count;
+        for (const visible of [['sess_a'], ['sess_b'], ['sess_a', 'sess_b']]) {
+            await act(async () => listProps.onViewableItemsChanged({
+                changed: [],
+                viewableItems: visible.map((id, index) => ({ item: nodeFor(id), key: nodeFor(id).id, index, isViewable: true })),
+            }));
+        }
+        expect(virtualizedListCommits.count - commitsBefore).toBe(0);
+        const { getVisibleSessionListSurfaces } = await import('@/sync/domains/session/sessionSurfaceVisibility');
+        expect(getVisibleSessionListSurfaces()).toEqual([
+            { serverId: 'srv_server_a', sessionId: 'sess_a' },
+            { serverId: 'srv_server_a', sessionId: 'sess_b' },
+        ]);
     });
 
     it('keeps native virtualized node data stable when an equivalent session-list refresh only replaces data objects', async () => {
@@ -2442,7 +2496,8 @@ describe('SessionsList (native virtualization)', () => {
             // The context owner presents the workspace separately from Machine identity.
             // Both facts must still come from the handoff target, never stale Session metadata.
             expect(item.props.subtitleOverride).toBe('repo');
-            const row = screen.root.findAll(node => node.props.item?.sessionId === 'sess_a' && node.props.rowViewport)[0];
+            const row = screen.root.findAll(node => node.props.item?.sessionId === 'sess_a' && node.props.rowViewport
+                && 'reachableSessionDisplay' in node.props)[0];
             expect(row?.props.reachableSessionDisplay).toMatchObject({ machineId: 'machine-target', machineLabel: 'Rebound workstation' });
         } finally {
             projectManager.removeSession(currentSession.id);
@@ -2481,10 +2536,7 @@ describe('SessionsList (native virtualization)', () => {
         collectionSpacesV1 = { v: 1, spaces: ['space-a', 'space-b'].map(id => ({
             id, name: id, entityKind: 'sessionWork', icon: { kind: 'icon', name: 'list' }, filter, includeNeedsYouEverywhere: false,
         } satisfies CollectionSpacesV1['spaces'][number])) };
-        const selectSpace = (spaceId: string) => writeCollectionSpaceSelectionV1({
-            scope: { serverId: 'srv_server_a', accountId: 'account-a' }, entityKind: 'sessionWork', spaceId,
-            isCurrent: () => true, readSettings: () => ({ collectionSpacesV1 }),
-        });
+        const selectSpace = (spaceId: string) => selectCollectionSpace({ serverId: 'srv_server_a', accountId: 'account-a' }, 'sessionWork', spaceId);
         await selectSpace('space-a');
         const fixtureScreen = await renderSessionsList();
         await fixtureScreen.unmount();

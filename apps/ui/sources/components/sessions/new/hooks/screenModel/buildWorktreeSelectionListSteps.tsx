@@ -90,8 +90,6 @@ export type WorktreeSelectionListBuilderParams = Readonly<{
     machinePlatform?: string | null;
     /** Effective theme color supplied by the React owner; this pure builder must not import a static base theme. */
     rowIconColor: string;
-    /** Caller-supplied "now" for relative-time pills (kept pure / testable). */
-    nowMs: number;
     /**
      * Stable suggested name (generated once per session by the owning chip).
      * Pre-populates the "name your worktree" step and is the fallback when the

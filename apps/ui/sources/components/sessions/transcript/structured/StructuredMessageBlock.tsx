@@ -1,6 +1,6 @@
 import React from 'react';
 
-import type { MessageStructuredPresentationV1 } from '@happier-dev/protocol';
+import type { MessageStructuredPresentationV1 } from '@happier-dev/protocol/sessions/messages/messageStructuredPresentationV1';
 
 import type { Message } from "@happier-dev/session-core/messages";
 import { PluginSurfaceFallback, projectPluginSurfaceFallbackFindText } from '@/components/sessions/panes/PluginSurfaceFallback';

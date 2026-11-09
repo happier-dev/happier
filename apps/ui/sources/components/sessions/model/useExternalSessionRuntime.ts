@@ -3,7 +3,7 @@ import {
     readExternalAgentObservationSessionState,
     type ExternalAgentObservationSnapshotV1,
 } from '@happier-dev/agents';
-import type { ExternalSessionStatusGetResponse } from '@happier-dev/protocol';
+import type { ExternalSessionStatusGetResponse } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { AppState, Platform } from 'react-native';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
@@ -53,24 +53,6 @@ type ExternalSessionTarget = Readonly<{
     remoteSessionId: string;
     source: NonNullable<ReturnType<typeof readExternalSessionLink>>['source'];
 }>;
-
-function readAttachLeaseTtlMsFromEnv(): number {
-    const raw = Number.parseInt(String(process.env.EXPO_PUBLIC_HAPPIER_EXTERNAL_SESSIONS_ATTACH_LEASE_TTL_MS ?? ''), 10);
-    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 30_000;
-    return Math.max(1_000, Math.min(15 * 60_000, configured));
-}
-
-function readAttachRenewLeadMsFromEnv(): number {
-    const raw = Number.parseInt(String(process.env.EXPO_PUBLIC_HAPPIER_EXTERNAL_SESSIONS_ATTACH_RENEW_LEAD_MS ?? ''), 10);
-    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 10_000;
-    return Math.max(500, Math.min(60_000, configured));
-}
-
-function readAttachRetryMsFromEnv(): number {
-    const raw = Number.parseInt(String(process.env.EXPO_PUBLIC_HAPPIER_EXTERNAL_SESSIONS_ATTACH_RETRY_MS ?? ''), 10);
-    const configured = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 5_000;
-    return Math.max(1_000, Math.min(60_000, configured));
-}
 
 const noopSubscribe = () => () => {};
 
@@ -353,6 +335,7 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
 
         let cancelled = false;
         let renewTimeoutId: ReturnType<typeof setTimeout> | null = null;
+        let leaseExpiresAtMs: number | null = null;
         let attachInFlight = false;
         let attachPending = false;
         // Attach/detach are Account-scoped durable operations against Account A's
@@ -382,18 +365,18 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
             }
         };
 
-        const scheduleRenew = (expiresAtMs: number) => {
-            const renewLeadMs = readAttachRenewLeadMsFromEnv();
-            const delayMs = Math.max(1_000, expiresAtMs - Date.now() - renewLeadMs);
+        const scheduleRenew = () => {
+            if (leaseExpiresAtMs === null) return;
+            const remainingMs = leaseExpiresAtMs - Date.now();
+            if (remainingMs <= 0) return;
+            // The daemon owns expiry. Renewal and failed-renewal recovery use
+            // its remaining lifetime, rounded only to the clock's resolution.
+            const delayMs = Math.ceil(remainingMs / 2);
             renewTimeoutId = setTimeout(() => {
-                requestLeaseEnsure();
-            }, delayMs);
-        };
-
-        const scheduleRetry = () => {
-            const delayMs = readAttachRetryMsFromEnv();
-            renewTimeoutId = setTimeout(() => {
-                requestLeaseEnsure();
+                renewTimeoutId = null;
+                if (leaseExpiresAtMs !== null && Date.now() < leaseExpiresAtMs) {
+                    requestLeaseEnsure();
+                }
             }, delayMs);
         };
 
@@ -418,7 +401,6 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
                             ...(requestedTailCursor
                                 ? { acceptedTailCursor: requestedTailCursor }
                                 : {}),
-                            ttlMs: readAttachLeaseTtlMsFromEnv(),
                         }, { serverId: sessionServerId ?? undefined, signal: controller.signal });
                         if (cancelled) {
                             // The lease outlived its viewer: nothing will renew
@@ -428,28 +410,24 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
                         }
                         if (!response.ok) {
                             clearRenewTimeout();
-                            if (
-                                response.errorCode === 'agent_unavailable'
-                                && response.error === 'background_follow_not_supported'
-                            ) {
-                                return;
-                            }
                             // A daemon that classified the failure as terminal
                             // will answer the same way forever; released daemons
-                            // omit the field and stay on the retry path.
+                            // omit the field and remain eligible for recovery
+                            // within an acquired lease's remaining lifetime.
                             if (response.retryable === false) {
                                 return;
                             }
-                            scheduleRetry();
+                            scheduleRenew();
                             return;
                         }
                         currentLeaseIdRef.current = response.leaseId;
+                        leaseExpiresAtMs = response.expiresAtMs;
                         clearRenewTimeout();
-                        scheduleRenew(response.expiresAtMs);
+                        scheduleRenew();
                     } catch {
                         if (cancelled) return;
                         clearRenewTimeout();
-                        scheduleRetry();
+                        scheduleRenew();
                         return;
                     }
                     if (acceptedTailCursorRef.current !== requestedTailCursor) {
@@ -465,6 +443,7 @@ export function useExternalSessionRuntime(params: UseExternalSessionRuntimeParam
         };
 
         const requestLeaseEnsure = () => {
+            clearRenewTimeout();
             attachPending = true;
             if (!attachInFlight) {
                 void pumpLeaseEnsure();

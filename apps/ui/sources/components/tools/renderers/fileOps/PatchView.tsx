@@ -2,6 +2,7 @@ import { Typography } from '@/constants/Typography';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
 import { deriveCanonicalPatchFileDiffs } from '@happier-dev/protocol/tools/v2';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
@@ -220,12 +221,12 @@ const styles = StyleSheet.create((theme) => ({
         alignItems: 'center',
         gap: theme.space.s8,
         padding: theme.space.s12,
-        backgroundColor: theme.colors.surface.inset,
+        backgroundColor: glassContentFill(theme.colors.surface.inset, theme.colors, { nested: true }),
         borderRadius: 8,
     },
     filesContainer: {
         padding: theme.space.s12,
-        backgroundColor: theme.colors.surface.inset,
+        backgroundColor: glassContentFill(theme.colors.surface.inset, theme.colors, { nested: true }),
         borderRadius: 8,
         gap: theme.space.s8,
     },

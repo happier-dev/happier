@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol';
+import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 import type { ComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
 
 import type { AgentInputChipPickerOption } from '@/components/sessions/agentInput/components/AgentInputChipPickerTypes';
@@ -16,10 +16,10 @@ import {
 } from '@/components/sessions/agentInput/controls/resolveSessionModeChipPresentation';
 import {
     reportedModelSummary,
-    resolveReportedModelStatus,
     type ReportedModelStatus,
 } from '@/components/sessions/modelPicker/reportedModelPresentation';
 import { describeEffectiveModelMode } from '@/sync/domains/models/describeEffectiveModelMode';
+import type { CurrentSessionRunnerProcessIdentity } from '@/sync/domains/models/resolveSessionModelSelectionDisposition';
 import { buildExtendedContextModelControl } from '@/sync/domains/models/extendedContextModelControl';
 import {
     findModelOptionForEffectiveModelId,
@@ -88,6 +88,7 @@ export type SessionAuthoringControlsInput = Readonly<{
     composerOptionsInput?: ComposerOptionsInputV1 | null;
     sessionId?: string;
     sessionActive?: boolean;
+    currentRunnerProcessIdentity?: CurrentSessionRunnerProcessIdentity | null;
     permissionMode?: PermissionMode | null;
     /** An embed's allowed modes (`grant.permissionModes`); the options narrow to them. `null` = all. */
     allowedPermissionModes?: readonly PermissionMode[] | null;
@@ -100,6 +101,7 @@ export type SessionAuthoringControlsInput = Readonly<{
     acpSessionModeOptionsOverride?: ReadonlyArray<SessionModeOptionOverride> | null;
     acpSessionModeSelectedIdOverride?: string | null;
     acpConfigOptionsOverride?: ReadonlyArray<SessionConfigOptionInput> | null;
+    acpModelConfigOptionIdOverride?: string | null;
     acpConfigOptionOverridesOverride?: AcpConfigOptionOverridesV1 | null;
     modelCatalogNames?: ModelCatalogNames | null;
 }>;
@@ -184,8 +186,10 @@ export function useSessionAuthoringControls(
             selectedModelId: input.modelMode ?? 'default',
             metadata,
             composerOptionsInput,
+            sessionActive: input.sessionActive,
+            currentRunnerProcessIdentity: input.currentRunnerProcessIdentity,
         });
-    }, [agentId, input.modelMode, metadata, composerOptionsInput]);
+    }, [agentId, input.modelMode, metadata, composerOptionsInput, input.sessionActive, input.currentRunnerProcessIdentity]);
 
     const selectedModelLabel = React.useMemo(() => {
         const found = findModelOptionForEffectiveModelId(modelOptions, effectiveModelPolicy.selectedModelId);
@@ -200,17 +204,17 @@ export function useSessionAuthoringControls(
 
     const appliedModelPresentation = React.useMemo<SessionAuthoringAppliedModelPresentation | null>(() => {
         const appliedModelId = effectiveModelPolicy.appliedModelId;
-        if (!appliedModelId) return null;
+        const status = effectiveModelPolicy.appliedModelStatus;
+        if (!appliedModelId || !status) return null;
         const found = findModelOptionForEffectiveModelId(modelOptions, appliedModelId);
         const label = found && found.label !== found.value ? found.label
             : resolveSessionModelLabel(agentId, composerOptionsInput, appliedModelId) ?? appliedModelId;
-        const status: ReportedModelStatus = resolveReportedModelStatus(input.sessionActive);
         return {
             optionValue: found?.value ?? appliedModelId,
             status,
             summary: reportedModelSummary(status, label),
         };
-    }, [agentId, composerOptionsInput, effectiveModelPolicy.appliedModelId, input.sessionActive, modelOptions]);
+    }, [agentId, composerOptionsInput, effectiveModelPolicy.appliedModelId, effectiveModelPolicy.appliedModelStatus, modelOptions]);
 
     // One line under the section label: what is running, and when a change to it
     // takes effect. Anything a provider adds beyond that stays a note, so the
@@ -349,14 +353,20 @@ export function useSessionAuthoringControls(
                 agentId,
                 configOptions: acpConfigOptionsOverride,
                 overrides: acpConfigOptionOverridesOverride?.overrides ?? null,
+                hideModelOption: canChangeModel && modelOptions.length > 0,
+                modelConfigOptionId: input.acpModelConfigOptionIdOverride,
+                modelDescriptors: modelOptions,
             });
         }
-        return computeAcpConfigOptionControls({ agentId, metadata });
+        return computeAcpConfigOptionControls({ agentId, metadata, modelDescriptors: modelOptions });
     }, [
         acpConfigOptionOverridesOverride,
         acpConfigOptionsOverride,
         agentId,
         canChangeConfigOption,
+        canChangeModel,
+        input.acpModelConfigOptionIdOverride,
+        modelOptions,
         metadata,
     ]);
 

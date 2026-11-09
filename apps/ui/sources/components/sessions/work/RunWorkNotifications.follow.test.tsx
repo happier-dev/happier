@@ -26,9 +26,9 @@ const { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID } = await import('@happier-dev/p
 const { InboxExecutionRunSourceBoundary, useInboxExecutionRunCount, useInboxExecutionRunSource } = await import('@/hooks/inbox/useInboxExecutionRunSource');
 const { notifyExecutionRunActivityFromUpdate } = await import('@/sync/runtime/executionRuns/executionRunActivityBus');
 const original = storage.getState();
-const executionRunCapabilities = { protocolVersion: 1, results: {
-    'tool.executionRuns': { ok: true, checkedAt: 1, data: { protocolVersion: 2, features: { detachedScope: true } } },
-} };
+const executionRunCapabilities = { protocolVersion: 1, capabilities: [{ id: 'tool.executionRuns', kind: 'tool',
+    protocol: { version: 2, available: true, features: { detachedScope: true, startAndWait: true, runScopedAgentBindings: true } },
+}], checklists: {} };
 
 beforeEach(() => network.resetRequests());
 afterEach(async () => { await standardCleanup(); storage.setState(original, true); });
@@ -44,7 +44,7 @@ async function setup(source: Extract<OtherFollowSourceRefV1, { kind: 'execution_
     storage.setState(state => ({ settings: { ...state.settings, experiments: true,
         featureToggles: { ...state.settings.featureToggles, 'execution.runs': true } } }));
     publishAppliedActiveServerSnapshot({ serverId: home.id, serverUrl: home.serverUrl, generation: 1 });
-    network.respond(RPC_METHODS.CAPABILITIES_DETECT, executionRunCapabilities);
+    network.respond(RPC_METHODS.CAPABILITIES_DESCRIBE, executionRunCapabilities);
     const path = '/v2/account/follows/sources';
     const writes: unknown[] = [];
     let once: PersonalRunFollowOnceV1[] = [];
@@ -85,6 +85,11 @@ async function setup(source: Extract<OtherFollowSourceRefV1, { kind: 'execution_
         reads: () => network.httpRequests.filter(request => new URL(request.url).pathname === path).length - writes.length };
 }
 
+async function setNotification(screen: Awaited<ReturnType<typeof renderScreen>>, runId: string, armed: boolean, condition = 'terminal') {
+    await screen.pressByTestIdAsync(`notify-run-${condition}${armed ? '' : '-cancel'}:${runId}`);
+    await vi.waitFor(() => expect(screen.findByTestId(`notify-run-${condition}-switch:${runId}`)?.props.value).toBe(armed));
+}
+
 describe('Run Notify me through personal Follow', () => {
     it('reads the exact Workflow Follow rather than an authored Habit inventory', async () => {
         const home = await network.addHome('https://run-follow.test', 'run-account');
@@ -113,10 +118,10 @@ describe('Run Notify me through personal Follow', () => {
         const owner = await setup(source);
         const screen = await renderScreen(<RunWorkNotifications source={source} serverId={owner.home.id} />);
         await vi.waitFor(() => expect(screen.findByTestId(`notify-run-terminal-switch:${source.runId}`)?.props.disabled).toBe(false));
-        await screen.pressByTestIdAsync(`notify-run-terminal:${source.runId}`);
+        await setNotification(screen, source.runId, true);
         expect(owner.writes).toEqual([{ once: [{ kind: 'run_settled' }] }]);
         expect(screen.findByTestId(`notify-run-terminal-switch:${source.runId}`)?.props.value).toBe(true);
-        await screen.pressByTestIdAsync(`notify-run-terminal-cancel:${source.runId}`);
+        await setNotification(screen, source.runId, false);
         expect(owner.writes).toEqual([{ once: [{ kind: 'run_settled' }] }, { once: [] }]);
         expect(owner.follow()).toMatchObject({ persistent: true, policy: { preset: 'quiet' }, once: [] });
         expect(network.httpRequests.filter(request => new URL(request.url).pathname.includes('automation'))).toHaveLength(0);
@@ -127,11 +132,11 @@ describe('Run Notify me through personal Follow', () => {
         const owner = await setup(source);
         const screen = await renderScreen(<RunWorkNotifications source={source} serverId={owner.home.id} />);
         await vi.waitFor(() => expect(screen.findByTestId('notify-run-terminal-switch:independent')?.props.disabled).toBe(false));
-        await screen.pressByTestIdAsync('notify-run-terminal:independent');
-        await screen.pressByTestIdAsync('notify-run-needs_attention:independent');
+        await setNotification(screen, 'independent', true);
+        await setNotification(screen, 'independent', true, 'needs_attention');
         expect(owner.writes).toEqual([{ once: [{ kind: 'run_settled' }] },
             { once: [{ kind: 'run_settled' }, { kind: 'first_needs_you' }] }]);
-        await screen.pressByTestIdAsync('notify-run-terminal-cancel:independent');
+        await setNotification(screen, 'independent', false);
         expect(owner.writes.at(-1)).toEqual({ once: [{ kind: 'first_needs_you' }] });
         expect(screen.findByTestId('notify-run-needs_attention-switch:independent')?.props.value).toBe(true);
     });
@@ -160,7 +165,7 @@ describe('Run Notify me through personal Follow', () => {
         const screen = await renderScreen(<RunWorkNotifications source={source} serverId={owner.home.id}
             selectedOutput={{ output, comparisonId: 'comparison-one', resultId: 'saved-one' }} />);
         await vi.waitFor(() => expect(screen.findByTestId(`notify-run-terminal-switch:${source.runId}`)?.props.disabled).toBe(false));
-        await screen.pressByTestIdAsync(`notify-run-terminal:${source.runId}`);
+        await setNotification(screen, source.runId, true);
         expect(owner.writes).toEqual([{ once: [{ kind: 'output_ready', outputRef: {
             kind: 'scm_diff_summary', output, comparisonId: 'comparison-one', resultId: 'saved-one',
         } }] }]);
@@ -182,11 +187,11 @@ describe('Run Notify me through personal Follow', () => {
         const screen = await renderScreen(<RunWorkNotifications source={source} serverId={owner.home.id}
             selectedOutput={{ output: 'commitPlan', comparisonId: 'comparison-one', resultId: 'saved-one' }} />);
         await vi.waitFor(() => expect(screen.findByTestId('notify-run-terminal-switch:two-outputs')?.props.disabled).toBe(false));
-        await screen.pressByTestIdAsync('notify-run-terminal:two-outputs');
+        await setNotification(screen, 'two-outputs', true);
         expect(owner.writes[0]).toEqual({ once: [walkthrough, { kind: 'output_ready', outputRef: {
             kind: 'scm_diff_summary', output: 'commitPlan', comparisonId: 'comparison-one', resultId: 'saved-one',
         } }] });
-        await screen.pressByTestIdAsync('notify-run-terminal-cancel:two-outputs');
+        await setNotification(screen, 'two-outputs', false);
         expect(owner.writes.at(-1)).toEqual({ once: [walkthrough] });
         expect(owner.follow()).toMatchObject({ persistent: true, policy: { preset: 'quiet' }, once: [walkthrough] });
     });
@@ -200,8 +205,8 @@ describe('Run Notify me through personal Follow', () => {
         owner.setDeliveries([receipt]);
         const screen = await renderScreen(<RunWorkNotifications source={source} serverId={owner.home.id} />);
         await vi.waitFor(() => expect(screen.findByTestId('notify-run-terminal-switch:unread-output')?.props.disabled).toBe(false));
-        await screen.pressByTestIdAsync('notify-run-terminal:unread-output');
-        await screen.pressByTestIdAsync('notify-run-terminal-cancel:unread-output');
+        await setNotification(screen, 'unread-output', true);
+        await setNotification(screen, 'unread-output', false);
         expect(owner.writes).toEqual([{ once: [{ kind: 'run_settled' }] }, { once: [] }]);
         expect(owner.follow().onceDeliveries).toEqual([receipt]);
     });
@@ -246,7 +251,7 @@ describe('Run Notify me through personal Follow', () => {
         await flushHookEffects();
         expect(owner.listReads()).toBe(reads);
         expect(network.requests).toHaveLength(runReads);
-        network.setRpcAckResponder(async request => request.method === RPC_METHODS.CAPABILITIES_DETECT
+        network.setRpcAckResponder(async request => request.method === RPC_METHODS.CAPABILITIES_DESCRIBE
             ? { ok: true, result: executionRunCapabilities }
             : { ok: false, error: 'execution_run_not_found', errorCode: 'execution_run_not_found' });
         await act(async () => notifyExecutionRunActivityFromUpdate(owner.home.id,
@@ -263,7 +268,7 @@ describe('Run Notify me through personal Follow', () => {
         expect(count).toBe(0);
         expect(readDetail()?.entries).toEqual([]);
         network.setRpcAckResponder(async request => ({ ok: true,
-            result: request.method === RPC_METHODS.CAPABILITIES_DETECT ? executionRunCapabilities : header }));
+            result: request.method === RPC_METHODS.CAPABILITIES_DESCRIBE ? executionRunCapabilities : header }));
         await act(async () => notifyExecutionRunActivityFromUpdate(owner.home.id,
             { type: 'execution-run-updated', machineId: source.machineId, runId: source.runId }));
         await vi.waitFor(() => expect(count).toBe(1));
@@ -271,7 +276,7 @@ describe('Run Notify me through personal Follow', () => {
         expect(readDetail()?.entries).toHaveLength(1);
         let currentHeader = header;
         network.setRpcAckResponder(async request => ({ ok: true,
-            result: request.method === RPC_METHODS.CAPABILITIES_DETECT ? executionRunCapabilities : currentHeader }));
+            result: request.method === RPC_METHODS.CAPABILITIES_DESCRIBE ? executionRunCapabilities : currentHeader }));
         await act(async () => readDetail()?.markOpened(source));
         expect(owner.writes).toEqual([{ once: [remaining], clearOnceDeliveries: true }]);
         expect(owner.follow()).toMatchObject({ policy: { preset: 'quiet' }, persistent: false, once: [remaining], onceDeliveries: [] });
@@ -303,7 +308,7 @@ describe('Run Notify me through personal Follow', () => {
             policy: { preset: 'quiet' }, once: [], onceDeliveries: [RunFollowOccurrenceV1Schema.parse({ original: { source: other,
                 permissionRequests: [{ requestId: 'permission-b', createdAt: 1 }] }, event: { kind: 'needs_you', type: 'approval' } })] })]);
         network.setRpcResponder(async request => {
-            if (request.method === RPC_METHODS.CAPABILITIES_DETECT) return executionRunCapabilities;
+            if (request.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return executionRunCapabilities;
             expect(request.method).toBe(SESSION_RPC_METHODS.EXECUTION_RUN_GET);
             expect(request.targetId).toBe(other.machineId);
             return ExecutionRunGetResponseSchema.parse({ run: { runId: other.runId, callId: 'call', sidechainId: 'sidechain',
@@ -330,6 +335,42 @@ describe('Run Notify me through personal Follow', () => {
         await screen.unmount();
     });
 
+    it('shares one exact Run header acquisition across independent mounted consumers and drains a push during its read', async () => {
+        const source = { kind: 'execution_run', machineId: 'machine-one', runId: 'shared-header' } as const;
+        const owner = await setup(source);
+        owner.oneShotOnly();
+        owner.setDeliveries([RunFollowOccurrenceV1Schema.parse({ original: { source, terminalEventId: 'terminal-one' }, event: { kind: 'finished' } })]);
+        const header = ExecutionRunGetResponseSchema.parse({ run: { runId: source.runId, callId: 'call', sidechainId: 'sidechain',
+            intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read_only',
+            retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response', status: 'succeeded', startedAtMs: 1, finishedAtMs: 2 } });
+        const held = createDeferred<void>();
+        let reads = 0;
+        network.setRpcResponder(async request => {
+            if (request.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return executionRunCapabilities;
+            expect(request.method).toBe(SESSION_RPC_METHODS.EXECUTION_RUN_GET);
+            reads += 1;
+            if (reads === 1) await held.promise;
+            return header;
+        });
+        const projected: Array<ReturnType<typeof useInboxExecutionRunSource> | undefined> = [];
+        function Detail({ index }: Readonly<{ index: number }>) { projected[index] = useInboxExecutionRunSource(); return null; }
+        const screen = await renderScreen(<><InboxExecutionRunSourceBoundary><Detail index={0} /></InboxExecutionRunSourceBoundary>
+            <InboxExecutionRunSourceBoundary><Detail index={1} /></InboxExecutionRunSourceBoundary></>);
+        await vi.waitFor(() => expect(projected.every(source => source?.loading)).toBe(true));
+        await vi.waitFor(() => expect(reads).toBeGreaterThan(0));
+        await flushHookEffects();
+        expect(reads).toBe(1);
+        await act(async () => notifyExecutionRunActivityFromUpdate(owner.home.id,
+            { type: 'execution-run-updated', machineId: source.machineId, runId: source.runId }));
+        await act(async () => held.resolve());
+        await vi.waitFor(() => expect(projected.map(source => source?.entries.length)).toEqual([1, 1]));
+        await vi.waitFor(() => expect(reads).toBe(2));
+        await screen.unmount();
+        await act(async () => notifyExecutionRunActivityFromUpdate(owner.home.id,
+            { type: 'execution-run-updated', machineId: source.machineId, runId: source.runId }));
+        expect(reads).toBe(2);
+    });
+
     it('keeps last committed state on refusal and refreshes fulfillment without unrelated reads', async () => {
         const source = { kind: 'execution_run', machineId: 'machine-one', runId: 'read-demand' } as const;
         const owner = await setup(source);
@@ -345,7 +386,7 @@ describe('Run Notify me through personal Follow', () => {
         owner.failWrite();
         await screen.pressByTestIdAsync('notify-run-terminal-cancel:read-demand');
         expect(screen.findByTestId('notify-run-terminal-switch:read-demand')?.props.value).toBe(true);
-        expect(screen.findByTestId('notify-run-terminal-error:read-demand')).not.toBeNull();
+        await vi.waitFor(() => expect(screen.findByTestId('notify-run-terminal-error:read-demand')).not.toBeNull());
         owner.setOnce([]);
         await act(async () => publishHomeAccountChange(owner.home.id, [ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID], { changeKinds: ['account'] }));
         await vi.waitFor(() => expect(screen.findByTestId('notify-run-terminal-switch:read-demand')?.props.value).toBe(false));

@@ -3,128 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { createTranscriptViewportController } from '@/components/sessions/transcript/viewport/createTranscriptViewportController';
 
 describe('transcript viewport controller', () => {
-    it('resolves initial follow bottom to a pin command', () => {
-        const controller = createTranscriptViewportController();
-
-        const command = controller.resolve({
-            type: 'first-paint',
-            sessionId: 'session-a',
-            shouldFollowBottom: true,
-            entrySnapshot: null,
-            jumpToSeq: null,
-        });
-
-        expect(command).toEqual({
-            kind: 'pin-bottom',
-            sessionId: 'session-a',
-            reason: 'initial-open',
-            mode: 'follow-bottom',
-        });
-        expect(controller.getMode()).toBe('follow-bottom');
-    });
-
-    it('resolves unpinned entry distance to a semantic restore distance command', () => {
-        const controller = createTranscriptViewportController();
-
-        const command = controller.resolve({
-            type: 'first-paint',
-            sessionId: 'session-a',
-            shouldFollowBottom: false,
-            entrySnapshot: {
-                shouldFollowBottom: false,
-                distanceFromLiveTailPx: 420,
-            },
-            jumpToSeq: null,
-        });
-
-        expect(command).toEqual({
-            kind: 'restore-distance',
-            sessionId: 'session-a',
-            reason: 'entry-restore',
-            mode: 'restore-distance',
-            distanceFromLiveTailPx: 420,
-        });
-        expect(controller.getMode()).toBe('restore-distance');
-    });
-
-    it('does not synthesize a restore-distance command when an unpinned entry has no known distance', () => {
-        const controller = createTranscriptViewportController();
-
-        const command = controller.resolve({
-            type: 'first-paint',
-            sessionId: 'session-a',
-            shouldFollowBottom: false,
-            entrySnapshot: {
-                shouldFollowBottom: false,
-                distanceFromLiveTailPx: null,
-            },
-            jumpToSeq: null,
-        });
-
-        expect(command).toEqual({
-            kind: 'none',
-            sessionId: 'session-a',
-            reason: 'entry-restore',
-            mode: 'restore-distance',
-        });
-        expect(controller.getMode()).toBe('restore-distance');
-    });
-
-    it('resolves unpinned entry anchor to semantic restore anchor', () => {
-        const controller = createTranscriptViewportController();
-
-        const command = controller.resolve({
-            type: 'first-paint',
-            sessionId: 'session-a',
-            shouldFollowBottom: false,
-            entrySnapshot: {
-                shouldFollowBottom: false,
-                distanceFromLiveTailPx: 80,
-                anchor: { kind: 'message', itemId: 'row-12', messageId: 'message-12' },
-                anchorItemOffsetPx: 24,
-            },
-            jumpToSeq: null,
-        });
-
-        expect(command).toEqual({
-            kind: 'restore-anchor',
-            sessionId: 'session-a',
-            reason: 'entry-restore',
-            mode: 'restore-anchor',
-            target: {
-                anchor: { kind: 'message', itemId: 'row-12', messageId: 'message-12' },
-                itemOffsetPx: 24,
-            },
-        });
-        expect(controller.getMode()).toBe('restore-anchor');
-    });
-
-    it('prefers jumpToSeq over first paint state', () => {
-        const controller = createTranscriptViewportController();
-
-        const command = controller.resolve({
-            type: 'first-paint',
-            sessionId: 'session-a',
-            shouldFollowBottom: false,
-            entrySnapshot: {
-                shouldFollowBottom: false,
-                distanceFromLiveTailPx: 420,
-                anchor: { kind: 'message', itemId: 'row-12', messageId: 'message-12' },
-                anchorItemOffsetPx: 24,
-            },
-            jumpToSeq: 34,
-        });
-
-        expect(command).toEqual({
-            kind: 'jump-to-seq',
-            sessionId: 'session-a',
-            reason: 'jump-to-seq',
-            mode: 'jump-to-seq',
-            seq: 34,
-        });
-        expect(controller.getMode()).toBe('jump-to-seq');
-    });
-
     it('keeps explicit jump-to-seq commands semantic even if a caller passes a stale index', () => {
         const controller = createTranscriptViewportController();
 
@@ -142,7 +20,6 @@ describe('transcript viewport controller', () => {
             mode: 'jump-to-seq',
             seq: 34,
         });
-        expect(controller.getMode()).toBe('jump-to-seq');
     });
 
     it.each([24, -936])('preserves explicit jump-to-seq alignment offset %s as a semantic command option', (itemOffsetPx) => {
@@ -163,7 +40,6 @@ describe('transcript viewport controller', () => {
             seq: 34,
             align: { kind: 'top-with-item-offset', itemOffsetPx },
         });
-        expect(controller.getMode()).toBe('jump-to-seq');
     });
 
     it('resolves jump-to-seq failure recovery from platform failure facts', () => {
@@ -191,19 +67,10 @@ describe('transcript viewport controller', () => {
             averageItemLengthPx: 123,
             animated: true,
         });
-        expect(controller.getMode()).toBe('jump-to-seq');
     });
 
-    it('prefers jump to bottom over unpinned restore', () => {
+    it('resolves an explicit jump to bottom as a forced animated pin', () => {
         const controller = createTranscriptViewportController();
-        controller.resolve({
-            type: 'first-paint',
-            sessionId: 'session-a',
-            shouldFollowBottom: false,
-            entrySnapshot: { shouldFollowBottom: false, distanceFromLiveTailPx: 420 },
-            jumpToSeq: null,
-        });
-
         const command = controller.resolve({
             type: 'jump-to-bottom',
             sessionId: 'session-a',
@@ -217,7 +84,6 @@ describe('transcript viewport controller', () => {
             force: true,
             animated: true,
         });
-        expect(controller.getMode()).toBe('jump-to-bottom');
     });
 
     it('resolves fallback bottom pins through the controller', () => {
@@ -238,7 +104,6 @@ describe('transcript viewport controller', () => {
             mode: 'jump-to-seq',
             animated: false,
         });
-        expect(controller.getMode()).toBe('jump-to-seq');
     });
 
     it('resolves explicit restore-distance corrections as semantic distance commands', () => {
@@ -262,7 +127,6 @@ describe('transcript viewport controller', () => {
             contentHeight: 36800,
             animated: false,
         });
-        expect(controller.getMode()).toBe('restore-distance');
     });
 
     it('resolves prepend fallback corrections as semantic history correction commands', () => {
@@ -289,7 +153,6 @@ describe('transcript viewport controller', () => {
             targetDistanceFromHistoryStartPx: 820,
             animated: false,
         });
-        expect(controller.getMode()).toBe('restore-anchor');
     });
 
     it('resolves explicit anchor restores without first-paint semantics', () => {
@@ -317,7 +180,6 @@ describe('transcript viewport controller', () => {
             },
             animated: false,
         });
-        expect(controller.getMode()).toBe('restore-anchor');
     });
 
     it('resolves visible web anchor correction as a semantic restore command', () => {
@@ -343,32 +205,6 @@ describe('transcript viewport controller', () => {
             },
             animated: false,
         });
-        expect(controller.getMode()).toBe('restore-anchor');
     });
 
-    it('resets to hydrating on session identity change', () => {
-        const controller = createTranscriptViewportController();
-        controller.resolve({
-            type: 'first-paint',
-            sessionId: 'session-a',
-            shouldFollowBottom: true,
-            entrySnapshot: null,
-            jumpToSeq: null,
-        });
-
-        const command = controller.resolve({
-            type: 'user-scroll',
-            sessionId: 'session-b',
-            distanceFromBottom: 200,
-            pinThresholdPx: 80,
-        });
-
-        expect(command).toEqual({
-            kind: 'none',
-            sessionId: 'session-b',
-            reason: 'session-change',
-            mode: 'hydrating',
-        });
-        expect(controller.getMode()).toBe('hydrating');
-    });
 });

@@ -138,7 +138,7 @@ function primaryLabel(action: SessionGitPaneAction): string {
         case 'pull': return t('sessionGitPane.header.pull', { count: count(action.count) });
         case 'fetch': return t('sessionGitPane.flow.action.fetch');
         case 'publish': return t('sessionGitPane.flow.action.publish');
-        case 'create-pr': return t('sessionGitPane.flow.action.createPr');
+        case 'create-pr': return action.reason === 'missing-base' ? t('sessionGitPullRequest.form.chooseBase') : t('sessionGitPane.flow.action.createPr');
         case 'open-pr': return t('sessionGitPane.flow.action.openPr', { number: String(action.count ?? '') });
         case 'resolve': return t('sessionGitPane.flow.action.resolve', { count: count(action.count) });
         case 'up-to-date': return t('sessionGitPane.flow.action.upToDate');
@@ -160,7 +160,7 @@ function menuTitle(action: SessionGitPaneAction): string {
     switch (action.key) {
         case 'push': return action.count ? t('sessionGitPane.header.push', { count: count(action.count) }) : t('sessionGitPane.flow.menu.push');
         case 'pull': return action.count ? t('sessionGitPane.header.pull', { count: count(action.count) }) : t('sessionGitPane.flow.menu.pull');
-        case 'create-pr': return t('sessionGitPane.flow.menu.createPr');
+        case 'create-pr': return action.reason === 'missing-base' ? t('sessionGitPullRequest.form.chooseBase') : t('sessionGitPane.flow.menu.createPr');
         default: return primaryLabel(action);
     }
 }
@@ -179,6 +179,7 @@ function menuSubtitle(action: SessionGitPaneAction, upstream: string | null, bas
 }
 
 const stylesheet = StyleSheet.create(() => ({
+    // The two halves of one split button (`ToolbarButton` `joinedEdge` draws the seam).
     split: {
         flexDirection: 'row',
         alignItems: 'stretch',

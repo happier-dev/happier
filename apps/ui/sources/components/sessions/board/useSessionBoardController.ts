@@ -1347,7 +1347,7 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
                         ? removalInput.binding.snapshot
                         : null;
                     const projected = removalLive?.itemsById.get(command.itemId);
-                    if (!removalLive || removalLive.layoutRevision === null || !projected) return;
+                    if (!removalLive || !projected) return;
                     if (projected.revision === null) {
                         // A missing-reference card has no shared record left to delete, but the
                         // layout still carries its placements and the card publishes Remove as
@@ -1357,7 +1357,7 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
                         const hasPlacement = removalLive.views.some((candidate) => !candidate.synthetic
                             && candidate.placements.some((placement) => placement.itemId === command.itemId));
                         const cleanupLayoutRevision = removalLive.layoutRevision;
-                        if (!hasPlacement) {
+                        if (!hasPlacement || cleanupLayoutRevision === null) {
                             present({ kind: 'failed', error: 'session_board_item_not_found' }, command);
                             return;
                         }
@@ -1375,13 +1375,15 @@ export function useSessionBoardController(input: SessionBoardControllerInput): S
                         && guardedRemoval.committedItemRevision !== null
                         ? guardedRemoval.committedItemRevision
                         : projected.revision;
+                    // A visual shown only in the transcript has no layout yet: the item revision alone
+                    // addresses the shared record, and the Action's layout revision is optional.
                     const removedLayoutRevision = removalLive.layoutRevision;
                     await submit(command, (p) => p.removeItem(
                         {
                             sessionId: removalInput.sessionId,
                             itemId: command.itemId,
                             expectedItemRevision: removedRevision,
-                            expectedLayoutRevision: removedLayoutRevision,
+                            ...(removedLayoutRevision !== null ? { expectedLayoutRevision: removedLayoutRevision } : {}),
                         },
                     ), () => retireDraftForItem(command.itemId));
                 };

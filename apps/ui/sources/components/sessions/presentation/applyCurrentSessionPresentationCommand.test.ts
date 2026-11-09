@@ -1,4 +1,4 @@
-import type { ComposerTransactionResultV1, ComposerTransactionV1 } from '@happier-dev/protocol';
+import type { ComposerTransactionResultV1, ComposerTransactionV1 } from '@happier-dev/protocol/plugins/ui/composer';
 import { describe, expect, it, vi } from 'vitest';
 
 import { applyCurrentSessionPresentationCommand } from './applyCurrentSessionPresentationCommand';

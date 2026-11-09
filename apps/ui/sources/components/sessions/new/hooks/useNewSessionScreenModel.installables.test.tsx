@@ -2,15 +2,19 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-    buildBackendTargetKey,
+    buildBackendTargetKey} from '@happier-dev/protocol/backends/targets/backendTargetRef';
+import {
     convertBackendTargetRefV2ToV1,
-    readBackendTargetRefV2,
-    PluginProjectionV2Schema,
-    SessionSpawnNewInputV2Schema,
-    SessionSpawnNewResultV1Schema,
-    V2SessionListResponseSchema,
+    readBackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import {
+    PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+    SessionSpawnNewInputV2Schema} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import {
+    SessionSpawnNewResultV1Schema} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import {
     type AcpCatalogSettingsV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/acp/catalog/settingsV1';
 import { qualifyPluginContributionReferenceV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1 } from '@happier-dev/protocol/agents/executionTargetV1';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
@@ -26,6 +30,7 @@ import {
     createSessionListRenderableSessionFixture,
 } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { createSessionListSourceFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createExistingSessionDirectoryPreflightResult, createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -43,6 +48,7 @@ import type { StorageState } from '@/sync/store/types';
 import type { NewSessionDraft } from '@/sync/domains/state/persistence';
 
 import { createProfileCatalogHttpResponse, installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
+import { rememberLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -238,7 +244,11 @@ async function activateAuthoringScope(scope: Readonly<{ serverId: string; accoun
 
 async function renderNewSessionScreenModel(options: Readonly<{ openAgentPicker?: boolean; freshDraft?: boolean }> = {}) {
     const seedStore = () => {
-        storageStore.getState().applySettingsLocal(settingsParse(settingsRuntimeState.current ?? {}));
+        const settings = settingsParse(settingsRuntimeState.current ?? {});
+        rememberLastUsedBackendSelection(storageStore.getState().settingsScope, {
+            lastUsedAgent: settings.lastUsedAgent, lastUsedBackendTarget: settings.lastUsedBackendTarget,
+        });
+        storageStore.getState().applySettingsLocal(settings);
         const machines = machineState.value.map(machine => createMachineFixture({
             ...machine, activeAt: Date.now(), metadata: { ...createMachineFixture().metadata!, ...machine.metadata },
         }));
@@ -322,7 +332,6 @@ installNewSessionScreenModelCommonModuleMocks({
             InteractionManager: {
                 runAfterInteractions: () => ({ cancel: () => {} }),
             },
-            useWindowDimensions: () => ({ width: 900, height: 800 }),
         });
     },
     unistyles: async () => {
@@ -644,7 +653,7 @@ describe('useNewSessionScreenModel (installables)', () => {
                 })) ?? [],
                 capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } },
             }])),
-            actionsById: {}, familiesById: {},   resourcesById: {}, settingsById: {}, diagnostics: [],
+            actionsById: {}, familiesById: {}, resourcesById: {}, settingsById: {}, diagnostics: [],
         });
         network.setRpcResponder(async ({ method, payload }) => {
             if (method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
@@ -721,7 +730,7 @@ describe('useNewSessionScreenModel (installables)', () => {
                 access: { custodian: { accountId, displayName: 'Fixture Account' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
                 canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [],
             }));
-            if (path === '/v2/sessions' || path === '/v2/sessions/active') return Response.json(V2SessionListResponseSchema.parse({
+            if (path === '/v2/sessions' || path === '/v2/sessions/active') return Response.json(createSessionListSourceFixture({
                 sessions: [...createdSessions].filter(([key]) => key.startsWith(`${serverId}|`)).map(([, session]) => session),
                 nextCursor: null, hasNext: false,
             }));

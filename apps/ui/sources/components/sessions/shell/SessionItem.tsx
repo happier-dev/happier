@@ -1,6 +1,5 @@
 import { useSessionArchivePending } from '@/hooks/session/useSessionArchivePending';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
-import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { HAPPIER_META_COLUMN_STYLE, HappierMaterialRoleProvider, useContainingHappierMaterialRole, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import { readSessionLiveManagedSessionCountV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
@@ -37,7 +36,6 @@ import {
 import {
     getAgentCore,
     } from '@/agents/catalog/catalog';
-import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { Typography } from '@/constants/Typography';
 import { isWorkStatusNeedsYou, resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { CollectionRowNeedsYouLeading } from '@/components/ui/lists/collection/CollectionRowNeedsYouHighlight';
@@ -83,6 +81,7 @@ import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionL
 import { CollectionRowBadge, CollectionRowContent, CollectionRowLine, CollectionRowTitle, useTouchCompactRow } from '@/components/ui/lists/collection/CollectionRowContent';
 import { WorkflowRunItemBody, type WorkflowRunItemProps } from './row/WorkflowRunItemBody';
 import { useWorkflowSessionOccurrence } from './row/useWorkflowSessionOccurrence';
+import { resolveWorkflowInvocationWorkStatus } from '@/components/workflows/presentation/workflowLifecyclePresentation';
 import {
     SESSION_LIST_ROW_SELECTION_RADIUS,
     resolveCollectionRowDensity,
@@ -100,6 +99,8 @@ import { useGlassMaterialColorResolver } from '@/components/ui/glass/useGlassSur
 import { useSessionListOrganizeMode } from './organize/SessionListOrganizeMode';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 import type { SessionListRowViewModel } from './sessionListRowViewModels';
+import { useSessionRowAppearanceMenu, type SetSessionAppearance } from './row/actionMenu/useSessionRowAppearanceMenu';
+import { resolveSessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
 import type { SessionListGuardState } from '@/sync/domains/session/listing/sessionListRenderable';
 import { GuardCountdown } from '@/components/machines/guard/GuardCountdown';
 import { WordCrossFade } from '@/components/ui/motion/WordCrossFade';
@@ -121,14 +122,12 @@ import { useSessionRowActionMenu } from './row/actionMenu/useSessionRowActionMen
 import type { SessionRowSectionMove, SessionRowSpaceMembership } from './useSessionListRowMoveActionHandlers';
 import { formatSessionAttentionReminderDateTime } from './row/actionMenu/sessionAttentionReminderAction';
 import {
-    buildSessionDebugInformation,
-    isSessionDebugInformationEnabled,
-    resolveProviderSessionIdForDebug,
+    buildSessionDebugInformationForSession,
 } from '@/components/sessions/debug/sessionDebugInformation';
-import { copySessionDebugInformationToClipboard } from '@/components/sessions/debug/sessionDebugClipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+import { copySessionDebugInformationToClipboard, isSessionCopyActionId } from '@/components/sessions/debug/sessionDebugClipboard';
 import {
-    createCopySessionDebugInformationMenuItem,
-    SESSION_COPY_DEBUG_INFORMATION_MENU_ITEM_ID,
+    createSessionCopyMenuItem,
 } from '@/components/sessions/debug/sessionDebugMenuItem';
 import {
     storage,
@@ -139,7 +138,6 @@ import {
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
 import { readSessionRowPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
-import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import type { ExternalSessionIdentityPresentation } from '../presentation/externalSessionIdentityPresentation';
 import {
     normalizeSessionListIdentityDisplay,
@@ -214,6 +212,8 @@ export type SessionItemBaseProps = Readonly<{
     allKnownTags?: string[];
     onSetTags?: ((newTags: string[]) => void) | null;
     tagsEnabled?: boolean;
+    /** The list's canonical session-colour writer; absent hides the row's colour action. */
+    onSetSessionAppearance?: SetSessionAppearance | null;
     selectionKey?: string | null;
     /** Canonical rendered occurrence; selectionKey remains the Session entity. */
     occurrenceId?: string;
@@ -310,6 +310,8 @@ type SessionItemContentProps = Omit<SessionItemBaseProps, 'subtitleOverride'> & 
     hideInactiveSessions: boolean;
     draft: SessionListRowViewModel['draft'];
     reminder: SessionListRowViewModel['reminder'];
+    /** Effective colour (session override, else its project's). */
+    appearanceColor: SessionListRowViewModel['appearanceColor'];
     /** P5 row context (lab `clctx`); absent for rows drawn outside the Sessions list. */
     rowContext?: SessionListRowViewModel['rowContext'];
 }>;
@@ -370,6 +372,23 @@ function resolveSessionItemEffectiveSession(input: Readonly<{
 }
 
 const stylesheet = StyleSheet.create((theme) => ({
+    // An inner pill at the row's leading edge, outside navigation; it never fights the selected chip or
+    // hover fill. Insets scale with the row height; the ink hairline keeps pale customs visible.
+    appearanceStripe: {
+        position: 'absolute',
+        left: theme.space.s4,
+        top: '28%',
+        bottom: '28%',
+        width: 3,
+        borderRadius: 2,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.border.default,
+    },
+    // Minimal rows sit tight to the identity; hug the edge and thin the pill so it keeps breathing room.
+    appearanceStripeMinimal: {
+        left: theme.space.s2,
+        width: 2,
+    },
     // Rows lie flat on the column's plane (lab `clflat`): a group is its label and its rows, apart from
     // the next group by space alone. The row draws no sheet, border or shadow; its fill is its own.
     sessionItemContainer: {
@@ -677,6 +696,7 @@ const SessionItemContent = React.memo(
         tags,
         allKnownTags,
         onSetTags,
+        onSetSessionAppearance,
         tagsEnabled,
         selectionKey,
         occurrenceId,
@@ -728,6 +748,7 @@ const SessionItemContent = React.memo(
         draft,
         reminder,
         rowContext,
+        appearanceColor,
     }: SessionItemContentProps) => {
         const router = useDestinationRouter();
         const { theme } = useUnistyles();
@@ -773,9 +794,7 @@ const SessionItemContent = React.memo(
                 borderColor: materialColor(theme.colors.background?.canvas ?? 'transparent', theme.colors.border.default),
             }],
         };
-        const localDevModeEnabled = useLocalSetting('devModeEnabled');
         const uiFontScale = useLocalSetting('uiFontScale');
-        const devModeEnabled = isSessionDebugInformationEnabled(localDevModeEnabled);
         const resolvedSession = session;
         const sessionId = String(resolvedSession?.id ?? '').trim();
         const resolvedSessionMetadata = React.useMemo(
@@ -865,25 +884,7 @@ const SessionItemContent = React.memo(
         } as const;
         const resolveSessionDebugInformation = React.useCallback(() => {
             const fullSession = readHydratedSessionForRow(resolvedSession.id, serverId);
-            const debugSession = fullSession ?? resolvedSession;
-            const debugMetadata = fullSession
-                ? readSessionOwnerMetadataView(fullSession)
-                : readSessionMetadataLayoutVersion(resolvedSession.metadataLayoutVersion) === 0
-                    ? resolvedSession.metadata
-                    : null;
-            const debugAgentId = resolveAgentIdFromSessionMetadata(debugMetadata) ?? '';
-            const debugAgentCore = getAgentCore(debugAgentId);
-            const providerSessionId = resolveProviderSessionIdForDebug({
-                metadata: debugMetadata,
-                vendorResumeIdField: debugAgentCore?.resume.vendorResumeIdField,
-            });
-            return buildSessionDebugInformation({
-                session: debugSession,
-                providerDisplayName: debugAgentCore
-                    ? t(debugAgentCore.displayNameKey)
-                    : formatAgentLikeIdForDisplay(debugAgentId),
-                providerSessionId,
-            });
+            return buildSessionDebugInformationForSession(fullSession ?? resolvedSession);
         }, [resolvedSession, serverId]);
         const supportsPin = typeof onTogglePinned === 'function';
         const supportsTag = tagsEnabled === true && typeof onSetTags === 'function';
@@ -917,6 +918,7 @@ const SessionItemContent = React.memo(
         const [uncontrolledContextMenuOpen, setUncontrolledContextMenuOpen] = React.useState(false);
         const contextMenuOpen = nativeContextMenuOpen ?? uncontrolledContextMenuOpen;
         const setContextMenuOpen = onNativeContextMenuOpenChange ?? setUncontrolledContextMenuOpen;
+        const writeClipboard = useClipboardWrite(serverId ?? null, { enabled: contextMenuOpen || moreMenuOpen });
         const setAttentionMenuHeld = useSessionListAttentionActivity();
         React.useLayoutEffect(() => {
             setAttentionMenuHeld(tagMenuOpen || moreMenuOpen || contextMenuOpen);
@@ -998,10 +1000,10 @@ const SessionItemContent = React.memo(
             if (e && typeof e.preventDefault === 'function') e.preventDefault();
         }, []);
 
-        const copyDebugMenuItems = React.useMemo((): DropdownMenuItem[] => {
-            if (!devModeEnabled) return [];
-            return [createCopySessionDebugInformationMenuItem({ iconColor: rowActionIconColor })];
-        }, [devModeEnabled, rowActionIconColor]);
+        const copyMenuItems = React.useMemo((): DropdownMenuItem[] => {
+            if (!contextMenuOpen && !moreMenuOpen) return [];
+            return [createSessionCopyMenuItem({ iconColor: rowActionIconColor, information: resolveSessionDebugInformation() })];
+        }, [contextMenuOpen, moreMenuOpen, resolveSessionDebugInformation, rowActionIconColor]);
         const confirmDeleteDraft = React.useCallback(async () => {
             if (!draft || !onDeleteDraft) return;
             const confirmed = await Modal.confirm(
@@ -1090,8 +1092,8 @@ const SessionItemContent = React.memo(
         }, [dragEnabled, organize.active, organize.available, rowActionIconColor]);
         const leadingMenuItems = React.useMemo(
             () => [...workspaceOpen.items, ...(mentionScope && mentionScope.serverId === serverId ? [{ id: 'entity.mentionInComposer', title: t('entityDragDrop.composer.mentionInComposer'),
-                icon: <Icon name="at" size={16} color={rowActionIconColor} /> }] : []), ...draftMenuItems, ...copyDebugMenuItems, ...forkMenuItems, ...organizeMenuItems],
-            [copyDebugMenuItems, draftMenuItems, forkMenuItems, organizeMenuItems, workspaceOpen.items, mentionScope, serverId, rowActionIconColor],
+                icon: <Icon name="at" size={16} color={rowActionIconColor} /> }] : []), ...draftMenuItems, ...forkMenuItems, ...organizeMenuItems],
+            [draftMenuItems, forkMenuItems, organizeMenuItems, workspaceOpen.items, mentionScope, serverId, rowActionIconColor],
         );
 
         const handleSelectLeadingMenuItem = React.useCallback(async (itemId: string): Promise<boolean> => {
@@ -1108,8 +1110,8 @@ const SessionItemContent = React.memo(
                 await confirmDeleteDraft();
                 return true;
             }
-            if (itemId === SESSION_COPY_DEBUG_INFORMATION_MENU_ITEM_ID) {
-                const copied = await copySessionDebugInformationToClipboard(resolveSessionDebugInformation());
+            if (isSessionCopyActionId(itemId)) {
+                const copied = await copySessionDebugInformationToClipboard(resolveSessionDebugInformation(), itemId, writeClipboard);
                 if (copied) {
                     copyFeedback.markCopied(resolvedSession.id);
                 }
@@ -1120,7 +1122,7 @@ const SessionItemContent = React.memo(
                 return true;
             }
             return false;
-        }, [confirmDeleteDraft, copyFeedback, mention, mentionScope, openForkFlow, organize, resolvedSession.id, resolveSessionDebugInformation, serverId, sessionNameResolved, workspaceOpen]);
+        }, [confirmDeleteDraft, copyFeedback, mention, mentionScope, openForkFlow, organize, resolvedSession.id, resolveSessionDebugInformation, writeClipboard, serverId, sessionNameResolved, workspaceOpen]);
 
         const handleEnterSelectionMode = React.useCallback(() => {
             if (!resolvedSelectionKey) return;
@@ -1189,6 +1191,19 @@ const SessionItemContent = React.memo(
             onOpened?.();
         }, [navigateToSession, onOpened, resolvedSession.id, serverId]);
 
+        const appearanceMenu = useSessionRowAppearanceMenu({
+            enabled: moreMenuOpen || contextMenuOpen,
+            serverId: serverId ?? null,
+            sessionId: resolvedSession.id,
+            theme,
+            effectiveColor: appearanceColor,
+            onSetSessionAppearance,
+        });
+        const appearanceStripeColor = resolveSessionAppearanceColor(appearanceColor, theme);
+        const closeRowMenus = React.useCallback(() => {
+            setMoreMenuOpen(false);
+            setContextMenuOpen(false);
+        }, [setContextMenuOpen]);
         const {
             tagMenuItems,
             handleTagMenuSelect,
@@ -1199,6 +1214,8 @@ const SessionItemContent = React.memo(
             handleContextMenuSelect,
             mutatingSession,
         } = useSessionRowActionMenu({
+            appearance: appearanceMenu,
+            closeMenus: closeRowMenus,
             target: sessionActionTarget,
             onOpenFollowEditor: followEditor.openEditor,
             sessionName: sessionNameResolved,
@@ -1210,6 +1227,7 @@ const SessionItemContent = React.memo(
             onSetTags,
             onTogglePinned,
             leadingMenuItems,
+            trailingMenuItems: copyMenuItems,
             onSelectLeadingMenuItem: handleSelectLeadingMenuItem,
             surface: actionMenuSurface,
             flightOriginRef: identityRef,
@@ -1356,10 +1374,12 @@ const SessionItemContent = React.memo(
         const rowDensity = isMinimal ? 'minimal' : compact ? 'compact' : 'default';
         const collectionRowDensity = resolveCollectionRowDensity(rowDensity);
         const workFacts = sessionWorkStatusFactsFromStatus(resolvedSession, sessionStatus);
-        const workStatus = resolveWorkStatusTone({
-            kind: 'session',
-            facts: workFacts,
-        });
+        const workStatus = workflowOccurrence?.lifecycle
+            ? resolveWorkflowInvocationWorkStatus(workflowOccurrence.lifecycle, workflowOccurrence)
+            : resolveWorkStatusTone({
+                kind: 'session',
+                facts: workFacts,
+            });
         const rowContextSubtitle = externalSessionIdentity?.rowMetadataLabel || sessionSubtitle;
         const currentWorkTitle = workflowOccurrence ? undefined : sessionStatus.awareness.currentWork?.title;
         const hasWorkHeadline = Boolean(currentWorkTitle)
@@ -1478,6 +1498,9 @@ const SessionItemContent = React.memo(
                 {trailingStatusGlyph}
             </CollectionRequestPeek>
         ) : trailingStatusGlyph;
+        // Hovering swaps the trailing children (time for row actions) in the same parent; the key keeps this
+        // one slot mounted across that swap, so its hover rest, open peek and mark animation survive it.
+        const trailingStatusKeyedSlot = <React.Fragment key="trailing-status">{trailingStatusSlot}</React.Fragment>;
         const showTrailingGuardWord = Boolean(guardState) && !trailingAttentionReplacesTime;
         const showTrailingActivityTime = Boolean(activityTimeLabel) && !trailingAttentionReplacesTime && !showTrailingGuardWord;
         const hasTrailingMeta = showTrailingAttentionIndicator || showTrailingActivityTime || showTrailingGuardWord;
@@ -1567,6 +1590,19 @@ const SessionItemContent = React.memo(
                     {needsYouHighlight ? (
                         <CollectionRowNeedsYouLeading {...needsYouHighlight} testID={`session-row-needs-you-highlight-${occurrenceTestId}`} />
                     ) : null}
+                    {appearanceStripeColor ? (
+                        <View
+                            testID={`session-item-appearance-stripe:${resolvedSession.id}`}
+                            pointerEvents="none"
+                            accessible={false}
+                            importantForAccessibility="no-hide-descendants"
+                            style={[
+                                styles.appearanceStripe,
+                                isMinimal ? styles.appearanceStripeMinimal : null,
+                                { backgroundColor: appearanceStripeColor },
+                            ]}
+                        />
+                    ) : null}
                     {normalizedReportsDepth > 0 ? (
                         <View
                             testID={`session-list-item-reports-gutter-${occurrenceTestId}`}
@@ -1655,7 +1691,10 @@ const SessionItemContent = React.memo(
                                     avatarSize={avatarSize}
                                     agentLogoSize={agentLogoSize}
                                     connected={sessionStatus.isConnected}
-                                                                                    testID={`session-list-agent-logo-${occurrenceTestId}`}
+                                    roster={actionMenuSurface === 'botsRoster'}
+                                    botActivity={botActivity}
+                                    coordinator={isCoordinator}
+                                    testID={`session-list-agent-logo-${occurrenceTestId}`}
                                 />
                             </View>
                         )}
@@ -1759,8 +1798,9 @@ const SessionItemContent = React.memo(
                                 testID={`session-list-status-subtitle-${occurrenceTestId}-${rowAttentionState}`}
                                 style={styles.secondaryLineRow}
                             >
-                                <View style={styles.secondaryStatusDotContainer}>
-                                    {rowStatusMark !== 'none' ? (
+                                {/* The mark's column exists only when there is a mark: a quiet word ("Ready") sits on the title's edge (labs r2 add-popover, r9 rail). */}
+                                {rowStatusMark !== 'none' ? (
+                                    <View style={styles.secondaryStatusDotContainer}>
                                         <WorkStatusRowMark
                                             status={workStatus}
                                             testIDSuffix={`${occurrenceTestId}-secondary`}
@@ -1768,8 +1808,8 @@ const SessionItemContent = React.memo(
                                             animationEnabled={attentionIndicatorAnimationEnabled}
                                             needsYouHighlight={needsYouHighlight}
                                         />
-                                    ) : null}
-                                </View>
+                                    </View>
+                                ) : null}
                                 <Text
                                     testID={`session-list-status-subtitle-text-${occurrenceTestId}-${rowAttentionState}`}
                                     style={[
@@ -1932,11 +1972,11 @@ const SessionItemContent = React.memo(
                                     )}
                                 />
                             ) : null}
-                            {showTrailingAttentionIndicator && workStatus.tone !== 'neutral' ? trailingStatusSlot : null}
+                            {showTrailingAttentionIndicator && workStatus.tone !== 'neutral' ? trailingStatusKeyedSlot : null}
                         </View>
                     ) : showTrailingAttentionIndicator || showTrailingActivityTime || showTrailingGuardWord ? (
                         <View style={styles.trailingMetaRow}>
-                            {showTrailingAttentionIndicator ? trailingStatusSlot : null}
+                            {showTrailingAttentionIndicator ? trailingStatusKeyedSlot : null}
                             {showTrailingActivityTime || showTrailingGuardWord ? (
                                 <WordCrossFade wordKey={showTrailingGuardWord && guardState ? guardState.kind : 'time'}>
                                     {showTrailingGuardWord && guardState ? (
@@ -2188,6 +2228,7 @@ function SessionItemFromRowViewModel(props: SessionItemProps) {
             hideInactiveSessions={itemProps.hideInactiveSessions ?? rowViewModel.hideInactiveSessions}
             draft={rowViewModel.draft}
             reminder={rowViewModel.reminder}
+            appearanceColor={rowViewModel.appearanceColor}
             rowContext={rowViewModel.rowContext}
         />
     );

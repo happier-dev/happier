@@ -1,7 +1,9 @@
+import { createWorkspaceSyncRelationshipsListFixture } from '@/dev/testkit/harness/workspaceSyncHarness';
 import * as React from 'react';
 import { act, ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { computeWorkspaceSyncPolicyDigest, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { computeWorkspaceSyncPolicyDigest} from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import { createAccountTokenForTests, createHomeGovernanceHarness, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -72,7 +74,7 @@ installSessionActionRpcBoundary((request) => {
     const separator = request.method.indexOf(':');
     if (separator < 1) throw new Error(`Expected a Machine-addressed RPC: ${request.method}`);
     const method = request.method.slice(separator + 1);
-    if (method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_LIST) return { statuses: [] };
+    if (method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST) return createWorkspaceSyncRelationshipsListFixture([]);
     if (method === RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY) {
         const input = request.params as { path: string };
         return { ok: true, path: input.path, entries: [], truncated: false };
@@ -82,6 +84,7 @@ installSessionActionRpcBoundary((request) => {
 await loadSyncSingletonForTests();
 const { sync } = await import('@/sync/sync');
 const { storage } = await import('@/sync/domains/state/storage');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { MachineSelector } = await import('@/components/sessions/new/components/MachineSelector');
@@ -1556,20 +1559,24 @@ describe('SessionHandoffPickerModal', () => {
         const onClose = vi.fn();
         const { SessionHandoffPickerModal } = await import('./SessionHandoffPickerModal');
 
-        const screen = await renderScreen(<SessionHandoffPickerModal
+        const picker = <SessionHandoffPickerModal
             onClose={onClose}
             onResolve={onResolve}
             sessionId="sess_1"
             sourceMachineId="machine_source"
             serverId={homeA.id}
-        />);
+        />;
+        const screen = await renderScreen(<InjectedAuthProvider credentials={null}>{picker}</InjectedAuthProvider>);
 
         await act(async () => {});
         expect(refreshMachinesThrottledMock).toHaveBeenCalledTimes(1);
         expect(screen.tree.findByType(MachineSelector).props.machines).toMatchObject([{ id: 'machine_target' }, { id: 'machine_source' }]);
 
-        await home.switchAccount(homeA.id, 'account-a');
-        await act(async () => {});
+        // Auth context hydration does not disconnect/reinitialize the Account's Sync owner.
+        // switchAccount exercises that separate lifecycle and legitimately clears its machine cache.
+        const credentials = sync.getCredentials();
+        expect(credentials).not.toBeNull();
+        await screen.update(<InjectedAuthProvider credentials={credentials}>{picker}</InjectedAuthProvider>);
 
         expect(refreshMachinesThrottledMock).toHaveBeenCalledTimes(1);
         expect(screen.tree.findByType(MachineSelector).props.machines).toMatchObject([{ id: 'machine_target' }, { id: 'machine_source' }]);

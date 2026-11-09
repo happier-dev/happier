@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { ApprovalRequest } from '@happier-dev/protocol';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 import { ApprovalDecisionBar } from '@/components/approvals/ApprovalDecisionBar';
 import { CapabilityFacts, type CapabilityCost } from '@/components/capabilities/facts/CapabilityFacts';

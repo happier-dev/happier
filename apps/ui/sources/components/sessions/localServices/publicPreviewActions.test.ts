@@ -1,11 +1,14 @@
-import type { FrontDoorRuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { describe, expect, it, vi } from 'vitest';
+import type { FrontDoorRuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+// Load the real clipboard/Action graph during collection, outside a timed assertion.
+import './publicPreviewActions';
 
 import type {
-    LocalServiceLaunchTargetV1,
+    LocalServiceLaunchTargetV1} from '@happier-dev/protocol/local/services/launcher/v1';
+import type {
     LocalServicePublicExposureV1,
     LocalServicePublicPreviewSnapshotV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/local/services/public/v1';
 
 const target = {
     id: 'preview:preview_1',
@@ -73,7 +76,7 @@ describe('local service public preview actions', () => {
             return { ok: false, errorCode: 'approval_required', error: 'approval_required' };
         };
         const { createLocalServicePublicPreviewActions } = await import('./publicPreviewActions');
-        const actions = createLocalServicePublicPreviewActions({ runtimeActionExecute, serverId: 'home-b' });
+        const actions = createLocalServicePublicPreviewActions({ runtimeActionExecute, serverId: 'home-b', copyToClipboard: async () => false });
         expect(await actions.create(qualifiedTarget)).toBeUndefined();
         expect(requests).toEqual([]);
     });
@@ -125,7 +128,7 @@ describe('local service public preview actions', () => {
     it('creates a link directly from a browser preview target through the same action owner', async () => {
         const runtimeActionExecute = vi.fn(async () => ({ protocolVersion: 1 as const, exposure, snapshot }));
         const { createLocalServicePublicPreviewActions } = await import('./publicPreviewActions');
-        const actions = createLocalServicePublicPreviewActions({ runtimeActionExecute, serverId: 'server_1' });
+        const actions = createLocalServicePublicPreviewActions({ runtimeActionExecute, serverId: 'server_1', copyToClipboard: async () => false });
         await expect(actions.create(target.browserTarget)).resolves.toMatchObject({ exposure });
         expect(runtimeActionExecute).toHaveBeenCalledWith(expect.objectContaining({
             actionId: 'localServices.publicPreview.create',
@@ -142,6 +145,7 @@ describe('local service public preview actions', () => {
 
         const actions = createLocalServicePublicPreviewActions({
             runtimeActionExecute,
+            copyToClipboard: async () => false,
             machineId: 'machine_1',
             sessionId: 'session_1',
             serverId: 'server_1',
@@ -219,6 +223,7 @@ describe('local service public preview actions', () => {
             runtimeActionExecute,
             machineId: 'machine_1',
             sessionId: 'session_1',
+            copyToClipboard: async () => false,
         });
 
         await expect(actions.revoke(exposure)).resolves.toEqual(expect.objectContaining({

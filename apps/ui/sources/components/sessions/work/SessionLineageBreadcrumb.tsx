@@ -78,7 +78,7 @@ export const SessionLineageNavigation = React.memo(
           color={theme.colors.text.tertiary}
         />}
         separator={<Icon name="caret-right" size={10} color={theme.colors.text.tertiary} />}
-        colors={{ focus: theme.colors.border.focus, hover: theme.colors.surface.pressed }}
+        colors={{ focus: theme.colors.border.focus, hover: theme.colors.surface.hover }}
         linkStyle={styles.crumb}
         // The header title sits flush below the crumbs: its hit area keeps that side.
         linkHitReach={TITLE_BELOW_HIT_REACH}

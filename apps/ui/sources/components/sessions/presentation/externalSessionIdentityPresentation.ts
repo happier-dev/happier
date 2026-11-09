@@ -1,4 +1,4 @@
-import type { ExternalSessionCandidateThreadV1 } from '@happier-dev/protocol';
+import type { ExternalSessionCandidateThreadV1 } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';

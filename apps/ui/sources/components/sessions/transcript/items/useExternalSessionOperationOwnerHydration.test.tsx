@@ -5,7 +5,7 @@ import {
     projectExternalSessionOperationSharedPresentationV1,
     type ExternalSessionOperationProgressV1,
     type ExternalSessionOperationSharedPresentationV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/operationV1';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 

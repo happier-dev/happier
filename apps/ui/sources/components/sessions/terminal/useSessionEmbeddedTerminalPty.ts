@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { SessionTerminalTargetV1 } from '@happier-dev/protocol';
+import type { SessionTerminalTargetV1 } from '@happier-dev/protocol/terminal/workspace';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
@@ -37,7 +37,6 @@ export function useSessionEmbeddedTerminalPty(params: Readonly<{
         machineId: params.available === false ? null : explicitMachineId ?? machineTarget?.machineId ?? null,
         cwd: target?.kind === 'machine_shell' || target?.kind === 'terminal_view' ? target.cwd : kind === 'workspace_shell' ? machineTarget?.basePath ?? null : null,
         launch,
-        initialCommand: target?.kind === 'workspace_shell' || target?.kind === 'machine_shell' ? target.initialCommand : undefined,
         attachedTerminalId: target?.kind === 'terminal_view' ? target.terminalId : undefined,
         readOnly: target?.kind === 'terminal_view',
         workspace: target?.kind === 'terminal_view' ? target.workspace : undefined,

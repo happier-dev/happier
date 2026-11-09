@@ -2,7 +2,7 @@ import React, { useCallback, useRef } from 'react';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import type { SharingAuthoritySession } from '@/sync/domains/social/sessionSharingMutationAuthority';
-import { useMachineListByServerId, useMachineListStatusByServerId, useServerScopedMachine } from '@/sync/domains/state/storage';
+import { useMachineListStatusByServerId, useServerScopedMachine, useMachineListByServerId } from '@/sync/domains/state/storage';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
@@ -10,7 +10,7 @@ import { useMachinePresenceSummaries } from '@/sync/domains/machines/reachabilit
 import { readExternalSessionOperationPresentationFromMetadata } from '@/components/sessions/transcript/items/externalSessionOperationMetadata';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { useExternalSessionOperationOwnerHydration } from '@/components/sessions/transcript/items/useExternalSessionOperationOwnerHydration';
-import { createExternalSessionTranscriptLiveSourceKeyFromLink, resolveExternalSessionTranscriptAuthorityState } from '@/sync/runtime/external/externalSessionTranscriptAuthority';
+import { createExternalSessionTranscriptLiveSourceKeyFromLink, readExternalSessionTranscriptStorageState, resolveExternalSessionTranscriptAuthorityState } from '@/sync/runtime/external/externalSessionTranscriptAuthority';
 import { resolveExternalSessionSharingPresentation } from '@/components/sessions/sharing/externalSessionSharingPresentation';
 import { useSessionListRuntimeNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import { t } from '@/text';
@@ -100,8 +100,7 @@ export function useExternalSessionSharingAvailability({ serverId, sessionId, ses
             ? false
             : sourceMachineReachability,
         liveSourceKey: sourceKey,
-        currentStorageState: session?.currentStorageState
-            ?? (externalSessionLink ? 'legacy_external_unknown' : 'hosted'),
+        currentStorageState: readExternalSessionTranscriptStorageState(session?.currentStorageState, externalSessionLink !== null),
         acceptedThroughServerSeq: session?.acceptedThroughServerSeq ?? null,
         publishedThroughServerSeq: session?.publishedThroughServerSeq ?? null,
         materializedThroughSourceAt: session?.materializedThroughSourceAt ?? null,

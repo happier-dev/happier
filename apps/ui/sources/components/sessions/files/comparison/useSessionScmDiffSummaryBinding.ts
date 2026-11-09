@@ -1,4 +1,4 @@
-import type { ScmDiffSummaryOutputKind } from '@happier-dev/protocol';
+import type { ScmDiffSummaryOutputKind } from '@happier-dev/protocol/scm/diffSummary';
 import type { SessionScmReviewComparison } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import { useSession } from '@/sync/domains/state/storage';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
@@ -14,6 +14,7 @@ import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/ser
 /** Session authority and launch policy feed the shared saved-result binding. */
 export function useSessionScmDiffSummaryBinding(params: Readonly<{
     sessionId: string; serverId?: string | null; comparison: SessionScmReviewComparison | null; output: ScmDiffSummaryOutputKind;
+    paneScopeId?: string;
     restoration?: ScmWalkthroughRestoration;
 }>) {
     const serverId = usePreferredServerIdForSession(params);

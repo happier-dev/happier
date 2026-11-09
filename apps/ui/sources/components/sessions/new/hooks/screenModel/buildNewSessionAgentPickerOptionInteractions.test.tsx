@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { BackendTargetRefV2 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import { installNewSessionComponentsCommonModuleMocks } from '@/components/sessions/new/components/newSessionComponentsTestHelpers';
 import { createResolvedAgentCatalogEntryFixture } from '@/dev/testkit/fixtures/agentCatalogFixtures';
@@ -9,7 +9,7 @@ import { renderScreen } from '@/dev/testkit';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { publishProjectedAgentUiBehaviorDescriptors, clearProjectedAgentUiBehaviorDescriptors } from '@/agents/registry/agentUiBehaviorProjection';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 
 import type { SessionAgentPickerSelection } from '@/components/sessions/agentPicker/buildSessionAgentPickerDetailContent';
@@ -176,29 +176,56 @@ describe('buildNewSessionAgentPickerOptionInteractions', () => {
         providerModelProjectionInputs.length = 0;
     });
 
-    it('defers full Settings reads until detail mount and keeps that detail current without rebuilding its option', async () => {
+    it('keeps mounted detail work local to its declared Agent keys without rebuilding its option', async () => {
         const previous = storage.getState().settings;
-        const readSettings = vi.fn(() => storage.getState().settings);
+        storage.setState({ settings: { ...previous, sessionListDensity: 'narrow' } });
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'picker-machine',
+            accountLifetime: { isCurrent: () => true },
+            descriptorsByAgentId: { [pluginEntry.agentId]: {
+                kind: 'plugin.ui.v1', version: 1, pluginId: 'fixture.agent', agentId: pluginEntry.agentId,
+                behavior: { payload: { sessionExtras: {
+                    providerId: pluginEntry.agentId, outputKey: 'mode', values: ['narrow', 'cozy'],
+                    settingKey: { scope: 'host', localId: 'sessionListDensity' },
+                } } },
+            } },
+        });
+        publishProjectedAgentUiBehaviorDescriptors({
+            machineId: 'other-picker-machine',
+            accountLifetime: { isCurrent: () => true },
+            descriptorsByAgentId: { [pluginEntry.agentId]: {
+                kind: 'plugin.ui.v1', version: 1, pluginId: 'fixture.agent', agentId: pluginEntry.agentId,
+                behavior: { payload: { sessionExtras: {
+                    providerId: pluginEntry.agentId, outputKey: 'mode', values: ['foreign'], defaultValue: 'foreign',
+                    settingKey: { scope: 'account', localId: 'foreignRuntimeMode' },
+                } } },
+            } },
+        });
         const { buildNewSessionAgentPickerOptionInteractions } = await import('./buildNewSessionAgentPickerOptionInteractions');
+        const { NewSessionEngineOptionDetail } = await import('@/components/sessions/new/components/NewSessionEngineOptionDetail');
         const interactions = buildNewSessionAgentPickerOptionInteractions({
-            entry: pluginEntry, disabled: false, selectedMachineId: null, capabilityServerId: 'server-1', selectedPath: '/repo',
-            readSettings,
+            entry: pluginEntry, disabled: false, selectedMachineId: 'picker-machine', capabilityServerId: 'server-1', selectedPath: '/repo',
             getEngineSelectionForTargetKey: () => ({ modelId: 'default', sessionModeId: null, configOverrides: {} }),
             selectEngineSelection: vi.fn(),
         });
-        expect(readSettings).not.toHaveBeenCalled();
         const renderDetail = interactions.renderDetailContent;
         if (!renderDetail) throw new Error('Missing engine detail');
-        const screen = await renderScreen(<>{renderDetail({ onRequestClose: vi.fn() })}</>);
+        let commits = 0;
+        const screen = await renderScreen(<React.Profiler id="agent-detail" onRender={() => { commits++; }}>
+            {renderDetail({ onRequestClose: vi.fn() })}
+        </React.Profiler>);
         try {
-            expect(readSettings.mock.results.at(-1)?.value).toBe(storage.getState().settings);
-            const reads = readSettings.mock.calls.length;
+            expect(screen.tree.root.findByType(NewSessionEngineOptionDetail).props.capabilityProbeContext?.cacheKeySuffixParts ?? []).toContain('narrow');
+            const before = commits;
             await act(async () => storage.setState({ settings: { ...storage.getState().settings,
                 experiments: !storage.getState().settings.experiments } }));
-            expect(readSettings.mock.calls.length).toBeGreaterThan(reads);
-            expect(readSettings.mock.results.at(-1)?.value).toBe(storage.getState().settings);
+            expect(commits).toBe(before);
+            await act(async () => storage.setState({ settings: { ...storage.getState().settings, sessionListDensity: 'cozy' } }));
+            expect(screen.tree.root.findByType(NewSessionEngineOptionDetail).props.capabilityProbeContext?.cacheKeySuffixParts ?? []).toContain('cozy');
         } finally {
-            await screen.unmount(); storage.setState({ settings: previous });
+            await screen.unmount();
+            clearProjectedAgentUiBehaviorDescriptors();
+            storage.setState({ settings: previous });
         }
     });
 
@@ -218,7 +245,6 @@ describe('buildNewSessionAgentPickerOptionInteractions', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
             getEngineSelectionForTargetKey: () => selection,
             selectEngineSelection: vi.fn(),
         });
@@ -256,7 +282,6 @@ describe('buildNewSessionAgentPickerOptionInteractions', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
             providerProjection: screenProjection,
             getEngineSelectionForTargetKey: () => selection,
             selectEngineSelection: vi.fn(),
@@ -287,7 +312,6 @@ describe('buildNewSessionAgentPickerOptionInteractions', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
             getEngineSelectionForTargetKey: () => selection,
             selectEngineSelection,
         });

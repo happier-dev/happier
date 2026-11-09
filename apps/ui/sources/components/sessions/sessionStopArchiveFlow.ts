@@ -1,3 +1,5 @@
+import { SessionArchiveTimeoutError, withSessionArchiveDeadline } from '@/sync/ops/sessionArchiveLifecycle';
+import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { HappyError } from '@/utils/errors/errors';
 import { storage } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -94,30 +96,84 @@ export async function archiveSessionWithPendingState<T>(
     }
 }
 
-export async function stopSessionAndMaybeArchive(params: StopSessionAndMaybeArchiveParams): Promise<void | false> {
-    const run = async (operation?: SessionArchiveOperation) => {
-        const stopResult = await params.stopSession();
-        // A missing runner or withdrawn Machine access permits one authoritative
-        // Archive attempt. Access-loss custody owns retirement; the Home still
-        // rejects active Sessions, so unavailable controls never prove termination.
-        const canAttemptArchiveWithoutRuntime = params.archiveAfterStop === 'always'
-            && (stopResult.code === 'session_stop_not_found'
-                || canAttemptArchiveAfterMachineAccessLoss(params.address, stopResult));
-        if (!stopResult.success && !isAcceptedPendingSessionStop(stopResult) && !canAttemptArchiveWithoutRuntime) {
-            throw new HappyError(resolveSessionStopFailureMessage(stopResult, params.stopErrorMessage), false, {
-                code: stopResult.code,
-                details: stopResult.details,
-            });
-        }
-        if (params.archiveAfterStop === 'never') return;
-        const archiveResult = await params.archiveSession(operation);
-        if (!archiveResult.success) {
-            const message = isSessionActiveArchiveResult(archiveResult)
-                ? params.archiveErrorMessage
-                : archiveResult.message || params.archiveErrorMessage;
-            throw new HappyError(message, false, { code: archiveResult.code });
+export type StopSessionAndRunActionParams = Readonly<{
+    stopSession: () => Promise<SessionMutationResult>;
+    stopErrorMessage: string;
+    endAction?: Readonly<{
+        run: (signal?: AbortSignal) => Promise<SessionMutationResult>;
+        errorMessage: string;
+        canRunAfterStopFailure?: (result: SessionMutationResult) => boolean;
+        readiness?: Readonly<{ isReady: () => boolean; signal: AbortSignal }>;
+    }>;
+}>;
+
+/** Observe lifecycle publication only while this one confirmed end action needs it. */
+async function waitForEndActionReadiness(isReady: () => boolean, signal: AbortSignal): Promise<void> {
+    throwIfAborted(signal);
+    if (isReady()) return;
+    await new Promise<void>((resolve, reject) => {
+        let settled = false;
+        let unsubscribe = () => {};
+        const finish = (error?: unknown) => {
+            if (settled) return;
+            settled = true;
+            unsubscribe();
+            signal.removeEventListener('abort', abort);
+            if (error !== undefined) reject(error);
+            else resolve();
+        };
+        const abort = () => finish(signal.reason ?? new Error('Session end action cancelled'));
+        const check = () => {
+            try { throwIfAborted(signal); if (isReady()) finish(); }
+            catch (error) { finish(error); }
+        };
+        unsubscribe = storage.subscribe(check);
+        signal.addEventListener('abort', abort, { once: true });
+        // Cover a publication or cancellation between the initial check and admission.
+        check();
+    });
+}
+
+/** Stop acknowledgements never prove end-action eligibility; each end action keeps its own guard. */
+export async function stopSessionAndRunAction(params: StopSessionAndRunActionParams): Promise<void> {
+    const stopResult = await params.stopSession();
+    const targetMissing = stopResult.code === 'session_stop_not_found';
+    const canProceed = params.endAction && (targetMissing || params.endAction.canRunAfterStopFailure?.(stopResult));
+    if (!stopResult.success && !isAcceptedPendingSessionStop(stopResult) && !canProceed) {
+        throw new HappyError(resolveSessionStopFailureMessage(stopResult, params.stopErrorMessage), false, {
+            code: stopResult.code, details: stopResult.details,
+        });
+    }
+    const endAction = params.endAction;
+    if (!endAction) return;
+    const run = async (signal?: AbortSignal) => {
+        if (endAction.readiness && !targetMissing) await waitForEndActionReadiness(endAction.readiness.isReady, signal ?? endAction.readiness.signal);
+        const result = await endAction.run(signal);
+        if (!result.success) {
+            throw new HappyError(isSessionActiveArchiveResult(result) ? endAction.errorMessage
+                : result.message || endAction.errorMessage, false, { code: result.code, details: result.details });
         }
     };
+    if (!endAction.readiness) return await run();
+    try {
+        // The existing end-stage owner supplies the budget; Stop itself is outside it.
+        await withSessionArchiveDeadline(endAction.readiness.signal, run);
+    } catch (error) {
+        if (error instanceof SessionArchiveTimeoutError) throw new HappyError(endAction.errorMessage, false, { code: 'session_end_action_timeout' });
+        throw error;
+    }
+}
+
+export async function stopSessionAndMaybeArchive(params: StopSessionAndMaybeArchiveParams): Promise<void | false> {
+    const run = (operation?: SessionArchiveOperation) => stopSessionAndRunAction({
+        stopSession: params.stopSession,
+        stopErrorMessage: params.stopErrorMessage,
+        ...(params.archiveAfterStop === 'always' ? { endAction: {
+            run: () => params.archiveSession(operation),
+            errorMessage: params.archiveErrorMessage,
+            canRunAfterStopFailure: (result: SessionMutationResult) => canAttemptArchiveAfterMachineAccessLoss(params.address, result),
+        } } : {}),
+    });
     return params.archiveAfterStop === 'always'
         ? archiveSessionWithPendingState(params.address, run)
         : run();

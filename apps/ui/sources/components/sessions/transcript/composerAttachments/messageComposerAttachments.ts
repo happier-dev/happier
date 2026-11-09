@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import { readHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/sessions/userMessageRpc';
 import type { ComposerAttachmentInputV1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type { SessionMessageRefV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageRefV1';
 import type { MessageStructuredReferences } from '../references/messageStructuredReferences';
 
 export type TranscriptComposerAttachment = Readonly<{
@@ -11,6 +12,7 @@ export type TranscriptComposerAttachment = Readonly<{
     description: string | null;
     icon: string | null;
     tone: string | null;
+    source?: SessionMessageRefV1;
 }>;
 
 const NO_COMPOSER_ATTACHMENTS: readonly TranscriptComposerAttachment[] = Object.freeze([]);
@@ -30,6 +32,7 @@ function projectTranscriptComposerAttachment(
         description: attachment.presentation.description ?? null,
         icon: attachment.presentation.icon ?? null,
         tone: attachment.presentation.tone ?? null,
+        ...(attachment.presentation.source ? { source: attachment.presentation.source } : {}),
     });
 }
 

@@ -58,6 +58,9 @@ describe('SessionMessageAccountByline', () => {
         const unnamed = await renderScreen(<SessionMessageAccountByline {...defaults} actor={{ ...actor, profile: { name: null, firstName: null, lastName: null, username: null, avatarUrl: null } }} />);
         expect(unnamed.findHostByTestId('transcript-account-attribution:message-1')?.props.accessibilityLabel)
             .toBe('message.accountActorSentBy(name=message.accountActorUnnamedMember)');
+        const currentWithoutProfile = await renderScreen(<SessionMessageAccountByline {...defaults} actor={{ ...actor, accessibility: 'current', profile: null }} />);
+        expect(currentWithoutProfile.findHostByTestId('transcript-account-attribution:message-1')?.props.accessibilityLabel)
+            .toBe('message.accountActorSentBy(name=message.accountActorUnnamedMember)');
         expect(JSON.stringify(former.tree.toJSON())).not.toContain(actor.accountId);
     });
 

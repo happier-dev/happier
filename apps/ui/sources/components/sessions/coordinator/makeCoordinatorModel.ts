@@ -7,10 +7,12 @@ import {
 } from '@happier-dev/protocol/sessions/follow/sessionCoordinatorSetupV1';
 import type { FollowRulePreviewResultV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRulePreviewV1';
 import type { QualifiedProjectKeyV1, WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
-import { projectWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
-import { matchSessionProjectFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { resolveSessionProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { resolveCoordinatorKeepDefault } from '@happier-dev/protocol/account/settings/accountSettings';
 import { workspaceRefResolutionContextV1 } from '@/sync/domains/workspaces/workspaceRefs';
+import { admitProjectWorkspaceCensusForSubject } from '@/sync/domains/workspaces/projectWorkspaceCensusAdmission';
+import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { Session } from '@/sync/domains/state/storageTypes';
 
 type RuleSuggestion =
     SessionCoordinatorEnableInputV1['ruleSuggestions'][number];
@@ -24,6 +26,9 @@ export type MakeCoordinatorRuleDraft = Readonly<{
 
 export type MakeCoordinatorDraft = Readonly<{
     project: QualifiedProjectKeyV1 | null;
+    /** Captured private inference authority, retained through retirement for this dialog opening. */
+    projectInferenceScope: ServerAccountScope | null;
+    projectCensusScope: ServerAccountScope | null;
     roleId: string;
     keep: MakeCoordinatorKeep;
     /** True while the place is still the one the Settings default resolved to (the dialog says "From your setting"). */
@@ -44,21 +49,23 @@ export function buildMakeCoordinatorDraft(
         serverId: string;
         sessionId: string;
         ownerMetadata: Readonly<Record<string, unknown>> | null;
+        projectKey?: string | null;
         workspaceRefs?: readonly WorkspaceRefV1[];
+        workspaceRefsScope?: ServerAccountScope | null;
+        sessionAuthority?: Pick<Session, 'ownerAccountId' | 'access' | 'accessLevel'>;
         settings: SessionCoordinatorCreationDefaultsV1;
         ruleIds: Readonly<{ project: string; home: string }>;
         ruleCensus: SessionCoordinatorRuleCensusV1 | null;
     }>,
 ): MakeCoordinatorDraft {
-    // Enumerate accepted Project anchors, but leave membership (including path,
-    // checkout identity, ambiguity and Home aliases) to the filter's one owner.
-    const candidates = typeof input.ownerMetadata?.projectId === 'string'
-        ? [{ serverId: input.serverId, projectKey: input.ownerMetadata.projectId }]
-        : (input.workspaceRefs ?? []).map(projectWorkspaceRefV1);
-    const workspaceContext = workspaceRefResolutionContextV1();
-    const matched = candidates.find(project => matchSessionProjectFilterV1(input.ownerMetadata,
-        input.serverId, project, input.workspaceRefs, workspaceContext) === 'match');
-    const project = matched ? { serverId: input.serverId, projectKey: matched.projectKey } : null;
+    const census = admitProjectWorkspaceCensusForSubject({
+        subject: { kind: 'session', ...input.sessionAuthority }, rowServerId: input.serverId,
+        censusServerId: input.workspaceRefsScope?.serverId, viewerAccountId: input.workspaceRefsScope?.accountId,
+        workspaceRefs: input.workspaceRefs,
+    });
+    const association = resolveSessionProjectKeyV1(input.ownerMetadata, input.serverId, census.workspaceRefs,
+        { ...workspaceRefResolutionContextV1(), projectKey: input.projectKey });
+    const project = association.kind === 'resolved' ? association.projectKey : null;
     const scope = project ? 'project' : 'home';
     // Both suggestions are prepared so the person can turn either on; the Settings switches decide which appear.
     const setup = prepareSessionCoordinatorSetupV1({
@@ -90,6 +97,8 @@ export function buildMakeCoordinatorDraft(
     );
     return {
         project,
+        projectInferenceScope: association.kind === 'resolved' && association.ref ? input.workspaceRefsScope ?? null : null,
+        projectCensusScope: census.admitted ? input.workspaceRefsScope ?? null : null,
         roleId: setup.roleId,
         keep: setup.keep,
         keepFromSetting: true,
@@ -98,6 +107,35 @@ export function buildMakeCoordinatorDraft(
         answersWorkerQuestions: setup.answersWorkerQuestions,
         rules,
     };
+}
+
+/** Reconcile before rendering or submitting, not only after a revoked rule has committed. */
+export function reconcileMakeCoordinatorProjectDraft(
+    current: MakeCoordinatorDraft,
+    prepared: MakeCoordinatorDraft,
+    rulesChosen: boolean,
+): MakeCoordinatorDraft {
+    if (current.projectInferenceScope
+        && !areServerAccountScopesEqual(current.projectInferenceScope, prepared.projectCensusScope)) {
+        const project = prepared.projectInferenceScope ? null : prepared.project;
+        if (!project && !current.project && !current.rules.some(rule => rule.scope === 'project')
+            && (current.projectCensusScope === prepared.projectCensusScope
+                || areServerAccountScopesEqual(current.projectCensusScope, prepared.projectCensusScope))) return current;
+        const rules = prepared.rules.filter(rule => rule.scope !== 'project' || project !== null).map(rule => ({ ...rule,
+            enabled: current.rules.find(previous => previous.scope === rule.scope)?.enabled ?? false }));
+        return { ...current, project,
+            // Retain the inference's original authority through retirement.
+            projectInferenceScope: project ? prepared.projectInferenceScope : current.projectInferenceScope,
+            projectCensusScope: prepared.projectCensusScope, rules };
+    }
+    if (current.project || !prepared.project) return current;
+    const rules = rulesChosen ? prepared.rules.map(rule => ({ ...rule,
+        enabled: current.rules.find(previous => previous.scope === rule.scope)?.enabled ?? false })) : prepared.rules;
+    const homeWide = rules.some(rule => rule.scope === 'home' && rule.enabled);
+    return { ...current, project: prepared.project,
+        projectInferenceScope: prepared.projectInferenceScope,
+        projectCensusScope: prepared.projectCensusScope, rules,
+        keep: current.keepFromSetting ? resolveCoordinatorKeepDefault(current.keepPreference, homeWide ? 'home' : 'project') : current.keep };
 }
 
 /** Turning a rule on or off re-resolves the place while it still follows the Settings default. */
@@ -141,6 +179,21 @@ export function buildMakeCoordinatorEnableInput(
                 }
             : {}),
     };
+}
+
+/** Keep Follow's accepted CAS revision in the existing draft when another setup step needs Retry. */
+export function applyMakeCoordinatorEffectsToDraft(
+    draft: MakeCoordinatorDraft,
+    effects: readonly SessionCoordinatorEffectV1[],
+): MakeCoordinatorDraft {
+    const rules = draft.rules.map(rule => {
+        const accepted = effects.find(effect => effect.operation === 'rule' && effect.ruleId === rule.suggestion.source.ruleId
+            && effect.status === 'accepted');
+        if (accepted?.status !== 'accepted' || accepted.version === undefined
+            || accepted.version === rule.suggestion.expectedVersion) return rule;
+        return { ...rule, suggestion: { ...rule.suggestion, expectedVersion: accepted.version } };
+    });
+    return rules.every((rule, index) => rule === draft.rules[index]) ? draft : { ...draft, rules };
 }
 
 export type MakeCoordinatorOutcome = Readonly<{

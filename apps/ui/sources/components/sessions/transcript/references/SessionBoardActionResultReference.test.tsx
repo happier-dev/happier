@@ -2,10 +2,12 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { StyleSheet } from 'react-native';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import { SessionSystemRecordStoredSchema } from '@happier-dev/protocol';
+import { SessionSystemRecordStoredSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 import { createSessionSurfaceNoteDocumentV1, SessionSurfaceItemV1Schema } from '@happier-dev/protocol/sessions/board';
 
 import { makeToolCall, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import {
     createSessionSystemRecordHttpFixture,
     installDisconnectedServerSocketBoundary,
@@ -59,9 +61,12 @@ async function renderReference(options: Readonly<{
         content: { t: 'plain', v: item }, revision,
         createdAt: '2026-10-10T00:00:00.000Z', updatedAt: '2026-10-10T00:00:00.000Z',
     });
-    const fixture = createSessionSystemRecordHttpFixture({ sessionId: 'session-1', records: [record] });
+    const fixture = createSessionSystemRecordHttpFixture({ sessionId: 'session-1', records: [record],
+        effectiveAccess: createPlainSessionCurrentProjectionRecordFixture({ id: 'session-1' }).effectiveAccess });
+    const accountBoundary = createHomeHubArtifactHttpBoundary('account-a');
     const connection = await restoreServerAccountForTest({
         serverUrl: 'https://inline-reference-presentation.test', request: async (...args) => {
+            if (new URL(String(args[0])).pathname === '/v2/account/settings') return accountBoundary.request(...args);
             const response = await fixture.request(...args);
             if (fixture.recordReads.length > 1) await options.beforeRepeatedRecordRead?.();
             return response;
@@ -116,7 +121,7 @@ async function renderReference(options: Readonly<{
         const action = readActions()?.find(candidate => candidate.id === 'add-to-companion');
         expect(action?.onPress).toBeTypeOf('function');
         // Invoke the real rendered menu action; its domain controller and local persistence remain real.
-        await act(async () => { action?.onPress?.(); });
+        await act(async () => { await action?.onPress?.(); });
     };
     return { screen, fixture, referenceElement, referenceElementForDemand, readController, readActions, addToCompanion, revealedItems, revealedMutations };
 }

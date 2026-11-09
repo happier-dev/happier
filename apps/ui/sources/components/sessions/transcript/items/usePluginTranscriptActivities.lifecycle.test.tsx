@@ -17,9 +17,10 @@ import {
     DaemonPluginUiResourceWatchOpenResponseSchema,
     type DaemonPluginUiResourceReadResponse,
     type DaemonPluginUiResourceWatchCloseResponse,
-    type DaemonPluginUiResourceWatchOpenResponse,
+    type DaemonPluginUiResourceWatchOpenResponse} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
     PLUGIN_TRANSCRIPT_ACTIVITY_CONTENT_TYPE_V1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/contributions/ui/transcriptActivities';
 
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 

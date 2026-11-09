@@ -1,6 +1,6 @@
-import { getSessionSourceContextActionChipPlacement } from './agentInputActionChipPlacements';
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
+import { AgentInputRailChip } from './agentInputChipRowReach';
 
 import type {
     AgentInputExtraActionChip,
@@ -11,6 +11,8 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { getSessionSourceContextActionChipPlacement, SESSION_SOURCE_CONTEXT_CHIP_KEY } from './agentInputActionChipPlacements';
+export { getSessionSourceContextActionChipPlacement, SESSION_SOURCE_CONTEXT_CHIP_KEY } from './agentInputActionChipPlacements';
 
 import {
     AGENT_INPUT_CHIP_ICON_SIZE_PX,
@@ -19,7 +21,6 @@ import {
     AGENT_INPUT_MENU_ICON_SIZE_PX,
 } from './agentInputChipIconMetrics';
 
-export const SESSION_SOURCE_CONTEXT_CHIP_KEY = 'session-source-context';
 export const SESSION_SOURCE_CONTEXT_CHIP_TEST_ID = 'agent-input-source-context-attachment-badge';
 
 /**
@@ -103,12 +104,12 @@ export function createSessionSourceContextActionChip(params: Readonly<{
             },
         }),
         render: (ctx: AgentInputExtraActionChipRenderContext) => (
-            <Pressable
+            <AgentInputRailChip
                 testID="agent-input-source-context-chip"
                 accessibilityRole="button"
                 accessibilityLabel={label}
                 onPress={openDetail}
-                style={({ pressed }) => ctx.chipStyle(Boolean(pressed))}
+                style={ctx.chipStyle}
             >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                     <Icon
@@ -119,7 +120,7 @@ export function createSessionSourceContextActionChip(params: Readonly<{
                     />
                     {ctx.showLabel ? <Text style={ctx.textStyle}>{label}</Text> : null}
                 </View>
-            </Pressable>
+            </AgentInputRailChip>
         ),
     };
 

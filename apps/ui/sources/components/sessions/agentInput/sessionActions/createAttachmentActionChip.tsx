@@ -8,15 +8,24 @@ import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeFor
 import { t } from '@/text';
 import { blurActiveElementOnWeb } from '@/utils/platform/deferOnWeb';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import type { ScreenCaptureAttachmentAction } from './screenCaptureAttachmentActions';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE, AGENT_INPUT_MENU_ICON_SIZE_PX } from '../definitions/agentInputChipIconMetrics';
 
 const WEB_PICKER_DOUBLE_OPEN_COOLDOWN_MS = 500;
+
+const SCREEN_CAPTURE_LABELS = {
+    'capture-screen': 'screenCapture.attach.capture',
+    'record-screen': 'screenCapture.attach.record',
+    'attach-recent-capture': 'screenCapture.window.attachRecent',
+} as const satisfies Record<ScreenCaptureAttachmentAction['id'], string>;
 
 function buildAttachmentRootStep(params: Readonly<{
     onPickFile: () => void;
     onPickImage: () => void;
     onPasteImage?: () => void;
     disabled?: boolean;
+    imageInputDisabledReason?: string;
+    screenCapture: readonly ScreenCaptureAttachmentAction[];
 }>): SelectionListStep {
     return {
         id: 'attachments-add-root',
@@ -30,15 +39,17 @@ function buildAttachmentRootStep(params: Readonly<{
                         ? [{
                             id: 'paste-image',
                             label: t('common.pasteImage'),
-                            disabled: params.disabled,
-                            onSelect: () => params.onPasteImage?.(),
+                            disabled: params.disabled || Boolean(params.imageInputDisabledReason),
+                            subtitle: params.imageInputDisabledReason,
+                            onSelect: () => { if (!params.imageInputDisabledReason) params.onPasteImage?.(); },
                         }]
                         : []),
                     {
                         id: 'add-image',
                         label: t('common.addImage'),
-                        disabled: params.disabled,
-                        onSelect: () => params.onPickImage(),
+                        disabled: params.disabled || Boolean(params.imageInputDisabledReason),
+                        subtitle: params.imageInputDisabledReason,
+                        onSelect: () => { if (!params.imageInputDisabledReason) params.onPickImage(); },
                     },
                     {
                         id: 'add-file',
@@ -48,6 +59,15 @@ function buildAttachmentRootStep(params: Readonly<{
                     },
                 ],
             },
+            ...(params.screenCapture.length > 0 ? [{
+                kind: 'static' as const,
+                id: 'screen-capture',
+                options: params.screenCapture.map((action) => ({
+                    id: action.id,
+                    label: t(SCREEN_CAPTURE_LABELS[action.id]),
+                    onSelect: () => { void action.run(); },
+                })),
+            }] : []),
         ],
     };
 }
@@ -57,11 +77,18 @@ export function createAttachmentActionChip(params: Readonly<{
     onPickImage: () => void;
     onPasteImage?: () => void;
     disabled?: boolean;
+    disabledReason?: string;
+    imageInputDisabledReason?: string;
+    /** The desktop app's capture entries; a host without a screen to capture passes none. */
+    screenCapture?: readonly ScreenCaptureAttachmentAction[];
 }>): AgentInputExtraActionChip {
-    const showChooser = Platform.OS === 'ios' || Platform.OS === 'android';
+    const screenCapture = params.screenCapture ?? [];
+    const showChooser = Platform.OS === 'ios' || Platform.OS === 'android' || screenCapture.length > 0;
+    const disabled = params.disabled === true || Boolean(params.disabledReason);
     // Per-chip instance guard (avoid cross-screen/test interference from module-level state).
     let lastWebPickerOpenAtMs = 0;
     const runPickerOpenWithWebCooldown = (action: () => void) => {
+        if (disabled) return;
         if (Platform.OS !== 'web') {
             action();
             return;
@@ -88,7 +115,7 @@ export function createAttachmentActionChip(params: Readonly<{
         controlId: 'attachments',
         placement: { id: 'attachments', title: t('common.attach'), icon: 'paperclip', defaultPlacement: 'overflow' },
         labelPolicy: 'auto-hide',
-        ...(showChooser ? {
+        ...(showChooser && !params.disabledReason ? {
             collapsedOptionsPopover: {
                 presentation: 'list',
                 title: '',
@@ -99,7 +126,9 @@ export function createAttachmentActionChip(params: Readonly<{
                     onPickFile: params.onPickFile,
                     onPickImage: params.onPickImage,
                     onPasteImage: params.onPasteImage,
-                    disabled: params.disabled,
+                    disabled,
+                    imageInputDisabledReason: params.imageInputDisabledReason,
+                    screenCapture,
                 }),
                 onSelect: () => {
                     // List-mode option actions live on SelectionListOption.onSelect.
@@ -111,9 +140,11 @@ export function createAttachmentActionChip(params: Readonly<{
             collapsedAction: ({ tint, dismiss, blurInput }) => ({
                 id: 'attachments',
                 label: t('common.attach'),
-                disabled: params.disabled,
+                disabled,
+                subtitle: params.disabledReason,
                 icon: normalizeNodeForView(<Icon name="paperclip" size={AGENT_INPUT_MENU_ICON_SIZE_PX} color={tint} />),
                 onPress: () => {
+                    if (disabled) return;
                     blurInput();
                     runPickerOpenWithWebCooldown(params.onPickFile);
                     dismiss();
@@ -124,19 +155,25 @@ export function createAttachmentActionChip(params: Readonly<{
             <Pressable
                 ref={ctx.chipAnchorRef}
                 testID="agent-input-attachments-chip"
+                accessibilityLabel={t('common.attach')}
+                accessibilityHint={params.disabledReason}
                 onPress={() => {
+                    if (disabled) return;
                     if (showChooser) {
                         ctx.toggleCollapsedPopover?.('attachments-add');
                     } else {
                         runPickerOpenWithWebCooldown(params.onPickFile);
                     }
                 }}
-                disabled={params.disabled}
+                disabled={disabled}
                 style={({ pressed }) => ctx.chipStyle(Boolean(pressed))}
             >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                     {normalizeNodeForView(<Icon name="paperclip" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={ctx.iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />)}
-                    {ctx.showLabel ? <Text style={ctx.textStyle}>{t('common.attach')}</Text> : null}
+                    <View style={{ flexShrink: 1 }}>
+                        {ctx.showLabel ? <Text style={ctx.textStyle}>{t('common.attach')}</Text> : null}
+                        {params.disabledReason ? <Text variant="meta" style={{ color: ctx.iconColor }}>{params.disabledReason}</Text> : null}
+                    </View>
                 </View>
             </Pressable>
         ),

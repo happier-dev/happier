@@ -133,7 +133,7 @@ describe('new-session capability prefetch', () => {
         await hook.rerender({ version: 2 });
         expect(read()).toBe(ready);
         expect(machineRpc).not.toHaveBeenCalled();
-        publishMachineContributionRegistryProjectionInvalidation({ serverId, machineId: machine.id });
+        publishMachineContributionRegistryProjectionInvalidation({ serverId, machineId: machine.id }, 'authority');
         await hook.rerender({ version: 3 });
         await vi.waitFor(() => expect(read()).toMatchObject({ status: 'loaded', snapshot: {
             response: { results: { 'tool.tmux': { data: { available: false } } } },

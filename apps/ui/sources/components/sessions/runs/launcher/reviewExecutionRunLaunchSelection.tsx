@@ -1,74 +1,48 @@
 import * as React from 'react';
-import { ScrollView, View } from 'react-native';
-import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
-import type { PluginUiSelectActionInputResultV1 } from '@happier-dev/protocol/plugins/ui';
+import { View } from 'react-native';
 
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { Text } from '@/components/ui/text/Text';
-import { getSessionInputFailureLabelKey } from '@/components/sessions/pending/pendingMessageVisualState';
 import { Modal } from '@/modal';
+import { createAnchoredSheetChrome } from '@/modal/components/card/anchoredSheetChrome';
+import type { PopoverAnchor } from '@/components/ui/popover';
+import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
+import { useSheetDismiss } from '@/modal/components/card/sheetDragDismiss';
+import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
+
 import type { CustomModalInjectedProps } from '@/modal/types';
-import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
 
-import { useReviewExecutionRunLaunchOptions } from './useReviewExecutionRunLaunchOptions';
-import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
+import type { ReviewExecutionRunLaunchSelection } from './useReviewExecutionRunLaunchOptions';
+import { SessionInteractiveExecutionRunDraftView } from './SessionInteractiveExecutionRunDraftView';
 
-type LaunchSelection = Extract<PluginUiSelectActionInputResultV1, { kind: 'executionRunLaunch' }>;
+type LaunchSelection = ReviewExecutionRunLaunchSelection;
 export type ReviewExecutionRunLaunchSelectionRequest = Readonly<{
+    anchor?: PopoverAnchor;
     sessionId: string;
     serverId: string;
     draft: Readonly<{ engineIds: readonly string[]; instructions: string }>;
     isCurrent: () => boolean;
 }>;
 
-/** No-invoke review selection: the same controls and admission as the incumbent review dialog. */
+/** The shared Run body returns credentials; its existing admission never invokes review.start. */
 export function ReviewExecutionRunLaunchSelectionModal(props: CustomModalInjectedProps & ReviewExecutionRunLaunchSelectionRequest & Readonly<{
     onResolve: (selection: LaunchSelection | null) => void;
 }>) {
-    const [busy, setBusy] = React.useState(false);
-    const [error, setError] = React.useState<string | null>(null);
-    const [operationId] = React.useState(randomUUID);
-    const options = useReviewExecutionRunLaunchOptions({ sessionId: props.sessionId, serverId: props.serverId,
-        engineIds: props.draft.engineIds, busy });
-    const continueLaunch = async () => {
-        if (busy || !options.ready || !props.isCurrent()) return;
-        setBusy(true);
-        setError(null);
-        try {
-            // The complete canonical review context retains the Team single-engine
-            // and consent refinements; only its value-free credential fields leave.
-            const admitted = ReviewStartInputSchema.parse({ ...props.draft, ...options.input, sessionId: props.sessionId });
-            await options.launcher.admitExactTarget({
-                secretReferenceOverlay: admitted.secretReferenceOverlay !== undefined,
-                teamCredentialModel: admitted.teamCredentialModel !== undefined,
-            }, operationId);
-            if (!props.isCurrent() || !options.launcher.accountLifetime?.isCurrent()) return;
-            props.onResolve({ kind: 'executionRunLaunch', input: {
-                ...(admitted.secretReferenceOverlay ? { secretReferenceOverlay: admitted.secretReferenceOverlay } : {}),
-                ...(admitted.teamCredentialModel ? { teamCredentialModel: admitted.teamCredentialModel } : {}),
-                ...(admitted.teamCredentialSessionBindingConsent ? { teamCredentialSessionBindingConsent: admitted.teamCredentialSessionBindingConsent } : {}),
-            } });
-        } catch (cause) {
-            const label = getSessionInputFailureLabelKey(cause);
-            setError(label ? t(label) : cause instanceof Error ? cause.message : t('common.requestFailed'));
-        } finally {
-            setBusy(false);
-        }
-    };
-    return <View testID="review-execution-run-launch-selection" style={{ gap: 16, maxHeight: '100%', flexShrink: 1 }}>
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ gap: 16 }}>
-            <Text>{t('reviewWalkthrough.dialog.instructions')}</Text>
-            <Text>{props.draft.instructions}</Text>
-            {options.controls}
-            {error ? <Text testID="review-execution-run-launch-error" accessibilityRole="alert">{error}</Text> : null}
-        </ScrollView>
-        <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 8 }}>
-            <RoundButton testID="review-execution-run-launch-cancel" size="normal" display="secondary"
-                title={t('common.cancel')} onPress={() => props.onResolve(null)} />
-            <RoundButton testID="review-execution-run-launch-continue" size="normal" title={t('common.continue')}
-                disabled={busy || !options.ready} loading={busy} onPress={() => { void continueLaunch(); }} />
-        </View>
+    const { onResolve, setChrome } = props;
+    // The composer's send returns the selection, so the footer holds only Cancel; a phone sheet's close and drag
+    // already dismiss it, which leaves that footer empty.
+    const phoneSheet = useSheetDismiss() !== null;
+    const footer = React.useMemo(() => phoneSheet ? null : (
+        <ModalCardFooterActions cancel={{ onPress: () => onResolve(null), testID: 'review-execution-run-launch-cancel' }} />
+    ), [onResolve, phoneSheet]);
+    useModalCardChrome(setChrome, React.useMemo(() => ({
+        ...createAnchoredSheetChrome({ title: t('runPage.launcher.titles.review'), anchor: props.anchor }),
+        footer,
+    }), [footer, props.anchor]));
+    return <View testID="review-execution-run-launch-selection" style={{ maxHeight: '100%', flexShrink: 1 }}>
+        <SessionInteractiveExecutionRunDraftView sessionId={props.sessionId} serverId={props.serverId}
+            intent="review" initialActionInput={props.draft} initialText={props.draft.instructions}
+            credentialSelectionOnly selectionIsCurrent={props.isCurrent} onLaunchSelection={onResolve}
+            onRunStarted={() => {}} />
     </View>;
 }
 
@@ -93,7 +67,7 @@ export function presentReviewExecutionRunLaunchSelection(request: ReviewExecutio
         onRequestClose: close,
         onHostUnmount: close,
         closeOnBackdrop: true,
-        chrome: { kind: 'card', title: t('scmComparison.startReview'), dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide }, phonePresentation: 'sheet' },
+        chrome: createAnchoredSheetChrome({ title: t('runPage.launcher.titles.review'), anchor: request.anchor }),
     });
     if (!modalId) close();
     else if (hideAfterShow) Modal.hide(modalId);

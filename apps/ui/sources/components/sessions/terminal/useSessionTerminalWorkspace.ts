@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
-import type { SessionTerminalActionId, SessionTerminalWorkspaceV1 } from '@happier-dev/protocol';
+import type { SessionTerminalActionId} from '@happier-dev/protocol/actions/sessionTerminalActionFamily';
+import type { SessionTerminalWorkspaceV1 } from '@happier-dev/protocol/terminal/workspace';
 import { parseSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { getActiveSessionTerminal, readSessionTerminalWorkspace, type SessionTerminalWorkspaceCommand } from './sessionTerminalWorkspace';
@@ -29,5 +30,6 @@ export function useSessionTerminalWorkspace(scopeId: string, initialWorkspace?: 
     const execute = useSessionTerminalActionExecute(scopeId);
     // Only the real SplitCanvasHost writes measured geometry. Process-affecting UI verbs use Actions above.
     const dispatchResize = React.useCallback((command: Extract<SessionTerminalWorkspaceCommand, { type: 'resize' }>) => dispatch({ type: 'terminalWorkspace', scopeId, command }), [dispatch, scopeId]);
-    return React.useMemo(() => ({ workspace, activeTerminal: getActiveSessionTerminal(workspace), execute, dispatchResize }), [workspace, execute, dispatchResize]);
+    const hideWorkspace = React.useCallback(() => dispatch({ type: 'hideTerminalWorkspace', scopeId }), [dispatch, scopeId]);
+    return React.useMemo(() => ({ workspace, activeTerminal: getActiveSessionTerminal(workspace), execute, dispatchResize, hideWorkspace }), [workspace, execute, dispatchResize, hideWorkspace]);
 }

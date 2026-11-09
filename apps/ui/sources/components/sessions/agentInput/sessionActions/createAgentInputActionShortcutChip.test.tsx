@@ -6,6 +6,7 @@ import type { ActionListItem } from '@/components/ui/lists/ActionListSection';
 import { createAgentInputActionShortcutChip } from './createAgentInputActionShortcutChip';
 import { createWorkflowRunActionChip } from './createWorkflowRunActionChip';
 import { buildCollapsedExtraControlActions } from '../controls/buildCollapsedExtraControlActions';
+import { AgentInputRailChip } from '../definitions/agentInputChipRowReach';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -91,7 +92,7 @@ describe('createAgentInputActionShortcutChip', () => {
         }) as React.ReactElement<{ onPress?: () => void; children?: React.ReactNode }>;
 
         expect(chip.key).toBe('shortcut:review.start');
-        expect(rendered.type).toBe('Pressable');
+        expect(rendered.type).toBe(AgentInputRailChip);
 
         const children = React.Children.toArray(rendered.props.children);
         const contentRow = children[0] as React.ReactElement<{ children?: React.ReactNode }>;

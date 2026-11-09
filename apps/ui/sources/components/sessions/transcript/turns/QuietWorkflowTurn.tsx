@@ -6,7 +6,8 @@ import { HAPPIER_DEFAULT_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/pl
 import type { Message } from '@happier-dev/session-core/messages';
 import { Typography } from '@/constants/Typography';
 import { Text } from '@/components/ui/text/Text';
-import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { t } from '@/text';
@@ -57,7 +58,7 @@ export const QuietWorkflowTurn = React.memo(function QuietWorkflowTurn(props: Re
                     accessibilityLabel={`${t(isExpanded ? 'common.collapse' : 'common.expand')}: ${firstLine || t('message.provenanceWorkflow')}`}>
                     <Text numberOfLines={1} ellipsizeMode="tail" style={styles.summary}>{firstLine}</Text>
                     {time ? <Text numberOfLines={1} style={styles.time} accessibilityLabel={timestamp ?? undefined}>{time}</Text> : null}
-                    <ExpandableItemCaret expanded={isExpanded} />
+                    <DisclosureCaret expanded={isExpanded} />
                 </HappierPressable>
             </View>}>
             {props.children}

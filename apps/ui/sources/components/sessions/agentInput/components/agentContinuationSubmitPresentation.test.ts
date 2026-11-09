@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { setPreferredLanguageFromSettings, t } from '@/text';
+import { preloadTranslationsForSettings, setPreferredLanguageFromSettings, t } from '@/text';
 import { ca } from '@/text/translations/ca';
 import { en } from '@/text/translations/en';
 import { es } from '@/text/translations/es';
@@ -137,10 +137,11 @@ describe('resolveAgentContinuationSubmitPresentation', () => {
         }
     });
 
-    it('opens with the mark in a language that opens with the Agent', () => {
+    it('opens with the mark in a language that opens with the Agent', async () => {
         // Japanese reads "{Agent} で続ける" where English reads "Continue with
         // {Agent}". A mark pinned to the trailing side would put the verb before
         // its subject there, so the side is read off the sentence, never fixed.
+        await preloadTranslationsForSettings('ja');
         setPreferredLanguageFromSettings('ja');
         try {
             const presentation = resolveAgentContinuationSubmitPresentation({

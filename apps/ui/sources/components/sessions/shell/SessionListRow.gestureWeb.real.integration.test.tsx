@@ -9,7 +9,7 @@ import { SessionListRow } from './sessionListRow';
 import { SessionListHeaderItem } from './sessionListHeaderItem';
 import { makeMutable } from 'react-native-reanimated';
 import { View } from 'react-native';
-import { isWorkspaceActionId } from '@happier-dev/protocol';
+import { isWorkspaceActionId } from '@happier-dev/protocol/actions/workspaceActionFamily';
 import { useSessionListRowInteractions } from './useSessionListRowInteractions';
 import { getStorage } from '@/sync/domains/state/storage';
 import { DEFAULT_SESSION_FOLDERS_V1 } from '@/sync/domains/session/folders';
@@ -92,12 +92,12 @@ describe('SessionListRow real web gesture', () => {
                 moveTreeRowToWorkspaceRoot: () => {},
                 readSectionMoveMenuItems: () => null,
                 moveTreeRowToSection: () => {},
-                readSpaceMembershipMenu: () => null,
+            readSpaceMembershipMenu: () => null,
                 moveTreeRowByKeyboard: (rowId, _label, direction) => { writes.push({ direction, key: rowId }); },
             });
             return (
             <SessionListHeaderItem item={item} collapsedKeys={{}} projectHeaderViewModelByGroupKey={new Map()}
-                hasMultipleMachines={false} onOpenProject={() => {}} onCreateSessionFromWorkspaceScope={() => {}}
+ onOpenProject={() => {}} onCreateSessionFromWorkspaceScope={() => {}}
                 onAddFolderToWorkspace={() => {}} onRenameWorkspace={() => {}} onResetWorkspaceName={() => {}} onToggleCollapse={() => {}}
                 getRowMoveActionHandlers={getRowMoveActionHandlers}
                 overlayShared={{ overlayVisible: makeMutable(0), overlayKind: makeMutable(0), overlayTop: makeMutable(0),
@@ -195,7 +195,7 @@ describe('SessionListRow real web gesture', () => {
                 overlayShared={interactions.dropOverlayShared}
                 onRegisterTreeRowBounds={interactions.registerTreeRowBounds} onUnregisterTreeRowBounds={interactions.unregisterTreeRowBounds} />
                 : <SessionListHeaderItem item={sourceKind === 'session-folder' ? folder : project}
-                    collapsedKeys={{}} projectHeaderViewModelByGroupKey={new Map()} hasMultipleMachines={false}
+                    collapsedKeys={{}} projectHeaderViewModelByGroupKey={new Map()}
                     onOpenProject={() => {}} onCreateSessionFromWorkspaceScope={() => {}} onAddFolderToWorkspace={() => {}}
                     onRenameWorkspace={() => {}} onResetWorkspaceName={() => {}} onToggleCollapse={onToggleCollapse}
                     overlayShared={interactions.dropOverlayShared}

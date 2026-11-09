@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { usePaneContentInsetPx } from '@/components/ui/lists/listPresentation';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
@@ -8,12 +9,13 @@ import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeMo
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { hapticsError, hapticsSuccess } from '@/components/ui/theme/haptics';
 import type { ScmWriteOperation, ScmWriteTerminalOperation } from '@/scm/operations/selectScmWriteOperation';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import type { ScmProjectOperationKind } from '@/sync/runtime/orchestration/projectManager';
 import { t } from '@/text';
 import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
 import { formatHappierAsOfTime } from '@happier-dev/plugin-ui/presentation';
 import { useMachine, useServerScopedMachine } from '@/sync/domains/state/storage';
+import { useMachineActivity } from '@/hooks/machine/useMachineActivity';
 
 /** What the pane knew when an operation started, so its outcome can say how much moved (Pushed 3 commits). */
 export type GitOutcomeFacts = Readonly<{
@@ -159,7 +161,8 @@ export const GitOutcomeLine = React.memo(function GitOutcomeLine(props: Readonly
 
 /** Retained operation results stay still when the pane opens on them. */
 function OutcomeFrame(props: Readonly<{ children: React.ReactNode }>) {
-    return <View style={{ paddingHorizontal: 12, paddingTop: 4, paddingBottom: 6 }}>{props.children}</View>;
+    const contentInsetPx = usePaneContentInsetPx();
+    return <View style={{ paddingHorizontal: contentInsetPx, paddingTop: 4, paddingBottom: 6 }}>{props.children}</View>;
 }
 
 function SuccessLine(props: Readonly<{ operation: Extract<ScmWriteTerminalOperation, { phase: 'succeeded' | 'effect_applied_with_warning' }>; facts: GitOutcomeFacts | null; undoCommit?: GitOutcomeRecovery['undoCommit'] }>) {
@@ -328,7 +331,8 @@ function OfflineAttentionNotice(props: React.ComponentProps<typeof AttentionNoti
     const scoped = useServerScopedMachine(props.serverId, props.serverId ? id : '');
     const legacy = useMachine(props.serverId ? '' : id);
     const machine = props.serverId ? scoped : legacy;
-    return <AttentionNotice {...props} machineLastSeenAt={props.machineLastSeenAt ?? machine?.activeAt ?? null} />;
+    const activity = useMachineActivity(props.machineLastSeenAt == null ? machine : null);
+    return <AttentionNotice {...props} machineLastSeenAt={props.machineLastSeenAt ?? activity?.activeAt ?? null} />;
 }
 
 const RETRYABLE: ReadonlySet<ScmProjectOperationKind> = new Set(['push', 'pull', 'fetch']);

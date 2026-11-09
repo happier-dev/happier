@@ -14,8 +14,13 @@ import {
   CurrentSessionPresentationStateV1Schema,
   type CurrentSessionPresentationStateV1,
 } from '@happier-dev/protocol/sessions/presentation/currentSessionPresentationV1';
-import { AccountPetListResponseV1Schema, AccountProfileSchema, AutomationDefinitionListResponseSchema, createPlainSessionOwnerMetadataEnvelopeV1, CurrentCursorResponseSchema, projectSessionSharedMetadataV1, SessionOwnerMetadataV1Schema, V2SessionListResponseSchema } from '@happier-dev/protocol';
-import type { ActionExecuteResult } from '@happier-dev/protocol';
+import { AccountPetListResponseV1Schema} from '@happier-dev/protocol/pets/accountLibrary';
+import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
+import { AutomationDefinitionListResponseSchema} from '@happier-dev/protocol/automations/automationApiV3';
+import { createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1, SessionOwnerMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { CurrentCursorResponseSchema} from '@happier-dev/protocol/changes';
+import { createSessionListSourceFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -122,7 +127,7 @@ describe('Session viewer semantic Action ingress', () => {
     const ownerMetadata = createPlainSessionOwnerMetadataEnvelopeV1(SessionOwnerMetadataV1Schema.parse({
       v: 1, workspace: { path: '/viewer/project', machineId: 'machine-1' },
     }));
-    const sessionsAnswer = () => ({ body: V2SessionListResponseSchema.parse({
+    const sessionsAnswer = () => ({ body: createSessionListSourceFixture({
       sessions: [{ id: 'session-a', seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
         encryptionMode: 'plain', metadataLayoutVersion: 1, metadataVersion: 1,
         metadata: JSON.stringify(projectSessionSharedMetadataV1({ metadata: {} })), ownerMetadata,

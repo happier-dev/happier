@@ -3,7 +3,8 @@ import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAc
 import { writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { t } from '@/text';
-import type { SessionRollbackCodeMode, SessionRollbackTarget } from '@happier-dev/protocol';
+import type { SessionRollbackCodeMode} from '@happier-dev/protocol/sessions/control/rollback/checkpointCodeRollback';
+import type { SessionRollbackTarget } from '@happier-dev/protocol/sessions/rollback';
 import type { CheckpointCodeRollbackDialogConfirmValue } from './CheckpointCodeRollbackDialog';
 import { showCheckpointCodeRollbackDialog } from './CheckpointCodeRollbackDialog';
 import { storage } from '@/sync/domains/state/storage';

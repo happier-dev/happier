@@ -40,7 +40,7 @@ export const TranscriptSessionActivityLine = React.memo(function TranscriptSessi
             accessibilityLiveRegion="polite"
             aria-live="polite"
         >
-            <ActivitySpinner size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
+            <ActivitySpinner size={ICON_SIZE.xs} color={theme.colors.text.tertiary} animationEnabled={awareness.freshness === 'live'} />
             <Text testID="transcript-session-activity-status" style={stylesheet.words} numberOfLines={1}>
                 {status.statusText}
             </Text>

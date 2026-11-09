@@ -55,14 +55,14 @@ export const ScmCommitsView = React.memo(function ScmCommitsView(props: ScmCommi
         };
     }, [addToSaved, bound, canStart, openExplainSetting, plan.supportedComparison]);
     // The proposal's own Run and saved result: the offer says only that the proposal has an update, never that a commit landed.
-    const { viewModel, machine, cwd } = bound;
+    const { viewModel, machine } = bound;
     const runId = viewModel?.executionRunId ?? null;
-    const notify = machine?.machineId && cwd && runId && viewModel?.comparison && viewModel.resultId
+    const notifySource = runId ? bound.host.sessionId ? { kind: 'execution_run' as const, sessionId: bound.host.sessionId, runId }
+        : machine?.machineId ? { kind: 'execution_run' as const, machineId: machine.machineId, runId } : null : null;
+    const notify = notifySource && viewModel?.comparison && viewModel.resultId
         ? <RunWorkNotifications serverId={bound.serverId}
-            source={{ kind: 'execution_run', machineId: machine.machineId, runId, ...(bound.host.sessionId ? { sessionId: bound.host.sessionId } : {}) }}
-            project={{ machineId: machine.machineId, directory: cwd }}
-            selectedOutput={{ output: 'commitPlan', comparisonId: viewModel.comparison.id, resultId: viewModel.resultId,
-                message: t('sessionWork.notify.commitPlanUpdate') }} /> : null;
+            source={notifySource}
+            selectedOutput={{ output: 'commitPlan', comparisonId: viewModel.comparison.id, resultId: viewModel.resultId }} /> : null;
     const onShowInGit = props.onShowInGit;
     const actions = React.useMemo(() => (onShowInGit ? { ...plan.actions, onShowInGit } : plan.actions), [onShowInGit, plan.actions]);
     const failureNotice = plan.phase === 'ready' && bound.generationFailure ? (
@@ -88,7 +88,7 @@ export const ScmCommitsView = React.memo(function ScmCommitsView(props: ScmCommi
                 notify={notify}
                 focusGroupId={props.focusGroupId ?? null}
                 busy={plan.busy}
-                error={plan.phase === 'ready' ? plan.error : null}
+                error={plan.phase === 'unavailable' ? bound.restoreFailure?.error ?? null : plan.phase === 'ready' ? plan.error : null}
                 failureNotice={failureNotice}
                 active={props.active}
                 onUndoDiscard={plan.undoDiscard}

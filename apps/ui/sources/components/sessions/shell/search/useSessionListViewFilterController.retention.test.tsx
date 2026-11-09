@@ -2,6 +2,11 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
+import type { CollectionSpacesV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
+import { clearPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
+import { selectCollectionSpace } from '@/sync/domains/session/listing/sessionListSpaces';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
+import { createSessionListViewFilterDefaults, buildSessionListSelectionScopeSignature } from './sessionListViewFilters';
 import {
     readRetainedSessionListPaneState,
     resetSessionListPaneRetentionForTests,
@@ -21,16 +26,11 @@ const harness = vi.hoisted(() => ({
     requestedServerIds: [] as string[],
     credentialObservers: new Set<(event: { serverId: string }) => void>(),
     hideInactiveSessions: false,
-    storage: {
-        externalSessionsEnabled: true,
-        storageKind: 'persisted' as 'all' | 'persisted' | 'direct',
-        setStorageKind: vi.fn(),
-    },
+    accountScope: null as { serverId: string; accountId: string } | null,
+    settingsVersion: null as number | null,
+    spaceCatalog: { v: 1, spaces: [] } as CollectionSpacesV1,
 }));
 
-vi.mock('@/components/sessions/model/useSessionListStorageKind', () => ({
-    useSessionListStorageKind: () => harness.storage,
-}));
 
 vi.mock('@/sync/runtime/orchestration/homeAccountChange', () => ({
     subscribeHomeCredentialChange: (observer: (event: { serverId: string }) => void) => {
@@ -55,8 +55,13 @@ vi.mock('@/sync/domains/server/serverProfiles', async (importOriginal) => ({
 vi.mock('@/sync/domains/server/selection/serverSelectionProfileScopeIds', () => ({
     listServerProfileScopeIds: () => ['home-a', 'home-b'],
 }));
-vi.mock('@/sync/domains/state/storage', () => ({
-    useSettingMutable: () => [harness.hideInactiveSessions, vi.fn()],
+vi.mock('@/sync/domains/state/storage', async () => (await import('@/dev/testkit/mocks/storage')).createStorageModuleStub({
+    useSetting: (key: keyof typeof settingsDefaults) => key === 'collectionSpacesV1' ? harness.spaceCatalog
+        : key === 'hideInactiveSessions' ? harness.hideInactiveSessions : settingsDefaults[key],
+    useActiveServerAccountScope: () => harness.accountScope,
+    useAccountSettingsScope: () => harness.accountScope,
+    useSettingsVersion: () => harness.settingsVersion,
+    useSettingsReady: () => harness.settingsVersion !== null,
 }));
 vi.mock('@/sync/domains/scope/useServerCredentialAccountScopes', () => ({
     useServerCredentialAccountScopeResolutions: (serverIds: readonly string[]) => {
@@ -71,6 +76,7 @@ vi.mock('@/sync/domains/session/listing/useSessionListQuerySourceState', () => (
 
 afterEach(() => {
     standardCleanup();
+    clearPersistenceStorage();
     resetSessionListPaneRetentionForTests();
     clearSessionListViewFilterRetentionForTests();
     harness.selection = { activeServerId: 'home-a', allowedServerIds: ['home-a', 'home-b'] };
@@ -78,7 +84,9 @@ afterEach(() => {
     harness.requestedServerIds = [];
     harness.credentialObservers.clear();
     harness.hideInactiveSessions = false;
-    harness.storage = { externalSessionsEnabled: true, storageKind: 'persisted', setStorageKind: vi.fn() };
+    harness.accountScope = null;
+    harness.settingsVersion = null;
+    harness.spaceCatalog = { v: 1, spaces: [] };
 });
 
 function paneState() {
@@ -89,6 +97,7 @@ function paneState() {
             { type: 'session', serverId: 'home-b', sessionId: 'session-b' },
         ],
         hasHiddenInactiveSessions: false,
+
         folderFeatureEnabledServerIds: [],
         showLoading: false,
         showEmptyState: false,
@@ -96,6 +105,49 @@ function paneState() {
 }
 
 describe('useSessionListViewFilterController retention lifetime', () => {
+    it('invalidates row-selection scope for every new narrowing field', () => {
+        const filters = createSessionListViewFilterDefaults({ homeServerIds: ['home-a'] });
+        const eligibility = { eligibleHomeServerIds: ['home-a'], eligibleAudiences: [], eligibleTagIds: [] };
+        const original = buildSessionListSelectionScopeSignature(filters, eligibility);
+        for (const changed of [
+            { ...filters, machines: { include: [{ serverId: 'home-a', machineId: 'm1' }], exclude: [] } },
+            { ...filters, agents: { include: ['codex'], exclude: [] } },
+            { ...filters, branches: { include: ['main'], exclude: [] } },
+            { ...filters, sections: { include: [{ serverId: 'home-a', sectionId: 's1' }], exclude: [] } },
+            { ...filters, updated: { op: 'after' as const, atMs: 10 } },
+            { ...filters, includeInactive: true },
+        ]) expect(buildSessionListSelectionScopeSignature(changed, eligibility)).not.toBe(original);
+    });
+    it('adopts the device selection from its admitted Account catalog without changing another context', async () => {
+        harness.accountScope = { serverId: 'home-a', accountId: 'account-a' };
+        harness.settingsVersion = 1;
+        const savedFilter = createSessionListViewFilterDefaults({ homeServerIds: ['home-a'], source: 'direct', includeInactive: true });
+        const { searchQuery: _searchQuery, ...filter } = savedFilter;
+        harness.spaceCatalog = { v: 1, spaces: [{ id: 'saved', name: 'Saved', entityKind: 'sessionWork',
+            icon: { kind: 'icon', name: 'list' }, filter, includeNeedsYouEverywhere: true }] };
+        await selectCollectionSpace(harness.accountScope, 'sessionWork', 'saved');
+        const { useSessionListViewFilterController } = await import('./useSessionListViewFilterController');
+        const hook = await renderHook(() => useSessionListViewFilterController());
+        expect(hook.getCurrent().selectedSpaceId).toBe('saved');
+        expect(hook.getCurrent().filters).toMatchObject({ source: 'direct', includeInactive: true, homeServerIds: ['home-a'] });
+        expect(hook.getCurrent().includeNeedsYouEverywhere).toBe(true);
+        await act(async () => hook.getCurrent().setSource('all'));
+        expect(hook.getCurrent().isSpaceModified).toBe(true);
+        expect(harness.spaceCatalog.spaces[0]).toMatchObject({ filter: { source: 'direct' } });
+        await act(async () => hook.getCurrent().resetFilters());
+        expect(hook.getCurrent().filters.source).toBe('direct');
+        expect(hook.getCurrent().isSpaceModified).toBe(false);
+    });
+
+    it('keeps archived drafts separate from the active context', async () => {
+        const { useSessionListViewFilterController } = await import('./useSessionListViewFilterController');
+        const active = await renderHook(() => useSessionListViewFilterController('active'));
+        await act(async () => active.getCurrent().setSearchQuery('active draft'));
+        const archived = await renderHook(() => useSessionListViewFilterController('archived'));
+        expect(archived.getCurrent().filters.searchQuery).toBe('');
+        await act(async () => archived.getCurrent().setSource('direct'));
+        expect(active.getCurrent().filters.source).toBe('all');
+    });
     it('loads inactive step sessions for a Runs-inclusive view while retaining the ordinary visibility preference', async () => {
         harness.hideInactiveSessions = true;
         harness.resolutions = new Map([
@@ -165,7 +217,7 @@ describe('useSessionListViewFilterController retention lifetime', () => {
         ]);
     });
 
-    it('seeds Source from the persisted preference and writes the choice back through it', async () => {
+    it('seeds Source as All while retaining edits without rewriting the default', async () => {
         harness.resolutions = new Map([
             ['home-a', { kind: 'bound', scope: { serverId: 'home-a', accountId: 'account-a' } }],
             ['home-b', { kind: 'bound', scope: { serverId: 'home-b', accountId: 'account-b' } }],
@@ -173,19 +225,41 @@ describe('useSessionListViewFilterController retention lifetime', () => {
         const { useSessionListViewFilterController } = await import('./useSessionListViewFilterController');
         const hook = await renderHook(() => useSessionListViewFilterController());
 
-        // The device-local preference is the one seed for every surface, so mount
-        // order can no longer decide which default the shared global context gets.
-        expect(hook.getCurrent().filters.source).toBe('persisted');
-        expect(hook.getCurrent().defaultFilters.source).toBe('persisted');
+        expect(hook.getCurrent().filters.source).toBe('all');
+        expect(hook.getCurrent().defaultFilters.source).toBe('all');
 
         await act(async () => hook.getCurrent().setSource('direct'));
 
-        expect(harness.storage.setStorageKind).toHaveBeenCalledWith('direct');
         expect(hook.getCurrent().filters.source).toBe('direct');
+        expect(hook.getCurrent().defaultFilters.source).toBe('all');
     });
 
-    it('seeds Source as All when no Home exposes external sessions', async () => {
-        harness.storage = { externalSessionsEnabled: false, storageKind: 'persisted', setStorageKind: vi.fn() };
+    it('stores inactive selection in the filter and restores the settings default on reset', async () => {
+        harness.hideInactiveSessions = true;
+        const { useSessionListViewFilterController } = await import('./useSessionListViewFilterController');
+        const hook = await renderHook(() => useSessionListViewFilterController('active', { kind: 'global' }, 'sessions'));
+        expect(hook.getCurrent().includeInactive).toBe(false);
+        await act(async () => hook.getCurrent().setIncludeInactive(true));
+        expect(hook.getCurrent().filters.includeInactive).toBe(true);
+        expect(hook.getCurrent().includeInactive).toBe(true);
+        expect(hook.getCurrent().queryHomes.map((home) => home.query.includeInactive)).toEqual([true, true]);
+        await act(async () => hook.getCurrent().resetFilters());
+        expect(hook.getCurrent().filters.includeInactive).toBeUndefined();
+        expect(hook.getCurrent().includeInactive).toBe(false);
+    });
+
+    it('forces archived inactive admission without changing the active retained filter', async () => {
+        harness.hideInactiveSessions = true;
+        const { useSessionListViewFilterController } = await import('./useSessionListViewFilterController');
+        const active = await renderHook(() => useSessionListViewFilterController('active'));
+        const archived = await renderHook(() => useSessionListViewFilterController('archived'));
+        await act(async () => archived.getCurrent().setIncludeInactive(false));
+        expect(archived.getCurrent().includeInactive).toBe(true);
+        expect(archived.getCurrent().filters.includeInactive).toBe(true);
+        expect(active.getCurrent().includeInactive).toBe(false);
+    });
+
+    it('seeds Source as All across admitted Homes', async () => {
         harness.resolutions = new Map([
             ['home-a', { kind: 'bound', scope: { serverId: 'home-a', accountId: 'account-a' } }],
             ['home-b', { kind: 'bound', scope: { serverId: 'home-b', accountId: 'account-b' } }],

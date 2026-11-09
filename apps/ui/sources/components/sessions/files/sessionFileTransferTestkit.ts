@@ -1,12 +1,14 @@
-import { FeaturesResponseSchema, type FeaturesResponse } from '@happier-dev/protocol';
+import { FeaturesResponseSchema, type FeaturesResponse } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { MachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
-import { createMachineFixture, createSessionFixture, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 import { primeServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
 import { clearMachineRequestReachabilityForTest } from '@/sync/domains/machines/reachability/machineReachability';
 import { setActiveServer } from '@/sync/domains/server/serverRuntime';
-import { storage } from '@/sync/domains/state/storage';
+import { storage } from '@/sync/domains/state/storageStore';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import { invalidateCachedTransferRoutesForServer } from '@/sync/domains/transfers/runtime/transferRouteCache';
 import { resetRuntimeFetch } from '@/utils/system/runtimeFetch';

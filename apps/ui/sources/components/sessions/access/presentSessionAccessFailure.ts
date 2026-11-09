@@ -1,12 +1,16 @@
-import type { SessionAccessErrorCodeV1 } from '@happier-dev/protocol';
+import type { SessionAccessErrorCodeV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { SessionAccessApiError } from '@/sync/api/session/sessionAccessApi';
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
+import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
 
 import type { SessionAccessUiError, SessionAccessUiReason } from './sessionAccessEditorTypes';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 function sessionAccessFailureMessage(code: string, status?: number): string {
+    const transient = readTransientAvailabilityFailure(code);
+    if (transient) return transient.effectMayHaveApplied
+        ? t('session.access.outcomeUnknown') : transient.message;
     switch (code) {
         case 'public_share_isolation_unavailable':
             return t('session.collaboration.pane.linkUnavailable');

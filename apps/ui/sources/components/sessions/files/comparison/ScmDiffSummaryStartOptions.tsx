@@ -92,7 +92,8 @@ export function ScmDiffSummaryStartOptions(props: Readonly<{
                             <Icon name="warning" size={14} color={theme.colors.state.warning.foreground} />
                             <Text style={styles.message}>{message}</Text>
                         </View>
-                        {failure?.nextAction === 'chooseModel' && props.onChooseModel ? (
+                        {/* The model choice above is already the next step; a second control for it would say the same thing twice. */}
+                        {failure?.nextAction === 'chooseModel' && props.onChooseModel && !props.model ? (
                             <View style={styles.nextStepLink}>
                                 <TextLinkButton testID={`${props.testID}-choose-model`} tone="strong" label={failure.action!} onPress={props.onChooseModel} />
                             </View>

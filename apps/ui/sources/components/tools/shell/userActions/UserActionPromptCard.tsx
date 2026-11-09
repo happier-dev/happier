@@ -3,6 +3,7 @@ import { useSessionTranscriptSource } from '@/components/sessions/transcript/sou
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { Metadata } from '@happier-dev/session-core/state';
@@ -131,7 +132,7 @@ const styles = StyleSheet.create((theme) => ({
         borderRadius: 12,
         borderWidth: 1,
         borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.elevated,
+        backgroundColor: glassContentFill(theme.colors.surface.elevated, theme.colors),
         overflow: 'hidden',
     },
     containerInline: {

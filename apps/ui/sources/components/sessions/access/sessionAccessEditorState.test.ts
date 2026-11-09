@@ -1,5 +1,5 @@
 import { describe,expect,it } from 'vitest';
-import type { SessionAccessGrantsListResponseV1 } from '@happier-dev/protocol';
+import type { SessionAccessGrantsListResponseV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import {createSessionAccessEditorState,reduceSessionAccessEditorState} from './sessionAccessEditorState';
 const snapshot:SessionAccessGrantsListResponseV1={visibility:'self',owner:{kind:'account',accountId:'owner',name:'Owner',firstName:'Owner',lastName:null,username:null,avatarUrl:null},primaryTeamId:null,grants:[],effectiveAccess:{v:1,level:'view',sources:[],capabilities:{readTranscript:true,submitAgentInput:false,editSessionRecords:false,approveRuntimePermissions:false,manageAccess:false,managePermissionDelegation:false,managePublicLink:false,archiveSession:false,renameSession:false,assignResponsibility:false,stopSession:false,deleteSession:false}}};
 const managerSnapshot:SessionAccessGrantsListResponseV1={...snapshot,visibility:'complete',

@@ -3,46 +3,22 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndex';
-import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 vi.mock('@legendapp/list/react-native', async () => {
     const legendListModule = await import('@/dev/testkit/mocks/legendList');
     return { LegendList: legendListModule.createCapturingLegendListMock({ renderItems: true }).module.LegendList };
 });
 
-installSessionShellCommonModuleMocks({
-    reactNative: async () => {
-        const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({
-            Platform: { OS: 'web' },
-        });
-    },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({
-            translate: (key: string) => key,
-        });
-    },
+vi.mock('react-native', async () => {
+    const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
+    return createReactNativeWebMock({ Platform: { OS: 'web' } });
 });
-
-vi.mock('./sessionListChrome', () => ({
-    SessionsListHeader: () => React.createElement('SessionsListHeader'),
-}));
-vi.mock('./NewSessionDraftsSection', () => ({
-    NewSessionDraftsSection: (props: Record<string, unknown>) => React.createElement('NewSessionDraftsSection', {
-        ...props,
-        testID: 'session-drafts-section',
-    }),
-}));
-vi.mock('@/components/ui/lists/Item', () => ({
-    Item: (props: any) => React.createElement('Item', props, props.title, props.rightElement),
-}));
-vi.mock('@/components/ui/lists/ItemGroup', () => ({
-    ItemGroup: (props: any) => React.createElement('ItemGroup', props, props.children),
-}));
-vi.mock('@expo/vector-icons', () => ({
-    Ionicons: 'Ionicons',
-}));
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({ translate: (key: string) => key });
+});
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 
 describe('SessionListVirtualizedContent filtered no-results state', () => {
     afterEach(() => {
@@ -50,10 +26,10 @@ describe('SessionListVirtualizedContent filtered no-results state', () => {
     });
 
     it('says an ordinary list filtered to nothing in one quiet line on the rows\' edge', async () => {
-        const { SessionListVirtualizedContent } = await import('./sessionListVirtualizedContent');
+        const { SessionListVirtualizedContent, SESSION_LIST_SUPPORTING_SECTIONS_NODE } = await import('./sessionListVirtualizedContent');
 
         const screen = await renderScreen(React.createElement(SessionListVirtualizedContent as any, {
-            nodes: [{
+            nodes: [SESSION_LIST_SUPPORTING_SECTIONS_NODE, {
                 id: buildSessionListIndexNodeId({ type: 'header', title: 'Active', headerKind: 'active', groupKey: 'active' }),
                 kind: 'header',
                 headerKind: 'active',
@@ -62,16 +38,16 @@ describe('SessionListVirtualizedContent filtered no-results state', () => {
             rowDensity: 'minimal',
             rowHeight: 48,
             safeAreaBottom: 0,
+            showReminders: false,
             renderItem: ({ item }: any) => React.createElement('Row', { testID: `row:${item.id}` }),
             rowExtraData: null,
             onStopScrollEventPropagationOnWeb: vi.fn(),
+
             filteredNoResultsMessage: 'directSessions.browseNoSearchResults',
         }));
 
         expect(screen.getTextContent()).toContain('directSessions.browseNoSearchResults');
         expect(screen.findByTestId('session-list-filtered-no-results')?.props.accessibilityLiveRegion).toBe('polite');
-        expect(screen.findByTestId('session-drafts-section')).toBeTruthy();
-        expect(screen.findByTestId('session-drafts-section')?.props.density).toBe('minimal');
     });
 
     it('omits waiting drafts and any archived shortcut when the host is rendering the archived corpus', async () => {
@@ -84,7 +60,9 @@ describe('SessionListVirtualizedContent filtered no-results state', () => {
             renderItem: () => null,
             rowExtraData: null,
             onStopScrollEventPropagationOnWeb: vi.fn(),
+
             showDrafts: false,
+            showReminders: false,
         }));
 
         expect(screen.findByTestId('session-drafts-section')).toBeNull();
@@ -94,7 +72,7 @@ describe('SessionListVirtualizedContent filtered no-results state', () => {
 
     it('renders the typed incomplete-search state and loads older query pages', async () => {
         const onLoadMore = vi.fn();
-        const { SessionListVirtualizedContent } = await import('./sessionListVirtualizedContent');
+        const { SessionListVirtualizedContent, SESSION_LIST_SUPPORTING_SECTIONS_NODE } = await import('./sessionListVirtualizedContent');
 
         const filters = {
             scope: 'my_work',
@@ -106,12 +84,14 @@ describe('SessionListVirtualizedContent filtered no-results state', () => {
             searchQuery: 'auth',
         } as const;
         const screen = await renderScreen(React.createElement(SessionListVirtualizedContent as any, {
-            nodes: [],
+            nodes: [SESSION_LIST_SUPPORTING_SECTIONS_NODE],
             rowHeight: 48,
             safeAreaBottom: 0,
+            showReminders: false,
             renderItem: () => null,
             rowExtraData: null,
             onStopScrollEventPropagationOnWeb: vi.fn(),
+
             filteredNoResultsMessage: 'directSessions.browseNoSearchResults',
             viewContext: {
                 kind: 'team',
@@ -137,11 +117,6 @@ describe('SessionListVirtualizedContent filtered no-results state', () => {
 
         expect(screen.getTextContent()).toContain('sessionsList.queryNoMatchesLoadedTitle');
         expect(screen.getTextContent()).not.toContain('directSessions.browseNoSearchResults');
-        expect(screen.findByTestId('session-drafts-section')?.props.viewContext).toEqual({
-            kind: 'team',
-            team: { serverId: 'home-a', teamId: 'team-a' },
-            teamDisplayName: 'Design',
-        });
         await screen.pressByTestIdAsync('session-list-query-action:load_more');
         expect(onLoadMore).toHaveBeenCalledTimes(1);
     });

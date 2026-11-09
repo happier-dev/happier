@@ -71,7 +71,7 @@ describe('SessionListHeaderItem Organize source', () => {
                 <SessionListOrganizeModeProvider>
                     {organize ? <EnterOrganize /> : null}
                     <SessionListHeaderItem item={item} collapsedKeys={{}} projectHeaderViewModelByGroupKey={new Map()}
-                        hasMultipleMachines={false} onOpenProject={vi.fn()} onCreateSessionFromWorkspaceScope={vi.fn()}
+ onOpenProject={vi.fn()} onCreateSessionFromWorkspaceScope={vi.fn()}
                         onAddFolderToWorkspace={vi.fn()} onRenameWorkspace={vi.fn()} onResetWorkspaceName={vi.fn()}
                         onToggleCollapse={onPress}
                         overlayShared={{ overlayVisible: { value: 0 }, overlayKind: { value: 0 }, overlayTop: { value: 0 },
@@ -102,7 +102,7 @@ describe('SessionListHeaderItem Organize source', () => {
                 moveTreeRowToWorkspaceRoot: () => {},
                 readSectionMoveMenuItems: () => null,
                 moveTreeRowToSection: () => {},
-                readSpaceMembershipMenu: () => null,
+            readSpaceMembershipMenu: () => null,
                 moveTreeRowByKeyboard: (rowId, label, direction) => { writes.push({ rowId, label, direction }); },
             });
             return <InjectedAuthProvider credentials={{ token: 'test-token' }}>
@@ -112,7 +112,7 @@ describe('SessionListHeaderItem Organize source', () => {
                         workspace: { t: 'workspaceRef', serverId: scope.serverId, workspaceRefId: 'workspace_a' },
                         workspaceScopeHint: scope }}
                     collapsedKeys={{}} projectHeaderViewModelByGroupKey={new Map()}
-                    hasMultipleMachines={false} onOpenProject={() => {}} onCreateSessionFromWorkspaceScope={() => {}}
+ onOpenProject={() => {}} onCreateSessionFromWorkspaceScope={() => {}}
                     onAddFolderToWorkspace={() => {}} onRenameWorkspace={() => {}} onResetWorkspaceName={() => {}}
                     onToggleCollapse={() => {}} getRowMoveActionHandlers={getRowMoveActionHandlers}
                 />

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createInputTypePickerPort, resolveSemanticInputTypePickerReference } from './inputTypePickerPort';
 import type { ResolvedInputTypeV1 } from '@happier-dev/protocol/inputs/runtime';
-
 import type { PluginUiInputTypeProjection } from '@/sync/domains/plugins/ui/projection';
 
 describe('host semantic picker discovery', () => {
@@ -38,6 +37,22 @@ describe('host semantic picker discovery', () => {
 });
 
 describe('native reference input picker projection', () => {
+  it('offers the incumbent Saved Secret picker and keeps its answer reference-only', async () => {
+    const port = createInputTypePickerPort({
+      resolveType: () => { throw new Error('Saved Secrets are host-owned'); },
+      canOpenPicker: () => false,
+      openPicker: async () => ({ kind: 'cancelled' }),
+      canOpenHostPicker: reference => reference.hostType === 'savedSecretReference',
+      openHostPicker: async () => ({ kind: 'completed', input: {
+        ref: 'happier:shared-secret:v1:resource', resourceRevision: 3,
+      } }),
+    });
+    const field = { path: 'secret', title: 'Secret', widget: 'select' as const,
+      inputType: { hostType: 'savedSecretReference' as const } };
+    expect(port.describe(field)).not.toBeNull();
+    expect(await port.pick({ field, value: undefined, options: [], signal: new AbortController().signal }))
+      .toEqual({ status: 'selected', value: { ref: 'happier:shared-secret:v1:resource', resourceRevision: 3 } });
+  });
   it('keeps omitted picker-only inventory distinct from an explicitly empty field constraint', async () => {
     const identity = { pluginId: 'test.inputs', localId: 'repository' };
     const type: ResolvedInputTypeV1 = { identity, occurrenceId: 'current', definition: {

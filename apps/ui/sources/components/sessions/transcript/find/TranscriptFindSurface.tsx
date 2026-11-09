@@ -4,11 +4,13 @@ import type { FindController } from '@happier-dev/plugin-ui/presentation';
 import { resolveHistoricalAgentIdAtSeq, type Message } from '@happier-dev/session-core/messages';
 
 import { FindBar } from '@/components/ui/find/FindBar';
-import { FindBarPlacement, useFindBarPresence, useFindBarPresentation } from '@/components/ui/find/FindBarPlacement';
+import { FindBarPlacement, useFindBarPresence, useFindBarPresentation, findBarBandFromLayout } from '@/components/ui/find/FindBarPlacement';
 import { useFindSurfaceFocusReturn } from '@/components/ui/find/useFindSurfaceFocusReturn';
+import { useFindComposerSlotReplacing } from '@/components/ui/find/FindComposerSlot';
 import { ChatFindSeedHost } from '@/components/appShell/panes/fileFindSeedHost';
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useFindSurfaceRegistration } from '@/keyboard/KeyboardShortcutProvider';
+import { isFindSurfaceTarget } from '@/keyboard/findSurfaceTarget';
 import { t } from '@/text';
 import { useSetting } from '@/sync/domains/state/storage';
 import { useSessionDebugInformationEnabled } from '@/sync/runtime/useSessionDebugInformationEnabled';
@@ -59,22 +61,26 @@ export function TranscriptFindSurface(props: Props) {
     const input = React.useRef<TextInput | null>(null);
     const [inputFocused, setInputFocused] = React.useState(false);
     const focusReturn = useFindSurfaceFocusReturn();
-    const containsFocus = () => {
-        if (!eligible) return false;
-        if (Platform.OS !== 'web') return true;
+    const composerReplaced = useFindComposerSlotReplacing();
+    const containsTarget = (target: unknown) => {
+        if (!eligible || Platform.OS !== 'web') return false;
+        // On phones the bar moves into the composer slot, outside this viewport.
+        if (isFindSurfaceTarget(input.current as unknown as HTMLElement | null, target)) return true;
         const viewport = props.viewportRef.current as unknown as HTMLElement | null;
-        const target = typeof document === 'undefined' ? null : document.activeElement;
-        if (!viewport || !target) return false;
-        if (viewport.contains(target)) return true;
+        if (isFindSurfaceTarget(viewport, target)) return true;
         // Composer is a sibling of the transcript, not an independently findable pane.
-        const session = viewport.closest('[data-testid^="session-view-retained-surface:"]');
-        const composer = target.closest('[data-testid="agent-input-composer"]');
-        return Boolean(session && composer && session.contains(composer));
+        const session = viewport?.closest('[data-testid^="session-view-retained-surface:"]');
+        return isFindSurfaceTarget(session?.querySelector('[data-testid="agent-input-composer"]'), target);
     };
+    const containsFocus = () => eligible && (Platform.OS !== 'web'
+        || containsTarget(typeof document === 'undefined' ? null : document.activeElement));
     const close = () => {
         model.close(); setInputFocused(false);
-        focusReturn.restore();
     };
+    React.useEffect(() => {
+        // The phone slot must commit the composer's visibility before DOM focus can return.
+        if (!open && !composerReplaced) focusReturn.restore();
+    }, [open, composerReplaced, focusReturn.restore]);
     const controller: FindController = {
         get query() { return model.query; }, get options() { return model.options; },
         get status() { return model.status; }, get capabilities() { return model.capabilities; },
@@ -86,7 +92,7 @@ export function TranscriptFindSurface(props: Props) {
     };
     useFindSurfaceRegistration(eligible ? {
         surfaceId: `transcript:${props.serverId ?? ''}:${props.sessionId}`,
-        containsFocus, open: openFind, isOpen: () => open, isInputFocused: () => inputFocused,
+        containsFocus, containsTarget, open: openFind, isOpen: () => open, isInputFocused: () => inputFocused,
         controller,
     } : null);
     const [measuredClearance, setMeasuredClearance] = React.useState(0);
@@ -231,8 +237,7 @@ function TranscriptFindActive(props: Props & Readonly<{
     const onClearance = props.onClearance;
     // The capsule floats over the transcript: its bottom edge plus one gutter is the band content keeps clear.
     const measureClearance = React.useCallback((event: LayoutChangeEvent) => {
-        const { y, height } = event.nativeEvent.layout;
-        onClearance(Math.ceil(y + height + TRANSCRIPT_TOP_GUTTER_PX));
+        onClearance(findBarBandFromLayout(event.nativeEvent.layout, TRANSCRIPT_TOP_GUTTER_PX));
     }, [onClearance]);
     React.useEffect(() => { if (phone) onClearance(0); }, [onClearance, phone]);
     React.useEffect(() => () => onClearance(0), [onClearance]);

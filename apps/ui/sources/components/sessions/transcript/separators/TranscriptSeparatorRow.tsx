@@ -2,6 +2,7 @@ import { Typography } from '@/constants/Typography';
 import * as React from 'react';
 import { View, type ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
 
 import { Text } from '@/components/ui/text/Text';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
@@ -78,7 +79,7 @@ export function TranscriptSeparatorRow(props: Readonly<{
             style={({ pressed }) => [
               styles.chip,
               chipChrome === 'minimal' ? styles.chipMinimal : null,
-              { backgroundColor: theme.colors.surface.base, borderColor: theme.colors.border.default, opacity: pressed ? motionTokens.press.opacitySubtle : 1 },
+              { backgroundColor: glassContentFill(theme.colors.surface.base, theme.colors, { nested: true }), borderColor: theme.colors.border.default, opacity: pressed ? motionTokens.press.opacitySubtle : 1 },
             ]}
           >
             {chipContent}
@@ -92,7 +93,7 @@ export function TranscriptSeparatorRow(props: Readonly<{
             style={[
               styles.chip,
               chipChrome === 'minimal' ? styles.chipMinimal : null,
-              { backgroundColor: theme.colors.surface.base, borderColor: theme.colors.border.default },
+              { backgroundColor: glassContentFill(theme.colors.surface.base, theme.colors, { nested: true }), borderColor: theme.colors.border.default },
             ]}
           >
             {chipContent}

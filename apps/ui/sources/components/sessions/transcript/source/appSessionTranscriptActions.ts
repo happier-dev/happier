@@ -28,8 +28,8 @@ function requireSendSuccess(result: ActionExecuteResult) {
 export async function submitAppSessionComposerMessage(port: SessionSubmitPort, options: SubmitSessionUserMessageOptions): Promise<SubmitSessionUserMessageResult> {
     let submitted: SubmitSessionUserMessageResult | undefined;
     const execute = createFrontDoorActionExecute(undefined, {
-        sessionSendMessage: async ({ permissionModeOverride }) => {
-            submitted = await submitSessionUserMessage(port, { ...options,
+        sessionSendMessage: async ({ permissionModeOverride, context }) => {
+            submitted = await submitSessionUserMessage(port, { ...options, actionContext: context,
                 metaOverrides: permissionModeOverride
                     ? { ...options.metaOverrides, permissionMode: permissionModeOverride }
                     : options.metaOverrides,
@@ -112,7 +112,9 @@ export function createAppSessionTranscriptActions(sessionId: string, serverId: s
         },
         answerUserAction: async (params) => {
             requireActionSuccess(await execute('session.user_action.answer', { sessionId, requestId: params.id,
-                answers: Object.entries(params.answers).map(([question, values]) => ({ question, values: [...values] })),
+                ...(params.decision === 'reject'
+                    ? { decision: 'reject' as const }
+                    : { answers: Object.entries(params.answers).map(([question, values]) => ({ question, values: [...values] })) }),
             }, context));
         },
         abort: async () => { requireActionSuccess(await execute('session.turn.cancel', { sessionId }, context)); },
@@ -121,10 +123,10 @@ export function createAppSessionTranscriptActions(sessionId: string, serverId: s
             // Keep the app submit owner's message-mode, wake and option-chip
             // origin semantics. Its effect runs only after Action admission.
             const submit = createFrontDoorActionExecute(undefined, {
-                sessionSendMessage: async ({ sessionId: targetId, message, serverId: targetServerId, permissionModeOverride }) => {
+                sessionSendMessage: async ({ sessionId: targetId, message, serverId: targetServerId, permissionModeOverride, context: actionContext }) => {
                     const result = await sync.submitMessage(targetId, message, undefined,
                         permissionModeOverride ? { permissionMode: permissionModeOverride } : undefined,
-                        { ...options, ...(targetServerId ? { serverId: targetServerId } : {}) });
+                        { ...options, actionContext, ...(targetServerId ? { serverId: targetServerId } : {}) });
                     return projectServerScopedSessionSendMessageResult({ ok: true, ack: {
                         localId: result.localId,
                         accepted: result.type === 'success' && result.providerAcceptancePending !== true,

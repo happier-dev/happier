@@ -1,4 +1,4 @@
-export type AgentInputActionBarLayout = 'wrap' | 'scroll' | 'collapsed';
+export type AgentInputActionBarLayout = 'wrap' | 'scroll';
 
 export type AgentInputActionBarActionFlags = Readonly<{
     showPermissionChip: boolean;
@@ -33,16 +33,10 @@ export function getHasAnyAgentInputActions(flags: AgentInputActionBarActionFlags
 }
 
 export function shouldShowSecondaryControlRow(
-    actionBarLayout: AgentInputActionBarLayout,
+    _actionBarLayout: AgentInputActionBarLayout,
     hasSecondaryControls: boolean,
 ): boolean {
-    // Secondary controls keep their own row in both "wrap" and "scroll" layouts.
-    // Only the "collapsed" layout moves them into the popover menu.
-    return actionBarLayout !== 'collapsed' && hasSecondaryControls;
-}
-
-export function shouldShowPathAndResumeRow(actionBarLayout: AgentInputActionBarLayout): boolean {
-    return shouldShowSecondaryControlRow(actionBarLayout, true);
+    return hasSecondaryControls;
 }
 
 /**

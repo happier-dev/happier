@@ -5,6 +5,7 @@ import { qualifyTranscriptAccountActor } from '@happier-dev/session-core/message
 import { SessionMessageAccountActorV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
 
 import { knownTools } from '@/components/tools/catalog';
+import { resolveExecutionRunTitle } from '@/components/sessions/runs/resolveExecutionRunTitle';
 import { resolveToolHeaderTextPresentation } from './resolveToolHeaderTextPresentation';
 import { installToolShellPresentationCommonModuleMocks } from './toolShellPresentationTestHelpers';
 
@@ -27,6 +28,16 @@ function makeToolCall(overrides: Partial<ToolCall>): ToolCall {
 }
 
 describe('resolveToolHeaderTextPresentation (real known tools)', () => {
+    it('names the change-summary Run by its product purpose without exposing its raw intent', () => {
+        const tool = makeToolCall({ name: 'SubAgentRun', state: 'running', input: {
+            intent: 'scm_diff_summary', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+            requestedConfiguration: { modelId: 'gpt-6-luna' },
+        } });
+        const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
+        expect(model.title).toBe(resolveExecutionRunTitle({ intent: 'scm_diff_summary' }));
+        expect(model.subtitle).toBeNull();
+    });
+
     it('names the authenticated answering person using the existing Home-qualified sanitized Account actor', () => {
         const tool = makeToolCall({ name: 'AskUserQuestion', description: 'Worker question', input: {},
             permission: { id: 'question', status: 'approved', answeredBy: { kind: 'person', accountId: 'bob' } } });

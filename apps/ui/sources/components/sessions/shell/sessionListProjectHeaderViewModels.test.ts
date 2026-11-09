@@ -370,7 +370,7 @@ describe('accepted Project title ownership', () => {
         expect(display.projectHeaderViewModelByGroupKey.size).toBe(0);
         const models = buildSessionListRowViewModels({ listItems,
             rowRenderableByKey: new Map([[sessionTagKey(serverId, session.id), session]]),
-            reachableSessionDisplayById: new Map(), relativeNowMs: 1_000, runtimeNowMs: 1_000,
+            reachableSessionDisplayById: new Map(), relativeNowMs: 1_000, runtimeNowMs: 1_000, 
             pinnedSessionKeys: new Set(), sessionTags: {}, selectedSessionId: null, showServerBadge: false, showPinnedServerBadge: false,
             rowContext: { enabled: true, identityDisplay: 'agentLogo', projectDisplayByKey: display.projectDisplayByKey,
                 groupProjectByGroupKey: display.groupProjectByGroupKey },
@@ -415,7 +415,7 @@ describe('accepted Project title ownership', () => {
         expect(projectTitle).toBe('Release home');
         const models = buildSessionListRowViewModels({ listItems,
             rowRenderableByKey: new Map([[sessionTagKey(serverId, session.id), session]]),
-            reachableSessionDisplayById: new Map(), relativeNowMs: 1_000, runtimeNowMs: 1_000,
+            reachableSessionDisplayById: new Map(), relativeNowMs: 1_000, runtimeNowMs: 1_000, 
             pinnedSessionKeys: new Set(), sessionTags: {}, selectedSessionId: null, showServerBadge: false, showPinnedServerBadge: false,
             rowContext: { enabled: true, identityDisplay: 'agentLogo', projectDisplayByKey: display.projectDisplayByKey,
                 groupProjectByGroupKey: display.groupProjectByGroupKey },

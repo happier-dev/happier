@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ActionId } from '@happier-dev/protocol';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { Modal } from '@/modal';

@@ -53,6 +53,7 @@ type SessionListSessionItemProps = Readonly<{
     onMoveToFolder?: () => void;
     sectionMove?: SessionItemProps['sectionMove'];
     spaceMembership?: SessionItemProps['spaceMembership'];
+    onSetSessionAppearance?: SessionItemProps['onSetSessionAppearance'];
     onMoveToWorkspaceRoot?: () => void;
     onMoveUp?: () => void;
     onMoveDown?: () => void;
@@ -133,6 +134,7 @@ export function SessionListSessionItem(props: SessionListSessionItemProps) {
             onMoveToFolder={props.onMoveToFolder}
             sectionMove={props.sectionMove}
             spaceMembership={props.spaceMembership}
+            onSetSessionAppearance={props.onSetSessionAppearance}
             onMoveToWorkspaceRoot={props.onMoveToWorkspaceRoot}
             onMoveUp={props.onMoveUp}
             onMoveDown={props.onMoveDown}

@@ -24,7 +24,7 @@ installSessionDetailsPanelCommonModuleMocks({
 
 import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
 const runtime = installSessionPaneRuntimeTestHarness();
-const { PluginProjectionV2Schema } = await import('@happier-dev/protocol');
+const { PluginProjectionV2Schema} = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
 const { normalizePluginUiDestinationBindingV1 } = await import('@happier-dev/protocol/plugins/ui');
 const { normalizePluginUiProjection } = await import('@/sync/domains/plugins/ui/projection');
 const { PluginSurfacePlacementHost } = await import('@/components/plugins/surfaces');

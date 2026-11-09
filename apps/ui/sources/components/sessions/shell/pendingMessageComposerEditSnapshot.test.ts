@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1 } from '@happier-dev/protocol';
+import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import { readAdmittedHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime';
 
 import { SESSION_DRAFT_VALUE_FIELD_CATALOG } from '../../../sync/domains/input/draftValues/sessionDraftValueFieldCatalog';
@@ -349,6 +349,7 @@ describe('pending message composer successor rejoin', () => {
             pendingId: 'pending-1',
             localId: 'pending-1',
             holdId: 'hold-1',
+            releasePresence: () => {},
             accountScope: null,
             accountLifetime: null,
             document: retiredDocument,
@@ -376,6 +377,7 @@ describe('pending message composer successor rejoin', () => {
             pendingId: 'pending-1',
             localId: 'pending-1',
             holdId: 'hold-1',
+            releasePresence: () => {},
             accountScope: null,
             accountLifetime: null,
             document: { text: 'a', mentions: [], attachments: [], revision: 4 },
@@ -413,6 +415,7 @@ describe('pending message composer successor rejoin', () => {
             pendingId: 'pending-1',
             localId: 'pending-1',
             holdId: 'hold-1',
+            releasePresence: () => {},
             accountScope: null,
             accountLifetime: {
                 scope: null,

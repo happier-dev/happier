@@ -43,6 +43,19 @@ describe('useTeamCredentialSelectionCoordinator', () => {
         alertMock.mockReset();
     });
 
+    it('carries owner and shared-user peer visibility into the existing Direct review before selection', async () => {
+        const { useTeamCredentialSelectionCoordinator } = await import('./useTeamCredentialSelectionCoordinator');
+        const hook = await renderHook(() => useTeamCredentialSelectionCoordinator('home-1'));
+        const pending = hook.getCurrent()({ resource: resource(), deliveryMode: 'direct', selection, isCurrent: () => true });
+        expect(confirmMock).toHaveBeenCalledWith(expect.anything(),
+            expect.stringContaining('teams.credentials.directUse.ownerVisibility'), expect.anything());
+        expect(confirmMock).toHaveBeenCalledWith(expect.anything(),
+            expect.stringContaining('teams.credentials.directUse.sharedUserVisibility'), expect.anything());
+        await expect(pending).resolves.toMatchObject({ kind: 'continue', consequence: { materialVisibility: {
+            ownerVisible: true, sharedUserPeerVisible: true,
+        } } });
+    });
+
     it('bypasses disclosure for brokered selection and returns the exact original selection', async () => {
         const { useTeamCredentialSelectionCoordinator } = await import('./useTeamCredentialSelectionCoordinator');
         const hook = await renderHook(() => useTeamCredentialSelectionCoordinator('home-1'));
@@ -59,7 +72,7 @@ describe('useTeamCredentialSelectionCoordinator', () => {
         const outcome = await hook.getCurrent()({ resource: resource(), deliveryMode: 'direct', selection, isCurrent: () => true });
         expect(confirmMock).toHaveBeenCalledWith(
             'teams.credentials.directUse.title',
-            'teams.credentials.directUse.body',
+            expect.stringContaining('teams.credentials.directUse.body'),
             {
                 confirmText: 'common.continue',
                 cancelText: 'common.cancel',
@@ -110,7 +123,7 @@ describe('useTeamCredentialSelectionCoordinator', () => {
         const outcome = await hook.getCurrent()({ resource: resource('preparing'), deliveryMode: 'direct', selection, isCurrent: () => true });
         expect(confirmMock).toHaveBeenCalledWith(
             'teams.credentials.directUse.title',
-            'teams.credentials.directUse.body',
+            expect.stringContaining('teams.credentials.directUse.body'),
             {
                 confirmText: 'common.continue',
                 cancelText: 'common.cancel',

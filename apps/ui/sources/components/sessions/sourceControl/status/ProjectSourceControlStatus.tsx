@@ -1,7 +1,7 @@
 import { Typography } from '@/constants/Typography';
 import React from 'react';
 import { View } from 'react-native';
-import { useSessionProjectScmSnapshot } from '@/sync/domains/state/storage';
+import { useSessionProjectScmSummarySnapshot } from '@/sync/domains/state/storage';
 import { StyleSheet } from 'react-native-unistyles';
 import { buildSessionScmSummary } from './statusSummary';
 import { Text } from '@/components/ui/text/Text';
@@ -67,7 +67,7 @@ interface ProjectSourceControlStatusProps {
 
 export function ProjectSourceControlStatus({ sessionId }: ProjectSourceControlStatusProps) {
     const styles = stylesheet;
-    const snapshot = useSessionProjectScmSnapshot(sessionId);
+    const snapshot = useSessionProjectScmSummarySnapshot(sessionId);
     const scmStatusSummary = buildSessionScmSummary(snapshot);
 
     if (!scmStatusSummary) {

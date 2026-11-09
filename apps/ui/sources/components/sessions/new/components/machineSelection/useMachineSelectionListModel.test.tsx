@@ -310,6 +310,49 @@ describe('useMachineSelectionListModel', () => {
             expect(handlers.selectSpy).toHaveBeenCalled();
         } finally { await rendered.unmount(); }
     });
+    it('keeps the option of every unchanged Machine row when one row changes (one list redraw per arrival is one row)', async () => {
+        const fixture = createFixture();
+        const handlers = makeHandlers();
+        let groups = fixture.groups;
+        const rendered = await renderHook(() => useMachineSelectionListModel({ ...buildParams(fixture, handlers), groups }));
+        const optionsOf = (model: ReturnType<typeof UseMachineSelectionListModel>) => model.rootStep.sections
+            .flatMap(section => section.kind === 'static' ? section.options.map(option => [`${section.id}|${option.id}`, option] as const) : []);
+        const before = new Map(optionsOf(rendered.getCurrent()));
+        const [changed, ...unchanged] = fixture.machines;
+        const renamed = { ...changed!, metadata: { ...changed!.metadata!, displayName: 'Renamed' } };
+        groups = fixture.groups.map(group => ({ ...group, machines: group.machines.map(machine => machine.id === renamed.id ? renamed : machine) }));
+        await act(async () => { await rendered.rerender(); });
+        const after = new Map(optionsOf(rendered.getCurrent()));
+        expect(after.size).toBe(before.size);
+        let keptRows = 0;
+        for (const [key, option] of after) {
+            if (option.id === renamed.id || option.id.endsWith(`::${renamed.id}`)) {
+                expect(option).not.toBe(before.get(key));
+            } else if (unchanged.some(machine => option.id === machine.id || option.id.endsWith(`::${machine.id}`))) {
+                expect(option).toBe(before.get(key));
+                keptRows += 1;
+            }
+        }
+        expect(keptRows).toBeGreaterThan(0);
+        const retained = [...after.values()].find(option => unchanged.some(machine => machine.id === option.id));
+        retained!.onSelect?.();
+        expect(handlers.selectSpy).toHaveBeenCalledWith(retained!.id);
+    });
+
+    it('keeps the list model when a host rebuilds equal Temporary computer rows', async () => {
+        const fixture = createFixture();
+        const handlers = makeHandlers();
+        const rendered = await renderHook(() => useMachineSelectionListModel({
+            ...buildParams(fixture, handlers),
+            // The popover overlay re-invokes its content per render; rows differ only in closure identity.
+            temporaryComputers: [{ serverId: 'server-a', artifactTarget: 'darwin-arm64', selected: false,
+                workspace: null, onSelect: () => {} }],
+        }));
+        const first = rendered.getCurrent().rootStep;
+        await rendered.rerender();
+        expect(rendered.getCurrent().rootStep).toBe(first);
+    });
+
     it.each(['session', 'finite', 'service-start'] as const)('keeps %s managed recipe selection separate from published artifacts and exact machines', async purpose => {
         const fixture = createFixture();
         const handlers = makeHandlers();

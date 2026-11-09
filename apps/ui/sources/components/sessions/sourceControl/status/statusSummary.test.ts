@@ -36,6 +36,41 @@ function buildSnapshot(overrides?: Partial<ScmWorkingSnapshot>): ScmWorkingSnaps
 }
 
 describe('buildSessionScmSummary', () => {
+    it('does not rescan 55k unchanged file statistics for repeated summary reads and keeps changed totals current', () => {
+        let reads = 0;
+        const stats = { includedAdded: 0, includedRemoved: 0, pendingAdded: 1, pendingRemoved: 0, isBinary: false };
+        const entries: ScmWorkingEntry[] = Array.from({ length: 55_000 }, (_, index) => ({
+            path: `src/file-${index}.ts`, previousPath: null, kind: 'modified', includeStatus: ' ', pendingStatus: 'M',
+            hasIncludedDelta: false, hasPendingDelta: true, get stats() { reads++; return stats; },
+        }));
+        const snapshot = buildSnapshot({ entries, totals: {
+            includedFiles: 0, pendingFiles: entries.length, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0,
+            pendingAdded: entries.length, pendingRemoved: 0,
+        } });
+        expect(buildSessionScmSummary(snapshot)?.linesAdded).toBe(55_000);
+        reads = 0;
+        for (let index = 0; index < 3; index++) expect(buildSessionScmSummary(snapshot)?.linesAdded).toBe(55_000);
+        expect(reads).toBe(0);
+        const changed = { ...snapshot, entries: [{ ...entries[0]!, stats: { ...stats, pendingAdded: 2 } }, ...entries.slice(1)],
+            totals: { ...snapshot.totals, pendingAdded: 55_001 } };
+        expect(buildSessionScmSummary(changed)?.linesAdded).toBe(55_001);
+    });
+
+    it('excludes media and binary line statistics while retaining both text change areas and every file', () => {
+        const entries: ScmWorkingEntry[] = ['a.ts', 'b.pdf', 'c.png', 'd.mp4', 'e.mp3', 'f.dat'].map((path) => ({
+            path, previousPath: null, kind: 'modified', includeStatus: 'M', pendingStatus: 'M',
+            hasIncludedDelta: true, hasPendingDelta: true,
+            stats: { includedAdded: 2, includedRemoved: 1, pendingAdded: 3, pendingRemoved: 4, isBinary: path === 'f.dat' },
+        }));
+        const totals = { includedFiles: 6, pendingFiles: 6, untrackedFiles: 0, includedAdded: 12, includedRemoved: 6, pendingAdded: 18, pendingRemoved: 24 };
+        expect(buildSessionScmSummary(buildSnapshot({ entries, totals }))).toMatchObject({
+            changedFiles: 6, linesAdded: 5, linesRemoved: 5, hasLineChanges: true,
+        });
+        expect(buildSessionScmSummary(buildSnapshot({ entries: entries.slice(1), totals: {
+            ...totals, includedAdded: 10, includedRemoved: 5, pendingAdded: 15, pendingRemoved: 20,
+        } }))).toMatchObject({ changedFiles: 5, linesAdded: 0, linesRemoved: 0, hasLineChanges: false, hasAnyChanges: true });
+    });
+
     it('returns null when snapshot is missing or not a git repo', () => {
         expect(buildSessionScmSummary(null)).toBeNull();
         expect(

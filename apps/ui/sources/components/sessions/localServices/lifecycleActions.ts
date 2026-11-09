@@ -11,7 +11,7 @@ import { publishPresentationNotice } from '@/components/sessions/presentation/pr
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { t } from '@/text';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { readLocalServiceActionOutcome } from './localServiceActionOutcome';
 import { executeLocalServiceActionWithAdmission, isLocalServiceActionAdmissionCurrent, readLocalServiceSetupConsentReview, useLocalServiceActionExecutor, type LocalServiceActionAdmission, type LocalServiceActionInvocationOptions } from './localServiceActionAdmission';
 
@@ -195,6 +195,16 @@ export function useManagedLocalServiceControlAction(context: Readonly<{
         const actionServerId = target.workspace?.serverId ?? serverId;
         const action = resolveLocalServiceActionKindForRuntimeActionId(actionId);
         if (action !== 'stop_managed' && action !== 'restart_managed') return undefined;
+        // The launcher producer supplies exact Environment identity, not Workspace
+        // execution authority. Native control policy resolves its live owner again.
+        if (target.environment) {
+            if (!actionServerId || target.sourceClass?.kind !== 'managed_service') return undefined;
+            return runtimeActionExecute({ actionId: 'machines.services.control', input: {
+                serverId: actionServerId, machineId: target.machineId, serviceId: target.id,
+                expectedGeneration: target.sourceClass.managedServiceId,
+                operation: action === 'stop_managed' ? 'stop' : 'restart',
+            }, context: { serverId: actionServerId, surface: 'ui' } }, options);
+        }
         let request = buildManagedServiceActionRequest({ target, action, ...options });
         const dispatch = () => runtimeActionExecute({ actionId,
             input: request,
@@ -391,7 +401,8 @@ export function useLocalServiceCopyUrlAction(
     const workspaceId = normalizeNonEmptyString(context.workspaceId);
     const serverId = normalizeNonEmptyString(context.serverId);
     const runtimeActionExecute = useLocalServiceActionExecutor(context);
-    const copyToClipboard = context.copyToClipboard ?? setClipboardStringSafe;
+    const writeClipboard = useClipboardWrite(serverId);
+    const copyToClipboard = context.copyToClipboard ?? writeClipboard;
 
     return React.useCallback(async (target: LocalServiceLaunchTarget, value: string) => {
         const inventoryEntryId = readInventoryEntryIdFromTarget(target);

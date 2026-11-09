@@ -106,8 +106,8 @@ vi.mock('@react-navigation/native', () => ({
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
   AgentContentView: (props: any) => React.createElement('AgentContentView', props, props.input ?? null),
 }));
-vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
-  ChatHeaderView: () => null,
+vi.mock('@/components/sessions/shell/view/SessionPaneHeader', () => ({
+  SessionPaneHeader: () => null,
 }));
 vi.mock('@/components/sessions/transcript/ChatList', () => ({
   ChatList: () => null,
@@ -304,6 +304,40 @@ describe('SessionView composer surface focus', () => {
     expect((await sync.ensureSessionVisibleForMessageRoute('s1', {
       serverId: accountRuntime.serverId, forceRefresh: true, hydrateMessages: false,
     })).kind).toBe('available');
+  });
+  it('offers the Browser Action code and content-free cause in deliberate Technical details', async () => {
+    const { SessionBrowserContextRuntimeProvider } = await import('@/components/sessions/browser/sessionBrowserContextRuntime');
+    const oldContext = featureEnabledState['browser.context'];
+    featureEnabledState['browser.context'] = true;
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    try {
+      screen = await renderScreen(
+        <SessionView id="s1" routeServerId={accountRuntime.serverId} surfaceFocusedOverride surfaceVisibleOverride
+          contentOverride={<React.Fragment />} />
+      );
+      const runtime = screen.tree.findByType(SessionBrowserContextRuntimeProvider).props.runtime as
+        import('@/components/sessions/browser/sessionBrowserContextRuntime').SessionBrowserContextRuntime;
+      const reportUnavailable = runtime.browserShellContext.onAttachUnavailable;
+      if (!reportUnavailable) throw new Error('Session Browser failure presenter did not mount');
+      modalAlertSpy.mockClear();
+      Reflect.apply(reportUnavailable, undefined, [{ ok: false, errorCode: 'runtime_action_disabled',
+        error: 'private transport text', details: { reasonCode: 'browser_context_annotation_unavailable', path: '/private/path' },
+        failureCause: { phase: 'browser.context.annotation.start', errorClass: 'Error', errorCode: 'machine_socket_unavailable', httpStatus: null } }]);
+      const initialAlert = modalAlertSpy.mock.calls.at(-1)!;
+      expect(initialAlert[1]).toBe('browserContext.composer.contextUnavailable');
+      const buttons = initialAlert[2] as ReadonlyArray<{ text: string; onPress?: () => void }>;
+      const details = buttons?.find(button => button.text === 'approvals.technicalDetails');
+      expect(details).toBeDefined();
+      details?.onPress?.();
+      const revealed = JSON.parse(modalAlertSpy.mock.calls.at(-1)![1]);
+      expect(revealed).toMatchObject({ code: 'runtime_action_disabled', phase: 'browser.context.annotation.start',
+        errorClass: 'Error', causeCode: 'machine_socket_unavailable', reasonCode: 'browser_context_annotation_unavailable' });
+      expect(revealed).not.toHaveProperty('path');
+      expect(JSON.stringify(revealed)).not.toContain('private transport text');
+    } finally {
+      await screen?.unmount();
+      featureEnabledState['browser.context'] = oldContext;
+    }
   });
   it.each([
     ['available', true, true, true],

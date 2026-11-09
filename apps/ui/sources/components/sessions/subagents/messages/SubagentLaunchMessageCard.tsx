@@ -1,7 +1,7 @@
 import React from 'react';
 
 import { t } from '@/text';
-import type { SubagentLaunchV1 } from '@happier-dev/protocol';
+import type { SubagentLaunchV1 } from '@happier-dev/protocol/messages/structured/subagentLaunchV1';
 
 import { SubagentStructuredMessageCard, projectSubagentStructuredFindText } from './SubagentStructuredMessageCard';
 

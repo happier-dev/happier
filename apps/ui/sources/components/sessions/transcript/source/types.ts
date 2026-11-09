@@ -2,7 +2,8 @@ import type { Message, TranscriptOlderPageLoadResult } from '@happier-dev/sessio
 import type { ReducerState } from '@happier-dev/session-core/reducer';
 import type { AgentState, Metadata } from '@happier-dev/session-core/state';
 import type { SessionPendingRequestLists } from '@happier-dev/session-core/pending';
-import type { SessionAwarenessProjectionV1, SessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol';
+import type { SessionAwarenessProjectionV1} from '@happier-dev/protocol/sessions/awareness/projectionV1';
+import type { SessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { SessionForkSupportSource } from '@/sync/domains/sessionFork/forkUiSupport';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
@@ -23,7 +24,10 @@ export type SessionTranscriptSubmitOptions = Pick<NonNullable<Parameters<typeof 
 export type SessionRequestReadOutcome = 'pending' | 'settled';
 export type SessionTranscriptActions = Readonly<{
     respondToPermission(params: Omit<SessionPermissionRespondRpcParamsV1, 'answers'>): Promise<void>;
-    answerUserAction(params: Pick<SessionPermissionRespondRpcParamsV1, 'id'> & Required<Pick<SessionPermissionRespondRpcParamsV1, 'answers'>>): Promise<void>;
+    answerUserAction(params:
+        | (Pick<SessionPermissionRespondRpcParamsV1, 'id'> & Required<Pick<SessionPermissionRespondRpcParamsV1, 'answers'>> & { decision?: never })
+        | (Pick<SessionPermissionRespondRpcParamsV1, 'id'> & { decision: 'reject'; answers?: never })
+    ): Promise<void>;
     abort(): Promise<void>;
     /**
      * Reads the exact Session on its own Home and says whether the request is still waiting for an answer

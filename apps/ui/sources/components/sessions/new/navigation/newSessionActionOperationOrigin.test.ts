@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { actionOperationRequestAddressKey } from '@/sync/domains/actionOperations/qualifiedActionOperation';
 
 const getSessionDraftSnapshotMock = vi.hoisted(() => vi.fn());

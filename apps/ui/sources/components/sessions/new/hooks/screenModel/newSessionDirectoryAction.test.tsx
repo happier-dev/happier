@@ -1,6 +1,7 @@
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it } from 'vitest';
-import { ActionIdSchema, createActionExecutor } from '@happier-dev/protocol';
+import { ActionIdSchema} from '@happier-dev/protocol/actions/actionIds';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 import { createAppShellAction } from '@/sync/ops/actions/appShellAction';
 import { useNewSessionMachinePathState } from './useNewSessionMachinePathState';

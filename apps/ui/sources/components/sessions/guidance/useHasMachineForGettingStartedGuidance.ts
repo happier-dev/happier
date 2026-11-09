@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
 import { useResolvedActiveServerSelection } from '@/hooks/server/useEffectiveServerSelection';
 import { storage } from '@/sync/domains/state/storageStore';
@@ -13,20 +12,18 @@ const readNoPresenceDeadlines = () => [];
 /** The getting-started selection is unknown until loaded; offline machines count, revoked ones do not. */
 export function useHasMachineForGettingStartedGuidance(enabled = true): boolean | null {
     const selection = useResolvedActiveServerSelection();
-    const bindings = useServerCredentialAccountScopeBindings(enabled ? [...selection.allowedServerIds, selection.activeServerId] : []);
     const activeServerProfile = useSessionGettingStartedActiveServerProfile(selection.activeServerId);
     const readSetup = React.useCallback(() => {
         if (!enabled) return null;
         const state = storage.getState();
         return resolveSessionGettingStartedMachineSetupSatisfied({
             get activeMachines() { return Object.values(state.machines); },
-            accountScopesByServerId: bindings,
             selection,
             activeServerProfile,
             machineListByServerId: state.machineListByServerId,
             machineListStatusByServerId: state.machineListStatusByServerId,
         });
-    }, [activeServerProfile, bindings, enabled, selection]);
+    }, [activeServerProfile, enabled, selection]);
     const targets = React.useMemo(() => enabled
         ? [...new Set([...selection.allowedServerIds, selection.activeServerId])].map(serverId => ({ serverId }))
         : [], [enabled, selection.activeServerId, selection.allowedServerIds]);

@@ -107,4 +107,9 @@ describe('resolveGoalStatusLabelKey', () => {
         expect(resolveGoalStatusLabelKey(goal({ status: 'complete' })))
             .toBe('session.workState.goal.statusComplete');
     });
+
+    it('says plain "Blocked" for a blocked goal (the Goal row already names the goal)', () => {
+        expect(resolveGoalStatusLabelKey(goal({ status: 'blocked' })))
+            .toBe('session.workState.goal.statusBlocked');
+    });
 });

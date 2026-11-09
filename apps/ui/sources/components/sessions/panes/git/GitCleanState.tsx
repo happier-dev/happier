@@ -1,7 +1,8 @@
 import * as React from 'react';
+import { usePaneContentInsetPx } from '@/components/ui/lists/listPresentation';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import type { ScmLogEntry } from '@happier-dev/protocol';
+import type { ScmLogEntry } from '@happier-dev/protocol/scm';
 
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceCard } from '@/components/ui/cards/SurfaceCard';
@@ -30,6 +31,7 @@ export const GitCleanState = React.memo(function GitCleanState(props: Readonly<{
     pullRequestNumber: number | null;
 }>) {
     const { theme } = useUnistyles();
+    const contentInsetPx = usePaneContentInsetPx();
     const upToDate = Boolean(props.upstream) && props.ahead === 0 && props.behind === 0;
     const title = upToDate && props.justCompleted ? t('sessionGitPane.fidelity.allClean') : upToDate ? t('sessionGitPane.flow.clean.titleUpToDate') : t('sessionGitPane.flow.clean.titleCommitted');
     const reason = upToDate && props.branch && props.upstream
@@ -55,5 +57,5 @@ export const GitCleanState = React.memo(function GitCleanState(props: Readonly<{
             {...(props.lastPushedAt ? { live: { text: t('sessionGitPane.fidelity.lastPushed', { when: formatScmTimelineWhen(props.lastPushedAt) }) } } : props.lastCommitAt ? { live: { text: t('sessionGitPane.flow.clean.lastCommit', { when: formatScmTimelineWhen(props.lastCommitAt) }) } } : {})}
         />
     );
-    return <View style={{ paddingHorizontal: theme.space.s12, paddingVertical: theme.space.s8 }}><SurfaceCard padding="sm" style={{ backgroundColor: theme.colors.state.success.background, borderColor: theme.colors.state.success.border }}>{state}</SurfaceCard></View>;
+    return <View style={{ paddingHorizontal: contentInsetPx, paddingVertical: theme.space.s8 }}><SurfaceCard padding="sm" style={{ backgroundColor: theme.colors.state.success.background, borderColor: theme.colors.state.success.border }}>{state}</SurfaceCard></View>;
 });

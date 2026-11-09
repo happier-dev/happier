@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 
-import type { ParticipantRecipientV1 } from '@happier-dev/protocol';
+import type { ParticipantRecipientV1 } from '@happier-dev/protocol/messages/structured/participantMessageV1';
 
 import type { AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
 import type { SessionParticipantTarget } from '@/sync/domains/session/participants/participantTargets';
@@ -21,13 +21,23 @@ import {
 import type { RecipientMultiSelectModel } from './recipientMultiSelectModel';
 
 const stylesheet = StyleSheet.create((theme) => ({
+    // A recipient's name is the caller's text and can be long: the chip never outgrows the rail it sits in,
+    // its label ellipsizes instead of running under the trailing accessory.
     anchor: {
         alignSelf: 'flex-start',
+        maxWidth: '100%',
+        minWidth: 0,
+        flexShrink: 1,
     },
     chipRow: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s6,
+        minWidth: 0,
+        flexShrink: 1,
+    },
+    label: {
+        flexShrink: 1,
     },
 }));
 
@@ -82,7 +92,7 @@ const MultiRecipientChip = React.memo(function MultiRecipientChip(props: MultiRe
                 >
                     <View style={stylesheet.chipRow}>
                         <Icon name="navigation-arrow" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={props.ctx.iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />
-                        {props.ctx.showLabel ? <Text numberOfLines={1} style={props.ctx.textStyle}>{label}</Text> : null}
+                        {props.ctx.showLabel ? <Text numberOfLines={1} style={[props.ctx.textStyle, stylesheet.label]}>{label}</Text> : null}
                     </View>
                 </Pressable>
             </View>
@@ -141,7 +151,7 @@ const SingleRecipientChip = React.memo(function SingleRecipientChip(props: Singl
                     <View style={styles.chipRow}>
                         <Icon name="navigation-arrow" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={props.ctx.iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />
                         {props.ctx.showLabel ? (
-                            <Text numberOfLines={1} style={props.ctx.textStyle}>
+                            <Text numberOfLines={1} style={[props.ctx.textStyle, styles.label]}>
                                 {t('session.participants.cardTo', { label: selectedLabel })}
                             </Text>
                         ) : null}

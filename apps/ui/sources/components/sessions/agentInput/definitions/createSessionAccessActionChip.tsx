@@ -1,6 +1,5 @@
-import { t } from '@/text';
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import type { AgentInputPopoverContent } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
@@ -8,7 +7,9 @@ import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeFor
 import { Text } from '@/components/ui/text/Text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SafeIonicons } from '@/components/ui/icons/SafeIonicons';
+import { t } from '@/text';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE, AGENT_INPUT_MENU_ICON_SIZE_PX } from './agentInputChipIconMetrics';
+import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
 
 export function createSessionAccessActionChip(params: Readonly<{
     label: string;
@@ -41,14 +42,13 @@ export function createSessionAccessActionChip(params: Readonly<{
             onPress: () => { dismiss(); params.onOpen?.(); },
         }) } : {}),
         render: ({ chipStyle, iconColor, showLabel, textStyle, chipAnchorRef, toggleCollapsedPopover }) => (
-            <Pressable
+            <AgentInputRailChip
                 ref={chipAnchorRef}
                 testID="session-access-chip"
                 accessibilityRole="button"
                 accessibilityLabel={params.accessibilityLabel}
                 onPress={() => params.onOpen ? params.onOpen(chipAnchorRef) : toggleCollapsedPopover?.('session-access')}
-                hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                style={(pressed) => chipStyle(pressed.pressed)}
+                style={chipStyle}
             >
                 {normalizeNodeForView(<Icon name="users" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />)}
                 {showLabel ? (
@@ -63,7 +63,7 @@ export function createSessionAccessActionChip(params: Readonly<{
                         {normalizeNodeForView(<SafeIonicons name="lock-closed-outline" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={iconColor} />)}
                     </View>
                 ) : null}
-            </Pressable>
+            </AgentInputRailChip>
         ),
     };
 }

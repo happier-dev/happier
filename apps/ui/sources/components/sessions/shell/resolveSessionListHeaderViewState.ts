@@ -62,7 +62,7 @@ export function resolveSessionListHeaderViewState(input: Readonly<{
         const viewModel = input.projectHeaderViewModelByGroupKey.get(groupKey) ?? null;
         const collapseKey = resolveSessionListHeaderCollapseKey(input.item, input.projectHeaderViewModelByGroupKey);
         const legacyWorkspaceKey = viewModel?.legacyWorkspaceKey ?? String(input.item.workspaceKey ?? '').trim();
-        const scopeHint = viewModel?.scopeHint ?? input.item.workspaceScopeHint ?? null;
+        const scopeHint = viewModel ? viewModel.scopeHint : input.item.workspaceScopeHint ?? null;
         const newSessionTarget = resolveNewSessionGroupTarget({ workspaceScopeHint: scopeHint, workspace: input.item.workspace });
         const rawSeedSessionId = viewModel?.seedSessionId ?? String(input.item.seedSessionId ?? '').trim();
         const seedSessionId = rawSeedSessionId ? rawSeedSessionId : null;

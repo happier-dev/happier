@@ -27,16 +27,13 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import {
-    resolveSessionBoardMountMode,
-    sessionBoardSourceRequiresExclusiveMount,
-    type SessionBoardExecutableCurrentness,
     type SessionBoardItemProjection,
     type SessionBoardMountHost,
 } from '@/sync/domains/session/board';
 
 import { SessionBoardDeclarativeContent } from './SessionBoardDeclarativeContent';
 import { SessionWalkthroughWidgetContent } from './SessionWalkthroughWidgetContent';
-import { UnavailableInstalledWidget } from '@/components/widgets/InstalledWidgetSurface';
+import { UnavailableInstalledWidget, WidgetAboutContext } from '@/components/widgets/InstalledWidgetSurface';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import { useSessionWidgetSurface, useWidgetInputsEditor } from '@/components/widgets/surface/useWidgetInputsEditor';
 import { readSessionWidgetProvidedContext } from '@/components/widgets/surface/sessionWidgetContext';
@@ -47,7 +44,7 @@ import { WidgetSnapshotCaptureContext } from '@/components/widgets/definitions/w
 import type { WidgetSetupSubmitResult } from '@/components/widgets/add/widgetSetupModel';
 import { useWidgetFrameRename } from '@/components/widgets/frame/useWidgetFrameRename';
 import { WIDGET_MENU_MAX_HEIGHT_PX } from '@/components/widgets/frame/widgetFrameMenu';
-import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
+import { useSessionHostWidgetDescriptor } from '@/components/widgets/surface/useSessionHostWidgetDescriptor';
 import { resolveWidgetSizeChoicesV1, canPromoteSessionWidgetDefinitionSourceV1, projectWidgetDefinitionPromotionBindingsV1, type WidgetInputBindingsV1, type WidgetSizeV1 } from '@happier-dev/protocol/widgets';
 import { renderWidgetSizeMenuSection, stepWidgetSizeControl, type WidgetSizeControl } from '@/components/widgets/frame/WidgetSizeControl';
 import { useWidgetInstanceDescriptor } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
@@ -55,7 +52,7 @@ import { useActiveServerAccountScope, useActiveServerAccountScopeLifetime, useUs
 import { useDiscussionParticipantProfiles } from '@/components/discussions/useDiscussionParticipantProfiles';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useAppShellPluginUiProjectionCurrentness } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { resolveWidgetInstanceTitle } from '@/components/widgets/widgetCatalog';
 import { resolveBoardWidgetProvenance } from '@/components/widgets/boardWidgetProvenance';
 import type { SessionPluginRuntimeState } from '@/components/sessions/plugins/useSessionPluginRuntime';
@@ -81,6 +78,7 @@ import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { SessionVisualNetworkPanel } from './SessionVisualNetworkPanel';
 import { readSessionVisualNetworkChoice, type SessionVisualNetworkChoice } from './sessionBoardVisualNetwork';
 import { WidgetFlowShell } from '@/components/widgets/flow/WidgetFlowShell';
+import { useSessionVisualPresentationActive } from './useSessionVisualPresentationActive';
 
 /**
  * The ONE durable Board item shell.
@@ -100,7 +98,7 @@ export type SessionWidgetDensity =
     | 'full'
     /** The one-column sidebar monitor/navigator. */
     | 'compact'
-    /** An inert reference: inline transcript results and non-primary placements. */
+    /** A compact reference presentation. */
     | 'preview';
 
 export type SessionWidgetHostProps = Readonly<{
@@ -113,16 +111,11 @@ export type SessionWidgetHostProps = Readonly<{
     session?: Session;
     item: SessionBoardItemProjection;
     host: SessionBoardMountHost;
-    /** The locally derived executable placement for this item, or `null`. */
-    primaryHost: SessionBoardMountHost | null;
+    /** Whether this surface consumes the body; transcript repeats select one occurrence. */
+    bodyActive?: boolean;
     density: SessionWidgetDensity;
     /** Lane 04 `editSessionRecords`. Actions the person cannot perform are absent, not disabled. */
     canEdit: boolean;
-    /**
-     * Exact Board-record/access/reachability proof for executable sources.
-     * Stale retained bytes remain visible, but never keep Host API authority.
-     */
-    executableCurrentness: SessionBoardExecutableCurrentness;
     /** Shared layout width intent, reported to assistive technology; the grid applies it. */
     width?: SessionBoardItemWidth;
     /**
@@ -169,6 +162,11 @@ export type SessionWidgetHostProps = Readonly<{
     onEdit?: () => void;
     /** An HTML visual's network access (none, exact sites, any site), through the Board's item update. Editors only. */
     onSetNetwork?: (network: SessionVisualNetworkChoice) => Promise<WidgetSetupSubmitResult>;
+    /**
+     * The Board facts this card's menu and Network access flow read (Pin, Edit, Network access, Delete), demanded only
+     * while one of them is open: a transcript reply has no Board of its own to keep that inventory loaded.
+     */
+    acquireMenuContent?: () => () => void;
     /** Persist one semantic Board width. Full density only. */
     onResize?: (width: SessionBoardItemWidth) => void;
     /** Persist one anchored move within the current Board view. */
@@ -194,6 +192,8 @@ export type SessionWidgetHostProps = Readonly<{
     /** Drop this view's placement. The shared item record survives. */
     /** Places this same item on the Board (a transcript reply offers it while the Board places it nowhere). */
     onPinToBoard?: () => void;
+    /** A reply's Board facts are loading for a viewer who may edit; see `SessionBoardItemMenuInput.boardFactsPending`. */
+    boardFactsPending?: boolean;
     onUnpin?: () => void;
     /** Exact one-shot focus handoff after this item replaces its editor. */
     focusHeadingRequestId?: number;
@@ -301,7 +301,7 @@ function actionLabel(kind: SessionBoardItemActionKind): string {
 export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactElement {
     const viewerScope = useActiveServerAccountScope();
     const viewerLifetime = useActiveServerAccountScopeLifetime();
-    const appRuntime = useAppShellPluginUiProjection();
+    const appRuntime = useAppShellPluginUiProjectionCurrentness();
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const testID = props.testID ?? `session-board-item-${props.item.itemId}`;
@@ -336,20 +336,16 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
         props.onHeadingFocusHandled?.(requestId);
     }, [props.focusHeadingRequestId, props.onHeadingFocusHandled]);
     const state = props.item.state;
-    const mountMode = resolveSessionBoardMountMode({
-        host: props.host,
-        primaryHost: props.primaryHost,
-        state,
-    });
+    const presented = useSessionVisualPresentationActive();
+    const bodyActive = props.bodyActive !== false && presented;
+    const mountMode = state.kind !== 'ready' ? 'inert' : bodyActive ? 'executable' : 'preview';
     const canOpenElsewhere = props.onOpenHere !== undefined;
     const embeddedPresentation = props.expanded === true ? 'fill' as const : 'content' as const;
     // This resolver proves renderer presence only. Both executable bodies and
     // inert widget references delegate exact-target admission to WidgetSurface.
     const presentation = resolveSessionBoardItemPresentation({
         state,
-        // `density` is visual chrome; whether this placement runs the item is answered
-        // once by `resolveSessionBoardMountMode`. A second rule here made the compact
-        // sidebar inert even when it was the elected primary host.
+        // Density is chrome; this surface's actual presentation controls its body.
         mountMode,
         canEdit: props.canEdit,
         canOpenElsewhere,
@@ -364,10 +360,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
     // A configured widget's inputs: Edit inputs… in the menu and the card's repair line open the
     // same step, for this copy only. The Board fills "This session" with its own Session.
     const widgetInstance = state.kind === 'ready' && state.item.source.kind === 'widget' ? state.item.source.instance : null;
-    const installedDescriptor = React.useMemo(
-        () => (widgetInstance ? readWidgetDescriptor(appRuntime.pluginUiProjection, widgetInstance.definition) : null),
-        [appRuntime.pluginUiProjection, widgetInstance],
-    );
+    const installedDescriptor = useSessionHostWidgetDescriptor({ serverId: props.serverId ?? null, sessionId: props.sessionId, instance: widgetInstance });
     const boardSurface = useSessionWidgetSurface({ owner: 'sessionBoard', serverId: props.serverId, sessionId: props.sessionId, session: props.session ?? null });
     const widgetDescriptor = useWidgetInstanceDescriptor(boardSurface.scope, widgetInstance, installedDescriptor);
     // A widget card is named by the shared widget-name owner (its own name, else its definition's title) so an
@@ -458,6 +451,10 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
     const [copyFlow, setCopyFlow] = React.useState<'save' | 'share' | null>(null);
     const [networkFlow, setNetworkFlow] = React.useState(false);
     const closeNetworkFlow = React.useCallback(() => setNetworkFlow(false), []);
+    const [menuOpen, setMenuOpen] = React.useState(false);
+    const menuDemand = menuOpen || networkFlow;
+    const acquireMenuContent = props.acquireMenuContent;
+    React.useEffect(() => (menuDemand ? acquireMenuContent?.() : undefined), [acquireMenuContent, menuDemand]);
     const onSetNetwork = props.onSetNetwork;
     const editNetwork = React.useMemo(() => props.canEdit && onSetNetwork && readyItem && readSessionVisualNetworkChoice(readyItem) !== null
         ? () => { card.reveal(); setNetworkFlow(true); } : undefined, [card, onSetNetwork, props.canEdit, readyItem]);
@@ -508,12 +505,9 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
             renderPreview: () => readyItem.source.kind === 'declarative'
                 ? <SessionBoardDeclarativeContent testID={`${testID}.save.document`} document={readyItem.source.document}
                     snapshot={readyItem.snapshot !== undefined} actionBinding={null} />
-                : readyItem.source.kind === 'widget' && boardSurface.scope && props.item.revision
-                    ? <WidgetSurface scope={boardSurface.scope} providedContext={readSessionWidgetProvidedContext({ serverId: boardSurface.scope.serverId, sessionId: props.sessionId, session: props.session })}
-                        instance={readyItem.source.instance} descriptor={widgetDescriptor} appRuntime={appRuntime} presentation="content"
-                        recordRevision={props.item.revision} testID={`${testID}.save.widget`} /> : null,
+                : null,
         };
-    }, [props.canEdit, props.density, props.item.itemId, props.item.revision, props.sessionId, readyItem, title, widgetDescriptor, appRuntime, boardSurface.scope, testID, itemMark]);
+    }, [props.canEdit, props.density, props.item.itemId, readyItem, title, widgetDescriptor, testID, itemMark]);
     const definitionFlows = useWidgetDefinitionFlows({
         instance: widgetInstance,
         scope: boardSurface.scope,
@@ -582,6 +576,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
         onAddToCompanion: props.onAddToCompanion,
         onRemoveFromCompanion: props.onRemoveFromCompanion,
         onPinToBoard: props.onPinToBoard,
+        boardFactsPending: props.boardFactsPending,
         onUnpin: props.onUnpin,
         // Removal belongs with the other card operations, marked destructive and
         // last, rather than as the one control drawn louder than every
@@ -617,6 +612,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
         props.onAddToCompanion,
         props.onRemoveFromCompanion,
         props.onPinToBoard,
+        props.boardFactsPending,
         props.onUnpin,
         props.frameOverride,
         props.width,
@@ -662,7 +658,15 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
 
     // A reply that runs elsewhere keeps no slot for the body it does not draw: the declared height
     // belongs to the live copy, and holding it here left a large empty box around one line.
-    const resolvedHeight = state.kind === 'ready' && props.expanded !== true
+    const resolvedHeight = state.kind === 'ready' && props.expanded === true && state.item.source.kind === 'hostedHtml'
+        // Expanded HTML follows the document without the card's viewport cap;
+        // its semantic policy supplies room until the first intrinsic report.
+        ? resolveSessionBoardReplyHeight({
+            height: { mode: 'auto', fallback: state.item.height.mode === 'fixed' ? state.item.height.size : state.item.height.fallback },
+            reportedHeight: props.reportedHeight ?? hostedFrameReportedHeight,
+            measuresIntrinsicHeight: true,
+        })
+        : state.kind === 'ready' && props.expanded !== true
         && !(reply && presentation.kind === 'preview')
         ? props.heightBounds === undefined
             ? resolveSessionBoardReplyHeight({
@@ -677,16 +681,6 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                 bounds: props.heightBounds,
             })
         : null;
-
-    const executablePaused = presentation.kind === 'content'
-        && state.kind === 'ready'
-        && sessionBoardSourceRequiresExclusiveMount(state.item.source.kind)
-        && props.executableCurrentness !== 'current';
-    const executablePausedReason = props.executableCurrentness === 'offline'
-        ? t('sessionBoard.board.offline')
-        : props.executableCurrentness === 'stale'
-            ? t('sessionBoard.board.stale')
-            : t('sessionBoard.board.unavailable.reason');
 
     const previewAction = presentation.kind === 'preview' ? presentation.actionKind : null;
     const configuredReference = presentation.kind === 'preview' && widgetInstance !== null;
@@ -712,20 +706,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
         />
     );
 
-    const body = executablePaused
-        ? (
-            <SurfaceStateCard
-                testID={`${testID}-executable-${props.executableCurrentness}`}
-                size={props.expanded ? undefined : 'line'}
-                kind={props.executableCurrentness === 'unverified' ? 'unavailable' : 'warning'}
-                title={t('sessionBoard.board.unavailable.title')}
-                reason={props.expanded ? executablePausedReason : undefined}
-                detail={props.expanded ? undefined : executablePausedReason}
-                diagnosticCode={`session_board_executable_${props.executableCurrentness}`}
-                accessibilitySemantics="status"
-            />
-        )
-        : presentation.kind === 'state'
+    const body = presentation.kind === 'state'
         ? (
             <SurfaceStateCard
                 testID={`${testID}-state`}
@@ -749,10 +730,10 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                 importantForAccessibility="no-hide-descendants"
             />
         )
-        : state.kind === 'ready' && state.item.source.kind === 'walkthrough'
+        : presentation.kind === 'content' && state.kind === 'ready' && state.item.source.kind === 'walkthrough'
             ? <SessionWalkthroughWidgetContent sessionId={props.sessionId} serverId={props.serverId ?? null}
                 comparisonKind={state.item.source.comparison} interactive={presentation.kind === 'content'} testID={`${testID}-walkthrough`} />
-        : state.kind === 'ready' && state.item.source.kind === 'declarative'
+        : presentation.kind === 'content' && state.kind === 'ready' && state.item.source.kind === 'declarative'
             ? (
                 // Native content reports what it draws, as a frame or an installed widget does, so an
                 // `auto` card fits it instead of standing at its fallback size.
@@ -774,7 +755,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                 ? (
                     // The same admission owner checks the exact bound target for
                     // both modes. A reference replaces the body before execution.
-                    viewerScope && viewerScope.serverId === props.serverId ? <WidgetSnapshotCaptureContext.Provider value={definitionFlows.snapshotSlot}><WidgetSurface
+                    viewerScope && viewerScope.serverId === props.serverId ? <WidgetSnapshotCaptureContext.Provider value={definitionFlows.snapshotSlot}><WidgetAboutContext.Provider value={definitionFlows.about ?? null}><WidgetSurface
                         testID={testID}
                         scope={{ ...viewerScope, owner: { kind: 'sessionBoard', sessionId: props.sessionId } }}
                         providedContext={readSessionWidgetProvidedContext({ serverId: viewerScope.serverId, sessionId: props.sessionId, session: props.session })}
@@ -790,7 +771,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                         onIntrinsicHeightChange={onReportIntrinsicHeight}
                         {...(props.onManagePlugin ? { onManagePlugin: props.onManagePlugin } : {})}
                         {...(inputs.onRepairInputs ? { onRepairInputs: inputs.onRepairInputs } : {})}
-                    /></WidgetSnapshotCaptureContext.Provider> : <UnavailableInstalledWidget unresolved={{ state: 'unavailable', reasonCode: 'widget_viewer_scope_mismatch' }} testID={testID} />
+                    /></WidgetAboutContext.Provider></WidgetSnapshotCaptureContext.Provider> : <UnavailableInstalledWidget unresolved={{ state: 'unavailable', reasonCode: 'widget_viewer_scope_mismatch' }} testID={testID} />
                 )
                 : presentation.kind === 'content'
                     && state.kind === 'ready' && state.item.source.kind === 'hostedHtml'
@@ -927,6 +908,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                     compactThreshold={Number.POSITIVE_INFINITY}
                     overflowTriggerTestID={`${testID}-actions`}
                     overflowTriggerAccessibilityLabel={t('common.moreActions')}
+                    onOverflowOpenChange={setMenuOpen}
                     onOverflowTriggerKeyDown={key => stepWidgetSizeControl(sizeControl, key)}
                     renderOverflowSection={({ id }) => renderWidgetSizeMenuSection(sizeControl, id, `${testID}.size`)}
                     overflowMaxHeightCap={WIDGET_MENU_MAX_HEIGHT_PX}
@@ -948,7 +930,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
             {networkFlow && readyItem ? <WidgetFlowShell anchorRef={card.anchorRef}
                 title={t('sessionBoard.item.network.title')}
                 onRequestClose={closeNetworkFlow} testID={`${testID}.networkShell`}>
-                <SessionVisualNetworkPanel item={readyItem} testID={`${testID}.network`} onClose={closeNetworkFlow}
+                <SessionVisualNetworkPanel current={readSessionVisualNetworkChoice(readyItem)} testID={`${testID}.network`} onClose={closeNetworkFlow}
                     onSave={(choice) => onSetNetwork?.(choice) ?? Promise.resolve({ ok: false, message: t('sessionBoard.item.network.failed') })} />
             </WidgetFlowShell> : null}
             {copyFlow && readyItem && copyAccount ? <WidgetFlowShell anchorRef={card.anchorRef}
@@ -976,6 +958,7 @@ export function SessionWidgetHost(props: SessionWidgetHostProps): React.ReactEle
                 {...(source && narrow ? { sourcePlacement: 'below' as const } : {})}
                 meta={bodyMeta ? <>{meta}{bodyMeta}</> : meta}
                 menu={controls}
+                livePicture={readyItem?.source.kind === 'hostedHtml'}
                 {...(moveHandle ? { grip: moveHandle } : {})}
                 fresh={props.fresh === true}
                 widgetPresentation={widgetPresentation}

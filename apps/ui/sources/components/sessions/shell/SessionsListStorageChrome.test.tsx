@@ -5,12 +5,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // The static storage graph reaches the Socket.IO transport; register its external boundary before any import.
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
+// The harness installs the server socket boundary as it loads: import it before any runtime module.
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { ITEM_GROUP_HEADER_NO_TITLE_PADDING_TOP_PX } from '@/components/ui/lists/itemGroupSpacing';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { storage } from '@/sync/domains/state/storageStore';
-import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { resolveSessionListDensityViewState } from './resolveSessionListDensityViewState';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -83,7 +84,7 @@ describe('SessionsListStorageChrome', () => {
     it('renders the external browse action above every unified-list filter and routes it to the canonical browse screen', async () => {
         const { SessionsListStorageChrome } = await import('./SessionsListStorageChrome');
         const screen = await renderScreen(
-            <SessionsListStorageChrome storageKind="all" column="sessions" />,
+            <SessionsListStorageChrome column="sessions" />,
             { wrapper: runtime.Wrapper },
         );
 
@@ -141,7 +142,7 @@ describe('SessionsListStorageChrome', () => {
         setExternalSessionsEnabled(false);
         const { SessionsListStorageChrome } = await import('./SessionsListStorageChrome');
         const screen = await renderScreen(
-            <SessionsListStorageChrome storageKind="all" column="sessions" />,
+            <SessionsListStorageChrome column="sessions" />,
             { wrapper: runtime.Wrapper },
         );
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { SessionAccessGrantsListResponseV1 } from '@happier-dev/protocol';
+import type { SessionAccessGrantsListResponseV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { projectSessionAccessEditorSnapshot, projectSessionAccessPrincipal } from './projectSessionAccessEditorSnapshot';
 import { presentSharePrincipal } from '@/components/sharing/sharePrincipalPresentation';
 

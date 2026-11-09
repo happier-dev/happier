@@ -1,12 +1,14 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 
 import { installSessionSubagentCommonModuleMocks } from '@/components/sessions/agents/sessionSubagentTestHelpers';
 import type { SessionWorkSources } from './sessionWorkSources';
 
 import type { WorkItem, WorkProjectionInput } from './workProjection';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -24,6 +26,12 @@ vi.mock('@/sync/domains/workflows/workflowRunDetailActions', () => ({
 
 // Only the storage environment is replaced: the Run invocation window is the real canonical domain.
 installSessionSubagentCommonModuleMocks({
+    text: async () => {
+        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+        const text = createTextModuleMock();
+        // Preserve this suite's key-only copy boundary except for the spoken row's source facts.
+        return createTextModuleMock({ translate: (key, params) => key === 'sessionWork.row.a11y' ? text.t(key, params) : key });
+    },
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -83,6 +91,41 @@ const { WORKER_KIND_GLYPHS } = await import('./workerKindGlyphs');
 await import('./WorkItemRow');
 
 describe('WorkItemRow', () => {
+    it('keeps a retained Work row clock silent while hidden and reopens with the current completion', async () => {
+        const { WorkItemRow } = await import('./WorkItemRow');
+        const now = Date.parse('2026-09-30T12:00:00.000Z');
+        vi.useFakeTimers({ now });
+        const census = installTimerCensus((stack) => stack.includes('sessionListRuntimeClock') ? 'relative-age' : null);
+        const onOpen = vi.fn();
+        const item: WorkItem = { ...needsYouSession(), atMs: now - 90_000,
+            status: { state: 'unread', bucket: 'finished', tone: 'neutral', attentionType: null, word: 'Unread' } };
+        const draw = (active: boolean, value = item) => <PluginSurfaceFocusEligibilityProvider active={active}>
+            <WorkItemRow item={value} onOpen={onOpen} />
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(draw(true));
+        try {
+            expect(screen.getTextContent()).toContain('1m');
+            expect(census.read()).toEqual([{ kind: 'timeout', delayMs: 30_000, consumer: 'relative-age' }]);
+            await screen.update(draw(false));
+            const before = census.readFires();
+            await act(async () => { vi.advanceTimersByTime(300_000); });
+            expect(census.readFires()).toEqual(before);
+            expect(census.read()).toEqual([]);
+            const updated: WorkItem = { ...item, title: 'New completion', atMs: Date.now() - 120_000,
+                status: { ...item.status, state: 'finished_unseen', word: 'Newly finished' } };
+            await screen.update(draw(false, updated));
+            await screen.update(draw(true, updated));
+            expect(screen.getTextContent()).toContain('2m');
+            expect(screen.getTextContent()).toContain('New completion');
+            expect(screen.findByTestId('session-work-row:session:checkout')?.props.accessibilityLabel).toContain('Newly finished');
+            await act(async () => { screen.pressByTestId('session-work-row:session:checkout'); });
+            expect(onOpen).toHaveBeenCalledWith(updated);
+        } finally {
+            await screen.unmount();
+            census.stop();
+            vi.useRealTimers();
+        }
+    });
     it('uses the same session identity glyph as worker updates', async () => {
         const { presentWorkItem } = await import('./WorkItemRow');
         expect(presentWorkItem(needsYouSession()).iconName).toBe(WORKER_KIND_GLYPHS.session);
@@ -151,7 +194,7 @@ describe('WorkItemRow', () => {
         expect(JSON.stringify(head?.children)).not.toContain('child A');
     });
 
-    it('says what kind of work a row is first in its subtitle when no Agent mark already says it', async () => {
+    it('says what kind of work a row is first in its subtitle, then what it is doing', async () => {
         const { presentWorkItem } = await import('./WorkItemRow');
         const session = needsYouSession();
         const run: WorkItem = {
@@ -163,10 +206,28 @@ describe('WorkItemRow', () => {
             open: { kind: 'workflow_run', runId: 'review' },
         };
 
-        // A Session led by an Agent mark is told by that mark: the kind word would only push its machine out.
-        expect(presentWorkItem(session).facts).toEqual(['Claude']);
-        expect(presentWorkItem({ ...session, agentId: null }).facts).toEqual(['sessionWork.kinds.session', 'Claude']);
+        // The Agent mark says the engine; the line says the kind and then what the Session is doing (lab convo-W8full).
+        expect(presentWorkItem({ ...session, facts: ['asks a question'] }).facts).toEqual(['sessionWork.kinds.session', 'asks a question']);
+        expect(presentWorkItem({ ...session, agentId: null, facts: [] }).facts).toEqual(['sessionWork.kinds.session']);
         expect(presentWorkItem(run).facts).toEqual(['sessionWork.kinds.workflowRun', '7 of 12']);
+    });
+
+    it('ends a quiet settled row with when it last moved, strong while unseen, and keeps a word that means something', async () => {
+        const { WorkItemRow } = await import('./WorkItemRow');
+        const settled = (state: string, word: string, atMs: number | null): WorkItem => ({
+            ...needsYouSession(), key: `session:${state}`, title: `Row ${state}`, facts: [], atMs,
+            status: { state, bucket: 'finished', tone: 'neutral', attentionType: null, word },
+        });
+        const unread = await renderScreen(<WorkItemRow item={settled('unread', 'Unread', Date.now() - 18 * 60_000)} onOpen={vi.fn()} />);
+        // "Unread" is not a state to read down a list: the time is (the title's weight carries unseen).
+        expect(unread.getTextContent()).toContain('18m');
+        expect(unread.getTextContent()).not.toContain('Unread');
+        await unread.unmount();
+        // A state with its own meaning keeps its word.
+        const stopped = await renderScreen(<WorkItemRow item={settled('stopped', 'Stopped', Date.now() - 18 * 60_000)} onOpen={vi.fn()} />);
+        expect(stopped.getTextContent()).toContain('Stopped');
+        expect(stopped.getTextContent()).not.toContain('18m');
+        await stopped.unmount();
     });
 
     it('never says the same words as its title and its kind: an untitled run reads its time, not "Workflow run / Workflow run"', async () => {

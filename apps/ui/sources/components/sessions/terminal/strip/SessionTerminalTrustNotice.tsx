@@ -15,18 +15,23 @@ export type SessionTerminalTrustNoticeContent = Readonly<{ lead: string; detail:
  * sentence is one tertiary line in the terminal's own strip, and what it means is the hover/focus
  * help (never a banner above the terminal).
  */
-export function SessionTerminalTrustNotice(props: Readonly<{ notice: SessionTerminalTrustNoticeContent; testID?: string }>) {
+export function SessionTerminalTrustNotice(props: Readonly<{
+  notice: SessionTerminalTrustNoticeContent;
+  /** A narrow pane keeps the mark alone; the sentence stays in the hover/focus help and the label. */
+  compact?: boolean;
+  testID?: string;
+}>) {
   const { theme } = useUnistyles();
   return (
     <Tooltip
       testID={props.testID}
       label={`${props.notice.lead} ${props.notice.detail}`}
       accessibilityLabel={`${props.notice.lead} ${props.notice.detail}`}
-      style={styles.root}
+      style={props.compact ? styles.compactRoot : styles.root}
     >
-      <View style={styles.row}>
+      <View style={props.compact ? styles.compactRow : styles.row}>
         <Icon name="key" size={13} color={theme.colors.text.tertiary} />
-        <Text style={styles.text} numberOfLines={1}>{props.notice.lead}</Text>
+        {props.compact ? null : <Text style={styles.text} numberOfLines={1}>{props.notice.lead}</Text>}
       </View>
     </Tooltip>
   );
@@ -35,5 +40,7 @@ export function SessionTerminalTrustNotice(props: Readonly<{ notice: SessionTerm
 const styles = StyleSheet.create((theme) => ({
   root: { flexShrink: 1, minWidth: 0, marginRight: 6 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 5, minWidth: 0 },
+  compactRoot: { flexShrink: 0, marginRight: 4 },
+  compactRow: { width: 24, height: 24, alignItems: 'center', justifyContent: 'center' },
   text: { ...M.tabSubtitle, ...Typography.default(), color: theme.colors.text.tertiary, flexShrink: 1 },
 }));

@@ -12,7 +12,8 @@ import { pathBelongsToRepo } from '@/components/sessions/new/modules/worktreePat
  * Fetches the SCM snapshot in TWO stages so the worktree picker chip can render
  * within sub-second latency even on repos with many active worktrees:
  *
- * 1. **Light fetch** (`fetchSnapshotForMachinePath` with NO `includeWorktreeStatus`).
+ * 1. **Light fetch** (`fetchSnapshotForMachinePath` with NO `includeWorktreeStatus` and
+ *    `detail: 'facts'`: ref queries only, no working-copy scan and no changed-file list).
  *    This returns the repo + branch + worktree-list quickly; the chip becomes
  *    visible as soon as this completes.
  * 2. **Background enrichment** (`fetchWorktreesEnrichment`). Once the light
@@ -48,6 +49,7 @@ export function useNewSessionRepoScmSnapshot(input: Readonly<{
             machineId,
             path,
             ...(input.machineHomeDir !== undefined ? { homeDir: input.machineHomeDir } : {}),
+            detail: 'facts',
         });
         if (!light) return null;
         const enrichment = scmRepositoryService.readCachedWorktreesEnrichment({
@@ -73,6 +75,7 @@ export function useNewSessionRepoScmSnapshot(input: Readonly<{
             machineId,
             path,
             ...(input.machineHomeDir !== undefined ? { homeDir: input.machineHomeDir } : {}),
+            detail: 'facts',
         });
         const cachedEnrichment = scmRepositoryService.readCachedWorktreesEnrichment({
             ...(input.serverId !== undefined ? { serverId: input.serverId } : {}),
@@ -114,11 +117,13 @@ export function useNewSessionRepoScmSnapshot(input: Readonly<{
         void (async () => {
             try {
                 // STAGE 1: Light fetch (fast).
+                // The checkout chip and picker read repository facts only, never the changed files.
                 const lightSnapshot = await scmRepositoryService.fetchSnapshotForMachinePath({
                     ...(input.serverId !== undefined ? { serverId: input.serverId } : {}),
                     machineId,
                     path,
                     ...(input.machineHomeDir !== undefined ? { homeDir: input.machineHomeDir } : {}),
+                    detail: 'facts',
                 });
                 if (cancelled) return;
                 // Apply any cached enrichment immediately so the chip doesn't

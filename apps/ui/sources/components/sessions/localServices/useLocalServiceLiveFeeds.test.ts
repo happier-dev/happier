@@ -71,13 +71,16 @@ describe('Project Services source feed plus actual native binding', () => {
       sourceClass: { kind: 'managed_service', managedServiceId: 'native-instance' }, serviceState: 'healthy',
       state: 'available', unavailableReason: undefined, readiness: 'ready', actions: ['manage'] });
     const watchSignals: AbortSignal[] = [];
+    const observationSignals: AbortSignal[] = [];
     let running = false;
     let failNativeRead = false;
     remote.mockImplementation(async ({ method, machineId, payload, signal }: {
-      method: string; machineId: string; payload: { projection?: 'managed_bindings' }; signal: AbortSignal;
+      method: string; machineId: string; payload: { projection?: 'managed_bindings'; observationOnly?: true }; signal: AbortSignal;
     }) => {
       if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
-        watchSignals.push(signal);
+        // The cancellation-owned demand observation is a separate request (363303bc81);
+        // count it apart from the value watch so either one duplicating still fails.
+        (payload.observationOnly ? observationSignals : watchSignals).push(signal);
         return new Promise(() => {});
       }
       if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT) {
@@ -95,6 +98,7 @@ describe('Project Services source feed plus actual native binding', () => {
     try {
       await vi.waitFor(() => expect(readRows()[0]).toMatchObject({ status: 'stopped', primaryAction: { kind: 'start' } }));
       expect(watchSignals).toHaveLength(1);
+      expect(observationSignals).toHaveLength(1);
       running = true;
       const execute = createLocalServicesRuntimeActionExecutor({
         catalogBinding: { lifetime: account.accountLifetime, credentialKey: resolveAuthCredentialsScopeKey(account.credentials) },
@@ -151,9 +155,10 @@ describe('Project Services source feed plus actual native binding', () => {
     let failBindings = false;
     const reopenedLauncher = createDeferred<void>();
     remote.mockImplementation(async ({ method, machineId, payload, signal }: {
-      method: string; machineId: string; payload: { projection?: 'managed_bindings' }; signal: AbortSignal;
+      method: string; machineId: string; payload: { projection?: 'managed_bindings'; observationOnly?: true }; signal: AbortSignal;
     }) => {
       if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
+        if (payload.observationOnly) return new Promise(() => {});
         watchSignals.push(signal);
         return new Promise((resolve, reject) => watches.push(value => value instanceof Error ? reject(value) : resolve(value)));
       }
@@ -277,8 +282,9 @@ describe('Project Services source feed plus actual native binding', () => {
         await vi.waitFor(() => expect(watches).toHaveLength(2));
         if (holdReopen) {
           await flushHookEffects();
-          expect.soft(censusReads - censusesBeforeRecovery).toBe(0);
-          // The recovering native reads, not a second recovery observer, renew admission.
+          // A failed listener watch does not invalidate the launcher facts. The one
+          // reconnect observation can renew the census while native reads are pending.
+          expect.soft(censusReads - censusesBeforeRecovery).toBe(1);
           await act(async () => { holdReopen = false; reopenedLauncher.resolve(); });
           await vi.waitFor(() => expect(readRows()[0]?.status).toBe('stopped'));
         }
@@ -381,9 +387,10 @@ describe('Project Services source feed plus actual native binding', () => {
     let watches = 0;
     let rejectWatch!: (error: unknown) => void;
     const firstWatch = new Promise((_, reject) => { rejectWatch = reject; });
-    remote.mockImplementation(async ({ method, machineId }: { method: string; machineId: string }) => {
+    remote.mockImplementation(async ({ method, machineId, payload }: { method: string; machineId: string; payload?: { observationOnly?: true } }) => {
       const inventory = { v: 1, machineId, generatedAt: 2, refreshState: 'idle', entries: [], diagnostics: [] };
       if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
+        if (payload?.observationOnly) return new Promise(() => {});
         if (++watches === 1) return firstWatch;
         if (watches === 2 && recovery === 'watch') return { protocolVersion: 1, changed: true,
           snapshot: { ...inventory, generatedAt: 3 } };
@@ -572,7 +579,8 @@ describe('Project Services source feed plus actual native binding', () => {
     });
     const hook = await renderHook(() => useLocalServiceLiveFeeds({ machineId: 'source', serverId: home!.home.id,
       scope: 'machine', launcherState: null }));
-    await vi.waitFor(() => expect(hook.getCurrent().inventoryState.generatedAt).toBe(2));
+    // Automatic observation reads the daemon-kept snapshot; it never needs the refresh Action.
+    await vi.waitFor(() => expect(hook.getCurrent().inventoryState.generatedAt).toBe(1));
     remote.mockClear();
     await act(async () => { await hook.getCurrent().refresh!(); });
     expect(remote.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_REFRESH)).toBe(enabled);

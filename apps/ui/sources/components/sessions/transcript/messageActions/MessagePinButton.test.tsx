@@ -131,6 +131,23 @@ describe('MessagePinButton', () => {
         nowSpy.mockRestore();
     });
 
+    it('keeps the pin labelled but mounts its icon only once its row reveals it', async () => {
+        const { MessagePinButton } = await import('./MessagePinButton');
+        const { RowActionRevealSlot } = await import('@/components/ui/lists/RowActionRevealSlot');
+        const renderRow = (revealed: boolean) => (
+            <RowActionRevealSlot revealed={revealed} testID="pin-slot">
+                <MessagePinButton availability={available()} onTogglePin={() => {}} testID="message-pin" />
+            </RowActionRevealSlot>
+        );
+
+        const screen = await renderScreen(renderRow(false));
+        expect(screen.findByTestId('message-pin')?.props.accessibilityLabel).toBe('session.transcriptNavigation.pinMessageA11y');
+        expect(screen.findAllByType(Icon)).toHaveLength(0);
+
+        await screen.update(renderRow(true));
+        expect(screen.findAllByType(Icon)).toHaveLength(1);
+    });
+
     it('omits unavailable actions and actions without a host callback', async () => {
         const { MessagePinButton } = await import('./MessagePinButton');
 

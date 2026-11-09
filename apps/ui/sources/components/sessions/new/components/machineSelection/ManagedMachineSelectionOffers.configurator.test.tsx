@@ -77,6 +77,48 @@ describe('useManagedMachineConfigurator', () => {
     expect(host.shown[0]?.props.preset).toBeNull();
   });
 
+  it('keeps the configurator identity across fresh host handlers and opens with the newest one', async () => {
+    const host = recordModalHost();
+    const { useManagedMachineConfigurator } =
+      await import('./ManagedMachineSelectionOffers');
+    const accountBinding = binding();
+    let onConfigure = vi.fn();
+    const hook = await renderHook(() =>
+      useManagedMachineConfigurator({
+        serverId: 'server-a',
+        binding: accountBinding,
+        onUse: () => {},
+        onConfigure: () => onConfigure(),
+      }),
+    );
+    const first = hook.getCurrent();
+    await hook.rerender();
+    expect(hook.getCurrent()).toBe(first);
+    const latest = vi.fn();
+    onConfigure = latest;
+    first(null);
+    expect(latest).toHaveBeenCalledTimes(1);
+    expect(host.shown).toHaveLength(1);
+    await hook.unmount();
+  });
+
+  it.each([[true, true], [false, false], [undefined, false]] as const)(
+    'opens the configurator to start the session only when the composer holds a drafted prompt (%s)',
+    async (drafted, startsSession) => {
+      const host = recordModalHost();
+      const { useManagedMachineConfigurator } = await import('./ManagedMachineSelectionOffers');
+      const onUse = vi.fn();
+      const hook = await renderHook(() =>
+        useManagedMachineConfigurator({ serverId: 'server-a', binding: binding(), onUse,
+          ...(drafted === undefined ? {} : { startsSession: () => drafted }) }),
+      );
+      hook.getCurrent()(null);
+      // Read once, as the configurator opens: the modal never subscribes to the composer's text.
+      expect(host.shown[0]?.props.startsSession).toBe(startsSession);
+      await hook.unmount();
+    },
+  );
+
   it('opens nothing and leaves the picker alone for an Account that is no longer current', async () => {
     const host = recordModalHost();
     const { useManagedMachineConfigurator } =
@@ -96,5 +138,37 @@ describe('useManagedMachineConfigurator', () => {
     expect(onConfigure).not.toHaveBeenCalled();
     expect(host.events).toEqual([]);
     await hook.unmount();
+  });
+});
+
+describe('useManagedMachineSelectionOffers', () => {
+  it('keeps the offers identity across a machine list change that leaves the controller name alone', async () => {
+    const { useManagedMachineSelectionOffers } = await import('./ManagedMachineSelectionOffers');
+    const accountBinding = binding();
+    const preset = {
+      id: 'preset-a', homeId: 'home-a', revision: 1, name: 'Build box',
+      launch: { provider: { pluginId: 'acme', localId: 'acme' }, schemaVersion: 1, name: 'Guest', choices: {} },
+      controller: { machineId: 'machine-a', installationId: 'installation-a' },
+    } as unknown as import('@happier-dev/protocol/machines/managed/managedMachinePresetV1').ManagedMachinePresetV1;
+    const presets = [preset];
+    const configure = vi.fn();
+    const machine = (activeAt: number, displayName = 'Mac Studio') =>
+      ({ id: 'machine-a', activeAt, metadata: { displayName, host: 'mac' } });
+    const hook = await renderHook(
+      (props: Readonly<{ machines: readonly unknown[] }>) => useManagedMachineSelectionOffers({
+        homeId: 'home-a', binding: accountBinding, serverId: 'server-a', presets,
+        machines: props.machines as never, configure,
+      }),
+      { initialProps: { machines: [machine(1)] } },
+    );
+    const before = hook.getCurrent();
+    expect(before.map(offer => offer.subtitle)).toContain('Mac Studio');
+    await hook.rerender({ machines: [machine(2)] });
+    // A presence tick changes the list's identity, not what an offer shows.
+    expect(hook.getCurrent()).toBe(before);
+    await hook.rerender({ machines: [machine(3, 'Renamed Mac')] });
+    const renamed = hook.getCurrent();
+    expect(renamed).not.toBe(before);
+    expect(renamed.map(offer => offer.subtitle)).toContain('Renamed Mac');
   });
 });

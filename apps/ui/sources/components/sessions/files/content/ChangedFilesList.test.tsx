@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
-import { mergeTurnChangeSets } from '@happier-dev/protocol';
+import { mergeTurnChangeSets } from '@happier-dev/protocol/sessions/changes/mergeTurnChangeSets';
 import { createThemeFixture, renderScreen } from '@/dev/testkit';
 import { useChangedFilesData } from '@/hooks/session/files/useChangedFilesData';
 import { ChangedFilesList } from './ChangedFilesList';
@@ -357,7 +357,6 @@ describe('ChangedFilesList', () => {
                         pendingRemoved: 1,
                     },
                 },
-                workspaceTouchedPaths: [],
                 searchQuery: '',
                 showAllRepositoryFiles: false,
                 sessionChangeSet,

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 
@@ -12,7 +12,6 @@ import {
     renderDeclarativeNode,
 } from '@/components/plugins/shared/declarativeNodes';
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { WidgetSnapshotNote } from '@/components/widgets/definitions/WidgetSnapshotNote';
 
 import {
@@ -61,7 +60,6 @@ export function SessionBoardDeclarativeContent(props: Readonly<{
     const { theme } = useUnistyles();
     const widgetPresentation = useWidgetPresentation();
     const presentationTheme = usePluginUiTheme(theme);
-    const minimumTouchTarget = resolveMinimumInteractiveTargetSize(Platform.OS);
     const actionBinding = props.actionBinding ?? null;
 
     const resolveAction = React.useMemo(
@@ -81,7 +79,7 @@ export function SessionBoardDeclarativeContent(props: Readonly<{
                 colors: theme.colors,
                 presentationTheme,
                 widgetPresentation,
-                minimumTouchTarget,
+                minimumTouchTarget: 0,
                 localize: readDeclarativeText,
                 useSharedSpinner: true,
                 markdownProfile: 'widget',

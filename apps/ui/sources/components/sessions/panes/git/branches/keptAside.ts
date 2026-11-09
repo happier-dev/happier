@@ -1,4 +1,4 @@
-import type { ScmStashEntry } from '@happier-dev/protocol';
+import type { ScmStashEntry } from '@happier-dev/protocol/scm';
 
 /**
  * The changes Happier kept aside for this branch when you switched away from it (a branch-kind stash named for

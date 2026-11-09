@@ -16,7 +16,7 @@ export async function resolveSessionTerminalRequest(scopeId: string, member: Ses
         return { serverId: project.scope.serverId, accountId: project.scope.accountId,
             machineId: project.workspace.machineId, terminalKey, isCurrent: project.lifetime.isCurrent,
             request: buildMachineTerminalSessionRequest({ terminalKey, cwd: project.workspace.rootPath,
-                workspace: project.workspace, launch: member.target.launch, initialCommand: member.target.initialCommand }) };
+                workspace: project.workspace, launch: member.target.launch }) };
     }
     let machineId: string | undefined;
     let cwd: string | undefined;
@@ -32,9 +32,8 @@ export async function resolveSessionTerminalRequest(scopeId: string, member: Ses
     const terminalKey = resolveSessionTerminalIdentity({ sessionId: address.sessionId, scopeId, terminal: member }).terminalKey;
     const launch = member.target.kind === 'session_attach' ? { kind: 'session_attach' as const, sessionId: address.sessionId }
         : member.target.launch;
-    const initialCommand = member.target.kind === 'session_attach' ? undefined : member.target.initialCommand;
     return { serverId: address.serverId, accountId: undefined, machineId, terminalKey, isCurrent: () => true,
-        request: { ...buildMachineTerminalSessionRequest({ terminalKey, cwd: cwd ?? null, launch, initialCommand,
+        request: { ...buildMachineTerminalSessionRequest({ terminalKey, cwd: cwd ?? null, launch,
             ...(member.target.kind === 'workspace_shell' && member.target.workspace ? { workspace: member.target.workspace } : {}) }),
             sessionId: address.sessionId } };
 }

@@ -17,7 +17,7 @@ export async function revealTranscriptFindMatch(match: TranscriptFindMatch, inpu
     setToolCallsGroupExpanded(value: { toolCallsGroupId: string; toolMessageIds: readonly string[]; expanded: boolean }): void;
     setThinkingExpanded(messageId: string, expanded: boolean): void;
     waitForVisualUpdate(): Promise<void>;
-    jumpToTarget(target: TranscriptJumpTarget, options: Readonly<{ signal: AbortSignal; align?: TranscriptViewportJumpAlignment; preferTargetWindow?: boolean }>): Promise<TranscriptJumpResult>;
+    jumpToTarget(target: TranscriptJumpTarget, options: Readonly<{ signal: AbortSignal; align?: TranscriptViewportJumpAlignment; preferTargetWindow?: boolean; landingCue?: boolean }>): Promise<TranscriptJumpResult>;
     /** The top band the open Find capsule covers (D10 `findClearanceRef`). */
     readClearancePx(): number;
 }>, context: Readonly<{ signal: AbortSignal }>) {
@@ -30,7 +30,8 @@ export async function revealTranscriptFindMatch(match: TranscriptFindMatch, inpu
         seqHint: match.message.seq ?? null };
     // Find's corpus includes loaded messages outside the currently projected list window.
     // Materializing that window is owned by the same jump host as Search-hit navigation.
-    const result = await input.jumpToTarget(target, { ...context, preferTargetWindow: true,
+    // The current match's fill marks the landing; the jump's row attention ring would be a second mark.
+    const result = await input.jumpToTarget(target, { ...context, preferTargetWindow: true, landingCue: false,
         align: { kind: 'reveal', clearancePx: input.readClearancePx(), focusTestId: FIND_MATCH_CURRENT_TEST_ID } });
     if (result.status === 'not-found') throw new Error('Find target unavailable');
 }

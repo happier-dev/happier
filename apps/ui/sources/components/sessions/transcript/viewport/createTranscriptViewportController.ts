@@ -3,63 +3,40 @@ import type {
     TranscriptViewportCommand,
     TranscriptViewportControllerInput,
     TranscriptViewportJumpAlignment,
-    TranscriptViewportMode,
 } from '@/components/sessions/transcript/viewport/transcriptViewportTypes';
 
 export type TranscriptViewportController = Readonly<{
-    getMode(): TranscriptViewportMode;
     resolve(input: TranscriptViewportControllerInput): TranscriptViewportCommand;
 }>;
 
 export function createTranscriptViewportController(): TranscriptViewportController {
-    let sessionId: string | null = null;
-    let mode: TranscriptViewportMode = 'hydrating';
-
     return {
-        getMode() {
-            return mode;
-        },
         resolve(input) {
-            if (sessionId !== input.sessionId) {
-                sessionId = input.sessionId;
-                mode = 'hydrating';
-                if (input.type === 'user-scroll') {
-                    return { kind: 'none', sessionId: input.sessionId, reason: 'session-change', mode };
-                }
-            }
-
             switch (input.type) {
-                case 'first-paint':
-                    return resolveFirstPaint(input);
-                case 'user-scroll':
-                    return resolveUserScroll(input);
                 case 'jump-to-bottom':
-                    mode = 'jump-to-bottom';
                     return {
                         kind: 'pin-bottom',
                         sessionId: input.sessionId,
                         reason: 'jump-to-bottom',
-                        mode,
+                        mode: 'jump-to-bottom',
                         force: true,
                         animated: true,
                     };
                 case 'pin-bottom':
-                    mode = input.mode;
                     return {
                         kind: 'pin-bottom',
                         sessionId: input.sessionId,
                         reason: input.reason,
-                        mode,
+                        mode: input.mode,
                         ...(typeof input.force === 'boolean' ? { force: input.force } : {}),
                         ...(typeof input.animated === 'boolean' ? { animated: input.animated } : {}),
                     };
                 case 'restore-distance':
-                    mode = 'restore-distance';
                     return {
                         kind: 'restore-distance',
                         sessionId: input.sessionId,
                         reason: input.reason,
-                        mode,
+                        mode: 'restore-distance',
                         distanceFromLiveTailPx: normalizeNonNegative(input.distanceFromLiveTailPx),
                         ...(typeof input.contentHeight === 'number' && Number.isFinite(input.contentHeight)
                             ? { contentHeight: normalizeNonNegative(input.contentHeight) }
@@ -67,37 +44,33 @@ export function createTranscriptViewportController(): TranscriptViewportControll
                         ...(typeof input.animated === 'boolean' ? { animated: input.animated } : {}),
                     };
                 case 'apply-history-correction':
-                    mode = 'restore-anchor';
                     return {
                         kind: 'apply-history-correction',
                         sessionId: input.sessionId,
                         reason: input.reason,
-                        mode,
+                        mode: 'restore-anchor',
                         targetDistanceFromHistoryStartPx: normalizeNonNegative(input.targetDistanceFromHistoryStartPx),
                         ...(typeof input.animated === 'boolean' ? { animated: input.animated } : {}),
                     };
                 case 'restore-anchor':
-                    mode = 'restore-anchor';
                     return {
                         kind: 'restore-anchor',
                         sessionId: input.sessionId,
                         reason: input.reason,
-                        mode,
+                        mode: 'restore-anchor',
                         target: normalizeRestoreAnchorTarget(input.anchor, input.itemOffsetPx),
                         ...(typeof input.animated === 'boolean' ? { animated: input.animated } : {}),
                     };
                 case 'restore-visible-anchor':
-                    mode = 'restore-anchor';
                     return {
                         kind: 'restore-visible-anchor',
                         sessionId: input.sessionId,
                         reason: input.reason,
-                        mode,
+                        mode: 'restore-anchor',
                         target: normalizeRestoreAnchorTarget(input.anchor, input.itemOffsetPx, input.itemIndex),
                         ...(typeof input.animated === 'boolean' ? { animated: input.animated } : {}),
                     };
                 case 'jump-to-seq':
-                    mode = 'jump-to-seq';
                     {
                         const routeMessageId = normalizeRouteMessageId(input.routeMessageId);
                         const transcriptBlockIndex = normalizeOptionalNonNegative(input.transcriptBlockIndex);
@@ -106,7 +79,7 @@ export function createTranscriptViewportController(): TranscriptViewportControll
                             kind: 'jump-to-seq',
                             sessionId: input.sessionId,
                             reason: 'jump-to-seq',
-                            mode,
+                            mode: 'jump-to-seq',
                             seq: input.seq,
                             ...(routeMessageId ? { routeMessageId } : {}),
                             ...(transcriptBlockIndex !== null ? { transcriptBlockIndex } : {}),
@@ -115,12 +88,11 @@ export function createTranscriptViewportController(): TranscriptViewportControll
                         };
                     }
                 case 'recover-jump-to-seq':
-                    mode = 'jump-to-seq';
                     return {
                         kind: 'recover-jump-to-seq',
                         sessionId: input.sessionId,
                         reason: 'jump-to-seq',
-                        mode,
+                        mode: 'jump-to-seq',
                         failedRenderedIndex: normalizeNonNegative(input.failedRenderedIndex),
                         averageItemLengthPx: normalizeNonNegative(input.averageItemLengthPx),
                         ...(typeof input.animated === 'boolean' ? { animated: input.animated } : {}),
@@ -128,87 +100,6 @@ export function createTranscriptViewportController(): TranscriptViewportControll
             }
         },
     };
-
-    function resolveFirstPaint(
-        input: Extract<TranscriptViewportControllerInput, { type: 'first-paint' }>,
-    ): TranscriptViewportCommand {
-        if (typeof input.jumpToSeq === 'number' && Number.isFinite(input.jumpToSeq)) {
-            mode = 'jump-to-seq';
-            return {
-                kind: 'jump-to-seq',
-                sessionId: input.sessionId,
-                reason: 'jump-to-seq',
-                mode,
-                seq: Math.trunc(input.jumpToSeq),
-            };
-        }
-
-        const entrySnapshot = input.entrySnapshot ?? null;
-        if (entrySnapshot?.shouldFollowBottom === false || input.shouldFollowBottom === false) {
-            const anchor = entrySnapshot?.anchor;
-            if (anchor != null) {
-                const anchorItemOffsetPx = entrySnapshot?.anchorItemOffsetPx;
-                mode = 'restore-anchor';
-                return {
-                    kind: 'restore-anchor',
-                    sessionId: input.sessionId,
-                    reason: 'entry-restore',
-                    mode,
-                    target: normalizeRestoreAnchorTarget(anchor, anchorItemOffsetPx),
-                };
-            }
-
-            const entryDistanceFromLiveTailPx = entrySnapshot?.distanceFromLiveTailPx;
-            if (typeof entryDistanceFromLiveTailPx !== 'number' || !Number.isFinite(entryDistanceFromLiveTailPx)) {
-                mode = 'restore-distance';
-                return {
-                    kind: 'none',
-                    sessionId: input.sessionId,
-                    reason: 'entry-restore',
-                    mode,
-                };
-            }
-
-            mode = 'restore-distance';
-            return {
-                kind: 'restore-distance',
-                sessionId: input.sessionId,
-                reason: 'entry-restore',
-                mode,
-                distanceFromLiveTailPx: normalizeNonNegative(entryDistanceFromLiveTailPx),
-            };
-        }
-
-        mode = 'follow-bottom';
-        return {
-            kind: 'pin-bottom',
-            sessionId: input.sessionId,
-            reason: 'initial-open',
-            mode,
-        };
-    }
-
-    function resolveUserScroll(
-        input: Extract<TranscriptViewportControllerInput, { type: 'user-scroll' }>,
-    ): TranscriptViewportCommand {
-        if (normalizeNonNegative(input.distanceFromBottom) > normalizeNonNegative(input.pinThresholdPx)) {
-            mode = 'user-unpinned';
-            return {
-                kind: 'none',
-                sessionId: input.sessionId,
-                reason: 'user-unpinned',
-                mode,
-            };
-        }
-
-        mode = 'follow-bottom';
-        return {
-            kind: 'none',
-            sessionId: input.sessionId,
-            reason: 'already-pinned',
-            mode,
-        };
-    }
 
 }
 

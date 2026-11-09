@@ -2,15 +2,16 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, expect, it, onTestFinished, vi } from 'vitest';
 import { createMachineFixture, createRootLayoutFeaturesResponse, createSessionFixture,
-    createSessionListRenderableSessionFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+    createSessionListRenderableSessionFixture, flushHookEffects, renderScreen, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import type { FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
+import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
-vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 // The anchored panel's portal and window measurement are the platform boundary; the panel's own parts stay real.
 vi.mock('@/components/ui/popover', async (importOriginal) => (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
@@ -35,6 +36,7 @@ async function mountRetryEditor(requestFailed = false, initialPolicy: FollowPoli
     const home = await network.addHome('https://follow-retry.test', 'follow-account');
     setActiveServerId(home.id);
     publishAppliedActiveServerSnapshot({ serverId: home.id, serverUrl: home.serverUrl, generation: 1 });
+    const destination = createSessionFixture({ id: 'destination', serverId: home.id });
     const features = createRootLayoutFeaturesResponse({ features: { sessions: { enabled: true, following: { enabled: true } } } });
     let policy = initialPolicy;
     let refusePolicyWrite = false;
@@ -45,6 +47,7 @@ async function mountRetryEditor(requestFailed = false, initialPolicy: FollowPoli
         if (path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
             signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
         if (path === '/v2/account/session-follow-rules') return Response.json({ rules: [] });
+        if (path === '/v2/sessions/destination') return Response.json(createPlainSessionByIdResponseFixture(destination));
         if (path === '/v2/sessions/destination/follows/sessions/source' && init?.method === 'PUT') {
             const body = JSON.parse(String(init.body));
             policyWrites.push(body);
@@ -72,7 +75,7 @@ async function mountRetryEditor(requestFailed = false, initialPolicy: FollowPoli
         sessionListRowsByServerId: { [home.id]: { [source.id]: source } } }));
     const scope = { serverId: home.id, accountId: home.accountId };
     if (requestFailed) recordMachineRequestFailed({ ...scope, machineId: machine.id });
-    const screen = await renderScreen(<SessionFollowSourcesEditor destination={createSessionFixture({ id: 'destination', serverId: home.id })}
+    const screen = await renderScreen(<SessionFollowSourcesEditor destination={destination}
         serverId={home.id} destinationMachineId={machine.id} />);
     const sourceRequests = () => network.httpRequests.filter(request => new URL(request.url).pathname === '/v2/sessions/source').length;
     return { screen, scope, sourceRequests, policyWrites, refusePolicyWrites: (value: boolean) => { refusePolicyWrite = value; } };
@@ -122,10 +125,12 @@ it('reads its saved rule filter and Include again result back into the open edit
         profile: { ...state.profile, id: home.accountId } }));
     const features = createRootLayoutFeaturesResponse({ features: { sessions: { enabled: true, following: { enabled: true } } } });
     const receiver = { kind: 'session' as const, sessionId: 'destination' };
+    const destination = createSessionFixture({ id: receiver.sessionId, serverId: home.id });
     let rule: import('@happier-dev/protocol/sessions/follow/sessionFollowRuleV1').SessionFollowRuleV1 = { ruleId: 'payments', receiver, version: 3, content: { t: 'plain',
         v: { v: 1 as const, enabled: true, filter: normalizeSessionListFilterV1({ homeServerIds: [home.id],
             projects: { include: [], exclude: [{ serverId: home.id, projectKey: 'payments' }] } }),
         policy: { preset: 'important' as const } } } };
+    let removed = false;
     network.setHttpResponder(async (input, init) => {
         const path = new URL(String(input)).pathname;
         if (path === '/v1/features') return Response.json(features);
@@ -138,20 +143,30 @@ it('reads its saved rule filter and Include again result back into the open edit
             rule = { ...rule, version: rule.version + 1, content: body.content };
             return Response.json({ rule });
         }
-        if (path === '/v2/account/session-follow-rules') return Response.json({ rules: [rule] });
+        if (path === '/v2/account/session-follow-rules/payments' && init?.method === 'DELETE') {
+            const body: unknown = JSON.parse(String(init.body));
+            expect(body).toEqual({ receiver, expectedVersion: rule.version });
+            removed = true;
+            return Response.json({ changed: true, version: rule.version + 1 });
+        }
+        if (path === '/v2/account/session-follow-rules') return Response.json({ rules: removed ? [] : [rule] });
+        if (path === '/v2/sessions/destination') return Response.json(createPlainSessionByIdResponseFixture(destination));
         if (path === '/v2/sessions/destination/follows/sessions') return Response.json({ sources: [] });
         return null;
     });
     const errors = vi.spyOn(console, 'error');
     const row = 'session-follow-source-rule:payments';
-    const screen = await renderScreen(<SessionFollowSourcesEditor destination={{ id: receiver.sessionId }}
+    const screen = await renderScreen(<SessionFollowSourcesEditor destination={destination}
         serverId={home.id} destinationMachineId={null} />);
     try {
         await vi.waitFor(async () => { await flushHookEffects(); expect(screen.findByTestId(row)).toBeTruthy(); });
         await screen.pressByTestIdAsync(row);
         await screen.pressByTestIdAsync(`${row}-filter`);
-        await screen.pressByTestIdAsync('session-list-filter:status:failed');
-        await screen.pressByTestIdAsync('session-list-filter-done');
+        await screen.pressByTestIdAsync('collection-filter-add');
+        await screen.pressByTestIdAsync('collection-filter-field:statuses');
+        await screen.pressByTestIdAsync('collection-filter-value:statuses:failed');
+        await screen.pressByTestIdAsync('collection-filter-back');
+        await screen.pressByTestIdAsync('collection-filter-done');
         await vi.waitFor(() => expect(rule.version).toBe(4));
         await vi.waitFor(() => expect(screen.findAllByTestId(`${row}-filter`).find(node => typeof node.props.onPress === 'function')?.props.disabled).toBe(false));
         expect(rule.content.t === 'plain' ? rule.content.v.filter.statuses : null).toContain('failed');
@@ -161,6 +176,10 @@ it('reads its saved rule filter and Include again result back into the open edit
         await vi.waitFor(() => expect(rule.version).toBe(5));
         await vi.waitFor(() => expect(screen.findByTestId(`${row}-left-out-payments`)).toBeNull());
         expect(screen.findByTestId(`${row}-left-out-undo`)).toBeTruthy();
+        await vi.waitFor(() => expect(screen.findAllByTestId(`${row}-remove`).find(node => typeof node.props.onPress === 'function')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync(`${row}-remove`);
+        await vi.waitFor(() => expect(removed).toBe(true));
+        await vi.waitFor(() => expect(screen.findByTestId(row)).toBeNull());
         expect(errors.mock.calls.filter(args => args.some(value => String(value).includes('getSnapshot')))).toEqual([]);
     } finally { await screen.unmount(); errors.mockRestore(); }
 });
@@ -170,9 +189,9 @@ it('acquires one private census for Following rule counts and draft edits, and r
     const { SessionFollowRuleV1Schema } = await import('@happier-dev/protocol/sessions/follow/sessionFollowRuleV1');
     const { DEFAULT_SESSION_AUTO_FOLLOW_PREFERENCES_V1 } = await import('@happier-dev/protocol/sessions/follow/accountFollow');
     const { SessionListQueryV1Schema, SESSION_LIST_PAGE_MAX_LIMIT } = await import('@happier-dev/protocol/sessions/listing/query');
-    const { SessionListQueryResponseV1Schema } = await import('@happier-dev/protocol/sessions/listing/response');
-    const { encodeV2SessionListCursorV1 } = await import('@happier-dev/protocol');
-    const { createPlainSessionByIdResponseFixture, createSessionOwnerViewerFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+    const { createSessionListSourceFixture } = await import('@/dev/testkit/harness/sessionReadBatchHttpBoundary');
+    const { encodeV2SessionListCursorV1} = await import('@happier-dev/protocol/sessions/control/contract');
+    const { createSessionOwnerViewerFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
     const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
     const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
     const home = await network.addHome('https://following-rule-demand.test', 'follow-account');
@@ -201,7 +220,7 @@ it('acquires one private census for Following rule counts and draft edits, and r
             const end = Math.min(offset + (query.limit ?? SESSION_LIST_PAGE_MAX_LIMIT), sessions.length);
             const nextCursor = end < sessions.length ? encodeV2SessionListCursorV1(String(end)) : null;
             if (nextCursor) offsets.set(nextCursor, end);
-            return Response.json(SessionListQueryResponseV1Schema.parse({ sessions: sessions.slice(offset, end),
+            return Response.json(createSessionListSourceFixture({ sessions: sessions.slice(offset, end),
                 hasNext: nextCursor !== null, nextCursor, attentionHasNext: false, attentionNextCursor: null }));
         }
         return null;
@@ -215,15 +234,20 @@ it('acquires one private census for Following rule counts and draft edits, and r
     const censusReads = () => network.httpRequests.filter(request => new URL(request.url).pathname === '/v2/account/session-follow-rules').length;
     const sourceReads = () => network.httpRequests.filter(request => new URL(request.url).pathname === '/v2/sessions/destination/follows/sessions').length;
     const row = (ruleId: string) => `session-follow-source-rule:${ruleId}`;
-    const screen = await renderScreen(<SessionFollowSourcesEditor destination={{ id: 'destination' }}
-        serverId={home.id} destinationMachineId={null} />);
+    const commits = new Set<() => void>();
+    const screen = await renderScreen(<React.Profiler id="following-counts" onRender={() => {
+        for (const notify of commits) notify();
+    }}><SessionFollowSourcesEditor destination={{ id: 'destination' }}
+        serverId={home.id} destinationMachineId={null} /></React.Profiler>);
     const count = (ruleId: string) => screen.findAllByTestId(row(ruleId))
         .find(node => typeof node.props.subtitle === 'string')?.props.subtitle;
+    const waitForCount = (ruleId: string, expected: number) => waitForTestEvent(notify => {
+        commits.add(notify);
+        return () => { commits.delete(notify); };
+    }, () => { expect(count(ruleId)).toContain(`count=${expected}`); });
     try {
-        await vi.waitFor(() => {
-            expect(count('payments')).toContain('count=1001');
-            expect(count('daily')).toContain('count=1001');
-        });
+        await waitForCount('payments', 1001);
+        await waitForCount('daily', 1001);
         expect(censusReads()).toBe(1);
         const sourcesBeforeDetail = sourceReads();
         await act(async () => publishHomeAccountChange(home.id, ['destination'], { changeKinds: ['session'], sessionListQueryAffects: false }));
@@ -233,7 +257,10 @@ it('acquires one private census for Following rule counts and draft edits, and r
         await screen.pressByTestIdAsync(row('payments'));
         await screen.pressByTestIdAsync(`${row('payments')}-filter`);
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('count=1001'));
-        await screen.pressByTestIdAsync('session-list-filter:status:failed');
+        await screen.pressByTestIdAsync('collection-filter-add');
+        await screen.pressByTestIdAsync('collection-filter-field:statuses');
+        await screen.pressByTestIdAsync('collection-filter-value:statuses:failed');
+        await screen.pressByTestIdAsync('collection-filter-back');
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('count=0'));
         expect(censusReads()).toBe(1);
         await screen.pressByTestIdAsync(`${row('payments')}-filter-back`);
@@ -241,21 +268,21 @@ it('acquires one private census for Following rule counts and draft edits, and r
             content: { t: 'plain' as const, v: { v: 1 as const, enabled: true,
                 filter: normalizeSessionListFilterV1({ ...filter, statuses: ['failed'] }), policy: { preset: 'important' as const } } } } : rule);
         await act(async () => publishHomeAccountChange(home.id, ['session-follows'], { changeKinds: ['account'] }));
-        await vi.waitFor(() => expect(count('daily')).toContain('count=0'));
+        await waitForCount('daily', 0);
         expect(count('payments')).toContain('count=1001');
         expect(censusReads()).toBe(2);
         rules = rules.map(rule => rule.ruleId === 'payments' ? { ...rule, version: 3,
             content: { t: 'plain' as const, v: { v: 1 as const, enabled: true,
                 filter: normalizeSessionListFilterV1({ ...filter, statuses: ['failed'] }), policy: { preset: 'important' as const } } } } : rule);
         await act(async () => publishHomeAccountChange(home.id, ['unrelated-future-entity'], { changeKinds: ['future_follow_projection'] }));
-        await vi.waitFor(() => expect(count('payments')).toContain('count=0'));
+        await waitForCount('payments', 0);
         expect(censusReads()).toBe(3);
         rules = rules.map(rule => rule.ruleId === 'payments' ? { ...rule, version: 4,
             content: { t: 'plain' as const, v: { v: 1 as const, enabled: true, filter, policy: { preset: 'important' as const } } } } : rule);
         await act(async () => publishHomeAccountChange(home.id, ['unqualified-entity']));
-        await vi.waitFor(() => expect(count('payments')).toContain('count=1001'));
+        await waitForCount('payments', 1001);
         expect(censusReads()).toBe(4);
-    } finally { await screen.unmount(); }
+    } finally { commits.clear(); await screen.unmount(); }
 });
 
 it('keeps an explicit source-key Retry enabled and dispatches while automatic network work is paused', async () => {

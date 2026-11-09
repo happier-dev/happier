@@ -1,5 +1,5 @@
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 
 export function isNewSessionDraftLaunchOperationInCustody(params: Readonly<{
     accountId: string;

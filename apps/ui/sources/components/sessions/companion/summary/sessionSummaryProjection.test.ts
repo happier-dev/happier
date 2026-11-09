@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { t } from '@/text';
 
-import type { SessionAwarenessProjectionV1 } from '@happier-dev/protocol';
+import type { SessionAwarenessProjectionV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 
 import {
     projectSessionSummaryCard,

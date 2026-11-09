@@ -11,7 +11,6 @@ import {
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-// The Copy debug information row action is a development affordance.
 (globalThis as typeof globalThis & { __DEV__?: boolean }).__DEV__ = true;
 
 type SessionItemProps = ModelBackedSessionItemTestProps;
@@ -26,7 +25,7 @@ const DUPLICATE_SESSION_ID = 'sess_shared_id';
 
 const openForkFlowSpy = vi.hoisted(() => vi.fn());
 const copyDebugSpy = vi.hoisted(() => vi.fn(
-    async (_information: Readonly<{ text: string; happierSessionLogPath: string | null }>) => true,
+    async (_text: string) => true,
 ));
 
 const themeColors = vi.hoisted(() => ({
@@ -148,10 +147,12 @@ vi.mock('@/utils/sessions/sessionUtils', async (importOriginal) => {
 vi.mock('@/components/ui/avatar/Avatar', () => ({ Avatar: 'Avatar' }));
 vi.mock('@/agents/registry/AgentIcon', () => ({ AgentIcon: 'AgentIcon' }));
 vi.mock('@/components/ui/status/StatusDot', () => ({ StatusDot: 'StatusDot' }));
-vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({ ActivitySpinner: 'ActivitySpinner' }));
 vi.mock('@/components/sessions/pendingBadge', () => ({ formatPendingCountBadge: () => null }));
 vi.mock('@/hooks/session/useNavigateToSession', () => ({ useNavigateToSession: () => vi.fn() }));
-vi.mock('@/utils/platform/responsive', () => ({ useIsTablet: () => false }));
+vi.mock('@/utils/platform/responsive', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/utils/platform/responsive')>(),
+    useIsTablet: () => false,
+}));
 vi.mock('@/hooks/ui/useHappyAction', () => ({ useHappyAction: (fn: unknown) => [false, fn] }));
 vi.mock('@/utils/time/formatShortRelativeTime', () => ({ formatShortRelativeTime: () => '1m' }));
 vi.mock('./sessionPinIcons', () => ({
@@ -175,11 +176,7 @@ vi.mock('@/sync/ops', async (importOriginal) => {
 vi.mock('@/components/sessions/fork/openSessionForkStrategyFlow', () => ({
     openSessionForkStrategyFlow: (input: unknown) => openForkFlowSpy(input),
 }));
-vi.mock('@/components/sessions/debug/sessionDebugClipboard', () => ({
-    copySessionDebugInformationToClipboard: (
-        information: Readonly<{ text: string; happierSessionLogPath: string | null }>,
-    ) => copyDebugSpy(information),
-}));
+vi.mock('expo-clipboard', () => ({ setStringAsync: copyDebugSpy }));
 
 function createHomeARow(): SessionListRenderableSession {
     return {
@@ -205,9 +202,10 @@ function createHomeARow(): SessionListRenderableSession {
     } as unknown as SessionListRenderableSession;
 }
 
+// Collect the cold row graph outside the timed test body.
+const { SessionItem } = await import('./SessionItem');
+const ModelBackedSessionItem = createModelBackedSessionItemTestComponent(SessionItem);
 async function renderSessionItem(props: SessionItemProps) {
-    const { SessionItem } = await import('./SessionItem');
-    const ModelBackedSessionItem = createModelBackedSessionItemTestComponent(SessionItem);
     return renderScreen(<ModelBackedSessionItem {...props} />);
 }
 
@@ -269,19 +267,15 @@ describe('SessionItem exact Home-qualified row actions', () => {
         await screen.unmount();
     });
 
-    it('copies the row’s own Home debug metadata rather than the focused Home’s same-ID entity', async () => {
+    it('refuses copying from an unbound Home instead of borrowing the focused Home Account', async () => {
         const screen = await renderCollidingHomeARow();
 
-        const contextMenu = findContextMenuWithItem(screen, 'session.copyDebugInformation');
+        const contextMenu = findContextMenuWithItem(screen, 'session.copy');
         expect(contextMenu).not.toBeNull();
         await act(async () => {
             await contextMenu?.props.onSelect?.('session.copyDebugInformation');
         });
-        await vi.waitFor(() => expect(copyDebugSpy).toHaveBeenCalledTimes(1));
-
-        const information = copyDebugSpy.mock.calls[0]?.[0];
-        expect(information?.happierSessionLogPath).toBe('/home-a/session.log');
-        expect(information?.text).not.toContain('/home-b/session.log');
+        expect(copyDebugSpy).not.toHaveBeenCalled();
 
         await screen.unmount();
     });

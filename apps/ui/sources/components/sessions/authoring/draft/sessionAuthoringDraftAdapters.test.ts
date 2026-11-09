@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { z as mini } from 'zod/mini';
 import {
     SessionModelSelectionV1Schema,
-    SessionInitialTriggerV1Schema,
-    SessionServerStartSpawnDraftV1Schema,
     type SessionModelSelectionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/providers/selection/v1';
+import {
+    SessionInitialTriggerV1Schema} from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import {
+    SessionServerStartSpawnDraftV1Schema} from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 
 import { DEFAULT_AGENT_ID } from '@/agents/catalog/catalog';
 import { buildAcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
@@ -90,6 +92,17 @@ function intervalAutomationDraft(params: Readonly<{
 }
 
 describe('sessionAuthoringDraftAdapters', () => {
+    it.each([undefined, '', '/', '/Users/coder/project', 'C:\\Users\\coder\\project'])('preserves directory intent %s without inventing a root during hydration', directory => {
+        const temporary = buildNewSessionAuthoringDraftFromTempData({ directory });
+        const persisted = buildNewSessionAuthoringDraftFromPersistedDraft({
+            input: '', selectedMachineId: 'guest', selectedPath: directory ?? null,
+            selectedProfileId: null, selectedSecretId: null, agentType: DEFAULT_AGENT_ID,
+            permissionMode: 'default', acpSessionModeId: null, updatedAt: 1,
+        });
+        expect(temporary.directory).toBe(directory ?? '');
+        expect(persisted.directory).toBe(directory ?? '');
+    });
+
     it('previews an executable model choice through ordinary authoring without prompt or creation identity', () => {
         const teamCredentialBindings = [{ v: 1, slot: { kind: 'provider_model' },
             resourceId: 'review-team-credential', expectedResourceRevision: 7, deliveryMode: 'brokered', teamId: 'team-a',

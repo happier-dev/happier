@@ -1,13 +1,12 @@
-import { getExecutionRunReportChipPlacement, getExecutionRunStartChipDefinition } from './executionRunStartChipPlacements';
-import type { AgentInputControlId, AgentInputControlPlacement } from '@/components/sessions/agentInput/controls/agentInputControlTypes';
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 
 import type {
     AgentInputExtraActionChip,
     AgentInputExtraActionChipRenderContext,
 } from '@/components/sessions/agentInput/agentInputContracts';
 import type { AgentInputContentPopoverConfig } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
+import type { AgentInputControlId, AgentInputControlPlacement } from '@/components/sessions/agentInput/controls/agentInputControlTypes';
 import {
     AGENT_INPUT_CHIP_ICON_SIZE_PX,
     AGENT_INPUT_CHIP_ICON_STYLE,
@@ -19,6 +18,9 @@ import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { EXECUTION_RUN_REPORT_CHIP_KEY, getExecutionRunReportChipPlacement, getExecutionRunStartChipDefinition } from './executionRunStartChipPlacements';
+import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
+export { EXECUTION_RUN_REPORT_CHIP_KEY, getExecutionRunReportChipPlacement } from './executionRunStartChipPlacements';
 
 /**
  * The start's own chips (lab `convo-S1`): each decision of a start — who reviews, permissions,
@@ -70,7 +72,7 @@ export function createExecutionRunStartContentChip(params: Readonly<{
             renderContent: params.renderContent,
         },
         render: (ctx: AgentInputExtraActionChipRenderContext) => (
-            <Pressable
+            <AgentInputRailChip
                 ref={ctx.chipAnchorRef}
                 testID={params.testID}
                 accessibilityRole="button"
@@ -84,17 +86,18 @@ export function createExecutionRunStartContentChip(params: Readonly<{
                     params.onIntent?.();
                     ctx.toggleCollapsedPopover?.(params.key);
                 }}
-                hitSlop={{ top: 8, bottom: 10, left: 4, right: 4 }}
-                style={(state) => ctx.chipStyle(state.pressed)}
+                style={ctx.chipStyle}
             >
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                     {normalizeNodeForView(<Icon name={params.icon} size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={ctx.iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />)}
                     {ctx.showLabel && !params.iconOnly ? <Text numberOfLines={1} style={ctx.textStyle}>{params.label}</Text> : null}
                 </View>
-            </Pressable>
+            </AgentInputRailChip>
         ),
     };
 }
+
+const REMOVE_TARGET_STYLE = () => ({ width: AGENT_INPUT_CHIP_REMOVE_TARGET_WIDTH_PX, alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch' }) as const;
 
 /**
  * One chosen reviewer (lab `convo-S1`): its mark and name, and × to take it off the review. The
@@ -130,24 +133,23 @@ export function createExecutionRunReviewerChip(params: Readonly<{
             >
                 {normalizeNodeForView(params.mark)}
                 <Text numberOfLines={1} style={ctx.textStyle}>{params.label}</Text>
-                <Pressable
+                <AgentInputRailChip
                     testID={`${key}:remove`}
                     accessibilityRole="button"
                     accessibilityLabel={removeLabel}
                     accessibilityState={{ disabled: params.disabled === true }}
                     disabled={params.disabled}
                     onPress={params.onRemove}
-                    hitSlop={{ top: 8, bottom: 10, left: 2, right: 4 }}
-                    style={{ width: AGENT_INPUT_CHIP_REMOVE_TARGET_WIDTH_PX, alignItems: 'center', justifyContent: 'center', alignSelf: 'stretch' }}
+                    // Inside the chip: the target reaches only the room beside the glyph that the chip's padding leaves.
+                    hitReach={{ left: 2, right: 4 }}
+                    style={REMOVE_TARGET_STYLE}
                 >
                     {normalizeNodeForView(<Icon name="x" size={AGENT_INPUT_CHIP_ICON_SIZE_PX - 2} color={ctx.iconColor} />)}
-                </Pressable>
+                </AgentInputRailChip>
             </View>
         ),
     };
 }
-
-export const EXECUTION_RUN_REPORT_CHIP_KEY = 'execution-run-start-report';
 
 /**
  * "Report to this session": when on, the finished run wakes this session with its result

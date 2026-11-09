@@ -237,4 +237,38 @@ describe('AgentInputSessionConfigOptionsSection', () => {
         expect(highlightedChoices(restored, 'reasoning_effort', ['low', 'high', 'xhigh'])).toEqual(['low']);
         expect(isCardDimmed(restored, 'reasoning_effort')).toBe(false);
     });
+
+    // The canonical projection keeps the flat selection index beside the display groups; the control
+    // presents the groups once and reads the flat index only to resolve values.
+    it('presents grouped choices once, by group, and selects by value', async () => {
+        const onSelectValue = vi.fn();
+        const screen = await renderSection({
+            configOptions: [{
+                id: 'tier',
+                name: 'Tier',
+                type: 'select',
+                currentValue: 'luna',
+                options: [
+                    { value: 'luna', name: 'Luna' },
+                    { value: 'sol', name: 'Sol' },
+                    { value: 'terra', name: 'Terra' },
+                ],
+                groups: [
+                    { id: 'quick', name: 'Quick', options: [{ value: 'luna', name: 'Luna' }] },
+                    { id: 'deep', name: 'Deep', options: [{ value: 'sol', name: 'Sol' }, { value: 'terra', name: 'Terra' }] },
+                ],
+            }],
+            ultracodeOn: false,
+            onSelectValue,
+        });
+
+        const grouped = (groupId: string, value: string) => `agent-input-config-option-option:${JSON.stringify(['tier', groupId, value])}`;
+        const flat = (value: string) => `agent-input-config-option-option:${JSON.stringify(['tier', value])}`;
+        for (const [groupId, value] of [['quick', 'luna'], ['deep', 'sol'], ['deep', 'terra']] as const) {
+            expect(screen.findAllByTestId(grouped(groupId, value)).length).toBeGreaterThan(0);
+            expect(screen.findAllByTestId(flat(value))).toHaveLength(0);
+        }
+        await screen.pressByTestIdAsync(grouped('deep', 'terra'));
+        expect(onSelectValue).toHaveBeenCalledWith('tier', 'terra');
+    });
 });

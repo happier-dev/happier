@@ -3,8 +3,13 @@ import { View, useWindowDimensions } from 'react-native';
 import { HAPPIER_PAGE_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { useNewSessionEmbeddedHost } from '@/components/sessions/new/navigation/newSessionHost';
+import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { Icon } from '@/components/ui/icons/Icon';
+import { resolveIconButtonGlyphSize } from '@/components/ui/icons/iconButtonGlyphSize';
+import { AGENT_INPUT_QUIET_ICON_SIZE_PX } from '@/components/sessions/agentInput/components/agentInputChromeStyles';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -15,6 +20,8 @@ const COMPACT_ACTIONS_MAX_WIDTH = 560;
 export const NEW_SESSION_DRAFT_COMPOSER_ACTION_SIZE = HAPPIER_PAGE_METRICS.controlHeightPx;
 /** Half the row's 4 px gap: neighbouring actions' hit areas meet, never overlap. */
 const ACTION_HIT_REACH = { left: 2, right: 2 } as const;
+/** Every glyph in the status row's actions, labelled or not, is the composer's quiet icon glyph. */
+const ACTION_GLYPH_SIZE = resolveIconButtonGlyphSize(AGENT_INPUT_QUIET_ICON_SIZE_PX);
 
 export const NewSessionDraftComposerActions = React.memo(function NewSessionDraftComposerActions(props: Readonly<{
     deleteDisabled: boolean;
@@ -24,18 +31,35 @@ export const NewSessionDraftComposerActions = React.memo(function NewSessionDraf
     const { theme } = useUnistyles();
     const { width } = useWindowDimensions();
     const compact = width < COMPACT_ACTIONS_MAX_WIDTH;
+    // Docked on a desktop, the card is narrow and its status row carries the machine line too: the
+    // actions are quiet icons there (owner 2026-11-01), named by their tooltip and accessible name.
+    const icons = useNewSessionEmbeddedHost()?.kind === 'docked' && !isMobileLayoutWidth(width);
     const [menuOpen, setMenuOpen] = React.useState(false);
     const deleteItems = React.useMemo<ReadonlyArray<DropdownMenuItem>>(() => [{
         id: 'delete',
         testID: 'new-session-draft-delete',
         title: t('sessionDrafts.delete.action'),
         disabled: props.deleteDisabled,
-        icon: <Icon name="trash" size={16} color={theme.colors.state.danger.foreground} />,
+        icon: <Icon name="trash" size={ACTION_GLYPH_SIZE} color={theme.colors.state.danger.foreground} />,
     }], [props.deleteDisabled, theme.colors.state.danger.foreground]);
 
     const runDelete = React.useCallback(() => {
         fireAndForget(props.onDelete(), { tag: 'NewSessionDraftComposerActions.delete' });
     }, [props.onDelete]);
+
+    // Unwrapped, so they are the status row's own items: every icon in the row takes the row's one gap.
+    if (icons) {
+        return (
+            <>
+                <IconButton testID="new-session-draft-start-another" variant="plain" iconName="plus" size={AGENT_INPUT_QUIET_ICON_SIZE_PX}
+                    accessibilityLabel={t('sessionDrafts.startAnother')} tooltip={t('sessionDrafts.startAnother')} tooltipPlacement="top"
+                    onPress={props.onStartAnother} />
+                <IconButton testID="new-session-draft-delete" variant="plain" iconName="trash" size={AGENT_INPUT_QUIET_ICON_SIZE_PX}
+                    accessibilityLabel={t('sessionDrafts.delete.action')} tooltip={t('sessionDrafts.delete.action')} tooltipPlacement="top"
+                    disabled={props.deleteDisabled} onPress={runDelete} />
+            </>
+        );
+    }
 
     return (
         <View style={styles.root}>
@@ -47,7 +71,7 @@ export const NewSessionDraftComposerActions = React.memo(function NewSessionDraf
                 onPress={props.onStartAnother}
                 style={styles.labeledAction}
             >
-                <Icon name="plus" size={15} color={theme.colors.text.secondary} />
+                <Icon name="plus" size={ACTION_GLYPH_SIZE} color={theme.colors.text.secondary} />
                 <Text variant="body" style={styles.secondaryLabel} numberOfLines={1}>
                     {t('sessionDrafts.startAnother')}
                 </Text>
@@ -66,16 +90,8 @@ export const NewSessionDraftComposerActions = React.memo(function NewSessionDraf
                     maxWidthCap={220}
                     popoverPortalWebTarget="body"
                     trigger={({ toggle }) => (
-                        <HappierPressable
-                hitReach={ACTION_HIT_REACH}
-                            testID="new-session-draft-actions-menu"
-                            accessibilityRole="button"
-                            accessibilityLabel={t('common.moreActions')}
-                            onPress={toggle}
-                            style={styles.iconAction}
-                        >
-                            <Icon name="dots-three" size={17} color={theme.colors.text.secondary} />
-                        </HappierPressable>
+                        <IconButton testID="new-session-draft-actions-menu" variant="plain" iconName="dots-three" size={AGENT_INPUT_QUIET_ICON_SIZE_PX}
+                            accessibilityLabel={t('common.moreActions')} onPress={toggle} />
                     )}
                 />
             ) : (
@@ -88,7 +104,7 @@ export const NewSessionDraftComposerActions = React.memo(function NewSessionDraf
                     onPress={runDelete}
                     style={[styles.labeledAction, props.deleteDisabled && styles.disabled]}
                 >
-                    <Icon name="trash" size={15} color={theme.colors.text.tertiary} />
+                    <Icon name="trash" size={ACTION_GLYPH_SIZE} color={theme.colors.text.tertiary} />
                     <Text variant="body" style={styles.deleteLabel} numberOfLines={1}>
                         {t('sessionDrafts.delete.action')}
                     </Text>
@@ -111,13 +127,6 @@ const styles = StyleSheet.create((theme) => ({
         gap: theme.space.s4,
         minHeight: NEW_SESSION_DRAFT_COMPOSER_ACTION_SIZE,
         paddingHorizontal: theme.space.s8,
-    },
-    iconAction: {
-        alignItems: 'center',
-        borderRadius: 8,
-        justifyContent: 'center',
-        minHeight: NEW_SESSION_DRAFT_COMPOSER_ACTION_SIZE,
-        minWidth: NEW_SESSION_DRAFT_COMPOSER_ACTION_SIZE,
     },
     secondaryLabel: {
         color: theme.colors.text.secondary,

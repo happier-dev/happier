@@ -165,6 +165,7 @@ export function seedAndOpenNewSession(params: Readonly<{
     ];
     const seededDraftId = (params.seedDraft ?? seedNewSessionDraftV1)({
         seed: {
+            ...(seed.actionDefault === undefined ? {} : { actionDefault: seed.actionDefault }),
             ...(seed.sessionName === undefined ? {} : { sessionName: seed.sessionName }),
             ...(seed.initialSessionFacts === undefined ? {} : { initialSessionFacts: seed.initialSessionFacts }),
             ...(seed.promptStack === undefined ? {} : { promptStack: seed.promptStack }),
@@ -173,6 +174,7 @@ export function seedAndOpenNewSession(params: Readonly<{
             ...(seed.agentTarget === undefined ? {} : { agentTarget: seed.agentTarget }),
             ...(seed.checkoutIntent === undefined ? {} : { checkoutIntent: seed.checkoutIntent }),
             ...(seed.placement === undefined ? {} : { placement: seed.placement }),
+            ...(seed.directoryIntent === undefined ? {} : { directoryIntent: seed.directoryIntent }),
             ...(seed.candidates === undefined ? {} : { candidates: seed.candidates }),
             ...(seed.origin === undefined ? {} : { origin: seed.origin }),
             // The public seed retains author-shaped attachment requests in the

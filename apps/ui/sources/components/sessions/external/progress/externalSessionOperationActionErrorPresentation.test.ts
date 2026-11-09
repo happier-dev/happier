@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ExternalSessionOperationActionErrorCodeV1 } from '@happier-dev/protocol';
+import type { ExternalSessionOperationActionErrorCodeV1 } from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
 
 import { presentExternalSessionOperationActionError } from './externalSessionOperationActionErrorPresentation';
 

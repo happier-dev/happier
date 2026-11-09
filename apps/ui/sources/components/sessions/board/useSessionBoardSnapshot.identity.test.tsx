@@ -4,7 +4,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { createDeferred, renderHook } from '@/dev/testkit';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
-import { useSessionBoardSnapshot } from './useSessionBoardSnapshot';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+
+// The binding reads the exact Session's retained record authority from the Sync runtime while demanded.
+await loadSyncSingletonForTests();
+const { useSessionBoardSnapshot } = await import('./useSessionBoardSnapshot');
 
 describe('useSessionBoardSnapshot identity', () => {
     it('retains loading identity while credential storage is pending and publishes the settled reason', async () => {

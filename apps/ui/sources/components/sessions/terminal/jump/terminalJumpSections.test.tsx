@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type * as React from 'react';
-import type { DaemonTerminalListEntryV1, SessionTerminalTabV1 } from '@happier-dev/protocol';
+import type { DaemonTerminalListEntryV1} from '@happier-dev/protocol/daemon/terminal';
+import type { SessionTerminalTabV1 } from '@happier-dev/protocol/terminal/workspace';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 
 import { appPaneReduce, createAppPaneState } from '@/components/appShell/panes/model/appPaneReducer';
@@ -83,9 +84,10 @@ function accessoryProps(option: { rightAccessory?: unknown }) {
 describe('Jump to a terminal: the palette Terminals scope', () => {
     it('opens the selected existing terminal in pinned Details and hides its bottom view', async () => {
         let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'openBottom', scopeId: SCOPE, tabId: 'terminal' });
+        state = appPaneReduce(state, { type: 'terminalWorkspace', scopeId: SCOPE,
+            command: { type: 'open', terminal: { id: 'vite', target: { kind: 'workspace_shell' } } } });
         openSessionTerminalInDetails({
             openDetailsTab: (tab, options) => { state = appPaneReduce(state, { type: 'openDetailsTab', scopeId: SCOPE, tab, openAs: options?.intent === 'pinned' ? 'pinned' : 'preview' }); },
-            closeBottom: () => { state = appPaneReduce(state, { type: 'closeBottom', scopeId: SCOPE }); },
         }, 'vite');
         expect(buildDetailsWorkspaceStateView(state.scopes[SCOPE]!.details).tabs.find((item) => item.key === 'terminal:vite')).toMatchObject({ isPinned: true, resource: { terminalInstanceId: 'vite' } });
         expect(state.scopes[SCOPE]?.bottom.isOpen).toBe(false);
@@ -113,7 +115,7 @@ describe('Jump to a terminal: the palette Terminals scope', () => {
                 listed('signin'),
                 listed('vite', { sessionId: 'session-craft' }),
             ] },
-            readSummary: (key) => (key === 'key-vite' ? { title: 'vite', bell: null, status: 'connected', error: null, url: 'http://localhost:5174/' } : null),
+            readSummary: (key) => (key === 'key-vite' ? { title: 'vite', bell: null, status: 'connected', error: null, failure: null, url: 'http://localhost:5174/' } : null),
         }), '');
         const rows = section(model.step.sections, 'terminal-jump:other-sessions')!.options;
         expect(rows.map((row) => row.id)).toEqual(['other:vite', 'other:test']);

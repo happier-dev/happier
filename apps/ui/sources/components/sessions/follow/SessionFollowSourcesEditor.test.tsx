@@ -1,3 +1,5 @@
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
+import { storage } from '@/sync/domains/state/storageStore';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,6 +13,11 @@ import { renderSettingsView } from '@/dev/testkit/harness/settingsViewHarness';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { OpenedSessionFollowRuleV1Schema } from '@happier-dev/protocol/sessions/follow/actions';
+import { SetSessionFollowRuleRequestV1Schema, SESSION_FOLLOW_RULES_ROUTE_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
+import { sealSessionFollowRuleContentV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleContentCodecV1';
+import type { SessionFollowReadInputs } from '@/sync/api/session/sessionFollowRulesApi';
 
 const api = vi.hoisted(() => ({
     list: vi.fn(),
@@ -54,12 +61,14 @@ vi.mock('@/text', async (importOriginal) => ({
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
-        useSessionListRowsByServerId: () => followState.rows,
+        useSessionListRowsByServerId: (_serverIds: readonly string[], selector?: (rows: typeof followState.rows) => unknown) => (
+            selector ? selector(followState.rows) : followState.rows
+        ),
         useServerScopedMachine,
     });
 });
 
-import { SessionFollowSourcesEditor } from './SessionFollowSourcesEditor';
+import { followSourceKey, SessionFollowSourcesEditor } from './SessionFollowSourcesEditor';
 /** The editor as a page section (two grouped sections); the pane form is tested on its own. */
 function renderPage(element: React.ReactElement, options?: Parameters<typeof renderSettingsView>[1]) {
     return renderSettingsView(element, {
@@ -68,7 +77,52 @@ function renderPage(element: React.ReactElement, options?: Parameters<typeof ren
     });
 }
 let accountFixture: Awaited<ReturnType<typeof activateStorageAccountScope>> | undefined;
-afterEach(() => { standardCleanup(); accountFixture?.dispose(); accountFixture = undefined; });
+let ruleHomes: ReturnType<typeof createHomeGovernanceHarness> | undefined;
+afterEach(async () => {
+    setScreenSharingPrivacyActive(false);
+    standardCleanup(); accountFixture?.dispose(); accountFixture = undefined;
+    await ruleHomes?.reset(); ruleHomes = undefined;
+});
+
+const RULE_HOME = 'srv_follow_editor';
+
+/** Private rule reads and writes share real Home credentials, admission and content codecs. */
+async function activateRuleCensus(input: unknown) {
+    const rule = OpenedSessionFollowRuleV1Schema.parse(input);
+    const { definition, ...identity } = rule;
+    let stored = { ...identity, content: sealSessionFollowRuleContentV1({ ...identity, definition, mode: 'plain', material: null }) };
+    const writes: Array<ReturnType<typeof SetSessionFollowRuleRequestV1Schema.parse>> = [];
+    const homes = createHomeGovernanceHarness();
+    ruleHomes = homes;
+    installHomeGovernanceBoundaries(homes);
+    await homes.addHome({ name: 'Rule editor', serverUrl: 'https://follow-editor.test', serverIdentityId: RULE_HOME,
+        accountId: 'follow-account', currentAccount: true, active: false });
+    const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+    const features = createRootLayoutFeaturesResponse({ features: { sessions: { following: { enabled: true } } } });
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    primeServerFeaturesSnapshot({ serverId: RULE_HOME, snapshot: { status: 'ready', features } });
+    for (const path of ['/v1/features', '/v1/features/authenticated']) homes.answer(RULE_HOME, path, { body: features });
+    homes.answer(RULE_HOME, '/v2/account/settings', { body: { content: { t: 'plain', v: {} }, version: 1 } });
+    homes.answer(RULE_HOME, SESSION_FOLLOW_RULES_ROUTE_V1, { select: () => ({ body: { rules: [stored] } }) });
+    api.list.mockImplementation(async (_destination: unknown, _signal: unknown, _accountId: unknown, readInputs: SessionFollowReadInputs) => (
+        readInputs.rules.status === 'ready'
+            ? { kind: 'ok', value: { sources: [], rules: readInputs.rules.rules, coverage: 'complete' } }
+            : { kind: 'failed', error: 'unavailable' }
+    ));
+    homes.answer(RULE_HOME, `PUT ${SESSION_FOLLOW_RULES_ROUTE_V1}/${rule.ruleId}`, { select: raw => {
+        const write = SetSessionFollowRuleRequestV1Schema.parse(raw);
+        writes.push(write);
+        stored = { ...stored, content: write.content, version: write.expectedVersion + 1 };
+        return { body: { rule: stored } };
+    } });
+    accountFixture?.dispose();
+    accountFixture = await activateStorageAccountScope({ serverId: RULE_HOME, accountId: 'follow-account' });
+    // The lifecycle helper's default endpoint has no credentials; scoped Follow
+    // transport must capture the same actual Home that serves the private census.
+    const runtime = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    runtime.publishAppliedActiveServerSnapshot({ ...runtime.getAppliedActiveServerSnapshot(), serverUrl: 'https://follow-editor.test' });
+    return writes;
+}
 
 /** A Home switch changes the real Account lifetime, not only the editor's target props. */
 async function switchFixtureHome(serverId: string) {
@@ -619,6 +673,17 @@ describe('SessionFollowSourcesEditor', () => {
         });
         expect(api.set).not.toHaveBeenCalled();
         expect(screen.findByTestId('session-follow-source-source-a-panel')).not.toBeNull();
+        const originalTitle = findSourceRow(screen, 'source-a')?.props.title;
+        await act(async () => {
+            storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { 'home-a': ['private'] } });
+            storage.getState().setSessionTagAssignmentsOptimistic('home-a', 'source-a', ['private']);
+            setScreenSharingPrivacyActive(true);
+        });
+        expect(findSourceRow(screen, 'source-a')?.props.title).toContain('message.sessionReferenceUnavailable');
+        expect(screen.findByTestId('session-follow-source-source-a-panel')).not.toBeNull();
+        await act(async () => setScreenSharingPrivacyActive(false));
+        expect(findSourceRow(screen, 'source-a')?.props.title).toBe(originalTitle);
+
         expect(sourcePresetSegment(screen, 'source-a', 'quiet')?.props.checked).toBe(true);
         expect(sourcePresetSegment(screen, 'source-a', 'everything')?.props.checked).toBe(false);
         await act(async () => {
@@ -784,6 +849,11 @@ describe('SessionFollowSourcesEditor', () => {
         await screen.unmount();
     });
 
+    it('keeps a Machine Run distinct from an opaque Session id with the same colon-shaped spelling', () => {
+        expect(followSourceKey({ kind: 'execution_run', sessionId: 'machine:machine-one', runId: 'same-run' }))
+            .not.toBe(followSourceKey({ kind: 'execution_run', machineId: 'machine-one', runId: 'same-run' }));
+    });
+
     it('lists every source kind as a row that opens the same panel and writes through its exact source ref', async () => {
         const other = (source: Record<string, string>, extra: Record<string, unknown> = {}) => ({
             source, destinationSessionId: 'destination-a', policy: { preset: 'important' as const }, deliveryState: 'eligible' as const,
@@ -803,11 +873,12 @@ describe('SessionFollowSourcesEditor', () => {
         const screen = await renderSettingsView(<SessionFollowSourcesEditor
             destination={createSessionFixture({ id: 'destination-a' })} serverId="home-a" destinationMachineId={null}
         />);
-        for (const key of ['source-a', 'discussion:disc-1', 'execution_run:source-a:run-1', 'workflow_run:wf-1']) {
+        const executionKey = followSourceKey({ kind: 'execution_run', sessionId: 'source-a', runId: 'run-1' });
+        for (const key of ['source-a', 'discussion:disc-1', executionKey, 'workflow_run:wf-1']) {
             await vi.waitFor(() => expect(findSourceRow(screen, key)).not.toBeNull());
         }
         // Each kind is named by its own owner, and a source the receiver can no longer read says so instead of a level.
-        expect(findSourceRow(screen, 'execution_run:source-a:run-1')?.props.title)
+        expect(findSourceRow(screen, executionKey)?.props.title)
             .toBe('session.follow.sources.executionRun:Alpha source');
         expect(findSourceRow(screen, 'workflow_run:wf-1')?.props.subtitle).toBe('session.follow.sources.sourceUnavailable');
 
@@ -829,67 +900,67 @@ describe('SessionFollowSourcesEditor', () => {
 
     it('shows a rule-only Following as rule rows with a live count, and edits or stops that rule in the same panel', async () => {
         const filter = { show: 'sessions', startedBy: ['you', 'triggers', 'agents'], scope: 'all_accessible', attention: 'any',
-            homeServerIds: ['home-a'], audiences: [], tagIds: [], source: 'all',
-            projects: { include: [{ serverId: 'home-a', projectKey: 'payments' }], exclude: [] }, statuses: ['failed'] };
+            homeServerIds: [RULE_HOME], audiences: [], tagIds: [], source: 'all',
+            projects: { include: [{ serverId: RULE_HOME, projectKey: 'payments' }], exclude: [] }, statuses: ['failed'] };
         const rule = { ruleId: 'rule-1', receiver: { kind: 'session', sessionId: 'destination-a' }, version: 3,
-            sources: [], inception: {}, definition: { v: 1, enabled: true, filter, policy: { preset: 'important' } } };
-        api.list.mockResolvedValue({ kind: 'ok', value: { sources: [], rules: [rule], coverage: 'complete' } });
+            sources: [], inception: { createdAt: 1 }, definition: { v: 1, enabled: true, filter, policy: { preset: 'important' } } };
+        const writes = await activateRuleCensus(rule);
         api.remove.mockResolvedValue({ kind: 'ok', value: { changed: true } });
-        followAction.execute.mockImplementation(async (actionId: string, input: Record<string, unknown>) => actionId === 'follow.preview'
+        followAction.execute.mockImplementation(async (actionId: string) => actionId === 'follow.preview'
             ? { kind: 'ok', value: { coverage: 'complete', matchCount: 4, matches: [], unavailable: [], overlaps: [] } }
-            : actionId === 'follow.set'
-                ? { kind: 'ok', value: { rule: { ...rule, version: 4, definition: { ...rule.definition, policy: input.policy } } } }
-                : { kind: 'failed', error: 'unavailable' });
+            : { kind: 'failed', error: 'unavailable' });
         const screen = await renderSettingsView(<SessionFollowSourcesEditor
-            destination={createSessionFixture({ id: 'destination-a' })} serverId="home-a" destinationMachineId={null}
+            destination={createSessionFixture({ id: 'destination-a' })} serverId={RULE_HOME} destinationMachineId={null}
         />);
+        await vi.waitFor(() => expect(api.list.mock.calls.at(-1)?.[3]).toMatchObject({
+            rules: { status: 'ready', serverId: RULE_HOME, accountId: 'follow-account', mode: 'plain' },
+        }));
         // Not an empty Following: the rule is the row, counted by the canonical preview for this receiver.
         await vi.waitFor(() => expect(findSourceRow(screen, 'rule:rule-1')?.props.subtitle).toBe('sessionCoordinator.make.count'));
         expect(screen.findAllByTestId('session-follow-sources-empty')).toHaveLength(0);
         expect(findSourceRow(screen, 'rule:rule-1')?.props.title).toBe('session.follow.sources.ruleMatching');
         await openSource(screen, 'rule:rule-1');
         expect(screen.findByTestId('session-follow-source-rule:rule-1-panel')).not.toBeNull();
+        await vi.waitFor(() => expect(sourcePresetSegment(screen, 'rule:rule-1', 'quiet')?.props.disabled).toBe(false));
         await act(async () => { sourcePresetSegment(screen, 'rule:rule-1', 'quiet')?.props.onPress?.(); await Promise.resolve(); });
         // The rule's whole definition is written at the version this list read; its filter is untouched.
-        await vi.waitFor(() => expect(followAction.execute).toHaveBeenCalledWith('follow.set', {
-            receiver: { kind: 'session', sessionId: 'destination-a' }, source: { kind: 'rule', ruleId: 'rule-1' },
-            ruleDefinition: { v: 1, enabled: true, filter }, policy: expect.objectContaining({ preset: 'quiet' }), expectedVersion: 3,
-        }, 'home-a', undefined));
+        await vi.waitFor(() => expect(writes).toEqual([expect.objectContaining({
+            receiver: { kind: 'session', sessionId: 'destination-a' }, expectedVersion: 3,
+            content: { t: 'plain', v: { v: 1, enabled: true, filter, policy: expect.objectContaining({ preset: 'quiet' }) } },
+        })]));
         expect(api.set).not.toHaveBeenCalled();
+        await vi.waitFor(() => expect(readControlDisabled(screen, 'session-follow-source-rule:rule-1-remove')).toBe(false));
         await act(async () => { screen.findByTestId('session-follow-source-rule:rule-1-remove')?.props.onPress?.(); await Promise.resolve(); });
         await vi.waitFor(() => expect(api.remove).toHaveBeenCalledWith({
-            serverId: 'home-a', destinationSessionId: 'destination-a', source: { kind: 'rule', ruleId: 'rule-1' },
+            serverId: RULE_HOME, destinationSessionId: 'destination-a', source: { kind: 'rule', ruleId: 'rule-1' }, expectedVersion: 4,
         }));
         await screen.unmount();
     });
 
     describe('a rule panel edits which sessions the rule follows', () => {
         const baseFilter = { show: 'sessions', startedBy: ['you', 'triggers', 'agents'], scope: 'all_accessible', attention: 'any',
-            homeServerIds: ['home-a'], audiences: [], tagIds: [], source: 'all',
-            projects: { include: [], exclude: [{ serverId: 'home-a', projectKey: 'payments' }] } };
+            homeServerIds: [RULE_HOME], audiences: [], tagIds: [], source: 'all',
+            projects: { include: [], exclude: [{ serverId: RULE_HOME, projectKey: 'payments' }] } };
         const rule = { ruleId: 'rule-1', receiver: { kind: 'session', sessionId: 'destination-a' }, version: 3,
             sources: [], inception: { createdAt: 1 }, definition: { v: 1, enabled: true, filter: baseFilter, policy: { preset: 'important' } } };
-        let version = 3;
-        beforeEach(() => {
-            version = 3;
-            api.list.mockResolvedValue({ kind: 'ok', value: { sources: [], rules: [rule], coverage: 'complete' } });
+        let writes: Awaited<ReturnType<typeof activateRuleCensus>>;
+        beforeEach(async () => {
+            writes = await activateRuleCensus(rule);
             api.remove.mockResolvedValue({ kind: 'ok', value: { changed: true } });
-            followAction.execute.mockImplementation(async (actionId: string, input: Record<string, unknown>) => {
+            followAction.execute.mockImplementation(async (actionId: string) => {
                 if (actionId === 'follow.preview') return { kind: 'ok', value: { coverage: 'complete', matchCount: 2, matches: [], unavailable: [], overlaps: [] } };
-                if (actionId !== 'follow.set') return { kind: 'failed', error: 'unavailable' };
-                version += 1;
-                return { kind: 'ok', value: { rule: { ...rule, version, definition: { ...(input.ruleDefinition as object), policy: input.policy } } } };
+                return { kind: 'failed', error: 'unavailable' };
             });
         });
-        const setCalls = () => followAction.execute.mock.calls.filter(([id]) => id === 'follow.set').map(([, input]) => input as Record<string, any>);
         async function press(screen: Awaited<ReturnType<typeof renderSettingsView>>, testID: string) {
-            await vi.waitFor(() => expect(screen.findAllByTestId(testID).find((node) => typeof node.props.onPress === 'function')).toBeDefined());
+            await vi.waitFor(() => expect(screen.findAllByTestId(testID).find((node) => typeof node.props.onPress === 'function'), testID).toBeDefined());
+            await vi.waitFor(() => expect(readControlDisabled(screen, testID), testID).not.toBe(true));
             await act(async () => { screen.findAllByTestId(testID).find((node) => typeof node.props.onPress === 'function')?.props.onPress?.(); await Promise.resolve(); });
         }
 
         it('on the anchored panel: the shared filter editor saves a new filter at the read version, and a left-out project comes back with Undo', async () => {
             const screen = await renderSettingsView(<SessionFollowSourcesEditor
-                destination={createSessionFixture({ id: 'destination-a' })} serverId="home-a" destinationMachineId={null}
+                destination={createSessionFixture({ id: 'destination-a' })} serverId={RULE_HOME} destinationMachineId={null}
             />);
             await openSource(screen, 'rule:rule-1');
             // The persisted "Leave them to this one" exclusion is visible, with its way back.
@@ -897,40 +968,46 @@ describe('SessionFollowSourcesEditor', () => {
 
             // Which sessions: the Sessions list's own editor, inline in the same panel; nothing is written until Save.
             await press(screen, 'session-follow-source-rule:rule-1-filter');
-            await press(screen, 'session-list-filter:status:failed');
-            expect(setCalls()).toHaveLength(0);
-            await press(screen, 'session-list-filter-done');
-            await vi.waitFor(() => expect(setCalls()).toHaveLength(1));
-            expect(setCalls()[0]).toMatchObject({ source: { kind: 'rule', ruleId: 'rule-1' }, expectedVersion: 3,
-                policy: { preset: 'important' } });
-            expect(setCalls()[0].ruleDefinition.filter.statuses?.length).toBeGreaterThan(0);
-            expect(setCalls()[0].ruleDefinition.filter.projects).toEqual(baseFilter.projects);
+            await press(screen, 'collection-filter-add');
+            await press(screen, 'collection-filter-field:statuses');
+            await press(screen, 'collection-filter-value:statuses:failed');
+            await press(screen, 'collection-filter-back');
+            expect(writes).toHaveLength(0);
+            await press(screen, 'collection-filter-done');
+            await vi.waitFor(() => expect(writes).toHaveLength(1));
+            expect(writes[0]).toMatchObject({ expectedVersion: 3, content: { t: 'plain', v: { policy: { preset: 'important' } } } });
+            const saved = writes[0]!.content;
+            if (saved.t !== 'plain') throw new Error('The plain Account must write plain rule content');
+            expect(saved.v.filter.statuses?.length).toBeGreaterThan(0);
+            expect(saved.v.filter.projects).toEqual(baseFilter.projects);
             // Saving returns to the rule's panel.
             await vi.waitFor(() => expect(screen.findByTestId('session-follow-source-rule:rule-1-filter')).not.toBeNull());
 
             // Include again writes the rule without the exclusion; Undo puts it back at the version that write produced.
             await press(screen, 'session-follow-source-rule:rule-1-left-out-payments-include');
-            await vi.waitFor(() => expect(setCalls()).toHaveLength(2));
-            expect(setCalls()[1].ruleDefinition.filter.projects).toBeUndefined();
+            await vi.waitFor(() => expect(writes).toHaveLength(2));
+            expect(writes[1]!.content).toMatchObject({ t: 'plain', v: { filter: expect.not.objectContaining({ projects: expect.anything() }) } });
             await press(screen, 'session-follow-source-rule:rule-1-left-out-undo');
-            await vi.waitFor(() => expect(setCalls()).toHaveLength(3));
+            await vi.waitFor(() => expect(writes).toHaveLength(3));
             // Writes so far: Save (→ 4), Include again (→ 5); Undo is bound to the version Include again produced.
-            expect(setCalls()[2]).toMatchObject({ expectedVersion: 5 });
-            expect(setCalls()[2].ruleDefinition.filter.projects).toEqual(baseFilter.projects);
+            expect(writes[2]).toMatchObject({ expectedVersion: 5, content: { t: 'plain', v: { filter: { projects: baseFilter.projects } } } });
             await screen.unmount();
         });
 
         it('on the phone page: the same filter step and writer, and Stop updates leaves the page', async () => {
             const onClose = vi.fn();
             const screen = await renderPage(<SessionFollowSourcesEditor
-                destination={createSessionFixture({ id: 'destination-a' })} serverId="home-a" destinationMachineId={null}
+                destination={createSessionFixture({ id: 'destination-a' })} serverId={RULE_HOME} destinationMachineId={null}
                 page={{ sourceKey: 'rule:rule-1', onClose, frame: (parts) => <>{parts.body}{parts.footer}</> }}
             />);
             await press(screen, 'session-follow-source-rule:rule-1-filter');
-            await press(screen, 'session-list-filter:status:failed');
-            await press(screen, 'session-list-filter-done');
-            await vi.waitFor(() => expect(setCalls()).toHaveLength(1));
-            expect(setCalls()[0]).toMatchObject({ expectedVersion: 3 });
+            await press(screen, 'collection-filter-add');
+            await press(screen, 'collection-filter-field:statuses');
+            await press(screen, 'collection-filter-value:statuses:failed');
+            await press(screen, 'collection-filter-back');
+            await press(screen, 'collection-filter-done');
+            await vi.waitFor(() => expect(writes).toHaveLength(1));
+            expect(writes[0]).toMatchObject({ expectedVersion: 3 });
             await press(screen, 'session-follow-source-rule:rule-1-remove');
             await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
             expect(api.remove).toHaveBeenCalledWith(expect.objectContaining({ source: { kind: 'rule', ruleId: 'rule-1' } }));

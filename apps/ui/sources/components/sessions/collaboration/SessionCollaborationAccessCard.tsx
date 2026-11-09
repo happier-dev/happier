@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { SidePaneBodyProvider, usePaneContentInsetPx } from '@/components/ui/lists/listPresentation';
 import { Pressable, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -9,7 +10,6 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { ITEM_SUBTITLE_TEXT_METRICS, ITEM_TITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { shadowLevelStyle } from '@/shadowElevation';
 import { t } from '@/text';
 
 import type { SessionAccessEditorModel, SessionAccessPrincipalPresentation } from '@/components/sessions/access/sessionAccessEditorTypes';
@@ -96,15 +96,15 @@ export function projectSessionCollaborationAccessCard(input: Readonly<{
 
 const styles = StyleSheet.create((theme) => ({
     block: {
-        marginHorizontal: theme.space.s12,
         marginTop: theme.space.s12,
         marginBottom: theme.space.s12,
         borderRadius: 14,
         borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.elevated,
+        // An in-flow card on the pane: the card fill and flat edge every grouped sheet uses, not a
+        // control's fill step (which read as a dark grey block) and no shadow.
+        borderColor: theme.colors.edge.surface,
+        backgroundColor: theme.colors.edge.cardFill,
         overflow: 'hidden',
-        ...shadowLevelStyle(theme.colors.shadowLevels[1]),
     },
     divider: { height: StyleSheet.hairlineWidth, marginLeft: theme.space.s12, backgroundColor: theme.colors.border.default },
     mark: {
@@ -142,10 +142,13 @@ export const SessionCollaborationAccessCard = React.forwardRef<React.ElementRef<
     children?: React.ReactNode;
 }>>(function SessionCollaborationAccessCard(props, ref) {
     const { theme } = useUnistyles();
+    // The card stands on the pane's text edge; its rows keep the card's own inset.
+    const contentInsetPx = usePaneContentInsetPx();
     const { card } = props;
     const subtitleParts = [card.subtitle, card.publicLinkOn ? t('session.collaboration.pane.publicLinkOn') : ''].filter(Boolean);
     return (
-        <View style={styles.block}>
+        <View style={[styles.block, { marginHorizontal: contentInsetPx }]}>
+            <SidePaneBodyProvider active={false}>
             <Item
                 pressableRef={ref}
                 testID="session-collaboration-access-card"
@@ -156,13 +159,16 @@ export const SessionCollaborationAccessCard = React.forwardRef<React.ElementRef<
                 density="compact"
                 showDivider={false}
                 showChevron={false}
-                leftElement={card.principals.length > 0 ? <AvatarStack size={MARK_PX - 4} ringColor={theme.colors.surface.elevated} entries={card.principals.map((principal) => ({
+                leftElement={card.principals.length > 0 ? <AvatarStack size={MARK_PX - 4} ringColor={theme.colors.edge.cardFill} entries={card.principals.map((principal) => ({
                     key: principal.key,
                     avatar: principal.ref.kind === 'account',
                     content: principal.ref.kind === 'account'
                         ? <Avatar id={principal.avatar?.id ?? principal.key} size={MARK_PX - 4} imageUrl={principal.avatar?.imageUrl ?? null} />
                         : <Icon name="users" size={14} color={theme.colors.text.secondary} />,
-                }))} /> : <View style={styles.mark}><Icon name={card.publicLinkOn ? 'link' : 'users'} size={14} color={theme.colors.text.secondary} /></View>}
+                }))} /> : undefined}
+                // Without faces the mark takes the row icon slot, so "Only you" and Responsible below it
+                // start their words on one edge.
+                icon={card.principals.length > 0 ? undefined : <Icon name={card.publicLinkOn ? 'link' : 'users'} size={18} color={theme.colors.text.secondary} />}
                 title={<Text testID="session-collaboration-access-card-title" style={styles.title} numberOfLines={1}>{card.title}</Text>}
                 subtitle={subtitleParts.length > 0 ? (
                         <View style={styles.subtitleRow}>
@@ -176,6 +182,7 @@ export const SessionCollaborationAccessCard = React.forwardRef<React.ElementRef<
             />
             {props.children ? <View style={styles.divider} /> : null}
             {props.children}
+            </SidePaneBodyProvider>
         </View>
     );
 });

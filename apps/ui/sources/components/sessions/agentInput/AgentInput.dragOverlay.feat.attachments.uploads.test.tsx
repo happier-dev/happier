@@ -13,7 +13,8 @@ import type { AttachmentDraft } from '@/components/sessions/attachments/attachme
 import type { MultiTextInputHandle } from '@/components/ui/forms/MultiTextInput';
 import type { ComposerStructuredInputMention } from './structuredInputMentions';
 import { formatInlineReferenceTokenV1, scanInlineReferenceTokensV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
-import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker.web';
 import { createEphemeralComposerDocumentOwner } from '@/components/sessions/composer/composerDocumentOwner';
 import { projectComposerDocumentSnapshot } from '@/components/sessions/composer/composerSnapshotProjection';
@@ -119,7 +120,7 @@ function PickerComposerHarness({ inputRef, onDrafts }: Readonly<{
     const selection = React.useRef({ start: 7, end: 7 });
     const intake = { enabled: true, maxFileBytes: 1024,
         onPickedDrafts: (drafts: readonly AttachmentDraft[]) => {
-            composerPresentation.insertComposerAttachmentReferences({ ref: pickerComposerRef, scope: pickerScope, items: (drafts).map(draft => ({ draft })) });
+            composerPresentation.insertComposerAttachmentReferences({ ref: pickerComposerRef, scope: pickerScope, items: drafts.map(draft => ({ draft })) });
         } };
     const attachments = useAttachmentDraftManager(intake);
     React.useEffect(() => { onDrafts(attachments.drafts); }, [attachments.drafts, onDrafts]);
@@ -356,6 +357,22 @@ describe('AgentInput (attachments drag overlay)', () => {
         await act(async () => { rendered.dropSurface.dispatchEvent(createFileDragEvent('dragenter')); });
         const overlay = document.querySelector<HTMLElement>('[data-testid="agent-input-drop-overlay"]');
         expect(overlay?.textContent).toContain(attachmentDropHint);
+    });
+
+    it('ignores pasted and dropped files while the composer is disabled', async () => {
+        const onAttachmentsAdded = vi.fn();
+        const rendered = await renderAgentInput(onAttachmentsAdded, { disabled: true });
+        const file = new File([new Uint8Array([1, 2, 3])], 'photo.png', { type: 'image/png' });
+        const paste = new Event('paste', { bubbles: true, cancelable: true });
+        Object.defineProperty(paste, 'clipboardData', { value: { files: [file], types: ['Files'],
+            items: [{ kind: 'file', type: 'image/png', getAsFile: () => file }], getData: () => '' } });
+        await act(async () => {
+            rendered.container.querySelector('[data-testid="new-session-composer-input"]')!.dispatchEvent(paste);
+            rendered.dropSurface.dispatchEvent(createFileDragEvent('dragenter', [file]));
+            rendered.dropSurface.dispatchEvent(createFileDragEvent('dragover', [file]));
+            rendered.dropSurface.dispatchEvent(createFileDragEvent('drop', [file]));
+        });
+        expect(onAttachmentsAdded).not.toHaveBeenCalled();
     });
 
     it('adds attachments dropped on the enclosing panel outside the textarea', async () => {

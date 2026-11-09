@@ -38,11 +38,6 @@ vi.mock('@react-navigation/native', async () => {
     };
 });
 
-vi.mock('@/components/ui/popover', () => ({
-    PopoverScope: ({ children }: React.PropsWithChildren<Record<string, never>>) =>
-        React.createElement('PopoverScope', null, children),
-}));
-
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
     modalMock.module = createModalModuleMock().module;
@@ -58,13 +53,12 @@ describe('newSessionContainedModalScreen helpers', () => {
         navigationMock.isFocused = true;
     });
 
-    it('creates containedModal screen options on iOS', async () => {
+    it('creates picker chrome without owning the root navigator presentation', async () => {
         const options = createNewSessionContainedModalScreenOptions({
             title: 'externalSessions.browseTitle',
             headerBackTitle: 'common.cancel',
         });
 
-        expect(options.presentation).toBe('containedModal');
         expect(options.headerShown).toBe(true);
         expect(options.title).toBe('externalSessions.browseTitle');
         expect(options.headerBackTitle).toBe('common.cancel');
@@ -81,7 +75,6 @@ describe('newSessionContainedModalScreen helpers', () => {
             </NewSessionScreenPortalScope></NavigationContext.Provider>,
         );
 
-        expect(screen.findAllByType('PopoverScope' as any)).toHaveLength(1);
         expect(screen.findAllByType('ModalProvider' as any)).toHaveLength(1);
         expect(screen.findByType('ModalProvider' as any).props.active).toBe(true);
         expect(screen.findByTestId('route-plugin-focus')?.props.eligible).toBe(true);

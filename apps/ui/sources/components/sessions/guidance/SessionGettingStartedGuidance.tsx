@@ -3,12 +3,13 @@ import { Platform, Pressable, ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { t } from '@/text';
 import { useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { Modal } from '@/modal';
 import { Image } from 'expo-image';
 import { useConnectTerminal } from '@/hooks/session/useConnectTerminal';
-import type { FeatureId } from '@happier-dev/protocol';
+import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { resolveCliInvokerNameForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
 import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
@@ -31,12 +32,12 @@ import { SessionGettingStartedSummary } from './SessionGettingStartedSummary';
 import { useSessionGettingStartedGuidanceBaseModel } from './useSessionGettingStartedGuidanceBaseModel';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { HAPPIER_PAGE_METRICS, useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { Icon } from '@/components/ui/icons/Icon';
 import {
     shouldForceFreshNewSessionEntryFromPressEvent,
-    useResolveNewSessionOrdinaryEntryRoute,
 } from '@/components/sessions/new/navigation/newSessionOrdinaryEntryRoute';
+import { useOpenNewSession } from '@/components/sessions/new/navigation/newSessionEntry';
 
 
 export type SessionGettingStartedGuidanceVariant = 'phone' | 'sidebar' | 'primaryPane';
@@ -238,8 +239,8 @@ function buildSteps(model: SessionGettingStartedGuidanceViewModel): SessionGetti
     }
 }
 
-async function copyTextToClipboard(text: string): Promise<boolean> {
-    const copied = await setClipboardStringSafe(text);
+async function copyTextToClipboard(text: string, writeClipboard: (text: string) => Promise<boolean>): Promise<boolean> {
+    const copied = await writeClipboard(text);
     if (!copied) {
         Modal.alert(t('common.error'), t('textSelection.failedToCopy'));
     }
@@ -256,6 +257,8 @@ async function copyTextToClipboard(text: string): Promise<boolean> {
 function ConnectMachinePrimaryCardContent(props: Readonly<{
     targetLabel: string;
     onOpenSetup: () => void;
+    /** A whole pane (Home on a new Account, a blocked New Session): the Daybreak "no machines" scene leads. */
+    scene: boolean;
 }>): React.ReactElement {
     const router = useDestinationRouter();
     const styles = stylesheet;
@@ -266,23 +269,34 @@ function ConnectMachinePrimaryCardContent(props: Readonly<{
     const openThisComputer = React.useCallback(() => {
         router.push(SETTINGS_ROUTES.machinesThisComputer);
     }, [router]);
+    const title = presentation?.title ?? t('sessionGettingStarted.title.connectMachine');
+    const description = presentation?.description ?? t('machine.thisComputer.noComputers', {
+        home: props.targetLabel,
+        appAccount: resolveViewerAccountDisplayName(accountLabel),
+    });
+    const actionTestID = presentation ? 'session-getting-started-open-this-computer' : 'session-getting-started-open-setup';
+    const actionLabel = presentation ? t('machine.thisComputer.openThisComputer') : t('setupOnboarding.openSetupAction');
+    const onAction = presentation ? openThisComputer : props.onOpenSetup;
 
+    if (props.scene) {
+        return (
+            <EmptyState
+                testID="session-getting-started-connect-machine"
+                scene="noMachines"
+                size="page"
+                title={title}
+                subtitle={description}
+                primaryAction={{ label: actionLabel, onPress: onAction, testID: actionTestID }}
+                paddingHorizontal={0}
+            />
+        );
+    }
     return (
         <>
-            <Text style={styles.title}>{presentation?.title ?? t('sessionGettingStarted.title.connectMachine')}</Text>
-            <Text style={styles.subtitle}>
-                {presentation?.description ?? t('machine.thisComputer.noComputers', {
-                    home: props.targetLabel,
-                    appAccount: resolveViewerAccountDisplayName(accountLabel),
-                })}
-            </Text>
+            <Text style={styles.title}>{title}</Text>
+            <Text style={styles.subtitle}>{description}</Text>
             <View style={styles.buttonWrapper}>
-                <RoundButton
-                    testID={presentation ? 'session-getting-started-open-this-computer' : 'session-getting-started-open-setup'}
-                    title={presentation ? t('machine.thisComputer.openThisComputer') : t('setupOnboarding.openSetupAction')}
-                    onPress={presentation ? openThisComputer : props.onOpenSetup}
-                    size="normal"
-                />
+                <RoundButton testID={actionTestID} title={actionLabel} onPress={onAction} size="normal" />
             </View>
         </>
     );
@@ -294,13 +308,17 @@ function SessionGettingStartedGuidanceViewImpl(props: SessionGettingStartedGuida
     const styles = stylesheet;
     const { model } = props;
     const copyFeedback = useHappierCopyFeedback();
+    const writeClipboard = useClipboardWrite();
 
     const title = getSessionGettingStartedTitle(model.kind);
     const subtitle = getSessionGettingStartedSubtitle(model.kind, model.targetLabel);
     const showSummaryOnly = model.kind === 'create_session' || model.kind === 'select_session';
-    const showLogo = props.variant === 'primaryPane'
+    const wholePane = props.variant === 'primaryPane';
+    // A whole pane without a machine draws its Daybreak scene in the logo's place.
+    const showLogo = wholePane
         && model.kind !== 'create_session'
-        && model.kind !== 'select_session';
+        && model.kind !== 'select_session'
+        && model.kind !== 'connect_machine';
     const showSetupPrimaryCard = model.kind === 'connect_machine' || model.kind === 'start_daemon';
     const shouldBuildCliFollowUpSteps = !showSetupPrimaryCard && !showSummaryOnly;
     const steps = React.useMemo(() => (
@@ -348,7 +366,7 @@ function SessionGettingStartedGuidanceViewImpl(props: SessionGettingStartedGuida
             {showSetupPrimaryCard ? (
                 <View testID="session-getting-started-setup-primary-card" style={styles.primaryCard}>
                     {model.kind === 'connect_machine' ? (
-                        <ConnectMachinePrimaryCardContent targetLabel={model.targetLabel} onOpenSetup={handleOpenSetup} />
+                        <ConnectMachinePrimaryCardContent targetLabel={model.targetLabel} onOpenSetup={handleOpenSetup} scene={wholePane} />
                     ) : (
                         <>
                             <Text style={styles.title}>{title}</Text>
@@ -408,7 +426,7 @@ function SessionGettingStartedGuidanceViewImpl(props: SessionGettingStartedGuida
                                           accessibilityLabel={t('common.copyWithLabel', { label: step.copyLabel ?? t('common.command') })}
                                           style={styles.codeCopyButton}
                                           onPress={async () => {
-                                              if (await copyTextToClipboard(step.command ?? '')) {
+                                              if (await copyTextToClipboard(step.command ?? '', writeClipboard)) {
                                                   copyFeedback.markCopied(step.id);
                                               }
                                           }}
@@ -507,17 +525,16 @@ SessionGettingStartedGuidanceView.displayName = 'SessionGettingStartedGuidanceVi
 function useSessionGettingStartedGuidanceViewModelBase(): SessionGettingStartedGuidanceViewModel {
     const router = useDestinationRouter();
     const baseModel = useSessionGettingStartedGuidanceBaseModel();
-    const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
+    const openNewSession = useOpenNewSession();
     const onOpenSetup = React.useCallback(() => {
         router.push(buildMachineAddHref({ path: 'thisComputer' }) as any);
     }, [router]);
 
     const onStartNewSession = React.useCallback((event?: unknown) => {
-        const { draftId, draftOrigin } = resolveNewSessionOrdinaryEntryRoute({
+        openNewSession({
             forceFresh: shouldForceFreshNewSessionEntryFromPressEvent(event),
         });
-        router.push({ pathname: '/new', params: { draftId, draftOrigin } });
-    }, [resolveNewSessionOrdinaryEntryRoute, router]);
+    }, [openNewSession]);
 
     return React.useMemo(() => {
         return {

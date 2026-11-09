@@ -1,7 +1,10 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema, DiscussionOpenedSummaryV1Schema } from '@happier-dev/protocol';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { DiscussionOpenedSummaryV1Schema} from '@happier-dev/protocol/discussions/actions';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { PEER_MEDIATION_OBSERVABILITY_SUBSCRIBE_SOCKET_EVENT } from '@happier-dev/protocol/machines/peer/mediation/observability/v1';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { z } from 'zod/mini';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
@@ -19,16 +22,23 @@ import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHa
 import { createSessionBoardDetailsTab, createSessionCommitDetailsTab, createSessionDiscussionDetailsTab } from './details/sessionDetailsTabBuilders';
 import { createWorkspaceFileDetailsTab } from '@/components/appShell/panes/details/fileDetailsTab';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 installSessionDetailsPanelCommonModuleMocks();
 // Browser launchpad discovery is served by this Account's explicitly admitted daemon.
 const browserMachine = createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' });
+const observabilitySubscriptions: string[] = [];
+const detailsFeatures = createRootLayoutFeaturesResponse({ features: {
+    browser: { enabled: true, viewTargets: { enabled: true } },
+    machines: FeaturesResponseSchema.parse({ features: { machines: {
+        enabled: true,
+        peerMediation: { enabled: true, observability: { enabled: true } },
+    } } }).features.machines,
+} });
 const runtime = installSessionPaneRuntimeTestHarness({
-    features: () => createRootLayoutFeaturesResponse({ features: {
-        browser: { enabled: true, viewTargets: { enabled: true } },
-    } }),
+    features: () => detailsFeatures,
     request: async (url, init) => {
         const path = new URL(String(url)).pathname;
         if (path === '/v1/machines/read-batch' && init?.method === 'POST') {
@@ -46,7 +56,10 @@ const runtime = installSessionPaneRuntimeTestHarness({
             for (const listener of socket.listeners('connect')) listener();
             return socket;
         });
-        vi.spyOn(socket, 'emit').mockReturnValue(socket);
+        vi.spyOn(socket, 'emit').mockImplementation((event) => {
+            if (event === PEER_MEDIATION_OBSERVABILITY_SUBSCRIBE_SOCKET_EVENT) observabilitySubscriptions.push(event);
+            return socket;
+        });
         vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, payload) => {
             if (event !== 'rpc-call') throw new Error(`Unexpected Browser pane transport event: ${event}`);
             const request = z.looseObject({ method: z.string(), params: z.unknown() }).parse(payload);
@@ -59,10 +72,20 @@ const runtime = installSessionPaneRuntimeTestHarness({
         });
     },
 });
+// Resolve the heavy real Sync graph after installing transport boundaries, during
+// collection; per-test hooks retain their existing timeout and reset behavior.
+await loadSyncSingletonForTests();
+await Promise.all([
+    import('@/components/discussions/DiscussionDetailsView'),
+    import('./SessionDetailsPanel'),
+    import('./surfaces/sessionDetailsSurfaceRenderers'),
+]);
 beforeEach(async () => {
+    observabilitySubscriptions.length = 0;
     vi.stubGlobal('location', { origin: 'https://pane-browser-client.test' });
     const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
-    expect((await getServerFeaturesSnapshot({ serverId: runtime.serverId, force: true })).status).toBe('ready');
+    const snapshot = await getServerFeaturesSnapshot({ serverId: runtime.serverId, force: true });
+    expect(snapshot.status, snapshot.status === 'error' ? snapshot.reason : snapshot.status).toBe('ready');
 });
 afterEach(() => vi.unstubAllGlobals());
 
@@ -79,7 +102,6 @@ async function renderers(overrides: Partial<Parameters<typeof import('./surfaces
     const { createSessionDetailsSurfaceRenderers } = await import('./surfaces/sessionDetailsSurfaceRenderers');
     return createSessionDetailsSurfaceRenderers({
         sessionId: 's1', scopeId: 'session:s1', serverId: runtime.serverId, machineId: 'machine-1',
-        requestClose: runtime.pane.closeDetails,
         openFileTab: (path, intent) => runtime.pane.openDetailsTab(createWorkspaceFileDetailsTab(path), { intent }),
         getStartEditingFileHandler: () => () => {},
         sessionScreenTestIdsEnabled: true, closeDetailsTab: runtime.pane.closeDetailsTab,
@@ -88,23 +110,44 @@ async function renderers(overrides: Partial<Parameters<typeof import('./surfaces
 }
 
 describe('SessionDetailsPanel browser product mount', () => {
+    it('mounts a populated Details destination without subscribing to unrendered peer diagnostics', async () => {
+        storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', activeAt: Date.now() })]);
+        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+        const screen = await renderScreen(<runtime.Wrapper>
+            <SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId="session:s1" paneSurfaceScope={{
+                targetKind: 'session', sessionId: 's1', serverId: runtime.serverId, machineId: 'machine-1',
+                pluginUiProjection: null, pluginBrowserProjection: null, projectionPhase: 'unavailable',
+                interactionEnabled: false, platform: 'web',
+            }} />
+        </runtime.Wrapper>);
+        await act(async () => runtime.pane.openDetailsTab(createWorkspaceFileDetailsTab('a.txt'), { intent: 'pinned' }));
+        await flushHookEffects();
+        expect(runtime.pane.scopeState?.details.tabs.map(tab => tab.key)).toEqual(['file:a.txt']);
+        expect(screen.tree.findAllByProps({ testID: 'session-details-open-browser' }).length).toBeGreaterThan(0);
+        expect(observabilitySubscriptions).toEqual([]);
+    });
+
+    it('retains the exact new draft and source anchor through the real Discussion tab renderer', async () => {
+        await renderScreen(<runtime.Wrapper />);
+        const { DiscussionDetailsView } = await import('@/components/discussions/DiscussionDetailsView');
+        const draftId = '00000000-0000-5000-8000-000000000007';
+        const anchor = { kind: 'session' as const, sessionId: 's1', messageId: 'source-answer' };
+        const tab = createSessionDiscussionDetailsTab({ kind: 'new', address: { serverId: runtime.serverId, sessionId: 's1' }, draftId, anchor });
+        await act(async () => runtime.pane.openDetailsTab(tab, { intent: 'preview' }));
+        const input = await renderInput(runtime.pane.scopeState!.details.tabs[0]);
+        const renderer = (await renderers()).find(candidate => candidate.id === 'session-discussion');
+        const element = renderer?.render(input);
+        if (!React.isValidElement<React.ComponentProps<typeof DiscussionDetailsView>>(element)) throw new Error('Expected discussion destination');
+        expect(element.props.target).toEqual({ kind: 'new', address: { serverId: runtime.serverId }, draftId, anchor });
+    });
     it('opens the same Browser pane as the viewer dock without adding a competing Details launchpad', async () => {
         storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', activeAt: Date.now() })]);
         const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
-        const { SessionHeaderBrowserButton } = await import('@/components/sessions/actions/SessionHeaderBrowserButton');
         const screen = await renderScreen(<runtime.Wrapper>
-            <SessionHeaderBrowserButton sessionId="s1" scopeId="session:s1" />
             <SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId="session:s1" />
         </runtime.Wrapper>);
         await act(async () => runtime.pane.openDetailsTab(createWorkspaceFileDetailsTab('a.txt'), { intent: 'pinned' }));
         await screen.pressByTestIdAsync('session-details-open-browser');
-        expect(runtime.pane.scopeState?.right).toMatchObject({ isOpen: true, activeTabId: 'browser' });
-        expect(runtime.pane.scopeState?.details.tabs.map(tab => tab.key)).toEqual(['file:a.txt']);
-        await act(async () => {
-            runtime.pane.closeRight();
-            runtime.pane.openDetailsTab(createWorkspaceFileDetailsTab('a.txt'), { intent: 'pinned' });
-        });
-        await screen.pressByTestIdAsync('session-header-browser-button');
         expect(runtime.pane.scopeState?.right).toMatchObject({ isOpen: true, activeTabId: 'browser' });
         expect(runtime.pane.scopeState?.details.tabs.map(tab => tab.key)).toEqual(['file:a.txt']);
     });
@@ -307,7 +350,7 @@ describe('SessionDetailsPanel browser product mount', () => {
         await renderScreen(<runtime.Wrapper />);
         const { DiscussionDetailsView } = await import('@/components/discussions/DiscussionDetailsView');
         const tab = createSessionDiscussionDetailsTab({
-            kind: 'discussion', address: { serverId: runtime.serverId, sessionId: 's1' }, discussionId: 'discussion-1',
+            kind: 'discussion', address: { serverId: runtime.serverId, sessionId: 's1' }, discussionId: 'discussion-1', messageId: 'question-1',
         });
         await act(async () => runtime.pane.openDetailsTab(tab, { intent: 'pinned' }));
         // Linked discussions need a visible fallback before their Home title arrives.
@@ -329,6 +372,7 @@ describe('SessionDetailsPanel browser product mount', () => {
         });
         await act(async () => element.props.onOpened?.(opened));
         expect(runtime.pane.scopeState?.details.tabs).toHaveLength(1);
-        expect(runtime.pane.scopeState?.details.tabs[0]).toMatchObject({ key: tab.key, title: opened.title, isPinned: true });
+        expect(runtime.pane.scopeState?.details.tabs[0]).toMatchObject({ key: tab.key, title: opened.title, isPinned: true,
+            resource: { target: { discussionId: opened.id, messageId: 'question-1' } } });
     });
 });

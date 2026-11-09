@@ -1,7 +1,7 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 
-import type { WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol';
+import type { WindowsRemoteSessionLaunchMode } from '@happier-dev/protocol/sessions/metadata/windowsRemoteSessionLaunchMode';
 
 import type {
     AgentInputExtraActionChip,
@@ -17,6 +17,7 @@ import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE, AGENT_INPUT
 import {
     WINDOWS_REMOTE_SESSION_LAUNCH_MODE_OPTIONS,
 } from '@/sync/domains/session/spawn/windowsRemoteSessionLaunchModeOptions';
+import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
 
 type WindowsRemoteSessionLaunchModeChipProps = Readonly<{
     mode: WindowsRemoteSessionLaunchMode;
@@ -92,14 +93,13 @@ const WindowsRemoteSessionLaunchModeChip = React.memo(function WindowsRemoteSess
     return (
         <>
             <View ref={anchorRef} collapsable={false} style={{ alignSelf: 'flex-start' }}>
-                <Pressable
+                <AgentInputRailChip
                     testID="agent-input-windows-launch-mode-chip"
                     onPress={() => setOpen((current) => !current)}
                     onPressIn={props.onIntent}
                     onFocus={props.onIntent}
                     onHoverIn={props.onIntent}
-                    hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                    style={({ pressed }) => props.ctx.chipStyle(Boolean(pressed))}
+                    style={(pressed) => props.ctx.chipStyle(Boolean(pressed))}
                     accessibilityRole="button"
                     accessibilityLabel={t('machine.windows.remoteSessionModeTitle')}
                 >
@@ -111,7 +111,7 @@ const WindowsRemoteSessionLaunchModeChip = React.memo(function WindowsRemoteSess
                             </Text>
                         ) : null}
                     </View>
-                </Pressable>
+                </AgentInputRailChip>
             </View>
 
             <AgentInputSelectionListPopover

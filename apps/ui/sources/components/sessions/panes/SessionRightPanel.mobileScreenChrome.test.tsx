@@ -3,18 +3,19 @@ import renderer from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 
-import { findTestInstanceByTypeWithProps, renderScreen as renderPanelScreen } from '@/dev/testkit';
+import { findTestInstanceByTypeWithProps, flattenTestStyle, renderScreen as renderPanelScreen } from '@/dev/testkit';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 
 
 let initialTabId = 'git';
+const materialPlatform = vi.hoisted(() => ({ os: 'ios' as 'ios' | 'android' }));
 
 installSessionDetailsPanelCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
             Platform: {
-                OS: 'ios',
+                get OS() { return materialPlatform.os; },
                 select: <T,>(options: { ios?: T; native?: T; default?: T; web?: T; android?: T }) =>
                     options?.ios ?? options?.native ?? options?.default ?? options?.web ?? options?.android,
             },
@@ -65,8 +66,26 @@ async function renderScreen(element: React.ReactElement) {
 }
 
 describe('SessionRightPanel (mobile screen chrome)', () => {
+    it.each(['cleared', 'reading'] as const)('inherits the shell content material (%s) instead of hiding the wallpaper behind its shared tab frame', async (coat) => {
+        // Android supplies the real tint tier in this host; iOS chrome cases below retain their existing boundary.
+        materialPlatform.os = 'android';
+        const { SessionRightPanel } = await import('./SessionRightPanel');
+        const { GlassSurface } = await import('@/components/ui/glass/GlassSurface');
+        const { GlassRuntimeEnvironmentProvider } = await import('@/components/ui/glass/glassRuntimeEnvironment');
+        const { GlassMaterialSettingsProvider } = await import('@/components/ui/glass/useGlassMaterialSettings');
+        const { glassPresetMaterials } = await import('@/components/ui/glass/glassMaterial');
+        const onPicture = (content: React.ReactNode) => <GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('everywhere') }}>
+            <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind: 'wallpaper' }}>
+                <GlassSurface plane surfaceGroup="content" atmosphereCoat={coat === 'reading' ? 'reading' : undefined}>{content}</GlassSurface>
+            </GlassRuntimeEnvironmentProvider>
+        </GlassMaterialSettingsProvider>;
+
+        const screen = await renderScreen(onPicture(<SessionRightPanel sessionId="s1" scopeId="session:s1" presentation="screen" />));
+        expect(flattenTestStyle(screen.findHostByTestId('session-right-panel-root')?.props.style).backgroundColor).toBe('transparent');
+    });
     beforeEach(() => {
         initialTabId = 'git';
+        materialPlatform.os = 'ios';
         vi.clearAllMocks();
     });
 

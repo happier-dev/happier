@@ -91,6 +91,7 @@ export function useSessionListSelectionController(
             scopeKey: input.scopeKey,
             visibleOrderedKeys: input.enabled === false ? [] : input.visibleOrderedKeys,
             eligibleKeys: input.enabled === false ? [] : input.eligibleKeys,
+            entityKeysByOccurrenceKey: input.enabled === false ? undefined : input.entityKeysByOccurrenceKey,
         });
     }
 
@@ -99,11 +100,12 @@ export function useSessionListSelectionController(
             scopeKey: input.scopeKey,
             visibleOrderedKeys: input.enabled === false ? [] : input.visibleOrderedKeys,
             eligibleKeys: input.enabled === false ? [] : input.eligibleKeys,
+            entityKeysByOccurrenceKey: input.enabled === false ? undefined : input.entityKeysByOccurrenceKey,
         });
         if (input.enabled === false) {
             storeRef.current?.exit();
         }
-    }, [input.enabled, input.eligibleKeys, input.scopeKey, input.visibleOrderedKeys]);
+    }, [input.enabled, input.eligibleKeys, input.entityKeysByOccurrenceKey, input.scopeKey, input.visibleOrderedKeys]);
 
     return storeRef.current;
 }

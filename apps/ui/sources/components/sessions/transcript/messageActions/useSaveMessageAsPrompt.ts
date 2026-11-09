@@ -26,7 +26,9 @@ export function useSaveMessageAsPrompt(props: Readonly<{
     const [title, setTitle] = React.useState(() => props.text.split(/\r?\n/, 1)[0].trim());
     const [favorite, setFavorite] = React.useState(true);
     const [shortcutExpanded, setShortcutExpanded] = React.useState(false);
-    const [shortcut, setShortcut] = React.useState('');
+    const [shortcut, setShortcutValue] = React.useState('');
+    // The field's leading adornment draws the `/`; a typed leading slash is dropped rather than shown twice.
+    const setShortcut = React.useCallback((value: string) => setShortcutValue(value.replace(/^\/+/, '')), []);
     const [error, setError] = React.useState<string | null>(null);
     const saving = React.useRef(false);
     const [isSaving, setIsSaving] = React.useState(false);

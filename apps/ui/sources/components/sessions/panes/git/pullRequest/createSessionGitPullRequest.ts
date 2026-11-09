@@ -6,6 +6,7 @@ import { reportSessionScmOperation } from '@/scm/operations/reporting';
 import { selectScmCreatePrResult } from '@/scm/pullRequests/selectScmCreatePrResult';
 import { sessionScmPullRequestOpenOrReuse } from '@/sync/ops/sessionScm';
 import { isScmActionNotRun } from '@/sync/ops/scm/scmActionInvocation';
+import { scmStatusSync } from '@/scm/scmStatusSync';
 
 import type { GitPullRequestCreateOutcome } from './gitPullRequestFormState';
 
@@ -68,5 +69,9 @@ export async function createSessionGitPullRequest(input: Readonly<{
             return outcome;
         },
     });
-    return lock.started ? lock.value : { kind: 'blocked', message: lock.message };
+    if (!lock.started) return { kind: 'blocked', message: lock.message };
+    if (lock.value.kind === 'created' || lock.value.kind === 'reused') {
+        await scmStatusSync.invalidateFromMutationAndAwait(input.sessionId, input.serverId);
+    }
+    return lock.value;
 }

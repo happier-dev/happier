@@ -62,6 +62,7 @@ vi.mock('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage', () => {
     const values = new Map<string, string>();
     return { getSessionDraftPersistenceStorage: () => ({
         getString: (key: string) => values.get(key),
+        getAllKeys: () => [...values.keys()],
         set: (key: string, value: string) => { values.set(key, value); },
         delete: (key: string) => { values.delete(key); },
     }) };

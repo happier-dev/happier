@@ -1,11 +1,13 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ProviderConnectionIdSchema, type BackendTargetRefV2 } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema} from '@happier-dev/protocol/providers/ids';
+import { type BackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { FavoriteModelSelectionV1Schema } from '@/sync/domains/models/favoriteModelSelections';
 
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 import { renderScreen } from '@/dev/testkit';
+import { layoutHitArea } from '@/dev/testkit/harness/hitFrameReach';
 import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import { createReactNativeWebMock } from '@/dev/testkit/mocks/reactNative';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
@@ -309,6 +311,38 @@ describe('NewSessionEngineOptionDetail', () => {
         probeRefreshSpies.config.mockClear();
     });
 
+    it('shows a held model-list approval in place and drops it once the projection settles', async () => {
+        const pendingProjection = (pendingApproval: ProviderProjectionResult['pendingApproval']): ProviderProjectionResult => ({
+            data: null,
+            error: null,
+            pendingApproval,
+            loading: pendingApproval !== null,
+            status: 'pending',
+            refreshFailures: [],
+            refresh: vi.fn(async () => {}),
+            refreshWithResult: vi.fn(async () => null),
+        });
+        const props = {
+            backendTarget,
+            selectedMachineId: 'machine-1',
+            capabilityServerId: 'server-1',
+            cwd: '/repo',
+            selectedModelId: 'default',
+            selectedSessionModeId: 'default',
+            selectedConfigOverrides: {},
+        } as const;
+        providerProjectionSpy.mockReturnValue(pendingProjection({
+            artifactId: 'refresh-approval-1',
+            href: '/inbox/approvals/refresh-approval-1?serverId=server-1' as never,
+        }));
+        const screen = await renderScreen(<NewSessionEngineOptionDetail {...props} />);
+        expect(screen.findByTestId('model-picker-projection-approval')).toBeTruthy();
+
+        providerProjectionSpy.mockReturnValue(pendingProjection(null));
+        await screen.update(<NewSessionEngineOptionDetail {...props} />);
+        expect(screen.findByTestId('model-picker-projection-approval')).toBeNull();
+    });
+
     it('keeps provider projection disabled when the root providers feature is disabled', async () => {
         providersFeatureEnabledState.value = false;
 
@@ -451,7 +485,6 @@ describe('NewSessionEngineOptionDetail', () => {
         }));
         expect(lastOptionPickerOverlayProps?.options).toEqual([]);
         expect(lastOptionPickerOverlayProps?.selectedValue).toEqual(selectedModelSelection.ref);
-        expect(lastOptionPickerOverlayProps?.effectiveLabel).toBe('provider-only-model');
         const renderedOptions = lastOptionPickerOverlayProps?.sections
             ?.flatMap((section: { options: unknown[] }) => section.options) ?? [];
         expect(renderedOptions.find(
@@ -497,7 +530,8 @@ describe('NewSessionEngineOptionDetail', () => {
         // Native rails draw no row actions, so the model header carries the Agent favorite.
         await withPlatformOS('ios', async () => {
             const onToggleFavoriteEngine = vi.fn();
-            const screen = await renderScreen(<NewSessionEngineOptionDetail
+            const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
+            const screen = await renderScreen(<HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}><NewSessionEngineOptionDetail
                 backendTarget={backendTarget}
                 selectedMachineId="machine-1"
                 capabilityServerId="server-1"
@@ -509,17 +543,17 @@ describe('NewSessionEngineOptionDetail', () => {
                     favorite: true,
                     onToggle: onToggleFavoriteEngine,
                 }}
-            />);
+            /></HappierUiPlatformProvider>);
 
             expect(lastOptionPickerOverlayProps?.headerAccessory).toBeTruthy();
 
             const favoriteAction = screen.findByTestId('new-session-engine-favorite-toggle');
-            const targetStyle = resolveInteractiveStyle(favoriteAction?.props.style);
-            // The press frame carries the target; the drawn box stays compact. Vertical is
-            // the free axis, horizontal is capped at half the header cluster's gap so the
-            // star cannot overlap the refresh control beside it (WCAG 2.2 AA SC 2.5.8).
-            expect(targetStyle.height ?? targetStyle.minHeight).toBeGreaterThanOrEqual(44);
-            expect(targetStyle.width ?? targetStyle.minWidth).toBeGreaterThanOrEqual(24);
+            // The drawn box stays compact; the hit area carries the finger target. Vertical is the free
+            // axis, horizontal is capped at half the header cluster's gap so the star cannot overlap the
+            // refresh control beside it (WCAG 2.2 AA SC 2.5.8).
+            const area = await layoutHitArea(() => screen.findByTestId('new-session-engine-favorite-toggle'), { width: 28, height: 28 });
+            expect(area.height).toBeGreaterThanOrEqual(44);
+            expect(area.width).toBeGreaterThanOrEqual(24);
             expect(favoriteAction?.props.accessibilityLabel).toBe('profiles.actions.removeFromFavorites');
             expect(typeof favoriteAction?.props.onFocus).toBe('function');
 

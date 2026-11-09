@@ -1,4 +1,5 @@
 import { readSessionWorkStateGroupV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
+import { inboxItemViewV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import type { SessionWorkflowRunHeadlineV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { shallow } from 'zustand/shallow';
@@ -9,6 +10,7 @@ import {
     type WorkStatusPresentation,
 } from '@/components/work/status/resolveWorkStatusTone';
 import { withOutstandingReports, type SessionWorkStatusFacts } from '@/components/work/status/sessionWorkStatusFacts';
+import { readWorkflowRunWorkStatusFacts, type WorkflowRunWorkStatusSummary } from '@/components/work/status/workflowWorkStatusFacts';
 import type { AgentActivityEntry } from '@/sync/domains/session/agentActivity';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { actionOperationAddressKey } from '@/sync/domains/actionOperations/qualifiedActionOperation';
@@ -142,8 +144,10 @@ export type WorkItem = Readonly<{
     title: string;
     /** The Agent whose mark the row carries, when known. */
     agentId: string | null;
-    /** Quiet secondary facts in reading order (engine · machine, "Reports to …", "7 of 12"). */
+    /** Quiet secondary facts in reading order (what it is doing, "reports to …", "7 of 12"; a machine only when it differs from the lead's). */
     facts: readonly string[];
+    /** When the work last moved, for the quiet time a settled Recent row ends with; absent when no source dates it. */
+    atMs?: number | null;
     /** The nearest visible item this belongs under (archived Session intermediates are presented separately). */
     parentKey: string | null;
     /** Visible report depth: 0 under the lead, 1 under another visible report, … */
@@ -157,6 +161,20 @@ export type WorkItem = Readonly<{
     /** A represented Workflow owns its command leaves; they add no top-level Work count. */
     projectCommands?: readonly WorkItem[];
 }>;
+
+/**
+ * Settled work nobody needs to act on ends its row with when it last moved instead of an "Unread" or
+ * "Ready" word (lab `convo-W8full`: Recent reads 18m, 12m); trouble and states with their own meaning
+ * (Offline, Stopped, Mentioned you) keep their word. The Work list draws that time and the Work map
+ * leaves such a node without a state word, so the two never disagree about what is still going.
+ */
+const QUIET_TIME_STATES: ReadonlySet<string> = new Set(['unread', 'finished_unseen', 'ready', 'waiting']);
+
+export function endsWithQuietTime(item: Pick<WorkItem, 'atMs' | 'status'>): boolean {
+    return typeof item.atMs === 'number' && QUIET_TIME_STATES.has(item.status.state)
+        && (item.status.bucket === 'finished' || item.status.bucket === 'idle') && item.status.tone === 'neutral';
+}
+
 
 /**
  * The narrow summary every closed surface reads (header strip, tab badge, "never Finished").
@@ -207,7 +225,12 @@ export type WorkReportSessionSource = Readonly<{
     managerSessionId: string | null;
     title: string;
     agentId: string | null;
+    /** Where it runs, only when that differs from the lead's machine. */
     facts: readonly string[];
+    /** What it is doing now, in the row's own words (the request it waits on, or its latest update headline). */
+    activity?: string | null;
+    /** Its last meaningful activity. */
+    atMs?: number | null;
     /** Awareness, state word and "settled", from the one Session facts owner (`readSessionWorkStatusFacts`). */
     statusFacts: SessionWorkStatusFacts;
     /** Offline with a turn in flight (`readSessionWorkStalled`); never inferred from the bucket. */
@@ -216,12 +239,10 @@ export type WorkReportSessionSource = Readonly<{
 }>;
 
 export type WorkManagedRunSource = Readonly<{
-    run: Pick<WorkflowRunSummaryV1, 'id' | 'state' | 'workflowCustodyState'>;
+    run: WorkflowRunWorkStatusSummary & Pick<WorkflowRunSummaryV1, 'id'>;
     title: string;
     /** The run's state word (`describeWorkflowRunState`). */
     word: string;
-    /** The server's attention predicate returned this run. */
-    needsAttention: boolean;
     /** When the run last changed, as the row says it ("10:42"); a Work row never runs a clock of its own. */
     time?: string;
 }>;
@@ -241,6 +262,8 @@ export type WorkProjectionInput = Readonly<{
     ownTriggerRunIds: ReadonlySet<string>;
     /** The word for each agent-activity status (the agent presenter's label). */
     describeAgentStatus: (entry: AgentActivityEntry) => string;
+    /** "reports to <lead>": a report nested under another visible report says which. */
+    describeReportsTo?: (lead: string) => string;
     /** Workflow progress copy ("7 of 12"). */
     describeProgress: (progress: Readonly<{ completed: number; total: number }>) => string;
 }>;
@@ -267,17 +290,16 @@ function classifyAgentActivity(entry: AgentActivityEntry, word: string): WorkSta
 function classifyManagedRun(source: WorkManagedRunSource): WorkStatus {
     return resolveWorkStatusTone({
         kind: 'workflow_run',
-        facts: {
-            state: source.run.state,
-            workflowCustodyState: source.run.workflowCustodyState,
-            inAttentionWindow: source.needsAttention,
-            word: source.word,
-        },
+        facts: readWorkflowRunWorkStatusFacts(source.run, { word: source.word }),
     });
 }
 
 function isOutstanding(bucket: WorkBucket): boolean {
     return bucket === 'working' || bucket === 'needs_you' || bucket === 'offline';
+}
+
+function isWorkNeedsYouStatus(status: WorkStatus): boolean {
+    return status.bucket === 'needs_you' && status.attentionType !== null && inboxItemViewV1(status.attentionType) === 'needs_you';
 }
 
 /**
@@ -312,6 +334,16 @@ function projectReportSessions(input: WorkProjectionInput): Readonly<{
     const items: WorkItem[] = [];
     const stalledKeys = new Set<string>();
     const visited = new Set<string>([input.sessionId]);
+    const titleBySessionId = new Map(input.reportSessions.map((source) => [source.sessionId, source.title]));
+    // Rows state what the report is doing; the lead's own reports need no "reports to" (every row here does).
+    const readFacts = (source: WorkReportSessionSource, parentSessionId: string | null): readonly string[] => {
+        const leadTitle = parentSessionId && parentSessionId !== input.sessionId ? titleBySessionId.get(parentSessionId) : undefined;
+        return [
+            ...(source.activity ? [source.activity] : []),
+            ...(leadTitle && input.describeReportsTo ? [input.describeReportsTo(leadTitle)] : []),
+            ...source.facts,
+        ];
+    };
     /** Places the reports of `managerSessionId` and returns how many in that subtree are still outstanding. */
     const walk = (managerSessionId: string, parentKey: string | null, level: number): number => {
         let outstanding = 0;
@@ -338,7 +370,8 @@ function projectReportSessions(input: WorkProjectionInput): Readonly<{
                 kind: 'session',
                 title: source.title,
                 agentId: source.agentId,
-                facts: source.facts,
+                facts: readFacts(source, parentKey ? parentKey.slice('session:'.length) : null),
+                atMs: source.atMs ?? null,
                 parentKey,
                 level,
                 status,
@@ -361,6 +394,7 @@ function archivedWorkItem(source: WorkReportSessionSource): WorkItem {
         title: source.title,
         agentId: source.agentId,
         facts: source.facts,
+        atMs: source.atMs ?? null,
         parentKey: null,
         level: 0,
         status: { state: 'archived', bucket: 'finished', tone: 'neutral', attentionType: null, word: t('sessionWork.states.archived') },
@@ -494,9 +528,10 @@ export function projectWork(input: WorkProjectionInput, previous?: WorkProjectio
     let stalled = 0;
     for (const item of [...sessions, ...workflows, ...backgroundRuns, ...agents, ...projectCommands]) {
         const itemStalled = item.kind === 'session' ? stalledKeys.has(item.key) : item.status.bucket === 'offline';
+        if (item.status.bucket === 'needs_you' && !isWorkNeedsYouStatus(item.status)) continue;
         if (item.kind === 'session' ? !isOutstandingSession(item.status.bucket, itemStalled) : !isOutstanding(item.status.bucket)) continue;
         outstanding += 1;
-        if (item.status.bucket === 'needs_you') needsYou += 1;
+        if (isWorkNeedsYouStatus(item.status)) needsYou += 1;
         if (itemStalled) stalled += 1;
     }
 
@@ -538,6 +573,7 @@ function retainWorkItems(next: readonly WorkItem[], previous: readonly WorkItem[
             ? retainWorkItems(item.projectCommands, old.projectCommands) : item.projectCommands;
         if (item.kind === old.kind && item.title === old.title && item.agentId === old.agentId
             && item.parentKey === old.parentKey && item.level === old.level && item.operation === old.operation
+            && (item.atMs ?? null) === (old.atMs ?? null)
             && shallow(item.facts, old.facts) && shallow(item.status, old.status) && shallow(item.progress, old.progress)
             && shallow(item.open, old.open) && projectCommands === old.projectCommands) return old;
         return projectCommands === item.projectCommands ? item : { ...item, projectCommands };
@@ -593,7 +629,8 @@ export function groupWorkByState(projection: WorkProjection, previous?: WorkStat
     const groups: Record<LiveWorkStateGroupKey, WorkItem[]> = { needsYou: [], working: [], recent: [] };
     const placed = new Map<string, Readonly<{ group: LiveWorkStateGroupKey; level: number }>>();
     for (const item of [...projection.sessions, ...projection.backgroundRuns, ...projection.workflows, ...projection.agents, ...projection.projectCommands]) {
-        const group = readSessionWorkStateGroupV1(item.status.bucket);
+        const group = item.status.bucket === 'needs_you' && !isWorkNeedsYouStatus(item.status)
+            ? 'recent' : readSessionWorkStateGroupV1(item.status.bucket);
         const parent = item.parentKey ? placed.get(item.parentKey) : undefined;
         const level = parent && parent.group === group ? parent.level + 1 : 0;
         placed.set(item.key, { group, level });

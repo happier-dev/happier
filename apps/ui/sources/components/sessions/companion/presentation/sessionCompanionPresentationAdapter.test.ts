@@ -66,7 +66,7 @@ function ports(overrides: Partial<SessionPresentationPorts> = {}): SessionPresen
     const readableItem = overrides.board?.canReadItem ?? (() => true);
     return {
         companion: controllerStub(),
-        canAddCompanionItem: (item) => canAddSessionCompanionItem(item, null, readableItem),
+        canAddCompanionItem: (item) => canAddSessionCompanionItem(item, null, widgetId => readableItem(widgetId) === true),
         board: {
             availability: 'ready',
             open: () => ({ status: 'applied', undo: () => {} }),
@@ -87,18 +87,18 @@ function ports(overrides: Partial<SessionPresentationPorts> = {}): SessionPresen
 const intent = (value: CurrentSessionPresentationIntentV1) => value;
 
 describe('chat.item.show', () => {
-    it('runs a readable item in its Chat reply, announces it once, and refuses a target it cannot read', () => {
+    it('runs a readable item in its Chat reply and announces it once, independently of Board membership', () => {
         const showItemInChat = vi.fn(() => ({ status: 'applied' as const }));
         const publishNotice = vi.fn();
         expect(applySessionPresentationIntent(ports({ showItemInChat, publishNotice }), { kind: 'chat.item.show', widgetId: 'visual-1' }))
             .toEqual({ status: 'applied' });
-        expect(showItemInChat).toHaveBeenCalledWith('visual-1');
+        expect(showItemInChat).toHaveBeenCalledWith('visual-1', undefined);
         expect(publishNotice).toHaveBeenCalledTimes(1);
 
-        const unread = ports({ showItemInChat, board: { ...ports().board, canReadItem: () => false } });
+        const transcriptOnly = ports({ showItemInChat, board: { ...ports().board, canReadItem: () => false } });
         showItemInChat.mockClear();
-        expect(applySessionPresentationIntent(unread, { kind: 'chat.item.show', widgetId: 'visual-1' })).toEqual({ status: 'invalidTarget' });
-        expect(showItemInChat).not.toHaveBeenCalled();
+        expect(applySessionPresentationIntent(transcriptOnly, { kind: 'chat.item.show', widgetId: 'visual-1' })).toEqual({ status: 'applied' });
+        expect(showItemInChat).toHaveBeenCalledWith('visual-1', undefined);
     });
 
     it('is typed unavailable when no reply that draws the item is on screen', () => {
@@ -537,6 +537,23 @@ describe('applySessionPresentationIntent', () => {
         )).toEqual({ status: 'unavailable' });
         expect(open).not.toHaveBeenCalled();
         expect(publishNotice).not.toHaveBeenCalled();
+    });
+
+    it('keeps an unreadable Board item unavailable when the mounted Board port is unavailable', () => {
+        const revealItem = vi.fn(() => ({ status: 'applied' as const }));
+
+        expect(applySessionPresentationIntent(
+            ports({
+                board: {
+                    ...ports().board,
+                    availability: 'unavailable',
+                    canReadItem: () => false,
+                    revealItem,
+                },
+            }),
+            intent({ kind: 'board.item.reveal', widgetId: 'missing' }),
+        )).toEqual({ status: 'unavailable' });
+        expect(revealItem).not.toHaveBeenCalled();
     });
 
     it('does not publish a notice for a refused or unchanged intent', () => {

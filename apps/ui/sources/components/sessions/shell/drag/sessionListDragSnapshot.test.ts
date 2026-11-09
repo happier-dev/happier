@@ -67,6 +67,18 @@ function viewItems(): SessionListIndexItem[] {
 }
 
 describe('buildSessionListDragSnapshot', () => {
+    it('captures the initiating mirror occurrence while keeping its semantic Session address', () => {
+        const base = sessionIndexItem('mirrored', 'project-a', null, 0);
+        const shelf = { ...base, occurrenceRole: 'needsYou' as const, groupKey: 'attention' };
+        const items = [projectHeader('attention'), shelf, projectHeader('project-a'), base];
+        const sourceRowId = treeRowId.session('server-a', 'mirrored', undefined, 'needsYou');
+        const snapshot = buildSessionListDragSnapshot({ items, viewItems: items, sessionDragKey: sourceRowId,
+            foldersFeatureEnabled: true });
+        expect(snapshot.source.sourceRowId).toBe(sourceRowId);
+        expect(snapshot.source.treeSource.metadata).toMatchObject({ serverId: 'server-a', sessionId: 'mirrored', item: shelf });
+        expect(snapshot.topology.rows.filter(row => row.kind === 'leaf')).toHaveLength(2);
+    });
+
     it('resolves a URL-shaped Home without parsing the list key', () => {
         const serverId = 'https://home.example.test:8443';
         const workspace = { ...workspaceA, serverId };
@@ -156,31 +168,31 @@ describe('buildSessionListDragSnapshot', () => {
     });
 
     it('emits structural sibling-before zones with anchor + target row ids (no bounds)', () => {
+        const items = [...indexItems(), sessionIndexItem('root-b', 'project-a', null, 0)];
         const snapshot = buildSessionListDragSnapshot({
-            items: indexItems(),
-            viewItems: viewItems(),
+            items,
+            viewItems: items,
             sessionDragKey: sessionAddressKey({ serverId: 'server-a', sessionId: 'root-a' }),
             foldersFeatureEnabled: true,
         });
 
-        // The project container holds [folder-a, root-a]; the gap before root-a
-        // is a `sibling-before` zone anchored on the preceding sibling (folder-a).
+        // Section headers have their own order; Project sibling gaps contain Sessions only.
         const siblingZone = snapshot.topology.dropZones.find((zone) =>
             zone.role === 'sibling-before'
-            && zone.targetRowId === treeRowId.session('server-a', 'root-a'));
+            && zone.targetRowId === treeRowId.session('server-a', 'root-b'));
         expect(siblingZone).toBeTruthy();
-        expect(siblingZone?.anchorRowId).toBe(treeRowId.folder('server-a', 'folder-a'));
+        expect(siblingZone?.anchorRowId).toBe(treeRowId.session('server-a', 'root-a'));
         expect(siblingZone).not.toHaveProperty('bounds');
 
         // Root-edge zones carry the first/last child row as their bounds anchor.
         const rootAfterLast = snapshot.topology.dropZones.find((zone) =>
             zone.role === 'root-after-last'
             && zone.containerId === treeRowId.workspaceRoot('project-a'));
-        expect(rootAfterLast?.anchorRowId).toBe(treeRowId.session('server-a', 'root-a'));
+        expect(rootAfterLast?.anchorRowId).toBe(treeRowId.session('server-a', 'root-b'));
         const rootBeforeFirst = snapshot.topology.dropZones.find((zone) =>
             zone.role === 'root-before-first'
             && zone.containerId === treeRowId.workspaceRoot('project-a'));
-        expect(rootBeforeFirst?.anchorRowId).toBe(treeRowId.folder('server-a', 'folder-a'));
+        expect(rootBeforeFirst?.anchorRowId).toBe(treeRowId.session('server-a', 'root-a'));
     });
 
     it('resolves a folder drag source from a folder drag key', () => {

@@ -7,6 +7,7 @@ import {
 } from '@/components/machines/managed/managedComposerBadges';
 import { describeManagedCreationProgress } from '@/components/settings/machines/managed/managedCreationProgressPresentation';
 import { describeManagedInstallationFailure, isManagedCreationInterrupted, managedCreationStages } from '@/components/settings/machines/managed/managedCreationPresentation';
+import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
 import { readMachineAddDevice } from '@/components/machines/add/useMachineAddPaths';
 import { ManagedPresetMark } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { t } from '@/text';
@@ -89,7 +90,8 @@ export function buildNewSessionManagedProgressBadge(
         tone,
         message: setup ? progress.kind === 'failed' ? t('managedMachines.creation.setupFailedHelp')
             : t('managedMachines.creation.setupWaiting', { name: machineName }) : failed ?
-                (operation?.error ? describeManagedInstallationFailure(operation.error, operation.progress) : null) ?? t('newSession.failedToStart')
+                (operation?.error ? describeManagedInstallationFailure(operation.error, operation.progress)
+                    : progress.kind === 'failed' ? resolveSystemTaskFailureMessage({ code: progress.code, message: null }) ?? null : null) ?? t('newSession.failedToStart')
             : t('managedMachines.creation.messageWaiting', { name: machineName }),
         archiveChoice: draft.updateArchiveEffect ? {
             scope: draft.creationScope ?? 'session',

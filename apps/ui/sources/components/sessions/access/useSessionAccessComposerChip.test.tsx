@@ -116,10 +116,14 @@ describe('useSessionAccessComposerChip', () => {
         expect(required.latest()?.label).toContain('Acme');
         expect(required.latest()?.label).toContain(t('session.access.required'));
         expect(required.latest()?.requiredByTeamPolicy).toBe(true);
+        // A policy lock explains this viewer's access, not a differing audience.
+        expect(required.latest()?.pending).not.toBe(true);
 
         const neutral = await mountProbe({ target: TARGET });
         expect(neutral.latest()?.label).toBe(t('session.access.title'));
         expect(neutral.latest()?.requiredByTeamPolicy).toBe(false);
+        expect(contextual.latest()?.pending).not.toBe(true);
+        expect(neutral.latest()?.pending).not.toBe(true);
     });
 
     it('hands the editor the real close and full-surface handoff from the popover host', async () => {

@@ -21,7 +21,7 @@ vi.mock('@/text', async () => {
     return createTextModuleMock({ translate: (key: string, params?: Record<string, unknown>) => (params && 'count' in params ? `${key}:${String(params.count)}` : key) });
 });
 
-const { WorkSection, WorkFlatSheet, WorkSectionEmptyLine } = await import('./WorkSection');
+const { WorkSection, WorkFlatSheet, WorkSectionEmptyLine, WorkSectionPlacementProvider } = await import('./WorkSection');
 const { Item } = await import('@/components/ui/lists/Item');
 const { CollectionListGroupLabel } = await import('@/components/ui/lists/collection/CollectionList');
 
@@ -63,6 +63,26 @@ describe('WorkSectionEmptyLine', () => {
 });
 
 describe('WorkSection', () => {
+    it('keeps an open Setup row\'s own operations beside the row\'s press target, never inside it', async () => {
+        const screen = await renderScreen(
+            <WorkSectionPlacementProvider value="setup">
+                <WorkSection testID="roles" anatomy="page" title="Roles" count="1 changed" action={<View testID="roles-add" />}>
+                    <ProbeRow id="reviewer" />
+                </WorkSection>
+            </WorkSectionPlacementProvider>,
+        );
+        const row = () => screen.findAll((node) => node.props.testID === 'roles:row' && typeof node.props.onPress === 'function')[0]!;
+        await act(async () => { row().props.onPress(); });
+        const add = screen.findByTestId('roles-add')!;
+        expect(add).not.toBeNull();
+        // No press target encloses the operation (the row composite itself only lays it out beside its own).
+        let ancestor: ReactTestInstance | null = add.parent;
+        while (ancestor) {
+            if (!rendersThrough(ancestor, Item)) expect(typeof ancestor.props.onPress).not.toBe('function');
+            ancestor = ancestor.parent;
+        }
+    });
+
     it('draws a configuration section flat on the pane: a full-width hairline, title · quiet count · ⓘ · one action, rows on the list inset with no hairlines', async () => {
         const screen = await renderScreen(
             <WorkSection

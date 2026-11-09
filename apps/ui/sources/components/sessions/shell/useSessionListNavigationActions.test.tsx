@@ -10,8 +10,10 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { readNewSessionDraftFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
 import { resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { clearTempData } from '@/utils/sessions/tempDataStore';
-import type { WorkspaceRefV1 } from '@happier-dev/protocol';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { buildRealmQualifiedMobileSurfaceStorageKey } from '@/sync/domains/settings/mobileSurfacePersistence';
+import { projectLastMobileSurfaceState, projectLastActiveRootPathState, projectLastActiveWorktreeIdState } from '@/sync/domains/state/navigationUiState';
+import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persistentUiState';
 import type { ProjectAccountRowV1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { SESSION_CONFIG_OPTION_OVERRIDES_KEY, SESSION_MODE_OVERRIDE_KEY } from '@happier-dev/agents';
 import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/UniversalSearchRuntimeContext';
@@ -73,6 +75,9 @@ describe('useSessionListNavigationActions', () => {
         storage.getState().applySettingsLocal({ rememberLastProjectSessionSelections: true, mobileWorkspaceExperienceV1: 'cockpit' });
         storage.getState().applyMachines([createMachineFixture({ id: 'machine_target' })], true, { sourceServerId: serverIdA });
         storage.setState({ sessions: {} });
+        replacePersistentUiStateForTest(projectLastMobileSurfaceState, {});
+        replacePersistentUiStateForTest(projectLastActiveRootPathState, {});
+        replacePersistentUiStateForTest(projectLastActiveWorktreeIdState, {});
         clearTempData();
         resetSessionDraftRepositoryForTests();
     });
@@ -104,11 +109,11 @@ describe('useSessionListNavigationActions', () => {
         expect(storage.getState().projectAccountRows?.workspaceRefs, JSON.stringify({ census,
             profileScope: storage.getState().profileScope, snapshot: storage.getState().projectAccountRows })).toHaveLength(workspaceRefs.length);
         const key = `project-selection:v1:${JSON.stringify([serverIdA, 'wr_1'])}`;
-        storage.getState().applyLocalSettings({
-            projectLastMobileSurfaceByWorkspaceRefId: { [buildRealmQualifiedMobileSurfaceStorageKey('project', { serverId: serverIdA, accountId: 'account-a' }, 'wr_1')!]: 'changes' },
-            projectLastActiveRootPathByWorkspaceRefId: { [key]: '/repo/.worktrees/feature' },
-            projectLastActiveWorktreeIdByWorkspaceRefId: { [key]: 'gitwt_feature' },
-        });
+        projectLastMobileSurfaceState.set(buildRealmQualifiedMobileSurfaceStorageKey('project', {
+            serverId: serverIdA, accountId: 'account-a',
+        }, 'wr_1')!, 'changes');
+        projectLastActiveRootPathState.set(key, '/repo/.worktrees/feature');
+        projectLastActiveWorktreeIdState.set(key, 'gitwt_feature');
 
         const { useSessionListNavigationActions } = await import('./useSessionListNavigationActions');
         const hook = await renderHook(() => useSessionListNavigationActions(), { wrapper: SearchWrapper });
@@ -256,6 +261,20 @@ describe('useSessionListNavigationActions', () => {
         });
         expect(routerPushSpy).not.toHaveBeenCalled();
 
+        await hook.unmount();
+    });
+    it('hands memoized list chrome one set of handlers across renders while they still read the latest scope', async () => {
+        const { useSessionListNavigationActions } = await import('./useSessionListNavigationActions');
+        const scopeA = { accountId: 'account-a', serverId: 'home-a', sessionId: null, machineId: null, rootPath: null };
+        const scopeB = { ...scopeA, accountId: 'account-b', serverId: 'home-b' };
+        const hook = await renderHook(({ scope }: { scope: typeof scopeA }) => useSessionListNavigationActions(scope),
+            { wrapper: SearchWrapper, initialProps: { scope: scopeA } });
+        const first = hook.getCurrent();
+        await hook.rerender({ scope: scopeB });
+
+        expect(hook.getCurrent()).toBe(first);
+        await act(async () => { first.handleOpenUniversalSearch('q'); });
+        expect(openUniversalSearchSpy).toHaveBeenCalledWith('q', scopeB);
         await hook.unmount();
     });
 });

@@ -10,7 +10,7 @@ import { formatPercent, formatTokenCount, formatTokenCountLong } from '@/utils/f
 import { t } from '@/text';
 
 import { AgentInputContentPopover } from '../components/AgentInputContentPopover';
-import { instrumentStripStyles } from './instrumentStripStyles';
+import { instrumentStripStyles, useInstrumentStripHitReach } from './instrumentStripStyles';
 import type { InstrumentStripContextModel } from './useInstrumentStripModel';
 
 const REFRESH_SHIMMER_MS = 300;
@@ -35,6 +35,7 @@ export const ContextGaugeInstrument = React.memo(function ContextGaugeInstrument
     props: ContextGaugeInstrumentProps,
 ) {
     const anchorRef = React.useRef(null);
+    const hitReach = useInstrumentStripHitReach();
     const [open, setOpen] = React.useState(false);
     const [refreshing, setRefreshing] = React.useState(false);
     const refreshTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -75,6 +76,7 @@ export const ContextGaugeInstrument = React.memo(function ContextGaugeInstrument
                     isStreaming={props.isStreaming}
                     stale={model.stale}
                     onPress={handlePress}
+                    hitReach={hitReach}
                     testID={props.testID ?? 'session-instrument-context-gauge'}
                 />
                 {props.showPercentText && percentLabel ? (

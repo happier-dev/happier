@@ -5,7 +5,7 @@ import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import type {
     SessionAgentTransitionSelectionV1,
     SessionContinuationMachinePresenceV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/agentTransition';
 
 import { inspectSessionContinuationsOnMachine } from '@/sync/ops/sessionContinuationInspection';
 

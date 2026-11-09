@@ -11,7 +11,7 @@ import {
     SessionListSelectionProvider,
     useSessionListSelectionActions,
 } from './SessionListSelectionContext';
-import { SessionListSelectionActionBarHost } from './SessionListSelectionActionBar';
+import { SessionListSelectionActionBarHost, type SessionListSelectionActionBarHostProps } from './SessionListSelectionActionBar';
 import { SESSION_BULK_ACTION_IDS, type SessionBulkActionTarget } from '@/components/sessions/actions/sessionBulkActionTypes';
 
 vi.mock('react-native', async (importOriginal) => {
@@ -210,6 +210,45 @@ describe('SessionListSelectionActionBarHost', () => {
         const result = screen.findByProps({ testID: 'session-list-selection-result' });
         expect(result.props['data-failed-count']).toBe(1);
         expect(result.props['data-succeeded-count']).toBe(0);
+        expect(screen.findByProps({ testID: 'session-list-selection-count' }).props['data-selected-count']).toBe(1);
+    });
+
+    it('retains the picker-captured filing context and partial outcomes', async () => {
+        type Choice = Awaited<ReturnType<NonNullable<SessionListSelectionActionBarHostProps['onRequestMoveToFolder']>>>;
+        let resolvePicker!: (choice: Choice) => void;
+        const picker = new Promise<Choice>(resolve => { resolvePicker = resolve; });
+        const writes: string[] = [];
+        const targetsByKey = new Map<string, SessionBulkActionTarget>(['session-a', 'session-b'].map(sessionId => [sessionId,
+            { key: sessionId, sessionId, serverId: 'server-a', canMoveToFolder: true }] as const));
+        const screen = await renderScreen(
+            <SessionListSelectionProvider scopeKey="scope-a" visibleOrderedKeys={['session-a', 'session-b']}>
+                <SelectionControls />
+                <SessionListSelectionActionBarHost targetsByKey={targetsByKey}
+                    bulkActionContext={{ foldersFeatureDecision: { state: 'enabled' },
+                        setSessionFolderAssignment: async () => { throw new Error('Must not select a later operation context'); } }}
+                    onRequestMoveToFolder={() => picker} />
+            </SessionListSelectionProvider>,
+        );
+        await pressByTestId(screen, 'select-all-sessions');
+        let operation: Promise<void> | undefined;
+        await act(async () => {
+            operation = screen.findByProps({ testID: 'session-list-selection-action-session-move-to-folder' }).props.onPress();
+        });
+        expect(writes).toEqual([]);
+        await act(async () => {
+            resolvePicker({ folderId: 'launch', destinationServerId: 'server-a', executionContext: {
+                // This is the captured external mutation boundary, not a second bulk implementation.
+                setSessionFolderAssignment: async ({ target }) => {
+                    writes.push(target.sessionId);
+                    if (target.sessionId === 'session-b') throw new Error('permission_denied');
+                },
+            } });
+            await operation;
+        });
+        expect(writes).toEqual(['session-a', 'session-b']);
+        const result = screen.findByProps({ testID: 'session-list-selection-result' });
+        expect(result.props['data-succeeded-count']).toBe(1);
+        expect(result.props['data-failed-count']).toBe(1);
         expect(screen.findByProps({ testID: 'session-list-selection-count' }).props['data-selected-count']).toBe(1);
     });
 

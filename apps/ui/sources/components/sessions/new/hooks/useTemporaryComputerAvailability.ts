@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { FeatureDecision } from '@happier-dev/protocol';
+import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
 import type { VerifiedRunnerArtifactV1 } from '@happier-dev/protocol/ephemeralRunner/runnerArtifact';
 import type { RunnerArtifactPublicationFailureV1 } from '@happier-dev/protocol/ephemeralRunner/errors';
 

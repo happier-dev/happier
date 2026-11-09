@@ -9,8 +9,7 @@ import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibil
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { NewSessionProfileAvailabilityReason } from '@/components/sessions/new/modules/newSessionAgentSelection';
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
-import type { Settings } from '@/sync/domains/settings/settings';
-import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
+import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/state/newSessionInteractionSchemas';
 import { toggleFavoriteBackendTargetKey } from '@/sync/domains/session/authoring/favoriteBackendTargets';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import type { RememberedEngineSelectionsByScopeV1 } from '@/sync/domains/session/authoring/rememberedEngineSelections';
@@ -67,11 +66,11 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     capabilityServerId: string;
     projectionCurrent: boolean;
     selectedPath: string | null;
-    readSettings: () => Settings;
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
     setFavoriteModelSelections?: (favorites: FavoriteModelSelectionV1[]) => void;
     favoriteBackendTargetKeys?: ReadonlyArray<string>;
     setFavoriteBackendTargetKeys?: (favorites: string[]) => void;
+    initialAgentPickerView?: NewSessionAgentPickerViewV1;
     onRememberAgentPickerView?: (view: NewSessionAgentPickerViewV1) => void;
     rememberEngineSelectionsEnabled?: boolean;
     rememberedEngineSelectionsByScope?: RememberedEngineSelectionsByScopeV1 | null;
@@ -94,9 +93,9 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
     handleAgentPickerSelect: (selectedId: string) => void;
     handleAgentClick: () => void;
 }> {
-    // Account echoes remember the next opening; they do not steer this mounted picker.
+    // Focus memory seeds the next opening; it never steers the mounted picker.
     const [rememberedAgentPickerView, setRememberedAgentPickerView] = React.useState(
-        () => params.readSettings().lastNewSessionAgentPickerViewV1,
+        () => params.initialAgentPickerView ?? null,
     );
     const rememberAgentPickerView = React.useCallback((view: NewSessionAgentPickerViewV1) => {
         setRememberedAgentPickerView((previous) => {
@@ -243,7 +242,6 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         selectedBackendTargetKey,
         selectedModelId: String(params.modelMode),
         selectedModelSelection: params.modelSelection ?? null,
-        readSettings: params.readSettings,
         refreshProbe: params.refreshProbe,
         favoriteModelSelections: params.favoriteModelSelections ?? [],
         favoriteBackendTargetKeys: params.favoriteBackendTargetKeys ?? [],
@@ -299,7 +297,6 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
         params.selectedProfileId,
         params.setFavoriteBackendTargetKeys,
         selectedBackendTargetKey,
-        params.readSettings,
         params.useProfiles,
         rememberAgentPickerView,
         params.experimentalConfirmation,

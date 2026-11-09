@@ -88,18 +88,18 @@ describe('projectTranscriptFindText', () => {
         expect(blocks.map((block) => block.text).join('\n')).not.toContain('secret-result');
     });
 
-    it('includes the tool structured card and omits chrome hidden by the canonical activity-feed presentation', () => {
+    it('includes the tool structured card and its disclosure title in the activity feed', () => {
         const message: Message = {
             kind: 'tool-call', id: 's', localId: null, createdAt: 1, children: [],
             meta: { happier: { kind: 'unknown-plugin-card.v1', payload: {} } },
             tool: {
                 id: 'tool', name: 'Unknown', state: 'completed', createdAt: 1, startedAt: 1, completedAt: 2,
-                description: null, input: {}, result: 'private hidden tool body',
+                description: null, input: {}, result: 'revealable tool result',
             },
         };
         const blocks = projectTranscriptFindText(message, { toolViewTimelineChromeMode: 'activity_feed' });
         expect(blocks.some((block) => block.id.startsWith('structured-unavailable-'))).toBe(true);
-        expect(blocks.some((block) => block.id === 'tool-title')).toBe(false);
-        expect(blocks.map((block) => block.text).join('\n')).not.toContain('private hidden tool body');
+        expect(blocks.some((block) => block.id === 'tool-title')).toBe(true);
+        expect(blocks.map((block) => block.text).join('\n')).toContain('revealable tool result');
     });
 });

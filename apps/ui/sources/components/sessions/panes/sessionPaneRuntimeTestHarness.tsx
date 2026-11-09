@@ -1,6 +1,11 @@
+import { replacePersistentUiStateForTest } from '@/dev/testkit/harness/persistentUiState';
 import 'fake-indexeddb/auto';
 import * as React from 'react';
-import { AccountSettingsV2GetResponseSchema, AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema, CurrentCursorResponseSchema, FeaturesResponseSchema, V2SessionByIdNotFoundSchema } from '@happier-dev/protocol';
+import { AccountSettingsV2GetResponseSchema} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema} from '@happier-dev/protocol/account/authoringMemory';
+import { CurrentCursorResponseSchema} from '@happier-dev/protocol/changes';
+import { FeaturesResponseSchema} from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { V2SessionByIdNotFoundSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { buildSessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
@@ -11,6 +16,7 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { storage } from '@/sync/domains/state/storageStore';
+import { paneUiState } from '@/sync/domains/state/filePaneUiState';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
@@ -21,12 +27,15 @@ import { createAuthoringMemoryHttpBoundary } from '@/dev/testkit/mocks/authoring
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { resolveServerScopedMachines } from '@/sync/domains/machines/resolveServerScopedMachines';
+import { captureActiveServerAccountScopeLifetime, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { SessionViewerSourceAccountScopeProvider } from '@/components/sessions/viewer/SessionViewerSourceAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
-import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createCompactSessionListRowFixture, createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { V2SessionListResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
 import {
     SESSION_HUMAN_PRESENCE_VISIBLE_REPLACE_EVENT,
     SessionHumanPresenceVisibleReplaceV1Schema,
@@ -44,6 +53,18 @@ vi.doUnmock('@/sync/domains/state/storage');
 vi.mock('@/sync/domains/state/browserRecordStorage', async () => (
     (await import('@/dev/testkit/mocks/browserRecordStorage')).createBrowserRecordStorageModuleMock()
 ));
+
+/** Call after installing case-owned boundaries; cold graph preparation can run during collection. */
+export async function prepareSessionPaneRuntimeForTests() {
+    const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+    await prepareSessionDraftPersistenceStorage();
+    await loadSyncSingletonForTests();
+    const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+    const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+    const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+    const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    return { AppPaneProvider, InjectedAuthProvider, useAppPaneScope, resetServerFeaturesClientForTests };
+}
 
 /** A real scoped Session and pane reducer; only Home HTTP/Socket transport is replaced. */
 export function installSessionPaneRuntimeTestHarness(params: Readonly<{
@@ -102,17 +123,12 @@ export function installSessionPaneRuntimeTestHarness(params: Readonly<{
             }
             params.configureSocket?.(socket, serverUrl);
         });
-        const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
-        await prepareSessionDraftPersistenceStorage();
-        await loadSyncSingletonForTests();
-        ({ AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider'));
-        ({ InjectedAuthProvider } = await import('@/auth/context/AuthContext'));
-        ({ useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope'));
-        const { resetServerFeaturesClientForTests } = await import('@/sync/api/capabilities/serverFeaturesClient');
-        resetServerFeaturesClientForTests();
+        const prepared = await prepareSessionPaneRuntimeForTests();
+        ({ AppPaneProvider, InjectedAuthProvider, useAppPaneScope } = prepared);
+        prepared.resetServerFeaturesClientForTests();
         previous = storage.getState();
         await restoreRealm({ accountId });
-        storage.setState({ localSettings: { ...storage.getState().localSettings, appPaneScopesV1: {} } });
+        replacePersistentUiStateForTest(paneUiState, {});
     });
     async function restoreRealm(realm: Readonly<{ serverUrl?: string; serverIdentityId?: string; accountId: string }>) {
         if (account && !accountDisposed) {
@@ -154,6 +170,14 @@ export function installSessionPaneRuntimeTestHarness(params: Readonly<{
             request: async (url, init) => {
                 const path = new URL(String(url)).pathname;
                 const json = (value: unknown) => Response.json(value);
+                const state = storage.getState();
+                const machines = resolveServerScopedMachines({ serverId: realmIdentityId,
+                    activeServerId: getActiveServerAccountScope()?.serverId ?? '', activeMachines: Object.values(state.machines),
+                    machineListByServerId: state.machineListByServerId, machineListStatusByServerId: state.machineListStatusByServerId }) ?? [];
+                const readMachine = (machineId: string) => {
+                    const machine = machines.find(machine => machine.id === machineId);
+                    return machine ? createPlainMachineRowFixture({ id: machineId, accountId: realm.accountId, machine }) : null;
+                };
                 if (path === '/v1/features' || path === '/v1/features/authenticated') {
                     const features = params.features?.() ?? createRootLayoutFeaturesResponse();
                     return json(FeaturesResponseSchema.parse({ ...features, capabilities: {
@@ -166,13 +190,24 @@ export function installSessionPaneRuntimeTestHarness(params: Readonly<{
                 if (path === '/v1/account/profile') return json(AccountProfileSchema.parse({ id: realm.accountId }));
                 const response = await params.request?.(url, init);
                 if (response) return response;
+                if ((init?.method ?? 'GET') === 'GET' && (path === '/v2/sessions' || path === '/v2/sessions/active')) {
+                    // The same Home serves seeded Sessions by id and in its snapshots. An empty
+                    // bootstrap snapshot after mount would authoritatively retire those rows.
+                    const sessions = Object.values(storage.getState().sessions)
+                        .filter(session => areServerProfileIdentifiersEquivalent(session.serverId, account?.serverId)
+                            && (path !== '/v2/sessions/active' || session.active))
+                        .map(session => createCompactSessionListRowFixture(createPlainSessionByIdResponseFixture(session).session));
+                    return json(V2SessionListResponseSchema.parse({ sessions,
+                        nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false }));
+                }
                 const memoryResponse = await authoringMemory.handle(url, init);
                 if (memoryResponse) return memoryResponse;
                 if (path === '/v1/account/project-rows/list') return json(createPlainProjectAccountRowListFixture());
                 const artifactResponse = artifacts.handle(String(url), init);
                 if (artifactResponse) return artifactResponse;
                 if ((init?.method ?? 'GET') === 'GET' && path === '/v2/account/settings') return json(AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {} }, version: 0 }));
-                if ((init?.method ?? 'GET') === 'GET' && path === '/v1/machines') return json([]);
+                if ((init?.method ?? 'GET') === 'GET' && path === '/v1/machines') return json(machines.map(machine =>
+                    createPlainMachineRowFixture({ id: machine.id, accountId: realm.accountId, machine })));
                 const bootstrapResponse = createEmptyAccountBootstrapHttpResponse(path, init);
                 if (bootstrapResponse) return bootstrapResponse;
                 if ((init?.method ?? 'GET') === 'GET' && path === AUTHORING_MEMORY_ROUTE_V1) return json(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
@@ -186,10 +221,6 @@ export function installSessionPaneRuntimeTestHarness(params: Readonly<{
                     const sessionResponse = readSession(path);
                     if (sessionResponse) return sessionResponse;
                 }
-                const readMachine = (machineId: string) => {
-                    const machine = storage.getState().machines[machineId];
-                    return machine ? createPlainMachineRowFixture({ id: machineId, accountId: realm.accountId, machine }) : null;
-                };
                 if (path === '/v1/machines/read-batch' && init?.method === 'POST') {
                     return createMachineReadBatchResponseFixture(init.body, readMachine);
                 }
@@ -257,9 +288,10 @@ export function installSessionPaneRuntimeTestHarness(params: Readonly<{
         return null;
     }
     function Wrapper({ children }: React.PropsWithChildren) {
-        return <InjectedAuthProvider credentials={account.credentials}><AppPaneProvider>
+        return <InjectedAuthProvider credentials={account.credentials}>
+            <SessionViewerSourceAccountScopeProvider accountLifetime={captureActiveServerAccountScopeLifetime()}><AppPaneProvider>
             <Probe />{children}
-        </AppPaneProvider></InjectedAuthProvider>;
+        </AppPaneProvider></SessionViewerSourceAccountScopeProvider></InjectedAuthProvider>;
     }
     return {
         Wrapper,

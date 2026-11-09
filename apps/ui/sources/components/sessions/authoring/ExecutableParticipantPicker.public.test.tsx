@@ -46,6 +46,12 @@ describe('external executable participant picker through the real app presentati
   it('selects immediately in single mode and searches through the same list owner', async () => {
     expect(typeof publicComponents.ExecutableParticipantPicker).toBe('function');
     const screen = await renderScreen(hosted(<ExecutableParticipantPickerExample />));
+    // React test renderer exposes a generic props bag at this external boundary.
+    const presented = screen.findByType(publicComponents.ExecutableParticipantPicker).props as React.ComponentProps<typeof publicComponents.ExecutableParticipantPicker>;
+    const model = presented.sections.flatMap(section => section.options).find(option => option.id === 'review');
+    expect(model?.searchText).toBe('GPT review');
+    await act(async () => screen.changeTextByTestId(`${presented.testID}-search`, 'GPT review'));
+    expect(screen.findByTestId(model!.testID!)).not.toBeNull();
     expect(screen.findByTestId('author-participant-picker-done')).toBeNull();
     await act(async () => screen.changeTextByTestId('author-participant-picker-search', 'Design'));
     expect(screen.findByTestId('author-participant-review')).toBeNull();

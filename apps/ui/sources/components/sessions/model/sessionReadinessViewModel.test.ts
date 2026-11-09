@@ -47,6 +47,29 @@ it('keeps unknown inventory distinct from unsupported and offline, without clear
         .toMatchObject({ status: 'unavailable', cause: 'agent', machine: { status: 'ready' }, agent: { state: 'unsupported' } });
 });
 
+it('preserves inventory lifecycle readiness and suppresses duplicate native sign-in repair while its terminal is open', () => {
+    const job = { jobId: 'install', intent: 'install', startedAtMs: 1, steps: [], logLine: null, outcome: null } as const;
+    for (const outcome of [null, { kind: 'failed', code: 'download_failed', stepId: null, message: null }] as const) {
+        const installing = projectMachineAgent({ agentId: facts.agentId, title: facts.title, facts,
+            checking: false, stale: false, connectedServices: [], job: { ...job, outcome } });
+        expect(buildSessionReadinessViewModel({ ...input, agent: installing }))
+            .toMatchObject({ readiness: { status: 'unavailable', agent: { state: 'notInstalled' } }, repair: null });
+    }
+    for (const phase of ['opening', 'waiting'] as const) {
+        expect(buildSessionReadinessViewModel({ ...input, signIn: {
+            phase, terminalKey: 'sign-in', authUrl: null, startedAtMs: 1, failure: null,
+        } })).toMatchObject({ readiness: { status: 'unavailable', agent: { state: 'needsSignIn' } }, repair: null });
+    }
+    const stale = projectMachineAgent({ agentId: facts.agentId, title: facts.title, facts,
+        checking: false, stale: true, connectedServices: [], job: null });
+    expect(buildSessionReadinessViewModel({ ...input, agent: stale }))
+        .toMatchObject({ readiness: { status: 'unknown', agent: { state: 'unknown' } }, repair: null });
+    const checking = projectMachineAgent({ agentId: facts.agentId, title: facts.title, facts: null,
+        checking: true, stale: false, connectedServices: [], job: null });
+    expect(buildSessionReadinessViewModel({ ...input, agent: checking, inventory: { status: 'loading', lastCheckedAt: null } }))
+        .toMatchObject({ readiness: { status: 'unknown', agent: { state: 'checking' } }, repair: null });
+});
+
 it('does not offer Move from a ready destination alone', () => {
     const idle = { phase: 'idle', errorCode: null, carrierPhase: 'unknown', carrierErrorCode: null } as const;
     const handoff = { targetMachineSelected: true, targetMachineAttemptable: true, sourceMachineAttemptable: false,

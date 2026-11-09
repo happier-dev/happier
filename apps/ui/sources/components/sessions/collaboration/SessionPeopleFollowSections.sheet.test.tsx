@@ -63,7 +63,7 @@ function FollowersSheet(props: Readonly<{
         followersError: props.followersError ?? null,
         refreshFollowers: props.refreshFollowers ?? (() => {}),
         following: { projection: null, loading: false, error: null, refresh: async () => {},
-            ruleInputs: { snapshot: null, lifetime: null, accountId: undefined, refresh: async () => {}, loading: false } },
+            ruleInputs: { snapshot: null, lifetime: null, accountId: undefined, refresh: async () => null, loading: false } },
         youLevel: 'quiet' as const,
         youLoading: false,
     };

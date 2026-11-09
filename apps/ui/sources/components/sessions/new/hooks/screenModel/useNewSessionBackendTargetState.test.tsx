@@ -1,22 +1,25 @@
-import { useNewSessionAgentAuthoringOptionsState } from './useNewSessionAgentAuthoringOptionsState';
-import { readBackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
-import { parseConnectedServicesBindingsByServiceIdFromAgentOptionState } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
-import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/selection/v1';
-import { flushSessionDraft, prepareLocalSessionDraftScope, resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
-import { buildNewSessionAuthoringDraftFromPersistedDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
-import { readNewSessionDraftFromRepository, writeNewSessionDraftToRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
-import type { NewSessionDraft } from '@/sync/domains/state/persistence';
 import * as React from 'react';
 import 'fake-indexeddb/auto';
 import renderer, { act } from 'react-test-renderer';
-import { afterAll, afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { MachineAgentInventoryItemSchema } from '@happier-dev/protocol/capabilities';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
-import { renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScreenModelTestHelpers';
+import { rememberLastUsedBackendSelection, readLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
+import { clearPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
+import type { NewSessionDraft } from '@/sync/domains/state/persistence';
+import { readNewSessionDraftFromRepository, writeNewSessionDraftToRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
+import { buildNewSessionAuthoringDraftFromPersistedDraft } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
+import { flushSessionDraft, prepareLocalSessionDraftScope, resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/selection/v1';
+import { parseConnectedServicesBindingsByServiceIdFromAgentOptionState } from '@/sync/domains/connectedServices/connectedServicesAgentOptionStateBindings';
+import { readBackendNewSessionOptionStateByTargetKey } from '@/utils/sessions/backendNewSessionOptionState';
+import { useNewSessionAgentAuthoringOptionsState } from './useNewSessionAgentAuthoringOptionsState';
 
 installNewSessionScreenModelCommonModuleMocks();
 const network = await installSessionOpsNetworkBoundary();
@@ -30,11 +33,16 @@ let initialSettings = settingsDefaults;
 
 function seedPreferences(preferences: Readonly<{ lastUsedAgent?: unknown; lastUsedBackendTarget?: unknown }>) {
     initialSettings = settingsParse({ ...storage.getState().settings, ...preferences });
+    rememberLastUsedBackendSelection(storage.getState().settingsScope, {
+        lastUsedAgent: initialSettings.lastUsedAgent,
+        lastUsedBackendTarget: initialSettings.lastUsedBackendTarget,
+    });
     storage.setState({ settings: initialSettings });
 }
 
 beforeEach(() => {
     network.resetRequests();
+    clearPersistenceStorage();
     storage.setState(storage.getInitialState(), true);
     seedPreferences({ lastUsedAgent: 'codex', lastUsedBackendTarget: null });
 });
@@ -167,6 +175,96 @@ describe('useNewSessionBackendTargetState', () => {
             await reopened.unmount();
             resetSessionDraftRepositoryForTests();
         }
+    });
+    it.each(['unknown', 'signedIn'] as const)('keeps the displayed implicit Agent when a sibling becomes ready and its own sign-in is %s', async (selectedSignIn) => {
+        const home = await network.addHome('https://agentstart-selection.test', 'selection-account');
+        const scope = { serverId: home.id, accountId: 'selection-account' };
+        const machine = createMachineFixture({ id: 'selection-machine', active: false });
+        storage.setState({ profileScope: scope, machineListByServerId: { [home.id]: [machine] } });
+        rememberLastUsedBackendSelection(storage.getState().settingsScope, { lastUsedAgent: null, lastUsedBackendTarget: null });
+        const { applyConnectedAccountCatalogSnapshot } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
+        applyConnectedAccountCatalogSnapshot(scope, 'purposes', {
+            status: 'ready', revision: 1, record: { key: 'purposes', value: { v: 1, bindings: [] } },
+        }, true);
+        const { serverAccountScopedResourceKey } = await import('@/sync/domains/scope/serverAccountScope');
+        const { machineAgentInventoryStore } = await import('@/agents/machineAgents/machineAgentInventoryStore');
+        const candidates = (['claude', 'codex'] as const).map(agentId => resolvedEntryFixture({
+            ...configuredPreferredEntries[0]!, backendTarget: { kind: 'backend', backendId: agentId },
+            backendTargetKey: `agent:happier.agent.${agentId}/${agentId}`, backendId: agentId, agentId,
+            catalogAgentId: agentId, builtInAgentId: agentId, iconAgentId: agentId, title: agentId, subtitle: agentId,
+        }));
+        const key = serverAccountScopedResourceKey(scope, 'machine-agents', machine.id);
+        machineAgentInventoryStore.publish(key, { status: 'loading', items: [], descriptors: candidates.map(entry => ({
+            agentId: entry.agentId, title: entry.title,
+        })), lastCheckedAt: null });
+        const hook = await renderHook(() => useNewSessionBackendTargetState({ entries: candidates, projectionPhase: 'ready',
+            machineTarget: { machineId: machine.id, serverId: home.id, load: false } }));
+        await vi.waitFor(() => expect(hook.getCurrent().machineAgents.agents).toHaveLength(2));
+        const selected = hook.getCurrent().backendTarget;
+        const selectedId = hook.getCurrent().selectedCatalogAgentId;
+        await act(async () => machineAgentInventoryStore.publish(key, { status: 'ready', lastCheckedAt: 1,
+            items: candidates.map(entry => MachineAgentInventoryItemSchema.parse({ agentId: entry.agentId, title: entry.title, installed: true,
+                version: '1', latestVersion: null, update: { supported: false, command: null },
+                signIn: { status: entry.agentId === selectedId ? selectedSignIn : 'signedIn', loginSupport: 'status_only' },
+                platform: { supported: true }, install: { available: false, mode: 'manual', sizeBytes: null, guideUrl: null },
+                dependencies: [] })),
+        }));
+        expect(hook.getCurrent().machineAgents.agents.some(agent => agent.state === 'ready')).toBe(true);
+        expect(hook.getCurrent().backendTarget).toBe(selected);
+        await hook.unmount();
+    });
+    it('follows an Account-purpose default from an implicit configured fallback while its catalog is loading', async () => {
+        const home = await network.addHome('https://configured-default.test', 'configured-default-account');
+        const scope = { serverId: home.id, accountId: 'configured-default-account' };
+        rememberLastUsedBackendSelection(storage.getState().settingsScope, { lastUsedAgent: null, lastUsedBackendTarget: null });
+        const hook = await renderHook(() => useNewSessionBackendTargetState({
+            entries: configuredPreferredEntries, configuredCatalogReady: false,
+            machineTarget: { machineId: null, serverId: home.id, load: false },
+        }));
+        try {
+            expect(resolveBackendTargetKeyV2(hook.getCurrent().backendTarget)).toBe(entries[0]!.backendTargetKey);
+            const { applyConnectedAccountCatalogSnapshot } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
+            await act(async () => applyConnectedAccountCatalogSnapshot(scope, 'purposes', {
+                status: 'ready', revision: 1, record: { key: 'purposes', value: { v: 1, bindings: [{
+                    purpose: { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' },
+                    target: { kind: 'account', account: { service: { pluginId: 'happier.agent.codex', localId: 'account' }, accountId: 'work' } },
+                }] } },
+            }, true));
+            expect(resolveBackendTargetKeyV2(hook.getCurrent().backendTarget)).toBe(configuredPreferredEntries[0]!.backendTargetKey);
+        } finally { await hook.unmount(); }
+    });
+    it('keeps a matched implicit target when a sibling enters the catalog without a purpose-default change', async () => {
+        const home = await network.addHome('https://default-before-agent.test', 'default-before-agent-account');
+        const scope = { serverId: home.id, accountId: 'default-before-agent-account' };
+        rememberLastUsedBackendSelection(storage.getState().settingsScope, { lastUsedAgent: null, lastUsedBackendTarget: null });
+        const claude: ResolvedBackendCatalogEntry = { ...configuredPreferredEntries[0]!,
+            agentCatalogEntry: createResolvedAgentCatalogEntryFixture({ agentId: 'claude' }),
+            backendTarget: { kind: 'backend', backendId: 'claude' }, backendTargetKey: 'agent:happier.agent.claude/claude',
+            backendId: 'claude', agentId: 'claude', catalogAgentId: 'claude', builtInAgentId: 'claude', iconAgentId: 'claude',
+        };
+        let currentEntries = [claude];
+        const { applyConnectedAccountCatalogSnapshot, applyAcknowledgedConnectedAccountCatalog } = await import('@/sync/store/settings/connectedAccountCatalogSnapshot');
+        const purposeRecord = (accountId: string) => ({ key: 'purposes' as const, value: { v: 1 as const, bindings: [{
+                purpose: { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' },
+                target: { kind: 'account' as const, account: { service: { pluginId: 'happier.agent.codex', localId: 'account' }, accountId } },
+            }] } });
+        const publishDefault = (accountId: string, revision: number) => applyConnectedAccountCatalogSnapshot(scope, 'purposes', {
+            status: 'ready', revision, record: purposeRecord(accountId),
+        }, true);
+        publishDefault('work', 1);
+        const hook = await renderHook(() => useNewSessionBackendTargetState({ entries: currentEntries,
+            machineTarget: { machineId: null, serverId: home.id, load: false } }));
+        try {
+            const selected = hook.getCurrent().backendTarget;
+            expect(resolveBackendTargetKeyV2(selected)).toBe(claude.backendTargetKey);
+            currentEntries = [claude, configuredPreferredEntries[0]!];
+            await hook.rerender();
+            expect(hook.getCurrent().backendTarget).toBe(selected);
+            await act(async () => applyAcknowledgedConnectedAccountCatalog(scope, purposeRecord('work'), 2, true));
+            expect(hook.getCurrent().backendTarget).toBe(selected);
+            await act(async () => publishDefault('other', 3));
+            expect(resolveBackendTargetKeyV2(hook.getCurrent().backendTarget)).toBe(configuredPreferredEntries[0]!.backendTargetKey);
+        } finally { await hook.unmount(); }
     });
     it('retains an explicit route while a remembered configured Agent and the catalog hydrate', async () => {
         seedPreferences({ lastUsedBackendTarget: entries[0]!.backendTarget });
@@ -329,12 +427,12 @@ describe('useNewSessionBackendTargetState', () => {
             observed?.setBackendTarget({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot', sourceKind: 'configured' });
         });
 
-        expect(storage.getState().settings.lastUsedBackendTarget).toEqual({
+        expect(readLastUsedBackendSelection(storage.getState().settingsScope).lastUsedBackendTarget).toEqual({
             kind: 'agent',
             identity: { pluginId: 'happier.agent.custom-acp', localId: 'custom-acp' },
             definitionId: 'review-bot',
         });
-        expect(storage.getState().settings.lastUsedAgent).toBe('codex');
+        expect(readLastUsedBackendSelection(storage.getState().settingsScope).lastUsedAgent).toBe('codex');
 
         act(() => {
             tree?.unmount();
@@ -553,8 +651,8 @@ describe('useNewSessionBackendTargetState', () => {
             observed?.setBackendTarget({ kind: 'backend', backendId: 'acme.review.backend' });
         });
 
-        expect(storage.getState().settings.lastUsedBackendTarget).toEqual({ kind: 'backend', backendId: 'acme.review.backend' });
-        expect(storage.getState().settings.lastUsedAgent).toBe('claude');
+        expect(readLastUsedBackendSelection(storage.getState().settingsScope).lastUsedBackendTarget).toEqual({ kind: 'backend', backendId: 'acme.review.backend' });
+        expect(readLastUsedBackendSelection(storage.getState().settingsScope).lastUsedAgent).toBe('claude');
 
         act(() => {
             tree?.unmount();
@@ -589,8 +687,8 @@ describe('useNewSessionBackendTargetState', () => {
             observed?.setBackendTarget({ kind: 'backend', backendId: 'ohMyPi' });
         });
 
-        expect(storage.getState().settings.lastUsedAgent).toBeNull();
-        expect(storage.getState().settings.lastUsedBackendTarget).toEqual({
+        expect(readLastUsedBackendSelection(storage.getState().settingsScope).lastUsedAgent).toBeNull();
+        expect(readLastUsedBackendSelection(storage.getState().settingsScope).lastUsedBackendTarget).toEqual({
             kind: 'agent',
             identity: {
                 pluginId: 'happier.agent.ohmypi',

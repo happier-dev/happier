@@ -3,6 +3,11 @@ import { describe, expect, it } from 'vitest';
 import { getInactiveSessionUiState } from '@/components/sessions/model/inactiveSessionUi';
 
 describe('getInactiveSessionUiState', () => {
+    it('does not claim unsupported context when eligibility is unknown and input is not authorized', () => {
+        expect(getInactiveSessionUiState({
+            isSessionActive: false, isResumable: null, isMachineOnline: null,
+        })).toEqual({ shouldShowInput: false, inactiveStatusTextKey: null, noticeKind: 'none' });
+    });
     it('does not label unobserved Machine presence offline or ready while keeping the draft available', () => {
         expect(getInactiveSessionUiState({
             isSessionActive: false, isResumable: true, isMachineOnline: null,

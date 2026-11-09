@@ -1,12 +1,13 @@
-import type { FrontDoorRuntimeActionExecute as RuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { describe, expect, it, vi } from 'vitest';
 
 import { DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import type {
-    LocalServiceLauncherSnapshotV1,
+    LocalServiceLauncherSnapshotV1} from '@happier-dev/protocol/local/services/launcher/v1';
+import type {
     ApprovalRequestV2,
-} from '@happier-dev/protocol';
-import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol';
+} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import type { FrontDoorRuntimeActionExecute as RuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import type { ActionApprovalRegistration, ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { renderHook } from '@/dev/testkit';
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';

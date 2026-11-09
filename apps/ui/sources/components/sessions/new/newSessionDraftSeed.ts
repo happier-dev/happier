@@ -1,4 +1,5 @@
-import type { ComposerAttachmentAuthorValueV1 } from '@happier-dev/protocol';
+import type { ComposerAttachmentAuthorValueV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type { SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
 import type {
     PluginUiNewSessionPlacementV1,
     PluginUiSessionCheckoutIntentV1,
@@ -68,10 +69,12 @@ export type NewSessionDraftAttachmentSeedV1 = Readonly<{
 }>;
 
 export type NewSessionDraftSeedV1 = Readonly<{
+    actionDefault?: NewSessionDraft['actionDefault'];
     sessionName?: NewSessionDraft['sessionName'];
     initialSessionFacts?: NewSessionDraft['initialSessionFacts'];
     promptStack?: NewSessionDraft['promptStack'];
     origin?: PluginUiNewSessionSeedOriginV1;
+    spaceMembership?: NewSessionDraft['spaceMembership'];
     prompt?: NewSessionDraftPromptSeedV1;
     profileId?: string;
     agentTarget?: NonNullable<NewSessionDraft['agentTarget']>;
@@ -82,6 +85,7 @@ export type NewSessionDraftSeedV1 = Readonly<{
      */
     checkoutIntent?: PluginUiSessionCheckoutIntentV1;
     placement?: NewSessionDraftPlacementSeedV1;
+    directoryIntent?: SessionDirectoryIntentV1;
     /** Unresolved placement choices remain owned by this draft until selected. */
     candidates?: readonly PluginUiSessionPlacementCandidateV1[];
     attachments?: readonly NewSessionDraftAttachmentSeedV1[];
@@ -105,7 +109,9 @@ function joinDraftInput(existingInput: string, promptText: string): string {
  * `updatedAt` and force `entryIntent` on a draft the reader is still editing.
  */
 export function newSessionDraftSeedDeclaresChangeV1(seed: NewSessionDraftSeedV1): boolean {
-    return seed.sessionName !== undefined
+    return seed.actionDefault !== undefined
+        || seed.sessionName !== undefined
+        || seed.spaceMembership !== undefined
         || seed.initialSessionFacts !== undefined
         || seed.promptStack !== undefined
         || normalizedNonEmpty(seed.prompt?.text) !== null
@@ -116,6 +122,7 @@ export function newSessionDraftSeedDeclaresChangeV1(seed: NewSessionDraftSeedV1)
         // worktree selection, but it is still a whole user-visible request.
         || seed.checkoutIntent !== undefined
         || seed.placement !== undefined
+        || seed.directoryIntent !== undefined
         // Candidate placement is a real user-visible request even though it
         // cannot become a persisted selection until the reader picks one.
         || (seed.candidates?.length ?? 0) > 0
@@ -162,11 +169,13 @@ export function applyNewSessionDraftSeedV1(input: Readonly<{
     const exactTarget = placement?.kind === 'exactTarget'
         ? { serverId: placement.serverId, machineId: placement.machineId }
         : null;
-    const directory = placement?.directory;
+    const directory = input.seed.directoryIntent?.kind === 'path' ? input.seed.directoryIntent.path : placement?.directory;
 
     return {
         ...base,
+        ...(input.seed.actionDefault === undefined ? {} : { actionDefault: input.seed.actionDefault }),
         ...(input.seed.sessionName === undefined ? {} : { sessionName: input.seed.sessionName }),
+        ...(input.seed.spaceMembership === undefined ? {} : { spaceMembership: input.seed.spaceMembership }),
         ...(input.seed.initialSessionFacts === undefined ? {} : { initialSessionFacts: input.seed.initialSessionFacts }),
         ...(input.seed.promptStack === undefined ? {} : { promptStack: input.seed.promptStack }),
         ...(input.seed.origin === undefined ? {} : { authoringOrigin: input.seed.origin }),
@@ -187,6 +196,8 @@ export function applyNewSessionDraftSeedV1(input: Readonly<{
                 executionTarget: { kind: 'machine' as const, target: exactTarget },
             }),
         ...(directory === undefined ? {} : { selectedPath: directory }),
+        ...(input.seed.directoryIntent?.kind === 'managed' ? { directoryKind: 'managed' as const }
+            : directory === undefined ? {} : { directoryKind: undefined }),
         ...(input.seed.candidates === undefined
             ? {}
             : { placementCandidates: input.seed.candidates }),

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     COMPOSER_CONTROL_STATE_CONTENT_TYPE_V1,
     MAX_COMPOSER_CONTROL_STATE_RESOURCE_BYTES_V1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/ui/composer';
 import type { PluginUiResourceReference, PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 
 import type { PluginContextualResourceBinding } from '@/components/plugins/surfaces/PluginContextualResourceStoreProvider';

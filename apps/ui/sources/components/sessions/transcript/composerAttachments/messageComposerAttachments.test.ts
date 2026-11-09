@@ -16,6 +16,15 @@ function persistedAttachment(overrides: Readonly<Record<string, unknown>> = {}):
 }
 
 describe('message composer attachment transcript projection', () => {
+    it('projects the annotation excerpt, note and immutable source independently of its plugin value', () => {
+        const source = { kind: 'session', session: { serverId: 'home-a', sessionId: 'session-a' }, messageId: 'committed-a' };
+        const [projected] = resolveMessageComposerAttachments({ happierStructuredInputV1: { v: 1, composerAttachments: [
+            persistedAttachment({ presentation: { label: 'Selected passage', typeLabel: 'Annotation', description: 'Clarify this', source } }),
+        ] } });
+        expect(projected).toMatchObject({ label: 'Selected passage', description: 'Clarify this', source });
+        expect(JSON.stringify(projected)).not.toContain('secret-token');
+    });
+
     it('keeps only unplaced or legacy fallbacks when the canonical projection draws an attachment inline', () => {
         const meta = { happierStructuredInputV1: { v: 1, composerAttachments: [
             persistedAttachment(), persistedAttachment({ instanceId: 'unplaced' }),

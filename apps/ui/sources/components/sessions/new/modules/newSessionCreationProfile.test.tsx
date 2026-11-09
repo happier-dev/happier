@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it } from 'vitest';
-import { ProviderConnectionIdSchema, type ProviderBoundModelRef } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema} from '@happier-dev/protocol/providers/ids';
+import { type ProviderBoundModelRef } from '@happier-dev/protocol/providers/selection/v1';
 
 import { renderHook } from '@/dev/testkit';
 import { installNewSessionComponentsCommonModuleMocks } from '@/components/sessions/new/components/newSessionComponentsTestHelpers';

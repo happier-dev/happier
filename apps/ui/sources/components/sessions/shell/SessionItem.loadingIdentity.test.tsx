@@ -57,10 +57,6 @@ vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => vi.fn(),
 }));
 
-vi.mock('@/utils/platform/responsive', () => ({
-    useIsTablet: () => false,
-}));
-
 vi.mock('@/hooks/ui/useHappyAction', () => ({
     useHappyAction: (_fn: unknown) => [false, vi.fn()],
 }));

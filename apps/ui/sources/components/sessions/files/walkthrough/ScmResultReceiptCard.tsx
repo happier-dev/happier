@@ -149,12 +149,15 @@ export function ScmResultReceiptCard(
         serverId,
         details: {
           kind: 'scmReview',
-          comparison,
+          comparison: { ...comparison, savedResult: {
+            cwd: props.receipt.output.comparison.repository.rootPath,
+            resultId: props.receipt.output.resultId,
+          } },
           view: isWalkthrough ? 'walkthrough' : 'files',
         },
       }),
     );
-  }, [comparison, isWalkthrough, navigate, serverId, sessionId]);
+  }, [comparison, isWalkthrough, navigate, serverId, sessionId, props.receipt.output]);
   const canOpen = props.canNavigate && Boolean(navigate) && comparison !== null;
   const openLink = canOpen ? (
     <TextLinkButton
@@ -227,10 +230,11 @@ export function ScmResultReceiptCard(
           {openLink}
         </View>
         {undo.error ? (
+          // A walkthrough that moved on after this update is a fact about it, not a failure to alarm about.
           <Text
             testID="scm-result-receipt-undo-error"
-            accessibilityRole="alert"
-            style={styles.error}
+            accessibilityRole={undo.failure?.errorCode === 'revision_conflict' ? undefined : 'alert'}
+            style={undo.failure?.errorCode === 'revision_conflict' ? styles.facts : styles.error}
           >
             {undo.error}
           </Text>

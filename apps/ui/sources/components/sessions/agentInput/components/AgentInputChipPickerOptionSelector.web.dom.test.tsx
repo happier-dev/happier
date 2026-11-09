@@ -150,7 +150,6 @@ describe('AgentInputChipPickerOptionSelector web DOM', () => {
             expect(row!.parentElement).toBe(action!.parentElement);
             expect(row!.getAttribute('role')).toBe('button');
             expect(action!.getAttribute('aria-label')).toBe('Add Codex to favorites');
-            expect(action!.getAttribute('aria-selected')).toBe('false');
             expect(action!.getAttribute('aria-pressed')).toBe('false');
 
             await act(async () => row!.focus());

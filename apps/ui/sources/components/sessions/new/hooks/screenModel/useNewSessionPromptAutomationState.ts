@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { SessionInitialTriggerV1 } from '@happier-dev/protocol';
+import type { SessionInitialTriggerV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 import type { ExactTurnAutomationPrefill } from '@/components/automations/sessionLifecycle/exactTurnAutomationPrefill';
 import {

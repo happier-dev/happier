@@ -6,6 +6,7 @@ import {
 } from '@happier-dev/protocol/teams';
 
 import {
+    findCurrentTeamCredentialProviderModel,
     findAssignedProviderModelCredentialBinding,
     resourceHasAvailableTeamCredentialProviderModel,
 } from './teamCredentialProviderModelCurrentness';
@@ -76,9 +77,20 @@ describe('resourceHasAvailableTeamCredentialProviderModel', () => {
         });
 
         expect(resourceHasAvailableTeamCredentialProviderModel(resource, selected)).toBe(false);
+        expect(findCurrentTeamCredentialProviderModel(resource, selected)).toBeNull();
+        const offered = resource.providerModels[0]!.selection;
+        const limited = { ...resource, readiness: {
+            kind: 'limit_reached' as const, metric: 'total_tokens' as const, resetsAtUtc: '2026-09-15T00:00:00.000Z',
+        } };
+        expect(resourceHasAvailableTeamCredentialProviderModel(limited, offered)).toBe(offered.deliveryMode === 'direct');
         expect(resourceHasAvailableTeamCredentialProviderModel(resource, {
             ...selected,
             deliveryMode: availableTwinRoute,
         })).toBe(true);
+        expect(findCurrentTeamCredentialProviderModel({ ...resource, readiness: { kind: 'limit_reached',
+            metric: 'inference_requests', resetsAtUtc: '2026-10-26T00:00:00Z' } }, {
+            ...selected,
+            deliveryMode: availableTwinRoute,
+        })?.availability).toBe('available');
     });
 });

@@ -1,4 +1,4 @@
-import { RPC_ERROR_CODES } from '@happier-dev/protocol';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { describe, expect, it, vi } from 'vitest';
 
 import { externalSessionOperationTranslations } from '@/text/translations/externalSessionOperationTranslations';

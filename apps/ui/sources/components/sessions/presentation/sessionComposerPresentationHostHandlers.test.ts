@@ -1,8 +1,9 @@
 import type {
-    ComposerContentHandleV1,
+    ComposerContentHandleV1} from '@happier-dev/protocol/runtime/input/composerContentV1';
+import type {
     ComposerSnapshotV1,
     ComposerTransactionResultV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/ui/composer';
 import type { PluginUiComposerAttachmentProjection } from '@/sync/domains/plugins/ui/projection';
 import type { PluginUiHostApiRequestEnvelopeV1 } from '@happier-dev/protocol/plugins/ui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -53,9 +54,11 @@ import {
     createComposerPresentationTransactionApplier,
     createComposerPresentationHostHandlers,
     registerComposerPresentationTarget,
+    registerSessionComposerPresentationTarget,
     type ComposerPresentationDocumentMutation,
     type ComposerPresentationTarget,
 } from './sessionComposerPresentationTargets';
+import { createPluginSurfaceHostApi } from '@/components/plugins/surfaces/createPluginSurfaceHostApi';
 
 const sessionRef = { kind: 'session', sessionId: 'session-1' } as const;
 const otherSessionRef = { kind: 'session', sessionId: 'session-2' } as const;
@@ -208,6 +211,75 @@ describe('composer presentation host handlers', () => {
         inspectComposerContentSpy.mockClear();
         releaseComposerContentSpy.mockClear();
         claimComposerContentSpy.mockClear();
+    });
+
+    it.each(['discussion', 'session'] as const)('keeps a mounted %s opener after focus moves and refuses other composers or retired custody', async kind => {
+        const scope = { serverId: 'opener-home', accountId: 'opener-account' };
+        const ref = kind === 'discussion' ? { kind: 'discussion' as const, discussionId: 'opener-discussion' } : sessionRef;
+        let targetScope = scope;
+        const target = Object.assign(createTarget(createSnapshot({ ref })), { readScope: () => targetScope });
+        const other = Object.assign(createTarget(createSnapshot({ ref: otherSessionRef, state: {
+            focused: true, editable: true, submittable: true, submitting: false, running: false,
+        } })), { readScope: () => scope });
+        const releaseOpener = kind === 'session'
+            ? registerSessionComposerPresentationTarget({ serverId: scope.serverId, sessionId: sessionRef.sessionId }, target)
+            : registerComposerPresentationTarget(ref, target);
+        cleanups.push(releaseOpener);
+        cleanups.push(registerSessionComposerPresentationTarget({ serverId: scope.serverId, sessionId: otherSessionRef.sessionId }, other));
+        let current = true;
+        const input = { scope, mountedComposer: ref, owner: {
+            identity: { pluginId: 'acme.fixture', localId: 'composer-tools' }, occurrenceId: 'generation-1', surfaceInstanceKey: 'mounted-1',
+        }, isCurrent: () => current,
+        transactionApplier: createComposerPresentationTransactionApplier({ composerAttachmentsById: {}, scope,
+            ...(kind === 'session' ? { sessionAddress: { serverId: scope.serverId, sessionId: sessionRef.sessionId } } : {}) }) };
+        const handlers = createComposerPresentationHostHandlers(input);
+        cleanups.push(handlers.dispose);
+        const api = createPluginSurfaceHostApi({ surfaceContext: request('activeComposer').surface, handlers });
+        expect(await api.handleRequest(request('activeComposer'))).toEqual(ref);
+        expect(await api.handleRequest(request('readComposer', { ref: otherSessionRef })))
+            .toEqual({ status: 'unavailable', reason: 'scopeClosed' });
+        const transaction = { expectedRevision: 3, operations: [{ kind: 'text.set', text: 'opener edit' }] };
+        expect(await api.handleRequest(request('applyComposer', { ref, transaction }))).toEqual({ status: 'applied', revision: 4 });
+        expect(target.readSnapshot?.().text).toBe('opener edit');
+        expect(await api.handleRequest(request('applyComposer', { ref: otherSessionRef, transaction })))
+            .toEqual({ status: 'composerUnavailable' });
+        expect(other.readSnapshot?.().text).toBe('draft');
+        expect(await api.handleRequest(request('readComposer', { ref, serverId: 'forged-home' })))
+            .toMatchObject({ code: 'invalid_payload' });
+        const foreign = Object.assign(createTarget(createSnapshot({ ref, revision: 4 })), { readScope: () => ({ ...scope, accountId: 'other-account' }) });
+        const releaseForeign = kind === 'session'
+            ? registerSessionComposerPresentationTarget({ serverId: scope.serverId, sessionId: sessionRef.sessionId }, foreign)
+            : registerComposerPresentationTarget(ref, foreign);
+        cleanups.push(releaseForeign);
+        expect(await api.handleRequest(request('activeComposer'))).toEqual(ref);
+        expect(await api.handleRequest(request('readComposer', { ref })))
+            .toMatchObject({ status: 'ready', snapshot: { text: 'opener edit' } });
+        expect(await api.handleRequest(request('applyComposer', { ref, transaction: {
+            expectedRevision: 4, operations: [{ kind: 'text.set', text: 'still the opener' }],
+        } }))).toEqual({ status: 'applied', revision: 5 });
+        expect(target.readSnapshot?.().text).toBe('still the opener');
+        expect(foreign.readSnapshot?.().text).toBe('draft');
+        targetScope = { ...scope, accountId: 'switched-account' };
+        expect(await api.handleRequest(request('activeComposer'))).toBeNull();
+        expect(await api.handleRequest(request('applyComposer', { ref, transaction })))
+            .toEqual({ status: 'composerUnavailable' });
+        targetScope = scope;
+        if (kind === 'session') {
+            cleanups.push(registerSessionComposerPresentationTarget({ serverId: 'other-home', sessionId: sessionRef.sessionId },
+                Object.assign(createTarget(createSnapshot({ ref })), { readScope: () => ({ ...scope, serverId: 'other-home' }) })));
+        }
+        releaseOpener();
+        expect(await api.handleRequest(request('activeComposer'))).toBeNull();
+        expect(await api.handleRequest(request('readComposer', { ref })))
+            .toEqual({ status: 'unavailable', reason: 'scopeClosed' });
+        expect(await api.handleRequest(request('applyComposer', { ref, transaction })))
+            .toEqual({ status: 'composerUnavailable' });
+        current = false;
+        expect(await api.handleRequest(request('activeComposer'))).toMatchObject({ code: 'stale_surface' });
+        expect(await api.handleRequest(request('applyComposer', { ref, transaction }))).toMatchObject({ code: 'stale_surface' });
+        current = true;
+        handlers.dispose();
+        expect(await api.handleRequest(request('activeComposer'))).toMatchObject({ code: 'stale_surface' });
     });
 
     it('does not advertise Composer observation without this mount’s snapshot publisher', () => {

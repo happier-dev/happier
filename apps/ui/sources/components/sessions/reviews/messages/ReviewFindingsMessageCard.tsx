@@ -4,13 +4,16 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useRouter } from 'expo-router';
 
 import type {
-    ReviewCommentV1,
-    ReviewFindingsV1,
-    ReviewFindingsV2,
-    ReviewQuestion,
+    ReviewCommentV1} from '@happier-dev/protocol/reviews/comments/v1';
+import type {
+    ReviewFindingsV1} from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
+import type {
+    ReviewFindingsV2} from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
+import type {
+    ReviewQuestion} from '@happier-dev/protocol/reviews/ReviewQuestion';
+import type {
     ReviewTriageStatus,
-} from '@happier-dev/protocol';
-import { REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1, renderReviewFindingsForVerifyV1 } from '@happier-dev/protocol/reviews/reviewFindingsApplyInputV1';
+} from '@happier-dev/protocol/reviews/reviewTriageStatus';
 import { ReviewFollowUpFailureCodeSchema } from '@happier-dev/protocol/execution/runs/index';
 
 import { hasAgentIconMark } from '@/agents/catalog/catalog';
@@ -65,12 +68,10 @@ import { useSessionMessages } from '@/sync/domains/state/storage';
 import {
     decideReviewRunFinding,
     loadReviewRunComments,
-    readReviewRunComments,
 } from '@/sync/domains/reviews/comments/reviewRunComments';
 import { areServerAccountScopesEqual, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeBinding, useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
-import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { SessionRunWorkNotifications } from '@/components/sessions/work/RunWorkNotifications';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -203,7 +204,8 @@ function TranscriptReviewFindingsCard(props: ReviewFindingsMessageCardProps & Re
 function PageReviewFindingsCard(props: ReviewFindingsMessageCardProps) {
     const accountLifetime = useReviewAccountLifetime(props.sessionId, props.serverId ?? null);
     const scope = accountLifetime?.scope ?? null;
-    const { messages } = useSessionMessages(props.sessionId);
+    // Finding state reads structured follow-up meta, never streamed text.
+    const { messages } = useSessionMessages(props.sessionId, { textUpdates: false });
     return <ReviewFindingsCardContent {...props} transcriptSource={null} scope={scope} accountLifetime={accountLifetime} sessionMessages={messages} workspacePath={null} />;
 }
 
@@ -295,6 +297,7 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
         () => rows.filter((row) => rowDecision(row, pendingOf) === 'accept'),
         [pendingOf, rows],
     );
+    const hasPendingDecisions = Object.keys(allPending).length > 0;
     const followUp = React.useMemo(() => followUpOf(members), [members]);
 
     const [showAllFindings, setShowAllFindings] = React.useState(false);
@@ -387,14 +390,14 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
                     ...(params.replyToQuestionId ? { replyToQuestionId: params.replyToQuestionId } : {}),
                     messageMarkdown: params.messageMarkdown,
                 },
-            });
+            }, { retainEffectResult: true });
+            // Preserve the admission receipt; the draft owner settles its captured
+            // fields against the Account lifetime even after this view closes.
+            if (result.ok) return true;
             if (!accountLifetime.isCurrent() || !followUpExecution.isCurrent()) return false;
-            if (!result.ok) {
-                const code = ReviewFollowUpFailureCodeSchema.safeParse('errorCode' in result ? result.errorCode : undefined);
-                setError(describeReviewFollowUpFailure(code.success ? code.data : undefined));
-                return false;
-            }
-            return true;
+            const code = ReviewFollowUpFailureCodeSchema.safeParse('errorCode' in result ? result.errorCode : undefined);
+            setError(describeReviewFollowUpFailure(code.success ? code.data : undefined));
+            return false;
         } catch {
             if (!accountLifetime.isCurrent() || !followUpExecution.isCurrent()) return false;
             setError(describeReviewFollowUpFailure(undefined));
@@ -442,55 +445,34 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
 
     const implementFixes = React.useCallback(() => {
         const capturedLifetime = accountLifetime;
-        if (!canActRef.current || !scope || !capturedLifetime?.isCurrent() || acceptedRows.length === 0) return;
+        if (!canActRef.current || !scope || !capturedLifetime?.isCurrent() || hasPendingDecisions || acceptedRows.length === 0) return;
         fireAndForget((async () => {
             setError(null);
             setIsApplying(true);
             try {
-                // Read the comments' current revisions and decisions: the verify step writes each
-                // verdict under CAS, and a choice changed meanwhile (here or on another surface) wins.
-                await Promise.all(memberRunIds.map((memberRunId) => loadReviewRunComments({ scope, sessionId, runId: memberRunId, commentIds: commentIdsByRunId[memberRunId] })));
-                const fresh = (memberRunId: string) => readReviewRunComments({ scope, sessionId, runId: memberRunId });
-                const freshComments = memberRunIds.flatMap((memberRunId) => fresh(memberRunId).comments);
-                const freshRows = rows.map((row) => ({
-                    ...row,
-                    sources: row.sources.map((source) => ({
-                        ...source,
-                        comment: findCommentForFinding(freshComments, source.finding, source.member.runId),
-                    })),
-                }));
-                const accepted = freshRows.filter((row) => rowDecision(row, (memberRunId) => fresh(memberRunId).pending) === 'accept');
-                if (accepted.length === 0) return;
-                // Each reviewer's finding goes with its own comment, so every comment gets its verdict.
-                const includedCommentIds = new Set<string>();
-                const findings = accepted.flatMap((row) => row.sources.flatMap((source) => {
-                    const comment = source.comment;
-                    if (comment && includedCommentIds.has(comment.id)) return [];
-                    if (comment) includedCommentIds.add(comment.id);
-                    const member = memberByRunId.get(source.member.runId);
-                    return [{
-                        ...source.finding,
-                        ...(comment ? { comment, flags: comment.flags, engineId: comment.engineId } : {}),
-                        ...(typeof source.finding.attributionConfidence === 'string' ? { attributionConfidence: source.finding.attributionConfidence } : {}),
-                        threadRefs: member?.threadRefsByFindingId[source.finding.id] ?? [],
-                    }];
-                }));
-                const text = `${REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1}\n\n${renderReviewFindingsForVerifyV1(findings)}`;
                 if (!canActRef.current || !capturedLifetime.isCurrent()) return;
-                await sync.submitMessage(
-                    sessionId,
-                    text,
-                    t('session.reviewFindings.actions.applyAcceptedFindings'),
-                    undefined,
-                    { serverId: scope.serverId, accountLifetime: capturedLifetime, callerSurface: 'review_findings_apply' },
-                );
+                await followUpExecution.executeValue('review.apply', { sessionId, reviews: members.map(member => ({
+                    runId: member.runId,
+                    findings: member.findings.map(finding => {
+                        const comment = member.commentByFindingId.get(finding.id);
+                        return { ...finding,
+                            ...(comment ? { comment: { id: comment.id, state: comment.state, serverRevision: comment.serverRevision,
+                                ...(comment.projectId ? { projectId: comment.projectId } : {}),
+                                ...(comment.workspace ? { workspace: comment.workspace } : {}),
+                                ...(comment.sessionId ? { sessionId: comment.sessionId } : {}),
+                                ...(comment.runId ? { runId: comment.runId } : {}),
+                            } } : {}),
+                            threadRefs: member.threadRefsByFindingId[finding.id] ?? [],
+                        };
+                    }),
+                })) }, { sessionMessageDisplayText: t('session.reviewFindings.actions.applyAcceptedFindings') });
             } catch (e) {
                 setError(e instanceof Error ? e.message : t('session.reviewFindings.errors.applyAcceptedFailed'));
             } finally {
                 setIsApplying(false);
             }
         })(), { tag: 'ReviewFindingsMessageCard.implementFixes' });
-    }, [acceptedRows.length, accountLifetime, commentIdsByRunId, memberByRunId, memberRunIds, rows, scope, sessionId]);
+    }, [acceptedRows.length, accountLifetime, followUpExecution.executeValue, hasPendingDecisions, members, scope, sessionId]);
 
     const visibleRows = !isPage && !showAllFindings ? rows.slice(0, CARD_VISIBLE_FINDINGS) : rows;
     const hiddenCount = rows.length - visibleRows.length;
@@ -534,7 +516,7 @@ function ReviewFindingsCardContent(props: ReviewFindingsMessageCardProps & Reado
             display={isPage ? 'default' : 'secondary'}
             title={isPage ? t('runPage.review.implementFixes', { count: acceptedRows.length }) : <StructuredFindText blockId="structured-review:implement" text={findDisplay.implement?.text ?? t('runPage.review.implementFixes', { count: acceptedRows.length })} useDefaultTypography={false} />}
             titleNumberOfLines={find.revealBlockId === 'structured-review:implement' ? 'complete' : 1}
-            disabled={acceptedRows.length === 0 || isApplying}
+            disabled={acceptedRows.length === 0 || hasPendingDecisions || isApplying}
             loading={isApplying}
             onPress={implementFixes}
         />

@@ -1,5 +1,5 @@
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
-import { buildTerminalDetailsTabKey, createTerminalDetailsTab, isTerminalDetailsTab } from '@/components/terminal/terminalDetailsTabModel';
+import { buildTerminalDetailsTabKey, createTerminalDetailsTab } from '@/components/terminal/terminalDetailsTabModel';
 import { t } from '@/text';
 
 export type EmbeddedTerminalDockLocation = 'sidebar' | 'details' | 'bottom';
@@ -25,39 +25,10 @@ export function createPrimarySessionDetailsTerminalTab() {
 
 /** Move an existing terminal's view, never its PTY, into pinned Details. */
 export function openSessionTerminalInDetails(
-    pane: Pick<AppPaneScopeApi, 'openDetailsTab' | 'closeBottom'>,
+    pane: Pick<AppPaneScopeApi, 'openDetailsTab'>,
     terminalInstanceId: string,
 ): void {
     pane.openDetailsTab(createSessionDetailsTerminalTab({ terminalInstanceId }), { intent: 'pinned' });
-    pane.closeBottom();
-}
-
-export function closeEmbeddedTerminalOutsideDockLocation(params: Readonly<{
-    pane: AppPaneScopeApi;
-    dockLocation: EmbeddedTerminalDockLocation;
-}>): void {
-    const scopeState = params.pane.scopeState;
-
-    const rightTerminalActive = Boolean(scopeState?.right.isOpen) && scopeState?.right.activeTabId === 'terminal';
-    const bottomTerminalActive = Boolean(scopeState?.bottom?.isOpen) && scopeState?.bottom?.activeTabId === 'terminal';
-    const detailsTerminalTabKeys = (scopeState?.details.tabs ?? [])
-        .filter((tab) => isTerminalDetailsTab({
-            resource: tab.resource,
-            tabKey: tab.key,
-        }))
-        .map((tab) => tab.key);
-
-    if (params.dockLocation !== 'sidebar' && rightTerminalActive) {
-        params.pane.closeRight();
-    }
-    if (params.dockLocation !== 'bottom' && bottomTerminalActive) {
-        params.pane.closeBottom();
-    }
-    if (params.dockLocation !== 'details') {
-        for (const tabKey of detailsTerminalTabKeys) {
-            params.pane.closeDetailsTab(tabKey);
-        }
-    }
 }
 
 export function openEmbeddedTerminalInDockLocation(params: Readonly<{

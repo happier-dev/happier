@@ -8,9 +8,10 @@ import type {
 import { useMountedSessionBoardController } from '@/components/sessions/board/SessionBoardControllerProvider';
 import { useSessionBoardContinuity } from '@/components/sessions/board/SessionBoardContinuity';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
-import { resolveActiveSessionBoardViewId } from '@/sync/domains/session/board';
+import { deriveSessionBoardItemState, resolveActiveSessionBoardViewId } from '@/sync/domains/session/board';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { useOptionalSessionViewerController } from '@/components/sessions/viewer/SessionViewerController';
+import { SessionWorkPresentationContext, type SessionWorkPresentationIntent } from '@/components/sessions/work/sessionWorkPresentation';
 
 import { useSessionCompanionController } from '../state/useSessionCompanionController';
 import { canAddSessionCompanionItem } from '../sessionCompanionContentModel';
@@ -54,6 +55,7 @@ export const SessionCompanionPresentationBridge = React.memo(
         // Only this exact Session's mounted viewer owner answers viewer intents; absent, they are
         // typed unavailable rather than claiming a rendered viewer.
         const viewer = useOptionalSessionViewerController()?.port;
+        const workPresentationRef = React.useContext(SessionWorkPresentationContext);
         const controller = useSessionCompanionController({
             sessionId,
             serverId,
@@ -66,27 +68,35 @@ export const SessionCompanionPresentationBridge = React.memo(
         const boardContinuity = useSessionBoardContinuity(address);
         const mountedBoard = useMountedSessionBoardController(address);
         const boardBinding = mountedBoard?.binding ?? null;
-        // Freshness is not authorization. An Agent's own Board write marks this
-        // repository stale before it reveals what it just made, so gating
-        // navigation on freshness would refuse the Board the viewer is looking
-        // at. Executable currentness keeps its own separate owner
-        // (`sessionBoardExecutableCurrentness`); per-target `canReadView` /
-        // `canReadItem` below still supply target validity.
-        const boardAvailable = boardBinding?.status === 'ready'
-            && boardBinding.snapshot.reachability === 'reachable';
-        const snapshot = boardAvailable ? boardBinding.snapshot : null;
+        // Opening the local pane creates Board content demand. A closed pane
+        // has no inventory/reachability observation yet, so requiring one here
+        // would prevent the very navigation that starts it. The binding owner
+        // retains feature/access refusal; exact item/view reads below retain
+        // target validity, independently of network readiness or freshness.
+        const boardAvailable = boardBinding?.status === 'ready';
+        const snapshot = boardBinding?.status === 'ready' ? boardBinding.snapshot : null;
+        const resolveInlineTranscriptOccurrence = mountedBoard?.resolveInlineTranscriptOccurrence;
 
         const board = React.useMemo((): SessionBoardPresentationPort => {
-            const readableItem = (widgetId: string, viewId?: string) => {
-                if (snapshot?.itemsById.get(widgetId)?.state.kind !== 'ready') return false;
+            const readableItem: SessionBoardPresentationPort['canReadItem'] = (widgetId, viewId) => {
+                // A current transcript occurrence can be ahead of the bulk
+                // Board inventory that feeds `snapshot`. Its mounted demand is
+                // the presentation owner's exact local readability witness.
+                if (viewId === undefined && resolveInlineTranscriptOccurrence?.(widgetId)) return true;
+                const state = snapshot ? snapshot.itemsById.get(widgetId)?.state
+                    ?? deriveSessionBoardItemState(undefined, { complete: !snapshot.incomplete }) : null;
+                if (state?.kind === 'loading') return null;
+                if (state?.kind !== 'ready') return false;
                 if (viewId === undefined) return true;
-                return snapshot.views.some((view) => (
+                if (snapshot?.layoutState.kind === 'loading') return null;
+                return snapshot?.views.some((view) => (
                     view.id === viewId
                     && view.placements.some((placement) => placement.itemId === widgetId)
-                ));
+                )) === true;
             };
-            const readableView = (viewId: string) => (
-                snapshot?.views.some((view) => view.id === viewId) === true
+            const readableView: SessionBoardPresentationPort['canReadView'] = (viewId) => (
+                snapshot?.layoutState.kind === 'loading' ? null
+                    : snapshot?.views.some((view) => view.id === viewId) === true
             );
             const combineOutcomes = (
                 first: SessionPresentationMutationOutcome,
@@ -129,7 +139,7 @@ export const SessionCompanionPresentationBridge = React.memo(
                 };
             };
             const selectView = (viewId: string): SessionPresentationMutationOutcome => {
-                if (!address || !readableView(viewId)) return { status: 'unavailable' };
+                if (!address || readableView(viewId) !== true) return { status: 'unavailable' };
                 const openOutcome = openBoard('beside_chat');
                 if (openOutcome.status === 'unavailable') return openOutcome;
                 return combineOutcomes(openOutcome, requestView(viewId));
@@ -150,12 +160,20 @@ export const SessionCompanionPresentationBridge = React.memo(
                 canReadView: readableView,
                 canReadItem: readableItem,
             };
-        }, [address, boardAvailable, boardContinuity, openBoard, revealBoardItem, snapshot]);
+        }, [address, boardAvailable, boardContinuity, openBoard, resolveInlineTranscriptOccurrence, revealBoardItem, snapshot]);
 
         const showInlineTranscriptItem = mountedBoard?.showInlineTranscriptItem;
-        const showItemInChat = React.useCallback((itemId: string): SessionPresentationMutationOutcome => (
-            { status: showInlineTranscriptItem?.(itemId) ?? 'unavailable' }
+        const showItemInChat = React.useCallback((itemId: string, occurrenceId?: string): SessionPresentationMutationOutcome => (
+            { status: showInlineTranscriptItem?.(itemId, occurrenceId) ?? 'unavailable' }
         ), [showInlineTranscriptItem]);
+
+        const work = React.useMemo(() => ({
+            apply: (intent: SessionWorkPresentationIntent): CurrentSessionPresentationIntentResultV1 => {
+                const mounted = workPresentationRef?.current;
+                return address && mounted?.address.serverId === address.serverId && mounted.address.sessionId === address.sessionId
+                    ? mounted.apply(intent) : { status: 'unavailable' };
+            },
+        }), [address, workPresentationRef]);
 
         const applier = React.useCallback((
             intent: CurrentSessionPresentationIntentV1,
@@ -164,13 +182,15 @@ export const SessionCompanionPresentationBridge = React.memo(
             companion: controller,
             board,
             viewer,
-            canAddCompanionItem: (item) => canAddSessionCompanionItem(item, mountedBoard?.pluginRuntime ?? null, board.canReadItem),
+            work,
+            canAddCompanionItem: (item) => canAddSessionCompanionItem(item, mountedBoard?.pluginRuntime ?? null,
+                (widgetId) => board.canReadItem(widgetId) === true),
             returnToChat,
             showItemInChat,
             openFullSurface: props.openFullSurface,
             publishNotice: publishPresentationNotice,
             noticeKeyPrefix: buildSessionPresentationNoticeKeyPrefix(address, sessionId),
-        }, intent, onCompanionMutation), [address, board, controller, mountedBoard?.pluginRuntime, props.openFullSurface, viewer, returnToChat, showItemInChat, sessionId]);
+        }, intent, onCompanionMutation), [address, board, controller, mountedBoard?.pluginRuntime, props.openFullSurface, viewer, work, returnToChat, showItemInChat, sessionId]);
 
         const applierRef = props.applierRef;
         React.useEffect(() => {

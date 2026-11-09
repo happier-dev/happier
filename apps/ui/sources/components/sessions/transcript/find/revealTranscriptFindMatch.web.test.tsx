@@ -12,6 +12,8 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { installWebLockManagerMock, type WebLockManagerMockHandle } from '@/auth/storage/tokenStorage.web.testHelpers';
 import type { ChatTranscriptListItem } from '../chatListTypes';
 import type { TranscriptFindCorpus } from './useTranscriptFind';
+import { View } from 'react-native';
+import { buildChatListItems } from '../../chatListItems';
 import type { restoreTranscriptJumpEnvironment } from '../viewport/jump/host/transcriptJumpHostTestHarness';
 
 vi.mock('react-native', async () => await import('react-native-web'));
@@ -53,8 +55,75 @@ function installMessage(message: Message) {
 }
 
 describe('web Find reveal through the real jump owner', () => {
+    it.each([390, 1440])('routes Enter, reverse and Escape through the transcript owner at %spx, including its seated input', async width => {
+        vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(width);
+        await act(async () => { window.dispatchEvent(new Event('resize')); });
+        const [{ KeyboardShortcutProvider }, { FindComposerSlotProvider, FindComposerSlotHost }] = await Promise.all([
+            import('@/keyboard/KeyboardShortcutProvider'), import('@/components/ui/find/FindComposerSlot'),
+        ]);
+        const messages: Message[] = [{ kind: 'user-text', id: 'keyboard-message', localId: null,
+            seq: 1, createdAt: 1, text: 'needle needle' }];
+        const items = buildChatListItems({ messageIdsOldestFirst: messages.map(message => message.id),
+            messagesById: Object.fromEntries(messages.map(message => [message.id, message])), pendingMessages: [] });
+        let corpus: TranscriptFindCorpus = { messages, history: { isLoaded: true, hasOlder: false, isLoadingOlder: false } };
+        const source = createReadOnlySessionTranscriptSource({ sessionId: 's1', serverId: null, messages,
+            historyState: corpus.history, reducerState: null, metadata: null, agentState: null });
+        // Viewport movement is the OS boundary; matching, registration and keyboard dispatch stay real.
+        const model = createTranscriptFindModel({ readCorpus: () => corpus, loadPage: null,
+            jumpToTarget: async target => ({ status: 'scrolled', target }), reveal: async () => {} });
+        const container = document.createElement('div'); document.body.appendChild(container);
+        const root = createRoot(container);
+        const viewport = React.createRef<React.ElementRef<typeof View>>();
+        function Screen() {
+            return <KeyboardShortcutProvider handlers={{}}><PluginSurfaceFocusEligibilityProvider active><FindComposerSlotProvider>
+                <View testID="session-view-retained-surface:s1">
+                    <View ref={viewport}><TranscriptFindSurface model={model} source={source} sessionId="s1" serverId={null}
+                        focused viewportRef={viewport} items={items} loadedMessages={messages}
+                        publishCorpus={next => { corpus = next; }} measureMessage={() => null} contentHeight={200}>
+                        <View />
+                    </TranscriptFindSurface></View>
+                    <FindComposerSlotHost composer={<div data-testid="agent-input-composer"><input data-testid="keyboard-origin" /></div>} />
+                </View>
+            </FindComposerSlotProvider></PluginSurfaceFocusEligibilityProvider></KeyboardShortcutProvider>;
+        }
+        const key = async (target: HTMLElement, init: KeyboardEventInit) => {
+            const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, ...init });
+            await act(async () => { target.dispatchEvent(event); await model.settled(); });
+            return event;
+        };
+        try {
+            await act(async () => { root.render(<Screen />); });
+            const origin = container.querySelector<HTMLInputElement>('[data-testid="keyboard-origin"]')!;
+            const focus = origin.focus.bind(origin);
+            // jsdom focuses display:none descendants; browsers refuse them. Keep
+            // that OS eligibility boundary real while the phone slot hides its composer.
+            vi.spyOn(origin, 'focus').mockImplementation(options => {
+                for (let node: HTMLElement | null = origin; node; node = node.parentElement) {
+                    if (getComputedStyle(node).display === 'none') return;
+                }
+                focus(options);
+            });
+            await act(async () => { origin.focus(); });
+            expect((await key(origin, { key: 'f', code: 'KeyF', ctrlKey: true })).defaultPrevented).toBe(true);
+            await act(async () => { model.setQuery('needle'); await model.settled(); });
+            const field = container.querySelector<HTMLInputElement>('[data-testid="transcript-find.input"]')!;
+            expect(field).not.toBeNull();
+            expect(field.closest('[data-testid="find-composer-slot"]') !== null).toBe(width === 390);
+            await act(async () => { field.focus(); });
+            expect(model.status).toMatchObject({ current: 1, total: 2 });
+            expect((await key(field, { key: 'Enter', code: 'Enter' })).defaultPrevented).toBe(true);
+            expect(model.status).toMatchObject({ current: 2, total: 2 });
+            await key(field, { key: 'Enter', code: 'Enter', isComposing: true });
+            expect(model.status).toMatchObject({ current: 2, total: 2 });
+            expect((await key(field, { key: 'Enter', code: 'Enter', shiftKey: true })).defaultPrevented).toBe(true);
+            expect(model.status).toMatchObject({ current: 1, total: 2 });
+            expect((await key(field, { key: 'Escape', code: 'Escape' })).defaultPrevented).toBe(true);
+            expect(model.getSnapshot().open).toBe(false);
+            expect(document.activeElement).toBe(origin);
+        } finally { await act(async () => { root.unmount(); }); model.dispose(); container.remove(); }
+    });
     it.each(['plain', 'e2ee'] as const)('finds a fetched %s page through normalization, reducer, Action registration and the real jump host', async (mode) => {
-        const { SessionMessagesPageV1Schema } = await import('@happier-dev/protocol');
+        const { SessionMessagesPageV1Schema} = await import('@happier-dev/protocol/sessions/messages/sessionMessagesPageV1');
         const { runSessionMessagesPagePipeline } = await import('@/sync/engine/sessions/sessionMessagesPagePipeline');
         const { createFindSurfaceRegistry } = await import('@/keyboard/findSurfaceRegistry');
         const { registerFindActionRuntime } = await import('@/keyboard/findActionRuntime');

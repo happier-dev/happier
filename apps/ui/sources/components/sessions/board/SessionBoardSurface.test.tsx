@@ -63,6 +63,17 @@ function note(title: string): SessionSurfaceItemV1 {
     } as SessionSurfaceItemV1;
 }
 
+function layoutViewTab(screen: Awaited<ReturnType<typeof renderScreen>>, viewId: string, x: number): void {
+    const tab = screen.findHostByTestId(`session-board-views-view-${viewId}`);
+    let layoutOwner = tab?.parent ?? null;
+    // The strip measures the outer native View; the shared pressable owns its hit-area geometry.
+    while (layoutOwner && !(layoutOwner.type === 'View' && typeof layoutOwner.props.onLayout === 'function')) {
+        layoutOwner = layoutOwner.parent;
+    }
+    if (!layoutOwner) throw new Error(`No measured Board view tab: ${viewId}`);
+    layoutOwner.props.onLayout({ nativeEvent: { layout: { x, y: 0, width: 100, height: 40 } } });
+}
+
 const ADDRESS = { serverId: 'home-1', sessionId: 'session-1' };
 const REVISION = 'ssr1.AAAACHN5c3JlY18xAAAAAQ';
 const NEXT_REVISION = 'ssr1.AAAACHN5c3JlY18xAAAAAg';
@@ -117,7 +128,6 @@ function Harness(props: Readonly<{
             serverId={props.serverId ?? 'home-1'}
             controller={controller}
             host={props.host ?? 'details'}
-            resolvePrimaryHost={() => props.host ?? 'details'}
             density="full"
             layout={props.host === 'mobileCockpit' ? 'single' : 'grid'}
             {...(props.navigationOnly ? { navigationOnly: true } : {})}
@@ -159,7 +169,6 @@ function PaneHarness(props: Readonly<{
                     sessionId="session-1"
                     controller={controller}
                     host={props.host}
-                    resolvePrimaryHost={() => props.host}
                     density={props.host === 'sidebar' ? 'compact' : 'full'}
                     layout="single"
                     {...(props.host === 'sidebar' ? { navigationOnly: true } : {})}
@@ -378,7 +387,7 @@ describe('SessionBoardSurface', () => {
             await screen.update(<Harness host={host} snapshot={afterRemoval} />);
 
             expect(focusByTestId.get('session-board-views-view-decisions')).toHaveBeenCalledOnce();
-            expect(screen.findByTestId('session-board-views-view-decisions')?.props.accessibilityState).toEqual({
+            expect(screen.findByTestId('session-board-views-view-decisions')?.props.accessibilityState).toMatchObject({
                 selected: true,
             });
             expect(screen.findHostByTestId('session-board-scroll')?.props.accessibilityLabelledBy).toBe(
@@ -578,8 +587,8 @@ describe('SessionBoardSurface', () => {
             await vi.waitFor(() => expect(screen.findHostByTestId('session-board-item-note-1-move-handle')).not.toBeNull());
             const drag = screen.tree.root.findByType(SessionSurfaceEntityDragHandle).props.drag as React.ComponentProps<typeof SessionSurfaceEntityDragHandle>['drag'];
             await act(async () => {
-                screen.findHostByTestId('session-board-views-view-overview')!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 100, height: 40 } } });
-                screen.findHostByTestId('session-board-views-view-research')!.props.onLayout({ nativeEvent: { layout: { x: 110, y: 0, width: 100, height: 40 } } });
+                layoutViewTab(screen, 'overview', 0);
+                layoutViewTab(screen, 'research', 110);
                 const carry = drag.runtime.begin(drag.sourceId, 'pointer');
                 expect(carry).not.toBeNull();
                 carry!.move({ x: 250, y: 120 });
@@ -618,8 +627,8 @@ describe('SessionBoardSurface', () => {
             const drag = screen.tree.root.findByType(SessionSurfaceEntityDragHandle).props.drag as React.ComponentProps<typeof SessionSurfaceEntityDragHandle>['drag'];
             let carry: ReturnType<typeof drag.runtime.begin> = null;
             await act(async () => {
-                screen.findHostByTestId('session-board-views-view-overview')!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 100, height: 40 } } });
-                screen.findHostByTestId('session-board-views-view-research')!.props.onLayout({ nativeEvent: { layout: { x: 110, y: 0, width: 100, height: 40 } } });
+                layoutViewTab(screen, 'overview', 0);
+                layoutViewTab(screen, 'research', 110);
                 carry = drag.runtime.begin(drag.sourceId, 'pointer');
                 expect(carry).not.toBeNull();
                 carry!.move({ x: 250, y: 120 });
@@ -898,7 +907,6 @@ describe('SessionBoardSurface', () => {
                     sessionId="session-1"
                     controller={controller}
                     host="details"
-                    resolvePrimaryHost={() => 'details'}
                     density="full"
                     layout="grid"
                     focusedItemId="note-1"
@@ -926,7 +934,6 @@ describe('SessionBoardSurface', () => {
                     sessionId="session-1"
                     controller={controller}
                     host="details"
-                    resolvePrimaryHost={() => 'details'}
                     density="full"
                     layout="grid"
                     focusedItemId="removed-note"
@@ -958,7 +965,6 @@ describe('SessionBoardSurface', () => {
                     sessionId="session-1"
                     controller={controller}
                     host="details"
-                    resolvePrimaryHost={() => 'details'}
                     density="full"
                     layout="grid"
                     focusedItemId="pending-note"
@@ -989,7 +995,6 @@ describe('SessionBoardSurface', () => {
                     sessionId="session-1"
                     controller={controller}
                     host="details"
-                    resolvePrimaryHost={() => 'details'}
                     density="full"
                     layout="grid"
                     focusedItemId="note-1"

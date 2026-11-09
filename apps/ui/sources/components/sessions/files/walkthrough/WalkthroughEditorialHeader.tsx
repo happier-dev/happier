@@ -5,7 +5,8 @@ import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { ScmComparisonEyebrow, ScmComparisonSourceFact } from '@/components/sessions/files/comparison/ScmComparisonHeader';
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -25,6 +26,8 @@ export type WalkthroughEditorialHeaderProps = Readonly<{
     /** The analysis fact's mark (the writing agent's identity mark), when the caller has it. */
     analysisMark?: React.ReactNode;
     reviewedProgressAvailable?: boolean;
+    /** The marks are still being read: the reviewed fact holds its room, unseen. */
+    reviewedProgressPending?: boolean;
     phone?: boolean;
     narrow?: boolean;
     overviewOpen: boolean;
@@ -76,8 +79,8 @@ export const WalkthroughEditorialHeader = React.memo(function WalkthroughEditori
                     mark={props.analysisMark}
                 />
             ) : null}
-            {props.reviewedProgressAvailable !== false && hasStops && !writing && !arriving ? (
-                <WalkthroughReviewedFact count={reading.reviewedCount} total={reading.stops.length} />
+            {(props.reviewedProgressAvailable !== false || props.reviewedProgressPending === true) && hasStops && !writing && !arriving ? (
+                <WalkthroughReviewedFact source={reading.reviewedSource} count={reading.reviewedCount} total={reading.stops.length} pending={props.reviewedProgressPending === true && props.reviewedProgressAvailable === false} />
             ) : null}
         </>
     );
@@ -173,7 +176,7 @@ function WalkthroughOverviewStrip(props: Readonly<{
             onPress={props.onToggle}
             style={(state) => [styles.overviewHead, focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
         >
-            <Icon name={props.open ? 'caret-down' : 'caret-right'} size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
+            <DisclosureCaret expanded={props.open} size={ICON_SIZE.xs} />
             <Text style={styles.overviewTitle}>{t('walkthrough.overview')}</Text>
             {props.phone && !props.open ? null : (
                 <Text style={styles.overviewMeta} numberOfLines={1}>

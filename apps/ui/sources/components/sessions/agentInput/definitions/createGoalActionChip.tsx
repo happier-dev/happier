@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { Pressable } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
@@ -17,6 +16,7 @@ import { hapticsLight } from '@/components/ui/theme/haptics';
 import { t } from '@/text';
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE, AGENT_INPUT_MENU_ICON_SIZE_PX } from './agentInputChipIconMetrics';
+import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
 
 const PRIMER_GOAL_ICON_PATHS = [
     'M20.172 6.75h-1.861l-4.566 4.564a1.874 1.874 0 1 1-1.06-1.06l4.565-4.565V3.828a.94.94 0 0 1 .275-.664l1.73-1.73a.249.249 0 0 1 .25-.063c.089.026.155.1.173.191l.46 2.301 2.3.46c.09.018.164.084.19.173a.25.25 0 0 1-.062.249l-1.731 1.73a.937.937 0 0 1-.663.275Z',
@@ -79,7 +79,7 @@ export function createGoalActionChip(params: Readonly<{
             ),
         },
         render: ({ chipStyle, iconColor, chipAnchorRef, toggleCollapsedPopover }) => (
-            <Pressable
+            <AgentInputRailChip
                 ref={chipAnchorRef}
                 testID="agent-input-goal-chip"
                 accessibilityRole="button"
@@ -89,11 +89,10 @@ export function createGoalActionChip(params: Readonly<{
                     hapticsLight();
                     toggleCollapsedPopover?.(SESSION_GOAL_CHIP_KEY);
                 }}
-                hitSlop={{ top: 8, bottom: 10, left: 4, right: 4 }}
-                style={(state) => chipStyle(state.pressed)}
+                style={chipStyle}
             >
                 {normalizeNodeForView(<Icon name="target" color={iconColor} size={AGENT_INPUT_CHIP_ICON_SIZE_PX} style={AGENT_INPUT_CHIP_ICON_STYLE} />)}
-            </Pressable>
+            </AgentInputRailChip>
         ),
     };
 }

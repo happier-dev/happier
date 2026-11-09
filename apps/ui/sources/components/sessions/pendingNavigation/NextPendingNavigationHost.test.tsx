@@ -24,7 +24,7 @@ installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 const { getStorage } = await import('@/sync/domains/state/storage');
-const { buildSessionMessagesPath, SessionCurrentProjectionRecordV1Schema } = await import('@happier-dev/protocol');
+const [{ buildSessionMessagesPath}, { SessionCurrentProjectionRecordV1Schema}] = await Promise.all([import('@happier-dev/protocol/sessions/messages/sessionMessagesPageV1'), import('@happier-dev/protocol/sessions/listing/response')]);
 const { buildSessionListRenderableFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
 const { SessionViewerProjectionV1Schema } = await import('@happier-dev/protocol/sessions/personal/viewer');
 const { useServerCredentialAccountScopeBindings } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
@@ -169,6 +169,28 @@ describe('mounted app-shell Next navigation', () => {
         await renderScreen(<KeyboardShortcutProvider handlers={{}}><NextPendingNavigationHost /></KeyboardShortcutProvider>);
         await expect(invokeNextPendingRequest()).resolves.toEqual({ status: 'none' });
         expect(navigation.routes).toHaveLength(0);
+    });
+
+    it('does not redraw when a Session update leaves the pending Homes unchanged', async () => {
+        // The host reads only which Homes hold pending requests; every message on the Account redrew it.
+        const serverId = await homes.addHome({ name: 'Quiet Home', serverUrl: 'https://quiet-next-home.test', accountId: 'next-owner' });
+        const session = createSessionFixture({ id: 'quiet', serverId, active: true, activeAt: Date.now(), updatedAt: Date.now() });
+        getStorage().setState({
+            isDataReady: true,
+            profileScope: { serverId, accountId: 'next-owner' },
+            sessions: { [session.id]: session }, sessionListRowsByServerId: {}, ordinarySessionListMembershipByServerId: {},
+        });
+        let commits = 0;
+        await renderScreen(<KeyboardShortcutProvider handlers={{}}>
+            <React.Profiler id="next" onRender={() => { commits += 1; }}><NextPendingNavigationHost /></React.Profiler>
+        </KeyboardShortcutProvider>);
+        const before = commits;
+        await act(async () => {
+            for (let seq = 2; seq < 5; seq += 1) {
+                getStorage().setState((state) => ({ sessions: { ...state.sessions, [session.id]: { ...session, seq, updatedAt: session.updatedAt + seq } } }));
+            }
+        });
+        expect(commits - before).toBe(0);
     });
 
     it('says once, quietly, that nothing waits when the key finds no request (lab fnext ST), and stays silent for Actions', async () => {

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { ScmPullRequestChecksState, ScmPullRequestState } from '@happier-dev/protocol';
+import type { ScmPullRequestChecksState, ScmPullRequestState } from '@happier-dev/protocol/scm/pullRequests';
 
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -12,8 +12,8 @@ import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+import { useOpenResource } from '@/utils/url/openResource';
 import { t } from '@/text';
 
 import { GitPullRequestProviderMark } from './GitPullRequestProviderMark';
@@ -38,9 +38,12 @@ export type GitPullRequestCardModel = Readonly<{
 export const GitPullRequestCard = React.memo(function GitPullRequestCard(props: Readonly<{
     model: GitPullRequestCardModel;
     animateIn?: boolean;
+    sessionId?: string;
+    serverId?: string;
 }>) {
     const { theme } = useUnistyles();
     const { model } = props;
+    const { openResource } = useOpenResource({ sessionId: props.sessionId, serverId: props.serverId });
     const reducedMotion = useReducedMotionPreference();
     const progress = useSharedValue(props.animateIn ? 0 : 1);
     React.useEffect(() => {
@@ -55,9 +58,10 @@ export const GitPullRequestCard = React.memo(function GitPullRequestCard(props: 
         transform: reducedMotion ? [] : [{ translateY: (1 - progress.value) * 6 }],
     }));
     const [copied, setCopied] = React.useState(false);
+    const writeClipboard = useClipboardWrite();
     const copy = React.useCallback(() => {
-        void setClipboardStringSafe(model.url).then((ok) => setCopied(ok));
-    }, [model.url]);
+        void writeClipboard(model.url).then((ok) => setCopied(ok));
+    }, [model.url, writeClipboard]);
     const stateLabel = t(`sessionGitPullRequest.card.state.${model.state}` as const);
     const checksColor = model.checks === 'success'
         ? theme.colors.state.success.foreground
@@ -87,10 +91,10 @@ export const GitPullRequestCard = React.memo(function GitPullRequestCard(props: 
             <View style={styles.actions}>
                 <ToolbarButton
                     testID="git-pull-request-card-open"
-                    label={model.providerName ? t('sessionGitPullRequest.card.openOn', { provider: model.providerName }) : t('sessionGitPullRequest.card.state.unknown')}
+                    label={t('common.open')}
                     icon={<Icon name="arrow-square-out" size={14} color={theme.colors.text.secondary} />}
                     onPress={() => {
-                        void openExternalUrl(model.url);
+                        void openResource({ kind: 'pullRequest', url: model.url });
                     }}
                 />
                 <ToolbarButton

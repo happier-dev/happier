@@ -138,7 +138,7 @@ function CommitPlanStoppedSummary(props: Readonly<{ proposal: CommitProposal; br
                         <CommitGroupMark number={group.number} state={group.state === 'landed' ? 'landed' : 'notCreated'} />
                         <View style={styles.summaryText}>
                             <Text style={styles.summaryMessage} numberOfLines={1}>{group.message}</Text>
-                            <Text style={styles.summaryMeta} numberOfLines={1}>
+                            <Text style={styles.summaryMeta}>
                                 {group.landedSha
                                     ? <><Text style={styles.mono}>{shortSha(group.landedSha)}</Text>{props.branch ? ` · ${t('commitProposal.outcome.onBranch', { branch: props.branch })}` : ''}</>
                                     : `${t('commitProposal.state.notCreatedShort')} · ${t('commitProposal.fileCount', { count: group.changes.length })}`}
@@ -178,8 +178,10 @@ export function CommitPlanGroupOutcome(props: Readonly<{
     if (group.rewrittenMessage) {
         const original = group.message.trim();
         const lines = group.rewrittenMessage.replace(/\n+$/, '').split('\n');
+        // The note names what the block shows, so it heads the block instead of riding the landed line (lab WT4-C4).
         return (
             <View style={styles.log} testID={`commit-group-rewritten:${group.id}`}>
+                <Text style={styles.logCaption}>{t('commitProposal.state.rewritten')}</Text>
                 {lines.map((line, index) => (
                     <Text key={index} style={[styles.logText, index > 0 && line.trim() && !original.includes(line.trim()) ? { color: theme.colors.state.success.foreground } : null]}>
                         {line || ' '}
@@ -243,12 +245,11 @@ export function CommitPlanGroupOutcome(props: Readonly<{
     return null;
 }
 
-/** A landed commit's line (lab WT4-C3): its SHA, when it was committed, and "signed" only when it was. */
-export function LandedMeta(props: Readonly<{ sha: string; rewritten: boolean; committedAtMs: number | null; signed: boolean }>) {
+/** A landed commit's line (lab WT4-C3): its SHA, when it was committed, and "signed" only when it was. A rewritten message heads its own block below. */
+export function LandedMeta(props: Readonly<{ sha: string; committedAtMs: number | null; signed: boolean }>) {
     const { theme } = useUnistyles();
     const parts = [
         props.committedAtMs !== null ? t('commitProposal.state.landedAt', { time: formatAsOfTime(props.committedAtMs) }) : t('commitProposal.state.landed'),
-        props.rewritten ? t('commitProposal.state.rewritten') : null,
         props.signed ? t('commitProposal.state.signed') : null,
     ].filter((part): part is string => part !== null);
     return (
@@ -305,6 +306,7 @@ const styles = StyleSheet.create((theme) => ({
     logFlush: { marginLeft: 0, marginRight: 0, marginBottom: 0, marginTop: theme.space.s10 },
     // Hook output is terminal text (D8): mono at the meta size with a log's leading.
     logText: { ...Typography.variant('meta'), lineHeight: 19, color: theme.colors.text.secondary, ...Typography.mono() },
+    logCaption: { ...Typography.variant('meta'), color: theme.colors.text.tertiary, marginBottom: theme.space.s6 },
     metaRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4 },
     metaText: { ...Typography.variant('body'),  color: theme.colors.text.tertiary,  },
 }));

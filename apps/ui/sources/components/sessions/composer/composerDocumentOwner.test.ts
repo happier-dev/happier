@@ -1,4 +1,5 @@
-import type { ComposerAttachmentDraftV1, ComposerRefV1 } from '@happier-dev/protocol';
+import type { ComposerAttachmentDraftV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import { describe, expect, it, vi } from 'vitest';
 
 import {

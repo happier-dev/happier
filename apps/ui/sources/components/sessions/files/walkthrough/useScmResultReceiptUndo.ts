@@ -30,7 +30,7 @@ export function useScmResultReceiptUndo(params: Readonly<{
     const receiptKey = JSON.stringify([identity, revision]);
     const [admitted, setAdmitted] = React.useState<Readonly<{ identity: string; key: string }> | null>(null);
     const activeRequestKey = admitted?.identity === identity ? admitted.key : requestKey ?? null;
-    // Observe only a known admitted projection. Mounting a receipt never reads or searches SCM data.
+    // The saved result owns availability; the local key only addresses its admitted projection.
     const getSnapshot = React.useCallback(() => {
         const entry = activeRequestKey ? getScmDiffSummaryState().entriesByKey[activeRequestKey] : undefined;
         return scopeKey && entry?.scopeKey === scopeKey && entry.sessionId === sessionId && entry.savedResult?.resultId === resultId
@@ -43,50 +43,48 @@ export function useScmResultReceiptUndo(params: Readonly<{
     [sessionId, scope?.serverId, scope?.accountId, isCurrent]);
     const [undoing, setUndoing] = React.useState(false);
     const [failed, setFailed] = React.useState<Readonly<{ key: string; failure: ReceiptUndoFailure }> | null>(null);
-    // This receipt's own Undo landed; a later edit elsewhere does not read as an Undo here.
-    const [undoneKey, setUndoneKey] = React.useState<string | null>(null);
     const pending = React.useRef(false);
-    const enabled = Boolean(canControl && receipt.publication.canUndo && (!saved || (saved.canUndo && saved.revision === revision
-        && !isScmCommitPlanApplicationLocked(saved.application))) && operations && isCurrent());
+    React.useEffect(() => {
+        if (!receipt.publication.canUndo || !operations || !scope || !isCurrent() || getSnapshot()) return;
+        let mounted = true;
+        void operations.read({ cwd, resultId }).then(read => {
+            if (!mounted || !isCurrent()) return;
+            if (!read.success) { setFailed({ key: receiptKey, failure: read }); return; }
+            if (read.result.resultId !== resultId || !read.result.output.success || read.result.output.comparison?.repository.rootPath !== cwd) return;
+            const key = loadSavedScmDiffSummaryResult({ sessionId, scope, result: read.result });
+            if (key) setAdmitted({ identity, key });
+        });
+        return () => { mounted = false; };
+    }, [receipt.publication.canUndo, operations, scopeKey, isCurrent, getSnapshot, cwd, resultId, sessionId, identity, receiptKey]);
+    // A later, different edit is not this receipt's Undo. The saved notice identifies the undone revision.
+    const undone = Boolean(saved && !saved.canUndo && saved.updateNotice?.kind === 'undo'
+        && saved.updateNotice.revision === revision + 1 && saved.revision >= saved.updateNotice.revision);
+    const enabled = Boolean(canControl && receipt.publication.canUndo && saved?.canUndo && saved.revision === revision
+        && !isScmCommitPlanApplicationLocked(saved.application) && operations && isCurrent());
     const undo = React.useCallback(async () => {
-        if (!enabled || !operations || !scope || pending.current || !isCurrent()) return;
+        if (!enabled || !operations || !activeRequestKey || pending.current || !isCurrent()) return;
         // A previously rendered callback cannot undo a later edit, even before React catches up.
         const current = getSnapshot();
-        if (current && (!current.canUndo || current.revision !== revision || isScmCommitPlanApplicationLocked(current.application))) return;
+        if (!current || !current.canUndo || current.revision !== revision || isScmCommitPlanApplicationLocked(current.application)) return;
         pending.current = true;
         setUndoing(true);
         setFailed(null);
-        const fail = (failure: ReceiptUndoFailure) => setFailed({ key: receiptKey, failure });
+        // A receipt is not an editor: when the walkthrough moved on after this update, say that, not the draft-conflict copy.
+        const fail = (failure: ReceiptUndoFailure) => setFailed({ key: receiptKey, failure: failure.errorCode === 'revision_conflict'
+            ? { ...failure, error: t('walkthrough.receipt.changedSince') } : failure });
         try {
-            // Only explicit Undo intent reads the exact saved result. The Action remains mutation authority.
-            const read = await operations.read({ cwd, resultId });
-            if (!isCurrent()) return;
-            if (!read.success) { fail(read); return; }
-            if (read.result.resultId !== resultId || !read.result.output.success || read.result.output.comparison?.repository.rootPath !== cwd) {
-                fail({ success: false, errorCode: 'result_unavailable', error: t('walkthroughStart.unavailable') });
-                return;
-            }
-            const key = loadSavedScmDiffSummaryResult({ sessionId, scope, result: read.result });
-            if (!key) { fail({ success: false, errorCode: 'result_unavailable', error: t('walkthroughStart.unavailable') }); return; }
-            setAdmitted({ identity, key });
-            if (read.result.revision !== revision) {
-                fail({ success: false, errorCode: 'revision_conflict', latestRevision: read.result.revision, error: t('walkthrough.saved.conflict') });
-                return;
-            }
-            if (!read.result.canUndo || isScmCommitPlanApplicationLocked(read.result.application)) {
-                fail({ success: false, errorCode: read.result.canUndo ? 'application_locked' : 'nothing_to_undo', error: t('walkthroughStart.unavailable') });
-                return;
-            }
             const response = await operations.undo({ cwd, resultId, expectedRevision: revision });
             if (!isCurrent()) return;
-            if (response.success) { applySavedScmDiffSummaryResult(key, response.result); setUndoneKey(receiptKey); }
+            if (response.success) applySavedScmDiffSummaryResult(activeRequestKey, response.result);
             else fail(response);
         } catch (failure) {
             if (isCurrent()) fail({ success: false, errorCode: 'result_unavailable',
                 error: failure instanceof Error ? failure.message : t('walkthroughStart.unavailable') });
         } finally { pending.current = false; setUndoing(false); }
-    }, [enabled, getSnapshot, isCurrent, operations, scope, cwd, resultId, revision, receiptKey, sessionId, identity]);
-    const failure = failed?.key === receiptKey && isCurrent() ? failed.failure : null;
-    return { onUndo: enabled && !undoing ? undo : undefined, undoing, undone: undoneKey === receiptKey && isCurrent(),
+    }, [enabled, getSnapshot, isCurrent, operations, activeRequestKey, cwd, resultId, revision, receiptKey]);
+    const failure: ReceiptUndoFailure | null = !isCurrent() || undone ? null : failed?.key === receiptKey ? failed.failure
+        : saved && saved.revision > revision ? { success: false, errorCode: 'revision_conflict', latestRevision: saved.revision,
+            error: t('walkthrough.receipt.changedSince') } : null;
+    return { onUndo: enabled && !undoing ? undo : undefined, undoing, undone: undone && isCurrent(),
         error: failure?.error ?? null, failure };
 }

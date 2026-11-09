@@ -9,6 +9,10 @@ import { RelativeTimeText } from '@/components/ui/selectionList/accessories/Rela
 import { StatusPill as BaseStatusPill, type StatusPillVariant } from '@/components/ui/status/StatusPill';
 import { Icon } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
+import type { ScmWorktree } from '@happier-dev/protocol/scm/workingSnapshot';
+import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { readRelativeTimeShortRefreshAtMs } from '@/utils/time/formatShortRelativeTime';
 
 import { buildWorktreeCheckoutOptionId } from '@/components/sessions/new/modules/worktreeCheckoutOptionId';
 import { pathsAreSameWorktree } from '@/components/sessions/new/modules/worktreePathComparison';
@@ -74,6 +78,40 @@ export function resolveWorktreeStatusVariant(args: Readonly<{
     return 'clean';
 }
 
+/** Only a mounted row consumes time. The closed picker keeps no clock or timer. */
+function WorktreeRowDetails({ worktree }: Readonly<{ worktree: ScmWorktree }>): React.ReactElement {
+    const presented = useLayoutPresentationActive();
+    const { lastActivityAt, changeCount } = worktree;
+    const readNextRefreshAtMs = React.useCallback((nowMs: number) => {
+        if (lastActivityAt === undefined) return null;
+        const ageAt = readRelativeTimeShortRefreshAtMs(lastActivityAt, nowMs);
+        const staleAt = changeCount === 0 ? lastActivityAt + NEW_SESSION_WORKTREE_STALE_THRESHOLD_MS + 1 : null;
+        return staleAt !== null && staleAt > nowMs
+            ? ageAt === null ? staleAt : Math.min(ageAt, staleAt)
+            : ageAt;
+    }, [changeCount, lastActivityAt]);
+    const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefreshAtMs, presented);
+    const variant = resolveWorktreeStatusVariant({ changeCount, lastActivityAt, nowMs });
+    // Count and suffix are separate so the pill never repeats the number.
+    const dirtyChangeCount = variant === 'dirty' ? changeCount : undefined;
+    const pillLabel = variant === 'dirty'
+        ? t('newSession.worktree.statusPill.changesSuffix', { count: dirtyChangeCount ?? 0 })
+        : variant === 'stale'
+            ? t('newSession.worktree.statusPill.idle')
+            : t('newSession.worktree.statusPill.clean');
+    return (
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            {lastActivityAt !== undefined ? (
+                <RelativeTimeText atMs={lastActivityAt} nowMs={nowMs} testID={`worktree-row-age:${worktree.path}`} />
+            ) : null}
+            {variant !== null ? (
+                <WorktreeStatusPill variant={variant} label={pillLabel} count={dirtyChangeCount}
+                    testID={`worktree-row-status:${worktree.path}`} />
+            ) : null}
+        </View>
+    );
+}
+
 export function buildExistingWorktreeOptions(
     params: WorktreeSelectionListBuilderParams,
 ): ReadonlyArray<SelectionListOption> {
@@ -91,42 +129,6 @@ export function buildExistingWorktreeOptions(
         })
         .map((worktree) => {
             const label = worktree.branch ?? worktree.path;
-            const variant = resolveWorktreeStatusVariant({
-                changeCount: worktree.changeCount,
-                lastActivityAt: worktree.lastActivityAt,
-                nowMs: params.nowMs,
-            });
-            // Pill rendering: pass `count` xor a short suffix `label` so the pill never
-            // duplicates the count (the wrapper renders `<count> <label>`; passing a
-            // pre-formatted "3 changes" alongside `count={3}` would print "3 3 changes").
-            const dirtyChangeCount = variant === 'dirty' ? worktree.changeCount : undefined;
-            const pillLabel = variant === 'dirty'
-                ? t('newSession.worktree.statusPill.changesSuffix', { count: dirtyChangeCount ?? 0 })
-                : variant === 'stale'
-                    ? t('newSession.worktree.statusPill.idle')
-                    : t('newSession.worktree.statusPill.clean');
-            // The relative-age text and the status pill sit in a gapped row so
-            // they read as two distinct accessories (the age is secondary text;
-            // the pill carries the status colour) rather than colliding.
-            const accessory = (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                    {worktree.lastActivityAt !== undefined ? (
-                        <RelativeTimeText
-                            atMs={worktree.lastActivityAt}
-                            nowMs={params.nowMs}
-                            testID={`worktree-row-age:${worktree.path}`}
-                        />
-                    ) : null}
-                    {variant !== null ? (
-                        <WorktreeStatusPill
-                            variant={variant}
-                            label={pillLabel}
-                            count={dirtyChangeCount}
-                            testID={`worktree-row-status:${worktree.path}`}
-                        />
-                    ) : null}
-                </View>
-            );
             // The row id MUST be derived through the shared
             // `buildWorktreeCheckoutOptionId` owner so it matches the chip
             // model's `selectedOptionId` byte-for-byte; otherwise a selected
@@ -141,7 +143,7 @@ export function buildExistingWorktreeOptions(
                 label,
                 subtitle: worktree.path,
                 icon: <Icon name="graph" size={WORKTREE_ROW_ICON_SIZE} color={params.rowIconColor} />,
-                rightAccessory: accessory,
+                rightAccessory: <WorktreeRowDetails worktree={worktree} />,
                 onSelect: () => params.onSelectExistingWorktree(worktree.path),
             } satisfies SelectionListOption;
         });

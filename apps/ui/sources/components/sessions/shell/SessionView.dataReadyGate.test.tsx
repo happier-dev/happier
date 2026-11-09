@@ -3,8 +3,8 @@ import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNaviga
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
-import type { ComposerAttachmentDraftV1 } from '@happier-dev/protocol';
-import { PluginProjectedActionV2Schema } from '@happier-dev/protocol';
+import type { ComposerAttachmentDraftV1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { PluginProjectedActionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { DEFAULT_SESSION_CAPABILITIES } from '@happier-dev/protocol/features/payload/capabilities/sessionCapabilities';
 
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
@@ -307,8 +307,8 @@ vi.mock('@react-navigation/native', () => ({
     useIsFocused: () => true,
 }));
 
-vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
-    ChatHeaderView: (props: any) => React.createElement(
+vi.mock('@/components/sessions/shell/view/SessionPaneHeader', () => ({
+    SessionPaneHeader: (props: any) => React.createElement(
         React.Fragment,
         null,
         React.createElement('Text', { testID: 'session-header-title' }, props.title ?? ''),
@@ -554,16 +554,13 @@ describe('SessionView (data ready gating)', () => {
                 await sync.fetchPendingMessages('s1', lifetime.scope);
             });
             const initialComposerRenders = agentInputPropsSpy.mock.calls.length;
+            const { rememberLastNewSessionAgentPickerView, rememberLastUsedBackendSelection } = await import('@/sync/domains/state/newSessionTargetUiState');
             await act(async () => {
-                canonicalStorage.getState().applySettingsLocal({
-                    lastNewSessionAgentPickerViewV1: { kind: 'favoriteModels' },
-                });
+                rememberLastNewSessionAgentPickerView(lifetime.scope, { kind: 'favoriteModels' });
             });
             expect(agentInputPropsSpy.mock.calls.length).toBe(initialComposerRenders);
             await act(async () => {
-                canonicalStorage.getState().applySettingsLocal({
-                    lastUsedBackendTarget: { kind: 'backend', backendId: 'codex' },
-                });
+                rememberLastUsedBackendSelection(lifetime.scope, { lastUsedBackendTarget: { kind: 'backend', backendId: 'codex' } });
             });
             expect(agentInputPropsSpy.mock.calls.length).toBe(initialComposerRenders);
 
@@ -905,6 +902,7 @@ describe('SessionView (data ready gating)', () => {
             extraActionChips: [sharedChip],
             beforeComposer: null,
             afterComposer: null,
+            statusRegions: [],
             renderAttachmentSurface: () => undefined,
             resolveAttachmentInteraction: () => undefined,
         };
@@ -942,8 +940,6 @@ describe('SessionView (data ready gating)', () => {
                     installedPackagesById: {},
                     agentsById: {},
                     actionsById: {},
-
-
                     resourcesById: {},
                     settingsById: {},
                     familiesById: {
@@ -1086,8 +1082,6 @@ describe('SessionView (data ready gating)', () => {
                     installedPackagesById: {},
                     agentsById: {},
                     actionsById: { 'acme.compose/refresh-context': projectedAction },
-
-
                     resourcesById: {},
                     settingsById: {},
                     familiesById: {},
@@ -1200,8 +1194,6 @@ describe('SessionView (data ready gating)', () => {
                     installedPackagesById: {},
                     agentsById: {},
                     actionsById: { 'acme.compose/refresh-context': projectedAction },
-
-
                     resourcesById: {},
                     settingsById: {},
                     familiesById: {},
@@ -1414,8 +1406,6 @@ describe('SessionView (data ready gating)', () => {
                     installedPackagesById: {},
                     agentsById: {},
                     actionsById: {},
-
-
                     resourcesById: {},
                     settingsById: {},
                     familiesById: {
@@ -1578,8 +1568,6 @@ describe('SessionView (data ready gating)', () => {
                     installedPackagesById: {},
                     agentsById: {},
                     actionsById: {},
-
-
                     resourcesById: {},
                     settingsById: {},
                     familiesById: {

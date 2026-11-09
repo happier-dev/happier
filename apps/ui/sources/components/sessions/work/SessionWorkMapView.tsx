@@ -44,11 +44,16 @@ const stylesheet = StyleSheet.create((theme) => ({
 export const SessionWorkMapView = React.memo((props: Readonly<{
     map: SessionWorkMap;
     projection: WorkProjection;
+    /**
+     * Each node's quiet facts under its name. The sidebar map (lab `session-A2`) draws one line per
+     * node (mark, name, state); the Details pane (lab `session-B`) has the room for the facts.
+     */
+    showFacts: boolean;
     testIDPrefix: string;
     onOpenItem: (item: WorkItem) => void;
 }>) => {
     const styles = stylesheet;
-    const { map, projection, onOpenItem } = props;
+    const { map, projection, onOpenItem, showFacts } = props;
     const itemByKey = React.useMemo(() => {
         const byKey = new Map<string, WorkItem>();
         for (const item of [...projection.sessions, ...projection.workflows, ...projection.backgroundRuns, ...projection.agents, ...projection.projectCommands]) {
@@ -92,6 +97,8 @@ export const SessionWorkMapView = React.memo((props: Readonly<{
         appearance: 'card',
         childLayout: node.kind === 'lead' ? 'lanes' : 'sequence',
         tone: node.status?.tone ?? 'neutral',
+        // A settled report is drawn in the quiet ink so it never reads like work still going.
+        muted: node.settled,
     }), []);
     const renderLeading = React.useCallback((node: SessionWorkMapNode) => (
         <ExecutionRunAgentMark agentId={node.agentId} size={28} />
@@ -119,7 +126,7 @@ export const SessionWorkMapView = React.memo((props: Readonly<{
             accessibilityLabelForNode={accessibilityLabelForNode}
             renderStatus={renderStatus}
             renderLeading={renderLeading}
-            renderSubtitle={renderSubtitle}
+            renderSubtitle={showFacts ? renderSubtitle : undefined}
             presentNode={presentNode}
             isNodeDisabled={isNodeDisabled}
             onOpen={onOpen}

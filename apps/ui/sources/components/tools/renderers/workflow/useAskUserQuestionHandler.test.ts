@@ -5,7 +5,7 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { createPlainSessionByIdResponseFixture, createPlainSessionCurrentProjectionRecordFixture, createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createCompactSessionListRowFixture } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
-import { projectSessionDisplayV1, SessionDisplayProjectionV1Schema } from '@happier-dev/protocol';
+import { projectSessionDisplayV1, SessionDisplayProjectionV1Schema } from '@happier-dev/protocol/sessions';
 import { SessionReadBatchRequestV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 import { SessionOrganizationSnapshotResponseSchema } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { SESSION_ORGANIZATION_SNAPSHOT_VERSION } from '@happier-dev/protocol/sessions/organization/constants';

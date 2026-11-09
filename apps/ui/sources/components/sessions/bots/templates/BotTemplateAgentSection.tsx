@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { botTemplateEditorStyles as styles } from './botTemplateEditorStyles';
 import { AGENT_IDS } from '@/agents/catalog/catalog';
-import { getResolvedAgentCatalogEntries, resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
+import { getResolvedAgentCatalogEntries } from '@/agents/backendCatalog/agentCatalogProjection';
+import { useSessionAgentCatalogIdentity } from '@/agents/registry/useSessionAgentCatalogIdentity';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { useSessionSelector } from '@/sync/store/hooks';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -19,17 +20,17 @@ export function BotTemplateAgentSection({ buffer, save }: Readonly<{ buffer: Bot
     const source = buffer.getSnapshot().draft.sourceSessionRef;
     const machineId = useSessionSelector(source.sessionId, source.serverId,
         session => session ? readSessionOwnerMetadataView(session)?.machineId ?? null : null);
-    const catalog = useDaemonMergedProjectionInputs({ machineId, serverId: source.serverId, enabled: open, sections: ['agentsById'] });
+    // Closing the picker keeps its display binding, but only opening it demands catalog data.
+    const catalog = useDaemonMergedProjectionInputs({ machineId, serverId: source.serverId, load: open, sections: ['agentsById'] });
+    const selected = useSessionAgentCatalogIdentity({ agentId: suggestion?.agentId ?? '', machineId, serverId: source.serverId });
     const entries = open ? getResolvedAgentCatalogEntries({ enabledAgentIds: AGENT_IDS,
         mergedBackendProjectionById: catalog.inputs?.mergedBackendProjectionById,
         mergedProviderProjectionById: catalog.inputs?.mergedProviderProjectionById }) : [];
     const items = [{ id: '', title: t('botTemplates.chooseAgent') }, ...entries.map(entry => ({ id: entry.agentId, title: entry.title }))];
     if (suggestion && !items.some(item => item.id === suggestion.agentId)) items.push({ id: suggestion.agentId,
-        title: resolveAgentCatalogProjection(suggestion.agentId, { enabledAgentIds: AGENT_IDS,
-            mergedBackendProjectionById: catalog.inputs?.mergedBackendProjectionById,
-            mergedProviderProjectionById: catalog.inputs?.mergedProviderProjectionById }).title });
-    return <ItemGroup title={t('botTemplates.suggestedAgent')}>
+        title: selected.entry.title });
     // The section names the suggestion; its rows name what they set (Agent, Model), never the section again.
+    return <ItemGroup title={t('botTemplates.suggestedAgent')}>
         <DropdownMenu testID="bot-template-agent" open={open} onOpenChange={setOpen} items={items} selectedId={suggestion?.agentId ?? ''}
             itemTrigger={{ title: t('newSession.wizardSection.agent'), itemProps: { testID: 'bot-template-agent-trigger' } }} onSelect={agentId => {
                 buffer.edit(draft => {

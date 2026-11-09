@@ -1,22 +1,19 @@
 import * as React from 'react';
-import { Platform, Pressable } from 'react-native';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
-const MINIMUM_TARGET = resolveMinimumInteractiveTargetSize(Platform.OS);
-
 const stylesheet = StyleSheet.create((theme) => ({
     row: {
-        minWidth: MINIMUM_TARGET,
-        minHeight: MINIMUM_TARGET,
         flexDirection: 'row',
         alignItems: 'center',
         alignSelf: 'flex-start',
+        paddingVertical: theme.space.s4,
         gap: theme.space.s6,
     },
     title: {
@@ -44,20 +41,20 @@ export const ExecutionRunStepsRow = React.memo((props: Readonly<{
     const styles = stylesheet;
     const { theme } = useUnistyles();
     return (
-        <Pressable
+        <HappierPressable
             testID="session-run-details-steps"
             accessibilityRole="button"
-            accessibilityState={{ expanded: props.expanded }}
+            expanded={props.expanded}
             onPress={props.onToggle}
             style={styles.row}
         >
-            <Icon name={props.expanded ? 'caret-down' : 'caret-right'} size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
+            <DisclosureCaret expanded={props.expanded} size={ICON_SIZE.xs} />
             <Text style={styles.title}>
                 {t('runPage.steps.title')}
                 {props.stepCount > 0 ? (
                     <Text style={styles.count}>{` · ${t('runPage.steps.count', { count: props.stepCount })}`}</Text>
                 ) : null}
             </Text>
-        </Pressable>
+        </HappierPressable>
     );
 });

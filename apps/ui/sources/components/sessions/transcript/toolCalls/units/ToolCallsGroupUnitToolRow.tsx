@@ -9,11 +9,11 @@ import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/ap
 import { TranscriptEnterWrapper } from '@/components/sessions/transcript/motion/TranscriptEnterWrapper';
 import { TRANSCRIPT_WEB_TOOL_CALL_PREPEND_ANCHOR_TEST_ID_PREFIX } from '@/components/sessions/transcript/webTranscriptPrependAnchor';
 import {
+    resolveTranscriptToolRouteMessageId,
     type TranscriptSessionCommonProps,
     useTranscriptSessionCommon,
 } from '@/components/sessions/transcript/transcriptSessionCommon';
 import { resolveToolRowPinAction } from '@/components/sessions/transcript/toolCalls/ToolCallPinAction';
-import { resolveMessageRouteIdForDisplay } from "@happier-dev/session-core/messages";
 import type { PersistedSessionMessagePinV1 } from "@happier-dev/session-core/pins";
 import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
 
@@ -48,7 +48,7 @@ export const ToolCallsGroupUnitToolRow = React.memo(function ToolCallsGroupUnitT
             forkCommon={transcriptSessionCommon.fork}
             messageDisplayCommon={transcriptSessionCommon.messageDisplay}
             toolChromeCommon={transcriptSessionCommon.toolChrome}
-            messageRouteId={resolveMessageRouteIdForDisplay({ message: props.message, ...transcriptSessionCommon.toolRoute })}
+            messageRouteId={resolveTranscriptToolRouteMessageId(props.message, transcriptSessionCommon.toolRoute)}
         />
     );
 });

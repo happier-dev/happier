@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, ScrollView, Pressable, Platform, useWindowDimensions } from 'react-native';
+import { View, ScrollView, Platform, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Typography } from '@/constants/Typography';
@@ -13,6 +13,7 @@ import { Text } from '@/components/ui/text/Text';
 import { useScrollViewWheelScrollTo } from '@/components/ui/scroll/useScrollViewWheelScrollTo';
 import { Icon } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 export interface EnvironmentVariablesPreviewPanelProps {
     environmentVariables: Record<string, string>;
@@ -167,13 +168,12 @@ export function EnvironmentVariablesPreviewPanel(props: EnvironmentVariablesPrev
                     {title}
                 </Text>
 
-                <Pressable
+                <HappierPressable
                     onPress={props.onClose}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     style={({ pressed }) => ({ opacity: pressed ? motionTokens.press.opacity : 1 })}
                 >
                     {normalizeNodeForView(<Icon name="x" size={20} color={theme.colors.text.secondary} />)}
-                </Pressable>
+                </HappierPressable>
             </View>
 
             <ScrollView

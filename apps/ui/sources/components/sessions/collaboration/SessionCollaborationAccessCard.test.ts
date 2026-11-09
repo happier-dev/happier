@@ -23,7 +23,7 @@ function model(overrides: Partial<SessionAccessEditorModel> = {}): SessionAccess
         content: { phase: 'ready', hasLastAcknowledgedSnapshot: true },
         owner: null,
         grants: [],
-        directory: { query: '', sections: [] },
+        directory: { sections: [] },
         summary: { label: 'Access', accessibilityLabel: 'Access', requiredByTeamPolicy: false },
         ...overrides,
     };

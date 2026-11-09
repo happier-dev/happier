@@ -1,10 +1,9 @@
 import * as React from 'react';
-import type { SessionTerminalMemberV1, SessionTerminalWorkspaceV1 } from '@happier-dev/protocol';
+import type { SessionTerminalMemberV1, SessionTerminalWorkspaceV1 } from '@happier-dev/protocol/terminal/workspace';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import { SplitCanvasHost, type SplitCanvasHostControls } from '@/components/appShell/splitCanvas/components/SplitCanvasHost';
-import type { SplitCanvasAction, SplitCanvasLeafNode, SplitCanvasState } from '@/components/appShell/splitCanvas/model/splitCanvasTypes';
+import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { PopoverAnchor } from '@/components/ui/popover';
 import { resolvePointerMenuAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
@@ -14,10 +13,9 @@ import { t } from '@/text';
 
 import type { SessionTerminalDescriptor, SessionTerminalTabDescriptor } from '../presentation/describeSessionTerminal';
 import type { SessionTerminalWorkspaceCommand } from '../sessionTerminalWorkspace';
-import { sessionTerminalTabToSplitCanvas } from '../sessionTerminalWorkspace';
-import { registerSessionTerminalSplitMeasurements } from '../sessionTerminalWorkspaceRuntime';
 import { SessionTerminalList, SESSION_TERMINAL_LIST_METRICS } from './SessionTerminalList';
 import { SessionTerminalStrip, type SessionTerminalStripProps } from './SessionTerminalStrip';
+import { SessionTerminalTabCanvas } from './SessionTerminalTabCanvas';
 
 type ResizeCommand = Extract<SessionTerminalWorkspaceCommand, { type: 'resize' }>;
 
@@ -25,7 +23,9 @@ export type SessionTerminalWorkspaceViewProps = Readonly<{
     scopeId: string;
     workspace: SessionTerminalWorkspaceV1;
     tabs: readonly SessionTerminalTabDescriptor[];
-    /** One terminal's body. Only the visible tab's members are mounted; hidden tabs keep running. */
+    /** A full page keeps discovery while another host presents its active terminal. */
+    renderTerminals?: boolean;
+    /** Visited tabs retain their renderers and connections until closed. */
     renderLeaf: (member: SessionTerminalMemberV1, state: Readonly<{ focused: boolean; descriptor: SessionTerminalDescriptor | null }>) => React.ReactNode;
     /** The narrowest a terminal may get, so a split never leaves a PTY too narrow to read. */
     minimumTerminalWidthPx: number;
@@ -34,8 +34,10 @@ export type SessionTerminalWorkspaceViewProps = Readonly<{
     tabMenuItems: (tabId: string) => readonly DropdownMenuItem[];
     onTabMenuSelect: (tabId: string, itemId: string) => void;
     emptyAction?: () => void;
+    /** Why the list stands in for the terminal (recovered Shells), said once above it. */
+    listNote?: string;
     testIdPrefix?: string;
-}> & Omit<SessionTerminalStripProps, 'tabs' | 'activeTabId' | 'listShowing' | 'activeTerminal' | 'onTabMenu' | 'testIdPrefix'>;
+}> & Omit<SessionTerminalStripProps, 'tabs' | 'activeTabId' | 'listShowing' | 'narrow' | 'activeTerminal' | 'onTabMenu' | 'testIdPrefix'>;
 
 /**
  * The session's bottom pane (terminal lab B1–B3): one strip, the visible tab's terminals side by side
@@ -47,45 +49,16 @@ export const SessionTerminalWorkspaceView = React.memo(function SessionTerminalW
     const { workspace } = props;
     const [widthPx, setWidthPx] = React.useState<number | null>(null);
     const [tabMenu, setTabMenu] = React.useState<Readonly<{ tabId: string; anchor: PopoverAnchor | undefined }> | null>(null);
-    const controlsRef = React.useRef<SplitCanvasHostControls | null>(null);
 
     const activeTab = workspace.tabs.find((tab) => tab.id === workspace.activeTabId) ?? null;
     const activeDescriptor = props.tabs.find((tab) => tab.tabId === workspace.activeTabId) ?? null;
     const focusedDescriptor = activeDescriptor?.members.find((member) => member.terminalId === activeTab?.focusedTerminalId) ?? null;
     // The list is a view, not a mode: below the width it needs, this window shows tabs (lab B3).
-    const listShowing = workspace.showList && widthPx !== null && widthPx >= SESSION_TERMINAL_LIST_METRICS.minimumPaneWidthPx;
+    const listShowing = props.renderTerminals !== false && workspace.showList && widthPx !== null && widthPx >= SESSION_TERMINAL_LIST_METRICS.minimumPaneWidthPx;
+    // The same width decides how much the strip can say: a pane with no room for the list keeps its tabs first.
+    const narrow = widthPx === null || widthPx < SESSION_TERMINAL_LIST_METRICS.minimumPaneWidthPx;
 
-    // Split admission and divider moves go through the mounted split engine's own measurements.
-    const activeTabId = activeTab?.id ?? null;
     const focusedTerminalId = activeTab?.focusedTerminalId ?? null;
-    React.useEffect(() => registerSessionTerminalSplitMeasurements(props.scopeId, (tabId) => {
-        if (!focusedTerminalId || (tabId && tabId !== activeTabId)) return null;
-        const measurement = controlsRef.current?.readSplitMeasurement(focusedTerminalId, 'right') ?? null;
-        return measurement ? { availableWidthPx: measurement.availableSizePx, minimumTerminalWidthPx: measurement.minimumExistingSizePx } : null;
-    }, (tabId, splitId, ratio) => (tabId === activeTabId ? controlsRef.current?.resizeSplit(splitId, ratio) ?? false : false)),
-    [activeTabId, focusedTerminalId, props.scopeId]);
-
-    const canvas = React.useMemo(() => (activeTab ? sessionTerminalTabToSplitCanvas(activeTab) : null), [activeTab]);
-    const onCanvasAction = React.useCallback((action: SplitCanvasAction<SessionTerminalMemberV1>) => {
-        if (!activeTabId) return;
-        if (action.type === 'focusLeaf' && action.leafId) props.onFocusTerminal(action.leafId);
-        if (action.type === 'setSplitRatio' && typeof action.availableSizePx === 'number') {
-            props.onResize({
-                type: 'resize', tabId: activeTabId, splitId: action.splitId, ratio: action.ratio,
-                availableWidthPx: action.availableSizePx,
-                minimumTerminalWidthPx: props.minimumTerminalWidthPx,
-                ...(action.minimumFirstSizePx !== undefined ? { minimumFirstWidthPx: action.minimumFirstSizePx } : {}),
-                ...(action.minimumSecondSizePx !== undefined ? { minimumSecondWidthPx: action.minimumSecondSizePx } : {}),
-            });
-        }
-    }, [activeTabId, props.minimumTerminalWidthPx, props.onFocusTerminal, props.onResize]);
-    const getLeafMinimumSizePx = React.useCallback(() => ({ width: props.minimumTerminalWidthPx, height: 0 }), [props.minimumTerminalWidthPx]);
-    const renderLeaf = React.useCallback((input: Readonly<{ leaf: SplitCanvasLeafNode<SessionTerminalMemberV1>; isFocused: boolean }>) => (
-        props.renderLeaf(input.leaf.payload, {
-            focused: input.isFocused,
-            descriptor: activeDescriptor?.members.find((member) => member.terminalId === input.leaf.id) ?? null,
-        })
-    ), [activeDescriptor, props.renderLeaf]);
 
     const onTabMenu = React.useCallback((tabId: string, event: unknown) => setTabMenu({ tabId, anchor: resolvePointerMenuAnchor(event) }), []);
     const onLayout = React.useCallback((event: LayoutChangeEvent) => {
@@ -100,6 +73,7 @@ export const SessionTerminalWorkspaceView = React.memo(function SessionTerminalW
                 tabs={props.tabs}
                 activeTabId={workspace.activeTabId}
                 listShowing={listShowing}
+                narrow={narrow}
                 activeTerminal={focusedDescriptor}
                 onTabMenu={onTabMenu}
                 testIdPrefix={props.testIdPrefix ? `${props.testIdPrefix}-strip` : undefined}
@@ -107,17 +81,20 @@ export const SessionTerminalWorkspaceView = React.memo(function SessionTerminalW
             {/* A terminal state card takes the Details step: a wide, short pane (lab ST). */}
             <SurfaceStateSizeProvider size="details">
             <View style={styles.body}>
-                {canvas ? (
+                {props.renderTerminals === false && props.tabs.length > 0 ? (
+                    <SessionTerminalList tabs={props.tabs} activeTabId={workspace.activeTabId} focusedTerminalId={focusedTerminalId}
+                        onActivateTab={props.onActivateTab} onFocusTerminal={props.onFocusTerminal} onTabMenu={onTabMenu} note={props.listNote}
+                        testIdPrefix={props.testIdPrefix ? `${props.testIdPrefix}-list` : undefined} />
+                ) : activeTab && props.renderTerminals !== false ? (
                     <View style={styles.canvas}>
-                        <TypedTerminalSplitCanvasHost
-                            state={canvas}
-                            dispatch={onCanvasAction}
-                            renderLeaf={renderLeaf}
-                            getLeafMinimumSizePx={getLeafMinimumSizePx}
-                            controlsRef={controlsRef}
-                            keyboardEnabled={false}
-                            chrome="flat"
-                        />
+                        {workspace.tabs.map(tab => (
+                            <RetainedPanelSurface key={tab.id} isActive={tab.id === workspace.activeTabId} mode="flow">
+                                <SessionTerminalTabCanvas scopeId={props.scopeId} tab={tab}
+                                    descriptor={props.tabs.find(descriptor => descriptor.tabId === tab.id) ?? null}
+                                    active={tab.id === workspace.activeTabId} minimumTerminalWidthPx={props.minimumTerminalWidthPx}
+                                    onFocusTerminal={props.onFocusTerminal} onResize={props.onResize} renderLeaf={props.renderLeaf} />
+                            </RetainedPanelSurface>
+                        ))}
                     </View>
                 ) : (
                     <View style={styles.empty}>
@@ -164,22 +141,11 @@ export const SessionTerminalWorkspaceView = React.memo(function SessionTerminalW
     );
 });
 
-const TypedTerminalSplitCanvasHost = SplitCanvasHost as unknown as React.ComponentType<Readonly<{
-    state: SplitCanvasState<SessionTerminalMemberV1>;
-    dispatch: (action: SplitCanvasAction<SessionTerminalMemberV1>) => void;
-    renderLeaf: (input: Readonly<{ leaf: SplitCanvasLeafNode<SessionTerminalMemberV1>; isFocused: boolean; isMaximized: boolean }>) => React.ReactNode;
-    getLeafMinimumSizePx: (leaf: SplitCanvasLeafNode<SessionTerminalMemberV1>) => Readonly<{ width: number; height: number }>;
-    controlsRef: React.MutableRefObject<SplitCanvasHostControls | null>;
-    keyboardEnabled: boolean;
-    chrome: 'framed' | 'flat';
-}>>;
-
 const stylesheet = StyleSheet.create((theme) => ({
     root: {
         flex: 1,
         minHeight: 0,
         minWidth: 0,
-        backgroundColor: theme.colors.surface.base,
     },
     body: {
         flex: 1,

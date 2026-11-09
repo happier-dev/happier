@@ -27,6 +27,7 @@ const { AgentInput } = await import('./AgentInput');
 const { MultiTextInput } = await import('@/components/ui/forms/MultiTextInput.web');
 const mapping = await import('@/components/ui/forms/composerEditor/composerTextDocMapping');
 const mentionsOwner = await import('./structuredInputMentions');
+const chipRowReach = await import('./definitions/agentInputChipRowReach');
 const detection = await import('@/components/autocomplete/findActiveWord');
 const recent = await import('@/components/sessions/composer/composerRecentReferences');
 const chips = await import('@/components/ui/forms/composerEditor/ComposerChipView.web');
@@ -138,6 +139,20 @@ describe('Session composer keystroke work', () => {
         await act(async () => {
             editor.focus();
         });
+        const typeKey = async (key: string) => {
+            await act(async () => {
+                editor.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+                // jsdom has no default text-edit action; emulate that browser boundary only.
+                const selection = window.getSelection()!;
+                const typed = document.createTextNode(key);
+                selection.getRangeAt(0).insertNode(typed);
+                selection.collapse(typed, 1);
+                editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: key }));
+                await new Promise<void>(resolve => queueMicrotask(resolve));
+            });
+        };
+        // The first key after focus marks the text as edited (one render); the contract is the steady-state key.
+        await typeKey('w');
         const nodes = [...editor.querySelectorAll('[data-composer-chip]')];
         const map = vi.spyOn(mapping, 'mapComposerDoc');
         const rebuild = vi.spyOn(mapping, 'composerTextToDoc');
@@ -153,16 +168,7 @@ describe('Session composer keystroke work', () => {
         const draftFlushes = vi.spyOn(drafts, 'flushSessionDraft');
         const decorations = vi.spyOn(DecorationSet, 'create');
         const before = { ...counts };
-        await act(async () => {
-            editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'x', bubbles: true, cancelable: true }));
-            // jsdom has no default text-edit action; emulate that browser boundary only.
-            const selection = window.getSelection()!;
-            const typed = document.createTextNode('x');
-            selection.getRangeAt(0).insertNode(typed);
-            selection.collapse(typed, 1);
-            editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: 'x' }));
-            await new Promise<void>(resolve => queueMicrotask(resolve));
-        });
+        await typeKey('x');
         const work = { hostRenders: counts.hostRenders - before.hostRenders, commits: counts.commits - before.commits,
             maps: map.mock.calls.length, rebuilds: rebuild.mock.calls.length, reconciles: reconcile.mock.calls.length,
             detections: detect.mock.calls.length, recent: recentBuild.mock.calls.length, suggestions: suggestions.mock.calls.length,
@@ -170,7 +176,7 @@ describe('Session composer keystroke work', () => {
             draftWrites: draftWrites.mock.calls.length, draftFlushes: draftFlushes.mock.calls.length,
             decorations: decorations.mock.calls.length };
         console.info('composer-keystroke-work', position, JSON.stringify(work));
-        expect(store.getPrompt()).toBe(position === 'before' ? `x${text}` : `${text}x`);
+        expect(store.getPrompt()).toBe(position === 'before' ? `wx${text}` : `${text}wx`);
         const currentNodes = [...editor.querySelectorAll('[data-composer-chip]')];
         expect(currentNodes).toHaveLength(nodes.length);
         currentNodes.forEach((node, index) => expect(node).toBe(nodes[index]));
@@ -185,5 +191,47 @@ describe('Session composer keystroke work', () => {
         expect(work.rebuilds).toBe(0);
         expect(work.maps).toBeLessThanOrEqual(2);
         expect(work.commits).toBeLessThanOrEqual(2);
+    });
+    it('re-renders the text leaf and not the composer chrome on an ordinary key', async () => {
+        Object.defineProperty(Range.prototype, 'getClientRects', { configurable: true, value: () => [] });
+        Object.defineProperty(Range.prototype, 'getBoundingClientRect', { configurable: true, value: () => new DOMRect(25, 35, 0, 18) });
+        vi.spyOn(window, 'scrollBy').mockImplementation(() => {});
+        const store = createComposerTextStore('Explain this');
+        const chipRail = vi.spyOn(chipRowReach, 'AgentInputChipRowReach');
+        const lifetime = captureActiveServerAccountScopeLifetime()!;
+        function SessionHost() {
+            const persistence = useSessionAgentInputComposerPersistence({ sessionId: 's1', accountLifetime: lifetime, textStore: store });
+            const draft = useDraft('s1', store, { accountLifetime: lifetime, session: storage.getState().sessions.s1, active: true });
+            return <SessionComposerAgentInput textStore={store} pendingText={null} sessionId="s1" onChangeText={draft.setDraftValue}
+                onSend={() => {}} placeholder="Message" autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+                inputPersistence={persistence.inputPersistence} structuredInputPersistence={persistence.structuredInputPersistence}
+                onStructuredInputMentionsChange={persistence.structuredInputPersistence.onMentionsChange} />;
+        }
+        container = document.createElement('div'); document.body.append(container); root = createRoot(container);
+        await act(async () => { root!.render(<runtime.Wrapper><SessionHost /></runtime.Wrapper>); });
+        const editor = container.querySelector<HTMLElement>('[data-happier-text-input]')!;
+        await act(async () => { editor.focus(); });
+        const typeKey = async (key: string) => {
+            await act(async () => {
+                editor.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+                const selection = window.getSelection()!;
+                const typed = document.createTextNode(key);
+                selection.getRangeAt(0).insertNode(typed);
+                selection.collapse(typed, 1);
+                editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: key }));
+                await new Promise<void>(resolve => queueMicrotask(resolve));
+            });
+        };
+        // The first key after focus marks the text as edited (one render); the contract is the steady-state key.
+        await typeKey('w');
+        type RenderProbe = { render: (...args: unknown[]) => React.ReactNode };
+        const inputRender = vi.spyOn(MultiTextInput as unknown as RenderProbe, 'render');
+        // The chrome's chip rail is part of the footer; it must have rendered at mount for the probe to mean anything.
+        expect(chipRail.mock.calls.length).toBeGreaterThan(0);
+        chipRail.mockClear();
+        await typeKey('x');
+        expect(store.getPrompt()).toContain('wx');
+        expect(inputRender.mock.calls.length).toBeGreaterThan(0);
+        expect(chipRail.mock.calls.length).toBe(0);
     });
 });

@@ -1,13 +1,18 @@
 import {
     buildComposerReferenceMentionPayloadV1,
+    readComposerReferenceMentionV1} from '@happier-dev/protocol/runtime/input/composerReferenceProviderV1';
+import {
     PluginProjectionV2Schema,
-    readComposerReferenceMentionV1,
-    readHappierStructuredInputV1FromMeta,
-    type ComposerAttachmentDraftV1,
-    type ComposerSnapshotV1,
-    type ComposerStagedMediaContentV1,
     type PluginProjectedComposerAttachmentEntryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+    readHappierStructuredInputV1FromMeta} from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import {
+    type ComposerAttachmentDraftV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import {
+    type ComposerSnapshotV1} from '@happier-dev/protocol/plugins/ui/composer';
+import {
+    type ComposerStagedMediaContentV1} from '@happier-dev/protocol/runtime/input/composerContentV1';
 import { describe, expect, it, vi } from 'vitest';
 import * as jsonSchemaValidation from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 
@@ -57,8 +62,6 @@ function composerAttachmentProjection(
         installedPackagesById: {},
         agentsById: {},
         actionsById: {},
-
-
         resourcesById: {},
         settingsById: {},
         familiesById: {

@@ -525,9 +525,16 @@ describe('AgentInputChipPickerPanel virtualized detail layout on web', () => {
         expect(restoredRows.length).toBeGreaterThan(1);
         expect(restoredRows.length).toBeLessThan(100);
         expect(restoredRows[0]?.getAttribute('aria-setsize')).toBe('500');
+        // The restored viewport is bounded; re-find the selected row through the real search
+        // instead of requiring an offscreen option to stay mounted in a 500-item list.
+        await act(async () => setInputValue('00484'));
+        await flushLegendWork();
         expect(container.querySelector(
             '[data-testid="model-picker-overlay-option:q24-model-00484"][aria-selected="true"]',
         )).not.toBeNull();
+
+        await act(async () => setInputValue(''));
+        await flushLegendWork();
 
         const scrollElement = findScrollElement(container);
         expect(scrollElement).not.toBeNull();

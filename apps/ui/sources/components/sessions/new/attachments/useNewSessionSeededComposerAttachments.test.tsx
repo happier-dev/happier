@@ -1,8 +1,9 @@
 import type {
-    ComposerRefV1,
+    ComposerRefV1} from '@happier-dev/protocol/plugins/ui/composerRef';
+import type {
     ComposerSnapshotV1,
     ComposerTransactionResultV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/ui/composer';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';

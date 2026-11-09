@@ -4,7 +4,7 @@
  * never invents an action the backend or policy does not allow). Commit is not a header action: the commit form
  * owns it, and while a commit is ready the header step steps down to secondary. One primary per view.
  */
-import type { ScmOperationState } from '@happier-dev/protocol';
+import type { ScmOperationState } from '@happier-dev/protocol/scm';
 import type { ScmWriteOperation } from '@/scm/operations/selectScmWriteOperation';
 
 export type SessionGitPaneHeaderFact =
@@ -45,6 +45,7 @@ export function resolveSessionGitPaneActions(input: Readonly<{
     prState: 'none' | 'open' | 'unknown';
     prNumber?: number | null;
     canCreatePr: boolean;
+    choosePrBase?: boolean;
     canOpenPrPage?: boolean;
     /** Something is selected and has a message: the commit form is the one primary. */
     commitReady: boolean;
@@ -58,7 +59,8 @@ export function resolveSessionGitPaneActions(input: Readonly<{
     };
     const canPr = input.canCreatePr || input.canOpenPrPage === true;
     const createPr: SessionGitPaneAction = {
-        key: 'create-pr', count: null, disabled: !canPr, ...(!canPr ? { reason: 'unavailable' } : {}),
+        key: 'create-pr', count: null, disabled: !canPr,
+        ...(!canPr ? { reason: 'unavailable' } : input.choosePrBase ? { reason: 'missing-base' } : {}),
     };
     const menu: SessionGitPaneAction[] = [
         remote('push', input.ahead),
@@ -85,6 +87,8 @@ export function resolveSessionGitPaneActions(input: Readonly<{
         primary = step(remote('push', input.ahead));
     } else if (input.prState === 'open' && typeof input.prNumber === 'number') {
         primary = { key: 'open-pr', count: input.prNumber, disabled: false, emphasis: 'quiet' };
+    } else if (input.upstream && input.ahead === 0 && input.behind === 0 && input.prState === 'none' && canPr) {
+        primary = step(createPr);
     } else {
         primary = { key: 'up-to-date', count: null, disabled: true, emphasis: 'quiet' };
     }

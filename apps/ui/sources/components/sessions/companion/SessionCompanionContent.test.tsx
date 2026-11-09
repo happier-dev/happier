@@ -229,9 +229,11 @@ describe('SessionCompanionContent (mounted)', () => {
         const content = (serverId: string) => <InjectedAuthProvider credentials={connection.credentials}>
             <SessionCompanionContent session={exactSession} serverId={serverId}
                 controller={controller([{ kind: 'widget', widgetId: 'daily-placement' }])}
-                boardBinding={{ status: 'ready', snapshot: board }} resolvePrimaryHost={() => 'companion'}
+                boardBinding={{ status: 'ready', snapshot: board }}
                 resolveSourceAvailability={createSessionBoardSourceAvailabilityResolver({ hostedHtmlRendererAvailable: true })} />
         </InjectedAuthProvider>;
+        // The physical document owns this lazy source after preparation stopped building a discarded copy.
+        await import('@/components/plugins/hostedWeb/guestBootstrap.generated');
         const screen = await renderScreen(content(viewer.serverId));
         try {
             // The reference is presented once the column has laid it out inside its viewport.
@@ -278,7 +280,7 @@ describe('SessionCompanionContent (mounted)', () => {
         vi.stubGlobal('location', { origin: 'https://app.happier.dev' });
         const screen = await renderScreen(<InjectedAuthProvider credentials={connection.credentials}>
             <SessionCompanionContent session={exactSession} serverId={viewer.serverId} controller={controller(refs)}
-                boardBinding={null} resolvePrimaryHost={() => null} />
+                boardBinding={null} />
         </InjectedAuthProvider>);
         const bodies = () => screen.tree.root.findAllByType(WidgetSurface).map(body => body.props.instance.id);
         const item = (id: string) => screen.findHostByTestId(`session-companion-content-item-instance:${id}`)!;
@@ -299,7 +301,7 @@ describe('SessionCompanionContent (mounted)', () => {
         } finally { await screen.unmount(); await connection.dispose(); vi.unstubAllGlobals(); }
     });
 
-    it('mounts a widget through the shared host with the exact Session and shell-derived primary mount', async () => {
+    it('mounts a widget through the shared host with the exact Session and local body demand', async () => {
         const pluginRuntime = { serverId: 'server-a' } as never;
         const callerHostedHtmlRuntime = { serverIdentityId: 'server-identity-a' } as never;
         const renderer = await renderScreen(
@@ -312,7 +314,6 @@ describe('SessionCompanionContent (mounted)', () => {
                     capabilities: { readTranscript: true, editSessionRecords: true },
                     canEdit: true,
                 })}
-                resolvePrimaryHost={() => 'details'}
                 pluginRuntime={pluginRuntime}
                 callerHostedHtmlRuntime={callerHostedHtmlRuntime}
                 resolveSourceAvailability={createSessionBoardSourceAvailabilityResolver({
@@ -325,9 +326,7 @@ describe('SessionCompanionContent (mounted)', () => {
         expect(widgetHostProps.mock.calls[0]?.[0]).toMatchObject({
             sessionId: 'session-1',
             host: 'companion',
-            // Not 'companion': the Companion consumes the shell's answer instead
-            // of appointing itself, so Details keeps the single executable mount.
-            primaryHost: 'details',
+            bodyActive: true,
             pluginRuntime,
             callerHostedHtmlRuntime,
         });
@@ -356,7 +355,6 @@ describe('SessionCompanionContent (mounted)', () => {
                     capabilities: { readTranscript: true, editSessionRecords: true },
                     canEdit: true,
                 })}
-                resolvePrimaryHost={() => 'companion'}
                 pluginRuntime={pluginRuntime}
                 callerHostedHtmlRuntime={callerHostedHtmlRuntime}
                 onRevealBoardItem={openBoard}
@@ -370,7 +368,7 @@ describe('SessionCompanionContent (mounted)', () => {
         expect(widgetHostProps.mock.calls[0]?.[0]).toMatchObject({
             sessionId: 'session-1',
             host: 'companion',
-            primaryHost: null,
+            bodyActive: false,
             canEdit: false,
             pluginRuntime,
         });
@@ -401,7 +399,6 @@ describe('SessionCompanionContent (mounted)', () => {
                 serverId="server-a"
                 controller={controller([SESSION_SUMMARY_COMPANION_ITEM])}
                 boardBinding={binding()}
-                resolvePrimaryHost={() => null}
                 summaryDestinations={{ approvals: openApprovals, git: openGit }}
                 presentation="rail"
                 measurementOnly={measurementOnly}
@@ -439,7 +436,6 @@ describe('SessionCompanionContent (mounted)', () => {
                     capabilities: { readTranscript: true, editSessionRecords: true },
                     canEdit: true,
                 })}
-                resolvePrimaryHost={() => 'details'}
                 onRevealBoardItem={openBoard}
                 onManageBoardItemPlugin={managePlugin}
             />,
@@ -467,7 +463,6 @@ describe('SessionCompanionContent (mounted)', () => {
             serverId: 'server-a',
             controller: controller([{ kind: 'widget' as const, widgetId: 'w1' }]),
             boardBinding: binding({ itemsById: board.itemsById }),
-            resolvePrimaryHost: () => 'companion' as const,
         };
 
         await renderScreen(<SessionCompanionContent {...shared} presentation="rail" />);
@@ -484,7 +479,6 @@ describe('SessionCompanionContent (mounted)', () => {
                 serverId="server-a"
                 controller={controller([{ kind: 'widget', widgetId: 'w1' }])}
                 boardBinding={binding({ incomplete: true })}
-                resolvePrimaryHost={() => null}
             />,
         );
 
@@ -499,7 +493,6 @@ describe('SessionCompanionContent (mounted)', () => {
                 serverId="server-a"
                 controller={controller([{ kind: 'widget', widgetId: 'w1' }])}
                 boardBinding={binding()}
-                resolvePrimaryHost={() => null}
             />,
         );
 
@@ -514,7 +507,6 @@ describe('SessionCompanionContent (mounted)', () => {
                 serverId="server-a"
                 controller={controller([{ kind: 'widget', widgetId: 'w1' }])}
                 boardBinding={binding({ reachability: 'offline' })}
-                resolvePrimaryHost={() => null}
             />,
         );
 
@@ -531,7 +523,6 @@ describe('SessionCompanionContent (mounted)', () => {
                     { kind: 'widget', widgetId: 'w1' },
                 ])}
                 boardBinding={{ status: 'unavailable', reason: 'forbidden', refresh: vi.fn() }}
-                resolvePrimaryHost={() => null}
             />,
         );
 
@@ -550,14 +541,12 @@ describe('SessionCompanionContent (mounted)', () => {
                 serverId="server-a"
                 controller={controller([{ kind: 'widget', widgetId: 'w1' }])}
                 boardBinding={{ status: 'unavailable', reason: 'offline', refresh }}
-                resolvePrimaryHost={() => null}
             />,
         );
-        await renderer.pressByTestIdAsync('session-companion-content-pending-w1-action');
+        await renderer.pressByTestIdAsync('session-companion-content-pending-w1.error-action');
+        await renderer.pressByTestIdAsync('session-companion-content-pending-w1.error-details-toggle');
 
-        expect(renderer.findByTestId(
-            'session-companion-content-pending-w1-diagnostic-session_companion_widget_offline',
-        )).not.toBeNull();
+        expect(renderer.getTextContent()).toContain('session_companion_widget_offline');
         expect(refresh).toHaveBeenCalledTimes(1);
     });
 
@@ -572,7 +561,6 @@ describe('SessionCompanionContent (mounted)', () => {
                     freshness: 'stale',
                     itemsById: new Map([['w1', readyItem('w1')]]),
                 })}
-                resolvePrimaryHost={() => null}
                 onRevealBoardItem={openBoard}
             />,
         );
@@ -598,7 +586,7 @@ describe('SessionCompanionContent (mounted)', () => {
             },
         };
         const renderer = await renderScreen(<SessionCompanionContent session={session} serverId="server-a" controller={companion}
-            boardBinding={binding({ itemsById: new Map([['w1', readyItem('w1')]]) })} resolvePrimaryHost={() => null} />);
+            boardBinding={binding({ itemsById: new Map([['w1', readyItem('w1')]]) })} />);
         const [owner] = renderer.findAll(node => Array.isArray(node.props?.actions)
             && node.props?.overflowTriggerTestID === 'session-companion-content-item-instance:personal-summary-actions');
         const actions = owner?.props.actions as ReadonlyArray<{ id: string; onPress?: () => void }>;
@@ -613,7 +601,7 @@ describe('SessionCompanionContent (mounted)', () => {
         const renameInstance = vi.fn((_instanceId: string, _displayName: string | null) => null);
         const companion: SessionCompanionController = { ...controller([instance]), renameInstance };
         const renderer = await renderScreen(<SessionCompanionContent session={session} serverId="server-a" controller={companion}
-            boardBinding={binding()} resolvePrimaryHost={() => null} />);
+            boardBinding={binding()} />);
         const menu = () => renderer.findAll(node => Array.isArray(node.props?.actions)
             && node.props?.overflowTriggerTestID === 'session-companion-content-item-instance:personal-summary-actions')[0]!;
         const rename = async (text: string) => {
@@ -646,7 +634,6 @@ describe('SessionCompanionContent (mounted)', () => {
                     capabilities: { readTranscript: true, editSessionRecords: true },
                     canEdit: true,
                 })}
-                resolvePrimaryHost={() => 'companion'}
             />,
         );
 
@@ -661,7 +648,6 @@ describe('SessionCompanionContent (mounted)', () => {
                 serverId="server-a"
                 controller={controller([])}
                 boardBinding={binding()}
-                resolvePrimaryHost={() => null}
             />,
         );
 

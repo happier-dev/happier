@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native-unistyles';
 import { botTemplateEditorStyles as styles } from './botTemplateEditorStyles';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { Item } from '@/components/ui/lists/Item';
@@ -40,7 +41,7 @@ export function BotTemplateMemorySection({ buffer, save }: Props) {
                 detail={personal.some(candidate => candidate.selected) ? undefined : t('botTemplates.leftOut')} />}>
             {personalExpanded ? personal.map(renderCandidate) : null}
         </ExpandableItem> : null}
-        {!candidates.length && !copied.length ? <SectionContentRow><Text variant="meta">{t('botTemplates.noMemory')}</Text></SectionContentRow> : null}
+        {!candidates.length && !copied.length ? <SectionContentRow><Text variant="meta" style={inkStyles.quiet}>{t('botTemplates.noMemory')}</Text></SectionContentRow> : null}
     </ItemGroup>;
 }
 
@@ -52,7 +53,7 @@ export function BotTemplateSkillsSection(props: Props) {
     const keys = React.useMemo(() => JSON.parse(keyList) as string[], [keyList]);
     return <ItemGroup title={t('botTemplateRecipient.skills')} description={t('botTemplates.skillsDescription')}>
         {keys.map(key => <SkillCandidate key={key} {...props} skillKey={key} />)}
-        {!keys.length ? <SectionContentRow><Text variant="meta">{t('botTemplates.noSkills')}</Text></SectionContentRow> : null}
+        {!keys.length ? <SectionContentRow><Text variant="meta" style={inkStyles.quiet}>{t('botTemplates.noSkills')}</Text></SectionContentRow> : null}
     </ItemGroup>;
 }
 
@@ -86,15 +87,20 @@ function SkillCandidate({ buffer, save, skillKey }: Props & Readonly<{ skillKey:
                     onCommit: () => { void buffer.commit(save); },
                 }} />} /> : null}
                 {selected.entries.map(file => <SectionContentRow key={file.path}>
-                    <Text variant="meta">{file.path}</Text>
+                    <Text variant="meta" style={inkStyles.ink}>{file.path}</Text>
                     {file.contentKind === 'utf8' ? selection === 'general_copy'
                         ? <InlineTextField style={styles.field} multiline editor={{ value: new TextDecoder().decode(decodeBase64(file.contentBase64)),
                             accessibilityLabel: file.path, placeholder: file.path, testID: `bot-template-skill-file:${skillKey}:${file.path}`,
                             onChangeText: text => buffer.editSkillFile(skillKey, file.path, text), onCommit: () => { void buffer.commit(save); } }} />
                         : <CodeBlockView code={new TextDecoder().decode(decodeBase64(file.contentBase64))} wrap showHeaderRow={false} />
-                        : <Text variant="meta">{t('botTemplates.binaryKept')}</Text>}
+                        : <Text variant="meta" style={inkStyles.quiet}>{t('botTemplates.binaryKept')}</Text>}
                 </SectionContentRow>)}
             </> : null}
         </ExpandableItem> : null}
     </>;
 }
+
+const inkStyles = StyleSheet.create(theme => ({
+    ink: { color: theme.colors.text.primary },
+    quiet: { color: theme.colors.text.secondary },
+}));

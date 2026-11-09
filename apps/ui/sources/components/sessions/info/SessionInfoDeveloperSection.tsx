@@ -4,10 +4,8 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import {
-  buildSessionDebugInformation,
   isSessionDebugInformationEnabled,
   resolveProviderSessionArtifactPath,
-  resolveProviderSessionIdForDebug,
 } from '@/components/sessions/debug/sessionDebugInformation';
 import { stringifySessionDebugJson } from '@/components/sessions/debug/sessionDebugRedaction';
 import { Item } from '@/components/ui/lists/Item';
@@ -23,6 +21,8 @@ import {
   formatPathRelativeToHome,
   type SessionStatus,
 } from '@/utils/sessions/sessionUtils';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useSessionInfoDisclosureCommands } from './useSessionInfoDisclosureCommands';
 
 type RawJsonSectionId = 'agentState' | 'metadata' | 'sessionStatus' | 'session';
 type RawJsonSnapshot = Readonly<{ section: RawJsonSectionId; code: string }>;
@@ -38,7 +38,6 @@ export const SessionInfoDeveloperSection = React.memo(
       metadata: ReturnType<typeof readSessionOwnerMetadataView>;
       serverId: string;
       providerDisplayName: string;
-      vendorResumeIdField: Parameters<typeof resolveProviderSessionIdForDebug>[0]['vendorResumeIdField'];
       status: SessionStatus;
     }>,
   ) {
@@ -54,7 +53,6 @@ function SessionInfoDeveloperContent(
     metadata: ReturnType<typeof readSessionOwnerMetadataView>;
     serverId: string;
     providerDisplayName: string;
-    vendorResumeIdField: Parameters<typeof resolveProviderSessionIdForDebug>[0]['vendorResumeIdField'];
     status: SessionStatus;
   }>,
 ) {
@@ -81,24 +79,24 @@ function SessionInfoDeveloperContent(
         return stringifySessionDebugJson(session);
     }
   };
-  const toggle = (section: RawJsonSectionId) =>
-    setExpanded((current) =>
-      current?.section === section
-        ? null
-        : { section, code: buildCode(section) },
-    );
-  const debugText = React.useMemo(
-    () =>
-      buildSessionDebugInformation({
-        session,
-        providerDisplayName: props.providerDisplayName,
-        providerSessionId: resolveProviderSessionIdForDebug({
-          metadata,
-          vendorResumeIdField: props.vendorResumeIdField,
-        }),
-      }).text,
-    [metadata, props.providerDisplayName, props.vendorResumeIdField, session],
-  );
+  const setSectionExpanded = (section: RawJsonSectionId, next: boolean) =>
+    setExpanded(next ? { section, code: buildCode(section) } : null);
+  const toggle = (section: RawJsonSectionId) => setExpanded(current => current?.section === section
+    ? null : { section, code: buildCode(section) });
+  useSessionInfoDisclosureCommands([
+    { key: 'agentState' as const, title: t('sessionInfo.agentState'), available: Boolean(session.agentState) },
+    { key: 'metadata' as const, title: t('sessionInfo.metadata'), available: Boolean(metadata) },
+    { key: 'sessionStatus' as const, title: t('sessionInfo.sessionStatus') },
+    { key: 'session' as const, title: t('sessionInfo.fullSessionObject') },
+  ].map(section => ({ key: `developer.${section.key}`, title: section.title, available: section.available,
+    expanded: expanded?.section === section.key,
+    onExpandedChange: (next: boolean) => setSectionExpanded(section.key, next),
+  })));
+  const openSessionLog = React.useCallback(() => router.push(buildScopedSessionRouteHref({
+    sessionId: session.id, serverId: props.serverId, suffix: '/log',
+  }) as never), [props.serverId, router, session.id]);
+  useCurrentUiContextLocalCommands([{ key: 'session.info.session-log', title: t('sessionPages.info.sessionLog'),
+    invoke: openSessionLog }]);
   const jsonRow = (section: RawJsonSectionId, title: string) => (
     <React.Fragment key={section}>
       <Item
@@ -119,6 +117,7 @@ function SessionInfoDeveloperContent(
       testID="session-info-developer"
       title={t('sessionPages.info.developerTitle')}
       description={t('sessionPages.info.developerDescription')}
+      density="compact"
     >
       <Item
         title={t('sessionInfo.thinking')}
@@ -145,17 +144,9 @@ function SessionInfoDeveloperContent(
       ) : null}
       <Item
         testID="session-info-session-log"
-        title={t('sessionLog.logPathCopyLabel')}
+        title={t('sessionPages.info.sessionLog')}
         detail={t('sessionPages.info.view')}
-        onPress={() =>
-          router.push(
-            buildScopedSessionRouteHref({
-              sessionId: session.id,
-              serverId: props.serverId,
-              suffix: '/log',
-            }) as never,
-          )
-        }
+        onPress={openSessionLog}
       />
       {session.agentState
         ? jsonRow('agentState', t('sessionInfo.agentState'))
@@ -163,12 +154,6 @@ function SessionInfoDeveloperContent(
       {metadata ? jsonRow('metadata', t('sessionInfo.metadata')) : null}
       {jsonRow('sessionStatus', t('sessionInfo.sessionStatus'))}
       {jsonRow('session', t('sessionInfo.fullSessionObject'))}
-      <Item
-        testID="session-info-copy-debug-information"
-        title={t('sessionInfo.copyDebugInformation')}
-        copy={debugText}
-        showChevron={false}
-      />
     </ItemGroup>
   );
 }

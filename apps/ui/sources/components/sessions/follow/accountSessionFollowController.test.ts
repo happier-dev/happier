@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { GetSessionFollowResponse, SetSessionFollowResponse } from '@happier-dev/protocol';
+import type { GetSessionFollowResponse, SetSessionFollowResponse } from '@happier-dev/protocol/sessions/follow/api';
 
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 

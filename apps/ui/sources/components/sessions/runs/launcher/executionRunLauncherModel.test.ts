@@ -5,10 +5,25 @@ import {
     createDiscussionSelectionInteractiveExecutionRunDraftDetailsTab,
     resolveExecutionRunLaunchTitle,
     createInteractiveExecutionRunDraftDetailsTab,
+    createComparisonReviewExecutionRunDraftDetailsTab,
     resolveExecutionRunLauncherIntent,
 } from './executionRunLauncherModel';
 
 describe('execution Run conversation details resources', () => {
+    it('preserves a captured comparison and narration choice in the same detached Run start destination', () => {
+        const comparisonReview = { cwd: '/work', comparison: { kind: 'branch' as const, base: 'main', head: 'HEAD' },
+            comparisonId: 'captured-range', scopeLabel: 'main → HEAD', defaultWalkthrough: true,
+            preselectedEngineIds: ['coderabbit'] };
+        expect(createComparisonReviewExecutionRunDraftDetailsTab(comparisonReview, { machineId: 'machine-a', cwd: '/work' }).resource)
+            .toEqual({ kind: 'executionRunLauncher', intent: 'review', sessionId: null,
+                workspace: { machineId: 'machine-a', cwd: '/work' }, comparisonReview });
+    });
+    it('retains the authorized evidence Session when a Workspace starts a private comparison', () => {
+        const comparisonReview = { cwd: '/work', comparison: { kind: 'session' as const },
+            scopeLabel: 'Session changes', defaultWalkthrough: true };
+        expect(createComparisonReviewExecutionRunDraftDetailsTab(comparisonReview, undefined, 'evidence-session').resource)
+            .toMatchObject({ sessionId: 'evidence-session', comparisonReview });
+    });
     it('preserves detached Machine authority when a launcher becomes a known Run with recovery', () => {
         expect(createExecutionRunDetailsTab('run_1', { retryInputLocalId: 'input_1' }, 'Question', {
             machineId: 'machine-a', cwd: '/work',

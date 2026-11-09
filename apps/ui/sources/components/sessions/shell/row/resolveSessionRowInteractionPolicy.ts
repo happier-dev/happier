@@ -73,7 +73,6 @@ export function resolveSessionRowInteractionPolicy(
     } = params;
 
     const isWeb = platformOs === 'web';
-    const isNativePhone = platformOs === 'ios' || platformOs === 'android';
     const phoneOrganizing = touchPrimaryPointer && organizeMode;
     const suppressNextPressOnNativeContextMenuOpen = contextMenuItemCount > 0 && contextMenuOpen && !contextMenuWasOpen;
 
@@ -81,7 +80,7 @@ export function resolveSessionRowInteractionPolicy(
         swipeEnabled: !isWeb && !phoneOrganizing && canArchiveSession,
         wholeRowDrag: !touchPrimaryPointer && dragEnabled,
         showDragGrip: phoneOrganizing && dragEnabled,
-        enableLongPressContextMenu: isNativePhone && !phoneOrganizing && contextMenuItemCount > 0,
+        enableLongPressContextMenu: touchPrimaryPointer && !phoneOrganizing && contextMenuItemCount > 0,
         suppressNextPressOnNativeContextMenuOpen,
     };
 

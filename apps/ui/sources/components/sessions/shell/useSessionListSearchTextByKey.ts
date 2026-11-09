@@ -243,9 +243,10 @@ function createSessionListSearchTextProjectionSelector(
             && renderableDelta
             && previousDeltaRevision !== null
             && renderableDelta.revision !== previousDeltaRevision
-            && renderableDelta.rebuiltSessionListIndex !== true
+            // Row lists are exhaustive; an index-only rebuild changes no row this projection reads.
             && renderableDelta.changedSessionIds.length === 0
             && renderableDelta.removedSessionIds.length === 0
+            && !renderableDelta.hydratedSessionIds?.length
         ));
         const runsUnchanged = previousState !== null
             && (previousState.profileScope === state.profileScope || areServerAccountScopesEqual(previousState.profileScope, state.profileScope))

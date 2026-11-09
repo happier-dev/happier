@@ -15,7 +15,7 @@ import {
 const S = 'server-a';
 const workspace: SessionFolderWorkspaceRefV1 = { t: 'workspaceScope', serverId: S, machineId: 'machine-a', rootPath: '/repo' };
 
-function session(sessionId: string): SessionListIndexItem {
+function session(sessionId: string): Extract<SessionListIndexItem, { type: 'session' }> {
     return {
         type: 'session', sessionId, serverId: S, storageKind: 'persisted', groupKey: 'project-a', groupKind: 'project',
         folderId: null, folderDepth: 0, workspace,
@@ -37,6 +37,16 @@ function setup(sourceSessionId: string) {
 }
 
 describe('session list staged keyboard move (KS)', () => {
+    it('returns a filed Session to its own Project even when Recent has no visible Project header', () => {
+        const tree = buildSessionListTreeRows({ items: [
+            { type: 'header', headerKind: 'folder', title: 'Launch', folderId: 'launch', groupKey: 'launch', serverId: S },
+            { ...session('filed'), groupKind: 'folder', groupKey: 'launch', folderId: 'launch' },
+        ] });
+        const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.session(S, 'filed') });
+        const state = stepSessionListStagedMove({ tree, source, state: beginSessionListStagedMove({ tree, source }), intent: 'out' });
+        expect(resolveSessionListStagedMoveResult({ tree, source, state })).toEqual({ kind: 'folder-assignment', folderId: null });
+    });
+
     it('starts where the row is, so dropping at once changes nothing', () => {
         const { tree, source } = setup('review');
         const state = beginSessionListStagedMove({ tree, source });
@@ -48,14 +58,14 @@ describe('session list staged keyboard move (KS)', () => {
         const { tree, source } = setup('review');
         let state = beginSessionListStagedMove({ tree, source });
         state = stepSessionListStagedMove({ tree, source, state, intent: 'previous' });
-        expect(resolveSessionListStagedMoveResult({ tree, source, state })?.instruction).toMatchObject({
-            kind: 'reorder-before', targetId: treeRowId.session(S, 'fix'),
+        expect(resolveSessionListStagedMoveResult({ tree, source, state })).toMatchObject({
+            instruction: { kind: 'reorder-before', targetId: treeRowId.session(S, 'fix') },
         });
         state = stepSessionListStagedMove({ tree, source, state, intent: 'next' });
         expect(state.place).toEqual({ kind: 'origin' });
         state = stepSessionListStagedMove({ tree, source, state, intent: 'next' });
-        expect(resolveSessionListStagedMoveResult({ tree, source, state })?.instruction).toMatchObject({
-            kind: 'reorder-after', targetId: treeRowId.session(S, 'relay'),
+        expect(resolveSessionListStagedMoveResult({ tree, source, state })).toMatchObject({
+            instruction: { kind: 'reorder-after', targetId: treeRowId.session(S, 'relay') },
         });
     });
 
@@ -70,12 +80,12 @@ describe('session list staged keyboard move (KS)', () => {
             visual: { kind: 'none' },
         });
         state = stepSessionListStagedMove({ tree, source, state, intent: 'out' });
-        expect(resolveSessionListStagedMoveResult({ tree, source, state })?.instruction.kind).toBe('reorder-before');
+        expect(resolveSessionListStagedMoveResult({ tree, source, state })).toMatchObject({ instruction: { kind: 'reorder-before' } });
 
         state = beginSessionListStagedMove({ tree, source });
         state = stepSessionListStagedMove({ tree, source, state, intent: 'in' });
-        expect(resolveSessionListStagedMoveResult({ tree, source, state })?.instruction).toMatchObject({
-            kind: 'nest-into', targetId: treeRowId.session(S, 'fix'),
+        expect(resolveSessionListStagedMoveResult({ tree, source, state })).toMatchObject({
+            instruction: { kind: 'nest-into', targetId: treeRowId.session(S, 'fix') },
         });
         state = stepSessionListStagedMove({ tree, source, state, intent: 'out' });
         expect(state.place).toEqual({ kind: 'origin' });
@@ -85,11 +95,6 @@ describe('session list staged keyboard move (KS)', () => {
         const { tree, source } = setup('relay');
         let state = beginSessionListStagedMove({ tree, source });
         state = stepSessionListStagedMove({ tree, source, state, intent: 'out' });
-        expect(resolveSessionListStagedMoveResult({ tree, source, state })?.instruction).toEqual({
-            kind: 'move-to-root',
-            containerId: treeRowId.workspaceRoot('project-a'),
-            rootId: treeRowId.workspaceRoot('project-a'),
-            depth: 0,
-        });
+        expect(resolveSessionListStagedMoveResult({ tree, source, state })).toEqual({ kind: 'folder-assignment', folderId: null });
     });
 });

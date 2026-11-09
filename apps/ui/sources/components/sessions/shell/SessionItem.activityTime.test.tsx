@@ -1135,6 +1135,7 @@ describe('SessionItem activity time', () => {
             <SessionItem
                 session={createSession('stale_prop_session')}
                 rowViewModel={{
+                    appearanceColor: null,
                     groupKey: 'group:model',
                     rowContext: null,
                     guardState: null,
@@ -1692,5 +1693,44 @@ describe('SessionItem activity time', () => {
         expect(screen.findByTestId('session-row-attention-indicator-spinner-sess_date_working-secondary')).toBeTruthy();
         expect(screen.getTextContent()).toContain('Working on it');
         expect(screen.getTextContent()).not.toContain(sessionPath);
+    });
+
+    it('keeps the request slot mounted when the pointer enters the row, so its hover rest and mark survive', async () => {
+        const { act } = await import('react-test-renderer');
+        const SessionItem = await importSessionItem();
+        const nowMs = Date.now();
+        const screen = await renderScreen(
+            <SessionItem
+                session={{
+                    ...createSession('sess_needs_permission'),
+                    hasPendingPermissionRequests: true,
+                    agentState: {
+                        controlledByUser: null,
+                        requests: { 'approval-1': { tool: 'Bash', kind: 'permission', arguments: {}, createdAt: nowMs } },
+                    },
+                    viewer: createSessionViewerFixture({
+                        attention: { needsAttention: true, reasons: ['permission_required'], primary: 'permission_required', presentation: 'full' },
+                    }),
+                } as unknown as SessionListRenderableSession}
+                serverId="server_a"
+                pinned={false}
+                selected={false}
+                variant="default"
+                secondaryLineMode="path"
+                compact
+                compactMinimal
+            />,
+        );
+        const findSlot = () => screen.root.findAll((node) => typeof node.type === 'string'
+            && String(node.props.testID ?? '').startsWith('session-row-request-peek-'))[0];
+        const slot = findSlot();
+        expect(slot).toBeTruthy();
+        // The row and the slot share one pointer entry: entering the slot from the pane also hovers the row.
+        const row = screen.root.findAll((node) => typeof node.type === 'string' && typeof node.props.onPointerEnter === 'function'
+            && node.findAll((child) => child === slot).length > 0)[0];
+        await act(async () => { row.props.onPointerEnter(); });
+        expect(findSlot() === slot, 'entering the row kept the slot instance').toBe(true);
+        await act(async () => { row.props.onPointerLeave(); });
+        expect(findSlot() === slot, 'leaving the row kept the slot instance').toBe(true);
     });
 });

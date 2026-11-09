@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Image, Platform, View } from 'react-native';
+import { Platform, View } from 'react-native';
+import { HappierCollectionSpaceIcon } from '@happier-dev/plugin-ui/presentation';
 import MaskedView from '@react-native-masked-view/masked-view';
 import Svg, { Path } from 'react-native-svg';
 import { useUnistyles } from 'react-native-unistyles';
@@ -33,21 +34,12 @@ export function SessionListProjectMark(
 ) {
   const { theme } = useUnistyles();
   const { size } = props;
-  const mark = props.favicon ? (
-    <Image
-      testID={props.testID ? `${props.testID}-project-favicon` : undefined}
-      source={{ uri: props.favicon.uri }}
-      style={{ width: size, height: size, borderRadius: Math.round(size / 4) }}
-      resizeMode="cover"
-      accessibilityIgnoresInvertColors
-    />
-  ) : (
-    <View
-      testID={props.testID ? `${props.testID}-project-fallback` : undefined}
-    >
-      <Icon name="folder" size={size} color={theme.colors.text.tertiary} />
-    </View>
-  );
+  const mark = <HappierCollectionSpaceIcon
+    size={size}
+    testID={props.testID}
+    mark={{ kind: 'project', favicon: props.favicon,
+      fallback: <Icon name="folder" size={size} color={theme.colors.text.tertiary} /> }}
+  />;
   return <SessionListMarkBadge size={size} badge={props.badge}>{mark}</SessionListMarkBadge>;
 }
 

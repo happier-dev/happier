@@ -25,6 +25,8 @@ export function resolveNewSessionReviewCommentsScope(params: Readonly<{
     const cachedSnapshot = scmRepositoryService.readCachedSnapshotForMachinePath({
         machineId,
         path: resolvedSelectedPath,
+        // Only the repository root is read here.
+        detail: 'facts',
     });
     const preferredRootPath = cachedSnapshot?.repo?.isRepo === true
         ? cachedSnapshot.repo.rootPath

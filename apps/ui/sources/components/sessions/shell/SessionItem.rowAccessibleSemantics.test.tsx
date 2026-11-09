@@ -1,4 +1,5 @@
 import React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -7,12 +8,15 @@ import { createSessionFixture, createSessionViewerFixture } from '@/dev/testkit/
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { createSessionItemRowViewModel } from './sessionItemRowViewModelTestFixture';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
+import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndex';
+import { treeRowId } from './drop-resolution/treeRowId';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
 const NOW_MS = 1_700_000_000_000;
 const routerPush = vi.hoisted(() => vi.fn());
 const rowPreferences = vi.hoisted(() => ({ backgroundWorkAttentionMode: 'keepWorking' as 'keepWorking' | 'keepWorkingUnread' | 'showUnread' }));
+const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'ios' }));
 
 /**
  * The row's state vocabulary, as the reader hears it. Keyed exactly as the canonical `status`
@@ -24,6 +28,11 @@ const ROW_STATUS_COPY: Readonly<Record<string, string>> = {
     'status.actionRequired': 'action required',
     'status.error': 'error',
     'status.readyForReview': 'ready for review',
+    'workStatus.finished': 'Finished',
+    'status.mentioned': 'Mentioned you',
+    'sessionWork.states.stopped': 'Stopped',
+    'status.offline': 'Offline',
+    'status.unknownState': 'Unknown',
     'status.ready': 'Ready',
     'status.unread': 'Unread',
     'status.queuedInput': 'Queued input',
@@ -33,6 +42,10 @@ const ROW_STATUS_COPY: Readonly<Record<string, string>> = {
     'status.backgroundActive': 'working in background',
     'status.unknown': 'unknown',
     'workStatus.buckets.needs_you': 'Needs you',
+    'workStatus.buckets.finished': 'Finished',
+    'workStatus.words.permission': 'Permission',
+    'workStatus.words.question': 'Question',
+    'sessionWork.list.coordinator': 'Coordinator',
 };
 
 // The shared press owner's motion tokens build their easing curves at import.
@@ -53,7 +66,6 @@ vi.mock('@/components/ui/forms/dropdown/ContextMenu', () => ({
 vi.mock('@/components/ui/avatar/Avatar', () => ({ Avatar: 'Avatar' }));
 vi.mock('@/agents/registry/AgentIcon', () => ({ AgentIcon: 'AgentIcon' }));
 vi.mock('@/hooks/session/useNavigateToSession', () => ({ useNavigateToSession: () => vi.fn() }));
-vi.mock('@/utils/platform/responsive', () => ({ useIsTablet: () => false }));
 vi.mock('@/hooks/ui/useHappyAction', () => ({ useHappyAction: (fn: unknown) => [false, fn] }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
 
@@ -64,7 +76,8 @@ installSessionShellCommonModuleMocks({
     },
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        return createReactNativeWebMock({ Platform: { OS: 'web' } });
+        const boundary = await createReactNativeWebMock();
+        return { ...boundary, Platform: { ...boundary.Platform, get OS() { return platformState.os; } } };
     },
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -86,6 +99,7 @@ installSessionShellCommonModuleMocks({
 // The shell testkit must receive its boundary options before its consumers load. Keep that work
 // in collection, outside the observable assertion budget.
 const { SessionItem } = await import('./SessionItem');
+const { SessionListSessionItem } = await import('./sessionListSessionItem');
 
 type RowStateCase = Readonly<{
     label: string;
@@ -107,22 +121,19 @@ const ROW_STATE_CASES: readonly RowStateCase[] = [
     {
         label: 'permission required',
         session: { pendingPermissionRequestCount: 1, pendingUserActionRequestCount: 0, pendingRequestObservedAt: NOW_MS },
-        spoken: 'permission required',
+        spoken: 'Permission',
     },
     {
         label: 'action required',
         session: { pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 1, pendingRequestObservedAt: NOW_MS },
-        spoken: 'action required',
+        spoken: 'Question',
     },
-    // A failed turn speaks only while its committed failure anchor is beyond this viewer's read cursor.
-    { label: 'failed', session: { latestTurnStatus: 'failed', viewer: createSessionViewerFixture({ latestFailureSeq: 4,
-        readState: { state: 'tracking', lastViewedSessionSeq: 1, unreadSince: null },
-        attention: { needsAttention: true, reasons: ['failed'], primary: 'failed', presentation: 'full' } }) }, spoken: 'error' },
-    { label: 'ready', session: { latestReadyEventSeq: 4 }, spoken: 'ready for review' },
+    { label: 'failed', session: { latestTurnStatus: 'failed', viewer: createSessionViewerFixture({ latestFailureSeq: 4, readState: { state: 'tracking', lastViewedSessionSeq: 1, unreadSince: null }, attention: { needsAttention: true, reasons: ['failed'], primary: 'failed', presentation: 'full' } }) }, spoken: 'error' },
+    { label: 'ready', session: { latestTurnStatus: 'completed', latestReadyEventSeq: 4, viewer: createSessionViewerFixture({ readState: { state: 'tracking', lastViewedSessionSeq: 1, unreadSince: null }, attention: { needsAttention: true, reasons: ['ready_after_read'], primary: 'ready_after_read', presentation: 'full' } }) }, spoken: 'Finished' },
     { label: 'queued input', session: { pendingCount: 2 }, spoken: 'Queued input' },
     { label: 'unread', session: {}, hasUnreadMessages: true, spoken: 'Unread' },
-    { label: 'attention', session: {}, attentionStanding: true, spoken: 'kept in attention' },
-    { label: 'quiet', session: {}, spoken: null },
+    { label: 'attention', session: {}, attentionStanding: true, spoken: 'online, kept in attention' },
+    { label: 'quiet', session: {}, spoken: 'online' },
 ];
 
 function createRowSession(overrides: Partial<Session>, id: string): Session {
@@ -153,12 +164,17 @@ async function renderRow(input: Readonly<{
     secondaryLineMode: 'status' | 'path';
 }>) {
     const { getSessionStatus } = await import('@/utils/sessions/sessionUtils');
-    const session = createRowSession(input.testCase.session, input.id);
+    const session = createRowSession({ ...input.testCase.session,
+        ...(input.testCase.hasUnreadMessages && !input.testCase.session.viewer ? { viewer: createSessionViewerFixture({
+            readState: { state: 'tracking', lastViewedSessionSeq: 0, unreadSince: 1 },
+            attention: { needsAttention: true, reasons: ['unread'], primary: 'unread', presentation: 'full' },
+        }) } : {}),
+    }, input.id);
     const rowViewModel = createSessionItemRowViewModel({
         session,
         overrides: {
             // The canonical localized status owner, not a hand-written row status.
-            sessionStatus: getSessionStatus(session, NOW_MS, { workingTextMode: 'static' }),
+            sessionStatus: getSessionStatus(session, NOW_MS),
             hasUnreadMessages: input.testCase.hasUnreadMessages === true,
             attentionStanding: input.testCase.attentionStanding === true,
             secondaryLineMode: input.secondaryLineMode,
@@ -183,6 +199,63 @@ function readOuterRow(screen: Awaited<ReturnType<typeof renderRow>>['screen'], i
 }
 
 describe('SessionItem outer row accessible semantics', () => {
+    it('opens only the initiating native menu for two occurrences of one Session', async () => {
+        platformState.os = 'ios';
+        const session = createRowSession({}, 'native-mirrored');
+        const rowViewModel = createSessionItemRowViewModel({ session, serverId: 'home' });
+        const common = {
+            rowViewModel, rowHeight: 48, dragEnabled: false, onDragStart: () => {}, onDropResult: () => {},
+            resolveDropResult: () => ({ result: { instruction: { kind: 'idle' as const }, visual: { kind: 'none' as const } }, geometry: { kind: 'none' as const } }),
+            onTogglePinnedSessionKey: null, onSetTagsSessionKey: null, draggingSessionKey: null,
+            overlayShared: { overlayVisible: { value: 0 }, overlayKind: { value: 0 as const }, overlayTop: { value: 0 },
+                overlayHeight: { value: 0 }, overlayLeft: { value: 0 }, overlayRight: { value: 0 }, overlayDepth: { value: 0 } },
+            onRegisterTreeRowBounds: () => {}, onUnregisterTreeRowBounds: () => {}, currentUserId: null,
+            allKnownTags: [], tagsEnabled: false, compact: false, compactMinimal: false, rowAttentionAnimationEnabled: false,
+        };
+        function NativeMirrorRows() {
+            const [menuKey, setMenuKey] = React.useState<string | null>(null);
+            return <>{(['needsYou', 'base'] as const).map(occurrenceRole => <SessionListSessionItem
+                key={occurrenceRole} {...common}
+                item={{ type: 'session', serverId: 'home', sessionId: session.id, occurrenceRole }}
+                treeRowId={treeRowId.session('home', session.id, undefined, occurrenceRole)}
+                nativeContextMenuSessionKey={menuKey}
+                onNativeContextMenuOpenChangeSessionKey={(key, open) => setMenuKey(open ? key : null)}
+            />)}</>;
+        }
+        const screen = await renderScreen(<NativeMirrorRows />);
+        const menus = screen.findAllByType('ContextMenu');
+        expect(menus).toHaveLength(2);
+        await act(async () => { menus[0]!.props.onOpenChange(true); });
+        expect(screen.findAllByType('ContextMenu').map(menu => menu.props.open)).toEqual([true, false]);
+    });
+
+    it('exposes distinct accessible hit targets for shelf and cross-Home base occurrences', async () => {
+        const { getSessionStatus } = await import('@/utils/sessions/sessionUtils');
+        const session = createRowSession({ thinking: true, thinkingAt: NOW_MS }, 'mirrored');
+        const rowViewModel = createSessionItemRowViewModel({ session, overrides: {
+            sessionStatus: getSessionStatus(session, NOW_MS),
+        } });
+        const occurrenceId = buildSessionListIndexNodeId({ type: 'session', serverId: 'home', sessionId: session.id, occurrenceRole: 'needsYou' });
+        const baseId = buildSessionListIndexNodeId({ type: 'session', serverId: 'home', sessionId: session.id });
+        const otherHomeBaseId = buildSessionListIndexNodeId({ type: 'session', serverId: 'other-home', sessionId: session.id });
+        const screen = await renderScreen(<>
+            <SessionItem session={session} rowViewModel={rowViewModel} />
+            <SessionItem session={session} rowViewModel={rowViewModel} occurrenceId={baseId} />
+            <SessionItem session={session} rowViewModel={rowViewModel} occurrenceId={otherHomeBaseId} />
+            <SessionItem session={session} rowViewModel={rowViewModel} occurrenceId={occurrenceId} />
+        </>);
+        expect(screen.findByTestId('session-list-item-mirrored')).not.toBeNull();
+        expect(screen.findAllHostsByTestId('session-list-item-mirrored')).toHaveLength(1);
+        expect(screen.findByTestId(`session-list-item-${baseId}`)).not.toBeNull();
+        expect(screen.findByTestId(`session-list-item-${otherHomeBaseId}`)).not.toBeNull();
+        expect(screen.findByTestId(`session-list-item-${occurrenceId}`)).not.toBeNull();
+        const indicatorIds = screen.root.findAll(node => typeof node.type === 'string'
+            && String(node.props.testID ?? '').startsWith('session-row-attention-indicator-'))
+            .map(node => String(node.props.testID));
+        expect(indicatorIds.length).toBeGreaterThanOrEqual(4);
+        expect(new Set(indicatorIds).size).toBe(indicatorIds.length);
+    });
+
     beforeEach(() => {
         // Only the clock is pinned: faking timers as well would stall the async render helpers,
         // and these cases depend on runtime freshness, not on scheduled work.
@@ -191,6 +264,7 @@ describe('SessionItem outer row accessible semantics', () => {
     });
 
     afterEach(() => {
+        platformState.os = 'web';
         vi.useRealTimers();
         routerPush.mockReset();
         rowPreferences.backgroundWorkAttentionMode = 'keepWorking';
@@ -215,12 +289,8 @@ describe('SessionItem outer row accessible semantics', () => {
             expect(String(row.props.accessibilityLabel)).not.toMatch(/ready for review/i);
             expect(row.props.accessibilityState.busy).toBe(true);
             const suffix = density === 'minimal' ? 'trailing' : 'secondary';
-            if (mode === 'keepWorking') {
-                expect(screen.findByTestId(`session-row-attention-indicator-spinner-${id}-${suffix}`)).toBeTruthy();
-                expect(screen.findByTestId(`session-row-unread-indicator-${id}-${suffix}`)).toBeNull();
-            } else {
-                expect(screen.findByTestId(`session-row-attention-indicator-dot-${id}-${suffix}`)).toBeTruthy();
-            }
+            expect(screen.findByTestId(`session-row-attention-indicator-spinner-${id}-${suffix}`)).toBeTruthy();
+            expect(screen.findByTestId(`session-row-unread-indicator-${id}-${suffix}`)).toBeNull();
             standardCleanup();
         }
     });
@@ -238,19 +308,15 @@ describe('SessionItem outer row accessible semantics', () => {
             runtimeActivityObservedAt: NOW_MS, runtimeActivityRevision: 1 }, id);
         const element = (current: Session) => <SessionItem session={current} compact compactMinimal
             rowViewModel={createSessionItemRowViewModel({ session: current, overrides: {
-                sessionStatus: getSessionStatus(current, NOW_MS, { workingTextMode: 'static' }),
+                sessionStatus: getSessionStatus(current, NOW_MS),
                 hasUnreadMessages: false, secondaryLineMode: 'status',
             } })} />;
         const screen = await renderScreen(element(session));
         expect(readOuterRow(screen, id).props.accessibilityLabel).toContain('Unread');
         expect(readOuterRow(screen, id).props.accessibilityLabel).toMatch(/background/i);
         expect(readOuterRow(screen, id).props.accessibilityLabel).not.toMatch(/ready for review/i);
-        if (mode === 'keepWorking') {
-            expect(screen.findByTestId(`session-row-unread-indicator-${id}-trailing`)).toBeNull();
-            expect(screen.findByTestId(`session-row-attention-indicator-spinner-${id}-trailing`)).toBeTruthy();
-        } else {
-            expect(screen.findByTestId(`session-row-attention-indicator-dot-${id}-trailing`)).toBeTruthy();
-        }
+        expect(screen.findByTestId(`session-row-unread-indicator-${id}-trailing`)).toBeNull();
+        expect(screen.findByTestId(`session-row-attention-indicator-spinner-${id}-trailing`)).toBeTruthy();
         const readViewer = createSessionViewerFixture({
             readState: { state: 'tracking', lastViewedSessionSeq: 4, unreadSince: null },
         });
@@ -272,12 +338,12 @@ describe('SessionItem outer row accessible semantics', () => {
                     attention: { needsAttention: true, reasons: ['ready_after_read'], primary: 'ready_after_read', presentation: 'full' } }),
             } },
         });
-        expect(readOuterRow(screen, 'modern-ready-settled').props.accessibilityLabel).toContain('ready for review');
+        expect(readOuterRow(screen, 'modern-ready-settled').props.accessibilityLabel).toContain('Finished');
         expect(screen.findByTestId('session-row-unread-indicator-modern-ready-settled-trailing')).toBeNull();
     });
 
     it('keeps reports disclosure independent of Session navigation', async () => {
-        const session = createRowSession({ managedSessions: { total: 4, working: 0, needsYou: 2, stalled: 0, finished: 0, attentionPrimary: null } }, 'lead');
+        const session = createRowSession({ managedSessions: { total: 4, working: 0, needsYou: 2, stalled: 0, finished: 0, attentionPrimary: 'permission_required' } }, 'lead');
         const onSetReportsCollapsed = vi.fn();
         const screen = await renderScreen(<SessionItem session={session}
             rowViewModel={createSessionItemRowViewModel({ session })}
@@ -352,7 +418,7 @@ describe('SessionItem outer row accessible semantics', () => {
             secondaryLineMode: 'path',
         });
         expect(readOuterRow(quiet.screen, 'row-path-quiet').props.accessibilityLabel)
-            .toBe('Row name');
+            .toBe('Row name. online');
     });
 
     it('exposes exactly one actionable element for the row itself', async () => {
@@ -373,35 +439,6 @@ describe('SessionItem outer row accessible semantics', () => {
         expect(rowPressables[0].props.accessibilityLabel).toBe(row.props.accessibilityLabel);
     });
 
-    it('colours the status word by the shared work-status tone: healthy work stays quiet, needs-you and trouble speak', async () => {
-        const { lightTheme } = await import('@/theme');
-        const { workStatusWordStyle } = await import('@/components/work/status/workStatusTreatment');
-        const quiet = lightTheme.colors.text.secondary;
-        const attention = (workStatusWordStyle('attention') as { color: string }).color;
-        const danger = (workStatusWordStyle('danger') as { color: string }).color;
-        const expectations: Readonly<Record<string, string>> = {
-            // Working and ready used to be drawn blue and green; a healthy row is quiet (INT §5.3).
-            working: quiet,
-            ready: quiet,
-            'permission required': attention,
-            'action required': attention,
-            failed: danger,
-        };
-        for (const [label, color] of Object.entries(expectations)) {
-            const testCase = ROW_STATE_CASES.find((entry) => entry.label === label)!;
-            const id = `row-tone-${label.replace(/\s+/g, '-')}`;
-            const { screen } = await renderRow({ testCase, id, density: 'default', secondaryLineMode: 'status' });
-            const word = screen.findAll((node) => (
-                typeof node.props?.testID === 'string'
-                && node.props.testID.startsWith(`session-list-status-subtitle-text-${id}-`)
-            ))[0];
-            expect(word, label).toBeDefined();
-            const flat = Object.assign({}, ...[word!.props.style].flat(Infinity).filter(Boolean));
-            expect([label, flat.color]).toEqual([label, color]);
-            standardCleanup();
-        }
-    });
-
     it('keeps an unknown status quiet: never a status-word headline, in either secondary-line mode', async () => {
         const { getSessionStatus } = await import('@/utils/sessions/sessionUtils');
         for (const secondaryLineMode of ['status', 'path'] as const) {
@@ -410,7 +447,7 @@ describe('SessionItem outer row accessible semantics', () => {
             const session = createRowSession({
                 active: false, encryptionMode: 'e2ee', encryptedContentAvailability: undefined,
             }, id);
-            const sessionStatus = getSessionStatus(session, NOW_MS, { workingTextMode: 'static' });
+            const sessionStatus = getSessionStatus(session, NOW_MS);
             expect(sessionStatus.state).toBe('unknown');
             const rowViewModel = createSessionItemRowViewModel({
                 session,
@@ -427,6 +464,25 @@ describe('SessionItem outer row accessible semantics', () => {
             ));
             expect([secondaryLineMode, words.length]).toEqual([secondaryLineMode, 0]);
             expect(readOuterRow(screen, id).props.accessibilityLabel ?? '').not.toContain('unknown');
+            standardCleanup();
+        }
+    });
+
+    it('marks a coordinator row from the one derived fact: shown and spoken when true, absent when false or unavailable', async () => {
+        const cases: ReadonlyArray<readonly [Partial<Session>, boolean]> = [
+            [{ managedSessions: { total: 2 } } as Partial<Session>, true],
+            [{ receivedRuleCount: 1 }, true],
+            [{ managedSessions: { total: 0 }, receivedRuleCount: 0 } as Partial<Session>, false],
+            [{}, false],
+        ];
+        for (const [facts, expected] of cases) {
+            const id = `row-coordinator-${String(expected)}`;
+            const session = createRowSession(facts, id);
+            const screen = await renderScreen(<SessionItem session={session} rowViewModel={createSessionItemRowViewModel({ session })} />);
+            const marks = screen.findAll((node) => String(node.props?.testID ?? '').endsWith('-coordinator-mark'));
+            expect([JSON.stringify(facts), marks.some(node => node.props.accessibilityLabel === 'Coordinator')])
+                .toEqual([JSON.stringify(facts), expected]);
+            expect(String(readOuterRow(screen, id).props.accessibilityLabel ?? '').includes('Coordinator')).toBe(expected);
             standardCleanup();
         }
     });

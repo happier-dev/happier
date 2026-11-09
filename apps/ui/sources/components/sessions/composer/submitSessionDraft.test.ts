@@ -95,6 +95,23 @@ afterEach(async () => {
 });
 
 describe('submitSessionDraft', () => {
+    it('settles an admitted offscreen Session draft after its caller cancels', async () => {
+        const scope = target();
+        const owner = createExistingSessionComposerDocumentOwner({ scope, ref: { kind: 'session', sessionId } });
+        owner.replaceDocument({ text: 'Deliver this offscreen draft', structuredInputMentions: [], composerAttachments: [] });
+        const cancellation = new AbortController();
+        homes.answer(serverId, '/v1/actions/session.message.send', { select: body => {
+            const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+            // The external Home has admitted the effect before the caller retires;
+            // its successful receipt remains true when the response arrives.
+            cancellation.abort();
+            return { body: { v: 1, actionId: 'session.message.send', requestId: request.envelope.requestId,
+                execution: { ok: true, result: SessionMessageSendResultV1Schema.parse({ status: 'accepted', localId: request.envelope.input.localId }) } } };
+        } });
+        expect(await submitSessionDraft({ sessionTarget: scope, signal: cancellation.signal })).toMatchObject({ ok: true });
+        expect(cancellation.signal.aborted).toBe(true);
+        expect(owner.read().document.text).toBe('');
+    });
     it.each([
         { fresh: true, includeWindowText: false }, { fresh: true, includeWindowText: true },
         { fresh: false, includeWindowText: false }, { fresh: false, includeWindowText: true },

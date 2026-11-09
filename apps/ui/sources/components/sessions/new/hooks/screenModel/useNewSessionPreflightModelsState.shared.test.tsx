@@ -6,6 +6,8 @@ import { createDeferred, flushHookEffects, renderHook } from '@/dev/testkit';
 import * as cache from '@/sync/domains/models/dynamicModelProbeCache';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { buildDynamicModelProbeCacheKey } from '@/sync/domains/models/dynamicModelProbeCacheKey';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { readAgentModelChoiceTarget } from '@/components/settings/pickers/projectAgentModelChoices';
 
 const { capabilityRpc } = vi.hoisted(() => ({ capabilityRpc: vi.fn() }));
 
@@ -19,6 +21,36 @@ beforeEach(async () => {
 });
 afterEach(standardCleanup);
 afterAll(() => preflight.dispose());
+
+it('observes installed Agent models under the catalog key rather than its runtime compatibility carrier', async () => {
+    capabilityRpc.mockReset();
+    const [entry] = getResolvedBackendCatalogEntries({ enabledAgentIds: [], mergedProviderProjectionById: {
+        'sample-agent': { agentId: 'sample-agent', identity: { pluginId: 'example.agent', localId: 'sample' }, title: 'Sample' },
+    } });
+    if (!entry) throw new Error('Expected the installed Agent catalog entry');
+    const retained = { availableModels: [{ id: 'installed-model', name: 'Installed model' }], supportsFreeform: false };
+    const changed = { availableModels: [{ id: 'changed-model', name: 'Changed model' }], supportsFreeform: false };
+    const changedTargetKey = 'agent:example.agent/changed';
+    for (const [targetKey, models] of [[entry.backendTargetKey, retained], [changedTargetKey, changed]] as const) {
+        const key = buildDynamicModelProbeCacheKey({ machineId: 'installed-machine', targetKey,
+            providerConnectionId: null, serverId: preflight.serverId, cwd: '/repo' })!;
+        cache.writeDynamicModelProbeCacheSuccess(key, models);
+    }
+    const hook = await renderHook(({ targetKey }: { targetKey: string }) => {
+        const params = { backendTarget: readAgentModelChoiceTarget(entry), backendTargetKey: targetKey,
+            runtimeCarrierAgentId: entry.agentId, selectedMachineId: 'installed-machine',
+            capabilityServerId: preflight.serverId, cwd: '/repo', enabled: false };
+        return useNewSessionPreflightModelsState(params);
+    }, { initialProps: { targetKey: entry.backendTargetKey } });
+    try {
+        expect(hook.getCurrent().preflightModels).toBe(retained);
+        expect(hook.getCurrent().preflightModelsTargetKey).toBe(entry.backendTargetKey);
+        await hook.rerender({ targetKey: changedTargetKey });
+        expect(hook.getCurrent().preflightModels).toBe(changed);
+        expect(hook.getCurrent().preflightModelsTargetKey).toBe(changedTargetKey);
+        expect(capabilityRpc).not.toHaveBeenCalled();
+    } finally { await hook.unmount(); }
+});
 
 it('returns retained models on the first render without waiting for an effect or opening demand', async () => {
     capabilityRpc.mockReset();
@@ -134,7 +166,12 @@ it('retains another model picker but releases an abandoned occurrence before rem
     await remounted.unmount();
 });
 
-it.each([false, true])('does not retry an unknown model outcome on the clock or remount (retained: %s)', async (retainGood) => {
+it.each([
+  [false, { reason: 'outcomeUnknown', requestDisposition: 'outcomeUnknown' }],
+  [true, { reason: 'outcomeUnknown', requestDisposition: 'outcomeUnknown' }],
+  [false, { reason: 'error', errorCode: 'agent_isolation_unavailable', retryable: false }],
+  [true, { reason: 'error', errorCode: 'agent_isolation_unavailable', retryable: false }],
+] as const)('does not retry an unknown or nonretryable model outcome on the clock or remount (retained: %s, failure: %j)', async (retainGood, failure) => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000_000);
     capabilityRpc.mockReset();
@@ -144,19 +181,17 @@ it.each([false, true])('does not retry an unknown model outcome on the clock or 
     if (retainGood) cache.writeDynamicModelProbeCacheSuccess(key, {
         availableModels: [{ id: 'retained', name: 'Retained' }], supportsFreeform: false,
     }, 900_000);
-    cache.writeDynamicModelProbeCacheError(key, 1_000_000, undefined, {
-        reason: 'outcomeUnknown', requestDisposition: 'outcomeUnknown',
-    });
+    cache.writeDynamicModelProbeCacheError(key, 1_000_000, undefined, failure);
     const render = () => renderHook(() => useNewSessionPreflightModelsState({
         backendTarget: { kind: 'backend', backendId: 'codex' }, selectedMachineId: 'unknown-model-machine',
         capabilityServerId: preflight.serverId, cwd: '/repo',
     }));
     const first = await render();
-    expect(first.getCurrent().probe).toMatchObject({ phase: 'idle', reason: 'outcomeUnknown', requestDisposition: 'outcomeUnknown' });
+    expect(first.getCurrent().probe).toMatchObject({ phase: 'idle', ...failure });
     await act(async () => { await vi.advanceTimersByTimeAsync(cache.DYNAMIC_MODEL_PROBE_SUCCESS_TTL_MS + 1); });
     await first.unmount();
     const remounted = await render();
-    expect(remounted.getCurrent().probe.reason).toBe('outcomeUnknown');
+    expect(remounted.getCurrent().probe).toMatchObject(failure);
     expect(capabilityRpc).not.toHaveBeenCalled();
     expect(remounted.getCurrent().preflightModels?.availableModels.map(model => model.id) ?? []).toEqual(retainGood ? ['retained'] : []);
     await remounted.unmount();

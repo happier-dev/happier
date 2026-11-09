@@ -30,7 +30,7 @@ export const WalkthroughInventory = React.memo(function WalkthroughInventory(pro
             {props.rows.map((row) => (
                 <ScmChangeRow key={row.path} theme={theme} file={scmFileStatusFromChange(row)}
                     testID={`walkthrough-inventory-${row.path}`} density="compact" phone={props.phone}
-                    style={[styles.inventoryRow, props.phone ? { minHeight: 44 } : null]}
+                    style={styles.inventoryRow}
                     onPress={props.onOpenFile ? () => props.onOpenFile!(row.path) : undefined}
                     tag={row.lockfile ? t('scmComparison.lockfileTag') : row.generated ? t('scmComparison.generatedTag') : null}
                     trailingElement={!row.lockfile && !row.generated && !(props.uncertain && row.reading === 'reading') ? <View style={styles.readState}>

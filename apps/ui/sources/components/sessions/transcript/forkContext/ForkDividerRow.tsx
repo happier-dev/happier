@@ -10,6 +10,7 @@ import { useSession } from '@/sync/domains/state/storage';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 
 export function ForkDividerRow(props: Readonly<{
   parentSessionId: string;
@@ -20,9 +21,11 @@ export function ForkDividerRow(props: Readonly<{
 }>): React.ReactElement {
   const { theme } = useUnistyles();
   const transcriptSource = useSessionTranscriptSource();
-  const parentSession = useSession(props.parentSessionId);
+  const parentSession = useSession(props.parentSessionId, props.serverId);
+  const isSessionVisible = useSessionRecordingVisibility();
   const dividerId = `${props.parentSessionId}:${props.childSessionId}`;
-  const parentName = parentSession ? getSessionName(parentSession) : null;
+  const parentName = parentSession && isSessionVisible({ sessionId: props.parentSessionId, serverId: props.serverId ?? parentSession.serverId })
+    ? getSessionName(parentSession) : null;
   const title =
     parentName
       ? t('session.forking.dividerTitleWithParent', { parent: parentName })

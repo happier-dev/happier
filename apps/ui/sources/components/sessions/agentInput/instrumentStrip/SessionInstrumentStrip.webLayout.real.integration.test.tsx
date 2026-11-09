@@ -52,10 +52,20 @@ afterEach(async () => {
 const REASON = 'Connected services · Unavailable';
 
 /** The New Session strip: a blocked-launch badge plus the draft's own actions ("Start another", "Delete draft"). */
+type StripBadge = {
+  label: string;
+  labelNumberOfLines?: number;
+  emphasis?: 'quiet' | 'prominent';
+  tone?: 'neutral' | 'warning';
+  testID?: string;
+};
+
 async function measureStrip(
   width: number,
-  badge: { label: string; labelNumberOfLines?: number } = { label: REASON, labelNumberOfLines: 0 },
+  badge: StripBadge = { label: REASON, labelNumberOfLines: 0 },
   withActions = true,
+  more: readonly StripBadge[] = [],
+  statusRegions?: React.ComponentProps<typeof import('./SessionInstrumentStrip').SessionInstrumentStrip>['statusRegions'],
 ): Promise<WebLayoutMeasurement> {
   const { SessionInstrumentStrip } = await import('./SessionInstrumentStrip');
   host = document.createElement('div');
@@ -65,13 +75,18 @@ async function measureStrip(
     root!.render(
       <View testID="frame" style={{ width }}>
         <SessionInstrumentStrip
+          statusRegions={statusRegions}
           statusBadges={[
             {
               key: 'blocked',
-              ...badge,
               tone: 'warning',
               testID: 'badge',
+              ...badge,
             },
+            ...more.map((entry, index) => ({
+              key: `more-${index}`,
+              ...entry,
+            })),
           ]}
           statusTrailingActions={
             withActions ? (
@@ -84,7 +99,7 @@ async function measureStrip(
   });
   return measureWebLayout(host, {
     viewport: { width: Math.max(width, 400), height: 300 },
-    texts: [badge.label],
+    texts: [badge.label, ...more.map((entry) => entry.label)],
     settle: (replay) => act(replay),
   });
 }
@@ -118,6 +133,20 @@ describe('the composer status row, as a browser lays it out', () => {
     expect(frame.right - actions.right).toBeLessThanOrEqual(20.5);
   });
 
+  it('on a narrow strip ellipsizes a quiet note and a plain value before it shortens a prominent badge', async () => {
+    // The Goal chip (prominent) beside the Session capability note (quiet), at the 388 px composer.
+    const layout = await measureStrip(
+      388,
+      { label: 'Goal paused', testID: 'goal', tone: 'neutral' },
+      false,
+      [{ label: 'brand-voice turned off \u00b7 applied now to this Session', emphasis: 'quiet', testID: 'note' }],
+    );
+    expect(layout.rect('goal:label').clipped).not.toBe(true);
+    expect(layout.rect('goal:label').text).toBe('Goal paused');
+    expect(layout.rect('note:label').clipped).toBe(true);
+    expect(layout.rect('note').right).toBeLessThanOrEqual(layout.rect('frame').right + 0.5);
+  });
+
   it('keeps a long sentence badge inside the strip on a phone, wrapping its words instead of running past the edge', async () => {
     // The managed wake failure line: a sentence, passed with no explicit line count.
     const layout = await measureStrip(
@@ -126,5 +155,37 @@ describe('the composer status row, as a browser lays it out', () => {
       false,
     );
     expect(layout.rect('badge').right).toBeLessThanOrEqual(layout.rect('frame').right + 0.5);
+  });
+
+  it('keeps a prominent admitted plugin badge whole beside a quiet host note', async () => {
+    const { definePlugin } = await import('@happier-dev/plugin-sdk');
+    const { parsePluginManifest } = await import('@happier-dev/plugin-sdk/manifest');
+    const { createSurfaceContextFixture } = await import('@happier-dev/plugin-sdk/testing');
+    const { ComposerStatusBadge } = await import('@happier-dev/plugin-ui/components');
+    const { HappierUiEnvironmentProvider, projectHappierUiEnvironment } = await import('@happier-dev/plugin-ui/environment');
+    const authored = definePlugin({
+      id: 'acme.status', version: '1.0.0',
+      composer: { regions: { checks: {
+        placement: 'statusStrip', emphasis: 'prominent', renderer: { renderer: 'checks-view' },
+      } } },
+      ui: { renderers: [{ id: 'checks-view', kind: 'reactNative', artifact: 'checks-view' }] },
+    });
+    const parsed = parsePluginManifest(authored.manifest);
+    if (!parsed.ok) throw new Error(JSON.stringify(parsed.diagnostics));
+    const definition = parsed.manifest.contributes!.composerRegions![0]!;
+    const emphasis = definition.emphasis;
+    if (emphasis !== 'prominent') throw new Error('The admitted region must retain its prominent emphasis');
+    const layout = await measureStrip(388,
+      { label: 'brand-voice turned off · applied now to this Session', emphasis: 'quiet', testID: 'note' },
+      false, [], [{ emphasis, node: (
+        <HappierUiEnvironmentProvider environment={projectHappierUiEnvironment(createSurfaceContextFixture())}>
+          <ComposerStatusBadge testID="plugin-checks" label="PR checks running" emphasis={emphasis} />
+        </HappierUiEnvironmentProvider>
+      ) }],
+    );
+    expect(layout.rect('plugin-checks:label').text).toBe('PR checks running');
+    expect(layout.rect('plugin-checks:label').clipped).not.toBe(true);
+    expect(layout.rect('note:label').clipped).toBe(true);
+    expect(layout.rect('plugin-checks').right).toBeLessThanOrEqual(layout.rect('frame').right + 0.5);
   });
 });

@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import type { ScmCreatePrResult } from '@/scm/pullRequests/selectScmCreatePrResult';
-import type { ScmOperationErrorCode } from '@happier-dev/protocol/scm';
+import type { ScmOperationErrorCode, ScmPullRequestSummary } from '@happier-dev/protocol/scm';
 
 /**
  * Whether a session's "New pull request" form is open and where it lives (Git lab PR / PRD). The form's
@@ -87,7 +87,7 @@ export type GitPullRequestCreateOutcome =
 export type GitPullRequestFormAfterCreate = Readonly<{
     clearDraft: boolean;
     closeForm: boolean;
-    created: Readonly<{ number: number | null; url: string }> | null;
+    created: ScmPullRequestSummary | null;
     failure: Readonly<{ errorCode?: ScmOperationErrorCode; blocked?: boolean; message: string }> | null;
     openedProviderPage: string | null;
 }>;
@@ -100,7 +100,7 @@ export function resolveGitPullRequestFormAfterCreate(outcome: GitPullRequestCrea
             return {
                 clearDraft: true,
                 closeForm: true,
-                created: { number: outcome.number ?? null, url: outcome.url },
+                created: outcome.pullRequest,
                 failure: null,
                 openedProviderPage: null,
             };

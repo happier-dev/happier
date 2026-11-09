@@ -1,4 +1,4 @@
-import { selectScmChangedFiles, type ScmFileStatus } from '@/scm/scmStatusFiles';
+import { selectScmChangedFileCount, selectScmChangedFiles, selectScmSnapshotLineTotals, type ScmFileStatus } from '@/scm/scmStatusFiles';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 
 /**
@@ -25,15 +25,31 @@ export type SessionScmChangesSummary = SessionScmSummary & Readonly<{
     fetchedAt: number;
 }>;
 
+const NO_FILES: readonly ScmFileStatus[] = [];
+
+/** The lines these files add and remove, however many of a working copy's files they are. */
+export function sumChangedLines(files: readonly ScmFileStatus[]): { added: number; removed: number } {
+    let added = 0;
+    let removed = 0;
+    for (const file of files) {
+        added += Number.isFinite(file.linesAdded) ? Math.max(0, file.linesAdded) : 0;
+        removed += Number.isFinite(file.linesRemoved) ? Math.max(0, file.linesRemoved) : 0;
+    }
+    return { added, removed };
+}
+
 export function buildSessionScmSummary(snapshot: ScmWorkingSnapshot | null): SessionScmChangesSummary | null {
-    if (!snapshot?.repo.isRepo) {
+    // A facts delivery measured no working copy: it has nothing to summarize.
+    if (!snapshot?.repo.isRepo || snapshot.detail === 'facts') {
         return null;
     }
 
-    const linesAdded = snapshot.totals.includedAdded + snapshot.totals.pendingAdded;
-    const linesRemoved = snapshot.totals.includedRemoved + snapshot.totals.pendingRemoved;
-    const files = selectScmChangedFiles(snapshot);
-    const changedFiles = files.length;
+    const totals = selectScmSnapshotLineTotals(snapshot);
+    const linesAdded = totals.includedAdded + totals.pendingAdded;
+    const linesRemoved = totals.includedRemoved + totals.pendingRemoved;
+    // A summary delivery carries counts, not rows: `files` stays empty and never reads as clean.
+    const files = snapshot.detail === 'summary' ? NO_FILES : selectScmChangedFiles(snapshot);
+    const changedFiles = selectScmChangedFileCount(snapshot);
 
     return {
         branch: snapshot.branch.head,

@@ -1,11 +1,14 @@
 import * as React from 'react';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { SelectionList } from '@/components/ui/selectionList/SelectionList';
 import type { SelectionListStep } from '@/components/ui/selectionList/_types';
+import { Icon } from '@/components/ui/icons/Icon';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { ExecutionRunAgentMark } from '@/components/sessions/runs/ExecutionRunAgentMark';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { getStorage } from '@/sync/domains/state/storage';
@@ -13,15 +16,17 @@ import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/ac
 import { setSessionManager } from '@/sync/ops/relations/setSessionManager';
 import { t } from '@/text';
 import { sessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
-import { readSessionPresentationRecord, readSessionPresentationServerId, readSessionPresentationInputDisplay, readSessionPresentationInputRelations } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
+import { formatRelativeTime } from '@/utils/time/formatShortRelativeTime';
 
 import { loadSessionManagerEligibility, type SessionManagerEligibilitySnapshot } from '@/sync/ops/relations/sessionManagerEligibility';
 
 import { describeManagerRefusal } from './putSessionUnderLead';
-import { buildPutUnderChooserSections, PUT_UNDER_TOP_LEVEL_OPTION_ID } from './putUnderChooser';
+import { buildPutUnderChooserSections, PUT_UNDER_TOP_LEVEL_OPTION_ID, type PutUnderChooserSection } from './putUnderChooser';
+import type { PutUnderCandidatePresentation } from './putUnderPresentation';
 import { resolvePutUnderEligibility } from './putUnderCandidates';
 import { describeSessionListDropReason } from '@/components/sessions/shell/dropPreview/sessionListDropPresentation';
 import { selectSessionRelationRecords } from './reportSubtree';
+import { readSessionPresentationRecord, readSessionPresentationServerId, readSessionPresentationInputDisplay, readSessionPresentationInputRelations } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
 /**
@@ -32,17 +37,42 @@ import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMe
  * current lead. The server's fence and compare-and-set decide; a refusal is said in words.
  */
 
-const stylesheet = StyleSheet.create(() => ({
+const stylesheet = StyleSheet.create((theme) => ({
     body: {
         minHeight: 320,
         maxHeight: 520,
     },
     // The refusal sits under the list, so nothing above it moves when it appears.
     status: {
-        paddingHorizontal: 16,
-        paddingBottom: 12,
+        paddingHorizontal: theme.space.s16,
+        paddingBottom: theme.space.s12,
     },
 }));
+
+/** The mark column's size: the Work map's node mark, so a session reads the same wherever it is chosen. */
+const CANDIDATE_MARK_SIZE = 28;
+
+/**
+ * The quiet line under a candidate (lab K1c): what it is and what it is doing ("Orchestrator · 1 still
+ * working"), otherwise when it last moved. Every candidate has one, so a long title keeps to one line
+ * under the list's shared row clamp.
+ */
+function describeCandidateFacts(session: PutUnderCandidatePresentation): string {
+    const activity = session.workingCount ? t('sessionWork.strip.stillWorking', { count: session.workingCount })
+        : session.leadsCount ? t('sessionWork.list.subSessions', { count: session.leadsCount })
+        : null;
+    return joinHappierFacts(session.roleName, activity ?? formatRelativeTime(session.updatedAt));
+}
+
+/** Sessions that already lead come first within their section; recency otherwise keeps its order. */
+function orderLeadsFirst(options: PutUnderChooserSection['options']): PutUnderChooserSection['options'] {
+    // "Top level" carries no session and keeps the first place.
+    const leads = (option: PutUnderChooserSection['options'][number]) => !option.session ? -1
+        : (option.session.leadsCount ?? 0) > 0 || option.session.roleId === 'orchestrator' ? 0 : 1;
+    return options.map((option, index) => ({ option, index }))
+        .sort((a, b) => leads(a.option) - leads(b.option) || a.index - b.index)
+        .map(({ option }) => option);
+}
 
 type PutUnderSessionModalProps = CustomModalInjectedProps & Readonly<{
     sessionId: string;
@@ -51,6 +81,7 @@ type PutUnderSessionModalProps = CustomModalInjectedProps & Readonly<{
 
 export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
     const { onClose } = props;
     const onCloseRef = React.useRef(onClose);
     onCloseRef.current = onClose;
@@ -126,16 +157,20 @@ export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
                 kind: 'static' as const,
                 id: section.id,
                 ...(section.title ? { title: section.title } : {}),
-                options: section.options.map((option) => ({
+                options: (section.id === 'available' ? orderLeadsFirst(section.options) : section.options).map((option) => ({
                     id: option.id,
                     label: option.label,
-                    ...(option.detail ? { subtitle: option.detail } : {}),
+                    labelEllipsizeMode: 'tail' as const,
+                    ...(option.detail || option.session ? { subtitle: option.detail ?? describeCandidateFacts(option.session!) } : {}),
+                    icon: option.session
+                        ? <ExecutionRunAgentMark agentId={option.session.agentId} size={CANDIDATE_MARK_SIZE} />
+                        : option.id === PUT_UNDER_TOP_LEVEL_OPTION_ID ? <Icon name="list" size={20} color={theme.colors.text.secondary} /> : undefined,
                     ...(option.disabled || (pendingId !== null && pendingId !== option.id) ? { disabled: true } : {}),
                     ...(pendingId === option.id ? { loading: true } : {}),
                 })),
             })),
         };
-    }, [facts, pendingId, props.sessionId, snapshot.sessions]);
+    }, [facts, pendingId, props.sessionId, snapshot.sessions, theme.colors.text.secondary]);
 
     const onSelect = React.useCallback((optionId: string) => {
         if (busy) return;
@@ -202,6 +237,8 @@ export function PutUnderSessionModal(props: PutUnderSessionModalProps) {
         kind: 'card' as const,
         title,
         testID: 'session-put-under-modal',
+        // Lab K1c: on a phone this is the sheet that pickers use, not a centred dialog.
+        phonePresentation: 'sheet' as const,
         dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.default, maxHeightRatio: 0.8, size: 'dialog' as const },
     }), [title]);
     useModalCardChrome(props.setChrome, chrome);

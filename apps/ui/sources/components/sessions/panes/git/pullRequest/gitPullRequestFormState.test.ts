@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { ScmPullRequestSummarySchema } from '@happier-dev/protocol/scm/pullRequests';
 
 import {
     closeGitPullRequestForm,
@@ -36,15 +37,19 @@ describe('where a new pull request form opens', () => {
 
 describe('the form after a create attempt', () => {
     it('a created pull request becomes the card and the draft is spent', () => {
-        expect(resolveGitPullRequestFormAfterCreate({ kind: 'created', number: 2501, url: 'https://github.com/o/r/pull/2501' })).toEqual({
+        const pullRequest = ScmPullRequestSummarySchema.parse({
+            provider: { id: 'example', kind: 'custom', displayName: 'Example', baseUrl: 'https://example.test' },
+            number: 2501, url: 'https://example.test/o/r/pull/2501', title: 'Created PR', headBranch: 'topic', baseBranch: 'main', state: 'draft',
+        });
+        expect(resolveGitPullRequestFormAfterCreate({ kind: 'created', number: 2501, url: pullRequest.url, pullRequest })).toEqual({
             clearDraft: true,
             closeForm: true,
-            created: { number: 2501, url: 'https://github.com/o/r/pull/2501' },
+            created: pullRequest,
             failure: null,
             openedProviderPage: null,
         });
-        expect(resolveGitPullRequestFormAfterCreate({ kind: 'reused', url: 'https://github.com/o/r/pull/7' })).toMatchObject({
-            clearDraft: true, closeForm: true, created: { number: null, url: 'https://github.com/o/r/pull/7' },
+        expect(resolveGitPullRequestFormAfterCreate({ kind: 'reused', url: pullRequest.url, pullRequest })).toMatchObject({
+            clearDraft: true, closeForm: true, created: pullRequest,
         });
     });
 

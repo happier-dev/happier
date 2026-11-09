@@ -6,7 +6,7 @@ import { readSessionRolesV1, type SessionRolesV1 } from '@happier-dev/protocol/p
 import type { RoleInstructionsOverrideV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 import type { RoleEngineV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
 import { resolveRoleRunsAsKindV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
-import { resolvedRoleToArtifact } from '@/sync/domains/roles/roleCatalog';
+import { resolvedRoleToArtifact, roleDisplayName } from '@/sync/domains/roles/roleCatalog';
 import { describeRoleRunsAs } from '@/components/roles/catalog/rolePresentation';
 
 import { useRoleCatalog } from '@/components/roles/catalog/useRoleCatalog';
@@ -334,7 +334,7 @@ function AddSessionRoleButton(props: Readonly<{
                                             actions={props.entries.map((entry) => ({
                                                 id: entry.roleId,
                                                 testID: `session-work-roles.add.change.${entry.roleId}`,
-                                                label: entry.role.name,
+                                                label: roleDisplayName(entry.role),
                                                 onPress: () => {
                                                     close();
                                                     setChangingRoleId(entry.roleId);

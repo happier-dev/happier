@@ -4,7 +4,7 @@ import type { CollectionSpaceV1 } from '@happier-dev/protocol/collections/spaces
 
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
-import { resolveCollectionSpaceIconName } from '@/components/ui/lists/collection/CollectionSpacesStrip';
+import { CollectionSpaceIcon } from '@/components/ui/lists/collection/CollectionSpaceIcon';
 import { t } from '@/text';
 
 export type SessionSpaceMembershipMenuChoice = Pick<SessionSpaceMembershipSetInputV1, 'operation' | 'spaceId' | 'sourceSpaceId'>;
@@ -20,7 +20,8 @@ export function buildSessionSpaceMembershipMenu(
     iconColor?: string,
 ): SessionSpaceMembershipMenu {
     const glyph = (name: IconName) => iconColor === undefined ? {} : { icon: React.createElement(Icon, { name, size: 16, color: iconColor }) };
-    const spaceGlyph = (space: (typeof spaces)[number]) => space.icon ? glyph(resolveCollectionSpaceIconName(space.icon)) : {};
+    const spaceGlyph = (space: (typeof spaces)[number]) => iconColor === undefined || !space.icon ? {}
+        : { icon: React.createElement(CollectionSpaceIcon, { icon: space.icon, size: 16, color: iconColor }) };
     const choices = new Map<string, SessionSpaceMembershipMenuChoice>();
     const add = spaces.map((space, index): DropdownMenuItem => {
         const id = `space-membership:add:${index}`;

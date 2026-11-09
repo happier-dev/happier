@@ -11,7 +11,6 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import type { SessionBoardPrimaryMountResolver } from '@/sync/domains/session/board';
 import type { SessionBoardSourceAvailabilityResolver } from '@/components/sessions/board/sessionBoardItemPresentation';
 
 import {
@@ -39,7 +38,6 @@ import { publishSessionCompanionCardBounds } from './layout/sessionCompanionCard
 const stylesheet = StyleSheet.create((theme) => ({
     rail: {
         minHeight: 0,
-        backgroundColor: theme.colors.surface.base,
     },
     /**
      * The hairline always faces Chat, so it follows the LOGICAL edge the rail
@@ -90,7 +88,6 @@ type SessionCompanionHostProps = Readonly<{
     onManageBoardItemPlugin?: (itemId: string) => void;
     summaryDestinations?: SessionSummaryDestinationHandlers;
     paneScopeId: string;
-    resolvePrimaryHost: SessionBoardPrimaryMountResolver;
 }>;
 
 export const SessionCompanionHost = React.memo(function SessionCompanionHost(
@@ -168,7 +165,6 @@ export const SessionCompanionHost = React.memo(function SessionCompanionHost(
                     serverId={props.address.serverId}
                     controller={controller}
                     boardBinding={props.boardBinding}
-                    resolvePrimaryHost={props.resolvePrimaryHost}
                     {...(props.pluginRuntime ? { pluginRuntime: props.pluginRuntime } : {})}
                     {...(props.resolveSourceAvailability
                         ? { resolveSourceAvailability: props.resolveSourceAvailability }
@@ -233,7 +229,6 @@ export const SessionCompanionHost = React.memo(function SessionCompanionHost(
                 serverId={props.address.serverId}
                 controller={controller}
                 boardBinding={props.boardBinding}
-                resolvePrimaryHost={props.resolvePrimaryHost}
                 {...(props.pluginRuntime ? { pluginRuntime: props.pluginRuntime } : {})}
                 {...(props.resolveSourceAvailability
                     ? { resolveSourceAvailability: props.resolveSourceAvailability }

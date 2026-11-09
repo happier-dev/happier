@@ -1,5 +1,3 @@
-import { admitAttachmentDraftSources, startEagerAttachmentDraftUploads } from './attachmentDraftAdmission';
-import { projectAttachmentDraftToAgentInputAttachment, resolveAttachmentImagePresentation } from './attachmentDraftPresentation';
 import * as React from 'react';
 
 import type { AttachmentUploadSource, AddWebAttachmentsOptions } from '@/sync/domains/attachments/attachmentsUploadFileSource';
@@ -12,9 +10,11 @@ import { nativeReadClipboardImageAttachment } from '@/utils/files/nativeClipboar
 import { assertAttachmentDraftSourcesAvailable, removeSubmittedAttachmentDrafts, sendableAttachmentDrafts, type AttachmentDraft } from './attachmentDraftModel';
 import { flushAttachmentDraftsForKey, getAttachmentDraftsSnapshotForKey, patchAttachmentDraftForKey, settleAttachmentDraftsForKey,
     subscribeAttachmentDraftsForKey, writeAttachmentDraftsForKey } from './attachmentDraftMemoryStore';
-import type { AttachmentsUploadConfig } from '@/sync/domains/transfers/ops/uploadSessionAttachment';
-import type { SessionAttachmentTransferContext } from '@/sync/domains/transfers/runtime/transferRuntime/families/sessionAttachmentTransfers';
-import type { ExactSessionMachineTargetIdentity } from '@/sync/ops/sessionMachineTarget';
+import { admitAttachmentDraftSources, startEagerAttachmentDraftUploads, type AttachmentDraftEagerUploadTarget } from './attachmentDraftAdmission';
+import { projectAttachmentDraftToAgentInputAttachment, resolveAttachmentImagePresentation } from './attachmentDraftPresentation';
+import { composerPictureStageEdit } from '@/components/sessions/composer/replaceComposerPicture';
+import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 
 export function useAttachmentDraftManager(params: Readonly<{
     enabled: boolean;
@@ -23,12 +23,13 @@ export function useAttachmentDraftManager(params: Readonly<{
     /** Existing Account/draft/occurrence address; this manager binds the shared memory owner. */
     memoryKey?: string | null;
     isCurrent?: () => boolean;
-    eagerUpload?: Readonly<{ sessionId: string; sessionTarget?: ExactSessionMachineTargetIdentity;
-        config: AttachmentsUploadConfig; transferContext?: SessionAttachmentTransferContext }>;
+    eagerUpload?: AttachmentDraftEagerUploadTarget;
     /** Picked uploads mention the exact drafts admitted by this intake owner. */
     onPickedDrafts?: (drafts: readonly AttachmentDraft[]) => void;
     /** The mounted document owner removes exact chip occurrences in the same user action. */
     onRemoveDraft?: (id: string) => void;
+    /** The mounted document supplies its existing scoped Action address for image edits. */
+    pictureEditAddress?: () => Readonly<{ scope: ServerAccountScope; ref: ComposerRefV1 }> | null;
 }>): Readonly<{
     filePickerRef: React.RefObject<AttachmentFilePickerHandle | null>;
     drafts: readonly AttachmentDraft[];
@@ -63,6 +64,8 @@ export function useAttachmentDraftManager(params: Readonly<{
     onRemoveDraftRef.current = params.onRemoveDraft;
     const onPickedDraftsRef = React.useRef(params.onPickedDrafts);
     onPickedDraftsRef.current = params.onPickedDrafts;
+    const pictureEditAddressRef = React.useRef(params.pictureEditAddress);
+    pictureEditAddressRef.current = params.pictureEditAddress;
     const eagerUploadRef = React.useRef(params.eagerUpload);
     eagerUploadRef.current = params.eagerUpload;
     const eagerUploadsRef = React.useRef(new Map<string, AbortController>());
@@ -74,7 +77,6 @@ export function useAttachmentDraftManager(params: Readonly<{
         ? memoryKey ? getAttachmentDraftsSnapshotForKey(memoryKey) : [] : draftsRef.current, [memoryKey]);
     const getSendableDraftsSnapshot = React.useCallback(() => sendableAttachmentDrafts(getDraftsSnapshot()), [getDraftsSnapshot]);
     const getDraftRevisionSnapshot = React.useCallback(() => draftRevisionRef.current, []);
-
     const prepareDraftsForSubmit = React.useCallback(async () => {
         if (memoryKey) await flushAttachmentDraftsForKey(memoryKey);
         const current = memoryKey ? getAttachmentDraftsSnapshotForKey(memoryKey) : draftsRef.current;
@@ -240,14 +242,32 @@ export function useAttachmentDraftManager(params: Readonly<{
             setWebPreviewUrlsVersion((v) => v + 1);
         }
     }, [drafts]);
+
+    const attachmentProjectionRef = React.useRef<Readonly<{
+        rows: ReadonlyMap<string, Readonly<{ draft: AttachmentDraft; uri: string | undefined; item: AgentInputAttachment }>>;
+        getDraftsSnapshot: typeof getDraftsSnapshot;
+        replaceDrafts: typeof replaceDrafts;
+        removeDraft: typeof removeDraft;
+    }> | null>(null);
     const agentInputAttachments = React.useMemo<readonly AgentInputAttachment[]>(() => {
         void webPreviewUrlsVersion;
         const webUrls = webPreviewUrlsRef.current;
-        return drafts.map(draft => projectAttachmentDraftToAgentInputAttachment(draft, {
-            webPreviewUri: webUrls.get(draft.id)?.url,
-            onRemove: () => removeDraft(draft.id),
-        }));
-    }, [drafts, removeDraft, webPreviewUrlsVersion]);
+        const published = attachmentProjectionRef.current;
+        const previous = published?.getDraftsSnapshot === getDraftsSnapshot && published.replaceDrafts === replaceDrafts && published.removeDraft === removeDraft ? published.rows : null;
+        const rows = new Map<string, Readonly<{ draft: AttachmentDraft; uri: string | undefined; item: AgentInputAttachment }>>();
+        const items = drafts.map((d) => {
+            const uri = webUrls.get(d.id)?.url;
+            const retained = previous?.get(d.id);
+            const item = retained?.draft === d && retained.uri === uri ? retained.item : projectAttachmentDraftToAgentInputAttachment(d, {
+                webPreviewUri: uri, onRemove: () => removeDraft(d.id),
+                stageEdit: composerPictureStageEdit({ kind: 'picked', attachmentId: d.id, getDraftsSnapshot, replaceDrafts }, () => pictureEditAddressRef.current?.() ?? null),
+            });
+            rows.set(d.id, { draft: d, uri, item });
+            return item;
+        });
+        attachmentProjectionRef.current = { rows, getDraftsSnapshot, replaceDrafts, removeDraft };
+        return items;
+    }, [drafts, removeDraft, webPreviewUrlsVersion, getDraftsSnapshot, replaceDrafts]);
 
     // Referential stability contract: memoized consumers (composer, transcript rows) receive
     // this manager or its callbacks as props; a fresh object per render would re-render them

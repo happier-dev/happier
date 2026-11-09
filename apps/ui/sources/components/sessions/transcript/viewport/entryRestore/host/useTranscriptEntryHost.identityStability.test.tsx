@@ -86,6 +86,7 @@ function createStableMembers() {
         entryRestoreDeadlineTimeoutRef: { current: null },
         entryRestoreOwner: createEntryRestoreOwner(),
         executeViewportCommand: vi.fn(() => true),
+        firstListPaintObservedRef: { current: true },
         hasNativeContentMeasurementForCurrentSession: vi.fn(() => false),
         initialFillAbortRef: { current: null },
         invalidateViewportAnchorCapture: vi.fn(),

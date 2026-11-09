@@ -14,11 +14,6 @@ vi.mock('@/text', async () => {
     });
 });
 
-vi.mock('@happier-dev/protocol', async (importOriginal) => ({
-    ...await importOriginal<typeof import('@happier-dev/protocol')>(),
-    DiffInputV2Schema: {},
-}));
-
 function getTitle(def: { title?: string | ((opts: { metadata: any; tool: any }) => string) }, tool: any): string | undefined {
     if (!def.title) return undefined;
     return typeof def.title === 'function' ? def.title({ metadata: null, tool }) : def.title;

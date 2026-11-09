@@ -17,18 +17,18 @@ import { SessionWidgetHost } from '@/components/sessions/board/SessionWidgetHost
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { ToolCall } from "@happier-dev/session-core/messages";
-import {
-    resolveSessionBoardExecutableCurrentness,
-    sessionBoardSourceRequiresExclusiveMount,
-    type SessionBoardMountHost,
-} from '@/sync/domains/session/board';
+import { useSessionVisualPresentationActive } from '@/components/sessions/board/useSessionVisualPresentationActive';
 import { useSessionSurfaceItem } from '@/sync/domains/session/board/useSessionSurfaceItem';
 import { resolveSessionForkVisualReferenceTargetV1, type SessionForkVisualContextV1 } from '@happier-dev/protocol/sessions/board/forkVisualCopies';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import { storage } from '@/sync/domains/state/storage';
 import { useTranscriptRowLayoutMutation } from '@/components/sessions/transcript/measurement/TranscriptRowLayoutMutationContext';
+import { useTranscriptRowSeq } from '@/components/sessions/transcript/attribution/SessionTranscriptAgentAttributionContext';
+import type { SessionVisualNetworkChoice } from '@/components/sessions/board/sessionBoardVisualNetwork';
+import { runAcknowledgedWidgetSetupCommand } from '@/components/widgets/surface/widgetSurfaceSetup';
 
 import {
     resolveTranscriptSessionBoardItemReference,
@@ -89,6 +89,20 @@ export const SessionBoardActionResultReference = React.memo(function SessionBoar
         reference={resolved} contentDemand={props.contentDemand !== false} />;
 });
 
+/**
+ * The live occurrence for an already-recognized reference. An approved Ask call reaches it through
+ * its approval card with the same reference the Allowed call resolves, so both read as one visual.
+ */
+export const SessionBoardItemReferenceOccurrence = React.memo(function SessionBoardItemReferenceOccurrence(props: Readonly<{
+    reference: TranscriptSessionBoardItemReference;
+    contentDemand?: boolean;
+}>): React.ReactElement | null {
+    if (props.reference.itemDestination === 'board') return null;
+    const { address, itemId } = props.reference;
+    return <MountedSessionBoardReference key={JSON.stringify([address.serverId, address.sessionId, itemId])}
+        reference={props.reference} contentDemand={props.contentDemand !== false} />;
+});
+
 function MountedSessionBoardReference(props: Readonly<{
     reference: TranscriptSessionBoardItemReference;
     contentDemand: boolean;
@@ -99,7 +113,9 @@ function MountedSessionBoardReference(props: Readonly<{
     // `null`, so the same local Session id on two Homes can never cross here.
     const mounted = useMountedSessionBoardController(address);
     const companionReveal = useSessionCompanionRevealPort(address);
-    const binding = useSessionSurfaceItem({ ...address, itemId, enabled: props.contentDemand });
+    const presented = useSessionVisualPresentationActive();
+    const contentDemand = props.contentDemand && presented;
+    const binding = useSessionSurfaceItem({ ...address, itemId, enabled: contentDemand });
     // Before this reply was ever measured its footprint is the smallest declared size.
     const repository = getSyncSingleton().readSessionSystemRecordObservation(address)?.repository;
     const measurements = repository?.readSurfaceItemMeasurements(address, itemId);
@@ -125,25 +141,29 @@ function MountedSessionBoardReference(props: Readonly<{
     const pluginRuntime = mounted?.pluginRuntime;
     const callerHostedHtmlRuntime = mounted?.callerHostedHtmlRuntime ?? null;
     const resolveSourceAvailability = mounted?.controller.resolveSourceAvailability;
-    // While the transcript list demands this reply, it is a candidate to run the item. Only an
-    // executable source needs the one live body; declarative content renders everywhere.
     const occurrence = React.useId();
+    const transcriptSeq = useTranscriptRowSeq();
     const readyItem = binding.status !== 'unavailable' && binding.item.state.kind === 'ready'
         ? binding.item.state.item : null;
-    const candidate = props.contentDemand && readyItem !== null && readyItem.destination !== 'board'
-        && sessionBoardSourceRequiresExclusiveMount(readyItem.source.kind);
+    const candidate = contentDemand && readyItem !== null && readyItem.destination !== 'board';
     const reportInlineTranscriptDemand = mounted?.reportInlineTranscriptDemand;
     React.useEffect(() => (
-        candidate && reportInlineTranscriptDemand ? reportInlineTranscriptDemand(itemId, occurrence) : undefined
-    ), [candidate, itemId, occurrence, reportInlineTranscriptDemand]);
-    const shellHost = mounted?.resolvePrimaryHost(itemId) ?? null;
-    // The transcript runs the item only in the reply that has been on screen longest.
-    const primaryHost: SessionBoardMountHost | null = shellHost === 'inlineTranscript'
-        ? mounted?.resolveInlineTranscriptOccurrence(itemId) === occurrence ? 'inlineTranscript' : null
-        : shellHost;
+        candidate && reportInlineTranscriptDemand ? reportInlineTranscriptDemand(itemId, occurrence, transcriptSeq) : undefined
+    ), [candidate, itemId, occurrence, reportInlineTranscriptDemand, transcriptSeq]);
+    // Pin, Edit, Network access and Delete on this reply read the Session's Board facts (placement,
+    // edit capability, revisions); the reply demands that inventory only while its menu or a flow is open.
+    const acquireBoardContent = mounted?.acquireContent;
+    // Whether this viewer may edit is the Session's own access fact, the same one the Board's facts carry, so the
+    // menu can hold the editor rows in place (disabled) while those facts load instead of inserting them later.
+    const viewerMayEdit = storage(state => {
+        const session = state.sessions[address.sessionId];
+        return session?.access?.capabilities.editSessionRecords === true
+            && areServerProfileIdentifiersEquivalent(session.serverId, address.serverId);
+    });
+    const bodyActive = mounted ? mounted.resolveInlineTranscriptOccurrence(itemId) === occurrence : true;
     // Dispose the body and observation while retaining its last measured slot.
     // The incumbent row visibility owner decides demand; this is not a viewport.
-    if (!props.contentDemand) return <View style={[styles.root, { height: retainedHeight }]}
+    if (!contentDemand) return <View style={[styles.root, { height: retainedHeight }]}
         testID={`transcript-board-item-${itemId}`} />;
 
     if (binding.status === 'unavailable') {
@@ -170,13 +190,6 @@ function MountedSessionBoardReference(props: Readonly<{
     const item = binding.item;
     if (item.state.kind === 'ready' && item.state.item.destination === 'board') return null;
     const title = resolveSessionBoardItemTitle(item.state);
-    const currentness = resolveSessionBoardExecutableCurrentness({
-        capabilities: { readTranscript: true, editSessionRecords: false },
-        reachability: binding.reachability, freshness: binding.freshness,
-        loading: binding.loading,
-        itemsById: new Map([[itemId, item]]),
-    }, item, pluginRuntime);
-
     // The panel is the item's own expanded destination, opened through the Session presentation
     // owner: the full body has room there and may scroll; the reply never does.
     const openInPanel = companionReveal ? (
@@ -187,16 +200,13 @@ function MountedSessionBoardReference(props: Readonly<{
             accessibilityLabel={t('sessionBoard.inline.openPanelA11y', { title })}
             tooltip={t('sessionBoard.inline.openPanel')}
             onPress={() => {
-                // Opening it in the panel is the latest choice, so the panel runs it again.
-                mounted?.releaseInlineTranscriptItem(itemId);
                 companionReveal.revealBoardItem(itemId);
             }}
         />
     ) : null;
-    // This reply previews an item that runs elsewhere (a Board host, or another reply). "Show here"
-    // makes this reply the one live body; the other copies then say where it runs.
-    const showHere = mounted && primaryHost !== 'inlineTranscript'
-        ? () => mounted.showInlineTranscriptItem(itemId, occurrence)
+    // Other occurrences of this item offer "Show here" through the same presentation Action.
+    const showHere = companionReveal?.showItemInChat && !bodyActive
+        ? () => companionReveal.showItemInChat?.(itemId, occurrence)
         : undefined;
     // Pin is the Board layout owner's existing `item.pin` command on this same item. It is offered
     // only while no Board view places the item; Unpin stays on the Board card that shows it.
@@ -206,22 +216,43 @@ function MountedSessionBoardReference(props: Readonly<{
     const pinToBoard = boardController && !placedOnBoard && boardController.supports('item.pin')
         ? () => { void boardController.run({ kind: 'item.pin', itemId }); }
         : undefined;
+    // The reply is an occurrence of the shared item, so an editor changes or deletes it from here through the
+    // same Board commands (AUDIT-B B-01); the editor itself lives in the Board panel, which Edit opens.
+    const canEditItem = boardController?.snapshot?.canEdit === true;
+    const removeItem = boardController && canEditItem && boardController.supports('item.remove')
+        ? () => { void boardController.run({ kind: 'item.remove', itemId }); }
+        : undefined;
+    const setNetwork = boardController && canEditItem && boardController.supports('item.network')
+        ? (network: SessionVisualNetworkChoice) => runAcknowledgedWidgetSetupCommand(
+            () => boardController.run({ kind: 'item.network', itemId, network }),
+            t('sessionBoard.item.network.failed'),
+        )
+        : undefined;
+    const boardFactsPending = viewerMayEdit && boardController !== undefined
+        && (boardController.snapshot?.loading ?? 'initial') === 'initial';
+    const editItem = boardController && canEditItem && companionReveal && boardController.supportsItemEdit(itemId)
+        ? () => { companionReveal.revealBoardItem(itemId); void boardController.run({ kind: 'item.edit', itemId }); }
+        : undefined;
     const widgetProps: React.ComponentProps<typeof SessionWidgetHost> = {
         sessionId: address.sessionId,
         serverId: address.serverId,
         item,
         host: 'inlineTranscript',
-        primaryHost,
+        bodyActive,
         density: 'compact',
         frame: 'reply',
-        canEdit: false,
-        executableCurrentness: currentness,
+        canEdit: canEditItem,
         onIntrinsicHeightChange,
         reportedHeight: intrinsicHeight,
         resolveSourceAvailability,
         ...(openInPanel ? { headerAccessory: openInPanel } : {}),
         ...(showHere ? { onOpenHere: showHere, openActionLabel: t('sessionBoard.inline.showHere') } : {}),
         ...(pinToBoard ? { onPinToBoard: pinToBoard } : {}),
+        ...(boardFactsPending ? { boardFactsPending } : {}),
+        ...(editItem ? { onEdit: editItem } : {}),
+        ...(setNetwork ? { onSetNetwork: setNetwork } : {}),
+        ...(removeItem ? { onRemove: removeItem } : {}),
+        ...(acquireBoardContent ? { acquireMenuContent: acquireBoardContent } : {}),
         ...(pluginRuntime ? { pluginRuntime } : {}),
         ...(callerHostedHtmlRuntime ? { callerHostedHtmlRuntime } : {}),
         testID: `transcript-board-widget-${itemId}`,

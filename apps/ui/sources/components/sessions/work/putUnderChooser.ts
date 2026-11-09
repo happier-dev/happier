@@ -3,13 +3,18 @@ import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/fo
 
 import { describeSessionListDropReason } from '@/components/sessions/shell/dropPreview/sessionListDropPresentation';
 import { readSessionPresentationRecord, readSessionPresentationInputDisplay, readSessionPresentationInputRelations, type SessionRelationRecord } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
-import { sessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
 import type { SessionManagerEligibilitySnapshot } from '@/sync/ops/relations/sessionManagerEligibility';
 import { t } from '@/text';
+import { sessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
 
 import { listPutUnderCandidateOptions } from './putUnderCandidates';
+import { readPutUnderCandidatePresentation, type PutUnderCandidatePresentation } from './putUnderPresentation';
 
 export const PUT_UNDER_TOP_LEVEL_OPTION_ID = '__top_level__';
+
+export type PutUnderChooserSection = Omit<HappierDropChooserSection, 'options'> & Readonly<{
+    options: readonly (HappierDropChooserSection['options'][number] & Readonly<{ session?: PutUnderCandidatePresentation }>)[];
+}>;
 
 /**
  * The "Put under…" chooser (lab K1c): Top level, the Sessions that can lead this one, then every
@@ -20,7 +25,7 @@ export function buildPutUnderChooserSections(input: Readonly<{
     sessions: Readonly<Record<string, SessionRelationRecord>>;
     sessionId: string;
     facts: SessionManagerEligibilitySnapshot | null;
-}>): readonly HappierDropChooserSection[] {
+}>): readonly PutUnderChooserSection[] {
     const self = input.sessions[input.sessionId];
     if (!self) return [];
     const currentLeadId = readSessionManagerSessionIdV1(readSessionPresentationInputRelations(self));
@@ -36,5 +41,8 @@ export function buildPutUnderChooserSections(input: Readonly<{
                 refusedReason: eligibility.allowed ? null : describeSessionListDropReason(eligibility.reason).message,
             })),
         ],
-    });
+    }).map(section => ({ ...section, options: section.options.map(option => {
+        const candidate = input.sessions[option.id];
+        return candidate ? { ...option, session: readPutUnderCandidatePresentation(candidate) } : option;
+    }) }));
 }

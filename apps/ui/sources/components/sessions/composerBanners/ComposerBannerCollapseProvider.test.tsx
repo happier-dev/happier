@@ -1,9 +1,11 @@
 import * as React from 'react';
 import { act, type ReactTestRenderer } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearPersistenceStorage, getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { readComposerBannerCollapse, writeComposerBannerCollapse } from '@/sync/domains/state/composerBannerUiState';
 
 import {
     ComposerBannerCollapseProvider,
@@ -54,10 +56,10 @@ describe('ComposerBannerCollapseProvider', () => {
     beforeEach(() => {
         storage.setState(state => ({ settings: settingsParse({ ...state.settings,
             sessionComposerRememberBannerVisibility: false,
-            actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } } }),
-            localSettings: { ...state.localSettings, sessionComposerCollapsedBannerKinds: {} } }));
+            actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } } }) }));
+        writeComposerBannerCollapse({});
     });
-    afterEach(() => { standardCleanup(); storage.setState(initialState, true); });
+    afterEach(() => { standardCleanup(); storage.setState(initialState, true); vi.restoreAllMocks(); clearPersistenceStorage(); });
 
     it('shares collapse across sibling subtrees so the badge and its banner never disagree', async () => {
         const tree = await renderSurface();
@@ -74,7 +76,7 @@ describe('ComposerBannerCollapseProvider', () => {
         const first = await renderSurface();
         toggleFrom(first, 'badge');
         expect(readCollapsed(first, 'badge')).toBe(true);
-        expect(storage.getState().localSettings.sessionComposerCollapsedBannerKinds).toEqual({});
+        expect(readComposerBannerCollapse()).toEqual({});
 
         const second = await renderSurface();
         expect(readCollapsed(second, 'badge')).toBe(false);
@@ -83,25 +85,27 @@ describe('ComposerBannerCollapseProvider', () => {
     it('remembers collapse across surfaces with Settings writes Off', async () => {
         storage.getState().applySettingsLocal({ sessionComposerRememberBannerVisibility: true });
         const first = await renderSurface();
+        const write = vi.spyOn(getPersistenceStorage(), 'set');
 
         toggleFrom(first, 'badge');
-        expect(storage.getState().localSettings.sessionComposerCollapsedBannerKinds).toEqual({ usageLimitRecovery: true });
+        expect(write.mock.calls.filter(([key]) => key === 'local-settings')).toHaveLength(0);
+        expect(readComposerBannerCollapse()).toEqual({ usageLimitRecovery: true });
 
         const second = await renderSurface();
         expect(readCollapsed(second, 'badge')).toBe(true);
 
         toggleFrom(second, 'banner');
         expect(readCollapsed(first, 'badge')).toBe(false);
-        expect(storage.getState().localSettings.sessionComposerCollapsedBannerKinds).toEqual({});
+        expect(readComposerBannerCollapse()).toEqual({});
     });
 
     it('ignores but preserves the stored record when remembering is off', async () => {
-        storage.getState().applyLocalSettings({ sessionComposerCollapsedBannerKinds: { usageLimitRecovery: true } }, { source: 'test' });
+        writeComposerBannerCollapse({ usageLimitRecovery: true });
 
         const tree = await renderSurface();
 
         expect(readCollapsed(tree, 'badge')).toBe(false);
-        expect(storage.getState().localSettings.sessionComposerCollapsedBannerKinds).toEqual({ usageLimitRecovery: true });
+        expect(readComposerBannerCollapse()).toEqual({ usageLimitRecovery: true });
     });
 
     it('keeps an explicitly ephemeral conflict collapse out of remembered banner preferences', async () => {
@@ -114,6 +118,6 @@ describe('ComposerBannerCollapseProvider', () => {
         toggleFrom(tree, 'draft-conflict');
 
         expect(readCollapsed(tree, 'draft-conflict')).toBe(true);
-        expect(storage.getState().localSettings.sessionComposerCollapsedBannerKinds).toEqual({});
+        expect(readComposerBannerCollapse()).toEqual({});
     });
 });

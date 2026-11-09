@@ -4,10 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     createPlainSessionOwnerMetadataEnvelopeV1,
     projectSessionSharedMetadataV1,
-    SessionPublicLinkCreateActionResultV1Schema,
-    SessionOwnerMetadataV1Schema,
+    SessionOwnerMetadataV1Schema} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import {
+    SessionPublicLinkCreateActionResultV1Schema} from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
+import {
     tryWriteServerEnabledBitInPlace,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/features/serverEnabledBit';
 
 // Imported from their owning testkit modules, never the `@/dev/testkit` barrel:
 // the harness installs its network boundaries with `vi.doMock`, which only
@@ -288,7 +290,7 @@ describe('SessionPublicLinkSection deferred approval', () => {
         answerPublicVisual(serverId, 'none');
         const artifactId = await createUiApprovalRequest({ serverId, actionId: 'session.public_link.create',
             actionInput: { sessionId: SESSION_ID, isConsentRequired: true }, actionRequestId: 'stale-share-network' });
-        const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol');
+        const { ApprovalRequestV2Schema} = await import('@happier-dev/protocol/approvals/approvalRequestV1');
         const approval = ApprovalRequestV2Schema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId)!));
         let decide: ReturnType<typeof useApprovalDecisionHandler> | undefined;
         function GenericApproval() {
@@ -320,7 +322,7 @@ describe('SessionPublicLinkSection deferred approval', () => {
         }, viewerOrigin: 'https://public-viewer.example.test' } });
         const artifactId = await createUiApprovalRequest({ serverId, actionId: 'session.public_link.create',
             actionInput: { sessionId: SESSION_ID, isConsentRequired: true }, actionRequestId: 'generic-share-network' });
-        const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol');
+        const { ApprovalRequestV2Schema} = await import('@happier-dev/protocol/approvals/approvalRequestV1');
         const approval = ApprovalRequestV2Schema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId)!));
         let decide: ReturnType<typeof useApprovalDecisionHandler> | undefined;
         function GenericApproval() {
@@ -345,6 +347,9 @@ describe('SessionPublicLinkSection deferred approval', () => {
         await waitForHomeGovernance(() => expect(harness.requestsFor(PUBLIC_SHARE_CREATE_PATH)).toHaveLength(1));
         expect(harness.requestsFor(PUBLIC_SHARE_CREATE_PATH)[0]!.input).toMatchObject({ networkOff: true });
         await expect(decision).resolves.toBe(true);
+        expect(harness.artifacts(serverId).list()).toHaveLength(1);
+        expect(harness.requestsFor(PUBLIC_SHARE_CREATE_PATH)).toHaveLength(1);
+        expect(modal.confirm).not.toHaveBeenCalled();
         expect(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId)!)).toMatchObject({
             status: 'executed', decision: { narrowedInput: { sessionId: SESSION_ID, isConsentRequired: true, networkOff: true } },
         });
@@ -357,7 +362,7 @@ describe('SessionPublicLinkSection deferred approval', () => {
         });
         const artifactId = await createUiApprovalRequest({ serverId, actionId: 'session.public_link.create',
             actionInput: { sessionId: SESSION_ID, isConsentRequired: true }, actionRequestId: 'generic-share-incomplete' });
-        const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol');
+        const { ApprovalRequestV2Schema} = await import('@happier-dev/protocol/approvals/approvalRequestV1');
         const approval = ApprovalRequestV2Schema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId)!));
         let decide: ReturnType<typeof useApprovalDecisionHandler> | undefined;
         function GenericApproval() {
@@ -392,7 +397,7 @@ describe('SessionPublicLinkSection deferred approval', () => {
         harness.answer(serverId, messagesPath, { body: { messages: [], hasMore: false, nextBeforeSeq: null }, respondAfter: gate });
         const artifactId = await createUiApprovalRequest({ serverId, actionId: 'session.public_link.create',
             actionInput: { sessionId: SESSION_ID, isConsentRequired: true }, actionRequestId: 'generic-share-retired-read' });
-        const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol');
+        const { ApprovalRequestV2Schema} = await import('@happier-dev/protocol/approvals/approvalRequestV1');
         const approval = ApprovalRequestV2Schema.parse(JSON.parse(harness.artifacts(serverId).readPlainBody(artifactId)!));
         let decide: ReturnType<typeof useApprovalDecisionHandler> | undefined;
         function GenericApproval() {
@@ -481,7 +486,7 @@ describe('SessionPublicLinkSection deferred approval', () => {
             body: { publicShare: committed, viewerOrigin: 'https://public-viewer.example.test' },
         });
         harness.answer(serverId, `GET ${PUBLIC_SHARE_PATH}`, { body: { publicShare: committed } });
-        const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol');
+        const { ApprovalRequestV2Schema} = await import('@happier-dev/protocol/approvals/approvalRequestV1');
         const original = ApprovalRequestV2Schema.parse(pending);
         let decide: ReturnType<typeof useApprovalDecisionHandler> | undefined;
         function Inbox() {

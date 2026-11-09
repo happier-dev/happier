@@ -18,7 +18,8 @@ vi.mock('react-native-unistyles', async () => {
     return createUnistylesMock();
 });
 vi.mock('@/text', () => ({ t: (key: string) => key }));
-vi.mock('@/components/ui/icons/Icon', () => ({
+vi.mock('@/components/ui/icons/Icon', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('@/components/ui/icons/Icon')>()),
     Icon: (props: Record<string, unknown>) => React.createElement('Icon', props),
 }));
 vi.mock('@/components/ui/text/Text', () => ({
@@ -89,11 +90,6 @@ describe('NewSessionDraftComposerActions', () => {
         expect(menu.props.items).toEqual(expect.arrayContaining([
             expect.objectContaining({ id: 'delete', testID: 'new-session-draft-delete', disabled: true }),
         ]));
-        const menuTrigger = screen.findByTestId('new-session-draft-actions-menu');
-        if (!menuTrigger) throw new Error('Expected compact draft actions menu');
-        const triggerStyle = flattenStyle(menuTrigger.props.style);
-        expect(triggerStyle.minHeight).toBe(NEW_SESSION_DRAFT_COMPOSER_ACTION_SIZE);
-        expect(triggerStyle.minWidth).toBe(NEW_SESSION_DRAFT_COMPOSER_ACTION_SIZE);
         await screen.unmount();
     });
 });

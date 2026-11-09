@@ -16,10 +16,8 @@ function normalizeOverrideValues(
 ): Readonly<Record<string, string>> {
     const normalized: Record<string, string> = {};
     for (const [configId, value] of Object.entries(overrides ?? {})) {
-        const normalizedConfigId = configId.trim();
-        const normalizedValue = typeof value === 'string' ? value.trim() : '';
-        if (!normalizedConfigId || !normalizedValue) continue;
-        normalized[normalizedConfigId] = normalizedValue;
+        if (!configId.trim() || typeof value !== 'string') continue;
+        normalized[configId] = value;
     }
     return normalized;
 }
@@ -46,8 +44,7 @@ function collectModelScopedOptionIds(
     const ids = new Set<string>();
     for (const modelOption of modelOptions) {
         for (const option of modelOption.modelOptions ?? []) {
-            const id = option.id.trim();
-            if (id) ids.add(id);
+            if (option.id.trim()) ids.add(option.id);
         }
     }
     return ids;
@@ -61,6 +58,7 @@ export function sanitizeNewSessionConfigOverridesForModelSelection(params: Reado
     /** Exact source descriptor, including an empty set; omission retains native lookup. */
     selectedModelConfigOptions?: ReadonlyArray<SessionConfigOption>;
     selectedConfigOverrides: Readonly<Record<string, string>> | null | undefined;
+    rejectedConfigOptionOverrides?: Readonly<Record<string, string>> | null;
 }>): Readonly<Record<string, string>> {
     const normalizedOverrides = normalizeOverrideValues(params.selectedConfigOverrides);
     const overrideRecords = toOverrideRecords(normalizedOverrides);
@@ -68,6 +66,7 @@ export function sanitizeNewSessionConfigOverridesForModelSelection(params: Reado
         providerId: params.providerId,
         configOptions: params.configOptions,
         overrides: overrideRecords,
+        modelDescriptors: params.modelOptions,
     }) ?? null);
     const selectedModel = findModelOptionForEffectiveModelId(params.modelOptions, params.selectedModelId);
     const selectedModelControls = controlsByOptionId(computeAcpConfigOptionControlsForProvider({
@@ -89,6 +88,9 @@ export function sanitizeNewSessionConfigOverridesForModelSelection(params: Reado
         }
         const globalControl = globalControls.get(configId);
         if (globalControl) {
+            if (!modelScopedOptionIds.has(configId)
+                && params.rejectedConfigOptionOverrides?.[configId] === value
+                && globalControl.option.currentValue !== value) continue;
             if (globalControl.requestedValue !== undefined) {
                 sanitized[configId] = globalControl.requestedValue;
             }

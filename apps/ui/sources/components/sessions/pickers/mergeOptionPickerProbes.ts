@@ -28,10 +28,12 @@ export function mergeOptionPickerProbes(
         || candidate.loadingAccessibilityLabel
         || candidate.refreshingAccessibilityLabel
     )) ?? null;
+    const failureMessage = candidates.find((candidate) => candidate.failed && candidate.refreshErrorMessage)?.refreshErrorMessage;
 
     const merged: OptionPickerProbeState = {
         phase,
         failed: candidates.some((candidate) => candidate.failed === true),
+        ...(failureMessage === undefined ? {} : { refreshErrorMessage: failureMessage }),
         ...(refreshFns.length > 0
             ? {
                 onRefresh: () => {

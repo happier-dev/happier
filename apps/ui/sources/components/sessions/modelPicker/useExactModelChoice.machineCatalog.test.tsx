@@ -1,10 +1,11 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createProviderErrorV1, PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { createProviderErrorV1} from '@happier-dev/protocol/providers/errors';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
-import { createDeferred, renderScreen, standardCleanup, flushHookEffects } from '@/dev/testkit';
+import { createDeferred, renderScreen, standardCleanup, flushHookEffects, findTestInstanceByTypeWithProps, pressTestInstanceAsync } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createProviderModelProjectionFixture, createProviderModelProjectionGroupFixture, createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -22,6 +23,11 @@ const { ModalProvider, Modal } = await import('@/modal');
 const { loadDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
 const { readAccountAgentProviderRequirements } = await import('@/providers/catalog/accountProviderDeclarations');
+const { SlimProfileRoutingFields } = await import('@/components/profiles/edit/SlimProfileRoutingFields');
+const { getResolvedBackendCatalogEntries } = await import('@/agents/backendCatalog/getResolvedBackendCatalogEntries');
+const { resolveProfileBackendTargetKeyForEntry } = await import('@/components/profiles/edit/profileBackendEntryStorage');
+const { Item } = await import('@/components/ui/lists/Item');
+const { t } = await import('@/text');
 await loadSyncSingletonForTests();
 
 let serverId = '';
@@ -56,7 +62,51 @@ beforeEach(async () => {
 afterEach(async () => { await act(async () => { Modal.hideAll(); }); await standardCleanup(); await account.reset(); });
 
 describe('exact model choice uses machine catalogs and preserves failures', () => {
-  it.each(['deferred', 'missed'] as const)('updates source rows in the open picker after a %s shared Machine answer and withdraws a failed answer', async (outcome) => {
+  it.each(['native', 'provider'] as const)('loads Profile model catalogs only when opened and selects the exact %s choice', async (source) => {
+    const entries = getResolvedBackendCatalogEntries({ enabledAgentIds: ['codex'] });
+    const entry = entries.find(candidate => candidate.builtInAgentId === 'codex');
+    if (!entry) throw new Error('Expected the resolved Codex catalog entry');
+    const targetKey = resolveProfileBackendTargetKeyForEntry(entry);
+    const ref = { agentTargetKey: targetKey, providerConnectionId: 'pc_profile', modelId: 'profile-provider-model' };
+    const group = createProviderModelProjectionGroupFixture({ connectionId: ref.providerConnectionId,
+      rows: [{ ref, descriptor: { id: ref.modelId, name: 'Profile Provider model' },
+        sources: { probe: true, manual: false, static: false }, confidence: 'probe',
+        compatibility: { result: { status: 'verified', selectedProtocol: 'openai-responses',
+          evidence: { sourceUrls: ['https://example.test'], verifiedAt: '2026-10-22' } },
+          compatibilityFingerprint: 'compatibility:v1:profile-model', confirmed: true },
+        endpointHealth: 'available', catalog: { stale: false }, loadState: 'loaded', visibility: 'visible' }],
+    });
+    const original = transport.call.getMockImplementation();
+    if (!original) throw new Error('Expected Machine transport');
+    transport.call.mockImplementation(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION
+      ? Promise.resolve(createProviderModelProjectionFixture({ agentTargetKey: targetKey, groups: [group] })) : original(request));
+    const onPreferredModelChange = vi.fn();
+    const screen = await renderScreen(<ModalProvider><SlimProfileRoutingFields
+      entries={entries} machineId="machine-a" serverId={serverId} preferredAgentTargetKey={targetKey}
+      defaultPermissionModeByTargetKey={{}} defaultPersistenceModeByTargetKey={{}}
+      onPermissionDefaultsChange={vi.fn()} onPersistenceDefaultsChange={vi.fn()}
+      onPreferredAgentChange={vi.fn()} onPreferredModelChange={onPreferredModelChange}
+    /></ModalProvider>);
+    await flushHookEffects();
+    const modelReads = () => transport.call.mock.calls.map(([request]) => request.method).filter(method => (
+      method === RPC_METHODS.CAPABILITIES_INVOKE || method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION
+    ));
+    expect(modelReads()).toEqual([]);
+    await pressTestInstanceAsync(findTestInstanceByTypeWithProps(screen, Item, { title: t('profiles.preferredModel.title') }));
+    const providerOptionId = `model-picker-overlay-option:${JSON.stringify([targetKey, ref.providerConnectionId, ref.modelId])}`;
+    const profileNativeRef = { ...nativeRef, agentTargetKey: targetKey };
+    const profileNativeOptionId = `model-picker-overlay-option:${JSON.stringify([targetKey, null, nativeRef.modelId])}`;
+    await waitForHomeGovernance(() => {
+      expect(screen.findByTestId(profileNativeOptionId)).not.toBeNull();
+      expect(screen.findByTestId(providerOptionId)).not.toBeNull();
+    });
+    expect(modelReads()).toContain(RPC_METHODS.CAPABILITIES_INVOKE);
+    expect(modelReads()).toContain(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION);
+    await screen.pressByTestIdAsync(source === 'native' ? profileNativeOptionId : providerOptionId);
+    expect(onPreferredModelChange).toHaveBeenCalledWith({ v: 1, updatedAt: expect.any(Number), ref: source === 'native' ? profileNativeRef : group.rows[0]!.ref });
+  });
+
+  it.each(['deferred', 'missed'] as const)('keeps verified source rows selectable across a %s or failed shared Machine declaration answer', async (outcome) => {
     enabled = true;
     const ref = { agentTargetKey, providerConnectionId: 'pc_gateway', modelId: 'gateway-model' };
     const group = createProviderModelProjectionGroupFixture({ connectionId: ref.providerConnectionId,
@@ -77,14 +127,17 @@ describe('exact model choice uses machine catalogs and preserves failures', () =
     transport.call.mockImplementation(request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
       ? answer.promise : request.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION
         ? Promise.resolve(createProviderModelProjectionFixture({ agentTargetKey, groups: [group] })) : original(request));
-    const read = () => loadDaemonMergedProjectionCacheEntry({ serverId, machineId: 'machine-a',
+    const read = () => loadDaemonMergedProjectionCacheEntry({ sections: 'complete', serverId, machineId: 'machine-a',
       accountLifetime: captureActiveServerAccountScopeLifetime() });
     let pending = read();
     const screen = await renderScreen(<ModalProvider><Host /></ModalProvider>);
     const selected = vi.fn();
     const optionId = `model-picker-overlay-option:${JSON.stringify([agentTargetKey, ref.providerConnectionId, ref.modelId])}`;
     await act(async () => { open(selected); });
-    expect(screen.findByTestId(optionId)).toBeNull();
+    await waitForHomeGovernance(() => {
+      expect(screen.findByTestId(optionId)).not.toBeNull();
+      expect(screen.findByTestId(optionId)?.props.disabled).not.toBe(true);
+    });
     expect(selected).not.toHaveBeenCalled();
     if (outcome === 'missed') {
       await act(async () => { answer.reject(new Error('Transport unavailable')); await pending; });
@@ -105,8 +158,9 @@ describe('exact model choice uses machine catalogs and preserves failures', () =
     pending = read();
     await act(async () => { answer.reject(new Error('Transport unavailable')); await pending; });
     selected.mockClear();
-    expect(screen.findByTestId(optionId)).toBeNull();
-    expect(selected).not.toHaveBeenCalled();
+    expect(screen.findByTestId(optionId)?.props.disabled).not.toBe(true);
+    await screen.pressByTestIdAsync(optionId);
+    expect(selected).toHaveBeenCalledWith(group.rows[0]!.ref);
   });
 
   it('loads the machine native catalog only on demand and commits its exact native choice', async () => {

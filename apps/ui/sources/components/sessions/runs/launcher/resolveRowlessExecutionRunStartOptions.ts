@@ -15,6 +15,12 @@ import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKey
 import type { ExecutionRunLauncherBackendChoice } from './resolveExecutionRunLauncherBackendChoices';
 
 type RowlessRunStartOptions = Pick<ExecutionRunStartRequest,
+    | 'intent'
+    | 'instructions'
+    | 'localInputId'
+    | 'retentionPolicy'
+    | 'runClass'
+    | 'ioMode'
     | 'backendTarget'
     | 'roleId'
     | 'permissionMode'
@@ -43,6 +49,7 @@ function readConfigOptions(value: unknown): Record<string, SpawnConfigOptionValu
 export function resolveRowlessExecutionRunStartOptions(params: Readonly<{
     choice: ExecutionRunLauncherBackendChoice;
     input: Readonly<Record<string, unknown>>;
+    conversation: Readonly<{ sessionId: string | null; text: string; localInputId: string }>;
 }>): { ok: true; options: RowlessRunStartOptions } | { ok: false } {
     if (params.choice.disabled) return { ok: false };
     const permissionMode = typeof params.input.permissionMode === 'string' ? params.input.permissionMode : null;
@@ -125,6 +132,14 @@ export function resolveRowlessExecutionRunStartOptions(params: Readonly<{
     return {
         ok: true,
         options: {
+            // Detached Agent Start owns the initial turn; a Session delegate receives
+            // that turn through the Session's canonical Pending admission instead.
+            ...(params.conversation.sessionId === null
+                ? { intent: 'agent', instructions: params.conversation.text, localInputId: params.conversation.localInputId }
+                : { intent: 'delegate' }),
+            retentionPolicy: 'resumable',
+            runClass: 'long_lived',
+            ioMode: 'streaming',
             backendTarget: params.choice.backendTarget,
             // Identity only: the target Session's admission resolves the role and stamps its engine.
             ...(roleId !== undefined ? { roleId: roleId.trim() } : {}),

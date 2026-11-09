@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 import { renderHook } from '@/dev/testkit';
 
@@ -59,7 +58,6 @@ describe('useNewSessionAgentSelectionModelModeReconciliation', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
         };
 
         await renderHook(() => useNewSessionAgentSelectionModelModeReconciliation(params));
@@ -96,7 +94,6 @@ describe('useNewSessionAgentSelectionModelModeReconciliation', () => {
             selectedMachineId: 'machine-1',
             capabilityServerId: 'server-1',
             selectedPath: '/repo',
-            readSettings: () => settingsDefaults,
         };
 
         await renderHook(() => useNewSessionAgentSelectionModelModeReconciliation(params));

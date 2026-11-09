@@ -5,7 +5,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
@@ -19,8 +19,9 @@ import { recordMachineRequestFailed } from '@/sync/domains/machines/reachability
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { readBuiltinWidgetDescriptorV1 } from '@happier-dev/protocol/widgets/builtinWidgetDescriptorV1';
 import { V2SessionRecordSchema } from '@happier-dev/protocol/sessions/control/contract';
-import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
-import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { InputOptionSchema } from '@happier-dev/protocol/inputs';
+import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
 
 // Hoist the physical transport before cross-package imports can capture Socket.IO.
 vi.mock('socket.io-client', async importOriginal => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -83,15 +84,19 @@ function MixedOptionsProbe(props: Readonly<{ serverId: string; workflow: string;
     </View>;
 }
 
-function OptionsProbe(props: Readonly<{ serverId: string; workflow: string; restricted?: boolean }>) {
+function OptionsProbe(props: Readonly<{ serverId: string; workflow: string; restricted?: boolean;
+    visible?: boolean; query?: string; cursor?: string;
+    observe?: (options: ReturnType<typeof useInputFieldOptions>) => void }>) {
     const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
     const selectedField = props.restricted ? { ...field, options: [
         { value: { repositoryId: 'example/review-assistant' }, label: 'Authored repository' },
         { value: { repositoryId: 'outside-resource' }, label: 'Outside Resource' },
     ] } : field;
-    const options = useInputFieldOptions({ serverId: props.serverId, machineId: 'controller-a', enabled: !!binding, accountLifetime: binding,
-        requests: [{ field: selectedField, consumer: { kind: 'workflow', workflow: props.workflow }, draftInput: {} }] });
+    const options = useInputFieldOptions({ serverId: props.serverId, machineId: 'controller-a', enabled: !!binding && props.visible !== false, accountLifetime: binding,
+        requests: [{ field: selectedField, consumer: { kind: 'workflow', workflow: props.workflow }, draftInput: {},
+            ...(props.query === undefined ? {} : { query: props.query }), ...(props.cursor === undefined ? {} : { cursor: props.cursor }) }] });
     const state = options.state(selectedField);
+    props.observe?.(options);
     return <View testID="native-field.options" accessibilityLabel={state.status} accessibilityHint={state.errorCode}>
         {state.options.map(option => <Text key={option.label}>{option.label}</Text>)}
     </View>;
@@ -188,7 +193,8 @@ describe('qualified input field options scope', () => {
             serverIdentityId, accountId: 'viewer', currentAccount: true });
         optionsBoundaries.set(origin, await createExternalActionAccountHttpBoundary({ serverUrl: origin, serverIdentityId,
             accountId: 'viewer', machineId: 'controller-a', actionId: 'action.options.resolve', tokenEpoch: 0,
-            execute: input => rpc.read(input) }));
+            execute: input => rpc.read(input), failure: result => result === 'resource-context-unavailable'
+                ? { errorCode: 'plugin_resource_context_unavailable', error: 'Resource context is unavailable' } : null }));
         const machine = createPlainMachineRowFixture({ id: 'controller-a', accountId: 'viewer' });
         harness.answer(serverId, 'GET /v1/machines/controller-a', { body: { machine } });
         harness.answer(serverId, 'GET /v1/machines', { body: [machine] });
@@ -213,6 +219,66 @@ describe('qualified input field options scope', () => {
             await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Selected team'));
             expect(rpc.read).toHaveBeenLastCalledWith({ actionId: platformActionId, fieldPath: platformField.path,
                 draftInput: { ...draftInput, machineId: 'controller-a' }, query: 'selected', cursor: 'from:next-team' });
+            rpc.read.mockResolvedValue('resource-context-unavailable');
+            await expect(callWorkflowAction({ actionId: 'action.options.resolve',
+                input: { actionId: platformActionId, fieldPath: platformField.path, draftInput }, parseResult: value => value,
+                context: { serverId, serverIdentityId, runtimeAccountId: 'viewer',
+                    externalActionTarget: { kind: 'machine', machineId: 'controller-a' } } }))
+                .rejects.toMatchObject({ code: 'plugin_resource_context_unavailable', rawCode: 'plugin_resource_context_unavailable', failure: null });
+        } finally { await screen.unmount(); }
+    });
+    it('demands a queried page only while visible, exposes its continuation, and aborts a pending page on close', async () => {
+        const target = await harness.addHome({ name: 'Paged options', serverUrl: 'https://paged-options.example',
+            serverIdentityId: 'srv_paged_options', accountId: 'viewer', currentAccount: true });
+        const workflow = await createTypedWorkflow(target, 'viewer');
+        let pendingSignal: AbortSignal | undefined;
+        rpc.read.mockImplementation(async (request: Readonly<{ input: Record<string, unknown>; signal?: AbortSignal }>) => {
+            if (request.input.query !== 'review') return reply('Unfiltered repository');
+            if (request.input.cursor === 'pending') {
+                pendingSignal = request.signal;
+                await new Promise<void>(resolve => request.signal?.addEventListener('abort', () => resolve(), { once: true }));
+                return reply('Closed page');
+            }
+            return request.input.cursor === 'second' ? reply('Second repository')
+                : { ...reply('First repository'), nextCursor: 'second' };
+        });
+        let observed: ReturnType<typeof useInputFieldOptions> | undefined;
+        const body = (visible: boolean, cursor?: string) => <OptionsProbe serverId={target} workflow={workflow}
+            visible={visible} query="review" cursor={cursor} observe={options => { observed = options; }} />;
+        const screen = await renderScreen(body(false));
+        try {
+            await flushHookEffects({ cycles: 10 });
+            expect(rpc.read).not.toHaveBeenCalled();
+            await screen.update(body(true));
+            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('First repository'));
+            expect(observed!.state(field)).toMatchObject({ status: 'ready', nextCursor: 'second' });
+            expect(rpc.read).toHaveBeenCalledTimes(1);
+            await screen.update(body(true, 'second'));
+            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Second repository'));
+            expect(observed!.state(field).nextCursor).toBeUndefined();
+            expect(rpc.read).toHaveBeenCalledTimes(2);
+            await screen.update(body(true, 'pending'));
+            await waitForHomeGovernance(() => expect(pendingSignal).toBeDefined());
+            await screen.update(body(false, 'pending'));
+            await flushHookEffects({ cycles: 10 });
+            expect(pendingSignal!.aborted).toBe(true);
+            expect(rpc.read).toHaveBeenCalledTimes(3);
+            expect(screen.getTextContent()).not.toContain('Closed page');
+            // Hidden demand must stay withdrawn even while other Sessions publish
+            // and a caller requests an explicit refresh of the parked form.
+            for (let index = 0; index < 1_000; index += 1) {
+                await act(async () => storage.getState().applySessions([
+                    createSessionFixture({ id: `hidden-option-${index}`, serverId: target }),
+                ]));
+            }
+            await act(async () => observed!.retry());
+            await flushHookEffects({ cycles: 10 });
+            expect(rpc.read).toHaveBeenCalledTimes(3);
+            expect(pendingSignal!.aborted).toBe(true);
+            rpc.read.mockResolvedValue(reply('Current repository after reopen'));
+            await screen.update(body(true));
+            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Current repository after reopen'));
+            expect(rpc.read).toHaveBeenCalledTimes(4);
         } finally { await screen.unmount(); }
     });
     it('keeps admitted native choices ready when responsive composition replaces the last reader, and withdraws them on Account retirement', async () => {
@@ -247,7 +313,7 @@ describe('qualified input field options scope', () => {
             expect(states.at(-1)?.options).not.toBe(remounted.options);
         } finally { await screen.unmount(); await connection.dispose(); }
     });
-    it('retains host choices while a refused plugin sibling changes fallback relay', async () => {
+    it('retains host choices when replacement receivers have no declared plugin options producer', async () => {
         const serverId = await harness.addHome({ name: 'Mixed inputs', serverUrl: 'https://mixed-options.example', serverIdentityId: 'srv_mixed_options', accountId: 'viewer', currentAccount: true });
         const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
         setRuntimeFetch(harness.request);
@@ -258,7 +324,8 @@ describe('qualified input field options scope', () => {
         const observations: InputFieldOptionsState[] = [];
         const body = () => <MixedOptionsProbe serverId={serverId} workflow={workflow} observePeriod={state => observations.push(state)} />;
         rpc.read.mockResolvedValue(reply('Serving repository'));
-        await act(async () => { storage.getState().applyMachines([createMachineFixture({ id: 'controller-a', activeAt: Date.now() })]); });
+        await act(async () => { storage.getState().applyMachines([createMachineFixture({ id: 'controller-a', activeAt: Date.now(),
+            access: createPlainMachineRowFixture({ id: 'controller-a', accountId: 'viewer' }).access })]); });
         const screen = await renderScreen(body());
         try {
             await vi.waitFor(() => {
@@ -270,17 +337,14 @@ describe('qualified input field options scope', () => {
             const replacement = createPlainMachineRowFixture({ id: 'controller-b', accountId: 'viewer' });
             harness.answer(serverId, 'GET /v1/machines/controller-b', { body: { machine: replacement } });
             await act(async () => {
-                const machine = createMachineFixture({ id: 'controller-b', activeAt: Date.now() });
+                const machine = createMachineFixture({ id: 'controller-b', activeAt: Date.now(), access: replacement.access });
                 storage.getState().applyMachines([machine]);
                 storage.setState(state => ({ machineListByServerId: { ...state.machineListByServerId,
                     [resolveServerProfileScopeIdForIdentifier(serverId)]: [machine] } }));
                 recordMachineRequestFailed({ serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'viewer', machineId: 'controller-a' });
             });
             await screen.update(body());
-            await vi.waitFor(() => expect(screen.findByTestId('mixed.options')?.props.accessibilityHint, JSON.stringify({
-                machines: Object.values(storage.getState().machines).map(machine => machine.id),
-                byHome: Object.fromEntries(Object.entries(storage.getState().machineListByServerId).map(([home, machines]) => [home, machines?.map(machine => machine.id)])),
-            })).toBe('controller-b'));
+            expect(screen.findByTestId('mixed.options')?.props.accessibilityHint).toBeUndefined();
             expect(observations.slice(mark).every(state => state.status === 'ready' && state.options === settled.options)).toBe(true);
             expect(screen.getTextContent()).toContain('Last 30 days');
         } finally { await screen.unmount(); await connection.dispose(); }
@@ -298,7 +362,7 @@ describe('qualified input field options scope', () => {
                 attention: { needsAttention: false, reasons: [], primary: null, presentation: 'full' },
                 follow: { follows: false, notificationLevel: null }, notification: { level: 'none', source: 'none' } },
         });
-        harness.answer(serverId, 'POST /v2/sessions/query', { body: SessionListQueryResponseV1Schema.parse({
+        harness.answer(serverId, 'POST /v2/sessions/query', { body: createSessionListSourceFixture({
             sessions: [session], nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
         }) });
         const connection = await restoreServerAccountForTest({ serverUrl: 'https://native-session-options.example', accountId: 'viewer',
@@ -327,7 +391,7 @@ describe('qualified input field options scope', () => {
             metadataVersion: 1, agentState: null, agentStateVersion: 0, dataEncryptionKey: null, share: null,
             effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: createSessionAccessFixture().capabilities },
             responsibleAccountId: null, responsibleAccount: null, viewer });
-        harness.answer(serverId, 'POST /v2/sessions/query', { body: SessionListQueryResponseV1Schema.parse({
+        harness.answer(serverId, 'POST /v2/sessions/query', { body: createSessionListSourceFixture({
             sessions: [record('listed', 'Listed session')], nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
         }) });
         harness.answer(serverId, 'GET /v2/sessions/saved', { body: { session: record('saved', 'Saved session') } });
@@ -383,16 +447,58 @@ describe('qualified input field options scope', () => {
         expect(screen.getTextContent()).toContain('Replacement repository');
         await screen.unmount();
     });
-    it('resolves a declared native input type in the captured target Home instead of borrowing the focused Account', async () => {
+    it('flows.F.G4 isolates unrelated publications, preserves equal options and consumes a relevant option change in the captured Home', async () => {
         const target = await harness.addHome({ name: 'Compute', serverUrl: 'https://compute-options.example', serverIdentityId: 'srv_compute_options', accountId: 'compute-owner', currentAccount: true });
         await harness.addHome({ name: 'Focused', serverUrl: 'https://focused-options.example', serverIdentityId: 'srv_focused_options', accountId: 'focused-owner', currentAccount: true });
         const workflow = await createTypedWorkflow(target, 'compute-owner');
-        rpc.read.mockResolvedValue(reply('Target repository'));
-        const screen = await renderScreen(<OptionsProbe serverId={target} workflow={workflow} />);
+        const option = InputOptionSchema.parse({ ...reply('Target repository').options[0], icon: 'terminal',
+            brand: { state: 'available', resource: { pluginId: repositoryInputTypeRef.pluginId, localId: 'brand' },
+                width: 128, height: 128, digest: `sha256:${'a'.repeat(64)}` },
+            source: { kind: 'registry', locator: '@example/repository-input' }, version: '2.4.0' });
+        const options = [option, ...Array.from({ length: 99 }, (_, index) => InputOptionSchema.parse({
+            value: { repositoryId: `example/repository-${index}` }, label: `Repository ${index}`,
+        }))];
+        rpc.read.mockResolvedValue({ ...reply('Target repository'), options });
+        let observed: ReturnType<typeof useInputFieldOptions> | undefined;
+        let commits = 0;
+        const screen = await renderScreen(<React.Profiler id="flows.F.G4.options" onRender={() => { commits += 1; }}>
+            <OptionsProbe serverId={target} workflow={workflow} observe={options => { observed = options; }} />
+        </React.Profiler>);
         await waitForHomeGovernance(() => expect(screen.findByTestId('native-field.options')?.props.accessibilityLabel).not.toBe('loading'));
         expect({ status: screen.findByTestId('native-field.options')?.props.accessibilityLabel,
             code: screen.findByTestId('native-field.options')?.props.accessibilityHint }).toEqual({ status: 'ready', code: undefined });
         expect(screen.getTextContent()).toContain('Target repository');
+        const admitted = observed!.state(field);
+        expect(admitted.options).toEqual(options);
+        expect(observed!.resolveOptions(field)).toBe(admitted.options);
+        const originalReads = rpc.read.mock.calls.length;
+        const settledCommits = commits;
+        const unrelated = Array.from({ length: 1_000 }, (_, index) => createSessionFixture({ id: `g4-unrelated-${index}`, serverId: target }));
+        for (const session of unrelated) {
+            await act(async () => { storage.getState().applySessions([session]); });
+        }
+        expect(rpc.read.mock.calls.length - originalReads).toBe(0);
+        expect(commits - settledCommits).toBe(0);
+        for (let refresh = 1; refresh <= 3; refresh += 1) {
+            await act(async () => observed!.retry());
+            await waitForHomeGovernance(() => expect(rpc.read.mock.calls.length).toBe(originalReads + refresh));
+            await flushHookEffects({ cycles: 10 });
+        }
+        expect(observed!.state(field)).toBe(admitted);
+        expect(commits - settledCommits).toBe(0);
+        const changed = { ...option, version: '2.5.0', brand: { state: 'retired' as const } };
+        rpc.read.mockResolvedValue({ ...reply('Target repository'), options: [changed, ...options.slice(1)] });
+        await act(async () => observed!.retry());
+        await waitForHomeGovernance(() => expect(observed!.state(field).options[0]).toEqual(changed));
+        expect(observed!.state(field)).not.toBe(admitted);
+        expect(commits - settledCommits).toBe(1);
+        expect(rpc.read.mock.calls.length - originalReads).toBe(4);
+        expect(observed!.state(field).options[0]).not.toBe(admitted.options[0]);
+        for (let index = 1; index < options.length; index += 1) {
+            expect(observed!.state(field).options[index]).toBe(admitted.options[index]);
+        }
+        expect(observed!.state(field).options[0]?.value).toEqual(admitted.options[0]?.value);
+        expect(observed!.resolveOptions(field)).toBe(observed!.state(field).options);
         expect(rpc.read).toHaveBeenCalledWith(expect.objectContaining({ serverUrl: expect.stringContaining('compute-options.example'),
             accountId: 'compute-owner', target: { kind: 'machine', machineId: 'controller-a' },
                 input: { consumer: { kind: 'workflow', workflow }, fieldPath: field.path, draftInput: { machineId: 'controller-a' } },

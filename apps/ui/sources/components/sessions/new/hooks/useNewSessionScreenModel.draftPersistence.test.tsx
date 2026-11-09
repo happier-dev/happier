@@ -19,7 +19,9 @@ import {
     readRetainedFavoriteModelSelectionsV1,
 } from '@/sync/domains/settings/sessionAuthoringSelectionPersistence';
 import { buildRememberedEngineSelectionScopeKey } from '@/sync/domains/session/authoring/rememberedEngineSelections';
-import { PluginProjectionV2Schema, ProviderConnectionIdSchema, SessionModelSelectionV1Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { ProviderConnectionIdSchema} from '@happier-dev/protocol/providers/ids';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/selection/v1';
 import { DaemonProviderModelProjectionResponseV1Schema, RPC_METHODS, RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import type { PluginUiSessionPlacementCandidateV1 } from '@happier-dev/protocol/plugins/ui';
@@ -157,7 +159,7 @@ const persistedDraft = vi.hoisted(() => ({
     automationDraft: NewSessionAutomationDraft;
     updatedAt: number;
     backendTarget?: { kind: 'builtInAgent'; agentId: string };
-    access?: import('@happier-dev/protocol').SessionInitialAccessDraftV1 | null;
+    access?: import('@happier-dev/protocol/sessions/access/sessionInitialAccessDraftV1').SessionInitialAccessDraftV1 | null;
     primaryTeamId?: string | null;
     resumeSessionId?: string | null;
     targetServerId?: string | null;
@@ -551,7 +553,6 @@ installNewSessionScreenModelCommonModuleMocks({
                     };
                 },
             },
-            useWindowDimensions: () => ({ width: 900, height: 800 }),
         });
     },
     unistyles: async () => {

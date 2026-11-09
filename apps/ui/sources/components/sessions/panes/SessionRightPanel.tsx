@@ -7,15 +7,17 @@ import { useMountedScopeActionCommand } from '@/components/approvals/useMountedS
 import { storage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { SessionTerminalRailBadge } from '@/components/sessions/terminal/strip/SessionTerminalRailBadge';
 import { SessionGitActionRailBadge, SessionGitActionRailTooltip } from './SessionGitActionRailBadge';
+import { SessionBoardRailBadge, SessionServicesRailBadge } from './SessionResourceRailBadge';
 import { SessionCollaborationRailBadge, useSessionConversationMentioned } from '@/components/sessions/collaboration/sessionConversationAttention';
 import { parseSessionPaneScopeId } from './sessionPaneScopeId';
-import { useSessionCollaborationDestinationAdmitted } from '@/hooks/session/useSessionCollaborationAvailability';
+import { useSessionCollaborationDestinationEntryAdmitted } from '@/hooks/session/useSessionCollaborationAvailability';
 import { normalizeSessionAddress, sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import * as React from 'react';
 import { Platform, View } from 'react-native';
 
 import { PopoverScope } from '@/components/ui/popover';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import type { PluginUiDestinationReferenceV1 } from '@happier-dev/protocol/plugins/ui';
 
 import { useChromeSafeAreaInsets } from '@/components/ui/layout/useChromeSafeAreaInsets';
@@ -26,7 +28,6 @@ import { usePaneMainColumn } from '@/components/appShell/panes/mainColumn/usePan
 import { useReportRightPanePlacement, type RightPaneSurface } from '@/components/appShell/panes/rightPanePlacement';
 import { usePaneActionRail, usePaneActionRailRightPaneHiddenByDetails } from '@/components/appShell/panes/PaneActionRailContext';
 import { IconButton } from '@/components/ui/buttons/IconButton';
-import { resolveTouchTargetFloorPx } from '@/components/ui/interactiveTargetSize';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { RightSidebarActionRail, type RightSidebarRailAction } from '@/components/appShell/rightSidebar/RightSidebarActionRail';
 import { openRightSidebarBuiltinTab, usePublishRightSidebarActions } from '@/components/appShell/rightSidebar/rightSidebarActions';
@@ -39,6 +40,7 @@ import { RightSidebarPaneHeader } from '@/components/appShell/rightSidebar/Right
 import { usePaneCompanionActions } from '@/components/sessions/companion/glances/usePaneCompanionActions';
 import { PaneHeaderSlotProvider, PaneHeaderSlotScope } from '@/components/appShell/panes/paneHeaderSlot';
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
+import { SidePaneBodyProvider } from '@/components/ui/lists/listPresentation';
 import { AppRightSidebarTabSurface, useAppRightSidebarTabInputs } from '@/components/appShell/rightSidebar/appRightSidebarTabs';
 import {
     resolveRightSidebarTabSelection,
@@ -60,6 +62,7 @@ import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback'
 import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { SessionPaneErrorBoundary, SessionPaneLazyLoader } from './SessionPaneLazyLoader';
 import { SessionWorkView } from '@/components/sessions/work/SessionWorkView';
+import { SessionInfoBody } from '@/components/sessions/info/SessionInfoBody';
 import { useSessionWorkSources } from '@/components/sessions/work/sessionWorkSources';
 import { readWorkSummaryPresentation } from '@/components/sessions/work/workProjection';
 import { SessionBoardPane } from '@/components/sessions/board/SessionBoardPane';
@@ -88,18 +91,23 @@ import {
     type SessionPluginRuntimeState,
 } from '@/components/sessions/plugins/useSessionPluginRuntime';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { createSessionBoardDetailsTab } from './details/sessionDetailsTabBuilders';
 import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
 import { useSessionSourceControlAvailability } from '@/hooks/session/sourceControl/sessionSourceControlAvailability';
-import type { SessionBoardPrimaryMountResolver } from '@/sync/domains/session/board';
 import { useMountedSessionBoardController } from '@/components/sessions/board/SessionBoardControllerProvider';
 import { CodeIntelligencePaneTab } from '@/components/workspaces/files/intelligence/CodeIntelligencePaneTab';
 import { useCodeIntelligencePaneProducer } from '@/components/workspaces/files/intelligence/codeIntelligencePaneStore';
+import { useRightSidebarContentFacts } from '@/components/appShell/rightSidebar/useRightSidebarContentFacts';
 import { useOpenSessionComputerScreen } from '@/components/computer/useOpenSessionComputerScreen';
+import { useSessionViewerMachineId } from '@/components/sessions/viewer/useSessionViewerMachine';
+import { useLocalServiceInventoryHasRunningServices } from '@/sync/domains/local/services/inventory/useLocalServiceInventoryRunningCount';
+import { useSessionBoardHasItems } from '@/sync/domains/sessionSystemRecords/useSessionSystemRecordBinding';
+import { usePluginSessionSurfaceTarget } from '@/components/plugins/surfaces/pluginSurfaceContext';
 import { retainShallow } from '@/sync/domains/state/structuralSharing';
 
 const loadSessionCollaborationSurface = async () => (await import('@/components/sessions/collaboration/SessionCollaborationSurface')).SessionCollaborationSurface;
+const loadSessionSkillsPane = async () => (await import('@/components/sessions/capabilities/SessionSkillsPane')).SessionSkillsPane;
 
 export type SessionRightPanelProps = Readonly<{
     sessionId: string;
@@ -113,10 +121,8 @@ export type SessionRightPanelProps = Readonly<{
      */
     onRequestClose?: () => void;
     /** One executable-mount decision derived by the enclosing Session shell. */
-    resolveBoardPrimaryHost?: SessionBoardPrimaryMountResolver;
 }>;
 
-const NO_BOARD_PRIMARY_MOUNT: SessionBoardPrimaryMountResolver = () => null;
 
 type RightTabId = string;
 
@@ -128,7 +134,6 @@ const EMPTY_PLUGIN_DESTINATION: PluginUiDestinationReferenceV1 = Object.freeze({
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
         flex: 1,
-        backgroundColor: theme.colors.surface.base,
         minHeight: 0,
         minWidth: 0,
     },
@@ -138,7 +143,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         paddingBottom: theme.space.s8,
         borderBottomWidth: Platform.select({ ios: 0.33, default: 1 }),
         borderBottomColor: theme.colors.border.default,
-        backgroundColor: theme.colors.surface.inset,
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s10,
@@ -263,13 +267,23 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRigh
         ?? null;
     const boardFeatureEnabled = useSessionBoardFeatureEnabled(boardFeatureServerId);
     const { sessionAddress, pluginRuntime } = props;
-    const collaborationAddress = props.paneSurfaceScope
-        ? props.paneSurfaceScope.sessionId === props.sessionId
-            ? normalizeSessionAddress(props.paneSurfaceScope.serverId, props.sessionId)
+    const countMachineId = useSessionViewerMachineId(props.sessionId, sessionAddress?.serverId ?? null);
+    const hasRunningServices = useLocalServiceInventoryHasRunningServices({
+        sessionId: props.sessionId, serverId: sessionAddress?.serverId ?? '', machineId: countMachineId,
+        enabled: sessionAddress !== null,
+    });
+    const boardHasItems = useSessionBoardHasItems({
+        sessionId: props.sessionId, serverId: sessionAddress?.serverId ?? null,
+        enabled: boardFeatureEnabled && sessionAddress !== null,
+    });
+    const paneSurfaceScope = props.paneSurfaceScope;
+    const collaborationAddress = React.useMemo(() => paneSurfaceScope
+        ? paneSurfaceScope.sessionId === props.sessionId
+            ? normalizeSessionAddress(paneSurfaceScope.serverId, props.sessionId)
             : null
-        : sessionAddress;
+        : sessionAddress, [paneSurfaceScope?.serverId, paneSurfaceScope?.sessionId, paneSurfaceScope === undefined, props.sessionId, sessionAddress]);
     const mountedBoard = useMountedSessionBoardController(collaborationAddress);
-    const collaborationAdmitted = useSessionCollaborationDestinationAdmitted(collaborationAddress?.serverId ?? '');
+    const collaborationAdmitted = useSessionCollaborationDestinationEntryAdmitted(collaborationAddress?.serverId ?? '');
     const sessionSharingAvailable = collaborationAddress !== null && collaborationAdmitted;
     const session = useSessionViewShellSession(props.sessionId, pluginRuntime.serverId);
     const runtimeAdmission = React.useMemo(() => Object.freeze({
@@ -282,14 +296,11 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRigh
             : []
     ), [pluginRuntime.pluginUiProjection]);
     const pluginLocale = getPreferredLanguage();
-    const localizePluginText = React.useMemo(
-        () => createPluginLocalizedTextResolver({
+    const localizePluginText = usePluginLocalizedTextResolver({
             projection: pluginRuntime.pluginUiProjection,
             locale: pluginLocale,
-        }),
-        [pluginLocale, pluginRuntime.pluginUiProjection],
-    );
-    const appTabInputs = useAppRightSidebarTabInputs();
+    });
+    const appTabInputs = useAppRightSidebarTabInputs(sessionAddress?.serverId);
     const sourceControlTabAvailable = useSessionSourceControlAvailability(props.sessionId, pluginRuntime.serverId);
     // The Session's accepted Project checkout, when it works in one: Scripts beside the transcript (lab `s-agent` PANE).
     const projectCheckout = useSessionProjectCheckout(session, pluginRuntime.serverId);
@@ -336,7 +347,6 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRigh
     const mainTabId = hasMainPages ? scopeState?.mainTabId ?? null : null;
     const setMainHidden = mainColumn?.setHidden;
     const showMain = React.useCallback(() => setMainHidden?.(false), [setMainHidden]);
-    const resolveBoardPrimaryHost = props.resolveBoardPrimaryHost ?? NO_BOARD_PRIMARY_MOUNT;
     const callerHostedHtmlRuntime = mountedBoard?.callerHostedHtmlRuntime ?? null;
     const activePluginPlacement = rightTabSelection.kind === 'available'
         && rightTabSelection.tab.owner === 'plugin'
@@ -418,6 +428,7 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRigh
         ? inheritedNavigationBinding
         : null;
     const fallbackNavigationBinding = usePluginSurfaceDestinationNavigationBindingForScope({
+        projection: pluginRuntime.pluginUiProjection,
         placements: pluginRuntime.pluginUiProjection
             ? selectPluginDestinationSurfacePlacements(pluginRuntime.pluginUiProjection)
             : [],
@@ -537,12 +548,16 @@ function useSessionRightSidebarModel(props: SessionRightPanelProps & SessionRigh
         backToTranscript,
         placementContext,
         collaborationAddress,
+        hasRunningServices,
+        boardHasItems,
+        countServerId: sessionAddress?.serverId ?? null,
+        countMachineId,
+        boardCountEnabled: boardFeatureEnabled && sessionAddress !== null,
         pluginRuntime,
         activePaneLaunch,
         activeInstanceKey,
         pluginBinding,
         availableTabIds,
-        resolveBoardPrimaryHost,
         callerHostedHtmlRuntime,
         session,
         projectCheckout,
@@ -645,6 +660,7 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
 }>) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     // The pane (header and body) is the boundary its menus and Add surfaces float inside.
     const paneBoundaryRef = React.useRef<View>(null);
     const insets = useChromeSafeAreaInsets();
@@ -656,16 +672,19 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
     const deviceType = useDeviceType();
     const stateSize = props.presentation === 'screen' && deviceType === 'phone' ? 'phone' : 'pane';
     const model = useSessionRightSidebar();
-    const { pane, scopeState, rightPanelTabs, bodyTabs, collaborationAddress, pluginRuntime, activePaneLaunch, activeInstanceKey, pluginBinding, availableTabIds, resolveBoardPrimaryHost, callerHostedHtmlRuntime, session, projectCheckout, openBoardItemInDetails, openBoardInDetails, openServiceInBrowser, openFileInDetails, openFileInDetailsPinned } = model;
+    const { pane, scopeState, rightPanelTabs, bodyTabs, collaborationAddress, pluginRuntime, activePaneLaunch, activeInstanceKey, pluginBinding, availableTabIds, callerHostedHtmlRuntime, session, projectCheckout, openBoardItemInDetails, openBoardInDetails, openServiceInBrowser, openFileInDetails, openFileInDetailsPinned } = model;
     const bodyTab = props.bodyTabId ? bodyTabs.find(tab => tab.id === props.bodyTabId) : null;
     const rightTabSelection = bodyTab ? { kind: 'available' as const, tab: bodyTab } : model.rightTabSelection;
     const activeTab = props.bodyTabId ? props.surfacePlacement === 'hidden' ? null : props.bodyTabId : model.activeTab;
     const inSessionColumn = props.surfacePlacement === 'main';
     const closeNavigationPane = props.onRequestClose ?? (inSessionColumn ? model.backToTranscript : model.closeRight);
     const selectTab = (tabId: string) => model.selectTab(tabId, inSessionColumn ? 'main' : 'side');
+    // Info is presented only while its pane is actually on screen: open, and not covered by Details.
+    const rightPaneHiddenByDetails = usePaneActionRailRightPaneHiddenByDetails();
     // Presented inside the session column (Editor first, lab AR1 EFv): a sub-page of the session, with
     // Back to its transcript and the session's own mark and name in the band it covers.
     const presentation = useSessionRightSidebarPresentation();
+    const infoPresented = activeTab === 'info' && (inSessionColumn || scopeState?.right.isOpen !== false && !rightPaneHiddenByDetails);
     const pageStrip = useSessionPageStrip(inSessionColumn ? model : null);
     // A pane can be kept in the Companion as one link row (lab WC3); the header's ⋯ offers it.
     const paneCompanionActions = usePaneCompanionActions({
@@ -688,7 +707,6 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
             accessibilityLabel={closeButtonAtStart ? t('common.back') : t('common.close')}
             variant="plain"
             size={36}
-                        minimumInteractiveTargetSize={resolveTouchTargetFloorPx() ?? undefined}
             iconName={closeButtonAtStart ? (Platform.OS === 'ios' ? 'caret-left' : 'arrow-left') : 'x'}
             iconSize={closeButtonAtStart ? 24 : 16}
         />
@@ -697,9 +715,9 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
     return (
         <SessionBodyTabContext.Provider value={props.bodyTabId ?? null}>
         <PaneHeaderSlotProvider>
-        <View ref={paneBoundaryRef} testID="session-right-panel-root" style={styles.container}>
+        <View ref={paneBoundaryRef} testID="session-right-panel-root" style={[styles.container, { backgroundColor: materialColor(theme.colors.surface.base, 'transparent') }]}>
         <PopoverScope boundaryRef={paneBoundaryRef}>
-            {!externalRail ? <View style={[styles.header, { paddingTop: headerPaddingTop + headerSafeAreaTop }]}>
+            {!externalRail ? <View style={[styles.header, { paddingTop: headerPaddingTop + headerSafeAreaTop, backgroundColor: materialColor(theme.colors.surface.inset, 'transparent') }]}>
                 {closeButtonAtStart ? closeButton : null}
                 <View style={styles.tabBarContainer}>
                     <RightSidebarIconTabBar
@@ -715,7 +733,9 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
                 scopeId={props.scopeId}
                 tabs={bodyTabs}
                 activeTabId={activeTab}
-                menuActions={paneCompanionActions}
+                // Info's header is its name and Close only (lab csinfo I2); every other pane keeps its ⋯.
+                menuActions={activeTab === 'info' ? undefined : paneCompanionActions}
+                onClose={activeTab === 'info' ? closeNavigationPane : undefined}
                 // The Session header and its page tabs stay above a page in the column (plan T U1): Chat
                 // is the way back when the strip is drawn; without it, Back returns to the transcript.
                 onBack={inSessionColumn && !pageStrip ? presentation.backToTranscript : undefined}
@@ -723,13 +743,40 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
             />
             <View style={styles.body}>
                 {/* Pane-states lab 0: every state inside the pane takes the pane's size (phone: its own step). */}
-                <SurfaceStateSizeProvider size={stateSize}>
+                <SurfaceStateSizeProvider size={stateSize}><SidePaneBodyProvider>
                 {rightTabSelection.kind === 'unresolved' ? (
                     <PaneLoadingFallback />
                 ) : rightTabSelection.kind === 'unavailable' ? (
                     <PluginReactNativeUnavailable diagnostics={[rightTabSelection.reason]} />
                 ) : (
                     <View style={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}>
+                        {availableTabIds.has('info') && collaborationAddress ? (
+                            // One body with the `/info` route (P2 U2). Hidden Info withdraws its reads and
+                            // watches (Activity) and keeps drafts and scroll for its return.
+                            <SessionRetainedPane
+                                key={`info:${sessionAddressKey(collaborationAddress)}`}
+                                tabId="info"
+                                isActive={infoPresented}
+                                hiddenMode="activity"
+                                mode="absolute-overlay"
+                                testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-surface-info')}
+                            >
+                                <SessionInfoBody address={collaborationAddress} presentation="pane" onRequestClose={closeNavigationPane} />
+                            </SessionRetainedPane>
+                        ) : null}
+                        {availableTabIds.has('skills') ? (
+                            <SessionRetainedPane
+                                tabId="skills"
+                                isActive={activeTab === 'skills'}
+                                hiddenMode="activity"
+                                mode="absolute-overlay"
+                                testID={resolveOptionalSessionScreenTestId(sessionScreenTestIdsEnabled, 'session-rightpanel-surface-skills')}
+                            >
+                                <SessionPaneLazyLoader load={loadSessionSkillsPane}
+                                    props={{ sessionId: props.sessionId, serverId: props.paneSurfaceScope?.serverId ?? parseSessionPaneScopeId(props.scopeId)?.address?.serverId }}
+                                    testID="session-skills-loading" />
+                            </SessionRetainedPane>
+                        ) : null}
                         <SessionRetainedPane
                             tabId="git"
                             isActive={activeTab === 'git'}
@@ -821,7 +868,6 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
                                         session={session}
                                         serverId={pluginRuntime.serverId}
                                         host="sidebar"
-                                        resolvePrimaryHost={resolveBoardPrimaryHost}
                                         density="compact"
                                         layout="single"
                                         interaction="navigation"
@@ -930,7 +976,7 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
                             ))}
                     </View>
                 )}
-                </SurfaceStateSizeProvider>
+                </SidePaneBodyProvider></SurfaceStateSizeProvider>
             </View>
         </PopoverScope>
         </View>
@@ -941,6 +987,8 @@ const SessionRightPanelContent = React.memo((props: SessionRightPanelProps & Rea
 
 export const SessionActionRail = React.memo(() => {
     const model = useSessionRightSidebar();
+    const sessionTarget = usePluginSessionSurfaceTarget({ sessionId: model.sessionId,
+        serverId: model.pluginRuntime.serverId, authority: model.pluginRuntime.accountLifetime });
     const rightPaneHiddenByDetails = usePaneActionRailRightPaneHiddenByDetails();
     const side = model.navigation.readColumn('side');
     const main = model.navigation.readColumn('main');
@@ -965,6 +1013,10 @@ export const SessionActionRail = React.memo(() => {
     }) : t('sessionWork.title');
     // Scripts counts this Session's own finite runs that are still working (the same Work operations).
     const runningScripts = workProjection?.projectCommands.filter((item) => item.status.bucket === 'working').length ?? 0;
+    const contentFacts = useRightSidebarContentFacts({
+        scopeId: model.scopeId, runningServices: model.hasRunningServices,
+        boardItems: model.boardHasItems, runningScripts: workProjection ? runningScripts > 0 : null,
+    });
     // The rail reads only the one summary bit; the dot itself subscribes in its own leaf.
     const collaborationMentioned = useSessionConversationMentioned(model.collaborationAddress);
     const actions: RightSidebarRailAction[] = [];
@@ -989,10 +1041,26 @@ export const SessionActionRail = React.memo(() => {
             ...(tab.id === 'computer' && computer?.machineName && !computer.disabledReason ? { detail: computer.machineName } : {}),
             defaultPlacement: tab.defaultPlacement ?? (tab.owner === 'plugin' ? 'overflow' : undefined),
             allowedPlacements: tab.allowedPlacements,
+            pluginCount: tab.owner === 'plugin' ? { tab, runtime: {
+                pluginUiProjection: model.pluginRuntime.pluginUiProjection,
+                machineId: model.pluginRuntime.machineId, serverId: model.pluginRuntime.serverId,
+                accountLifetime: model.pluginRuntime.accountLifetime,
+                interactionEnabled: model.pluginRuntime.phase === 'current' && model.pluginRuntime.interactionEnabled === true,
+            }, sessionId: model.sessionId, ...(tab.placement.binding.targetKind === 'session' && sessionTarget ? { target: sessionTarget } : {}),
+                mountInstanceKey: model.activeTab === tab.id ? model.activeInstanceKey : undefined,
+                launchInput: model.activeTab === tab.id && tab.placement.binding.targetKind !== 'app' ? model.activePaneLaunch?.input : undefined,
+            } : undefined,
+            hasContent: active ? true : tab.owner === 'builtin' ? tab.readContent?.(contentFacts) : null,
             badgeCount,
             badge: tab.id === 'git' ? <SessionGitActionRailBadge sessionId={model.sessionId} serverId={model.pluginRuntime.serverId} />
                 : tab.id === 'collaboration' && model.collaborationAddress ? <SessionCollaborationRailBadge target={model.collaborationAddress} />
-                    : undefined,
+                    : tab.id === 'services' ? <SessionServicesRailBadge sessionId={model.sessionId} serverId={model.countServerId ?? ''} machineId={model.countMachineId} enabled={false} />
+                        : tab.id === 'board' ? <SessionBoardRailBadge sessionId={model.sessionId} serverId={model.countServerId} enabled={model.boardCountEnabled} />
+                            : tab.id === 'terminal' ? <SessionTerminalRailBadge sessionId={model.sessionId} serverId={model.pluginRuntime.serverId} /> : undefined,
+            renderBadgeSignal: tab.id === 'git' ? renderSignal => <SessionGitActionRailBadge sessionId={model.sessionId} serverId={model.pluginRuntime.serverId} renderSignal={renderSignal} />
+                : tab.id === 'collaboration' && model.collaborationAddress ? renderSignal => <SessionCollaborationRailBadge target={model.collaborationAddress!} renderSignal={renderSignal} />
+                    : tab.id === 'services' ? renderSignal => <SessionServicesRailBadge sessionId={model.sessionId} serverId={model.countServerId ?? ''} machineId={model.countMachineId} enabled={false} renderSignal={renderSignal} />
+                        : tab.id === 'board' ? renderSignal => <SessionBoardRailBadge sessionId={model.sessionId} serverId={model.countServerId} enabled={model.boardCountEnabled} renderSignal={renderSignal} /> : undefined,
             tooltipContent: tab.id === 'git' ? <SessionGitActionRailTooltip sessionId={model.sessionId} serverId={model.pluginRuntime.serverId} /> : undefined,
             onPress: () => {
                 const togglesPresenter = tab.id === 'terminal' || tab.id === 'review' || tab.id === 'computer';

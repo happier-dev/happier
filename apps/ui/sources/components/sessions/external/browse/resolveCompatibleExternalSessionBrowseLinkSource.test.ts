@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ExternalSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 
 import { resolveCompatibleExternalSessionBrowseLinkSource } from './resolveCompatibleExternalSessionBrowseLinkSource';
 

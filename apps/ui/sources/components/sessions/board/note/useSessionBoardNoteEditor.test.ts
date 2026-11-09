@@ -11,7 +11,7 @@ import {
 // The canonical declarative document bound; `plugins/ui` does not re-export it,
 // and importing it from there silently yields `undefined`, which would size the
 // "oversized" fixture at zero characters and pass against any implementation.
-import { MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1 } from '@happier-dev/protocol';
+import { MAX_PLUGIN_DECLARATIVE_DOCUMENT_RESOURCE_BYTES_V1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeDocumentContentTypeV1';
 import { act, renderHook } from '@/dev/testkit';
 import type {
     SessionBoardActionOutcome,

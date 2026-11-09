@@ -92,10 +92,8 @@ function mockCommonDeps() {
             React.createElement(React.Fragment, null, props.children),
     }));
 
-    vi.doMock('@/components/ui/popover', () => ({
-        Popover: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
-            React.createElement(React.Fragment, null, props.children),
-    }));
+    vi.doMock('@/components/ui/popover', async (importOriginal) =>
+        (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 
     vi.doMock('@/components/ui/overlays/FloatingOverlay', () => ({
         FloatingOverlay: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
@@ -288,7 +286,7 @@ describe('AgentInput (action bar scroll layout)', () => {
         } }, { persist: false });
         let tree: renderer.ReactTestRenderer;
         tree = (await renderScreen(<AgentInput
-                    value=""
+                    value="Queue this next" // The rail carries Stop once the disc would send (P3 §3.3).
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}
@@ -347,7 +345,7 @@ describe('AgentInput (action bar scroll layout)', () => {
 
         let tree: renderer.ReactTestRenderer;
         tree = (await renderScreen(<AgentInput
-                    value=""
+                    value="Queue this next" // The rail carries Stop once the disc would send (P3 §3.3).
                     placeholder="Type"
                     onChangeText={() => {}}
                     onSend={() => {}}

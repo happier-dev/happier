@@ -1,7 +1,11 @@
 import * as React from 'react';
-import { V2SessionByIdNotFoundSchema } from '@happier-dev/protocol';
+import { V2SessionByIdNotFoundSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { afterAll, vi } from 'vitest';
-import { AccountProfileSchema, AccountSettingsV2GetResponseSchema, AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema, MACHINE_PLAIN_DATA_KEY_MARKER, ScmWorkingSnapshotSchema } from '@happier-dev/protocol';
+import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
+import { AccountSettingsV2GetResponseSchema} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryListResponseV1Schema} from '@happier-dev/protocol/account/authoringMemory';
+import { MACHINE_PLAIN_DATA_KEY_MARKER} from '@happier-dev/protocol/machines/machineStoredContent';
+import { ScmWorkingSnapshotSchema } from '@happier-dev/protocol/scm/workingSnapshot';
 import { createScmCapabilities } from '@happier-dev/protocol/scm/capabilities';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -12,6 +16,7 @@ import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 import { isFilesystemActionId, type FilesystemActionId } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 
 export type FileViewRpcRequest = Readonly<{ targetId: string; method: string; payload: unknown }>;
 type FileViewTransport = Readonly<{
@@ -57,8 +62,8 @@ export function installSessionFilesViewBoundaries(options: Readonly<{
     confirmResult?: boolean;
     renderItemLimit?: number;
     emitViewability?: boolean;
-    onRecyclerCommit?: (props: Readonly<Record<string, unknown>>) => void;
     onRecycler?: (state: import('@/dev/testkit/mocks/legendList').CapturingLegendListMockState) => void;
+    onRecyclerCommit?: (props: Readonly<Record<string, unknown>>) => void;
 }> = {}) {
     vi.doMock('react-native', async () => {
         const { createReactNativeNativeMock, createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -94,6 +99,7 @@ export function installSessionFilesViewBoundaries(options: Readonly<{
     vi.doMock('@/components/ui/code/editor/CodeEditor', () => ({ CodeEditor: () => null }));
 }
 
+/** Await at collection after installing boundaries, before test lifecycle deadlines start. */
 export async function prepareSessionFilesViewTestkit() {
     await loadSyncSingletonForTests();
     const { installRealActionExecutorModuleLoader } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
@@ -110,6 +116,8 @@ export async function createSessionFilesViewFixture(input: Readonly<{
     machine?: import('@/sync/domains/state/storageTypes').Machine | null;
     credentials?: Parameters<typeof restoreServerAccountForTest>[0]['credentials'];
     serverIdentityId?: string;
+    featureOverrides?: Parameters<typeof import('@/dev/testkit/fixtures/featureFixtures').createRootLayoutFeaturesResponse>[0];
+    settings?: Partial<import('@/sync/domains/settings/settings').Settings>;
     rpc?: (request: FileViewRpcRequest) => unknown | Promise<unknown>;
     request?: NonNullable<Parameters<typeof restoreServerAccountForTest>[0]['request']>;
     machineCarrierOrigin?: string;
@@ -134,8 +142,9 @@ export async function createSessionFilesViewFixture(input: Readonly<{
         requests.push(request);
         return input.rpc?.(request) ?? { success: false, error: 'RPC method not available', errorCode: 'METHOD_NOT_AVAILABLE' };
     };
-    const features = createRootLayoutFeaturesResponse({ features: { machines: transferFeatures().features.machines },
-        capabilities: { serverIdentity: { serverIdentityId: serverIdentityId ?? null } } });
+    const features = createRootLayoutFeaturesResponse({ ...input.featureOverrides,
+        features: { machines: transferFeatures().features.machines, ...input.featureOverrides?.features },
+        capabilities: { ...input.featureOverrides?.capabilities, serverIdentity: { serverIdentityId: serverIdentityId ?? null } } });
     const authoringMemory = createAuthoringMemoryHttpBoundary();
     // The Account-carrier Action transport admits only a Home Machine row that proves its custodian and ready access.
     const { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
@@ -157,7 +166,9 @@ export async function createSessionFilesViewFixture(input: Readonly<{
     // With an advertised Home identity (required by the Account-carrier Action transport), the Machine's installation key is shared by every Action issuer, so its rows publish the one the carrier seals to.
     const installationPublicKey = (await issuerFor('daemon.filesystem.listDirectory'))?.machine.installationPublicKey;
     const machine = input.machine === null ? null
-        : { ...(input.machine ?? transferMachine({ id: input.machineId ?? 'm1', storageMode: 'plain' })), active: true, activeAt: Date.now() };
+        : { ...(input.machine ?? transferMachine({ id: input.machineId ?? 'm1', storageMode: 'plain' })), active: true, activeAt: Date.now(),
+            // Seed the same content/installation identity the HTTP boundary serves during bootstrap.
+            dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, ...(installationPublicKey ? { installationPublicKey } : {}) };
     // Own-Machine Action admission reads the Machine's ready custody from the full row.
     const ownedMachine = machine && serverIdentityId && !machine.access
         ? { ...machine, access: createPlainMachineRowFixture({ id: machine.id, accountId: 'alice' }).access, installationId: machine.installationId ?? 'test-installation', installationPublicKey }
@@ -189,8 +200,13 @@ export async function createSessionFilesViewFixture(input: Readonly<{
         if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
         if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
         if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: 'alice' }));
+        // These fixture Machines are user-run, so wake preparation observes no
+        // managed enrollment through the real Home HTTP contract.
+        if (path === managedMachineActionEndpointPathV1('machines.managed.list') && init?.method === 'POST') {
+            return Response.json(ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse({ machines: [] }));
+        }
         if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
-        if (path === '/v2/account/settings') return Response.json(AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: {} }, version: 0 }));
+        if (path === '/v2/account/settings') return Response.json(AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: input.settings ?? {} }, version: 0 }));
         if (path === AUTHORING_MEMORY_ROUTE_V1) return Response.json(AuthoringMemoryListResponseV1Schema.parse({ rows: [] }));
         if (path.endsWith('/messages')) return Response.json({ messages: [], hasMore: false });
         if (machine && path === `/v1/machines/${machine.id}`) return Response.json({ machine: machineRow });
@@ -237,10 +253,13 @@ export async function createSessionFilesViewFixture(input: Readonly<{
             throw new Error('File-view fixture is waiting for its admitted Account/Home');
         }
     });
-    storage.getState().applySettingsLocal({ experiments: true, featureToggles: { 'scm.writeOperations': true, 'files.reviewComments': false, 'files.diffSyntaxHighlighting': false, 'files.editor': false } });
+    storage.getState().applySettingsLocal({ experiments: true, ...input.settings, featureToggles: {
+        'scm.writeOperations': true, 'files.reviewComments': false, 'files.diffSyntaxHighlighting': false,
+        'files.editor': false, ...input.settings?.featureToggles,
+    } });
     storage.getState().applySessions([session]);
     return {
-        ...connection, scope, session, requests, emissions, storage,
+        ...connection, scope, session, requests, emissions, storage, artifacts,
         async dispose() {
             const { scmStatusSync } = await import('@/scm/scmStatusSync');
             scmStatusSync.clearForSession(session.id, scope.serverId);

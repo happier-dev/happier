@@ -1,5 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
+import { renderScreen } from '@/dev/testkit';
+import { StatusPill } from '@/components/ui/status/StatusPill';
 import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScreenModelTestHelpers';
 
 installNewSessionScreenModelCommonModuleMocks();
@@ -36,6 +38,17 @@ import {
 
 const TEST_ROW_ICON_COLOR = '#456DEF';
 const WORKTREE_NAME_SUGGESTION = 'clever-ocean';
+
+async function readRenderedWorktreeStatusPill(accessory: React.ReactElement): Promise<React.ComponentProps<typeof StatusPill> | undefined> {
+    const screen = await renderScreen(accessory);
+    try {
+        // React Test Renderer erases props at this external query boundary.
+        return screen.findAllByType(StatusPill)
+            .find(node => node.props.testID === 'worktree-row-status:/repo/.worktrees/feature')?.props as React.ComponentProps<typeof StatusPill> | undefined;
+    } finally {
+        await screen.unmount();
+    }
+}
 
 function makeSnapshot(overrides?: Partial<ScmWorkingSnapshot['repo']>): ScmWorkingSnapshot {
     return {
@@ -166,7 +179,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             machineId: 'machine-a',
             machinePath: '/repo',
             rowIconColor: TEST_ROW_ICON_COLOR,
-            nowMs: 1_700_000_000_000,
             worktreeNameSuggestion: 'current-name',
             onSelectCurrentDir: () => {},
             onSelectExistingWorktree: () => {},
@@ -225,7 +237,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             machinePath: '~/repo',
             machineHomeDir: '/Users/server-b',
             rowIconColor: TEST_ROW_ICON_COLOR,
-            nowMs: 1_700_000_000_000,
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
@@ -264,7 +275,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir,
             onSelectExistingWorktree,
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -310,7 +320,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
             pendingWorktreeName: 'clever-cloud',
             onSelectPendingWorktree,
@@ -340,7 +349,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
             pendingWorktreeName: 'clever-cloud',
             pendingWorktreeBaseRef: 'main',
@@ -368,7 +376,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
@@ -396,7 +403,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -674,7 +680,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -702,7 +707,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: 'C:/Users/foo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -731,7 +735,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             machineHomeDir: '/Users/leeroy',
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -797,7 +800,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -810,25 +812,14 @@ describe('buildWorktreeSelectionListSteps', () => {
         const row = existing.options.find((o) => o.id === 'checkout:/repo/.worktrees/feature');
         expect(row).toBeDefined();
         const accessory = row!.rightAccessory as React.ReactElement;
-        // The accessory is a fragment containing <RelativeTimeText/> and <StatusPill/>.
-        // Walk children to find the StatusPill and read its props.
-        const fragmentChildren = React.Children.toArray((accessory.props as { children: React.ReactNode }).children);
-        const pillElement = fragmentChildren.find(
-            (child): child is React.ReactElement<Record<string, unknown>> =>
-                React.isValidElement(child)
-                && (child.props as { testID?: string }).testID === 'worktree-row-status:/repo/.worktrees/feature',
-        );
-        expect(pillElement).toBeDefined();
-        const pillProps = pillElement!.props as {
-            count?: number;
-            label?: unknown;
-        };
+        const pillProps = await readRenderedWorktreeStatusPill(accessory);
+        expect(pillProps).toBeDefined();
         // Blocker 2: count must be passed (so the pill prints it via tabular nums), and the
         // label must be a SHORT singular/plural suffix only — never the same localized string
         // that already embeds the count (otherwise the pill renders "3 3 changes").
-        expect(pillProps.count).toBe(3);
+        expect(pillProps!.count).toBe(3);
         // Assert the suffix key (not the legacy count-embedding key) and the pluralization count.
-        expect(pillProps.label).toBe('newSession.worktree.statusPill.changesSuffix(count=3)');
+        expect(pillProps!.label).toBe('newSession.worktree.statusPill.changesSuffix(count=3)');
     });
 
     // ---- Per-row icon contracts ----
@@ -848,7 +839,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -871,7 +861,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -900,7 +889,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -1093,7 +1081,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -1124,7 +1111,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -1163,7 +1149,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -1215,7 +1200,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -1286,7 +1270,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -1355,7 +1338,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-a',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -1382,7 +1364,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-b',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -1404,7 +1385,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo-a',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -1417,7 +1397,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo-b',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -1445,7 +1424,6 @@ describe('buildWorktreeSelectionListSteps', () => {
                 rowIconColor: TEST_ROW_ICON_COLOR,
                 machineId: 'machine-1',
                 machinePath,
-                nowMs: 1_700_000_000_000,
                 onSelectCurrentDir: vi.fn(),
                 onSelectExistingWorktree: vi.fn(),
                 worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -1486,7 +1464,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -1498,15 +1475,9 @@ describe('buildWorktreeSelectionListSteps', () => {
         if (existing?.kind !== 'static') throw new Error('existing must be static');
         const row = existing.options.find((o) => o.id === 'checkout:/repo/.worktrees/feature');
         const accessory = row?.rightAccessory as React.ReactElement;
-        const fragmentChildren = React.Children.toArray((accessory.props as { children: React.ReactNode }).children);
-
         // The age accessory (RelativeTimeText) MAY still render because age is independent of porcelain.
         // But the status pill MUST NOT render — clean/stale is meaningless if changeCount is unknown.
-        const statusPill = fragmentChildren.find(
-            (child): child is React.ReactElement<Record<string, unknown>> =>
-                React.isValidElement(child)
-                && (child.props as { testID?: string }).testID === 'worktree-row-status:/repo/.worktrees/feature',
-        );
+        const statusPill = await readRenderedWorktreeStatusPill(accessory);
         expect(statusPill).toBeUndefined();
     });
 
@@ -1534,7 +1505,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -1546,12 +1516,7 @@ describe('buildWorktreeSelectionListSteps', () => {
         if (existing?.kind !== 'static') throw new Error('existing must be static');
         const row = existing.options.find((o) => o.id === 'checkout:/repo/.worktrees/feature');
         const accessory = row?.rightAccessory as React.ReactElement;
-        const fragmentChildren = React.Children.toArray((accessory.props as { children: React.ReactNode }).children);
-        const statusPill = fragmentChildren.find(
-            (child): child is React.ReactElement<Record<string, unknown>> =>
-                React.isValidElement(child)
-                && (child.props as { testID?: string }).testID === 'worktree-row-status:/repo/.worktrees/feature',
-        );
+        const statusPill = await readRenderedWorktreeStatusPill(accessory);
         // changeCount IS known (0 = clean) so the pill should render.
         expect(statusPill).toBeDefined();
     });
@@ -1566,7 +1531,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -1606,7 +1570,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: 'machine-1',
             machinePath: '/repo',
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,
@@ -1618,15 +1581,9 @@ describe('buildWorktreeSelectionListSteps', () => {
         if (existing?.kind !== 'static') throw new Error('existing must be static');
         const row = existing.options.find((o) => o.id === 'checkout:/repo/.worktrees/feature');
         const accessory = row!.rightAccessory as React.ReactElement;
-        const fragmentChildren = React.Children.toArray((accessory.props as { children: React.ReactNode }).children);
-        const pillElement = fragmentChildren.find(
-            (child): child is React.ReactElement<Record<string, unknown>> =>
-                React.isValidElement(child)
-                && (child.props as { testID?: string }).testID === 'worktree-row-status:/repo/.worktrees/feature',
-        );
-        expect(pillElement).toBeDefined();
-        const pillProps = pillElement!.props as { count?: number; label?: unknown };
-        expect(pillProps.count).toBe(7);
+        const pillProps = await readRenderedWorktreeStatusPill(accessory);
+        expect(pillProps).toBeDefined();
+        expect(pillProps!.count).toBe(7);
 
         // Resolve the actual English translation via the real `t()` to assert the suffix
         // does not embed the count. The translator mock returns `{ key, params }` only;
@@ -1651,7 +1608,6 @@ describe('buildWorktreeSelectionListSteps', () => {
             rowIconColor: TEST_ROW_ICON_COLOR,
             machineId: null,
             machinePath: null,
-            nowMs: 1_700_000_000_000,
             onSelectCurrentDir: vi.fn(),
             onSelectExistingWorktree: vi.fn(),
             worktreeNameSuggestion: WORKTREE_NAME_SUGGESTION,

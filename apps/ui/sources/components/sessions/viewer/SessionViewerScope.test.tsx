@@ -123,7 +123,6 @@ describe('SessionViewerScope presentable sources', () => {
 
         it('closes the Details pane the dock opened, so the transcript reads underneath the floating frame', async () => {
             await mount('session_online');
-            await act(async () => { controller?.setFloatFits(true); });
             await open('computer');
             await apply({ kind: 'viewer.dock' });
             expect(pane?.scopeState?.details.isOpen).toBe(true);
@@ -134,7 +133,6 @@ describe('SessionViewerScope presentable sources', () => {
 
         it('returns Details to the tabs it held before the dock, without the viewer tab', async () => {
             await mount('session_online');
-            await act(async () => { controller?.setFloatFits(true); });
             await act(async () => { pane?.openDetailsTab(otherTab, { intent: 'pinned' }); });
             await open('computer');
             await apply({ kind: 'viewer.dock' });
@@ -147,7 +145,6 @@ describe('SessionViewerScope presentable sources', () => {
         it.each([false, true])('returns the Browser dock to its previous right pane without navigating (previously open: %s)', async (previouslyOpen) => {
             await mount('session_online');
             if (previouslyOpen) await act(async () => { pane?.openRight({ tabId: 'git', present: false }); });
-            await act(async () => { controller?.setFloatFits(true); });
             await open('browser');
             await apply({ kind: 'viewer.dock' });
             expect(pane?.scopeState?.right.isOpen).toBe(true);

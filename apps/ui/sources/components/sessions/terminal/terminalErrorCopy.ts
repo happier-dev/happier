@@ -18,6 +18,7 @@ const COPY_BY_ERROR_CODE: Record<string, TerminalErrorCopy> = {
     terminal_cwd_denied: { bodyKey: 'terminalEmbedded.errors.cwdDenied' },
     terminal_spawn_failed: { bodyKey: 'terminalEmbedded.errors.spawnFailed' },
     terminal_invalid_request: { bodyKey: 'terminalEmbedded.errors.invalidRequest' },
+    cli_update_required: { bodyKey: 'deps.ui.notAvailableUpdateCli' },
     project_requester_credentials_unavailable: { bodyKey: 'terminalEmbedded.errors.projectRequesterCredentialsUnavailable' },
     project_workspace_changed: { bodyKey: 'terminalEmbedded.errors.projectWorkspaceChanged' },
     project_workspace_unavailable: { bodyKey: 'terminalEmbedded.errors.projectWorkspaceUnavailable' },

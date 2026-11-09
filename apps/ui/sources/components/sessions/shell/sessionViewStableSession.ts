@@ -134,6 +134,7 @@ export function buildSessionViewShellSessionSignature(session: Session): string 
         pendingUserActionRequestCount: session.pendingUserActionRequestCount ?? null,
         pendingRequestObservedAt: session.pendingRequestObservedAt ?? null,
         pendingActivationAuthorization: session.pendingActivationAuthorization ?? null,
+        pendingActivationFailureDetails: session.pendingActivationFailureDetails ?? null,
         rollbackEligibleTurnStarts: buildShellVisibleSequenceSetSignatureValue(
             session.rollbackEligibleTurnStarts,
         ),

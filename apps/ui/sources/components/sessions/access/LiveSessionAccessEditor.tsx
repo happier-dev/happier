@@ -11,6 +11,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import type { SessionAccessEditorPresentation } from './sessionAccessEditorTypes';
+import { useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
 
 function ScopedEditor(props: Readonly<{scope:ServerAccountScope;sessionId:string;presentation:SessionAccessEditorPresentation;onRequestClose?:()=>void;onOpenFullSurface?:(handoff:SessionCollaborationHandoff)=>void;testID?:string}>) {
     // The composer host holds no exact snapshot; the canonical Home-scoped row is
@@ -20,7 +21,9 @@ function ScopedEditor(props: Readonly<{scope:ServerAccountScope;sessionId:string
         return row?readSessionMetadataLayoutVersion(row.metadataLayoutVersion):null;
     });
     const controller=useLiveSessionAccessEditorController({scope:props.scope,sessionId:props.sessionId,metadataLayoutVersion});
+    const session = useSessionViewShellSession(props.sessionId, props.scope.serverId);
     return <SessionAccessEditor {...controller} presentation={props.presentation} onRequestClose={props.onRequestClose}
+        templateSource={session ? { session, serverId: props.scope.serverId } : undefined}
         onOpenFullSurface={props.onOpenFullSurface} linkPath={buildScopedSessionRouteHref({sessionId:props.sessionId})} testID={props.testID}/>;
 }
 

@@ -14,6 +14,7 @@ const START_CONTROL_DEFINITIONS = {
     permissions: { key: 'execution-run-start-permissions', controlId: 'permission', icon: 'shield', titleKey: 'executionRuns.newRun.sections.permissions' },
     route: { key: 'execution-run-start-route', controlId: 'connectedServices', icon: 'path', titleKey: 'agentInput.model.title', placementIcon: 'sparkle' },
     scope: { key: 'execution-run-start-scope', controlId: 'reviewComments', icon: 'git-diff', titleKey: 'agentStart.chips.scope' },
+    walkthrough: { key: 'execution-run-start-walkthrough', controlId: 'reviewComments', icon: 'play', titleKey: 'scmComparison.view.walkthrough' },
     advanced: { key: 'execution-run-start-advanced', controlId: 'providerOption', icon: 'sliders-horizontal', titleKey: 'agentStart.chips.advanced' },
 } as const satisfies Readonly<Record<string, Readonly<{ key: string; controlId: AgentInputControlId; icon: IconName; titleKey: TranslationKeyNoParams; placementTitleKey?: TranslationKeyNoParams; placementIcon?: IconName }>>>;
 

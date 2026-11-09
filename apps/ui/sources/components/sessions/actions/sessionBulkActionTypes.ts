@@ -1,4 +1,4 @@
-import type { FeatureDecision } from '@happier-dev/protocol';
+import type { FeatureDecision } from '@happier-dev/protocol/features/decision';
 import type { SessionStopRecovery } from '@/sync/ops/sessionStopContract';
 import type { SessionArchiveOperation } from '@/sync/domains/session/listing/sessionArchiveState';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';

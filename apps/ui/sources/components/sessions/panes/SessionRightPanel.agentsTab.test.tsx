@@ -7,6 +7,12 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { t } from '@/text';
 
 let initialTabId = 'git';
+const collaborationEntryState = vi.hoisted(() => ({ state: 'unavailable' as 'loading' | 'available' | 'unavailable' }));
+
+vi.mock('@/hooks/session/useSessionCollaborationAvailability', () => ({
+    useSessionCollaborationDestinationAvailabilityState: () => collaborationEntryState.state,
+    useSessionCollaborationDestinationEntryAdmitted: () => collaborationEntryState.state === 'available',
+}));
 
 installSessionDetailsPanelCommonModuleMocks({
     reactNative: async () => {
@@ -62,7 +68,23 @@ async function renderScreen(element: React.ReactElement) {
 describe('SessionRightPanel (core tabs)', () => {
     beforeEach(() => {
         initialTabId = 'git';
+        collaborationEntryState.state = 'unavailable';
         vi.clearAllMocks();
+    });
+
+    it('never publishes the desktop Collaboration action while admission is loading or refused', async () => {
+        collaborationEntryState.state = 'loading';
+        const { SessionActionRail, SessionRightSidebarProvider } = await import('./SessionRightPanel');
+        const rail = () => <SessionRightSidebarProvider sessionId="s1" scopeId="session:s1">
+            <SessionActionRail />
+        </SessionRightSidebarProvider>;
+
+        const screen = await renderScreen(rail());
+        expect(screen.findByTestId('session-action-rail:collaboration')).toBeNull();
+
+        collaborationEntryState.state = 'unavailable';
+        await act(async () => screen.tree.update(<runtime.Wrapper>{rail()}</runtime.Wrapper>));
+        expect(screen.findByTestId('session-action-rail:collaboration')).toBeNull();
     });
 
     it('keeps the Work rail badge without calling offline reports running', async () => {

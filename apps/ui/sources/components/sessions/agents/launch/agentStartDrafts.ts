@@ -3,6 +3,8 @@ import type {
     DetailsWorkspaceGroupView,
 } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
 import { DiscussionSelectionSourceV1Schema, type DiscussionSelectionSourceV1 } from '@happier-dev/protocol/discussions/content';
+import { scmComparisonKey } from '@/components/sessions/files/comparison/filesComparison';
+import type { ComparisonReviewDraftInput } from '@/components/sessions/runs/launcher/useComparisonReviewDraft';
 import {
     resolveExecutionRunLauncherIntent,
     type ExecutionRunIntent,
@@ -21,6 +23,7 @@ export type AgentStartDraft = Readonly<{
     /** `null` for a plain conversation. */
     intent: ExecutionRunIntent | null;
     roleId: string | null;
+    comparison?: true;
     /** The tab the person is looking at. */
     active: boolean;
 }>;
@@ -34,13 +37,28 @@ export function executionRunLauncherDraftKey(start: Readonly<{
     intent: ExecutionRunIntent | null;
     roleId?: string | null;
     discussionCorrelationId?: string | null;
+    comparisonReview?: ComparisonReviewDraftInput | null;
 }>): string {
     if (start.discussionCorrelationId) return `discussion:${start.discussionCorrelationId}`;
+    if (start.comparisonReview) {
+        const { cwd, comparison, comparisonId } = start.comparisonReview;
+        return `comparison:${JSON.stringify([start.roleId ?? null, cwd,
+            scmComparisonKey(comparisonId ? { ...comparison, comparisonId } : comparison)])}`;
+    }
     return `${start.intent ?? 'conversation'}${start.roleId ? `:${start.roleId}` : ''}`;
 }
 
 /** The start a retained launcher draft key names; `null` for a Discussion draft (its selection owns it) or an unknown key. */
-function readRetainedStart(key: string): Pick<AgentStartDraft, 'intent' | 'roleId'> | null {
+function readRetainedStart(key: string): Pick<AgentStartDraft, 'intent' | 'roleId' | 'comparison'> | null {
+    if (key.startsWith('comparison:')) {
+        try {
+            const identity: unknown = JSON.parse(key.slice('comparison:'.length));
+            if (Array.isArray(identity) && identity.length === 3 && (identity[0] === null || typeof identity[0] === 'string')) {
+                return { intent: 'review', roleId: identity[0], comparison: true };
+            }
+        } catch { /* An invalid retained key is not a launcher address. */ }
+        return null;
+    }
     const [head, ...rest] = key.split(':');
     const roleId = rest.length > 0 ? rest.join(':') : null;
     if (head === 'conversation' && roleId === null) return { intent: null, roleId: null };
@@ -55,6 +73,7 @@ export type AgentStartDraftTarget = Readonly<{
     /** `null` for a plain conversation. */
     intent: ExecutionRunIntent | null;
     roleId: string | null;
+    comparisonReview?: ComparisonReviewDraftInput;
     /** The selected discussion messages a conversation draft was started from, when it has them. */
     discussion: Readonly<{
         source: DiscussionSelectionSourceV1 & Readonly<{ draftCorrelationId: string }>;
@@ -64,7 +83,8 @@ export type AgentStartDraftTarget = Readonly<{
 
 export function readAgentStartDraftTarget(resource: unknown): AgentStartDraftTarget | null {
     if (!resource || typeof resource !== 'object') return null;
-    const value = resource as { kind?: unknown; mode?: unknown; intent?: unknown; roleId?: unknown; source?: unknown; initialInstructions?: unknown };
+    const value = resource as { kind?: unknown; mode?: unknown; intent?: unknown; roleId?: unknown; source?: unknown; initialInstructions?: unknown;
+        comparisonReview?: ComparisonReviewDraftInput };
     if (value.kind !== 'executionRunLauncher') return null;
     if (value.mode === 'conversation') {
         const source = DiscussionSelectionSourceV1Schema.safeParse(value.source);
@@ -80,7 +100,8 @@ export function readAgentStartDraftTarget(resource: unknown): AgentStartDraftTar
     // The intent-less launcher tab is "Advanced": a review with every choice.
     const intent = value.intent === undefined ? 'review' : resolveExecutionRunLauncherIntent(value.intent);
     if (!intent) return null;
-    return { intent, roleId: typeof value.roleId === 'string' && value.roleId.length > 0 ? value.roleId : null, discussion: null };
+    return { intent, roleId: typeof value.roleId === 'string' && value.roleId.length > 0 ? value.roleId : null, discussion: null,
+        ...(value.comparisonReview ? { comparisonReview: value.comparisonReview } : {}) };
 }
 
 /**
@@ -115,6 +136,7 @@ export function projectAgentStartDrafts(details: Readonly<{
                 tabKey: tab.key,
                 intent: target.intent,
                 roleId: target.roleId,
+                ...(target.comparisonReview ? { comparison: true as const } : {}),
                 active: Boolean(details?.isOpen) && group.activeTabKey === tab.key,
             });
         }

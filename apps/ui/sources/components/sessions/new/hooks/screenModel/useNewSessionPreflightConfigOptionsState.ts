@@ -37,37 +37,54 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
     enabled?: boolean;
 }>): Readonly<{
     configOptions: readonly AcpConfigOption[] | null;
+    modelConfigOptionId?: string;
     unavailable: boolean;
     probe: Readonly<{
         phase: 'idle' | 'loading' | 'refreshing';
+        failed: boolean;
+        refreshErrorMessage?: string;
+        rejectedConfigOptionOverrides?: Readonly<Record<string, string>>;
         refreshedAt: number | null;
         reason?: ProbedResourceFailure['reason'];
+        errorCode?: string;
+        retryable?: boolean;
         requestDisposition?: ProbedResourceFailure['requestDisposition'];
         onRefresh: () => void;
     }>;
 }> {
     const [configOptions, setConfigOptions] = React.useState<readonly AcpConfigOption[] | null>(null);
+    const [modelConfigOptionId, setModelConfigOptionId] = React.useState<string | undefined>();
     const [unavailable, setUnavailable] = React.useState(false);
     const [probePhase, setProbePhase] = React.useState<'idle' | 'loading' | 'refreshing'>('idle');
     const [refreshedAt, setRefreshedAt] = React.useState<number | null>(null);
     const [failure, setFailure] = React.useState<ProbedResourceFailure>({});
+    const [refreshFailure, setRefreshFailure] = React.useState<Readonly<{
+        refreshErrorMessage?: string;
+        rejectedConfigOptionOverrides: Readonly<Record<string, string>>;
+    }> | null>(null);
     const [refreshNonce, setRefreshNonce] = React.useState(0);
     const lastHandledRefreshNonceRef = React.useRef(0);
     const configOptionsRef = React.useRef<readonly AcpConfigOption[] | null>(null);
+    const modelConfigOptionIdRef = React.useRef<string | undefined>(undefined);
     const refreshedAtRef = React.useRef<number | null>(null);
-    const lastScopeKeyRef = React.useRef<string | null>(null);
+    const lastCacheKeyRef = React.useRef<string | null>(null);
 
     React.useEffect(() => {
         configOptionsRef.current = configOptions;
+        modelConfigOptionIdRef.current = modelConfigOptionId;
         refreshedAtRef.current = refreshedAt;
-    }, [configOptions, refreshedAt]);
+    }, [configOptions, modelConfigOptionId, refreshedAt]);
 
     const onRefresh = React.useCallback(() => {
+        setRefreshFailure(null);
         setRefreshNonce((current) => current + 1);
     }, []);
 
     const backendTargetInput = params.backendTarget;
     const probeKey = React.useMemo(() => resolveBackendTargetKeyV2(backendTargetInput), [backendTargetInput]);
+    React.useEffect(() => {
+        setRefreshFailure(null);
+    }, [probeKey, params.selectedMachineId, params.capabilityServerId, params.cwd]);
     const backendTargetForProbe = React.useMemo(() => {
         // Stabilize by semantic identity (probeKey) so effects don't thrash on object identity churn.
         return readBackendTargetRefV2(backendTargetInput);
@@ -107,40 +124,30 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
         extraKeySuffixParts: probeContextCacheKeySuffixParts,
     }), [params.capabilityServerId, params.cwd, params.selectedMachineId, probeContextCacheKeySuffixParts, probeKey]);
 
-    const probeScopeKey = React.useMemo(() => {
-        const machineId = String(params.selectedMachineId ?? '').trim();
-        if (!machineId) return null;
-        const serverId = String(params.capabilityServerId ?? '').trim() || 'active';
-        return JSON.stringify([
-            'dynamicConfigOptionsProbeScope',
-            serverId,
-            machineId,
-            probeKey,
-            ...(probeContextCacheKeySuffixParts ?? []),
-        ]);
-    }, [params.capabilityServerId, params.selectedMachineId, probeContextCacheKeySuffixParts, probeKey]);
-
     React.useEffect(() => {
         if (params.enabled === false) {
             setFailure({});
+            setRefreshFailure(null);
             setConfigOptions(null);
+            setModelConfigOptionId(undefined);
             configOptionsRef.current = null;
             setUnavailable(false);
             setProbePhase('idle');
             setRefreshedAt(null);
             refreshedAtRef.current = null;
-            lastScopeKeyRef.current = probeScopeKey;
+            lastCacheKeyRef.current = cacheKey;
             return;
         }
         if (!cacheKey || !agentType) {
             setFailure({});
             setConfigOptions(null);
+            setModelConfigOptionId(undefined);
             configOptionsRef.current = null;
             setUnavailable(false);
             setProbePhase('idle');
             setRefreshedAt(null);
             refreshedAtRef.current = null;
-            lastScopeKeyRef.current = probeScopeKey;
+            lastCacheKeyRef.current = cacheKey;
             return;
         }
 
@@ -151,12 +158,13 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
         }
 
         const cacheEntry = readDynamicConfigOptionsProbeCache(cacheKey);
-        setFailure({ reason: cacheEntry?.reason, errorCode: cacheEntry?.errorCode, requestDisposition: cacheEntry?.requestDisposition });
+        setFailure({ reason: cacheEntry?.reason, errorCode: cacheEntry?.errorCode, retryable: cacheEntry?.retryable, requestDisposition: cacheEntry?.requestDisposition });
         const cached = cacheEntry?.kind === 'success' ? cacheEntry.value : null;
-        const scopeStable = lastScopeKeyRef.current !== null && probeScopeKey !== null && lastScopeKeyRef.current === probeScopeKey;
-        lastScopeKeyRef.current = probeScopeKey;
+        const scopeStable = lastCacheKeyRef.current !== null && lastCacheKeyRef.current === cacheKey;
+        lastCacheKeyRef.current = cacheKey;
         if (cached) {
             setConfigOptions(cached);
+            setModelConfigOptionId(cacheEntry?.kind === 'success' ? cacheEntry.modelConfigOptionId : undefined);
             configOptionsRef.current = cached;
             setUnavailable(cacheEntry?.kind === 'success' && cacheEntry.unavailable === true);
             const cachedUpdatedAt = cacheEntry?.updatedAt ?? null;
@@ -164,6 +172,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
             refreshedAtRef.current = cachedUpdatedAt;
         } else if (!scopeStable) {
             setConfigOptions(null);
+            setModelConfigOptionId(undefined);
             configOptionsRef.current = null;
             setUnavailable(false);
             setRefreshedAt(null);
@@ -191,9 +200,12 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
             const cwd = typeof params.cwd === 'string' ? params.cwd.trim() : '';
             const attempt = await runDynamicConfigOptionsProbeDedupe<Readonly<{
                 value?: readonly AcpConfigOption[];
+                modelConfigOptionId?: string;
                 cacheable?: boolean;
                 unavailable?: boolean;
                 failure?: ProbedResourceFailure;
+                refreshError?: boolean;
+                refreshErrorMessage?: string;
             }> | null>(cacheKey, async (signal) => {
                 const response = await invokeAgentInventoryProbeAction({
                     agentId: probeAgentType,
@@ -211,6 +223,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
                 if (!response.supported) return { failure: {
                     reason: response.reason,
                     ...(response.errorCode ? { errorCode: response.errorCode } : {}),
+                    ...(response.retryable === undefined ? {} : { retryable: response.retryable }),
                     ...(response.requestDisposition ? { requestDisposition: response.requestDisposition } : {}),
                 } };
                 if (!response.response.ok) return null;
@@ -224,7 +237,11 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
                 const normalized = normalizeAcpConfigOptionsArray(record.configOptions);
                 if (!normalized) return null;
                 const cacheable = source !== 'static';
-                return { value: normalized, cacheable };
+                return { value: normalized, cacheable,
+                    ...(record.refreshError === true ? { refreshError: true } : {}),
+                    ...(typeof record.refreshErrorMessage === 'string' ? { refreshErrorMessage: record.refreshErrorMessage } : {}),
+                    ...(typeof record.modelConfigOptionId === 'string' && record.modelConfigOptionId.trim()
+                        ? { modelConfigOptionId: record.modelConfigOptionId } : {}) };
             }, controller.signal);
 
             if (cancelled) return;
@@ -239,9 +256,28 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
             const value = attempt?.value ?? null;
             const nextUnavailable = attempt?.unavailable === true;
 
+            if (attempt?.refreshError) {
+                writeDynamicConfigOptionsProbeCacheError(cacheKey, commitNowMs, { reason: 'error' });
+                const observed = configOptionsRef.current ?? value;
+                if (observed) {
+                    setConfigOptions(observed);
+                    setModelConfigOptionId(configOptionsRef.current ? modelConfigOptionIdRef.current : attempt.modelConfigOptionId);
+                }
+                setRefreshFailure({
+                    ...(attempt.refreshErrorMessage === undefined ? {} : { refreshErrorMessage: attempt.refreshErrorMessage }),
+                    rejectedConfigOptionOverrides: probeContextCapabilityParams?.configOptionOverrides ?? {},
+                });
+                setFailure({ reason: 'error' });
+                setUnavailable(false);
+                setProbePhase('idle');
+                return;
+            }
+
             if (value && attempt?.cacheable !== false) {
-                writeDynamicConfigOptionsProbeCacheSuccess(cacheKey, value, commitNowMs);
+                setRefreshFailure(null);
+                writeDynamicConfigOptionsProbeCacheSuccess(cacheKey, value, commitNowMs, attempt?.modelConfigOptionId);
                 setConfigOptions(value);
+                setModelConfigOptionId(attempt?.modelConfigOptionId);
                 setUnavailable(false);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');
@@ -251,6 +287,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
             if (value && attempt?.cacheable === false && nextUnavailable) {
                 writeDynamicConfigOptionsProbeCacheUnavailable(cacheKey, commitNowMs);
                 setConfigOptions(value);
+                setModelConfigOptionId(undefined);
                 setUnavailable(true);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');
@@ -263,6 +300,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
             if (value && attempt?.cacheable === false && !cached) {
                 writeDynamicConfigOptionsProbeCacheError(cacheKey, commitNowMs);
                 setConfigOptions(value);
+                setModelConfigOptionId(attempt?.modelConfigOptionId);
                 setUnavailable(false);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');
@@ -274,9 +312,10 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
                 if (cachedUnavailable) {
                     writeDynamicConfigOptionsProbeCacheUnavailable(cacheKey, commitNowMs);
                 } else {
-                    writeDynamicConfigOptionsProbeCacheSuccess(cacheKey, cached, commitNowMs);
+                    writeDynamicConfigOptionsProbeCacheSuccess(cacheKey, cached, commitNowMs, cacheEntry?.kind === 'success' ? cacheEntry.modelConfigOptionId : undefined);
                 }
                 setConfigOptions(cached);
+                setModelConfigOptionId(cacheEntry?.kind === 'success' ? cacheEntry.modelConfigOptionId : undefined);
                 setUnavailable(cachedUnavailable);
                 setRefreshedAt(commitNowMs);
                 setProbePhase('idle');
@@ -286,7 +325,7 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
             const stale = configOptionsRef.current;
             const staleUpdatedAt = refreshedAtRef.current;
             if (stale && staleUpdatedAt) {
-                writeDynamicConfigOptionsProbeCacheSuccess(cacheKey, stale, commitNowMs);
+                writeDynamicConfigOptionsProbeCacheSuccess(cacheKey, stale, commitNowMs, modelConfigOptionIdRef.current);
                 setConfigOptions(stale);
                 setUnavailable(false);
                 setRefreshedAt(commitNowMs);
@@ -310,13 +349,23 @@ export function useNewSessionPreflightConfigOptionsState(params: Readonly<{
             controller.abort();
             if (retryTimeout) clearTimeout(retryTimeout);
         };
-    }, [agentType, backendTargetForProbe, cacheKey, params.enabled, params.capabilityServerId, params.cwd, params.selectedMachineId, probeContextCapabilityParams, probeContextKey, probeScopeKey, refreshNonce]);
+    }, [agentType, backendTargetForProbe, cacheKey, params.enabled, params.capabilityServerId, params.cwd, params.selectedMachineId, probeContextCapabilityParams, probeContextKey, refreshNonce]);
+
+    // Match the model observation owner: a render for a different request must
+    // not lend the previous draft's catalog authority before effects adopt it.
+    const hasCurrentIdentity = lastCacheKeyRef.current === cacheKey;
+    const retainedEntry = !hasCurrentIdentity && cacheKey && params.enabled !== false
+        ? readDynamicConfigOptionsProbeCache(cacheKey) : null;
+    const retainedCatalog = retainedEntry?.kind === 'success' ? retainedEntry : null;
 
     return {
-        configOptions,
-        unavailable,
+        configOptions: hasCurrentIdentity ? configOptions : retainedCatalog?.value ?? null,
+        modelConfigOptionId: hasCurrentIdentity ? modelConfigOptionId : retainedCatalog?.modelConfigOptionId,
+        unavailable: hasCurrentIdentity ? unavailable : retainedCatalog?.unavailable === true,
         probe: {
             phase: probePhase,
+            failed: refreshFailure !== null || failure.reason === 'error' || failure.reason === 'outcomeUnknown',
+            ...(refreshFailure ?? {}),
             refreshedAt,
             ...failure,
             onRefresh,

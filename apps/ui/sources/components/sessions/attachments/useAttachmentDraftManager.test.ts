@@ -16,6 +16,20 @@ import { useAttachmentDraftManager } from './useAttachmentDraftManager';
 import type { AttachmentDraft } from './attachmentDraftModel';
 
 describe('useAttachmentDraftManager', () => {
+    it('keeps the 19 unaffected picture projections when one occurrence is replaced', async () => {
+        const initialDrafts: readonly AttachmentDraft[] = Array.from({ length: 20 }, (_, i) => ({
+            id: String(i), status: 'pending', source: { kind: 'memory', name: `Picture${i}.png`, mimeType: 'image/png', bytes: new Uint8Array([i]), previewUri: `blob:picture-${i}` },
+        }));
+        const hook = await renderHook(() => useAttachmentDraftManager({ enabled: true, maxFileBytes: 1024, initialDrafts }));
+        try {
+            const previous = hook.getCurrent().agentInputAttachments;
+            await act(async () => { hook.getCurrent().replaceDrafts(initialDrafts.map((draft, i) => i === 3
+                ? { ...draft, source: { kind: 'memory', name: 'Edited.png', mimeType: 'image/png', bytes: new Uint8Array([99]), previewUri: 'blob:edited' } } : draft)); });
+            const next = hook.getCurrent().agentInputAttachments;
+            expect(next[3]).not.toBe(previous[3]);
+            for (let i = 0; i < 20; i++) if (i !== 3) expect(next[i]).toBe(previous[i]);
+        } finally { await hook.unmount(); }
+    });
     it('owns one preview URL per current web image and releases replaced, removed and unmounted images', async () => {
         const liveUrls = new Set<string>();
         let created = 0;

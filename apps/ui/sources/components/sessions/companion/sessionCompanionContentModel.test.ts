@@ -194,6 +194,12 @@ describe('resolveSessionCompanionBoardInventory', () => {
     });
 
     it('projects access loss, locking, and unsupported content without calling them deletions', () => {
+        expect(resolveSessionCompanionBoardInventory({ status: 'unavailable', reason: 'offline' }))
+            .toEqual({ kind: 'offline' });
+        for (const reason of ['invalid_response', 'server_error', 'session_board_storage_mode_mismatch'] as const) {
+            expect(resolveSessionCompanionBoardInventory({ status: 'unavailable', reason }))
+                .toEqual({ kind: 'unavailable', reason });
+        }
         expect(resolveSessionCompanionBoardInventory({ status: 'unavailable', reason: 'forbidden' }))
             .toEqual({ kind: 'revoked' });
         expect(resolveSessionCompanionBoardInventory({

@@ -19,7 +19,7 @@ import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurfac
 import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
-import { useSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
+import { useSessionCollaborationAvailabilityState } from '@/hooks/session/useSessionCollaborationAvailability';
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
@@ -116,7 +116,7 @@ type PaneRefs = Readonly<{
  * day, so there is no mode switch between them.
  */
 function SessionCollaborationAccountContent(props: Readonly<{ scope: ServerAccountScope; sessionId: string }>) {
-    const availability = useSessionCollaborationAvailability(props.scope.serverId);
+    const availability = useSessionCollaborationAvailabilityState(props.scope.serverId);
     const conversationsEnabled = useSessionConversationsAvailability(props.scope.serverId);
     const target = React.useMemo(() => ({ serverId: props.scope.serverId, sessionId: props.sessionId }), [props.scope.serverId, props.sessionId]);
     const routeParams = useLocalSearchParams<{ collaborationFocus?: string | string[] }>();
@@ -142,6 +142,13 @@ function SessionCollaborationAccountContent(props: Readonly<{ scope: ServerAccou
     );
     // "Edit what it follows" opens People's Following sheet (its page on a phone), not just its summary row.
     const [followOpenRequest, setFollowOpenRequest] = React.useState<SessionPeopleFollowOpenRequest | null>(null);
+    const acceptedFollowOpenRequest = React.useRef<SessionPeopleFollowOpenRequest | null>(null);
+    const acknowledgeFollowOpenRequest = React.useCallback((accepted: SessionPeopleFollowOpenRequest) => {
+        if (acceptedFollowOpenRequest.current === accepted) return false;
+        acceptedFollowOpenRequest.current = accepted;
+        setFollowOpenRequest((current) => current === accepted ? null : current);
+        return true;
+    }, []);
     const publicLinkAnchor = React.useRef<React.ElementRef<typeof View>>(null);
     const appliedIntentId = React.useRef(0);
     const appliedRouteFocus = React.useRef<SessionCollaborationFocusTarget | null>(null);
@@ -305,6 +312,7 @@ function SessionCollaborationAccountContent(props: Readonly<{ scope: ServerAccou
         responsibleAccountId: responsibilityController.responsibleAccountId ?? null,
         openRowRequest,
         followOpenRequest,
+        acknowledgeFollowOpenRequest,
     } as const;
     return (
         <View style={styles.surface}>
@@ -317,9 +325,11 @@ function SessionCollaborationAccountContent(props: Readonly<{ scope: ServerAccou
                 isActive={!responsibilityPickerHost.compactStepOpen}
                 testID="session-collaboration-main-panel"
             >
-                {availability === 'available'
-                    ? <SessionCollaborationNamedAccessPane {...pane} />
-                    : <SessionCollaborationPane {...pane} access={null} namedAccess={false} />}
+                {availability === 'loading'
+                    ? <SurfaceStateCard testID="session-collaboration-admission-loading" kind="loading" title={t('common.loading')} />
+                    : availability === 'available'
+                        ? <SessionCollaborationNamedAccessPane {...pane} />
+                        : <SessionCollaborationPane {...pane} access={null} namedAccess={false} />}
             </RetainedPanelSurface>
             {responsibilityPickerHost.compactStep}
         </View>
@@ -347,6 +357,7 @@ type PaneProps = Readonly<{
     responsibleAccountId: string | null;
     openRowRequest?: Readonly<{ key: string }>;
     followOpenRequest: SessionPeopleFollowOpenRequest | null;
+    acknowledgeFollowOpenRequest: (accepted: SessionPeopleFollowOpenRequest) => boolean;
 }>;
 
 /**
@@ -402,7 +413,7 @@ function SessionCollaborationPane(props: PaneProps & Readonly<{ access: SessionA
             {/* Configured vs ready (C7): whether asking this session can work now, before who hears about it. */}
             <SessionPeopleReadinessSection scope={props.scope} sessionId={props.sessionId} />
             <SessionPeopleFollowSections target={props.target} session={props.snapshot.session} followingAnchorRef={refs.followingAnchor}
-                openRequest={props.followOpenRequest} />
+                openRequest={props.followOpenRequest} onOpenRequestAccepted={props.acknowledgeFollowOpenRequest} />
         </>
     );
     return (
@@ -507,6 +518,8 @@ function SessionCollaborationSharePanel(props: PaneProps & Readonly<{ access: Se
             {props.access ? (
                 <View ref={refs.accessAnchor} tabIndex={-1} style={styles.accessBody} testID="session-collaboration-access-body">
                     <SessionAccessEditor {...props.access} presentation="full" responsibleAccountId={props.responsibleAccountId}
+                        templateSource={snapshot.session ? { session: snapshot.session, serverId: props.scope.serverId } : undefined}
+                        onRequestClose={props.closeShare}
                         publicLink={publicLink} openRowRequest={props.openRowRequest}
                         linkPath={buildScopedSessionRouteHref({ sessionId: props.sessionId })} testID="session-access-editor:collaboration" />
                 </View>

@@ -7,6 +7,8 @@ import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionO
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScreenModelTestHelpers';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { rememberLastUsedBackendSelection, readLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
+import { clearPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 
 installNewSessionScreenModelCommonModuleMocks();
 const network = await installSessionOpsNetworkBoundary();
@@ -29,7 +31,9 @@ const entries: ReadonlyArray<ResolvedBackendCatalogEntry> = (['codex', 'claude']
 
 beforeEach(() => {
     network.resetRequests();
+    clearPersistenceStorage();
     storage.setState(storage.getInitialState(), true);
+    rememberLastUsedBackendSelection(null, { lastUsedAgent: 'codex', lastUsedBackendTarget: codexTarget });
     storage.setState({ settings: settingsParse({ ...settingsDefaults, lastUsedAgent: 'codex', lastUsedBackendTarget: codexTarget,
         actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } } }) });
 });
@@ -42,7 +46,7 @@ describe('New Session last-used target memory with Settings writes Off', () => {
             return useNewSessionBackendTargetState({ entries: [], projectionPhase: 'ready' });
         });
         expect(subject.getCurrent().backendTarget).toEqual(codexTarget);
-        await act(async () => storage.getState().applySettingsLocal({ lastUsedAgent: 'claude', lastUsedBackendTarget: claudeTarget }));
+        await act(async () => rememberLastUsedBackendSelection(null, { lastUsedAgent: 'claude', lastUsedBackendTarget: claudeTarget }));
         expect(subject.getCurrent().backendTarget).toEqual(claudeTarget);
         await subject.unmount();
     });
@@ -55,18 +59,18 @@ describe('New Session last-used target memory with Settings writes Off', () => {
             return useNewSessionBackendTargetState({ entries: currentEntries, projectionPhase: 'ready' });
         });
         await act(async () => subject.getCurrent().setBackendTarget(selectionKind === 'updater' ? () => claudeTarget : claudeTarget));
-        expect(storage.getState().settings.lastUsedBackendTarget).toEqual(claudeTarget);
+        expect(readLastUsedBackendSelection(null).lastUsedBackendTarget).toEqual(claudeTarget);
         const settledRenders = renders;
-        await act(async () => storage.getState().applySettingsLocal({ lastUsedBackendTarget: { ...claudeTarget } }));
+        await act(async () => rememberLastUsedBackendSelection(null, { lastUsedBackendTarget: { ...claudeTarget } }));
         expect(renders).toBe(settledRenders);
-        await act(async () => storage.getState().applySettingsLocal({ lastUsedAgent: 'codex', lastUsedBackendTarget: codexTarget }));
-        expect(storage.getState().settings.lastUsedBackendTarget).toEqual(codexTarget);
+        await act(async () => rememberLastUsedBackendSelection(null, { lastUsedAgent: 'codex', lastUsedBackendTarget: codexTarget }));
+        expect(readLastUsedBackendSelection(null).lastUsedBackendTarget).toEqual(codexTarget);
         expect(subject.getCurrent().backendTarget).toEqual(claudeTarget);
         expect(renders).toBe(settledRenders);
         // A fresh picker intent can remember this target again after another
         // Session changed the default, even though its logical key is unchanged.
         await act(async () => subject.getCurrent().setBackendTarget(selectionKind === 'updater' ? () => claudeTarget : claudeTarget));
-        expect(storage.getState().settings.lastUsedBackendTarget).toEqual(claudeTarget);
+        expect(readLastUsedBackendSelection(null).lastUsedBackendTarget).toEqual(claudeTarget);
         currentEntries = entries.map(entry => entry.agentId === 'claude' ? { ...entry, agentId: 'claude-current' } : entry);
         await subject.rerender();
         expect(subject.getCurrent().backendTarget).toEqual(claudeTarget);

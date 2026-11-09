@@ -30,6 +30,7 @@ import { useSessionCompanionController } from '@/components/sessions/companion/s
 import { SESSION_SUMMARY_COMPANION_ITEM } from '@/components/sessions/companion/state/sessionCompanionPreference';
 import { TranscriptNavigationRailPreview } from '../navigation/TranscriptNavigationRailPreview';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
+import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
 
 const { routerPush, routerSetParams } = vi.hoisted(() => ({ routerPush: vi.fn(), routerSetParams: vi.fn() }));
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
@@ -56,6 +57,50 @@ beforeEach(async () => {
 });
 
 describe('app transcript source', () => {
+    it.each([false, true])('keeps history consumers quiet on message arrivals but publishes loading changes (ancestor=%s)', async (ancestor) => {
+        const previous = storage.getState();
+        const session = createSessionFixture({ id: 'source-history-locality', metadata: null });
+        const counts = createRenderCommitCounter();
+        storage.getState().applySessions([session]);
+        storage.getState().applyMessagesLoaded(session.id);
+        const hook = await renderHook(() => {
+            useRenderCommitCounter(counts);
+            return useSessionTranscriptSource().history.useState();
+        }, { wrapper: (props) => ancestor
+            ? <AppSessionTranscriptSourceProvider sessionId="source-history-child">
+                <TranscriptOriginSourceProvider originSessionId={session.id} readOnly>{props.children}</TranscriptOriginSourceProvider>
+            </AppSessionTranscriptSourceProvider>
+            : <AppSessionTranscriptSourceProvider sessionId={session.id}>{props.children}</AppSessionTranscriptSourceProvider>,
+        });
+        try {
+            expect(hook.getCurrent().isLoaded).toBe(true);
+            const history = hook.getCurrent();
+            counts.reset();
+            for (let index = 0; index < 100; index += 1) {
+                await act(async () => {
+                    storage.getState().applyMessages(session.id, [{
+                        id: `history-unrelated-${index}`, seq: index + 1, localId: null, createdAt: index + 1,
+                        role: 'user', isSidechain: false, content: { type: 'text', text: 'new message' },
+                    }]);
+                });
+            }
+            expect(counts.read()).toEqual({ renders: 0, commits: 0 });
+            expect(hook.getCurrent()).toBe(history);
+            await act(async () => {
+                const transcript = storage.getState().sessionMessages[session.id];
+                storage.setState({ sessionMessages: { ...storage.getState().sessionMessages,
+                    [session.id]: { ...transcript, isLoaded: false },
+                } });
+            });
+            expect(hook.getCurrent().isLoaded).toBe(false);
+            await act(async () => { storage.getState().applyMessagesLoaded(session.id); });
+            expect(hook.getCurrent().isLoaded).toBe(true);
+            expect(counts.read()).toEqual({ renders: 2, commits: 2 });
+        } finally {
+            await hook.unmount();
+            storage.setState(previous);
+        }
+    });
     it.each([
         { forked: false, thinking: false }, { forked: true, thinking: false },
         { forked: false, thinking: true }, { forked: true, thinking: true },
@@ -229,6 +274,13 @@ describe('app transcript source', () => {
             const switchEvent = { id: 'switch', kind: 'agent-event', localId: null, createdAt: 2, event: { type: 'connected-service-account-switch', serviceId: 'anthropic', groupId: null, fromProfileId: null, toProfileId: null, reason: 'manual', mode: 'restart_resume' } } satisfies Message;
             await act(async () => { storage.setState({ sessionMessages: { [session.id]: { ...initial, messagesVersion: 2, messageIdsOldestFirst: [first.id, switchEvent.id], messagesById: { first, switch: switchEvent } } } }); });
             expect(hook.getCurrent()).toEqual([{ event: switchEvent.event, createdAtMs: 2 }]);
+            const failedAttempt = { id: 'failed-attempt', kind: 'agent-event', localId: null, createdAt: 3,
+                event: { type: 'connected-service-account-switch-attempt', ok: false, action: 'restart_requested', attemptedContinuityMode: 'restart', outcome: 'terminal' },
+            } satisfies Message;
+            await act(async () => { storage.setState({ sessionMessages: { [session.id]: { ...initial, messagesVersion: 3,
+                messageIdsOldestFirst: [first.id, switchEvent.id, failedAttempt.id], messagesById: { first, switch: switchEvent, 'failed-attempt': failedAttempt },
+            } } }); });
+            expect(hook.getCurrent()).toEqual([{ event: switchEvent.event, createdAtMs: 2 }, { event: failedAttempt.event, createdAtMs: 3 }]);
             const switchEvidence = hook.getCurrent();
             await act(async () => { storage.setState({ sessionMessages: { [session.id]: { ...initial, messagesVersion: 3, messageIdsOldestFirst: [], messagesById: {}, isLoaded: false } } }); });
             expect(hook.getCurrent()).toBe(switchEvidence);
@@ -551,7 +603,7 @@ describe('app transcript source', () => {
             return <SessionCompanionContent
                 session={session} serverId={serverId}
                 controller={{ ...controller, preference: { ...controller.preference, items: [SESSION_SUMMARY_COMPANION_ITEM] } }}
-                boardBinding={null} resolvePrimaryHost={() => null}
+                boardBinding={null}
             />;
         }
         try {
@@ -626,7 +678,7 @@ describe('app transcript source', () => {
             // the shared app action owner directly to its exact Session.
             const screen = await renderScreen(<SessionCompanionScreen
                 sessionId={session.id} address={{ sessionId: session.id, serverId }}
-                resolvePrimaryHost={() => null} onRevealBoardItem={routerPush} onRequestClose={routerPush}
+                onRevealBoardItem={routerPush} onRequestClose={routerPush}
             />);
             expect(screen.findByTestId('session-companion-content-summary-allow')).not.toBeNull();
             await screen.pressByTestIdAsync('session-companion-content-summary-allow');

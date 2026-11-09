@@ -11,12 +11,16 @@ import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createDeferred } from '@/dev/testkit';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
-import { readMachineOnlineGraceMsFromEnv } from '@/utils/sessions/machineUtils';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { createRpcCallError } from '@/sync/runtime/rpcErrors';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
+import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 
 const machineRpc = vi.hoisted(() => vi.fn());
 const settingsPush = vi.hoisted(() => vi.fn());
@@ -29,7 +33,11 @@ vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key: string, options?: Record<string, unknown>) =>
         key === 'memoryContext.memory.factCount' ? `${options?.count} facts`
-            : key === 'memoryContext.memory.searchUnavailableOn' ? `${key}:${options?.machine}` : key });
+            : key === 'memoryContext.memory.searchUnavailableOn' || key === 'memoryContext.memory.searchFailedOn'
+                || key === 'memoryContext.memory.searchIndexMissingOn' || key === 'memoryContext.memory.documentSearchUnavailableOn'
+                || key === 'memoryContext.memory.projectSearchUnsupported'
+                ? `${key}:${options?.machine}`
+                : key === 'memoryContext.memory.noResultsInProject' ? `${key}:${options?.project}` : key });
 });
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -44,6 +52,7 @@ await loadSyncSingletonForTests();
 const { sync } = await import('@/sync/sync');
 const { storage } = await import('@/sync/domains/state/storage');
 const { MemorySearchPanel, useMemorySearchPanelModel } = await import('./MemorySearchPanel');
+const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
 const { ProjectContextBody } = await import('@/components/projects/context/ProjectContextBody');
 const { useMemoryDocument } = await import('./useMemoryDocument');
 const { useMemoryDocumentSummary } = await import('./useMemoryDocumentSummary');
@@ -84,6 +93,9 @@ beforeEach(async ({ signal }) => {
     homes.answer(administration.serverIds[0]!, '/v1/account/encryption/currentness', {
         body: createPlainAccountEncryptionCurrentnessFixture(),
     });
+    homes.answer(administration.serverIds[0]!, `/v2/sessions/${transcript.sessionId}?accessProjectionVersion=1`, {
+        body: { session: createPlainSessionCurrentProjectionRecordFixture({ id: transcript.sessionId, seq: transcript.seqTo }) },
+    });
     homes.answer(administration.serverIds[0]!, '/v1/machines', {
         body: [createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a' })],
     });
@@ -98,6 +110,7 @@ beforeEach(async ({ signal }) => {
     await sync.refreshMachines();
 });
 afterEach(async () => {
+    setScreenSharingPrivacyActive(false);
     standardCleanup();
     await connection?.dispose();
     connection = null;
@@ -144,7 +157,74 @@ async function search(coverage: MemoryDocumentSearchCoverageV1 | null, hits: rea
     return screen;
 }
 
+it('omits recording-private Session hits and restores them when sharing ends', async () => {
+    const serverId = administration.serverIds[0]!;
+    const screen = await search({ state: 'ready' }, [document, transcript]);
+    expect(screen.findByTestId('search.session.0')).not.toBeNull();
+    // Let Account/bootstrap reads settle before the person's deliberate privacy preference.
+    await act(async () => {
+        storage.setState({ settings: { ...storage.getState().settings, sessionListHiddenTagIdsWhileRecording: { [serverId]: ['private'] } },
+        sessionOrganizationTagAssignmentsBySessionKey: {
+            [buildSessionOrganizationSessionKey(resolveServerProfileScopeIdForIdentifier(serverId), transcript.sessionId)]: { sessionId: transcript.sessionId, tagIds: ['private'] },
+        } });
+        setScreenSharingPrivacyActive(true);
+    });
+    const { readSessionRecordingVisibility } = await import('@/sync/store/sessionRecordingVisibility');
+    expect(readSessionRecordingVisibility()({ serverId, sessionId: transcript.sessionId })).toBe(false);
+    expect(screen.findByTestId('search.remembered.0')).not.toBeNull();
+    expect(screen.findByTestId('search.session.0')).toBeNull();
+    await act(async () => setScreenSharingPrivacyActive(false));
+    expect(screen.findByTestId('search.session.0')).not.toBeNull();
+});
+
 describe('MemorySearchPanel corpus coverage', () => {
+    it.each(['project', 'global'] as const)('shows only Action-admitted Session ranges in %s search', async scopeType => {
+        const serverId = administration.serverIds[0]!;
+        const scope = scopeType === 'project'
+            ? { type: 'project' as const, projectRef: { serverId, projectKey: 'payments' } }
+            : { type: 'global' as const };
+        const readable = { ...transcript, sessionId: 'readable-session', summary: 'Admitted Session match' };
+        const revoked = { ...transcript, sessionId: 'revoked-session', summary: 'Revoked Session match' };
+        const beyondFrontier = { ...readable, seqFrom: 3, seqTo: 4, summary: 'Hidden newer Session match' };
+        const row = createPlainSessionCurrentProjectionRecordFixture({ id: readable.sessionId, seq: 2 });
+        homes.answer(serverId, `/v2/sessions/${readable.sessionId}?accessProjectionVersion=1`, { body: { session: row } });
+        homes.answer(serverId, `/v2/sessions/${revoked.sessionId}?accessProjectionVersion=1`, { status: 403, body: { error: 'forbidden' } });
+        machineRpc.mockImplementation(async (request: Readonly<{ method: string }>) => request.method === RPC_METHODS.DAEMON_MEMORY_STATUS
+            ? { ...status, documentSearchSupported: true, projectSearchSupported: true }
+            : { v: 1, ok: true, hits: [document, revoked, beyondFrontier, readable], documents: { state: 'ready' } });
+        // Compare the rendered consumer with the real Action; only HTTP and daemon transport are replaced.
+        const admitted = await createDefaultActionExecutor().execute('memory.search', {
+            machineId: administration.targets[0]!.machineId,
+            query: { v: 1, query: 'fact', scope, mode: 'auto', corpora: ['documents', 'sessions'] },
+        }, { serverId: administration.targets[0]!.serverIdentityId, surface: 'ui', authority: 'present_user', expectedAccountId: 'account-a', signal: caseSignal });
+        expect(admitted, JSON.stringify(admitted)).toMatchObject({ ok: true, result: { hits: [document, readable] } });
+        machineRpc.mockClear();
+        const requestStart = homes.requests.length;
+        const screen = await renderScreen(<InjectedAuthProvider credentials={connection!.credentials}>
+            <MemorySearchPanel testID="admitted-search" serverId={serverId} scope={scope} />
+        </InjectedAuthProvider>);
+        await waitForHomeGovernance(async () => {
+            caseSignal.throwIfAborted();
+            await flushHookEffects();
+            expect(screen.findByTestId('admitted-search.input')?.props.editable).toBe(true);
+        });
+        await act(async () => screen.findByTestId('admitted-search.input')!.props.onChangeText('fact'));
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(screen.getTextContent()).toContain(readable.summary);
+        });
+        expect(screen.getTextContent()).toContain(document.summary);
+        expect(screen.getTextContent()).not.toContain(revoked.summary);
+        expect(screen.getTextContent()).not.toContain(beyondFrontier.summary);
+        // Several ranges from one Session share its one current visibility read.
+        const sessionReads = homes.requests.slice(requestStart).filter(request =>
+            request.path === `/v2/sessions/${readable.sessionId}?accessProjectionVersion=1`
+            || request.path === `/v2/sessions/${revoked.sessionId}?accessProjectionVersion=1`);
+        expect(sessionReads.map(request => request.path).sort()).toEqual([
+            `/v2/sessions/${readable.sessionId}?accessProjectionVersion=1`,
+            `/v2/sessions/${revoked.sessionId}?accessProjectionVersion=1`,
+        ]);
+    });
     it.each(['A', '猫'])('searches the admitted one-character query %s', async query => {
         const screen = await search({ state: 'ready' }, [document], query);
         expect(machineRpc.mock.calls.find(([request]) => request.method === RPC_METHODS.DAEMON_MEMORY_SEARCH)?.[0].payload)
@@ -177,6 +257,10 @@ describe('MemorySearchPanel corpus coverage', () => {
             await act(async () => { await vi.advanceTimersByTimeAsync(249); });
             expect(machineRpc).not.toHaveBeenCalled();
             await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+            await vi.waitFor(async () => {
+                await flushHookEffects();
+                expect(machineRpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_MEMORY_SEARCH)).toBe(true);
+            });
             const first = machineRpc.mock.calls.find(([request]) => request.method === RPC_METHODS.DAEMON_MEMORY_SEARCH)?.[0];
             expect(first?.payload).toMatchObject({ query: 'A' });
             expect(screen.getTextContent()).toContain('universalSearch.searchingGroup');
@@ -186,11 +270,18 @@ describe('MemorySearchPanel corpus coverage', () => {
             expect(first.signal.aborted).toBe(true);
             await act(async () => pending.resolve({ v: 1, ok: true, hits: [], documents: { state: 'ready' } }));
             await act(async () => { await vi.advanceTimersByTimeAsync(250); });
-            expect(screen.findByTestId('pending-search.remembered.0')).not.toBeNull();
+            await vi.waitFor(async () => {
+                await flushHookEffects();
+                expect(screen.findByTestId('pending-search.remembered.0')).not.toBeNull();
+            });
             expect(screen.getTextContent()).toContain('memoryContext.memory.resultCount');
             expect(screen.getTextContent()).not.toContain('universalSearch.searchingGroup');
             await act(async () => screen.findByTestId('pending-search.input')!.props.onChangeText('B'));
             await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+            await vi.waitFor(async () => {
+                await flushHookEffects();
+                expect(machineRpc.mock.calls.some(([request]) => request.payload?.query === 'B')).toBe(true);
+            });
             expect(screen.findByTestId('pending-search.remembered.0')).not.toBeNull();
             expect(screen.getTextContent()).toContain('universalSearch.searchingGroup');
             expect(screen.getTextContent()).not.toContain('memoryContext.memory.resultCount');
@@ -240,6 +331,46 @@ describe('MemorySearchPanel corpus coverage', () => {
         expect(screen.getTextContent()).toContain(projectHit.summary);
         expect(screen.getTextContent()).not.toContain(otherHit.summary);
     });
+    it('says a Project search found nothing in that Project and widens only when the person chooses Search everything', async () => {
+        const serverId = administration.serverIds[0]!;
+        const projectRef = { serverId, projectKey: 'payments' };
+        const workspaceRef = { id: 'payments-checkout', ...projectRef, machineId: administration.targets[0]!.machineId,
+            rootPath: '/repo/payments', createdAtMs: 1 };
+        const accountScope = { serverId, accountId: 'account-a' };
+        storage.getState().activateProjectAccountRowsScope(accountScope);
+        storage.getState().applyProjectAccountRowsForScope(accountScope, { scope: accountScope, status: 'ready', coverage: 'complete',
+            workspaceRefs: [workspaceRef], relationships: [], organizations: [], revisionsByPhysicalKey: {} });
+        const elsewhere = { ...document, summary: 'Fact from another Project', score: 1 };
+        const searchScopes = () => machineRpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_MEMORY_SEARCH)
+            .map(([request]) => (request.payload as { scope?: unknown }).scope);
+        machineRpc.mockImplementation(async (request: Readonly<{ method: string; payload: { scope?: { type: string } } }>) =>
+            request.method === RPC_METHODS.DAEMON_MEMORY_STATUS
+                ? { ...status, projectSearchSupported: true, documentSearchSupported: true }
+                : { v: 1, ok: true, documents: { state: 'ready' }, project: { state: 'ready' },
+                    hits: request.payload.scope?.type === 'global' ? [elsewhere] : [] });
+        const screen = await renderScreen(<InjectedAuthProvider credentials={connection!.credentials}>
+            <ProjectContextBody workspaceRef={workspaceRef} />
+        </InjectedAuthProvider>);
+        await screen.pressByTestIdAsync('project-context.memory.search');
+        const panel = 'project-context.memory.searchPanel';
+        await act(async () => { await vi.waitFor(() => expect(screen.findByTestId(`${panel}.input`)?.props.editable).toBe(true)); });
+        await act(async () => screen.findByTestId(`${panel}.input`)!.props.onChangeText('refunds'));
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(screen.findByTestId(`${panel}.empty`)).not.toBeNull();
+        });
+        // A zero result names the Project it searched; nothing was searched beyond it.
+        expect(screen.getTextContent()).toContain('memoryContext.memory.noResultsInProject:payments');
+        expect(screen.getTextContent()).not.toContain(elsewhere.summary);
+        expect(searchScopes()).toEqual([{ type: 'project', projectRef }]);
+        await screen.pressByTestIdAsync(`${panel}.empty-action`);
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(screen.getTextContent()).toContain(elsewhere.summary);
+        });
+        expect(searchScopes()).toEqual([{ type: 'project', projectRef }, { type: 'global' }]);
+        expect(screen.findByTestId(`${panel}.widened`)).not.toBeNull();
+    });
     it('retains the typed unsupported cause and qualified Machine in the consumed model, clearing it after repair', async () => {
         const serverId = administration.serverIds[0]!;
         const scope = { type: 'project' as const, projectRef: { serverId, projectKey: 'payments' } };
@@ -286,6 +417,121 @@ describe('MemorySearchPanel corpus coverage', () => {
         expect(screen.findByTestId('unsupported-project.empty')).toBeNull();
         expect(machineRpc.mock.calls.some(([request]) => request.method === RPC_METHODS.DAEMON_MEMORY_SEARCH)).toBe(false);
     });
+    describe('names the selected Machine and the known cause of a failed search', () => {
+        async function failedSearch(answer: () => Promise<unknown>) {
+            machineRpc.mockImplementation(async (request: Readonly<{ method: string }>) => request.method === RPC_METHODS.DAEMON_MEMORY_STATUS
+                ? { ...status, documentSearchSupported: true }
+                : await answer());
+            const screen = await renderScreen(<InjectedAuthProvider credentials={connection!.credentials}>
+                <MemorySearchPanel testID="failure" serverId={administration.serverIds[0]!} />
+            </InjectedAuthProvider>);
+            await waitForHomeGovernance(async () => {
+                caseSignal.throwIfAborted();
+                await flushHookEffects();
+                expect(screen.findByTestId('failure.input')?.props.editable).toBe(true);
+            });
+            await act(async () => screen.findByTestId('failure.input')!.props.onChangeText('fact'));
+            await act(async () => { await vi.waitFor(() => expect(machineRpc.mock.calls.some(([request]) =>
+                request.method === RPC_METHODS.DAEMON_MEMORY_SEARCH)).toBe(true)); });
+            await flushHookEffects();
+            const machine = storage.getState().machines[administration.targets[0]!.machineId]!;
+            return { screen, machineName: machine.metadata?.displayName ?? machine.metadata?.host };
+        }
+        const searchCalls = () => machineRpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.DAEMON_MEMORY_SEARCH).length;
+
+        it('leads a search turned off after selection to the setting, never to a Retry that cannot repair it', async () => {
+            const { screen, machineName } = await failedSearch(async () =>
+                ({ v: 1, ok: false, errorCode: 'memory_disabled', error: 'memory_disabled' }));
+            await vi.waitFor(async () => { await flushHookEffects(); expect(screen.findByTestId('failure.unavailable')).not.toBeNull(); });
+            expect(screen.getTextContent()).toContain(`memoryContext.memory.searchUnavailableOn:${machineName}`);
+            expect(screen.findByTestId('failure.failed')).toBeNull();
+            expect(screen.findByTestId('failure.failed-action')).toBeNull();
+            await screen.pressByTestIdAsync('failure.unavailable-action');
+            expect(settingsPush).toHaveBeenCalledWith((await import('@/components/settings/catalog/routes')).SETTINGS_ROUTES.search);
+        });
+        it('says the Machine has not built its memory index yet, and Retry asks again', async () => {
+            const { screen, machineName } = await failedSearch(async () =>
+                ({ v: 1, ok: false, errorCode: 'memory_index_missing', error: 'memory_index_missing' }));
+            await vi.waitFor(async () => { await flushHookEffects(); expect(screen.findByTestId('failure.indexMissing')).not.toBeNull(); });
+            expect(screen.getTextContent()).toContain(`memoryContext.memory.searchIndexMissingOn:${machineName}`);
+            expect(screen.findByTestId('failure.failed')).toBeNull();
+            const before = searchCalls();
+            await screen.pressByTestIdAsync('failure.indexMissing-action');
+            await act(async () => { await vi.waitFor(() => expect(searchCalls()).toBeGreaterThan(before)); });
+        });
+        it('keeps a generic Retry, naming the Machine, for a failure with no known cause', async () => {
+            const { screen, machineName } = await failedSearch(async () => { throw new Error('socket closed'); });
+            await vi.waitFor(async () => { await flushHookEffects(); expect(screen.findByTestId('failure.failed')).not.toBeNull(); });
+            expect(screen.getTextContent()).toContain(`memoryContext.memory.searchFailedOn:${machineName}`);
+            expect(screen.findByTestId('failure.unavailable')).toBeNull();
+            expect(screen.findByTestId('failure.indexMissing')).toBeNull();
+            const before = searchCalls();
+            await screen.pressByTestIdAsync('failure.failed-action');
+            await act(async () => { await vi.waitFor(() => expect(searchCalls()).toBeGreaterThan(before)); });
+        });
+        it('names the Machine whose remembered facts cannot be searched, with no result count beside it', async () => {
+            const screen = await search({ state: 'unavailable' }, []);
+            const machine = storage.getState().machines[administration.targets[0]!.machineId]!;
+            await vi.waitFor(async () => { await flushHookEffects(); expect(screen.findByTestId('search.documentsCoverage')).not.toBeNull(); });
+            expect(screen.getTextContent()).toContain(
+                `memoryContext.memory.documentSearchUnavailableOn:${machine.metadata?.displayName ?? machine.metadata?.host}`);
+            expect(screen.getTextContent()).not.toContain('memoryContext.memory.resultCount');
+        });
+    });
+    describe('names the Machine of the exact Home, never the same-id Machine of the active Home map', () => {
+        const ACTIVE_NAME = 'Active map neighbour';
+        const EXACT_NAME = 'Exact Home Machine';
+        /** The same Machine id answers to two names: the active-Home map's and the exact Home's settled inventory. */
+        function splitHomeNames() {
+            const machineId = administration.targets[0]!.machineId;
+            const named = (machine: Machine, displayName: string) => ({ ...machine, metadata: { ...machine.metadata!, displayName } });
+            storage.setState(state => ({
+                machines: { ...state.machines, [machineId]: named(state.machines[machineId]!, ACTIVE_NAME) },
+                // Every Home inventory that lists the Machine names it as the exact Home does.
+                machineListByServerId: Object.fromEntries(Object.entries(state.machineListByServerId).map(([homeId, list]) =>
+                    [homeId, list === null ? null : list.map(machine => machine.id === machineId ? named(machine, EXACT_NAME) : machine)])),
+            }));
+        }
+        async function typeFact(screen: Awaited<ReturnType<typeof renderScreen>>, testID: string) {
+            await waitForHomeGovernance(async () => {
+                caseSignal.throwIfAborted();
+                await flushHookEffects();
+                expect(screen.findByTestId(`${testID}.input`)?.props.editable).toBe(true);
+            });
+            await act(async () => screen.findByTestId(`${testID}.input`)!.props.onChangeText('fact'));
+            await flushHookEffects();
+        }
+        it.each([
+            ['documents coverage', 'memoryContext.memory.documentSearchUnavailableOn', 'coverage'],
+            ['a failed search', 'memoryContext.memory.searchFailedOn', 'failed'],
+            ['an unavailable (switched off) search', 'memoryContext.memory.searchUnavailableOn', 'disabled'],
+            ['an unsupported Project search', 'memoryContext.memory.projectSearchUnsupported', 'unsupported'],
+        ] as const)('for %s', async (_label, key, flow) => {
+            const serverId = administration.serverIds[0]!;
+            const scope = flow === 'unsupported'
+                ? { type: 'project' as const, projectRef: { serverId, projectKey: 'payments' } } : undefined;
+            machineRpc.mockImplementation(async (request: Readonly<{ method: string }>) => {
+                if (request.method === RPC_METHODS.DAEMON_MEMORY_STATUS) return { ...status, documentSearchSupported: true };
+                if (flow === 'failed') throw new Error('socket closed');
+                if (flow === 'disabled') return { v: 1, ok: false, errorCode: 'memory_disabled', error: 'memory_disabled' };
+                return { v: 1, ok: true, hits: [], documents: { state: 'unavailable' } };
+            });
+            const screen = await renderScreen(<InjectedAuthProvider credentials={connection!.credentials}>
+                <MemorySearchPanel testID="exact" serverId={serverId} scope={scope} />
+            </InjectedAuthProvider>);
+            await typeFact(screen, 'exact');
+            await vi.waitFor(async () => {
+                await flushHookEffects();
+                expect(screen.getTextContent()).toContain(key);
+            });
+            // Only now, with the Home's own inventory settled, do the two maps disagree about the Machine's name.
+            await act(async () => splitHomeNames());
+            await flushHookEffects();
+            const text = screen.getTextContent();
+            expect(text).toContain(EXACT_NAME);
+            expect(text).not.toContain(ACTIVE_NAME);
+        });
+    });
     it('preserves qualified Project scope and retained hits when the selected Machine goes offline', async () => {
         const serverId = administration.serverIds[0]!;
         const scope = { type: 'project' as const, projectRef: { serverId, projectKey: 'payments' } };
@@ -314,7 +560,7 @@ describe('MemorySearchPanel corpus coverage', () => {
             ...createPlainMachineRowFixture({ id: machineId, accountId: 'account-a' }), active: false,
         }] });
         const lastSeenAt = Date.now();
-        const clock = vi.spyOn(Date, 'now').mockReturnValue(lastSeenAt + readMachineOnlineGraceMsFromEnv() + 1);
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(lastSeenAt + 1);
         try {
             await act(async () => storage.getState().applyMachines([{ ...selectedMachine, active: false, activeAt: lastSeenAt }],
                 false, { sourceServerId: serverId }));
@@ -331,6 +577,42 @@ describe('MemorySearchPanel corpus coverage', () => {
             await act(async () => administration.selectTarget(administration.targets[1]!));
             await flushHookEffects();
             expect(screen.findByTestId('project-search.remembered.0')).toBeNull();
+        } finally { clock.mockRestore(); }
+    });
+    it('leaves the offline Home to the page instead of blaming the selected Machine while nothing is typed', async () => {
+        const serverId = administration.serverIds[0]!;
+        const scope = { type: 'project' as const, projectRef: { serverId, projectKey: 'payments' } };
+        machineRpc.mockImplementation(async (request: Readonly<{ method: string }>) => request.method === RPC_METHODS.DAEMON_MEMORY_STATUS
+            ? { ...status, projectSearchSupported: true, documentSearchSupported: true }
+            : { v: 1, ok: true, hits: [], documents: { state: 'ready' } });
+        const screen = await renderScreen(<InjectedAuthProvider credentials={connection!.credentials}>
+            <MemorySearchPanel testID="idle-search" serverId={serverId} scope={scope} />
+        </InjectedAuthProvider>);
+        await waitForHomeGovernance(async () => {
+            caseSignal.throwIfAborted();
+            await flushHookEffects();
+            expect(screen.findByTestId('idle-search.input')?.props.editable).toBe(true);
+        });
+        const machineId = administration.targets[0]!.machineId;
+        const selectedMachine = storage.getState().machines[machineId];
+        if (!selectedMachine) throw new Error('Expected the selected Machine fixture');
+        homes.answer(serverId, '/v1/machines', { body: [{
+            ...createPlainMachineRowFixture({ id: machineId, accountId: 'account-a' }), active: false,
+        }] });
+        const lastSeenAt = Date.now();
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(lastSeenAt + 1);
+        try {
+            await act(async () => storage.getState().applyMachines([{ ...selectedMachine, active: false, activeAt: lastSeenAt }],
+                false, { sourceServerId: serverId }));
+            await flushHookEffects();
+            // Online, a Machine that cannot search says so and leads to the setting.
+            expect(screen.findByTestId('idle-search.unavailable')).not.toBeNull();
+            await act(async () => storage.getState().setEndpointConnectivity({
+                status: 'offline', reason: null, attempt: 1, nextRetryAt: null,
+                lastConnectedAt: 1, lastDisconnectedAt: 2, lastErrorMessage: null,
+            }));
+            await flushHookEffects();
+            expect(screen.findByTestId('idle-search.unavailable')).toBeNull();
         } finally { clock.mockRestore(); }
     });
     it('renders admitted loaded and indexed facts through the real selected-daemon summary path', async () => {
@@ -365,7 +647,7 @@ describe('MemorySearchPanel corpus coverage', () => {
         const machineId = administration.targets[0]!.machineId;
         const machine = storage.getState().machines[machineId]!;
         const lastSeenAt = Date.now();
-        const clock = vi.spyOn(Date, 'now').mockReturnValue(lastSeenAt + readMachineOnlineGraceMsFromEnv() + 1);
+        const clock = vi.spyOn(Date, 'now').mockReturnValue(lastSeenAt + 1);
         homes.answer(serverId, '/v1/machines', { body: [{ ...createPlainMachineRowFixture({ id: machineId, accountId: 'account-a' }), active: false }] });
         await act(async () => storage.getState().applyMachines([{ ...machine, active: false, activeAt: lastSeenAt }], false, { sourceServerId: serverId }));
         const hook = await renderHook(() => {
@@ -629,5 +911,7 @@ describe('MemorySearchPanel corpus coverage', () => {
         const screen = await search({ state: 'ready' }, []);
         expect(screen.findByTestId('search.documentsCoverage')).toBeNull();
         expect(screen.findByTestId('search.empty')).toBeTruthy();
+        // A global zero has nothing wider to offer.
+        expect(screen.findByTestId('search.empty-action')).toBeNull();
     });
 });

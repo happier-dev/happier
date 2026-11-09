@@ -607,8 +607,6 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                                     title={t('settingsSession.handoff.advanced.title')}
                                     subtitle={t('settingsSession.handoff.advanced.subtitle')}
                                     icon={<Icon name="sliders-horizontal" size={16} color={theme.colors.text.secondary} />}
-                                    rightElement={<Icon name={state.expanded ? 'caret-down' : 'caret-right'} size={16} color={theme.colors.text.secondary} />}
-                                    showChevron={false}
                                 />
                             )}
                         >

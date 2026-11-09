@@ -59,6 +59,7 @@ function buildPaneState(items: readonly SessionListIndexItem[]): VisibleSessionL
         summary: { sessionsReady: true, sessionCount: items.filter((item) => item.type === 'session').length },
         visibleSessionListIndex: items,
         hasHiddenInactiveSessions: false,
+        
         folderFeatureEnabledServerIds: [],
         showLoading: false,
         showEmptyState: false,

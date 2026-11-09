@@ -1,6 +1,4 @@
-import { getLinkedFilesActionChipPlacement } from './agentInputActionChipPlacements';
 import * as React from 'react';
-import { Pressable } from 'react-native';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import type { AgentInputPopoverContent } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
@@ -10,6 +8,8 @@ import { t } from '@/text';
 import { LinkFilePickerPopoverContent } from '@/components/sessions/linkedFiles/projectPicker/LinkFilePickerPopoverContent';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE, AGENT_INPUT_MENU_ICON_SIZE_PX } from './agentInputChipIconMetrics';
+import { getLinkedFilesActionChipPlacement } from './agentInputActionChipPlacements';
+import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
 
 const LINK_FILE_ICON: IconName = 'at';
 
@@ -72,7 +72,7 @@ function createBaseLinkFileChip(params: Readonly<{
             scrollEnabled: false,
         },
         render: ({ chipStyle, iconColor, showLabel, textStyle, countTextStyle, chipAnchorRef, toggleCollapsedPopover }) => (
-            <Pressable
+            <AgentInputRailChip
                 ref={chipAnchorRef}
                 testID={params.testID}
                 onPress={() => {
@@ -80,8 +80,7 @@ function createBaseLinkFileChip(params: Readonly<{
                     toggleCollapsedPopover?.(params.key);
                 }}
                 disabled={params.disabled}
-                hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                style={({ pressed }) => chipStyle(Boolean(pressed))}
+                style={chipStyle}
             >
                 {normalizeNodeForView(<Icon name={LINK_FILE_ICON} size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />)}
                 {showLabel ? (
@@ -91,7 +90,7 @@ function createBaseLinkFileChip(params: Readonly<{
                         countTextStyle={countTextStyle}
                     />
                 ) : null}
-            </Pressable>
+            </AgentInputRailChip>
         ),
     };
 }

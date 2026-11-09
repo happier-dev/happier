@@ -422,6 +422,7 @@ function buildCandidateVirtualizedSource(params: Readonly<{
     }
     const items: SelectionListVirtualizedOptionSourceItem[] = [];
     const navigationOptionIndexes: number[] = [];
+    const itemIndexByOptionIndex: number[] = [];
     let positionInSet = 0;
     for (let groupIndex = 0; groupIndex < groups.length; groupIndex += 1) {
         items.push({ kind: 'section-header', key: `project:${groups[groupIndex]!.path}::header`, sectionIndex: groupIndex });
@@ -429,6 +430,7 @@ function buildCandidateVirtualizedSource(params: Readonly<{
             positionInSet += 1;
             navigationOptionIndexes.push(candidateIndex);
             const candidate = params.candidates[candidateIndex]!;
+            itemIndexByOptionIndex[candidateIndex] = items.length;
             items.push({
                 kind: 'option',
                 // Read lazily (only mounted rows are keyed by the window), but from this listing's
@@ -483,6 +485,7 @@ function buildCandidateVirtualizedSource(params: Readonly<{
     return {
         items,
         optionCount: params.candidates.length,
+        findItemIndexByOptionIndex: candidateIndex => itemIndexByOptionIndex[candidateIndex] ?? -1,
         get stateKey(): string {
             const interaction = params.getInteractionState();
             return [
@@ -1076,7 +1079,8 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
         <SurfaceStateCard
             testID="direct-session-candidates:cancelled"
             kind="unavailable"
-            iconName="stop"
+            // A stopped search is incomplete history, not a missing thing: the shared history glyph, never the bare stop square.
+            iconName="clock-counter-clockwise"
             accessibilitySemantics="status"
             title={t(isContentSearch ? 'externalSessions.browseContentStopped' : 'externalSessions.browseIndexingCancelled')}
             action={retry}
@@ -1096,7 +1100,9 @@ export const ExternalSessionBrowseCandidatesList = React.memo(function ExternalS
         <EmptyState
             layout="line"
             testID="direct-session-candidates:content-partial-empty"
-            title={t('externalSessions.browseContentPartial')}
+            // Nothing matched in what could be searched: say the query, then why it may be incomplete (one line).
+            title={trimmedQuery ? t('externalSessions.browseContentPartialNoMatches', { query: trimmedQuery })
+                : t('externalSessions.browseContentPartial')}
         />
     ) : props.nextCursor !== null ? undefined : trimmedQuery ? (
         <EmptyState

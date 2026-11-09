@@ -106,10 +106,8 @@ installSessionShellCommonModuleMocks({
 });
 
 vi.mock('@legendapp/list/react-native', async () => {
-    const legendListModule = await import('@/dev/testkit/mocks/legendList');
-    const mock = legendListModule.createCapturingLegendListMock({ renderItems: true });
-    legendListState.current = mock.state;
-    return { LegendList: mock.module.LegendList };
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({ renderItems: true }, (state) => { legendListState.current = state; });
 });
 
 // Configure shell boundaries before loading testkit consumers that import native modules.
@@ -398,6 +396,7 @@ function createPaneState() {
         summary: { sessionsReady: true, sessionCount: mockVisibleSessionListViewData.filter((item) => item.type === 'session').length },
         visibleSessionListIndex: buildSessionListIndexFromViewData(mockVisibleSessionListViewData),
         hasHiddenInactiveSessions: false,
+        
         folderFeatureEnabledServerIds: [],
         showLoading: false,
         showEmptyState: false,
@@ -471,7 +470,7 @@ describe('SessionsList pinning + per-group ordering', () => {
         expect(findTestInstanceByTypeContainingText(screen.root, 'Pressable', 'sessionInfo.inactiveAndArchivedSessions')).toBeUndefined();
 
         // The scope menu itself is covered by the filter control's DOM test; here the list offers it.
-        expect(screen.findByTestId('session-list-filter-trigger')).toBeTruthy();
+        expect(screen.findByTestId('session-list-space-title')).toBeTruthy();
     });
 
     it('hands the scope editor the number of sessions the list shows, counted from the list rows', async () => {
@@ -587,6 +586,43 @@ describe('SessionsList pinning + per-group ordering', () => {
         );
         expect(updatedRow.props.allKnownTags).toBe(firstKnownTags);
         expect(updatedRow.props.allKnownTags).toEqual(['blocked', 'important', 'review']);
+    });
+
+    it('keeps every mounted row out of a redraw when one Session only moves in its group', async () => {
+        // An agent-state update moves its Session to the top of its group. Only that row's own
+        // cell may redraw (Legend re-renders every mounted cell when extraData changes identity).
+        const { SessionsListView: SessionsListComponent } = await import('./SessionsList');
+        const screen = await renderSessionsList();
+        const firstExtraData = legendListState.current?.props?.extraData;
+        expect(firstExtraData).toBeTruthy();
+
+        const [header, rowA, rowB] = mockVisibleSessionListViewData;
+        mockVisibleSessionListViewData = [header, rowB, rowA];
+        await screen.update(<SessionsListComponent paneState={createPaneState()} />);
+
+        expect(legendListState.current?.props?.data.map((node: { id: string }) => node.id).join(','))
+            .toMatch(/sess_b.*sess_a/);
+        expect(legendListState.current?.props?.extraData).toBe(firstExtraData);
+    });
+
+    it('keeps every mounted cell out of a redraw when a scroll step changes which rows are viewable', async () => {
+        const screen = await renderSessionsList();
+        const props = legendListState.current?.props;
+        const firstExtraData = props?.extraData;
+        const nodes: Array<{ id: string }> = props?.data ?? [];
+        const sessionNode = (id: string) => nodes.find((node) => node.id.includes(id));
+        expect(sessionNode('sess_a') && sessionNode('sess_b')).toBeTruthy();
+
+        for (const visible of [['sess_a'], ['sess_b'], ['sess_a', 'sess_b']]) {
+            await act(async () => {
+                legendListState.current?.props?.onViewableItemsChanged?.({
+                    viewableItems: visible.map((id) => ({ item: sessionNode(id), isViewable: true })),
+                });
+            });
+        }
+
+        expect(screen).toBeTruthy();
+        expect(legendListState.current?.props?.extraData).toBe(firstExtraData);
     });
 
     it('writes updated session tags through organization assignments', async () => {

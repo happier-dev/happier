@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { SessionTerminalWorkspaceV1 } from '@happier-dev/protocol';
+import type { SessionTerminalWorkspaceV1 } from '@happier-dev/protocol/terminal/workspace';
 
 import type { DocumentTabItem } from '@/components/ui/navigation/DocumentTabStrip';
 import { t } from '@/text';

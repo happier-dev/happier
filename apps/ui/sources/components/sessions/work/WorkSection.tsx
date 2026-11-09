@@ -1,3 +1,4 @@
+import { SectionLeadingColumnProvider } from '@/components/ui/lists/sectionLeadingColumn';
 import {
     HAPPIER_PAGE_METRICS,
     HAPPIER_WORK_PANE_METRICS,
@@ -7,13 +8,15 @@ import {
     happierPageTextMetrics,
     useHappierPageSection,
 } from '@happier-dev/plugin-ui/presentation';
+import { useSessionInfoDisclosureCommands } from '@/components/sessions/info/useSessionInfoDisclosureCommands';
 import * as React from 'react';
-import { View, type StyleProp, type ViewStyle } from 'react-native';
+import { Pressable, View, type StyleProp, type ViewStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
-import { ExpandableItem, ExpandableItemCaret } from '@/components/ui/lists/ExpandableItem';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
@@ -56,6 +59,12 @@ export type WorkSectionProps = Readonly<{
     icon?: IconName;
     /** `setup` placement: the closed row's value ("Release reviewer", "On", "5 on"); defaults to the count. */
     summary?: string;
+    /**
+     * `setup` placement: whether the row opens when this device remembers no choice. Omitted, the Setup
+     * owner's default applies (Instructions open); a section with nothing to read yet passes `false`, so it
+     * stays a closed value row ("Add") that opens on its create flow (lab csinfo I2min).
+     */
+    setupDefaultExpanded?: boolean;
     children?: React.ReactNode;
 }>;
 
@@ -88,7 +97,7 @@ export const WorkSection = React.memo((props: WorkSectionProps) => {
  * changes its own entry by the section's key.
  */
 export type WorkSectionSetupDisclosure = Readonly<{
-    isExpanded: (sectionKey: string) => boolean;
+    isExpanded: (sectionKey: string, sectionDefault?: boolean) => boolean;
     setExpanded: (sectionKey: string, expanded: boolean) => void;
 }>;
 
@@ -112,11 +121,15 @@ function WorkSectionAsSetupRow(props: WorkSectionProps) {
     const disclosure = React.useContext(WorkSectionSetupDisclosureContext);
     const sectionKey = readSetupSectionKey(props);
     const [localExpanded, setLocalExpanded] = React.useState(false);
-    const expanded = disclosure ? disclosure.isExpanded(sectionKey) : localExpanded;
+    const expanded = disclosure ? disclosure.isExpanded(sectionKey, props.setupDefaultExpanded) : localExpanded;
     const onExpandedChange = React.useCallback((next: boolean) => {
         if (disclosure) disclosure.setExpanded(sectionKey, next);
         else setLocalExpanded(next);
     }, [disclosure, sectionKey]);
+    // The row publishes its own disclosure to Agents, with the state it actually shows.
+    useSessionInfoDisclosureCommands([{
+        key: sectionKey, title: props.title, expanded, onExpandedChange, available: disclosure !== null,
+    }]);
     const value = props.loading ? undefined : (props.summary ?? readCountText(props) ?? undefined);
     return (
         <View nativeID={props.nativeID} collapsable={false}>
@@ -130,19 +143,32 @@ function WorkSectionAsSetupRow(props: WorkSectionProps) {
                         testID={`${props.testID}:row`}
                         title={props.title}
                         icon={props.icon ? <Icon name={props.icon} /> : undefined}
-                        detail={open ? undefined : value}
+                        // The value stays while open (lab csinfo I2 "Release reviewer ⌄"), beside the quiet operations.
+                        detail={value}
                         showChevron={false}
+                        // While open, the section's own operations ("+", search) are controls of their own:
+                        // they sit beside the row's press target, never inside it (no button in a button).
+                        // The caret stays a pointer target for closing; the row itself is the one toggle that
+                        // assistive tech and the keyboard reach.
+                        rightElementOutsidePressable={open && Boolean(props.action)}
                         rightElement={(
                             <View style={stylesheet.setupTrailing}>
                                 {open && props.action ? props.action : null}
-                                <ExpandableItemCaret expanded={open} />
+                                {open && props.action ? (
+                                    <Pressable accessible={false} focusable={false} onPress={() => onExpandedChange(false)}>
+                                        <DisclosureCaret expanded={open} />
+                                    </Pressable>
+                                ) : <DisclosureCaret expanded={open} />}
                             </View>
                         )}
                     />
                 )}
             >
                 <View style={stylesheet.setupBody}>
-                    {props.loading ? <SkeletonRows testID={`${props.testID}-loading`} rows={2} accessibilityLabel={props.title} /> : props.children}
+                    {/* The body is its own section: its rows reserve no glyph column of the row above. */}
+                    <SectionLeadingColumnProvider>
+                        {props.loading ? <SkeletonRows testID={`${props.testID}-loading`} rows={2} accessibilityLabel={props.title} /> : props.children}
+                    </SectionLeadingColumnProvider>
                 </View>
             </ExpandableItem>
         </View>

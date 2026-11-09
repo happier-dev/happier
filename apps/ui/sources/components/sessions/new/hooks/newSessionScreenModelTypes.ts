@@ -1,4 +1,6 @@
 import type { View } from 'react-native';
+import type { SessionSpaceMembershipTargetV1 } from '@happier-dev/protocol/actions';
+import type { SessionBotFaceV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import type { NewSessionTemporaryComputerLaunch } from '../components/NewSessionLaunchSurface';
 
 import type { NewSessionSimplePanelProps } from '@/components/sessions/new/components/NewSessionSimplePanel';
@@ -12,6 +14,7 @@ import type {
 } from '@/components/sessions/new/components/NewSessionWizard';
 import type { NewSessionCheckoutCreationDraft } from '@/sync/domains/state/newSessionCheckoutDraft';
 import type { ManagedMachineSelectionDraft, ManagedMachineAcquisitionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
+import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedMachineCreationProgress } from '@/components/settings/machines/managed/managedMachineCreation';
 import type { ComposerTextStore } from '@/components/sessions/agentInput/composerTextStore';
 import type { SessionInstructionsAuthoringResult } from '@/sync/ops/promptLibrary/sessionInstructions';
@@ -39,16 +42,23 @@ export type NewSessionInstructionsCreationModel = Readonly<{
 export type NewSessionBotCreationModel = Readonly<{
     nameStore: ComposerTextStore;
     onSessionNameChange: (value: string) => void;
-    /** The draft's Instructions line, shown under the Bot's name (lab `b-new`). */
-    instructions?: React.ReactNode;
+    /** The face the Bot will be born with (its seed is concrete); the header previews it. */
+    face?: SessionBotFaceV1 | null;
+    /** Keeps a face choice with the draft (no server write); absent where the draft cannot be written. */
+    onFaceChange?: (face: SessionBotFaceV1 | null) => void;
 }>;
 
 /** Non-visual managed configurator transaction; CUI owns its accessory/picker presentation. */
 export type NewSessionManagedMachineDraftModel = Readonly<{
     selection: ManagedMachineSelectionDraft | null;
     acquisition: ManagedMachineAcquisitionDraft | null;
-    select: (draft: ManagedMachineSelectionDraft, serverId?: string) => void;
+    onAcquisitionChange?: (value: ManagedMachineAcquisitionDraft | null) => void;
+    /** The existing scope-choice presentation uses this source's actual lifecycle boundary. */
+    creationScope?: 'session' | 'task';
+    select: (draft: ManagedMachineSelectionDraft, serverId?: string, options?: import('../components/machineSelection/managedMachineSelection').ManagedMachineUseOptions) => void;
     progress: ManagedMachineCreationProgress;
+    /** The retained resource row while no operation reports for it (its stages, or Setup interrupted), and its page. */
+    retainedMachine?: Readonly<{ machine: ManagedMachineV1; inspect: () => void }>;
     retryInstallation: () => void;
     retrySetup?: () => void;
     continueWithoutSetup?: () => void;
@@ -64,8 +74,14 @@ export type NewSessionSimpleScreenProps = NewSessionSimplePanelProps & Readonly<
 }>;
 
 export type NewSessionScreenModel =
+    Readonly<{
+        /** Editable local draft context; presentation is supplied by the creation host. */
+        spaceMembership?: SessionSpaceMembershipTargetV1 | null;
+        setSpaceMembership?: (next: SessionSpaceMembershipTargetV1 | null) => void;
+    }> & (
     | Readonly<{
         variant: 'simple';
+        requesterIsolation?: ReturnType<typeof import('@/hooks/machine/useMachineOwnIsolationStatus').useMachineOwnIsolationStatus>;
         popoverBoundaryRef: React.RefObject<View>;
         launchOverlay: React.ReactNode | null;
         temporaryComputerLaunch?: NewSessionTemporaryComputerLaunch;
@@ -80,6 +96,7 @@ export type NewSessionScreenModel =
     }>
     | Readonly<{
         variant: 'wizard';
+        requesterIsolation?: ReturnType<typeof import('@/hooks/machine/useMachineOwnIsolationStatus').useMachineOwnIsolationStatus>;
         popoverBoundaryRef: React.RefObject<View>;
         launchOverlay: React.ReactNode | null;
         temporaryComputerLaunch?: NewSessionTemporaryComputerLaunch;
@@ -99,4 +116,4 @@ export type NewSessionScreenModel =
             machine: NewSessionWizardMachineProps;
             footer: NewSessionWizardFooterProps;
         }>;
-    }>;
+    }>);

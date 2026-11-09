@@ -1,4 +1,4 @@
-import type { SessionDataKeyEnvelopeItemV1 } from '@happier-dev/protocol';
+import type { SessionDataKeyEnvelopeItemV1 } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';
 import { describe, expect, it } from 'vitest';
 
 import type {

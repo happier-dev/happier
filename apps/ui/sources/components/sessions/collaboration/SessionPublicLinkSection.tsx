@@ -29,7 +29,7 @@ import type { SessionPublicLinkPublication } from '@/sync/domains/social/session
 import type { SharingAuthoritySession } from '@/sync/domains/social/sessionSharingMutationAuthority';
 import { t } from '@/text';
 import { presentSessionAccessFailure } from '@/components/sessions/access/presentSessionAccessFailure';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 
 import type { ExternalSessionSharingAvailability } from '@/components/sessions/external/sharing/useExternalSessionSharingAvailability';
 import { buildPublicShareApplicationUrl, resolvePublicShareApplicationBaseUrl } from '@/components/sessions/sharing/publicShareApplicationUrl';
@@ -208,6 +208,7 @@ export function SessionPublicLinkCard(props: Readonly<{
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const { publicShare } = props;
+    const writeClipboard = useClipboardWrite(props.configurationScope);
     const [configuring, setConfiguring] = React.useState(false);
     const [showQr, setShowQr] = React.useState(false);
     const [expiry, setExpiry] = React.useState<Expiry>('7');
@@ -278,7 +279,7 @@ export function SessionPublicLinkCard(props: Readonly<{
     };
     const copy = async () => {
         if (!shareUrl) return;
-        const copied = await setClipboardStringSafe(shareUrl);
+        const copied = await writeClipboard(shareUrl);
         if (!copied) {
             Modal.alert(t('common.error'), t('textSelection.failedToCopy'));
             return;

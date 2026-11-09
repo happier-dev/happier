@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { readHappierStructuredInputV1FromMeta } from '@happier-dev/protocol';
+import { readHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import type { RunnerPreparedAuthoringV1 } from '@happier-dev/protocol/ephemeralRunner/launchManifest';
 import { createMaterializedRunnerProjectionFixture } from '@/dev/testkit/fixtures/runnerMaterializationFixtures';
 import type { RunnerActivationProjectionV1 } from '@happier-dev/protocol/ephemeralRunner/projection';
@@ -199,6 +199,7 @@ describe('materialized Runner attachment recovery integration', () => {
                 path: `.happier/uploads/${name}`,
                 sizeBytes: bytes.byteLength,
                 sha256: reviewed.sha256,
+                attachmentHandle: { v: 1, sessionId: 'session-a', id: `issued-${reviewed.id}` },
             };
         };
         const present = async () => { boundaries.events.push('present'); };
@@ -218,7 +219,8 @@ describe('materialized Runner attachment recovery integration', () => {
         expect(boundaries.followUps).toHaveLength(0);
         expect(storage.getState().reviewCommentsDraftsByWorkspaceCacheKey[workspaceCacheKey]).toEqual([comment]);
         await expect(readRunnerCreatorAttachmentUploadCustody(scope, activationId)).resolves.toMatchObject({
-            resumedUploads: [{ id: 'file-one', path: '.happier/uploads/one.txt', sizeBytes: 3 }],
+            resumedUploads: [{ id: 'file-one', path: '.happier/uploads/one.txt', sizeBytes: 3,
+                attachmentHandle: { v: 1, sessionId: 'session-a', id: 'issued-file-one' } }],
         });
 
         await expect(recoverMaterializedTemporaryComputerSessionForSession({
@@ -265,12 +267,11 @@ describe('materialized Runner attachment recovery integration', () => {
         expect(followUp.messageLocalId).toBe('first-turn-a');
         // Attachments travel as structured message metadata; the prompt text no longer lists their paths.
         expect(followUp.metaOverrides).toMatchObject({
-            happierAttachments: {
-                kind: 'attachments.v1',
-                payload: { attachments: [
-                    { id: 'file-one', path: '.happier/uploads/one.txt' },
-                    { id: 'file-empty', path: '.happier/uploads/empty.txt' },
-                ] },
+            happierStructuredInputV1: {
+                sessionAttachments: [
+                    { v: 1, sessionId: 'session-a', id: 'issued-file-one' },
+                    { v: 1, sessionId: 'session-a', id: 'issued-file-empty' },
+                ],
             },
         });
         expect(followUp.metaOverrides).toMatchObject({

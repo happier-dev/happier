@@ -48,3 +48,25 @@ export function resolveChipRailCutEdges(input: Readonly<{
 
     return { ...(start ? { start } : {}), ...(end ? { end } : {}) };
 }
+
+/**
+ * Where a scrolled rail comes to rest (native snap offsets): each chip seated just past the leading
+ * indicator's room, so a resting rail never leaves a chip that is mostly in view under the leading cut
+ * (the mask would hide all of it and leave a void). `items` are in content coordinates; offsets past the
+ * scroll range are dropped, since the range's own end is a rest point.
+ */
+export function resolveChipRailSnapOffsets(input: Readonly<{
+    viewportWidth: number;
+    contentWidth: number;
+    items: ReadonlyArray<ChipRailItemEdge>;
+}>): number[] {
+    const maxScroll = input.contentWidth - input.viewportWidth;
+    if (maxScroll <= 0) return [];
+    const offsets = [0];
+    for (const item of input.items.slice(1)) {
+        const offset = Math.round(item.left - END_INDICATOR_ROOM_PX);
+        if (offset >= maxScroll) break;
+        if (offset > offsets[offsets.length - 1]!) offsets.push(offset);
+    }
+    return offsets;
+}

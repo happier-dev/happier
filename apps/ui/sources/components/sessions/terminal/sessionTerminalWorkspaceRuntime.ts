@@ -30,7 +30,7 @@ export function subscribeSessionTerminalWorkspace(listener: () => void): () => v
     listeners.add(listener);
     return () => { listeners.delete(listener); };
 }
-export function readSessionTerminalWorkspaceForScope(scopeId: string, initialWorkspace?: import('@happier-dev/protocol').SessionTerminalWorkspaceV1) {
+export function readSessionTerminalWorkspaceForScope(scopeId: string, initialWorkspace?: import('@happier-dev/protocol/terminal/workspace').SessionTerminalWorkspaceV1) {
     const scope = (mountedOwner?.getReadState?.() ?? mountedOwner?.getState())?.scopes[scopeId];
     return mountedOwner && (scope || initialWorkspace) ? readSessionTerminalWorkspace(scope?.bottom.tabState.terminal ?? initialWorkspace) : null;
 }
@@ -39,7 +39,7 @@ export function readVisibleSessionTerminalTabsForScope(scopeId: string): readonl
     return state ? selectVisibleSessionTerminalTabs(state, scopeId) : [];
 }
 /** Explicit open intent initializes a new host through the existing pane owner; never on mount. */
-export function initializeSessionTerminalWorkspaceForScope(scopeId: string, workspace: import('@happier-dev/protocol').SessionTerminalWorkspaceV1): boolean {
+export function initializeSessionTerminalWorkspaceForScope(scopeId: string, workspace: import('@happier-dev/protocol/terminal/workspace').SessionTerminalWorkspaceV1): boolean {
     if (!mountedOwner) return false;
     const project = parseProjectPaneScopeId(scopeId) ? resolveProjectTerminalScope(scopeId) : null;
     if (parseProjectPaneScopeId(scopeId) && !project) return false;
@@ -92,7 +92,6 @@ export function openSessionTerminalInDetailsForScope(scopeId: string, terminalId
     if (!owner) return false;
     openSessionTerminalInDetails({
         openDetailsTab: (tab, options) => owner.dispatch({ type: 'openDetailsTab', scopeId, tab, openAs: options?.intent === 'pinned' ? 'pinned' : 'preview' }),
-        closeBottom: () => owner.dispatch({ type: 'closeBottom', scopeId }),
     }, terminalId);
     return true;
 }

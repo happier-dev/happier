@@ -1,15 +1,15 @@
 import * as React from 'react';
-import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { useShallow } from 'zustand/react/shallow';
 
 import { getStorage } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { sessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
 import { t } from '@/text';
-import type { SessionListRowStateByServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
+import { resolveSessionListHomeKey, type SessionListRowStateByServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
+import { EMPTY_SESSION_RELATION_FACTS } from '@/sync/store/domains/sessionRelations';
 
-import { selectSessionRelationRecords } from './reportSubtree';
-import { readSessionPresentationInputRelations, readSessionPresentationInputDisplay } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
+import { selectSessionRelationRecords, readSessionRelationFacts, readSessionRelationRecord, selectSessionAncestorIds } from './reportSubtree';
+import { readSessionPresentationInputDisplay } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 
 /** A lead above a Session in the `manager` tree (ORC §3.1), named as this device can name it. */
 export type SessionLineageAncestor = Readonly<{
@@ -35,36 +35,31 @@ export function readSessionLineage(
   rowsByServerId?: SessionListRowStateByServerId,
 ): SessionLineageAncestor[] {
   const records = selectSessionRelationRecords(sessions, serverId, rowsByServerId);
-  const ancestors: SessionLineageAncestor[] = [];
-  const visited = new Set([sessionId]);
-  const self = records[sessionId];
-  let leadId = readSessionManagerSessionIdV1(self ? readSessionPresentationInputRelations(self) : null);
-  while (leadId && !visited.has(leadId)) {
-    const lead = records[leadId];
-    if (!lead) break;
-    visited.add(leadId);
-    ancestors.unshift({ sessionId: leadId, title: sessionDisplayTitle(readSessionPresentationInputDisplay(lead), serverId) });
-    leadId = readSessionManagerSessionIdV1(readSessionPresentationInputRelations(lead));
-  }
-  return ancestors;
+  return selectSessionAncestorIds(readSessionRelationFacts(records), sessionId).map(id => ({
+    sessionId: id,
+    title: sessionDisplayTitle(readSessionPresentationInputDisplay(records[id]!), serverId),
+  }));
 }
 
 /**
- * The live lineage of a Session. The selector returns a flat id/title list so an unrelated store
- * update keeps the previous array (shallow equality) and the header does not re-render.
+ * The live lineage of a Session. Subscribe to the admitted relationship inputs before walking them,
+ * so message/settings publications and another Home's list changes do no inventory work.
  */
 export function useSessionLineage(
   sessionId: string,
   serverId: string | null,
 ): readonly SessionLineageAncestor[] {
-  const flat = getStorage()(
-    useShallow((state) =>
-      readSessionLineage(state.sessions, sessionId, serverId, state.sessionListRowsByServerId).flatMap((ancestor) => [
-        ancestor.sessionId,
-        ancestor.title,
-      ]),
-    ),
-  );
+  const relations = getStorage()((state) => {
+    const key = resolveSessionListHomeKey(state.sessionRelationsByServerId, serverId);
+    return key ? state.sessionRelationsByServerId[key] ?? EMPTY_SESSION_RELATION_FACTS : EMPTY_SESSION_RELATION_FACTS;
+  });
+  const ancestorIds = React.useMemo(() => selectSessionAncestorIds(relations, sessionId), [relations, sessionId]);
+  // Titles may also use the display target or localized fallback. Keep that narrow read live
+  // over the selected ancestor chain without rebuilding the relationship inventory.
+  const flat = getStorage()(useShallow((state) => ancestorIds.flatMap(id => {
+    const input = readSessionRelationRecord(state.sessions, id, serverId, state.sessionListRowsByServerId);
+    return input ? [id, sessionDisplayTitle(readSessionPresentationInputDisplay(input), serverId)] : [];
+  })));
   return React.useMemo(() => {
     const ancestors: SessionLineageAncestor[] = [];
     for (let index = 0; index + 1 < flat.length; index += 2) {

@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BUILT_IN_ROLES_V1, RoleActionInputSchemasV1, RoleActionOutputSchemasV1 } from '@happier-dev/protocol';
+import { BUILT_IN_ROLES_V1} from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
+import { RoleActionInputSchemasV1, RoleActionOutputSchemasV1 } from '@happier-dev/protocol/prompts/roles/roleActionsV1';
 import { resolveRolesSnapshotV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 import { readSessionRolesV1, SessionRolesV1Schema, snapshotSessionRolesAtSpawnV1, writeSessionRoleConfigurationV1ToMetadata } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
 import { projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -16,7 +17,6 @@ import { serveSessionActionHome } from '@/dev/testkit/harness/sessionActionHome'
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createArtifactListHttpResponse } from '@/dev/testkit/harness/artifactStoreBoundary';
-import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { parseDecryptedSessionMetadata } from '@/sync/engine/sessions/parsePlainSessionPayload';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -137,8 +137,14 @@ async function prepareRolesHome() {
     // Session reads (the Approval reviewer's metadata write reads its latest tuple) take the batch wire.
     const sessionReads = createSessionReadBatchHttpBoundary(async request => {
         const path = request.path;
-        if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
         if (path === '/v1/artifacts') return createArtifactListHttpResponse(request.url, []);
+        // List and exact reads must describe the same Home. An empty list
+        // authoritatively withdraws these seeded Sessions during Action catch-up.
+        if (path === '/v2/sessions' || path === '/v2/sessions/active') {
+            return Response.json({ sessions: Object.values(storage.getState().sessions)
+                .map(session => createPlainSessionByIdResponseFixture(session).session),
+                nextCursor: null, hasNext: false });
+        }
         if (path.startsWith('/v2/sessions/')) {
             const session = storage.getState().sessions[decodeURIComponent(path.slice('/v2/sessions/'.length))];
             if (session) return Response.json(createPlainSessionByIdResponseFixture(session));
@@ -408,6 +414,10 @@ describe('Work › Roles and Notes', () => {
             shared.metadataUpdates = [];
             const screen = await renderScreen(<SessionRolesSection sessionId="lead" />);
             expect(await choose(screen, 'on')).toMatchObject({ approvalReviewerEnabled: true });
+            await vi.waitFor(() => {
+                expect(Object.hasOwn(storage.getState().sessions, 'lead')).toBe(true);
+                expect(storage.getState().sessions.lead.ownerMetadataView).toMatchObject({ approvalReviewerEnabled: true });
+            });
             await vi.waitFor(() => expect(reviewerState(screen).value).toBe('on'));
         });
 
@@ -419,6 +429,11 @@ describe('Work › Roles and Notes', () => {
             const screen = await renderScreen(<SessionRolesSection sessionId="lead" />);
             // The session stops carrying a value (never a copy of today's default), so later default changes apply.
             expect(await choose(screen, 'default')).not.toHaveProperty('approvalReviewerEnabled');
+            await vi.waitFor(() => {
+                const metadata = storage.getState().sessions.lead?.ownerMetadataView;
+                expect(metadata).toBeTruthy();
+                expect(metadata).not.toHaveProperty('approvalReviewerEnabled');
+            });
             await vi.waitFor(() => expect(reviewerState(screen)).toEqual({ subtitle: 'roles.session.approvalReviewerFollowsDefault', value: 'default' }));
         });
     });

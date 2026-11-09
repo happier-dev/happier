@@ -85,6 +85,26 @@ describe('useComposerKeyboardLayout native', () => {
         nativeHookState.windowHeight = 800;
     });
 
+    it.each(['ios', 'android'] as const)('seats a newly mounted %s scaffold above a keyboard that is already shown', async (platform) => {
+        nativeHookState.platformOS = platform;
+        nativeHookState.reanimatedKeyboardHeight = -300;
+        const { useComposerKeyboardLayout } = await import('./useComposerKeyboardLayout.native');
+        const hook = await renderHook(() => useComposerKeyboardLayout({
+            headerHeight: 100,
+            layoutBottomInset: 80,
+            safeAreaBottom: 20,
+        }));
+
+        expect(hook.getCurrent().bottomInset.value).toBe(220);
+        expect(hook.getCurrent().keyboardHeightLive.value).toBe(220);
+        expect(hook.getCurrent().availablePanelHeight.value).toBe(400);
+
+        act(() => nativeHookState.keyboardListeners.get('keyboardDidHide')?.());
+        await hook.rerender();
+        expect(hook.getCurrent().bottomInset.value).toBe(20);
+        expect(hook.getCurrent().keyboardHeightLive.value).toBe(0);
+    });
+
     it('normalizes keyboard lift relative to the layout below the scaffold', async () => {
         const { useComposerKeyboardLayout } = await import('./useComposerKeyboardLayout.native');
         const hook = await renderHook(() => useComposerKeyboardLayout({

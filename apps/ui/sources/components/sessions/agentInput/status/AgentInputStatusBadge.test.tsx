@@ -60,12 +60,30 @@ describe('AgentInputStatusBadge', () => {
                 backgroundColor: expect.anything(),
                 borderColor: expect.anything(),
             }));
-            expect(screen.find((node) => node.props.chrome === 'plain')).toBeTruthy();
+            const painted = screen.findAllByType('View').map(node => flattenStyle(node.props.style).backgroundColor)
+                .filter(color => typeof color === 'string' && color !== 'transparent');
+            expect(painted).toEqual([]);
 
             badge?.props.onPress?.();
             expect(onPress).toHaveBeenCalledTimes(1);
         } finally {
             consoleError.mockRestore();
+        }
+    });
+    it('shows the popover caret only on a prominent badge that opens one', async () => {
+        const { AgentInputStatusBadge } = await import('./AgentInputStatusBadge');
+        const renderPopover = () => null;
+        const cases = [
+            { emphasis: 'prominent' as const, renderPopover, caret: true },
+            { emphasis: 'quiet' as const, renderPopover, caret: false },
+            { emphasis: 'prominent' as const, renderPopover: undefined, caret: false },
+        ];
+        for (const entry of cases) {
+            const screen = await renderScreen(
+                <AgentInputStatusBadge key="usage" label="Usage limit reached" testID="usage-badge" tone="warning"
+                    emphasis={entry.emphasis} renderPopover={entry.renderPopover} onPress={() => {}} />,
+            );
+            expect(Boolean(screen.findByTestId('usage-badge:caret')), `${entry.emphasis} ${entry.renderPopover ? 'popover' : 'plain'}`).toBe(entry.caret);
         }
     });
     it('keeps a warning badge amber on a glass composer, as it is on an opaque one', async () => {

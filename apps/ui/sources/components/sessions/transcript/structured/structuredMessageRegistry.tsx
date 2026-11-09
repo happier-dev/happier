@@ -5,16 +5,10 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { FileReviewNoteV1Schema } from '@happier-dev/protocol/messages/structured/fileReviewNoteV1';
 import { FileReviewNoteLine, projectFileReviewNoteText } from '@/components/sessions/files/review/FileReviewNoteLine';
 
-import { ReviewCommentsV1Schema } from '@/sync/domains/input/reviewComments/reviewCommentMeta';
 import { ReviewCommentsMessageCard, projectReviewCommentsFindText } from '@/components/sessions/reviews/messages/ReviewCommentsMessageCard';
-import { DelegateOutputV1Schema } from '@happier-dev/protocol/messages/structured/delegateOutputV1';
-import { ExecutionRunCompletionV1Schema, type ExecutionRunCompletionV1 } from '@happier-dev/protocol/execution/runs/completionInputV1';
+import type { ExecutionRunCompletionV1 } from '@happier-dev/protocol/execution/runs/completionInputV1';
 import type { WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
-import { PlanOutputV1Schema } from '@happier-dev/protocol/messages/structured/planOutputV1';
 import { ParticipantMessageV1Schema } from '@happier-dev/protocol/messages/structured/participantMessageV1';
-import { ReviewFindingsV1Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
-import { ReviewFindingsV2Schema } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
-import { ReviewFollowUpV1Schema } from '@happier-dev/protocol/messages/structured/reviewFollowUpV1';
 import { SessionSummaryShardV1Schema } from '@happier-dev/protocol/messages/structured/sessionSummaryShardV1';
 import { SessionSynopsisV1Schema } from '@happier-dev/protocol/messages/structured/sessionSynopsisV1';
 import { SubagentCommandV1Schema } from '@happier-dev/protocol/messages/structured/subagentCommandV1';
@@ -34,11 +28,11 @@ import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInt
 import { WorkerUpdateCard, projectWorkerUpdateFindText } from '@/components/sessions/work/WorkerUpdateCard';
 import { VoiceTranscriptNotePayloadSchema } from '@/voice/transcript/voiceTranscriptNoteMeta';
 import { resolveVoiceContinuationNoteText } from '@/voice/transcript/voiceTranscriptNotePresentation';
-import { transcriptMarkdownTextStyle } from '@/components/sessions/transcript/transcriptMarkdownTypography';
+import { TranscriptEventLine } from '@/components/sessions/transcript/events/TranscriptEventRow';
 import { StructuredFindText, type StructuredFindTextBlock, type StructuredFindProjectionContext } from './structuredFindText';
-import { ScmDiffSummaryGenerateOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
 import { readScmDiffSummaryPublicationReceipt } from '@/sync/domains/scm/diffSummary/publicationReceipt';
 import { ScmResultReceiptCard, projectScmResultReceiptFindText } from '@/components/sessions/files/walkthrough/ScmResultReceiptCard';
+import { STRUCTURED_TOOL_RESULT_CARDS } from './structuredToolResultCards';
 
 export type StructuredMessageKind =
     | 'file_review_note.v1'
@@ -118,8 +112,11 @@ const structuredMessageRegistryEntries: readonly (StructuredMessageRegistryEntry
     {
         kind: 'voice_note.v1',
         schema: VoiceTranscriptNotePayloadSchema,
+        // A Voice note ("Continued on Chrome") is an event in the conversation, not something the agent said.
         render: (_payload, params) => params.message.kind === 'agent-text'
-            ? <StructuredFindText blockId="structured-voice-note" style={transcriptMarkdownTextStyle} text={resolveVoiceContinuationNoteText(params.message.meta) ?? params.message.text} />
+            ? <TranscriptEventLine icon="planet" testID="transcript-voice-note" renderText={(textStyle) => (
+                <StructuredFindText blockId="structured-voice-note" style={textStyle} text={resolveVoiceContinuationNoteText(params.message.meta) ?? params.message.text} />
+            )} />
             : null,
         projectFindText: (_payload, params) => params.message.kind === 'agent-text'
             ? [{ id: 'structured-voice-note', text: resolveVoiceContinuationNoteText(params.message.meta) ?? params.message.text }]
@@ -160,16 +157,14 @@ const structuredMessageRegistryEntries: readonly (StructuredMessageRegistryEntry
         },
     },
     {
-        kind: 'review_comments.v1',
-        schema: ReviewCommentsV1Schema,
+        ...STRUCTURED_TOOL_RESULT_CARDS.reviewComments,
         render: (payload, params) => (
             <ReviewCommentsMessageCard payload={payload} onJumpToAnchor={params.onJumpToAnchor} />
         ),
         projectFindText: (payload, params) => projectReviewCommentsFindText(payload, { canJumpToAnchor: params.canJumpToAnchor }),
     },
     {
-        kind: 'review_findings.v1',
-        schema: ReviewFindingsV1Schema,
+        ...STRUCTURED_TOOL_RESULT_CARDS.reviewFindingsV1,
         render: (payload, params) => (
             <ReviewFindingsMessageCard
                 payload={payload}
@@ -183,8 +178,7 @@ const structuredMessageRegistryEntries: readonly (StructuredMessageRegistryEntry
         usesSessionMessages: true,
     },
     {
-        kind: 'review_findings.v2',
-        schema: ReviewFindingsV2Schema,
+        ...STRUCTURED_TOOL_RESULT_CARDS.reviewFindingsV2,
         render: (payload, params) => (
             <ReviewFindingsMessageCard
                 payload={payload}
@@ -198,14 +192,12 @@ const structuredMessageRegistryEntries: readonly (StructuredMessageRegistryEntry
         usesSessionMessages: true,
     },
     {
-        kind: 'review_follow_up.v1',
-        schema: ReviewFollowUpV1Schema,
+        ...STRUCTURED_TOOL_RESULT_CARDS.reviewFollowUp,
         render: (payload) => <ReviewFollowUpMessageCard payload={payload} />,
         projectFindText: (payload) => projectReviewFollowUpFindText(payload),
     },
     {
-        kind: 'plan_output.v1',
-        schema: PlanOutputV1Schema,
+        ...STRUCTURED_TOOL_RESULT_CARDS.planOutput,
         render: (payload, params) => (
             <PlanOutputMessageCard
                 payload={payload}
@@ -216,23 +208,20 @@ const structuredMessageRegistryEntries: readonly (StructuredMessageRegistryEntry
         projectFindText: (payload, params) => projectPlanOutputFindText(payload, { canSendMessages: params.canSendMessages }),
     },
     {
-        kind: 'delegate_output.v1',
-        schema: DelegateOutputV1Schema,
+        ...STRUCTURED_TOOL_RESULT_CARDS.delegateOutput,
         render: (payload) => (
             <DelegateOutputMessageCard payload={payload} />
         ),
         projectFindText: (payload) => projectDelegateOutputFindText(payload),
     },
     {
-        kind: 'execution_run_completion.v1',
-        schema: ExecutionRunCompletionV1Schema,
+        ...STRUCTURED_TOOL_RESULT_CARDS.executionRunCompletion,
         // Retained 0.2 rows have no effective-engine fact; do not infer one from the current lead.
         render: (payload, params) => <WorkerUpdateCard update={legacyCompletionUpdate(payload, params.sessionId)} serverId={params.serverId} navigationEnabled={params.interaction.permissionDisabledReason !== 'public'} />,
         projectFindText: (payload, params) => projectWorkerUpdateFindText(legacyCompletionUpdate(payload, params.sessionId ?? ''), { canInspect: payload.canInspect && params.canNavigate === true }),
     },
     {
-        kind: 'scm_diff_summary.v1',
-        schema: ScmDiffSummaryGenerateOutputSchema,
+        ...STRUCTURED_TOOL_RESULT_CARDS.scmDiffSummary,
         // Only a saved publication is a receipt (it carries `scmResultUpdate` beside the payload);
         // baselines, refusals and discussion keep the ordinary prose path.
         render: (payload, params) => {

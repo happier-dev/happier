@@ -61,7 +61,7 @@ export function useSessionFollowers(address: SessionAddress, enabled: boolean) {
         const unsubscribe = subscribeHomeAccountChange(event => {
             if (isCurrent() && areServerProfileIdentifiersEquivalent(event.serverId, binding.serverId)
                 && isSessionFollowAccountChangeRelevant(event, sessionIds)) read();
-        });
+        }, { reconnect: 'refresh' });
         read();
         return () => { abort.abort(); retirement.dispose(); unsubscribe(); refreshRef.current = () => {}; };
     }, [enabled, binding, key, address.sessionId]);

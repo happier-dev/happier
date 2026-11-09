@@ -44,6 +44,8 @@ import { isWalkthroughOtherFindKey, useWalkthroughFind } from './walkthroughFind
 import { ChangedFilesReviewFindSurface } from '@/components/workspaces/scm/review/ChangedFilesReviewFind';
 import type { ReviewFindTarget } from '@/components/workspaces/scm/review/useChangedFilesReviewFind';
 import type { WalkthroughReading, WalkthroughStop } from './walkthroughReading';
+import type { WalkthroughReviewedSource } from './walkthroughReviewedProjection';
+import { useWalkthroughReviewedStop } from './useWalkthroughReviewed';
 
 export type WalkthroughViewLayout = 'wide' | 'narrow' | 'phone';
 
@@ -103,8 +105,12 @@ export type WalkthroughViewProps = Readonly<{
   marksDisabledReason?: string | null;
   /** The matching Account record has loaded; unknown marks are not confirmed zero progress. */
   reviewedProgressAvailable?: boolean;
+  /** The Account record is still being read: the header holds the reviewed fact's room. */
+  reviewedProgressPending?: boolean;
   /** Discuss with the generator; absent when it cannot take a turn. */
   onAsk?: (stop: WalkthroughStop, question?: string) => void;
+  /** Ask is being resolved (the generator not yet observed): the phone bar keeps its slot, disabled, so nothing shifts. */
+  askPending?: boolean;
   askingStopId?: string | null;
   onOpenFile?: (path: string) => void;
   onShowFiles?: () => void;
@@ -159,7 +165,8 @@ export const WalkthroughView = React.memo(function WalkthroughView(
   props: WalkthroughViewProps,
 ) {
   const { theme } = useUnistyles();
-  const reading = props.reading;
+  const reviewedSource = props.reading.reviewedSource;
+  const reading = reviewedSource?.base ?? props.reading;
   const phone = props.layout === 'phone';
   const reducedMotion = useReducedMotionPreference();
   const rootRef = React.useRef<View>(null);
@@ -172,7 +179,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(
   // The phone column's Find focus root; the wide root also scopes the review keys.
   const phoneRootRef = React.useRef<View>(null);
   const firstUnread =
-    reading.stops.find((stop) => !stop.reviewed) ?? reading.stops[0];
+    (reviewedSource?.getSnapshot().stops ?? reading.stops).find((stop) => !stop.reviewed) ?? reading.stops[0];
   const [currentStopId, setCurrentStopId] = React.useState<string | null>(
     props.initialStopId ?? firstUnread?.id ?? null,
   );
@@ -249,6 +256,23 @@ export const WalkthroughView = React.memo(function WalkthroughView(
     },
     [phone],
   );
+  // A reading that begins past its first stop (the next unread one) opens on it, so the stop the bar and rail name
+  // is the one on screen; once measured, and only if the reader has not scrolled first.
+  const landingStopId = React.useRef(
+    currentStopId !== null && currentStopId !== reading.stops[0]?.id ? currentStopId : null,
+  );
+  const streamMeasured = React.useRef(false);
+  const land = React.useCallback(() => {
+    const stopId = landingStopId.current;
+    if (!stopId || !streamMeasured.current || !stopOffsets.current.has(stopId)) return;
+    landingStopId.current = null;
+    scrollToStop(stopId);
+  }, [scrollToStop]);
+  const measureStream = React.useCallback((event: LayoutChangeEvent) => {
+    streamOffset.current = event.nativeEvent.layout.y;
+    streamMeasured.current = true;
+    land();
+  }, [land]);
   const move = React.useCallback(
     (direction: 1 | -1) => {
       const next =
@@ -283,6 +307,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(
   const onScroll = React.useCallback(
     (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       scrollTop.current = event.nativeEvent.contentOffset.y;
+      if (scrollTop.current > 0) landingStopId.current = null;
       const line =
         event.nativeEvent.contentOffset.y +
         CURRENT_STOP_READING_LINE_PX -
@@ -306,9 +331,9 @@ export const WalkthroughView = React.memo(function WalkthroughView(
   const toggleCurrent = React.useMemo(
     () =>
       onToggleReviewed && currentStop && !marksBlocked
-        ? () => onToggleReviewed(currentStop)
+        ? () => onToggleReviewed(reviewedSource?.getStop(currentStop.id) ?? currentStop)
         : undefined,
-    [currentStop, marksBlocked, onToggleReviewed],
+    [currentStop, marksBlocked, onToggleReviewed, reviewedSource],
   );
   const askCurrent = React.useMemo(
     () =>
@@ -328,6 +353,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(
       component: WalkthroughContentsSheet,
       props: {
         stops: reading.stops,
+        reviewedSource,
         others: reading.others,
         reviewedCount:
           props.reviewedProgressAvailable === false
@@ -358,6 +384,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(
     reading.others,
     reading.reviewedCount,
     reading.stops,
+    reviewedSource,
     scrollToOthers,
     scrollToStop,
   ]);
@@ -384,7 +411,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(
         <SurfaceStateCard
           testID="walkthrough-restoring"
           kind="loading"
-          title={t('common.loading')}
+          title={t('walkthrough.restoring')}
         />
       );
     }
@@ -393,7 +420,8 @@ export const WalkthroughView = React.memo(function WalkthroughView(
         <SurfaceStateCard
           testID="walkthrough-unavailable"
           kind="error"
-          title={t('common.requestFailed')}
+          title={t('walkthrough.restoreFailedTitle')}
+          reason={t('walkthrough.restoreFailedReason')}
           action={
             props.onRetryRestore
               ? { label: t('common.retry'), onPress: props.onRetryRestore }
@@ -558,13 +586,15 @@ export const WalkthroughView = React.memo(function WalkthroughView(
         key="failed"
         testID="walkthrough"
         failure={failure}
+        lead={reading.phase === 'partial' && reading.stops.length > 0 ? t('walkthrough.notice.stoppedAfter', { count: reading.stops.length }) : undefined}
         onChooseModel={props.offline ? undefined : props.onChooseModel}
         onEnableExplain={props.offline ? undefined : props.onEnableExplain}
         onRetry={props.offline ? undefined : props.onRetry}
       />,
     );
   }
-  if (reading.phase === 'cancelled') {
+  // A typed cancellation already says it, with Try again, in the failure strip above.
+  if (reading.phase === 'cancelled' && !failure) {
     notices.push(
       <AttentionBanner
         key="cancelled"
@@ -603,6 +633,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(
         generatedLabel={props.generatedLabel}
         analysisMark={props.analysisMark}
         reviewedProgressAvailable={props.reviewedProgressAvailable}
+        reviewedProgressPending={props.reviewedProgressPending}
         phone={phone}
         narrow={props.layout === 'narrow'}
         overviewOpen={overviewOpen}
@@ -642,6 +673,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(
     const section = (
       <WalkthroughStopSection
         stop={stop}
+        reviewedSource={reviewedSource}
         current={stop.id === currentStop?.id}
         phone={phone}
         showKeys={!phone && stop.id === currentStop?.id}
@@ -671,6 +703,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(
         }
         onLayout={(event: LayoutChangeEvent) => {
           stopOffsets.current.set(stop.id, event.nativeEvent.layout.y);
+          if (stop.id === landingStopId.current) land();
         }}
         style={stop !== reading.stops[0] ? styles.stopDivider : null}
       >
@@ -790,11 +823,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(
         >
           {header}
           {sectionControl}
-          <View
-            onLayout={(event) => {
-              streamOffset.current = event.nativeEvent.layout.y;
-            }}
-          >
+          <View onLayout={measureStream}>
             {body}
           </View>
         </ScrollView>
@@ -808,56 +837,17 @@ export const WalkthroughView = React.memo(function WalkthroughView(
               disabled={currentIndex <= 0}
             />
             {props.onToggleReviewed ? (
-              <HappierPressable
-                testID="walkthrough-phone-mark"
-                accessibilityRole="button"
-                accessibilityLabel={
-                  currentStop.reviewed
-                    ? t('walkthrough.unmarkReviewedA11y')
-                    : t('walkthrough.markReviewedA11y')
-                }
-                checked={currentStop.reviewed}
-                disabled={Boolean(marksDisabled)}
-                onPress={() => props.onToggleReviewed?.(currentStop)}
-                style={(state) => [
-                  styles.phoneBarButton,
-                  styles.phoneBarGrow,
-                  state.pressed ? styles.sectionPressed : null,
-                  focusRingStyle({
-                    focused: state.focused,
-                    color: theme.colors.border.focus,
-                  }),
-                ]}
-              >
-                <Icon
-                  name={currentStop.reviewed ? 'check-circle' : 'circle'}
-                  size={ICON_SIZE.md}
-                  color={
-                    currentStop.reviewed
-                      ? theme.colors.state.success.foreground
-                      : theme.colors.text.primary
-                  }
-                />
-                <Text
-                  style={[
-                    styles.phoneBarLabel,
-                    currentStop.reviewed ? styles.phoneBarLabelDone : null,
-                  ]}
-                >
-                  {currentStop.reviewed
-                    ? t('walkthrough.reviewed')
-                    : t('walkthrough.markReviewed')}
-                </Text>
-              </HappierPressable>
+              <WalkthroughPhoneMark stop={currentStop} source={reviewedSource} disabled={Boolean(marksDisabled)} onToggleReviewed={props.onToggleReviewed} />
             ) : (
               <View style={styles.phoneBarGrow} />
             )}
-            {props.onAsk && !props.offline ? (
+            {(props.onAsk || props.askPending) && !props.offline ? (
               <PhoneBarButton
                 testID="walkthrough-phone-ask"
                 icon="chat-circle-dots"
                 label={t('walkthrough.askAboutStopA11y')}
                 onPress={() => props.onAsk?.(currentStop)}
+                disabled={!props.onAsk}
               />
             ) : null}
             <PhoneBarButton
@@ -879,6 +869,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(
     props.layout === 'wide' && reading.stops.length > 0 ? (
       <WalkthroughContents
         placement="rail"
+        reviewedSource={reviewedSource}
         stops={reading.stops}
         others={reading.others}
         reviewedCount={
@@ -919,11 +910,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(
           >
             <View style={styles.column}>
               {header}
-              <View
-                onLayout={(event) => {
-                  streamOffset.current = event.nativeEvent.layout.y;
-                }}
-              >
+              <View onLayout={measureStream}>
                 {body}
               </View>
             </View>
@@ -972,11 +959,36 @@ function PhoneBarButton(
   );
 }
 
+function WalkthroughPhoneMark(props: Readonly<{
+  stop: WalkthroughStop; source?: WalkthroughReviewedSource; disabled: boolean;
+  onToggleReviewed: NonNullable<WalkthroughViewProps['onToggleReviewed']>;
+}>) {
+  const { theme } = useUnistyles();
+  const stop = useWalkthroughReviewedStop(props.source, props.stop);
+  return <HappierPressable
+    testID="walkthrough-phone-mark"
+    accessibilityRole="button"
+    accessibilityLabel={stop.reviewed ? t('walkthrough.unmarkReviewedA11y') : t('walkthrough.markReviewedA11y')}
+    checked={stop.reviewed}
+    disabled={props.disabled}
+    onPress={() => props.onToggleReviewed(stop)}
+    style={(state) => [styles.phoneBarButton, styles.phoneBarGrow, state.pressed ? styles.sectionPressed : null,
+      focusRingStyle({ focused: state.focused, color: theme.colors.border.focus })]}
+  >
+    <Icon name={stop.reviewed ? 'check-circle' : 'circle'} size={ICON_SIZE.md}
+      color={stop.reviewed ? theme.colors.state.success.foreground : theme.colors.text.primary} />
+    <Text style={[styles.phoneBarLabel, stop.reviewed ? styles.phoneBarLabelDone : null]}>
+      {stop.reviewed ? t('walkthrough.reviewed') : t('walkthrough.markReviewed')}
+    </Text>
+  </HappierPressable>;
+}
+
 /** The phone contents sheet (lab WT1-A2p): the rail's rows, in thumb reach. */
 function WalkthroughContentsSheet(
   props: Readonly<{
     onClose: () => void;
     stops: WalkthroughReading['stops'];
+    reviewedSource?: WalkthroughReviewedSource;
     others: WalkthroughReading['others'];
     reviewedCount: number | null;
     currentStopId: string | null;
@@ -988,6 +1000,7 @@ function WalkthroughContentsSheet(
     <WalkthroughContents
       placement="sheet"
       stops={props.stops}
+      reviewedSource={props.reviewedSource}
       others={props.others}
       reviewedCount={props.reviewedCount}
       currentStopId={props.currentStopId}
@@ -999,7 +1012,7 @@ function WalkthroughContentsSheet(
 }
 
 const styles = StyleSheet.create((theme) => ({
-  root: { flex: 1, minHeight: 0, backgroundColor: theme.colors.surface.base },
+  root: { flex: 1, minHeight: 0 },
   row: { flex: 1, minHeight: 0, flexDirection: 'row' },
   streamFrame: { flex: 1, minWidth: 0, position: 'relative' },
   stream: {
@@ -1049,7 +1062,6 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s10,
     minHeight: 52,
     paddingHorizontal: theme.space.s16,
-    backgroundColor: theme.colors.surface.base,
     borderTopWidth: StyleSheet.hairlineWidth,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderColor: theme.colors.border.default,

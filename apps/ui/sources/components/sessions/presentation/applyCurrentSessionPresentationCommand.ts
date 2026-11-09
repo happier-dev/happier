@@ -4,7 +4,7 @@ import {
 import type {
     ComposerTransactionResultV1,
     ComposerTransactionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/ui/composer';
 import type {
     CurrentSessionPresentationAckV1,
     CurrentSessionPresentationIntentResultV1,

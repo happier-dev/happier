@@ -19,6 +19,7 @@ import { WalkthroughStopNumber } from './WalkthroughAtoms';
 import { Typography } from '@/constants/Typography';
 import type { createScmDiffSummaryResultOperations, ScmCommitPlanOperationResult } from '@/sync/ops/scmDiffSummary/results';
 import { t } from '@/text';
+import { useWalkthroughDraft } from './useWalkthroughDraft';
 
 export type WalkthroughSavedActionsProps = Readonly<{
     result: ScmDiffSummaryResult;
@@ -37,15 +38,9 @@ export type WalkthroughSavedActionsProps = Readonly<{
     undoInNotice?: boolean;
     /** The pushed phone reading: the open edit takes the narrower inset. */
     phone?: boolean;
-}>;
-
-type Draft = Readonly<{
-    expectedRevision: number;
-    base: ScmDiffSummaryWalkthrough;
-    title: string;
-    stopId?: string;
-    stopTitle: string;
-    prose: string;
+    /** Exact Account/host/result identity, excluding its changing revision. */
+    editorKey?: string;
+    paneScopeId?: string;
 }>;
 
 export type WalkthroughSavedActions = Readonly<{
@@ -57,8 +52,8 @@ export type WalkthroughSavedActions = Readonly<{
 
 /**
  * The saved result's operations. They are offered once, in the comparison menu, so the reading column holds the
- * reading; choosing one opens its editor in place under the header. Drafts belong to this editing leaf; all saved
- * state and revision decisions stay at the machine owner.
+ * reading; choosing one opens its editor in place under the header. Drafts follow the retained pane lifetime;
+ * all saved state and revision decisions stay at the machine owner.
  */
 export function useWalkthroughSavedActions(input: WalkthroughSavedActionsProps | null): WalkthroughSavedActions {
     const { theme } = useUnistyles();
@@ -66,7 +61,8 @@ export function useWalkthroughSavedActions(input: WalkthroughSavedActionsProps |
     // only while `present`, so they read `props` as the saved input it then is.
     const props = input as WalkthroughSavedActionsProps;
     const present = input !== null;
-    const [draft, setDraft] = React.useState<Draft | null>(null);
+    const [draft, setDraft] = useWalkthroughDraft(input
+        ? input.editorKey ?? JSON.stringify([input.cwd, input.result.resultId]) : null, input?.paneScopeId);
     const [refining, setRefining] = React.useState(false);
     const [discussing, setDiscussing] = React.useState(false);
     const [message, setMessage] = React.useState('');
@@ -78,7 +74,6 @@ export function useWalkthroughSavedActions(input: WalkthroughSavedActionsProps |
     const latest = React.useRef(props);
     latest.current = props;
     React.useEffect(() => {
-        setDraft(null);
         setRefining(false);
         setDiscussing(false);
         setMessage('');
@@ -166,13 +161,11 @@ export function useWalkthroughSavedActions(input: WalkthroughSavedActionsProps |
     const items: DropdownMenuItem[] = [];
     const subtitle = disabledReason ?? undefined;
     if (present && walkthrough) items.push({ id: 'edit', testID: 'walkthrough-saved-edit', title: t('walkthrough.saved.edit'), icon: icon('pencil-simple'), disabled: blocked, subtitle });
-    if (present && props.result.canUndo && !props.undoInNotice) items.push({ id: 'undo', testID: 'walkthrough-saved-undo', title: t('walkthrough.notice.undo'), icon: icon('arrow-arc-left'), disabled: blocked, subtitle });
+    if (present && props.result.canUndo && !props.undoInNotice) items.push({ id: 'undo', testID: 'walkthrough-saved-undo', title: t('walkthrough.saved.undoLast'), icon: icon('arrow-arc-left'), disabled: blocked, subtitle });
     if (present && canGenerate) items.push({ id: 'refine', testID: 'walkthrough-saved-refine', title: t('walkthrough.saved.refine'), icon: icon('sparkle'), disabled: blocked || !walkthrough, subtitle });
     if (present && canGenerate && props.nativeDiscussion) items.push({ id: 'discuss', testID: 'walkthrough-saved-discuss', title: t('walkthrough.saved.discuss'), icon: icon('chat-circle-dots'), disabled: blocked, subtitle });
     if (present && canGenerate && !props.result.output.outputs?.summary) items.push({ id: 'add-summary', testID: 'walkthrough-saved-add-summary', title: t('walkthrough.saved.addSummary'), icon: icon('file-text'), disabled: blocked, subtitle });
-    if (present && canGenerate && props.result.output.comparison?.source.kind === 'workingTree' && !props.result.output.outputs?.commitPlan) {
-        items.push({ id: 'add-commitPlan', testID: 'walkthrough-saved-add-commitPlan', title: t('walkthrough.saved.addCommitPlan'), icon: icon('git-commit'), disabled: blocked, subtitle });
-    }
+    // Propose commits is the comparison's (its Commits view adds the proposal to this walkthrough), never a second row here.
     const select = (id: string) => {
         if (blocked) return;
         if (id === 'edit') openEdit();
@@ -180,7 +173,6 @@ export function useWalkthroughSavedActions(input: WalkthroughSavedActionsProps |
         else if (id === 'refine' && walkthrough) { if (!draft) openEdit(); setRefining(true); }
         else if (id === 'discuss') setDiscussing(true);
         else if (id === 'add-summary') void invoke(() => props.operations.addOutputs({ ...revisionInput(), outputs: ['summary'] }));
-        else if (id === 'add-commitPlan') void invoke(() => props.operations.addOutputs({ ...revisionInput(), outputs: ['commitPlan'] }));
     };
     const selectRef = React.useRef(select);
     selectRef.current = select;

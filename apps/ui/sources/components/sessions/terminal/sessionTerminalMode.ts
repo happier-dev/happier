@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { createSessionPaneScopeId, parseSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
-import type { SessionTerminalMemberV1, SessionTerminalTargetV1 } from '@happier-dev/protocol';
+import type { SessionTerminalMemberV1, SessionTerminalTargetV1 } from '@happier-dev/protocol/terminal/workspace';
 import { getActiveSessionTerminal, readSessionTerminalWorkspace } from './sessionTerminalWorkspace';
 import { dispatchSessionTerminalWorkspaceCommand, readSessionTerminalWorkspaceForScope, subscribeSessionTerminalWorkspace } from './sessionTerminalWorkspaceRuntime';
 

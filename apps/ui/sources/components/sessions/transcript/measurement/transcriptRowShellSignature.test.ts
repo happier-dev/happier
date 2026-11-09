@@ -159,9 +159,6 @@ describe('buildTranscriptRowShellSignature', () => {
             groupingMode: 'turns',
             item: params.item,
             latestCommittedActivityKey: params.latestCommittedActivityKey ?? null,
-            // No `action-draft` row in this file; the option resolver is exercised in
-            // `actionDraftStatusChurn.consumers.test.ts`.
-            resolveActionDraftFieldOptions: () => [],
             resolveThinkingExpanded: () => false,
             sessionActive: params.sessionActive ?? false,
             widthBucket: 'w:400',

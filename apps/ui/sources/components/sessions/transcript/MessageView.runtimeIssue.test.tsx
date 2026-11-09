@@ -64,6 +64,38 @@ describe('MessageView runtime failure rows', () => {
         standardCleanup();
     });
 
+    it.each([false, true])('offers a capability recovery link only when the source can navigate (%s)', async navigationEnabled => {
+        const { MessageView } = await import('./MessageView');
+        const message: Message = { kind: 'agent-event', id: 'capability', localId: null, createdAt: 1,
+            event: { type: 'message', message: 'Linear could not start', capabilityNoticeV1: { v: 1, items: [
+                { kind: 'mcp_server', name: 'Linear', itemId: 'linear', code: 'missing_value_ref', detail: 'env:LINEAR_API_KEY' },
+            ] } } };
+        const source = createTestSessionTranscriptSource({ messages: [message], navigate: navigationEnabled ? vi.fn() : null,
+            interaction: { canSendMessages: true, canApprovePermissions: true } });
+        const screen = await renderScreen(<MessageView message={message} metadata={null} sessionId="s1" />, source);
+        expect(Boolean(screen.findHostByTestId('transcript-event-capability-notice-open'))).toBe(navigationEnabled);
+    });
+
+    it.each(['owner', 'shared-editor'] as const)('reads a typed Team failure as a runtime notice for a %s without owner metadata', async viewer => {
+        const { MessageView } = await import('./MessageView');
+        const preview = 'Shared Team credential refused the request';
+        const messages = projectPersistedRows([{ id: 'team-failure', data: { type: 'message', message: preview },
+            meta: { source: 'runtime', runtimeIssueV1: { v: 1, scope: 'primary_session', status: 'failed',
+                code: 'team_credential', source: 'team_credential', occurredAt: 1_000, sanitizedPreview: preview,
+                teamCredential: { v: 1, resourceId: 'selected-resource', reasonCode: 'resource_forbidden' } } } }]);
+        const source = createTestSessionTranscriptSource({ sessionId: 's1', messages, metadata: null,
+            authorship: { viewerScope: { serverId: 'home', accountId: viewer === 'owner' ? 'B' : 'A' },
+                hasOtherNamedCollaborator: true },
+            interaction: { canSendMessages: true, canApprovePermissions: viewer === 'owner' } });
+        const screen = await renderScreen(<MessageView message={messages[0]!} metadata={null} sessionId="s1" />, source);
+        expect(screen.findByTestId('transcript-event-runtime-issue')).not.toBeNull();
+        const { MarkdownView } = await import('@/components/markdown/MarkdownView');
+        expect(screen.findAllByType(MarkdownView)).toHaveLength(0);
+        expect(screen.getTextContent()).toContain('teams.credentials.sessionDeniedTitle');
+        expect(screen.getTextContent()).toContain('teams.credentials.forbidden');
+        expect(screen.getTextContent()).not.toContain('codex turn failed:');
+    });
+
     it('renders a persisted turn failure as an error event row, not as assistant prose', async () => {
         const { MessageView } = await import('./MessageView');
         const messages = projectPersistedRows([

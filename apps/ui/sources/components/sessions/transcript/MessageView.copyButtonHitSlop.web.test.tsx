@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { standardCleanup } from '@/dev/testkit';
 import { renderWithSessionTranscriptSource as renderScreen } from '@/dev/testkit/sessionTranscriptSource';
-import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
+import { installMessageViewCommonModuleMocks, revealTranscriptMessageActions } from './messageViewTestHelpers';
 import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -115,6 +115,7 @@ describe('MessageView (copy button target, web)', () => {
             <MessageView message={message} metadata={null} sessionId="s1" />,
         );
 
+        await revealTranscriptMessageActions(screen, 'local-1');
         const copyButton = screen.findByTestId('transcript-message-copy:local-1');
         expect(copyButton).toBeTruthy();
 

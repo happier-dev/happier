@@ -6,9 +6,10 @@ vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import {
-    DaemonSimulatorPreviewSnapshotRequestV1Schema, DaemonSimulatorPreviewSnapshotResponseV1Schema,
-    DEFAULT_DEVICE_SIMULATOR_PREVIEW_CAPABILITIES, SimulatorPreviewSnapshotV1Schema,
-} from '@happier-dev/protocol';
+    DaemonSimulatorPreviewSnapshotRequestV1Schema, DaemonSimulatorPreviewSnapshotResponseV1Schema, SimulatorPreviewSnapshotV1Schema,
+} from '@happier-dev/protocol/devices/simulator/runtimeV1';
+import {
+    DEFAULT_DEVICE_SIMULATOR_PREVIEW_CAPABILITIES} from '@happier-dev/protocol/features/payload/capabilities/deviceCapabilities';
 import { RPC_METHODS, RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { createMachineFixture, renderScreen } from '@/dev/testkit';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';

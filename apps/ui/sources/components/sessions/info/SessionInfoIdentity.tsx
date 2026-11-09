@@ -1,20 +1,21 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { Avatar } from '@/components/ui/avatar/Avatar';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import type { IconName } from '@/components/ui/icons/Icon';
+import { SessionElapsedClock } from '@/components/sessions/companion/summary/SessionSummaryStatusLine';
+import { SessionAvatar } from '@/components/sessions/bots/face/SessionAvatar';
+import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
+import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { PageHeader, type PageHeaderTextEditor } from '@/components/ui/layout/PageHeader';
 import { PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { readSessionTurnStartedAtMs } from '@/sync/domains/session/awareness/useSessionAwareness';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import {
-  getSessionAvatarId,
   type SessionStatus,
 } from '@/utils/sessions/sessionUtils';
 
@@ -57,16 +58,23 @@ export const SessionInfoIdentity = React.memo(function SessionInfoIdentity(
     onClose: () => void;
   }>,
 ) {
+  const { theme } = useUnistyles();
+  // The one next step, quiet beside the status it answers (lab csinfo I2min "Resume"): the pane's small
+  // labelled action, never a call-to-action slab.
   const action = props.contextAction ? (
-    <RoundButton
+    <ToolbarButton
       testID={`session-info-context-action:${props.contextAction.id}`}
-      size="small"
-      display="secondary"
-      title={props.contextAction.label}
+      label={props.contextAction.label}
+      icon={<Icon name={props.contextAction.icon} size={12} color={theme.colors.text.primary} />}
       onPress={props.contextAction.onPress}
-      loading={props.contextAction.loading}
+      // The meta line sits right under the button (nothing is free below it); the free space is above: the
+      // pane header band's lower air, or the route header's gap to the title.
+      hitReach={{ top: props.presentation === 'route' ? theme.space.s4 : theme.space.s12, bottom: 0 }}
+      busy={props.contextAction.loading}
+      disabled={props.contextAction.loading}
     />
   ) : null;
+  const turnStartedAtMs = readSessionTurnStartedAtMs(props.session);
   const statusLine = (
     <View style={styles.statusLine}>
       <StatusDot
@@ -81,6 +89,13 @@ export const SessionInfoIdentity = React.memo(function SessionInfoIdentity(
       >
         {props.status.statusText}
       </Text>
+      {/* While a turn runs, how long it has (lab csinfo I2 "Working · 4 min"): the one shared clock. */}
+      {turnStartedAtMs !== null ? (
+        <>
+          <Text style={styles.statusElapsed} aria-hidden>·</Text>
+          <SessionElapsedClock sinceMs={turnStartedAtMs} testID="session-info-status-elapsed" style={styles.statusElapsed} />
+        </>
+      ) : null}
     </View>
   );
   const metaLine =
@@ -112,8 +127,9 @@ export const SessionInfoIdentity = React.memo(function SessionInfoIdentity(
         title={props.sessionName}
         titleEditor={props.titleEditor}
         leading={
-          <Avatar
-            id={getSessionAvatarId(props.session)}
+          <SessionAvatar
+            session={props.session}
+            serverId={props.session.serverId}
             size={48}
             monochrome={!props.status.isConnected}
             flavor={props.agentId}
@@ -178,6 +194,11 @@ const styles = StyleSheet.create((theme) => ({
   statusText: {
     ...Typography.variant('body', 'medium'),
     flexShrink: 1,
+  },
+  statusElapsed: {
+    ...Typography.variant('body'),
+    ...Typography.tabular(),
+    color: theme.colors.text.secondary,
   },
   metaRow: {
     flexDirection: 'row',

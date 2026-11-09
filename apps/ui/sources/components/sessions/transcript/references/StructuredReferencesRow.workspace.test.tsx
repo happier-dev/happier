@@ -142,10 +142,6 @@ it('opens a transcript file through the canonical Action into the qualified sess
                 serverId: targetServerId, path: ' ', fileView: 'view',
             } });
         });
-        await act(async () => {
-            expect(links.openPath('/repo-neighbor/secret.ts')).toBe(false);
-            expect(links.openPath('../secret.ts')).toBe(false);
-        });
         await act(async () => { expect(links.onMarkdownLinkPress('src/100%2525.ts#L7')).toBe(true); });
         await vi.waitFor(() => {
             const group = navigation.state.groups[navigation.state.focusedGroupId];

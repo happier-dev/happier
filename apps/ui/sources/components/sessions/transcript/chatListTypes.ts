@@ -17,7 +17,7 @@ import type {
     TranscriptHostWakeCountByMessageId,
 } from '@/components/sessions/transcript/events/transcriptEventEmphasis';
 import type { ExternalSessionOperationActionRef } from '@/components/sessions/external/progress/ExternalImportProgressCard';
-import type { ExternalSessionOperationProgressV1 } from '@happier-dev/protocol';
+import type { ExternalSessionOperationProgressV1 } from '@happier-dev/protocol/sessions/external/operationV1';
 import type { ForkAwareMessageMetadata } from './forkContext/buildForkAwareMessageDescriptors';
 
 export type ChatTranscriptListItem = TranscriptRowShellItem;

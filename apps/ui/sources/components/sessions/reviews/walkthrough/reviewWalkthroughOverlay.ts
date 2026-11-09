@@ -1,4 +1,6 @@
-import type { ReviewFinding, ReviewFindingOverlayEntry, ReviewFindingsOverlay, ScmDiffSummaryWalkthrough } from '@happier-dev/protocol';
+import type { ReviewFinding} from '@happier-dev/protocol/reviews/ReviewFinding';
+import type { ReviewFindingOverlayEntry, ReviewFindingsOverlay} from '@happier-dev/protocol/reviews/projectReviewFindingsOverlay';
+import type { ScmDiffSummaryWalkthrough } from '@happier-dev/protocol/scm/diffSummary';
 import type { ReviewOverlayFinding } from '@happier-dev/protocol/reviews/projectReviewFindingsOverlay';
 
 import { formatReviewFindingLocation, REVIEW_SEVERITY_RANK } from '@/components/sessions/reviews/findings/reviewFindingPresentation';

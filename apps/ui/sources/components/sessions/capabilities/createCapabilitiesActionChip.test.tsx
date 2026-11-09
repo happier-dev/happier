@@ -49,3 +49,27 @@ it('keeps the chip as wide as a counted label while counts load and when they ar
   });
   expect(labelWidth(counted)).toBe(labelWidth(unknown));
 });
+
+it('warms its popover on the chip shell\'s intent signals and, in a chip rail, never reaches into the line above or below', async () => {
+  const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
+  const { layoutHitArea } = await import('@/dev/testkit/harness/hitFrameReach');
+  const { AgentInputChipRowReach, resolveAgentInputChipRailHitReach } = await import('@/components/sessions/agentInput/definitions/agentInputChipRowReach');
+  const { createCapabilitiesActionChip } = await import('./createCapabilitiesActionChip');
+  const onIntent = vi.fn();
+  const chip = createCapabilitiesActionChip({ label: 'Skills', attention: false, stabilityKey: 'session:one', popoverContent: () => null, onIntent });
+  const screen = await renderScreen(
+    <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}><AgentInputChipRowReach reach={resolveAgentInputChipRailHitReach(6)}>
+      {chip.render({
+        chipStyle: () => ({ height: 24 }), iconColor: '#000', showLabel: true, textStyle: {}, countTextStyle: {},
+        chipAnchorRef: React.createRef(), toggleCollapsedPopover: () => {},
+      } as unknown as Parameters<typeof chip.render>[0])}
+    </AgentInputChipRowReach></HappierUiPlatformProvider>,
+  );
+  const host = () => screen.findHostByTestId('session-capabilities-chip');
+  act(() => { host()!.props.onHoverIn(); host()!.props.onPressIn(); host()!.props.onFocus(); });
+  expect(onIntent).toHaveBeenCalledTimes(3);
+  const area = await layoutHitArea(host, { width: 90, height: 24 });
+  // A finger's target reaches only half the rail's line gap toward the chip lines above and below it.
+  expect(area.insets.top).toBe(0.5);
+  expect(area.insets.bottom).toBe(0.5);
+});

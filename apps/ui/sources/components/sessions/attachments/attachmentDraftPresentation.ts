@@ -19,6 +19,7 @@ export function resolveAttachmentImagePresentation(source: AttachmentUploadSourc
 export function projectAttachmentDraftToAgentInputAttachment(draft: AttachmentDraft, options: Readonly<{
     webPreviewUri?: string;
     onRemove?: () => void;
+    stageEdit?: AgentInputAttachment['stageEdit'];
 }> = {}): AgentInputAttachment {
     const source = draft.source;
     const image = resolveAttachmentImagePresentation(source);
@@ -28,8 +29,9 @@ export function projectAttachmentDraftToAgentInputAttachment(draft: AttachmentDr
         key: draft.id, label: resolveAttachmentSourceName(source),
         attachmentType: source.kind === 'folder' ? 'folder' : 'file', status: draft.status,
         preview: uri && image ? { kind: 'image', uri, mimeType: image.mimeType } : undefined,
-        uploadProgress: draft.uploadProgress, error: draft.error,
+        uploadProgress: draft.uploadProgress, error: draft.error, errorCode: draft.errorCode,
         ...(options.onRemove ? { onRemove: options.onRemove } : {}),
+        ...(image && options.stageEdit ? { stageEdit: options.stageEdit, hasImageMarks: draft.edit !== undefined } : {}),
     };
 }
 

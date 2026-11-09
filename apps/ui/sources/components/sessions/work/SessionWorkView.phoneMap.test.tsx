@@ -4,25 +4,35 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AuthTokenProvenanceSchema } from '@happier-dev/protocol/auth/authToken';
 
-import { createDeferred, createMachineFixture, createSessionFixture, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, createMachineFixture, createRenderCommitCounter, createSessionFixture, pressTestInstanceAsync, renderScreen, standardCleanup, useRenderCommitCounter } from '@/dev/testkit';
 import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
+import { createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { selectSessionReportSubtree } from './reportSubtree';
 import { installSessionSubagentCommonModuleMocks } from '@/components/sessions/agents/sessionSubagentTestHelpers';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { CurrentSessionPresentationActionInputV1Schema, type CurrentSessionPresentationIntentResultV1 } from '@happier-dev/protocol/sessions';
+import type { PresentationService } from '@happier-dev/plugin-sdk/interactions';
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const routerPush = vi.hoisted(() => vi.fn());
 const routeParams = vi.hoisted(() => ({ current: {} as Record<string, string> }));
+const deviceDimensions = vi.hoisted(() => ({ width: 390, height: 844, scale: 1, fontScale: 1 }));
+// External authors use this public service contract; the real host schema and mounted bridge consume it below.
+const workIntents = {
+    list: { kind: 'work.view.select', view: 'list' },
+    map: { kind: 'work.view.select', view: 'map' },
+    recent: { kind: 'work.recent.show_more' },
+    expand: { kind: 'work.map.expand' },
+} satisfies Record<string, Parameters<PresentationService['present']>[0]>;
 
 installSessionSubagentCommonModuleMocks({
     storage: () => vi.importActual<typeof import('@/sync/domains/state/storage')>('@/sync/domains/state/storage'),
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-        const dimensions = { width: 390, height: 844, scale: 1, fontScale: 1 };
         return createReactNativeWebMock({
-            Dimensions: { get: () => dimensions, addEventListener: () => ({ remove() {} }) },
-            useWindowDimensions: () => dimensions,
+            Dimensions: { get: () => deviceDimensions, addEventListener: () => ({ remove() {} }) },
         });
     },
 });
@@ -37,6 +47,7 @@ const { createWorkflowRunSummaryFixture } = await import('@/dev/testkit/fixtures
 const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
 const { SurfaceFreshnessLine } = await import('@/components/ui/surfaces/SurfaceFreshnessLine');
 const { resolveServerScopedMachine } = await import('@/sync/domains/machines/resolveServerScopedMachine');
+const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/machinePresence');
 
 // Keep the Work producer, launcher, selectors, pane and header publication real.
 const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
@@ -50,16 +61,20 @@ const { PaneHeader } = await import('@/components/appShell/panes/PaneHeader');
 const { PaneHeaderActions } = await import('@/components/appShell/panes/PaneHeaderActions');
 const { SurfaceStateSizeProvider } = await import('@/components/ui/surfaces/surfaceStateSize');
 const { useSessionAgentActivity } = await import('@/hooks/session/useSessionAgentActivity');
-const { SessionWorkSourcesProvider, useSessionWorkSourcesOwner } = await import('./sessionWorkSources');
+const { SessionWorkSourcesProvider, useSessionWorkSources, useSessionWorkSourcesOwner } = await import('./sessionWorkSources');
 const { SessionWorkView } = await import('./SessionWorkView');
+const { SessionWorkMapDetailsView } = await import('./SessionWorkMapDetailsView');
+const { SessionPresentedSurfacePresentationTarget } = await import('@/components/sessions/companion/presentation/SessionPresentedSurfacePresentationTarget');
+const { readSessionPresentationAdapterAtAddress } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
+const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
 const { useAppPaneScope } = await import('@/components/appShell/panes/hooks/useAppPaneScope');
+const { createSessionPaneScopeId } = await import('@/components/sessions/panes/sessionPaneScopeId');
 const { createExecutionRunLauncherDetailsTab, createInteractiveExecutionRunDraftDetailsTab, createDiscussionSelectionInteractiveExecutionRunDraftDetailsTab } = await import('@/components/sessions/runs/launcher/executionRunLauncherModel');
-const { readInteractiveExecutionRunDraftNavigationIntent } = await import('@/components/sessions/runs/launcher/interactiveExecutionRunDraftNavigationIntent');
 const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
 const { ensureSessionDraftRepositoryHydrated, resetSessionDraftRepositoryForTests, writeExistingSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
 
-function PaneProbe(props: Readonly<{ onPane: (pane: AppPaneScopeApi) => void }>) {
-    const pane = useAppPaneScope('session:lead');
+function PaneProbe(props: Readonly<{ scopeId: string; onPane: (pane: AppPaneScopeApi) => void }>) {
+    const pane = useAppPaneScope(props.scopeId);
     React.useLayoutEffect(() => props.onPane(pane), [pane, props.onPane]);
     return null;
 }
@@ -71,20 +86,41 @@ function WorkHeader() {
     } />;
 }
 
+function CountedWorkMap(props: Readonly<{ serverId: string; counter: ReturnType<typeof createRenderCommitCounter> }>) {
+    // Instrument the Map's real source subscription; the positive control also checks its painted node.
+    useSessionWorkSources();
+    useRenderCommitCounter(props.counter);
+    return <SessionWorkMapDetailsView sessionId="lead" serverId={props.serverId}
+        scopeId={createSessionPaneScopeId('lead', props.serverId)} />;
+}
+
 function WorkHost(props: Readonly<{ serverId: string; onPane?: (pane: AppPaneScopeApi) => void;
+    presentationTarget?: boolean; showWork?: boolean; workPresented?: boolean;
+    children?: React.ReactNode;
     onSources?: (sources: ReturnType<typeof useSessionWorkSourcesOwner>) => void }>) {
     const activity = useSessionAgentActivity({ sessionId: 'lead', serverId: props.serverId });
     const sources = useSessionWorkSourcesOwner({ sessionId: 'lead', serverId: props.serverId,
         ownerMetadata: storage.getState().sessions.lead?.metadata ?? null, agentActivity: activity });
     React.useLayoutEffect(() => props.onSources?.(sources), [props.onSources, sources]);
+    const scopeId = createSessionPaneScopeId('lead', props.serverId);
+    const workView = props.showWork !== false ? <SessionWorkView sessionId="lead" serverId={props.serverId} scopeId={scopeId} /> : null;
     return <SessionWorkSourcesProvider value={sources}>
+        {props.presentationTarget ? <SessionPresentedSurfacePresentationTarget sessionId="lead" serverId={props.serverId}
+            presented openBoard={() => ({ status: 'unavailable' })}
+            revealBoardItem={() => ({ status: 'unavailable' })} returnToChat={() => ({ status: 'unchanged' })}
+            openFullSurface={() => ({ status: 'unavailable' })} /> : null}
         <AppPaneProvider>
-            {props.onPane ? <PaneProbe onPane={props.onPane} /> : null}
+            {props.children}
+            {props.onPane ? <PaneProbe scopeId={scopeId} onPane={props.onPane} /> : null}
             <PaneHeaderSlotProvider>
                 <WorkHeader />
                 <PaneHeaderSlotScope slotKey="work">
                     <SurfaceStateSizeProvider size="phone">
-                        <SessionWorkView sessionId="lead" serverId={props.serverId} scopeId="session:lead" />
+                        {props.presentationTarget ? (
+                            <PluginSurfaceFocusEligibilityProvider active={props.workPresented !== false}>
+                                {workView}
+                            </PluginSurfaceFocusEligibilityProvider>
+                        ) : workView}
                     </SurfaceStateSizeProvider>
                 </PaneHeaderSlotScope>
             </PaneHeaderSlotProvider>
@@ -93,12 +129,185 @@ function WorkHost(props: Readonly<{ serverId: string; onPane?: (pane: AppPaneSco
 }
 
 afterEach(async () => {
+    deviceDimensions.width = 390;
     routeParams.current = {};
     await standardCleanup();
 });
 
+/**
+ * A Session with a turn in flight. An idle Session ends its List row with a quiet time and folds out of the Map
+ * (lab `session-A2`), so journeys that need a drawn node use a working one.
+ */
+function workingTurn() {
+    const now = Date.now();
+    return { active: true, activeAt: now, presence: 'online', latestTurnStatus: 'in_progress', latestTurnStatusObservedAt: now } as const;
+}
+
 describe('phone Work List → Map', () => {
-    it('reopens a retained start draft on a phone through the Run page that already shows its draft', async () => {
+    it('settles Map and commits nothing for unrelated Session arrivals', async () => {
+        const connection = await restoreServerAccountForTest({
+            serverUrl: 'https://work-map-counts.test', serverIdentityId: 'srv_work_map_counts', accountId: 'account',
+            request: async url => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+                if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+                return Response.json({}, { status: 404 });
+            },
+        });
+        const initial = storage.getState();
+        const serverId = connection.serverId;
+        const draftScope = getActiveServerAccountScope();
+        if (!draftScope) throw new Error('Expected the restored Account draft scope');
+        await ensureSessionDraftRepositoryHydrated(draftScope);
+        const lead = createSessionFixture({ id: 'lead', serverId });
+        const child = createSessionListRenderableSessionFixture({ id: 'mapped-child', serverId, manager: { sessionId: 'lead' }, ...workingTurn() });
+        const unrelated = Array.from({ length: 1_000 }, (_, i) => createSessionFixture({ id: `unrelated-${i}`, serverId }));
+        storage.setState({ sessions: { lead, ...Object.fromEntries(unrelated.map(session => [session.id, session])) },
+            sessionListRowsByServerId: { [serverId]: { [child.id]: child } } });
+        const counts = createRenderCommitCounter();
+        const mapCounts = createRenderCommitCounter();
+        const screen = await renderScreen(<React.Profiler id="work-map" onRender={counts.commit}>
+            <WorkHost serverId={serverId} presentationTarget>
+                <CountedWorkMap serverId={serverId} counter={mapCounts} />
+            </WorkHost>
+        </React.Profiler>, {
+            wrapper: ({ children }) => <InjectedAuthProvider credentials={connection.credentials}>{children}</InjectedAuthProvider>,
+        });
+        try {
+            expect(screen.findHostByTestId('session-work-map-details-node-session:mapped-child')).not.toBeNull();
+            expect(mapCounts.read().commits).toBeGreaterThan(0);
+            counts.reset();
+            await act(async () => {
+                readSessionPresentationAdapterAtAddress({ serverId, sessionId: 'lead' })?.apply(workIntents.map);
+            });
+            expect(screen.findHostByTestId('session-work-map-node-session:mapped-child')).not.toBeNull();
+            // The view switch and its shared pane-header publication each commit once.
+            expect(counts.read().commits).toBe(2);
+            // Count the real Map subtree: other Work leaves have independent lifecycle updates.
+            mapCounts.reset();
+            for (let index = 0; index < 100; index++) {
+                await act(async () => {
+                    const current = storage.getState();
+                    selectSessionReportSubtree(current.sessions, 'lead', connection.home.id, current.sessionListRowsByServerId);
+                    storage.setState(state => ({ sessions: { ...state.sessions,
+                        [unrelated[index]!.id]: { ...unrelated[index]!, seq: index + 1 },
+                    } }));
+                });
+            }
+            expect(mapCounts.read()).toEqual({ renders: 0, commits: 0 });
+            await act(async () => {
+                storage.setState({ sessionListRowsByServerId: { [serverId]: {
+                    [child.id]: { ...child, metadata: { ...child.metadata!, name: 'Updated report' } },
+                } } });
+            });
+            expect(screen.getTextContent()).toContain('Updated report');
+            const detailNode = screen.findHostByTestId('session-work-map-details-node-session:mapped-child');
+            expect(JSON.stringify(detailNode?.props.accessibilityLabel)).toContain('Updated report');
+            expect(mapCounts.read().commits).toBeGreaterThan(0);
+        } finally {
+            await screen.unmount();
+            storage.setState(initial, true);
+            await connection.dispose();
+        }
+    });
+
+    it.each(['phone', 'desktop'] as const)('applies author intents to the mounted Work view on %s, retains disclosure across view switches, and retires on unmount', async device => {
+        deviceDimensions.width = device === 'phone' ? 390 : 1400;
+        const connection = await restoreServerAccountForTest({
+            serverUrl: 'https://work-presentation.test', serverIdentityId: 'srv_work_presentation', accountId: 'account',
+            request: async url => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+                if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+                return Response.json({}, { status: 404 });
+            },
+        });
+        const initial = storage.getState();
+        const serverId = connection.home.id;
+        const draftScope = getActiveServerAccountScope();
+        if (!draftScope) throw new Error('Expected the restored Account draft scope');
+        await ensureSessionDraftRepositoryHydrated(draftScope);
+        const lead = createSessionFixture({ id: 'lead', serverId });
+        const children = Array.from({ length: 6 }, (_, i) => createSessionFixture({ id: `child-${i}`, serverId,
+            manager: { sessionId: 'lead' }, latestTurnStatus: 'completed' }));
+        const mappedChild = createSessionFixture({ id: 'mapped-child', serverId, manager: { sessionId: 'lead' }, ...workingTurn() });
+        storage.setState({ sessions: { lead, [mappedChild.id]: mappedChild, ...Object.fromEntries(children.map(child => [child.id, child])) }, sessionListRowsByServerId: {} });
+        let pane: AppPaneScopeApi | undefined;
+        const screen = await renderScreen(<WorkHost serverId={serverId} presentationTarget onPane={next => { pane = next; }} />, {
+            wrapper: ({ children }) => <InjectedAuthProvider credentials={connection.credentials}>{children}</InjectedAuthProvider>,
+        });
+        const apply = async (raw: unknown) => {
+            const { intent } = CurrentSessionPresentationActionInputV1Schema.parse({ intent: raw });
+            let result: CurrentSessionPresentationIntentResultV1 | undefined;
+            await act(async () => { result = readSessionPresentationAdapterAtAddress({ serverId, sessionId: 'lead' })?.apply(intent); });
+            return result;
+        };
+        try {
+            const scroll = screen.findHostByTestId('session-work-scroll');
+            // The Goal row stands under the header on a phone too, where no composer is mounted beside the page
+            // to offer it; beside the composer on desktop it follows what that composer offers (this session's has none).
+                        expect(screen.getTextContent().includes('session.workState.goal.title')).toBe(device === 'phone');
+            expect(screen.findByTestId('session-work-state-recent-more')).not.toBeNull();
+            expect(await apply(workIntents.recent)).toEqual({ status: 'applied' });
+            expect(screen.findByTestId('session-work-state-recent-more')).toBeNull();
+            expect(await apply(workIntents.recent)).toEqual({ status: 'unchanged' });
+            expect(await apply(workIntents.map)).toEqual({ status: 'applied' });
+            // Finished leaves intentionally fold out of Map; the unfinished child's real node proves the view switched.
+            expect(screen.findHostByTestId('session-work-map-node-session:mapped-child')).not.toBeNull();
+            expect(screen.findHostByTestId('session-work-scroll')).toBe(scroll);
+            expect(await apply(workIntents.map)).toEqual({ status: 'unchanged' });
+            await screen.update(<WorkHost serverId={serverId} presentationTarget workPresented={false} />);
+            expect(await apply(workIntents.list)).toEqual({ status: 'unavailable' });
+            await screen.update(<WorkHost serverId={serverId} presentationTarget onPane={next => { pane = next; }} />);
+            expect(await apply(workIntents.map)).toEqual({ status: 'unchanged' });
+            expect(await apply(workIntents.expand)).toEqual({ status: device === 'phone' ? 'unavailable' : 'applied' });
+            if (device === 'desktop') {
+                expect(pane?.scopeState?.details?.tabs.some(tab => tab.key === 'sessionWorkMap:lead')).toBe(true);
+                // Expansion lends the Map to Details without changing the sidebar's local preference.
+                expect(screen.findByTestId('session-work-map-node-session:mapped-child')).toBeNull();
+                expect(await apply(workIntents.list)).toEqual({ status: 'unchanged' });
+                await act(async () => { pane!.closeDetails(); });
+                expect(screen.findHostByTestId('session-work-map-node-session:mapped-child')).not.toBeNull();
+                expect(await apply(workIntents.map)).toEqual({ status: 'unchanged' });
+                expect(screen.findHostByTestId('session-work-scroll')).toBe(scroll);
+
+                expect(await apply(workIntents.list)).toEqual({ status: 'applied' });
+                expect(await apply(workIntents.expand)).toEqual({ status: 'applied' });
+                expect(screen.findByTestId('session-work-map-node-session:mapped-child')).toBeNull();
+                await act(async () => { pane!.closeDetailsTab('sessionWorkMap:lead'); });
+                expect(await apply(workIntents.list)).toEqual({ status: 'unchanged' });
+                expect(screen.findByTestId('session-work-map-node-session:mapped-child')).toBeNull();
+
+                // Selecting another Details tab unmounts the expanded Map and restores the prior Map.
+                expect(await apply(workIntents.map)).toEqual({ status: 'applied' });
+                expect(await apply(workIntents.expand)).toEqual({ status: 'applied' });
+                await act(async () => { pane!.openDetailsTab(createExecutionRunLauncherDetailsTab('plan'), { intent: 'pinned' }); });
+                expect(screen.findHostByTestId('session-work-map-node-session:mapped-child')).not.toBeNull();
+                // Asking for sidebar Map takes it back rather than showing it twice.
+                expect(await apply(workIntents.expand)).toEqual({ status: 'applied' });
+                expect(await apply(workIntents.map)).toEqual({ status: 'applied' });
+                expect(pane?.scopeState?.details?.tabs.some(tab => tab.key === 'sessionWorkMap:lead')).toBe(false);
+                expect(screen.findHostByTestId('session-work-map-node-session:mapped-child')).not.toBeNull();
+            } else {
+                expect(screen.findHostByTestId('session-work-map-node-session:mapped-child')).not.toBeNull();
+            }
+            await screen.pressByTestIdAsync('session-work-view:list');
+            expect(screen.findByTestId('session-work-state-recent-more')).toBeNull();
+            expect(screen.findHostByTestId('session-work-scroll')).toBe(scroll);
+            await screen.update(<WorkHost serverId={serverId} presentationTarget showWork={false} />);
+            expect(await apply(workIntents.map)).toEqual({ status: 'unavailable' });
+            expect(await apply(workIntents.recent)).toEqual({ status: 'unavailable' });
+            expect(readSessionPresentationAdapterAtAddress({ serverId: 'other-home', sessionId: 'lead' })).toBeNull();
+        } finally {
+            await screen.unmount();
+            storage.setState(initial, true);
+            resetSessionDraftRepositoryForTests();
+            await connection.dispose();
+        }
+    });
+    it('reopens every retained start in the shared contextual Run destination on phone', async () => {
         const connection = await restoreServerAccountForTest({
             serverUrl: 'https://phone-work-draft.test', serverIdentityId: 'srv_phone_work_draft', accountId: 'account',
             request: async url => {
@@ -150,53 +359,20 @@ describe('phone Work List → Map', () => {
             });
             expect(screen.findByTestId(`session-work-start-draft:${discussion.key}`)?.props.accessibilityLabel).toContain('First Discussion draft');
             expect(screen.findByTestId(`session-work-start-draft:${otherDiscussion.key}`)?.props.accessibilityLabel).toContain('Second Discussion draft');
-            const scope = `serverId=${encodeURIComponent(serverId)}`;
-            const { SessionNewRunScreen } = await import('@/app/(app)/session/[id]/runs/new');
             const { SessionAgentsLaunchMenu } = await import('@/components/sessions/agents/launch/SessionAgentsLaunchMenu');
-            const pushedHref = () => {
-                const href: unknown = routerPush.mock.calls[0]?.[0];
-                if (typeof href !== 'string') throw new Error('Expected a produced Run URL');
-                return href;
-            };
-            const decodedRoute = (href: string) => {
-                const route = new URL(href, 'https://phone-route.test');
-                return { pathname: route.pathname, params: Object.fromEntries(route.searchParams) };
-            };
-            const assertRouteHeading = async (href: string) => {
-                routeParams.current = { id: 'lead', ...decodedRoute(href).params };
-                const route = await renderScreen(<SessionNewRunScreen />, {
-                    wrapper: ({ children }) => <InjectedAuthProvider credentials={connection.credentials}>{children}</InjectedAuthProvider>,
-                });
-                try {
-                    await vi.waitFor(() => expect(route.getTextContent()).toContain(secondOpinion.title));
-                    expect(route.getTextContent()).not.toContain('runPage.launcher.titles.review');
-                } finally { await route.unmount(); }
-            };
-            // The initial preset and the retained tab must reach the same real route and draft heading.
             routerPush.mockClear();
             await act(async () => screen.tree.findByType(SessionAgentsLaunchMenu).props.launcher.openRun('review', {
                 roleId: 'second_opinion', title: secondOpinion.title,
             }));
-            const presetHref = `/session/lead/runs/new?${scope}&intent=review&roleId=second_opinion&title=Second%20opinion`;
-            expect(routerPush).toHaveBeenCalledTimes(1);
-            expect(decodedRoute(pushedHref())).toEqual(decodedRoute(presetHref));
-            await assertRouteHeading(pushedHref());
-            for (const [tab, href] of [
-                [conversation, `/session/lead/runs/new?${scope}`],
-                [plan, `/session/lead/runs/new?${scope}&intent=plan`],
-                [secondOpinion, `/session/lead/runs/new?${scope}&intent=review&roleId=second_opinion&title=Second%20opinion`],
-                [discussion, `/session/lead/runs/new?${scope}&draftCorrelationId=selection_1`],
-                [otherDiscussion, `/session/lead/runs/new?${scope}&draftCorrelationId=selection_2`],
-            ] as const) {
-                routerPush.mockClear();
+            expect(pane!.scopeState?.details.activeTabKey).toBe(secondOpinion.key);
+            expect(routerPush).not.toHaveBeenCalled();
+            for (const tab of [conversation, plan, secondOpinion, discussion, otherDiscussion]) {
                 await screen.pressByTestIdAsync(`session-work-start-draft:${tab.key}`);
-                expect(routerPush).toHaveBeenCalledTimes(1);
-                expect(decodedRoute(pushedHref())).toEqual(decodedRoute(href));
-                if (tab === secondOpinion) await assertRouteHeading(pushedHref());
+                expect(pane!.scopeState?.details.activeTabKey).toBe(tab.key);
+                expect(routerPush).not.toHaveBeenCalled();
             }
-            // The Run page finds that exact draft through the existing handoff, not the plain conversation draft.
-            expect(readInteractiveExecutionRunDraftNavigationIntent({ address: { serverId, sessionId: 'lead' }, correlationId: 'selection_1' }))
-                .toEqual({ source: discussionSource, initialText: 'Investigate this' });
+            expect(pane!.scopeState?.details.tabs.find(tab => tab.key === discussion.key)?.resource)
+                .toEqual(discussion.resource);
             await act(async () => pane!.closeDetailsTab(conversation.key));
             for (const [key, preview] of [
                 ['conversation', 'Plain conversation draft'],
@@ -207,7 +383,8 @@ describe('phone Work List → Map', () => {
             }
             routerPush.mockClear();
             await screen.pressByTestIdAsync('session-work-start-draft:conversation');
-            expect(routerPush).toHaveBeenCalledWith(`/session/lead/runs/new?${scope}`);
+            expect(pane!.scopeState?.details.activeTabKey).toBe(conversation.key);
+            expect(routerPush).not.toHaveBeenCalled();
         } finally {
             await screen.unmount();
             storage.setState(initial, true);
@@ -245,7 +422,8 @@ describe('phone Work List → Map', () => {
             expect(screen.getTextContent()).not.toContain('second line');
             routerPush.mockClear();
             await screen.pressByTestIdAsync('session-work-start-draft:plan');
-            expect(routerPush).toHaveBeenCalledWith(`/session/lead/runs/new?serverId=${encodeURIComponent(serverId)}&intent=plan`);
+            expect(routerPush).not.toHaveBeenCalled();
+            expect(screen.findByTestId('session-work-start-draft:execution-run-launcher:plan')).toBeTruthy();
             await act(async () => writeExistingSessionDraft({ scope: draftScope, sessionId: 'lead', patch: { executionRunLauncher: { key: 'plan', patch: { text: '' } } } }));
             expect(screen.findByTestId('session-work-start-draft:plan')).toBeFalsy();
         } finally {
@@ -273,7 +451,7 @@ describe('phone Work List → Map', () => {
         const draftScope = getActiveServerAccountScope();
         if (!draftScope) throw new Error('Expected the restored Account draft scope');
         await ensureSessionDraftRepositoryHydrated(draftScope);
-        const child = createSessionFixture({ id: 'child', serverId, manager: { sessionId: lead.id } });
+        const child = createSessionFixture({ id: 'child', serverId, manager: { sessionId: lead.id }, ...workingTurn() });
         const foreign = createSessionFixture({ id: 'foreign', serverId: 'another-home', manager: { sessionId: lead.id } });
         storage.setState({ sessions: { lead, child, foreign }, sessionListRowsByServerId: {} });
         const credentials = createDeferred<void>();
@@ -357,6 +535,47 @@ describe('Work pane after a child was archived', () => {
             expect(screen.getTextContent()).not.toContain('sessionWork.subtitle.nothingStarted');
         } finally {
             hydrateRows.mockRestore();
+            await screen.unmount();
+            storage.setState(initial, true);
+            resetSessionDraftRepositoryForTests();
+            await connection.dispose();
+        }
+    }, 180_000);
+});
+
+describe('Work pane Managed by row', () => {
+    it('says a top-level session is Top level and opens Put under from that row', async () => {
+        const connection = await restoreServerAccountForTest({
+            serverUrl: 'https://work-managed-by.test', serverIdentityId: 'srv_work_managed_by', accountId: 'account',
+            request: async url => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+                if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+                return Response.json({}, { status: 404 });
+            },
+        });
+        const initial = storage.getState();
+        const serverId = connection.home.id;
+        const draftScope = getActiveServerAccountScope();
+        if (!draftScope) throw new Error('Expected the restored Account draft scope');
+        await ensureSessionDraftRepositoryHydrated(draftScope);
+        const { Modal } = await import('@/modal');
+        const show = vi.spyOn(Modal, 'show');
+        storage.setState({ sessions: { lead: createSessionFixture({ id: 'lead', serverId }) }, sessionListRowsByServerId: {},
+            sessionMessages: { lead: createSessionMessagesFixture({ isLoaded: true }) } });
+        const screen = await renderScreen(<WorkHost serverId={serverId} />, {
+            wrapper: ({ children }) => <InjectedAuthProvider credentials={connection.credentials}>{children}</InjectedAuthProvider>,
+        });
+        try {
+            await waitForHomeGovernance(() => expect(screen.findHostByTestId('session-work-managed-by')).not.toBeNull());
+            expect(screen.getTextContent()).toContain('entityDragDrop.keyboard.topLevel');
+            const managedBy = screen.findByTestId('session-work-managed-by');
+            expect(managedBy).not.toBeNull();
+            await pressTestInstanceAsync(managedBy!);
+            expect(show).toHaveBeenCalledWith(expect.objectContaining({ props: { sessionId: 'lead', serverId } }));
+        } finally {
+            show.mockRestore();
             await screen.unmount();
             storage.setState(initial, true);
             resetSessionDraftRepositoryForTests();
@@ -456,9 +675,12 @@ describe('Work pane while its machine is not answering', () => {
             expect(screen.getTextContent()).toContain('Retained workflow');
             // Arrange the neighboring reachable-Machine state through its real store owner,
             // just as the initial offline state above; this does not certify census recovery.
-            await act(async () => storage.getState().applyMachines([
-                createMachineFixture({ id: 'm1', active: true, activeAt: Date.now() }),
-            ], false, { sourceServerId: serverId }));
+            await act(async () => {
+                storage.getState().applyMachines([
+                    createMachineFixture({ id: 'm1', active: true, activeAt: Date.now() }),
+                ], false, { sourceServerId: serverId });
+                observeMachinePresenceForTest(draftScope, ['m1']);
+            });
             expect(resolveServerScopedMachine(storage.getState(), serverId, 'm1')?.active).toBe(true);
             await waitForHomeGovernance(() => expect(screen.findHostByTestId('session-work-machine-offline')).toBeNull());
             // A reachable Machine must not hide the independent retained Run failure.

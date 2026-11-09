@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { normalizeRawMessage } from '@happier-dev/session-core/raw';
+import { isRuntimeIssueMessageMeta, readRuntimeIssueMessageMeta } from '../transcript/events/runtimeIssueMessage';
+
+import { t } from '@/text';
 
 import { presentSessionTeamCredentialDenial } from './sessionTeamCredentialDenialPresentation';
 
@@ -20,6 +24,44 @@ const resourceNames: Readonly<Record<string, string>> = { 'resource-acme': 'Acme
 const resolveResourceDisplayName = (resourceId: string) => resourceNames[resourceId] ?? null;
 
 describe('presentSessionTeamCredentialDenial', () => {
+    it('preserves reconnect recovery from the real retained transcript reader', () => {
+        const issue = runtimeIssue({ teamCredential: {
+            v: 1, resourceId: 'resource-acme', reasonCode: 'connected_service_credential_reconnect_required',
+        } });
+        const message = normalizeRawMessage('failure', 'failure', issue.occurredAt, {
+            role: 'agent', content: { type: 'acp', agentId: 'codex', data: {
+                type: 'message', message: issue.sanitizedPreview,
+            } }, meta: { source: 'runtime', runtimeIssueV1: issue },
+        }, { seq: 10 });
+        const presentation = presentSessionTeamCredentialDenial({
+            issue: readRuntimeIssueMessageMeta(message?.meta), resolveResourceDisplayName,
+        });
+        expect(presentation?.title).toBe('Connected account needs reconnect');
+        expect(presentation?.body).toContain(t('teams.credentials.recovery.ownerHandoff'));
+        expect(presentation?.body).toContain('Acme OpenAI');
+    });
+    it('selects the named refusal and recovery from the common owner/shared-editor history reader without owner metadata', () => {
+        const issue = runtimeIssue({ teamCredential: {
+            v: 1, resourceId: 'resource-acme', reasonCode: 'resource_forbidden',
+        } });
+        const message = normalizeRawMessage('failure', 'failure', issue.occurredAt, {
+            role: 'agent', content: { type: 'acp', agentId: 'codex', data: {
+                type: 'message', message: issue.sanitizedPreview,
+            } }, meta: { source: 'runtime', runtimeIssueV1: issue },
+        }, { seq: 10 });
+        // Both roles receive the same authorized transcript, even when the
+        // mutable Session issue/owner-only binding projection is unavailable.
+        expect(isRuntimeIssueMessageMeta(message?.meta)).toBe(true);
+        const presentation = presentSessionTeamCredentialDenial({
+            issue: readRuntimeIssueMessageMeta(message?.meta),
+            resolveResourceDisplayName,
+        });
+        expect(presentation).toMatchObject({ kind: 'team-credential-denied', resourceId: 'resource-acme',
+            action: 'choose-model', actionLabel: 'Choose another credential' });
+        expect(presentation?.body).toContain('Acme OpenAI');
+        expect(presentation?.body).toContain('managed by this Team');
+    });
+
     it('names the exhausted shared credential, its measure and when the allowance returns', () => {
         const presentation = presentSessionTeamCredentialDenial({
             issue: runtimeIssue({

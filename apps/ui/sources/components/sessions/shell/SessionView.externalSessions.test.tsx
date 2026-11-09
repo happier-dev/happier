@@ -4,23 +4,37 @@ import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNaviga
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
-  ApprovalRequestV1Schema,
-  buildApprovalRequestArtifactHeaderV1,
+  ApprovalRequestV1Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import {
+  buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import {
   buildProviderAccountUsageRecordId,
-  buildSystemSessionMetadataV1,
-  ExternalSessionOperationSharedPresentationV1Schema,
-  HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1,
-  PluginProjectionV2Schema,
-  ParticipantRecipientV1Schema,
-  StrictJsonValueSchema,
-  SessionDraftDocumentV1Schema,
-  SessionCurrentProjectionRecordV1Schema,
+  ProviderAccountUsageSnapshotV1Schema} from '@happier-dev/protocol/connect/account-usage-primitives';
+import {
+  buildSystemSessionMetadataV1} from '@happier-dev/protocol/sessions/control/contract';
+import {
+  ExternalSessionOperationSharedPresentationV1Schema} from '@happier-dev/protocol/sessions/external/operationV1';
+import {
+  HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1} from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import {
+  PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+  ParticipantRecipientV1Schema} from '@happier-dev/protocol/messages/structured/participantMessageV1';
+import {
+  StrictJsonValueSchema} from '@happier-dev/protocol/json/strictJsonValue';
+import {
+  SessionDraftDocumentV1Schema} from '@happier-dev/protocol/drafts/sessionDrafts';
+import {
+  SessionCurrentProjectionRecordV1Schema} from '@happier-dev/protocol/sessions/listing/response';
+import {
   SessionMetadataTuplePatchV1Schema,
-  SessionMetadataTuplePatchSuccessV1Schema,
-  SessionRuntimeIssueV1Schema,
-  ProviderAccountUsageSnapshotV1Schema,
+  SessionMetadataTuplePatchSuccessV1Schema} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import {
+  SessionRuntimeIssueV1Schema} from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import {
   MACHINE_PLAIN_DATA_KEY_MARKER,
-  encodePlainMachineStoredContent,
+  encodePlainMachineStoredContent} from '@happier-dev/protocol/machines/machineStoredContent';
+import {
   ExternalSessionStatusGetRequestSchema,
   ExternalSessionStatusGetResponseSchema,
   ExternalSessionAttachRequestSchema,
@@ -29,13 +43,15 @@ import {
   ExternalSessionDetachResponseSchema,
   ExternalSessionTranscriptPageRequestSchema,
   ExternalSessionTranscriptPageResponseSchema,
-  ExternalSessionTranscriptRefreshReadAfterRequestV1Schema,
-  ExternalSessionTranscriptRefreshReadAfterResponseV1Schema,
   ExternalSessionTranscriptReadAfterRequestSchema,
-  ExternalSessionTranscriptReadAfterResponseSchema,
+  ExternalSessionTranscriptReadAfterResponseSchema} from '@happier-dev/protocol/sessions/external/daemonRpcV1';
+import {
+  ExternalSessionTranscriptRefreshReadAfterRequestV1Schema,
+  ExternalSessionTranscriptRefreshReadAfterResponseV1Schema} from '@happier-dev/protocol/sessions/external/secureRefreshV1';
+import {
   WorkspaceAnchorsResolveRequestV1Schema,
   WorkspaceAnchorsResolveResponseV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workspace/anchors/v1';
 import { ExternalSessionTakeoverStartInputV1Schema, ExternalSessionOperationActionResponseV1Schema,
   ExternalSessionOperationProgressV1Schema, EXTERNAL_SESSION_OPERATION_TIMELINES_V1 } from '@happier-dev/protocol/sessions';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -79,6 +95,7 @@ import {
   writeExistingSessionDraft,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { readComposerText } from '@/dev/testkit/readComposerText';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 (globalThis as any).__DEV__ = false;
@@ -414,8 +431,8 @@ vi.mock('@/components/sessions/panes/useRegisterSessionPaneDriver', () => ({
 vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
   useSessionPaneUrlSync: () => {},
 }));
-vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
-  ChatHeaderView: (props: any) => {
+vi.mock('@/components/sessions/shell/view/SessionPaneHeader', () => ({
+  SessionPaneHeader: (props: any) => {
     chatHeaderPropsSpy(props);
     return null;
   },
@@ -1128,6 +1145,7 @@ describe('SessionView (direct sessions)', () => {
       externalAgentPresentation: {
         state: 'unknown',
         labelKey: 'status.externalStatusUnknown',
+        needsAttention: false,
         agentLabel: 'Codex',
         machineLabel: 'happy-host',
       },
@@ -1275,7 +1293,7 @@ describe('SessionView (direct sessions)', () => {
     expect(outboundMessageAckSpy).not.toHaveBeenCalled();
 
     const chatListProps = chatListPropsSpy.mock.calls.at(-1)?.[0];
-    const previousDraft = findAgentInput(screen).props.value;
+    const previousDraft = readComposerText(findAgentInput(screen));
     await act(async () => {
       chatListProps?.onEditPendingMessage?.({
         id: 'pending-1',
@@ -1284,7 +1302,7 @@ describe('SessionView (direct sessions)', () => {
         message: { id: 'pending-1', localId: 'pending-1' },
       });
     });
-    expect(findAgentInput(screen).props.value).toBe(previousDraft);
+    expect(readComposerText(findAgentInput(screen))).toBe(previousDraft);
   });
 
   it('places pending-message references into the editable composer document', async () => {
@@ -2968,6 +2986,7 @@ describe('SessionView (direct sessions)', () => {
         externalAgentPresentation: {
           state: 'working',
           labelKey: 'status.workingExternally',
+          needsAttention: false,
           agentLabel: 'Codex',
           machineLabel: 'happy-host',
         },
@@ -3159,7 +3178,7 @@ describe('SessionView (direct sessions)', () => {
       },
     });
     expect(outboundMessageAckSpy).not.toHaveBeenCalled();
-    expect(findAgentInput(screen).props.value).toBe('continue this session');
+    expect(readComposerText(findAgentInput(screen))).toBe('continue this session');
     expect(readCanonicalDraftRecipient()).toEqual({ kind: 'execution_run', runId: 'run-1' });
     expect(readCanonicalDraftRequestedAction()).toEqual({ v: 1, kind: 'send_now' });
     expect(readCanonicalDraftMentions()).toEqual([{
@@ -3191,7 +3210,7 @@ describe('SessionView (direct sessions)', () => {
     expect(machineExternalSessionTakeoverSpy).not.toHaveBeenCalled();
     expect(machineExternalSessionTakeoverPersistSpy).not.toHaveBeenCalled();
     expect(outboundMessageAckSpy).not.toHaveBeenCalled();
-    expect(findAgentInput(screen).props.value).toBe('draft survives unavailable status');
+    expect(readComposerText(findAgentInput(screen))).toBe('draft survives unavailable status');
     expect(modalAlertSpy).toHaveBeenCalledWith(
       'common.error',
       'chatFooter.externalSessionStatusUnavailable',
@@ -3305,7 +3324,7 @@ describe('SessionView (direct sessions)', () => {
     }));
     expect(outboundMessageAckSpy).not.toHaveBeenCalled();
     agentInput = findAgentInput(screen);
-    expect(agentInput.props.value).toBe('keep this execution draft');
+    expect(readComposerText(agentInput)).toBe('keep this execution draft');
   });
 
   it('keeps the composer text when direct takeover is cancelled from the send prompt', async () => {
@@ -3338,7 +3357,7 @@ describe('SessionView (direct sessions)', () => {
     expect(outboundMessageAckSpy).not.toHaveBeenCalled();
 
     agentInput = findAgentInput(screen);
-    expect(agentInput.props.value).toBe('draft stays here');
+    expect(readComposerText(agentInput)).toBe('draft stays here');
     expect(readCanonicalDraftRecipient()).toEqual({ kind: 'execution_run', runId: 'run-1' });
     expect(readCanonicalDraftRequestedAction()).toEqual({ v: 1, kind: 'send_now' });
     expect(readCanonicalDraftMentions()).toEqual([{
@@ -3413,7 +3432,7 @@ describe('SessionView (direct sessions)', () => {
       await waitForHomeGovernance(() => expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'session_input_target_unavailable'));
 
       agentInput = findAgentInput(screen);
-      expect(agentInput.props.value).toBe('restore this prompt $restored');
+      expect(readComposerText(agentInput)).toBe('restore this prompt $restored');
       expect(readCanonicalDraftRecipient()).toEqual(recipient);
       expect(readCanonicalDraftRequestedAction()).toEqual({ v: 1, kind: 'send_now' });
       expect(readCanonicalDraftMentions()).toEqual([mention]);
@@ -3508,7 +3527,7 @@ describe('SessionView (direct sessions)', () => {
       await waitForHomeGovernance(() => expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'session_input_target_unavailable'));
 
       agentInput = findAgentInput(screen);
-      expect(agentInput.props.value).toBe('send to $new target');
+      expect(readComposerText(agentInput)).toBe('send to $new target');
       expect(readCanonicalDraftRecipient()).toEqual(newRecipient);
       expect(readCanonicalDraftRequestedAction()).toEqual({ v: 1, kind: 'enqueue' });
       expect(readCanonicalDraftMentions()).toEqual([newMention]);
@@ -3538,7 +3557,7 @@ describe('SessionView (direct sessions)', () => {
     });
 
     agentInput = findAgentInput(screen);
-    expect(agentInput.props.value).toBe('clear me immediately');
+    expect(readComposerText(agentInput)).toBe('clear me immediately');
     expect(outboundMessageAckSpy).not.toHaveBeenCalled();
 
   });
@@ -3601,7 +3620,7 @@ describe('SessionView (direct sessions)', () => {
       },
     });
     expect(outboundMessageAckSpy).not.toHaveBeenCalled();
-    expect(findAgentInput(screen).props.value).toBe('persist this');
+    expect(readComposerText(findAgentInput(screen))).toBe('persist this');
 
   });
 
@@ -3643,7 +3662,7 @@ describe('SessionView (direct sessions)', () => {
     expect(sendVoiceSessionComposerTextSpy).not.toHaveBeenCalled();
     expect(outboundMessageAckSpy).not.toHaveBeenCalled();
     agentInput = findAgentInput(screen);
-    expect(agentInput.props.value).toBe('keep this Voice draft');
+    expect(readComposerText(agentInput)).toBe('keep this Voice draft');
   });
 
   it('routes hidden Voice conversation sends after external runner admission is verified', async () => {

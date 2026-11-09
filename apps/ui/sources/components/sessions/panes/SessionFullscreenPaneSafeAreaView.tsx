@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 
 type SessionFullscreenPaneSafeAreaViewProps = Readonly<{
     testID?: string;
@@ -23,6 +24,8 @@ export const SessionFullscreenPaneSafeAreaView = React.memo(function SessionFull
     props: SessionFullscreenPaneSafeAreaViewProps,
 ) {
     const safeArea = useSafeAreaInsets();
+    const { theme } = useUnistyles();
+    const materialColor = useHappierMaterialColorResolver();
     const includeTopInset = props.includeTopInset !== false;
     const includeBottomInset = props.includeBottomInset !== false;
 
@@ -32,6 +35,7 @@ export const SessionFullscreenPaneSafeAreaView = React.memo(function SessionFull
             style={[
                 stylesheet.container,
                 {
+                    backgroundColor: materialColor(theme.colors.surface.base, 'transparent'),
                     paddingTop: includeTopInset ? safeArea.top : 0,
                     paddingBottom: includeBottomInset ? safeArea.bottom : 0,
                 },

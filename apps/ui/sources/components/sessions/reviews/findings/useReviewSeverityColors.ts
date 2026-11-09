@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_REVIEW_SEVERITY_TONE, resolveHappierReviewSeverityColor } from '@happier-dev/plugin-ui/presentation';
 import type { PluginUiThemeV1 } from '@happier-dev/plugin-sdk/ui';
-import type { ReviewFinding } from '@happier-dev/protocol';
+import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
 
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 

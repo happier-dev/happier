@@ -19,8 +19,11 @@ import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/s
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { SessionCapabilitySelectionV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
+import { setSessionCapabilitySelectionItemV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
-import { PluginProjectionV2Schema, RPC_METHODS } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 
 const homes = createHomeGovernanceHarness();
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -53,6 +56,7 @@ const { PromptLibraryRecordV1Schema, PromptLibraryRowsListResponseV1Schema } = a
 const { resolveSessionCapabilitiesV1 } = await import('@happier-dev/protocol/reach/resolveSessionCapabilitiesV1');
 const { SessionCapabilitiesGetOutputV1Schema } = await import('@happier-dev/protocol/actions/specs/sessionCapabilities');
 const { buildSessionCapabilitiesModel } = await import('./sessionCapabilitiesModel');
+const { useSessionCapabilitiesDetail } = await import('./useSessionCapabilitiesDetail');
 const { SessionCapabilitiesContent } = await import('./SessionCapabilitiesContent');
 const { applyMcpServerCatalogSnapshot, resetMcpServerCatalogSnapshotsForTests } = await import('@/sync/store/settings/mcpServerCatalogSnapshot');
 const { McpServerCatalogV1Schema } = await import('@happier-dev/protocol/mcp/servers/serverRowsV1');
@@ -60,7 +64,7 @@ const { MetadataSchema } = await import('@happier-dev/session-core/state');
 const { SessionSkillCatalogListResponseV1Schema } = await import('@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc');
 const { normalizeRawMessage } = await import('@happier-dev/session-core/raw');
 const { createSessionAccessFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
-const { SessionCurrentProjectionRecordV1Schema } = await import('@happier-dev/protocol');
+const { SessionCurrentProjectionRecordV1Schema} = await import('@happier-dev/protocol/sessions/listing/response');
 const { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionOwnerCompatibilityViewV1 } =
   await import('@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1');
 const { writeCapabilitySelectionApplyV1, clearCapabilitySelectionApplyV1 } =
@@ -116,6 +120,28 @@ afterEach(async () => {
   standardCleanup();
   clearDaemonMergedProjectionCacheForTests();
   await homes.reset();
+});
+
+it('keeps the joined Project in capability approval context and refuses conflicting stamps', async () => {
+  const home = await adoptHomeProfile({ source: 'manual', descriptor: { v: 1, homeServerIdentityId: 'srv_chip_capabilities',
+    canonicalServerUrl: 'https://chip-capabilities.test', revision: 1,
+    endpoints: [{ kind: 'https', url: 'https://chip-capabilities.test' }] } });
+  if (!home.serverIdentityId) throw new Error('Expected a qualified fixture Home');
+  const credentials = await TokenStorage.getCredentialsForServerUrl('https://chip-capabilities.test', { serverId });
+  if (!credentials) throw new Error('Expected the fixture Home credentials');
+  await restoreConnectionToActiveServer(credentials);
+  const scope = { serverId: home.serverIdentityId, accountId: 'owner' };
+  getStorage().setState({ settingsScope: scope, profileScope: scope });
+  applyProjectAccountRowsFixture(getStorage(), { workspaceRefs: [{ id: 'checkout', serverId: scope.serverId,
+    machineId: 'machine', rootPath: '/repo', projectKey: 'joined-project', createdAtMs: 1 }] });
+  const hook = await renderHook(({ projectId }: { projectId: string }) => useSessionCapabilitiesDetail(
+    scope.serverId, true, () => {}, { metadata: { path: '/repo', host: 'MacBook', machineId: 'machine',
+      workspaceId: 'checkout', projectId, flavor: 'codex' } },
+    { view: null, selection: {}, state: 'resolving', readOnly: false }, 'MacBook'),
+    { initialProps: { projectId: 'checkout' } });
+  await vi.waitFor(() => expect(hook.getCurrent().detail.context).toMatchObject({ projectKey: 'joined-project', directory: '/repo' }));
+  await hook.rerender({ projectId: 'unrelated-project' });
+  expect(hook.getCurrent().detail.context).toBeUndefined();
 });
 
 it('composes the real rules lookup and sheet model without showing Off before the rules load', async () => {
@@ -207,6 +233,74 @@ it('binds the draft chip to the preview on intent and edits only the draft', asy
   ).toBe(false);
 });
 
+it('demands one preview for Session Skills and keeps opening its picker on that same owner', async () => {
+  const sessionId = 'c123456789012345678901234';
+  const owner = createSessionOwnerMetadataV1({ metadata: { path: '/repo', host: 'MacBook', machineId: 'machine',
+    flavor: 'codex', startedBy: 'daemon', runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: {} } } });
+  if (!owner.ok) throw new Error('Invalid session owner fixture');
+  const row = SessionCurrentProjectionRecordV1Schema.parse({ id: sessionId, seq: 1, createdAt: 1, updatedAt: 1,
+    active: true, activeAt: 1, encryptionMode: 'plain', metadataLayoutVersion: 1,
+    metadata: JSON.stringify({ v: 1 }), metadataVersion: 1,
+    ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1(owner.ownerMetadata), agentState: null, agentStateVersion: 1,
+    dataEncryptionKey: null, share: null, responsibleAccountId: null, responsibleAccount: null,
+    effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: createSessionAccessFixture().capabilities } });
+  for (const suffix of ['', '?accessProjectionVersion=1']) homes.answer(serverId, `GET /v2/sessions/${sessionId}${suffix}`, { body: { session: row } });
+  homes.answer(serverId, 'POST /v1/artifacts/headers/read', { body: { artifacts: [] } });
+  homes.answer(serverId, 'GET /v1/artifacts', { body: [] });
+  getStorage().setState({ sessions: { [sessionId]: createSessionFixture({ id: sessionId, serverId, active: true,
+    metadataLayoutVersion: 1, metadata: { path: '', host: '' }, ownerMetadataView: MetadataSchema.parse(
+      projectSessionOwnerCompatibilityViewV1({ sharedMetadata: { v: 1 }, ownerMetadata: owner.ownerMetadata })) }) },
+    sessionLocalStateScope: { serverId, accountId: 'owner' } });
+  const { SessionSkillsPane } = await import('./SessionSkillsPane');
+  const { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+  const { t } = await import('@/text');
+  let commands: ReturnType<typeof useCurrentUiContextComposedCommands> = [];
+  function ObserveCommands() {
+    commands = useCurrentUiContextComposedCommands();
+    return null;
+  }
+  function MountedSkills() {
+    const { binding } = useServerCredentialAccountScopeBinding(serverId);
+    return <CurrentUiContextCommandsProvider authority={binding ?? null}>
+      <SessionSkillsPane sessionId={sessionId} serverId={serverId} /><ObserveCommands />
+    </CurrentUiContextCommandsProvider>;
+  }
+  const screen = await renderScreen(<MountedSkills />);
+  await vi.waitFor(() => expect(screen.findByType(SessionCapabilitiesContent)?.props.model.state).toBe('ready'));
+  const calls = transport.mock.calls.length;
+  expect(calls).toBe(1);
+  const add = screen.findAll(node => node.props?.testID === 'session-skills:add' && typeof node.props?.onPress === 'function')[0];
+  if (!add) throw new Error('Expected the Skills add picker');
+  await act(async () => add.props.onPress());
+  expect(transport.mock.calls.length).toBe(calls);
+  expect(screen.findAll(node => node.props?.testID === 'session-skills:group:mcp')).toHaveLength(0);
+  expect(homes.requests.filter(request => request.method === 'GET' && request.path === '/v1/artifacts')).toHaveLength(0);
+  expect(commands.some(command => command.title === t('capabilities.session.sheet.removeLabel', { item: 'review' }))).toBe(true);
+  await act(async () => getStorage().setState(current => ({ sessions: { ...current.sessions, [sessionId]: {
+    ...current.sessions[sessionId]!, ownerMetadataView: MetadataSchema.parse({
+      ...current.sessions[sessionId]!.ownerMetadataView,
+      skillSelectionV1: setSessionCapabilitySelectionItemV1({}, 'skill', 'review', 'off').skills,
+    }),
+  } } })));
+  await vi.waitFor(() => expect(screen.findByType(SessionCapabilitiesContent)?.props.model.groups[0]?.rows[0]?.action.kind).toBe('turn_on'));
+  expect(commands.some(command => command.title === t('capabilities.session.sheet.removeLabel', { item: 'review' }))).toBe(false);
+  expect(commands.some(command => command.title === t('capabilities.session.sheet.turnOnLabel', { item: 'review' }))).toBe(true);
+  await act(async () => getStorage().setState({ settingsScope: { serverId, accountId: 'owner' } }));
+  expect(commands.some(command => command.title === t('capabilities.skills.pane.allSkills'))).toBe(true);
+  expect(screen.findByType(SessionCapabilitiesContent)?.props.skillDetails('review').onPress).toBeTypeOf('function');
+  await act(async () => getStorage().setState({ settingsScope: { serverId: 'another-home', accountId: 'owner' } }));
+  expect(screen.findAll(node => node.props?.testID === 'session-skills:open:skills')[0]?.props.disabled).toBe(true);
+  expect(screen.findByType(SessionCapabilitiesContent)?.props.openUnavailableReason).toBe(t('common.unavailable'));
+  expect(screen.findByType(SessionCapabilitiesContent)?.props.skillDetails('review').onPress).toBeUndefined();
+  expect(commands.some(command => command.title === t('capabilities.skills.pane.allSkills'))).toBe(false);
+  expect(commands.some(command => command.title === 'review')).toBe(false);
+  await act(async () => getStorage().setState({ settingsScope: { serverId, accountId: 'another-owner' } }));
+  expect(screen.findAll(node => node.props?.testID === 'session-skills:open:skills')[0]?.props.disabled).toBe(true);
+  await act(async () => getStorage().setState({ settingsScope: { serverId, accountId: 'owner' } }));
+  expect(screen.findAll(node => node.props?.testID === 'session-skills:open:skills')[0]?.props.disabled).toBe(false);
+  expect(screen.findByType(SessionCapabilitiesContent)?.props.skillDetails('review').onPress).toBeTypeOf('function');
+});
+
 it('mounts one Session owner for the chip and the apply line, and adds nothing until intent', async () => {
   const sessionId = 'c123456789012345678901234';
   const home = await adoptHomeProfile({ source: 'manual', descriptor: { v: 1, homeServerIdentityId: 'srv_chip_capabilities',
@@ -233,7 +327,7 @@ it('mounts one Session owner for the chip and the apply line, and adds nothing u
   const binding = await renderHook(() => useServerCredentialAccountScopeBinding(scope.serverId));
   await vi.waitFor(() => expect(binding.getCurrent().binding).not.toBeNull());
   await act(async () => {
-    expect(await loadDaemonMergedProjectionCacheEntry({ machineId: 'machine', serverId: scope.serverId,
+    expect(await loadDaemonMergedProjectionCacheEntry({ sections: 'complete', machineId: 'machine', serverId: scope.serverId,
       accountLifetime: binding.getCurrent().binding! })).toMatchObject({ kind: 'ready' });
   });
   const reach = await renderHook(() => useReachMachines());

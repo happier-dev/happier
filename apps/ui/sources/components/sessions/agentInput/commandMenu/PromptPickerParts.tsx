@@ -1,13 +1,13 @@
 import * as React from 'react';
 import { readableMessageText } from '@/components/sessions/transcript/messageDisplayText';
-import { Animated, Platform, ScrollView, View, type StyleProp, type TextStyle } from 'react-native';
+import { Animated, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Icon } from '@/components/ui/icons/Icon';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { resolveOverlayMotionPreset, useOverlayMotionAnimation } from '@/components/ui/overlays/motion/overlayMotion';
-import { KeyHint } from '@/components/ui/keyboard/KeyHint';
+import { SelectionListFooter } from '@/components/ui/selectionList/SelectionListFooter';
 import { FavoriteToggleButton } from '@/components/ui/buttons/FavoriteToggleButton';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { SELECTION_LIST_SKELETON_ROW_SHAPE } from '@/components/ui/selectionList/_constants';
@@ -16,8 +16,17 @@ import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
 import { queryRanges } from '@/components/ui/text/queryRanges';
 import { ITEM_SUBTITLE_TEXT_METRICS } from '@/components/ui/lists/itemDensityMetrics';
 import { Text } from '@/components/ui/text/Text';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { Typography } from '@/constants/Typography';
+import {
+    HAPPIER_PROMPT_PICKER_METRICS,
+    HappierPromptPickerPreview,
+    HappierPromptPickerRow,
+    type HappierPromptPickerColors,
+    type HappierPromptPickerHost,
+    type HappierPromptPickerMetaPart,
+} from '@happier-dev/plugin-ui/presentation';
 import type { UserMessageHistoryEntriesSnapshot } from '@/hooks/session/useUserMessageHistoryEntries';
 import { useKeyboardShortcutLabel } from '@/keyboard/shortcutLabels';
 import { isEscapeKeyEvent } from '@/keyboard/escape';
@@ -35,8 +44,7 @@ type RowLabels = Readonly<{
 
 const ARGUMENTS_TOKEN = '$ARGUMENTS';
 
-/** `fixed` parts (a time) never lose their place to a long neighbour. */
-type MetaPart = Readonly<{ text: string; token?: true; fixed?: true }>;
+type MetaPart = HappierPromptPickerMetaPart;
 
 /** "Library · /e2e · Testing", "Built in · /review" or "Fix settings modal remount · 12m ago"; `/tokens` are marked. */
 function describeRow(row: PromptPickerRow, labels: RowLabels): readonly MetaPart[] {
@@ -60,21 +68,21 @@ function sharesLeadingText(a: string, b: string): boolean {
     return x.length > 0 && y.length > 0 && (x.startsWith(y) || y.startsWith(x));
 }
 
-function MetaLine(props: Readonly<{ parts: readonly MetaPart[]; style: StyleProp<TextStyle>; trailing?: string; lines?: number }>) {
-    const joined = (parts: readonly MetaPart[]) => parts.map((part, index) => <React.Fragment key={index}>
-        {index ? ' · ' : ''}{part.token ? <Text style={styles.token}>{part.text}</Text> : part.text}
-    </React.Fragment>);
-    const fixed = props.parts.filter((part) => part.fixed);
-    // Where the line may wrap (the preview header) every part stays in reading order; on a one-line row
-    // the flowing parts give way so the fixed one (a time) always shows.
-    if (!fixed.length || props.lines) {
-        return <Text style={props.style} numberOfLines={props.lines ?? 1}>{joined(props.parts)}{props.trailing ? ` · ${props.trailing}` : ''}</Text>;
-    }
-    const flowing = props.parts.filter((part) => !part.fixed);
-    return <View style={styles.metaRow}>
-        {flowing.length ? <Text style={[props.style, styles.metaLead]} numberOfLines={1}>{joined(flowing)}</Text> : null}
-        <Text style={props.style} numberOfLines={1}>{flowing.length ? ' · ' : ''}{fixed.map((part) => part.text).join(' · ')}</Text>
-    </View>;
+/** Core's text for the picker presentation: its type roles, faces and font scaling. */
+function PromptPickerText(props: React.ComponentProps<HappierPromptPickerHost['Text']>) {
+    return <Text variant={props.variant} emphasis={props.emphasis} numberOfLines={props.numberOfLines} testID={props.testID}
+        style={[props.color ? { color: props.color } : null, props.mono ? Typography.mono() : null, props.tabularNumbers ? Typography.tabular() : null]}>
+        {props.children}
+    </Text>;
+}
+
+const PROMPT_PICKER_HOST: HappierPromptPickerHost = { Text: PromptPickerText };
+
+function usePromptPickerColors(): HappierPromptPickerColors {
+    const { theme } = useUnistyles();
+    const { text, border } = theme.colors;
+    return React.useMemo(() => ({ text: text.primary, secondaryText: text.secondary, tertiaryText: text.tertiary, divider: border.default }),
+        [text.primary, text.secondary, text.tertiary, border.default]);
 }
 
 export function PromptPickerRowContent(props: RowLabels & Readonly<{
@@ -84,23 +92,19 @@ export function PromptPickerRowContent(props: RowLabels & Readonly<{
 }>) {
     const { theme } = useUnistyles();
     const { row } = props;
+    const colors = usePromptPickerColors();
     const title = row.kind === 'history' ? row.title.replace(/\s+/g, ' ').trim() : row.title;
-    return <View style={styles.row} testID={`prompt-picker-row:${row.id}`}>
-        <View style={styles.lead}>
-            <Icon name={row.kind === 'history' ? 'clock-counter-clockwise' : 'chat'} size={16} color={theme.colors.text.secondary} />
-        </View>
-        <View style={styles.body}>
-            <Text style={styles.title} numberOfLines={1}><FindHighlightedText text={title} ranges={queryRanges(title, props.query)} /></Text>
-            <MetaLine style={styles.meta} parts={describeRow(row, props)} />
-        </View>
-        {row.kind === 'doc' ? <FavoriteToggleButton id={row.document.artifactId} isFavorite={row.document.favorite}
+    return <HappierPromptPickerRow testID={`prompt-picker-row:${row.id}`} host={PROMPT_PICKER_HOST} colors={colors}
+        glyph={<Icon name={row.kind === 'history' ? 'clock-counter-clockwise' : 'chat'} size={HAPPIER_PROMPT_PICKER_METRICS.glyphPx} color={theme.colors.text.secondary} />}
+        title={<FindHighlightedText text={title} ranges={queryRanges(title, props.query)} />}
+        meta={describeRow(row, props)}
+        accessory={row.kind === 'doc' ? <FavoriteToggleButton id={row.document.artifactId} isFavorite={row.document.favorite}
             addLabel={t('agentInput.promptPicker.addFavorite')} removeLabel={t('agentInput.promptPicker.removeFavorite')}
             onToggle={props.onToggleFavorite} testID={`prompt-picker-favorite:${row.id}`} />
             // Starring something you sent turns it into a favourite prompt where it stands (lab R1s).
             : row.kind === 'history' ? <FavoriteToggleButton id={row.id} isFavorite={false}
                 addLabel={t('agentInput.promptPicker.saveAsFavorite')} removeLabel={t('agentInput.promptPicker.saveAsFavorite')}
-                onToggle={props.onToggleFavorite} testID={`prompt-picker-favorite:${row.id}`} /> : null}
-    </View>;
+                onToggle={props.onToggleFavorite} testID={`prompt-picker-favorite:${row.id}`} /> : null} />;
 }
 
 /** The full text of the highlighted row, with what ↵ will do and where it came from. */
@@ -110,27 +114,29 @@ export function PromptPickerPreview(props: RowLabels & Readonly<{ row: PromptPic
     const contentId = props.row.id;
     const latestRow = React.useRef(props.row);
     latestRow.current = props.row;
-    const [preview, setPreview] = React.useState<Readonly<{ id: string; revision: typeof contentRevision; text?: string; error?: true }> | null>(null);
+    const [preview, setPreview] = React.useState<Readonly<{ id: string; revision: typeof contentRevision; attempt: number; text?: string; error?: true }> | null>(null);
+    // Retry asks the same reader again for the same row; the skeleton holds the place while it does.
+    const [attempt, setAttempt] = React.useState(0);
     React.useEffect(() => {
         let active = true;
-        void props.read(latestRow.current).then((text) => { if (active) setPreview({ id: contentId, revision: contentRevision, text }); },
-            () => { if (active) setPreview({ id: contentId, revision: contentRevision, error: true }); });
+        void props.read(latestRow.current).then((text) => { if (active) setPreview({ id: contentId, revision: contentRevision, attempt, text }); },
+            () => { if (active) setPreview({ id: contentId, revision: contentRevision, attempt, error: true }); });
         return () => { active = false; };
-    }, [contentId, contentRevision, props.read]);
-    const current = preview?.id === contentId && preview.revision === contentRevision ? preview : null;
+    }, [attempt, contentId, contentRevision, props.read]);
+    const current = preview?.id === contentId && preview.revision === contentRevision && preview.attempt === attempt ? preview : null;
+    const colors = usePromptPickerColors();
     const { row } = props;
     const kind = row.kind === 'history' ? t('agentInput.promptPicker.previewSent') : t('agentInput.promptPicker.previewInserts');
-    const origin = row.kind === 'doc' ? t('agentInput.promptPicker.previewEdited', { time: formatRelativeTimeShort(row.document.updatedAtMs, props.nowMs) })
-        : row.kind === 'history' ? props.sessionNames.get(row.entry.sessionId) || null : null;
-    return <View style={styles.preview} testID="prompt-picker-preview">
-        <MetaLine style={styles.previewMeta} parts={describeRow(row, props)} trailing={kind} lines={2} />
-        <ScrollView style={styles.previewScroll} contentContainerStyle={styles.previewScrollContent}>
-            {current?.error ? <Text style={styles.previewError}>{t('agentInput.promptPicker.readError')}</Text>
-                : current?.text !== undefined ? <PreviewText text={current.text} markdown={row.kind !== 'history'} />
-                : <SkeletonRows rows={1} {...SELECTION_LIST_SKELETON_ROW_SHAPE} />}
-        </ScrollView>
-        {origin ? <Text style={styles.previewMeta} numberOfLines={1}>{origin}</Text> : null}
-    </View>;
+    // Only a library prompt has a footer (lab R1 "Edited 3 days ago"); a sent message's session already leads the header meta.
+    const origin = row.kind === 'doc' ? t('agentInput.promptPicker.previewEdited', { time: formatRelativeTimeShort(row.document.updatedAtMs, props.nowMs) }) : null;
+    return <HappierPromptPickerPreview testID="prompt-picker-preview" host={PROMPT_PICKER_HOST} colors={colors}
+        meta={describeRow(row, props)} action={kind} origin={origin}>
+        {current?.error ? <SurfaceStateCard testID="prompt-picker-preview-failed" size="line" kind="error" accessibilitySemantics="alert"
+            title={t('agentInput.promptPicker.readError')}
+            action={{ label: t('common.retry'), onPress: () => setAttempt((value) => value + 1), testID: 'prompt-picker-preview-retry' }} />
+            : current?.text !== undefined ? <PreviewText text={current.text} markdown={row.kind !== 'history'} />
+            : <SkeletonRows rows={1} {...SELECTION_LIST_SKELETON_ROW_SHAPE} />}
+    </HappierPromptPickerPreview>;
 }
 
 /**
@@ -155,27 +161,6 @@ function PreviewText(props: Readonly<{ text: string; markdown: boolean }>) {
     const text = promptPreviewDisplayText(props.text);
     if (props.markdown) return <MarkdownView profile="widget" markdown={markArguments(text)} />;
     return <Text selectable style={styles.previewText}>{text}</Text>;
-}
-
-/** One quiet line in the list: an invitation, an empty result or a recoverable failure. */
-export function PromptPickerNotice(props: Readonly<{
-    text: string;
-    title?: string;
-    tone?: 'default' | 'error';
-    action?: Readonly<{ label: string; onPress: () => void }>;
-    testID?: string;
-}>) {
-    return <View style={styles.notice} testID={props.testID}>
-        {props.title ? <Text style={styles.noticeTitle}>{props.title}</Text> : null}
-        <View style={styles.actionLine}>
-            <Text style={[styles.noticeText, props.tone === 'error' ? styles.noticeError : null]} accessibilityLiveRegion="polite">{props.text}</Text>
-            {props.action ? <View style={styles.action}>
-                <Text style={styles.noticeText}>{' · '}</Text>
-                <TextLinkButton label={props.action.label} onPress={props.action.onPress}
-                    tone={props.tone === 'error' ? 'strong' : 'quiet'} testID={props.testID ? `${props.testID}:action` : undefined} />
-            </View> : null}
-        </View>
-    </View>;
 }
 
 export function PromptPickerSkeletonRow(props: Readonly<{ testID?: string }>) {
@@ -206,7 +191,7 @@ export function PromptPickerSaveRow(props: Readonly<{
     const submit = form.canSave ? () => { void form.save(); } : undefined;
     return <Animated.View style={[styles.row, styles.saveRow, motion.style]} testID={`prompt-picker-save:${props.row.id}`}>
         <View style={[styles.lead, styles.saveLead]}>
-            <Icon name="chat" size={16} color={theme.colors.text.secondary} />
+            <Icon name="chat" size={METRICS.glyphPx} color={theme.colors.text.secondary} />
         </View>
         <View style={styles.body}>
             <View style={styles.saveLine}>
@@ -240,8 +225,9 @@ export function PromptPickerSaveRow(props: Readonly<{
 }
 
 /**
- * Hints for the keys the field owns (hardware keyboards only), then the honest state of the
- * history search: older pages are searched on demand, with progress and Stop.
+ * Hints for the keys the field owns (hardware keyboards only), then one short status for the history
+ * search: older pages are searched on demand, with progress and Stop, and what was searched stays said.
+ * The status is one line at every state, so the footer keeps its height and never wraps the hints.
  */
 export function PromptPickerFooter(props: Readonly<{
     history: UserMessageHistoryEntriesSnapshot;
@@ -256,84 +242,65 @@ export function PromptPickerFooter(props: Readonly<{
     const { history } = props;
     const platform = resolveKeyboardPlatform();
     const pickerShortcut = useKeyboardShortcutLabel('composer.prompts.open');
-    const status = props.applyError ? <Text style={[styles.status, styles.noticeError]} accessibilityLiveRegion="polite">{t('agentInput.promptPicker.applyError')}</Text>
-        : history.error ? <View style={styles.actionLine}>
-            <Text style={[styles.status, styles.noticeError]} accessibilityLiveRegion="polite">{t('agentInput.promptPicker.historyError')}</Text>
-            <View style={styles.action}><Text style={styles.status}>{' · '}</Text>
-                <TextLinkButton label={t('common.retry')} onPress={history.retry} tone="strong" />
-            </View>
-        </View>
-        : history.isLoading ? <View style={styles.actionLine}>
-            <Text style={styles.status} accessibilityLiveRegion="polite">
-                {t('agentInput.promptPicker.searchingOlder', { searched: history.progress.sessionsSearched, total: history.progress.totalSessions })}
-            </Text>
-            <View style={styles.action}><Text style={styles.status}>{' · '}</Text>
-                <TextLinkButton label={t('agentInput.promptPicker.stop')} onPress={history.stop} testID="prompt-picker-history-stop" />
-            </View>
-        </View>
-        : history.hasMore ? <TextLinkButton label={t('agentInput.promptPicker.loadOlder')}
-            onPress={() => { void history.loadMore(); }} testID="prompt-picker-history-more" />
+    const { sessionsSearched: searched, totalSessions: total } = history.progress;
+    // One state at a time, in order: a failed apply, the search running (Stop), the search failed
+    // (Retry), the library arriving, then the settled coverage with its next step.
+    const end = props.applyError ? <StatusLine tone="error" text={t('agentInput.promptPicker.applyError')} />
+        : history.isLoading ? <StatusLine text={t('agentInput.promptPicker.searchingOlder', { searched, total })}
+            action={<TextLinkButton label={t('agentInput.promptPicker.stop')} onPress={history.stop} testID="prompt-picker-history-stop" />} />
+        : history.error ? <StatusLine tone="error" text={t('agentInput.promptPicker.historyError')}
+            action={<TextLinkButton label={t('common.retry')} onPress={() => history.retry()} tone="strong" testID="prompt-picker-history-retry" />} />
+        : props.libraryLoading ? <StatusLine text={t('agentInput.promptPicker.loadingLibrary')} />
+        // Each "Search more" reads further back; the settled line keeps the count, so every press shows its progress.
+        : history.coverage === 'partial' && history.hasMore && searched > 0 ? <StatusLine
+            text={t('agentInput.promptPicker.searchedOlder', { searched, total })}
+            action={<TextLinkButton label={t('agentInput.promptPicker.searchMore')} onPress={() => { void history.loadMore(); }} testID="prompt-picker-history-more" />} />
+        : history.coverage !== 'complete' ? <StatusLine
+            text={t(history.coverage === 'partial' ? 'agentInput.promptPicker.partialHistory' : 'agentInput.promptPicker.loadedHistory')}
+            action={history.hasMore ? <TextLinkButton label={t('agentInput.promptPicker.loadOlder')}
+                onPress={() => { void history.loadMore(); }} testID="prompt-picker-history-more" /> : undefined} />
         : null;
-    const coverage = props.libraryLoading ? t('agentInput.promptPicker.loadingLibrary')
-        : history.coverage === 'partial' ? t('agentInput.promptPicker.partialHistory')
-        : history.coverage === 'loaded' ? t('agentInput.promptPicker.loadedHistory') : null;
     const hints = props.hardwareKeyboard && props.wide !== false;
-    if (!hints && !status && !coverage) return null;
-    return <View style={styles.footer} testID="prompt-picker-footer">
-        {hints ? <View style={styles.hints}>
-            <Hint keys="↑↓" label={t('commandPalette.hints.move')} />
-            <Hint keys="↵" label={t('agentInput.promptPicker.insert')} />
-            {props.canSend ? <Hint keys={formatKeybindingLabel({ binding: 'Mod+Enter' }, platform)} label={t('agentInput.promptPicker.send')} /> : null}
-            <Hint keys={formatKeybindingLabel({ binding: 'Mod+D' }, platform)} label={t('agentInput.promptPicker.favorite')} />
-        </View> : null}
-        <View style={[styles.footerEnd, hints ? null : styles.footerStart]}>
-            {/* One status line: the coverage fact, then its next step after a quiet separator. */}
-            {coverage ? <Text style={styles.status} accessibilityLiveRegion="polite" testID="prompt-picker-history-coverage">{coverage}{status ? ' ·' : ''}</Text> : null}
-            {status ?? (!coverage && hints && pickerShortcut ? <Hint keys={pickerShortcut} label={t('agentInput.promptPicker.title')} /> : null)}
-        </View>
+    if (!hints && !end) return null;
+    return <SelectionListFooter testID="prompt-picker-footer" hardwareKeyboardAvailable={hints} action={end} hints={[
+        { id: 'move', label: '↑↓', description: t('commandPalette.hints.move') },
+        { id: 'insert', label: '↵', description: t('agentInput.promptPicker.insert') },
+        ...(props.canSend ? [{ id: 'send', label: formatKeybindingLabel({ binding: 'Mod+Enter' }, platform), description: t('agentInput.promptPicker.send') }] : []),
+        { id: 'favorite', label: formatKeybindingLabel({ binding: 'Mod+D' }, platform), description: t('agentInput.promptPicker.favorite') },
+        ...(!end && pickerShortcut ? [{ id: 'open', label: pickerShortcut, description: t('agentInput.promptPicker.title') }] : []),
+    ]} />;
+}
+
+/** The footer's one status: a sentence that ellipsizes rather than wraps, then its next step after a quiet separator. */
+function StatusLine(props: Readonly<{ text: string; tone?: 'error'; action?: React.ReactNode }>) {
+    return <View style={styles.footerEnd} testID="prompt-picker-history-status">
+        <Text style={[styles.status, props.tone === 'error' ? styles.noticeError : null]} numberOfLines={1}
+            accessibilityLiveRegion="polite">{props.text}</Text>
+        {props.action ? <View style={styles.action}><Text style={styles.status}>{'· '}</Text>{props.action}</View> : null}
     </View>;
 }
 
-function Hint(props: Readonly<{ keys: string; label: string }>) {
-    return <View style={styles.hint}><KeyHint label={props.keys} /><Text style={styles.hintLabel}>{props.label}</Text></View>;
-}
+const METRICS = HAPPIER_PROMPT_PICKER_METRICS;
 
 const styles = StyleSheet.create((theme) => ({
-    row: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s10, paddingLeft: 14, paddingRight: theme.space.s10, paddingVertical: theme.space.s6, minHeight: 48 },
-    lead: { width: 20, alignItems: 'center', justifyContent: 'center' },
+    // The in-place save row stands on the presentation's row anatomy, so it rises into the list in line.
+    row: { flexDirection: 'row', alignItems: 'center', gap: METRICS.rowGapPx, paddingLeft: METRICS.rowPaddingLeftPx,
+        paddingRight: METRICS.rowPaddingRightPx, paddingVertical: METRICS.rowPaddingVerticalPx, minHeight: METRICS.rowMinHeightPx },
+    lead: { width: METRICS.leadColumnPx, alignItems: 'center', justifyContent: 'center' },
     body: { flex: 1, minWidth: 0, gap: 1 },
-    title: { ...Typography.variant('label', 'semiBold'), ...Typography.default(), color: theme.colors.text.primary },
     meta: { ...Typography.variant('meta'), color: theme.colors.text.secondary },
-    token: Typography.mono(),
-    metaRow: { flexDirection: 'row', alignItems: 'baseline', minWidth: 0 },
-    metaLead: { flexShrink: 1, minWidth: 0 },
-    // The in-place save row: the field and Save share one line; the meta says where it goes.
+    // The field and Save share one line; the meta says where it goes.
     saveRow: { alignItems: 'flex-start', paddingVertical: theme.space.s10 },
     saveLead: { marginTop: theme.space.s8 },
     saveLine: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
     saveField: { flex: 1, minWidth: 0 },
     saveMeta: { marginTop: theme.space.s6 },
     saveStar: { marginTop: theme.space.s6 },
-    preview: { width: 300, flexShrink: 0, minHeight: 0, gap: theme.space.s8, paddingHorizontal: 14, paddingVertical: theme.space.s12,
-        borderLeftWidth: StyleSheet.hairlineWidth, borderLeftColor: theme.colors.border.default },
-    previewMeta: { ...({ ...Typography.variant('micro', 'regular'), ...Typography.tabular() }), color: theme.colors.text.tertiary },
-    previewScroll: { flex: 1, minHeight: 0 },
-    previewScrollContent: { paddingBottom: theme.space.s4 },
     previewText: { ...Typography.default(), ...ITEM_SUBTITLE_TEXT_METRICS.compact, color: theme.colors.text.primary },
-    previewError: { ...Typography.default(), ...ITEM_SUBTITLE_TEXT_METRICS.compact, color: theme.colors.state.danger.foreground },
-    notice: { paddingHorizontal: theme.space.s16, paddingTop: theme.space.s10, paddingBottom: theme.space.s8, gap: theme.space.s6 },
-    noticeTitle: { ...Typography.variant('meta'), ...Typography.default('semiBold'), color: theme.colors.text.secondary },
-    noticeText: { ...Typography.default(), ...ITEM_SUBTITLE_TEXT_METRICS.cozy, color: theme.colors.text.secondary },
     noticeError: { color: theme.colors.state.danger.foreground },
     actionLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', minWidth: 0 },
     action: { flexDirection: 'row', alignItems: 'center' },
     skeleton: { paddingHorizontal: theme.space.s4 },
-    footer: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: theme.space.s4, minHeight: 34,
-        paddingHorizontal: theme.space.s12, paddingVertical: theme.space.s6, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.colors.border.default },
-    hints: { maxWidth: '100%', flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 14, rowGap: theme.space.s4 },
-    footerEnd: { maxWidth: '100%', flexGrow: 1, flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s6, justifyContent: 'flex-end', alignItems: 'center' },
-    footerStart: { justifyContent: 'flex-start' },
-    hint: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6 },
-    hintLabel: { ...({ ...Typography.variant('micro', 'regular'), ...Typography.tabular() }), color: theme.colors.text.tertiary },
-    status: { ...({ ...Typography.variant('micro', 'regular'), ...Typography.tabular() }), color: theme.colors.text.secondary, textAlign: 'right' },
+    footerEnd: { flexShrink: 1, minWidth: 0, flexDirection: 'row', gap: theme.space.s6, justifyContent: 'flex-end', alignItems: 'center', marginLeft: 'auto' },
+    status: { ...({ ...Typography.variant('micro', 'regular'), ...Typography.tabular() }), color: theme.colors.text.secondary, textAlign: 'right', flexShrink: 1, minWidth: 0 },
 }));

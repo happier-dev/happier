@@ -19,7 +19,7 @@ import { t } from '@/text';
 import { ChangedFilesSectionHeader } from '@/components/workspaces/scm/review/ChangedFilesSectionHeader';
 import { ScmChangeRow, resolveScmChangeStatsColumnWidth } from '@/components/workspaces/scm/changes/ScmChangeRow';
 import { filterDirectoryLikeScmFileStatuses } from '@/scm/isDirectoryLikeScmFileStatus';
-import type { RepositoryCheckpointTurnMetadata } from '@happier-dev/protocol';
+import type { RepositoryCheckpointTurnMetadata } from '@happier-dev/protocol/sessions/changes/types';
 
 type ChangedFilesListProps = {
     theme: any;

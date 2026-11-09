@@ -313,7 +313,7 @@ describe('useNewSessionCheckoutActionChip', () => {
         expect(getOptionIconColor(releaseOption)).toBe('#123ABC');
     });
 
-    it('parks the checkout clock while retained and refreshes its current labels on presentation', async () => {
+    it('keeps a closed checkout model stable across retained and presented time', async () => {
         const { useNewSessionCheckoutActionChip } = await import('./useNewSessionCheckoutActionChip');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
         vi.useFakeTimers();
@@ -333,57 +333,12 @@ describe('useNewSessionCheckoutActionChip', () => {
             expect(roots.length - before).toBe(0);
             expect(roots.at(-1)).toBe(held);
             await act(async () => screen.update(tree(true)));
-            expect(roots.at(-1)).not.toBe(held);
+            expect(roots.at(-1)).toBe(held);
             const visible = roots.length;
             await act(async () => { vi.advanceTimersByTime(60_000); });
-            expect(roots.length - visible).toBe(1);
+            expect(roots.length - visible).toBe(0);
             expect(roots.at(-1)?.id).toBe(held?.id);
         } finally { await act(async () => screen.unmount()); vi.useRealTimers(); }
-    });
-
-    it('rebuilds rootStep on the next minute tick (nowMs ticks via useNowMs)', async () => {
-        vi.useFakeTimers();
-        vi.setSystemTime(new Date('2026-05-12T00:00:00.000Z'));
-        try {
-            const { useNewSessionCheckoutActionChip } = await import('./useNewSessionCheckoutActionChip');
-
-            const captures: Array<SelectionListStep | undefined> = [];
-            function Probe() {
-                const chip = useNewSessionCheckoutActionChip(makeDefaultParams({
-                    repoScmSnapshot: makeSnapshot([
-                        { path: '/repo', branch: 'main', isCurrent: true, isMain: true },
-                    ]),
-                    checkoutChipModel: makeCheckoutChipModel([
-                        { id: 'current_path', kind: 'current_path', path: '/repo' },
-                        { id: 'create_git_worktree', kind: 'create_git_worktree' },
-                    ]),
-                    checkoutPickerOpen: false,
-                    selectedPath: '/repo',
-                }));
-                captures.push(getCheckoutChipRootStepFromChip(chip));
-                return null;
-            }
-
-            await renderScreen(<Probe />);
-            const initialRoot = captures[captures.length - 1];
-
-            await act(async () => {
-                vi.advanceTimersByTime(60_000);
-            });
-
-            const tickedRoot = captures[captures.length - 1];
-            // The chip must rebuild rootStep when nowMs ticks (referential identity change),
-            // so RelativeTimeText / stale recomputation observes the new clock.
-            expect(tickedRoot).not.toBe(initialRoot);
-            // ...but the rebuild describes the SAME destination. `SelectionList` keys its
-            // "a rebuilt root is a refresh, not navigation" rule on the root step id
-            // (`useSelectionListStepStack`), so a rebuild that changed the id would drain
-            // the step stack and throw the user out of the worktree name step — losing the
-            // name they were typing — once a minute.
-            expect(tickedRoot?.id).toBe(initialRoot?.id);
-        } finally {
-            vi.useRealTimers();
-        }
     });
 
     it('threads machineHomeDir through to buildWorktreeSelectionListSteps so tilde worktree paths match the absolute current dir', async () => {

@@ -10,7 +10,7 @@ import {
   type ConnectedServicesProfileOption,
   type ConnectedServicesProfileOptionsByServiceId,
 } from '@happier-dev/agents';
-import { ConnectedAccountServiceKeySchema, ConnectedServiceBindingSelectionV2Schema, ConnectedServiceBindingsV2Schema, type ConnectedServiceBindingSelectionV2, type ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { areTeamResourceConnectedServiceSelectionsEqual, ConnectedAccountServiceKeySchema, ConnectedServiceBindingSelectionV2Schema, ConnectedServiceBindingsV2Schema, type ConnectedServiceBindingSelectionV2, type ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type {
   SessionTeamCredentialBindingIntentV1,
@@ -128,7 +128,13 @@ export function buildConnectedServicesBindingsPayload(params: Readonly<{
     if (!ConnectedAccountServiceKeySchema.safeParse(serviceId).success) continue;
     const parsedBinding = ConnectedServiceBindingSelectionV2Schema.safeParse(binding);
     if (!parsedBinding.success) continue;
-    bindingsByServiceId[serviceId] = parsedBinding.data;
+    if (parsedBinding.data.source === 'connected' && parsedBinding.data.selection === 'group') {
+      // Session runtime evidence must not become an authored selection.
+      const { appliedProfileId: _appliedProfileId, ...selection } = parsedBinding.data;
+      bindingsByServiceId[serviceId] = selection;
+    } else {
+      bindingsByServiceId[serviceId] = parsedBinding.data;
+    }
     if (parsedBinding.data.source !== 'native') connectedCount += 1;
     else hasExplicitNativeBinding = true;
   }
@@ -160,10 +166,7 @@ export function composeConnectedServiceTeamCredentialBindingIntents(params: Read
       candidate.id === selection.resourceId
       && candidate.readiness.kind === 'available'
       && candidate.connectedServiceSelections.some((candidateSelection) => (
-        candidateSelection.resourceId === selection.resourceId
-        && candidateSelection.deliveryMode === selection.deliveryMode
-        && JSON.stringify(candidateSelection.disclosedMember ?? null)
-          === JSON.stringify(selection.disclosedMember ?? null)
+        areTeamResourceConnectedServiceSelectionsEqual(candidateSelection, selection)
       ))
     ));
     if (!resource) continue;

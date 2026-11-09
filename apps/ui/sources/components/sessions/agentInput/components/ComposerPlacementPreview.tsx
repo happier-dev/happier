@@ -181,7 +181,6 @@ export const ComposerPlacementPreview = React.memo(
             {menuTrigger}
             {/* One line that scrolls sideways, through the live row's own scroller and edge fades (ACCEPT-OPUS). */}
             <AgentInputScrollableChipRow
-              fadeColor={theme.colors.surface.selected}
               indicatorColor={tint}
               containerStyle={PHONE_ROW_STYLE}
               contentStyle={phoneRowContentStyle}

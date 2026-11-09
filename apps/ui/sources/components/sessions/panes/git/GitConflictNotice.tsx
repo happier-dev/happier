@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { formatExactCount } from '@/components/ui/navigation/tabBadge/tabBadgeModel';
 import { sync } from '@/sync/sync';
-import type { ScmOperationState } from '@happier-dev/protocol';
+import type { ScmOperationState } from '@happier-dev/protocol/scm';
 
 type ScmRepositoryOperationKind = ScmOperationState['kind'];
 import { t } from '@/text';

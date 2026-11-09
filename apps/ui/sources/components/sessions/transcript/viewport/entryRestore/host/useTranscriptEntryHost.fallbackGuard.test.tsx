@@ -126,6 +126,7 @@ function createStableMembers(overrides?: {
         entryRestoreDeadlineTimeoutRef: { current: null },
         entryRestoreOwner: overrides?.entryRestoreOwner ?? createEntryRestoreOwner(),
         executeViewportCommand: overrides?.executeViewportCommand ?? vi.fn(() => true),
+        firstListPaintObservedRef: { current: true },
         hasNativeContentMeasurementForCurrentSession: vi.fn(() => false),
         initialFillAbortRef: { current: null },
         invalidateViewportAnchorCapture: vi.fn(),

@@ -6,6 +6,7 @@ import { t } from '@/text';
 
 const sessionAttachmentsUploadFileSpy = vi.hoisted(() => vi.fn());
 const runTransferFinalizeRecoveryMock = vi.hoisted(() => vi.fn());
+const issuedHandle = { v: 1 as const, sessionId: 's1', id: 'issued-file' };
 
 vi.mock('@/sync/domains/transfers/ops/uploadSessionAttachment', () => ({
     sessionAttachmentsUploadFile: (args: unknown) => sessionAttachmentsUploadFileSpy(args),
@@ -19,6 +20,37 @@ describe('uploadAttachmentDraftsToSession', () => {
     beforeEach(() => {
         sessionAttachmentsUploadFileSpy.mockReset();
         runTransferFinalizeRecoveryMock.mockReset();
+    });
+
+    it.each([undefined, { v: 1 as const, sessionId: 'other-session', id: 'old-issued' }])(
+        'reuploads retained path-only or foreign-session drafts before returning issued ingress: %j', async attachmentHandle => {
+            const handle = { v: 1 as const, sessionId: 's1', id: 'fresh-issued' };
+            sessionAttachmentsUploadFileSpy.mockResolvedValue({ success: true, path: 'fresh.txt', sizeBytes: 1,
+                sha256: 'a'.repeat(64), attachmentHandle: handle });
+            const source = { kind: 'memory' as const, name: 'note.txt', bytes: new Uint8Array([1]) };
+            const checkpoint = vi.fn();
+            const result = await uploadAttachmentDraftsToSession({ sessionId: 's1', messageLocalId: 'm1',
+                drafts: [{ id: 'd1', source, status: 'uploaded', uploadedPath: 'old.txt', attachmentHandle }],
+                config: { uploadLocation: 'workspace', workspaceRelativeDir: '.happier/attachments', vcsIgnoreStrategy: 'none',
+                    vcsIgnoreWritesEnabled: false, maxFileBytes: 1024 }, applyDraftPatch: () => {}, onUploadedDraftCheckpoint: checkpoint });
+            expect(result.uploaded[0]).toMatchObject({ path: 'fresh.txt', attachmentHandle: handle });
+            expect(sessionAttachmentsUploadFileSpy).toHaveBeenCalledWith(expect.objectContaining({ file: source }));
+            expect(checkpoint).toHaveBeenCalledWith(expect.objectContaining({ attachmentHandle: handle }));
+        },
+    );
+
+    it('releases an eager folder result without issuance so the user can retry the original source', async () => {
+        const attachmentHandle = { v: 1 as const, sessionId: 's1', id: 'issued-folder' };
+        sessionAttachmentsUploadFileSpy.mockResolvedValueOnce({ success: true, path: 'folder', sizeBytes: 1, sha256: 'a'.repeat(64) })
+            .mockResolvedValueOnce({ success: true, path: 'folder-retry', sizeBytes: 1, sha256: 'a'.repeat(64), attachmentHandle });
+        const draft = { id: 'folder-draft', status: 'pending' as const,
+            source: { kind: 'folder' as const, name: 'project', entries: [{ relativePath: 'note.txt',
+                source: { kind: 'memory' as const, name: 'note.txt', bytes: new Uint8Array([1]) } }] } };
+        const args = { sessionId: 's1', drafts: [draft], config: { uploadLocation: 'workspace' as const,
+            workspaceRelativeDir: '.happier/attachments', vcsIgnoreStrategy: 'none' as const,
+            vcsIgnoreWritesEnabled: false, maxFileBytes: 1024 }, applyDraftPatch: vi.fn() };
+        await expect(uploadAttachmentDraftsToSession(args)).rejects.toThrow(describeUploadFailure('other', t('common.machine')));
+        await expect(uploadAttachmentDraftsToSession(args)).resolves.toMatchObject({ uploaded: [{ attachmentHandle }] });
     });
 
     it.each(['response', 'throw'] as const)('classifies a raw transfer %s for the tray and send caller', async mode => {
@@ -35,12 +67,12 @@ describe('uploadAttachmentDraftsToSession', () => {
         expect(failure).toBeInstanceOf(Error);
         expect((failure as Error).message).toBe(humanReason);
         expect(failure).toMatchObject({ rpcErrorCode: 'EADDRINUSE' });
-        expect(applyDraftPatch).toHaveBeenLastCalledWith('image', { status: 'error', error: humanReason });
+        expect(applyDraftPatch).toHaveBeenLastCalledWith('image', { status: 'error', error: humanReason, errorCode: 'EADDRINUSE' });
     });
 
     it('retains the issued attachment handle in message metadata and on uploaded-draft retry', async () => {
-        const { uploadAttachmentDraftsToSession, buildAttachmentMessageMeta } = await import('./uploadAttachmentDraftsToSession');
-        const { AttachmentsMessageMetaV1Schema } = await import('@/sync/domains/attachments/attachmentsMessageMeta');
+        const { uploadAttachmentDraftsToSession, buildSessionAttachmentIngressMeta } = await import('./uploadAttachmentDraftsToSession');
+        const { RawIngressStructuredInputV1Schema } = await import('@happier-dev/protocol/runtime/input/structuredInputV1');
         const handle = { v: 1 as const, sessionId: 's1', id: 'issued-handle' };
         const result = await uploadAttachmentDraftsToSession({
             sessionId: 's1', messageLocalId: 'm1',
@@ -50,9 +82,10 @@ describe('uploadAttachmentDraftsToSession', () => {
                 vcsIgnoreWritesEnabled: false, maxFileBytes: 1024 },
             applyDraftPatch: () => {},
         });
-        const metadata = buildAttachmentMessageMeta(result.uploaded);
-        const payload = (metadata.happier as { payload: unknown }).payload;
-        expect(AttachmentsMessageMetaV1Schema.parse(payload).attachments[0]).toMatchObject({ id: 'd1', attachmentHandle: handle });
+        const metadata = buildSessionAttachmentIngressMeta(result.uploaded);
+        expect(RawIngressStructuredInputV1Schema.parse(metadata.happierStructuredInputV1))
+            .toEqual({ v: 1, sessionAttachments: [handle] });
+        expect(metadata).not.toHaveProperty('happier');
         expect(result.uploaded[0]?.structuredInput).toMatchObject({ id: 'd1' });
         expect(sessionAttachmentsUploadFileSpy).not.toHaveBeenCalled();
     });
@@ -65,6 +98,7 @@ describe('uploadAttachmentDraftsToSession', () => {
             path: '.happier/uploads/messages/m1/12345678-file.png',
             sizeBytes: 5,
             sha256: 'h1',
+            attachmentHandle: issuedHandle,
         });
 
         const file = typeof File === 'function'
@@ -92,6 +126,7 @@ describe('uploadAttachmentDraftsToSession', () => {
                 path: '.happier/uploads/messages/m1/12345678-file.png',
                 sizeBytes: 5,
                 sha256: 'h1',
+                attachmentHandle: issuedHandle,
             };
         });
 
@@ -128,6 +163,7 @@ describe('uploadAttachmentDraftsToSession', () => {
                     mimeType: 'image/png',
                     sizeBytes: 5,
                     sha256: 'h1',
+                    attachmentHandle: issuedHandle,
                     structuredInput: {
                         id: 'd1',
                         type: 'localImage',
@@ -167,6 +203,7 @@ describe('uploadAttachmentDraftsToSession', () => {
             path: '.happier/uploads/messages/m1/readme.md',
             sizeBytes: 12,
             sha256: 'h2',
+            attachmentHandle: issuedHandle,
         });
 
         const drafts: any[] = [
@@ -204,62 +241,8 @@ describe('uploadAttachmentDraftsToSession', () => {
             mimeType: 'text/markdown',
             sizeBytes: 12,
             sha256: 'h2',
+            attachmentHandle: issuedHandle,
         });
-    });
-
-    it('builds transcript metadata with structured uploaded-image metadata', async () => {
-        const module = await import('./uploadAttachmentDraftsToSession');
-        expect(typeof module.buildAttachmentMessageMeta).toBe('function');
-
-        const meta = module.buildAttachmentMessageMeta([
-            {
-                name: 'screen.png',
-                path: '.happier/uploads/messages/m1/screen.png',
-                mimeType: 'image/png',
-                sizeBytes: 42,
-                sha256: 'h1',
-                structuredInput: {
-                    type: 'localImage',
-                    kind: 'localImage',
-                    localPath: '.happier/uploads/messages/m1/screen.png',
-                    path: '.happier/uploads/messages/m1/screen.png',
-                    mimeType: 'image/png',
-                    name: 'screen.png',
-                    sizeBytes: 42,
-                    sha256: 'h1',
-                },
-            },
-        ]);
-
-        expect(meta).toMatchObject({
-            happier: {
-                kind: 'attachments.v1',
-                payload: {
-                    attachments: [
-                        {
-                            name: 'screen.png',
-                            path: '.happier/uploads/messages/m1/screen.png',
-                            mimeType: 'image/png',
-                            sizeBytes: 42,
-                            sha256: 'h1',
-                        },
-                    ],
-                },
-            },
-            happierStructuredInputV1: {
-                v: 1,
-                imageInputs: [
-                    {
-                        type: 'localImage',
-                        kind: 'localImage',
-                        localPath: '.happier/uploads/messages/m1/screen.png',
-                        path: '.happier/uploads/messages/m1/screen.png',
-                        provenance: { kind: 'sessionAttachmentUpload' },
-                    },
-                ],
-            },
-        });
-        expect(JSON.stringify(meta.happierStructuredInputV1)).not.toContain('"attachments":[');
     });
 
     it('preserves the upload failure error code on the thrown error', async () => {
@@ -325,6 +308,7 @@ describe('uploadAttachmentDraftsToSession', () => {
                 path: '.happier/uploads/messages/m1/readme.md',
                 sizeBytes: 12,
                 sha256: 'sha256',
+                attachmentHandle: issuedHandle,
             },
         });
 
@@ -371,12 +355,14 @@ describe('uploadAttachmentDraftsToSession', () => {
                 path: '.happier/uploads/messages/m1/first.txt',
                 sizeBytes: 5,
                 sha256: 'a'.repeat(64),
+                attachmentHandle: { ...issuedHandle, id: 'issued-first' },
             })
             .mockResolvedValueOnce({
                 success: true,
                 path: '.happier/uploads/messages/m1/second.txt',
                 sizeBytes: 6,
                 sha256: 'b'.repeat(64),
+                attachmentHandle: { ...issuedHandle, id: 'issued-second' },
             });
 
         const pending = uploadAttachmentDraftsToSession({

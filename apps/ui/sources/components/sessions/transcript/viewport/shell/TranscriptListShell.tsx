@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
+import { measureWindowBounds, type WindowBounds } from '@/components/ui/treeDragDrop';
+import { RetainedPresentationGeometryRefreshContext, RetainedPresentationViewportContext } from '@/components/ui/presentation/retainedPresentationSlots';
 
 import { MarkdownCodeBlockWrapStateProvider } from '@/components/markdown/MarkdownCodeBlockWrapState';
 import { ComposerKeyboardFloatingInset } from '@/components/sessions/keyboardAvoidance';
@@ -28,6 +30,23 @@ function TranscriptListShellInner<TItem>(
     const renderer = resolveTranscriptListRenderer();
     const Renderer = renderer.Component;
     const rendererRef = React.useRef<TranscriptListShellRef<TItem> | null>(null);
+    const viewportRef = React.useRef<View | null>(null);
+    const refreshRetainedGeometry = React.useContext(RetainedPresentationGeometryRefreshContext);
+    const retainedViewport = React.useMemo(() => ({
+        measure: (publish: (rect: WindowBounds | null) => void) => {
+            void measureWindowBounds(viewportRef.current).then(publish);
+        },
+    }), []);
+    const hostOnScroll = props.onScroll;
+    const onScroll = React.useCallback<NonNullable<typeof hostOnScroll>>((event, movement) => {
+        hostOnScroll?.(event, movement);
+        if (Platform.OS !== 'web') refreshRetainedGeometry?.();
+    }, [hostOnScroll, refreshRetainedGeometry]);
+    const hostOnLayout = props.onLayout;
+    const onLayout = React.useCallback<NonNullable<typeof hostOnLayout>>((event) => {
+        hostOnLayout?.(event);
+        if (Platform.OS !== 'web') refreshRetainedGeometry?.();
+    }, [hostOnLayout, refreshRetainedGeometry]);
     const commitRendererRef = React.useCallback((node: TranscriptListShellRef<TItem> | null) => {
         rendererRef.current = node;
         if (typeof ref === 'function') ref(node);
@@ -62,10 +81,13 @@ function TranscriptListShellInner<TItem>(
 
     return (
         <MarkdownCodeBlockWrapStateProvider>
-            <View style={TRANSCRIPT_LIST_SHELL_STYLE}>
+            <RetainedPresentationViewportContext.Provider value={retainedViewport}>
+            <View ref={viewportRef} collapsable={false} style={TRANSCRIPT_LIST_SHELL_STYLE}>
                 <Renderer
                     ref={commitRendererRef}
                     {...props}
+                    onScroll={onScroll}
+                    onLayout={onLayout}
                     onRevealNativeItem={props.onRevealNativeItem ?? revealNativeItem}
                     {...(conversation ? { onRendererAtEndChange } : {})}
                 />
@@ -75,6 +97,7 @@ function TranscriptListShellInner<TItem>(
                     <ComposerKeyboardFloatingInset
                         testID="transcript-jump-to-bottom-keyboard-offset"
                         baseBottom={12}
+                        hideUnderComposerOverlay
                         style={{ position: 'absolute', right: 12 }}
                     >
                         <JumpToBottomButton
@@ -86,6 +109,7 @@ function TranscriptListShellInner<TItem>(
                     </ComposerKeyboardFloatingInset>
                 ) : null}
             </View>
+            </RetainedPresentationViewportContext.Provider>
         </MarkdownCodeBlockWrapStateProvider>
     );
 }

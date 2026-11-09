@@ -4,7 +4,8 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 
 vi.mock('socket.io-client', async (importOriginal) =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
-import type { ReviewCommentV1, ReviewFindingsV2 } from '@happier-dev/protocol';
+import type { ReviewCommentV1} from '@happier-dev/protocol/reviews/comments/v1';
+import type { ReviewFindingsV2 } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
 
 import { buildReviewCommentFixture, createDeferred, createRootLayoutFeaturesResponse, createSessionFixture, flushHookEffects, renderScreen, standardCleanup, storePlainReviewCommentFixture } from '@/dev/testkit';
 import { serveActionHomes, type ServedHomeRequest } from '@/dev/testkit/harness/actionHomesHttpHarness';

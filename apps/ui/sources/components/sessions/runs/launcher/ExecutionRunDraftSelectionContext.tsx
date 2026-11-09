@@ -1,4 +1,4 @@
-import type { DiscussionSelectionSourceV1 } from '@happier-dev/protocol';
+import type { DiscussionSelectionSourceV1 } from '@happier-dev/protocol/discussions/references';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';

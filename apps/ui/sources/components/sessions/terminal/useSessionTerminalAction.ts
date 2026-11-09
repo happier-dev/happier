@@ -4,7 +4,7 @@ import { usePaneActionRailRightPaneHiddenByDetails } from '@/components/appShell
 
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { parseSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
-import { closeEmbeddedTerminalOutsideDockLocation, openEmbeddedTerminalInDockLocation } from './embeddedTerminalDocking';
+import { openEmbeddedTerminalInDockLocation } from './embeddedTerminalDocking';
 import { useSessionTerminalAvailability } from './useSessionTerminalAvailability';
 import { setSessionTerminalMode } from './sessionTerminalMode';
 import { readSessionTerminalWorkspace } from './sessionTerminalWorkspace';
@@ -35,7 +35,6 @@ export function useSessionTerminalAction(params: Readonly<{
                 pane.closeBottom();
                 return;
             }
-            // Terminals opened in Details are per-tab moves (lab M); showing the pane leaves them be.
             openEmbeddedTerminalInDockLocation({ pane, dockLocation: 'bottom' });
             return;
         }
@@ -46,7 +45,6 @@ export function useSessionTerminalAction(params: Readonly<{
             return;
         }
         if (rightPaneHiddenByDetails === true) pane.closeDetails();
-        closeEmbeddedTerminalOutsideDockLocation({ pane, dockLocation: 'sidebar' });
         openEmbeddedTerminalInDockLocation({ pane, dockLocation: 'sidebar' });
     }, [
         bottomTerminalActive,
@@ -64,5 +62,7 @@ export function useSessionTerminalAction(params: Readonly<{
         ? bottomTerminalActive
         : rightTerminalActive && !rightPaneHiddenByDetails;
 
-    return { available: terminalEnabled, active: terminalEnabled && active, onPress };
+    const available = terminalEnabled;
+    const activeNow = terminalEnabled && active;
+    return React.useMemo(() => ({ available, active: activeNow, onPress }), [available, activeNow, onPress]);
 }

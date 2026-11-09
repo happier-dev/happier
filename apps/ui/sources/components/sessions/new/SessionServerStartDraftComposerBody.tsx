@@ -35,7 +35,7 @@ export function SessionServerStartDraftComposerBody(props: Readonly<{
     seed: SessionServerStartDraftSeed;
     model: SessionServerStartDraftRecipe;
 }>) {
-    const { selectedTarget, selectedPlacement, machine, directory, setDirectory, setDirectoryEdited,
+    const { selectedTarget, selectedPlacement, machine, directory, noFolderSelected, setDirectory, setDirectoryEdited,
         directoryCandidateIndex, setSelectedCandidateIndex, error, setError, facts, agentTargets,
         selection, changeFields, changeField, organization, folderMenuOpen, setFolderMenuOpen, folderOptions,
         retainedFolderId, folderResolved, folderChoosable, showFolder, daemonMergedProjection,
@@ -147,7 +147,7 @@ export function SessionServerStartDraftComposerBody(props: Readonly<{
                     testID="server-start-draft-directory"
                     pressableRef={directoryFocus.attachOrigin}
                     title={t('newSession.recipeComposerDirectory')}
-                    detail={directory.trim() ? formatPathRelativeToHome(directory, homeDir) : t('newSession.folder.noFolder')}
+                    detail={noFolderSelected || !directory.trim() ? t('newSession.folder.noFolder') : formatPathRelativeToHome(directory, homeDir)}
                     onPress={() => setBrowsing(true)}
                 />
                 {showFolder && folderChoosable ? (

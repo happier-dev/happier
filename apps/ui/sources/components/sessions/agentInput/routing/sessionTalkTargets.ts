@@ -150,7 +150,7 @@ export function useSessionTalkTargets(sessionId: string, serverId: string | null
             const configuration = isAccountFollowConfigurationChangeRelevant(event);
             if (!configuration && !event.changeKinds?.includes('discussion') && !isSessionFollowAccountChangeRelevant(event)) return;
             invalidate(configuration);
-        });
+        }, { reconnect: 'refresh' });
     }, [enabled, binding]);
     const previewContext = (selector: SessionTalkSelector) => {
         const usesRules = selector === 'followers' || selector === 'following' || selector === 'matching';

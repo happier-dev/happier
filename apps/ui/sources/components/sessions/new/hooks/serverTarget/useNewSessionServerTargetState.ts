@@ -81,6 +81,7 @@ export function useNewSessionServerTargetState(params: Readonly<{
             serverSelectionActiveTargetId: params.settings.serverSelectionActiveTargetId,
         }, serverProfiles);
         return listServerSelectionTargets({
+            currentServerId: activeServerId,
             serverProfiles: serverProfiles.map((profile) => ({
                 ...profile,
                 id: resolveServerProfileScopeId(profile),
@@ -88,7 +89,7 @@ export function useNewSessionServerTargetState(params: Readonly<{
             groupProfiles: toServerSelectionSettings(scopedSettings).serverSelectionGroups ?? [],
             usableServerIds,
         });
-    }, [usableServerIds, params.settings.serverSelectionActiveTargetId, params.settings.serverSelectionActiveTargetKind, serverProfiles, serverSelectionGroups]);
+    }, [activeServerId, usableServerIds, params.settings.serverSelectionActiveTargetId, params.settings.serverSelectionActiveTargetKind, serverProfiles, serverSelectionGroups]);
 
     const resolvedSettingsTarget = React.useMemo(() => {
         const settings = normalizeServerSelectionSettingsForProfileScopeIds({

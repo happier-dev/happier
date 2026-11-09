@@ -6,6 +6,9 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import type { sync as syncInstance } from '@/sync/sync';
 import { createDeferred, renderScreen } from '@/dev/testkit';
+import { Modal } from '@/modal';
+import * as serverScopedMachineRpc from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { t } from '@/text';
 import {
     applyComposerPresentationTransaction,
     createComposerPresentationHostHandlers,
@@ -21,13 +24,15 @@ import {
 } from '@/sync/domains/browser/context';
 import {
     DaemonPluginUiComposerSurfaceCatalogEntryV1Schema,
-    type BrowserAdapterCapabilitiesV1,
-    type BrowserContextCapabilities,
     type DaemonPluginUiComposerSurfaceCatalogEntryV1,
     type PluginProjectionV2,
     type PluginProjectedComposerAttachmentEntryV1,
     type PluginProjectedComposerRegionEntryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+    type BrowserAdapterCapabilitiesV1} from '@happier-dev/protocol/browser/adapters/v1';
+import {
+    type BrowserContextCapabilities} from '@happier-dev/protocol/features/payload/capabilities/browserCapabilities';
 
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import {
@@ -37,6 +42,7 @@ import {
 import {
     clearSessionAttachmentDrafts,
     readSessionAttachmentDrafts,
+    writeSessionAttachmentDrafts,
 } from '@/components/sessions/attachments/sessionAttachmentDraftStore';
 import {
     createEphemeralComposerDocumentOwner,
@@ -45,11 +51,15 @@ import {
 } from '@/components/sessions/composer/composerDocumentOwner';
 import type { ParticipantComposerPreparedSubmission } from './SessionParticipantComposer';
 import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
+import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
+import { flushAttachmentDraftsForKey } from '@/components/sessions/attachments/attachmentDraftMemoryStore';
+import { sessionAttachmentDraftKey } from '@/components/sessions/attachments/sessionAttachmentDraftStore';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 const agentInputSpy = vi.fn();
-const modalAlertSpy = vi.fn();
+const modalAlertSpy = vi.fn<typeof Modal.alert>();
+const secureStorageBoundary = createDesktopSecureStorageBoundary();
 type SubmitMessage = typeof syncInstance.submitMessage;
 const acceptedSubmission: Awaited<ReturnType<SubmitMessage>> = {
     type: 'success', persistence: 'pending', wake: { attempted: false, state: 'not_needed' },
@@ -153,8 +163,6 @@ function currentParticipantDaemonProjection(entriesById: Readonly<Record<string,
         installedPackagesById: {},
         agentsById: {},
         actionsById: {},
-
-
         resourcesById: {},
         settingsById: {},
         familiesById: {
@@ -364,14 +372,6 @@ installSessionActionsCommonModuleMocks({
             View: ({ children, ...props }: { children?: React.ReactNode }) => React.createElement('View', props, children),
         });
     },
-    modal: async () => {
-        const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-        return createModalModuleMock({
-            spies: {
-                alert: (...args: unknown[]) => modalAlertSpy(...args),
-            },
-        }).module;
-    },
 });
 
 vi.mock('@/components/sessions/agentInput', () => ({
@@ -391,16 +391,6 @@ vi.mock('@/components/sessions/agentInput/components/AgentInputContentPopover', 
 vi.mock('@/components/sessions/agentInput/components/AgentInputPopoverSurface', () => ({
     AgentInputPopoverSurface: (props: Readonly<{ children?: React.ReactNode }>) => <>{props.children}</>,
 }));
-
-vi.mock(
-    '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc',
-    async (importOriginal) => {
-        const { installServerScopedMachineRpcModuleMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
-        return installServerScopedMachineRpcModuleMock({
-            machineRpcWithServerScope: (params: unknown) => machineRpcWithServerScopeSpy(params) as never,
-        })(importOriginal);
-    },
-);
 
 vi.mock('@/agents/backendCatalog/useDaemonMergedProjectionInputs', () => ({
     useDaemonMergedProjectionInputs: () => participantDaemonProjectionState.current,
@@ -457,7 +447,8 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSes
     usePreferredServerIdForSession: () => 'server-1',
 }));
 
-vi.mock('@/sync/ops/sessionExecutionRuns', () => ({
+vi.mock('@/sync/ops/sessionExecutionRuns', async importOriginal => ({
+    ...await importOriginal<typeof import('@/sync/ops/sessionExecutionRuns')>(),
     sessionExecutionRunSend: (...args: Parameters<typeof sessionExecutionRunSendSpy>) => sessionExecutionRunSendSpy(...args),
     isExecutionRunNotRunningSendError: (...args: Parameters<typeof isExecutionRunNotRunningSendErrorSpy>) => isExecutionRunNotRunningSendErrorSpy(...args),
 }));
@@ -468,9 +459,8 @@ vi.mock('@/sync/sync', () => ({
     },
 }));
 
-vi.mock('@/utils/system/fireAndForget', () => ({
-    fireAndForget: (promise: Promise<unknown>) => void promise,
-}));
+vi.mock('@/sync/domains/state/browserRecordStorage', async () =>
+    (await import('@/dev/testkit/mocks/browserRecordStorage')).createBrowserRecordStorageModuleMock());
 
 vi.mock('@/platform/randomUUID', () => ({
     randomUUID: () => randomUUIDSpy(),
@@ -478,7 +468,13 @@ vi.mock('@/platform/randomUUID', () => ({
 
 describe('SessionParticipantComposer', () => {
     beforeEach(() => {
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: secureStorageBoundary.invoke });
         resetSessionActionsCommonModuleMockState();
+        // Presentation imports acquire these platform boundaries before the shared
+        // module factories run. Attach the spies to the instances the composer uses.
+        vi.spyOn(Modal, 'alert').mockImplementation(modalAlertSpy);
+        vi.spyOn(serverScopedMachineRpc, 'machineRpcWithServerScope')
+            .mockImplementation(params => machineRpcWithServerScopeSpy(params) as never);
         agentInputSpy.mockClear();
         modalAlertSpy.mockClear();
         syncSubmitMessageSpy.mockClear();
@@ -491,6 +487,7 @@ describe('SessionParticipantComposer', () => {
             path: '.happier/uploads/messages/first-input-1/notes.txt',
             sizeBytes: 5,
             sha256: 'sha-notes',
+            attachmentHandle: { v: 1, sessionId: 's1', id: 'issued-notes' },
         });
         machineRpcWithServerScopeSpy.mockReset();
         machineRpcWithServerScopeSpy.mockResolvedValue({});
@@ -532,7 +529,7 @@ describe('SessionParticipantComposer', () => {
         // The composer's persisted delivery selection is normalized into the one
         // canonical pending vocabulary; `interrupt` means cancel-then-send, which is
         // `send_now`, not a Run-only delivery word.
-        expect(syncSubmitMessageSpy).toHaveBeenCalledWith(
+        await vi.waitFor(() => expect(syncSubmitMessageSpy).toHaveBeenCalledWith(
             's1',
             'Refine the current review',
             undefined,
@@ -547,7 +544,7 @@ describe('SessionParticipantComposer', () => {
                 callerSurface: 'participant_composer',
                 localId: 'first-input-1',
             }),
-        );
+        ));
         expect(sessionExecutionRunSendSpy).not.toHaveBeenCalled();
     });
 
@@ -595,7 +592,7 @@ describe('SessionParticipantComposer', () => {
             'Inspect the final edit',
             undefined,
             expect.objectContaining({
-                happier: expect.objectContaining({ kind: 'attachments.v1' }),
+                happierStructuredInputV1: expect.objectContaining({ sessionAttachments: [expect.objectContaining({ sessionId: 's1' })] }),
             }),
             expect.objectContaining({
                 serverId: 'server-1',
@@ -605,12 +602,38 @@ describe('SessionParticipantComposer', () => {
         );
     });
 
+    it('settles a scoped upload silently when its composer is withdrawn', async () => {
+        const { SessionParticipantComposer } = await import('./SessionParticipantComposer');
+        sessionAttachmentsUploadFileSpy.mockImplementationOnce(async (args: { signal: AbortSignal }) =>
+            await new Promise((_resolve, reject) => {
+                args.signal.addEventListener('abort', () => reject(args.signal.reason), { once: true });
+            }));
+        const screen = await renderScreen(<SessionParticipantComposer sessionId="s1" serverId="server-1"
+            canSendMessages recipient={{ kind: 'execution_run', runId: 'run_1' }}
+            initialLocalId="first-input-1" draftOccurrenceId="cancel-upload" />);
+        const props = agentInputSpy.mock.lastCall?.[0] as {
+            onAttachmentsAdded: (files: readonly File[]) => void;
+            onSend: (options?: { inputTextOverride?: string }) => void;
+        };
+        await act(async () => {
+            props.onAttachmentsAdded([new File(['hello'], 'notes.txt')]);
+            props.onSend({ inputTextOverride: 'Inspect this file' });
+            await flushHookEffects({ cycles: 4, turns: 2 });
+        });
+        expect(sessionAttachmentsUploadFileSpy).toHaveBeenCalledOnce();
+        await screen.unmount();
+        await act(async () => { await flushHookEffects({ cycles: 4, turns: 2 }); });
+        expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
+        expect(modalAlertSpy).not.toHaveBeenCalled();
+    });
+
     it('hands a post-capture edit to the known Run document after a delayed upload admits the captured input', async () => {
         const upload = createDeferred<{
             success: true;
             path: string;
             sizeBytes: number;
             sha256: string;
+            attachmentHandle: { v: 1; sessionId: string; id: string };
         }>();
         sessionAttachmentsUploadFileSpy.mockReturnValueOnce(upload.promise);
         const runOwner: { current: MutableComposerDocumentOwner | null } = { current: null };
@@ -654,14 +677,15 @@ describe('SessionParticipantComposer', () => {
         let input = agentInputSpy.mock.lastCall?.[0] as {
             onAttachmentsAdded: (files: readonly File[]) => void;
             onChangeText: (text: string) => void;
-            onSend: () => void;
+            onSend: () => Promise<void>;
         };
         await act(async () => {
             input.onAttachmentsAdded([new File(['hello'], 'notes.txt', { type: 'text/plain' })]);
             input.onChangeText('A');
         });
         input = agentInputSpy.mock.lastCall?.[0] as typeof input;
-        act(() => input.onSend());
+        let sending: Promise<void> | undefined;
+        act(() => { sending = input.onSend(); });
         await act(async () => {
             await Promise.resolve();
         });
@@ -676,8 +700,10 @@ describe('SessionParticipantComposer', () => {
             path: '.happier/uploads/messages/first-input-1/notes.txt',
             sizeBytes: 5,
             sha256: 'sha-notes',
+            attachmentHandle: { v: 1, sessionId: 's1', id: 'issued-notes' },
         });
         await act(async () => {
+            await sending;
             await flushHookEffects({ cycles: 4, turns: 2 });
         });
 
@@ -741,7 +767,7 @@ describe('SessionParticipantComposer', () => {
         clearSessionAttachmentDrafts(accountTwoScope);
     });
 
-    it('carries staged transfer drafts and unsent text into a new draft occurrence for the same Session', async () => {
+    it.each([false, true])('carries staged transfer drafts and unsent text into a new draft occurrence for the same Session; destination intake=%s', async destinationIntake => {
         const { SessionParticipantComposer } = await import('./SessionParticipantComposer');
         const firstOccurrence = {
             serverId: 'server-1',
@@ -774,6 +800,10 @@ describe('SessionParticipantComposer', () => {
             await flushHookEffects({ cycles: 3, turns: 1 });
         });
         expect(readSessionAttachmentDrafts(firstOccurrence)).toHaveLength(1);
+        if (destinationIntake) {
+            writeSessionAttachmentDrafts(secondOccurrence, [{ id: 'destination-intake', status: 'pending',
+                source: { kind: 'memory', name: 'newer.txt', bytes: new Uint8Array([7]) } }]);
+        }
 
         await screen.update(<SessionParticipantComposer
             sessionId="s1"
@@ -783,7 +813,10 @@ describe('SessionParticipantComposer', () => {
             initialLocalId="first-input-1"
             draftOccurrenceId="draft-occurrence-2"
         />);
-        await flushHookEffects({ cycles: 3, turns: 1 });
+        await act(async () => {
+            await flushAttachmentDraftsForKey(sessionAttachmentDraftKey(secondOccurrence));
+            await flushHookEffects({ cycles: 3, turns: 1 });
+        });
 
         // A launcher starting another attempt rotates the draft occurrence. The unsent
         // text and staged file belong to the person, not to the abandoned attempt, and
@@ -793,8 +826,8 @@ describe('SessionParticipantComposer', () => {
             value?: string;
         };
         expect(carriedProps.value).toBe('Still unsent');
-        expect(carriedProps.attachmentRowItems ?? []).toHaveLength(1);
-        expect(readSessionAttachmentDrafts(secondOccurrence)).toHaveLength(1);
+        expect(carriedProps.attachmentRowItems ?? []).toHaveLength(destinationIntake ? 2 : 1);
+        expect(readSessionAttachmentDrafts(secondOccurrence)).toHaveLength(destinationIntake ? 2 : 1);
         expect(readSessionAttachmentDrafts(firstOccurrence)).toEqual([]);
         clearSessionAttachmentDrafts(firstOccurrence);
         clearSessionAttachmentDrafts(secondOccurrence);
@@ -947,7 +980,7 @@ describe('SessionParticipantComposer', () => {
         const { SessionParticipantComposer } = await import('./SessionParticipantComposer');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
         const { resolveComposerEntityDrop } = await import('@/components/sessions/composer/composerEntityDrop');
-        const { buildComposerReferenceMentionPayloadV1 } = await import('@happier-dev/protocol');
+        const { buildComposerReferenceMentionPayloadV1} = await import('@happier-dev/protocol/runtime/input/composerReferenceProviderV1');
         const render = (presented: boolean) => <PluginSurfaceFocusEligibilityProvider active={false} presentationActive={presented}>
             <SessionParticipantComposer sessionId="s1" canSendMessages recipient={null} />
         </PluginSurfaceFocusEligibilityProvider>;
@@ -1000,8 +1033,9 @@ describe('SessionParticipantComposer', () => {
                 reference: { pluginId: 'acme.issues', localId: 'issues' },
                 page: [{ id: 'participant-99', label: 'Participant issue #99' }],
             });
+        await act(async () => firstProps.onComposerFocusChange(true));
+        firstProps = agentInputSpy.mock.lastCall?.[0] as ParticipantAutocompleteProps;
         await act(async () => {
-            firstProps.onComposerFocusChange(true);
             const suggestions = await firstProps.autocompleteSuggestions('@issue', new AbortController().signal);
             expect(suggestions).toEqual([
                 expect.objectContaining({
@@ -1036,9 +1070,10 @@ describe('SessionParticipantComposer', () => {
         });
         expect(machineRpcWithServerScopeSpy).toHaveBeenCalledTimes(callsBeforeStaleSearch);
 
-        const secondProps = agentInputSpy.mock.lastCall?.[0] as ParticipantAutocompleteProps;
+        let secondProps = agentInputSpy.mock.lastCall?.[0] as ParticipantAutocompleteProps;
+        await act(async () => secondProps.onComposerFocusChange(true));
+        secondProps = agentInputSpy.mock.lastCall?.[0] as ParticipantAutocompleteProps;
         await act(async () => {
-            secondProps.onComposerFocusChange(true);
             const suggestions = await secondProps.autocompleteSuggestions('@issue', new AbortController().signal);
             expect(suggestions).toEqual([
                 expect.objectContaining({
@@ -1209,7 +1244,7 @@ describe('SessionParticipantComposer', () => {
             await flushHookEffects({ cycles: 1, turns: 1 });
         });
         expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'common.unavailable');
+        await vi.waitFor(() => expect(modalAlertSpy).toHaveBeenCalledWith(t('common.error'), t('common.unavailable')));
         expect(readComposerPresentationSnapshot(ref)).toMatchObject({
             text: 'Keep this unavailable participant draft',
             attachments: [expect.objectContaining({
@@ -1270,7 +1305,7 @@ describe('SessionParticipantComposer', () => {
             await flushHookEffects({ cycles: 1, turns: 1 });
         });
         expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'common.unavailable');
+        expect(modalAlertSpy).toHaveBeenCalledWith(t('common.error'), t('common.unavailable'));
         expect(readComposerPresentationSnapshot(ref)).toMatchObject({
             text: 'Keep this invalid participant draft',
             attachments: [expect.objectContaining({ availability: { status: 'invalid' } })],
@@ -1520,7 +1555,7 @@ describe('SessionParticipantComposer', () => {
             references: submitted.references,
             attachments: submitted.attachments,
         });
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'participant send rejected');
+        await vi.waitFor(() => expect(modalAlertSpy).toHaveBeenCalledWith(t('common.error'), 'participant send rejected'));
     });
 
     it('presents a coded target-admission rejection as localized copy, never as the raw protocol code', async () => {
@@ -1543,8 +1578,8 @@ describe('SessionParticipantComposer', () => {
             await flushHookEffects({ cycles: 1, turns: 1 });
         });
 
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'session.pendingMessages.admissionRejected.targetUnavailable');
-        expect(modalAlertSpy).not.toHaveBeenCalledWith('common.error', 'session_input_target_unavailable');
+        await vi.waitFor(() => expect(modalAlertSpy).toHaveBeenCalledWith(t('common.error'), t('session.pendingMessages.admissionRejected.targetUnavailable')));
+        expect(modalAlertSpy).not.toHaveBeenCalledWith(t('common.error'), 'session_input_target_unavailable');
     });
 
     it('preserves a participant reference whose exact token remains in newer text after acceptance', async () => {
@@ -1815,7 +1850,7 @@ describe('SessionParticipantComposer', () => {
             sessionId: 's1',
             instanceId: 'participant-composer-scope',
         })?.text).toBe('');
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'participant wake failed');
+        await vi.waitFor(() => expect(modalAlertSpy).toHaveBeenCalledWith(t('common.error'), 'participant wake failed'));
     });
 
     it('carries composer attachments into an execution-run send instead of rejecting them', async () => {
@@ -2101,7 +2136,7 @@ describe('SessionParticipantComposer', () => {
         });
 
         expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'browserContext.composer.contextUnavailable');
+        await vi.waitFor(() => expect(modalAlertSpy).toHaveBeenCalledWith(t('common.error'), t('browserContext.composer.contextUnavailable')));
     });
 
     it('carries attached browser context into an execution-run send through the same metadata channel as the main Session', async () => {
@@ -2174,7 +2209,7 @@ describe('SessionParticipantComposer', () => {
         });
 
         expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
-        expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'browserContext.composer.contextUnavailable');
+        await vi.waitFor(() => expect(modalAlertSpy).toHaveBeenCalledWith(t('common.error'), t('browserContext.composer.contextUnavailable')));
     });
 
     it('passes extra action chips through to AgentInput', async () => {

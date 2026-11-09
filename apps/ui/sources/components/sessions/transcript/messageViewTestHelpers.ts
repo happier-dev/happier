@@ -1,3 +1,4 @@
+import { act } from 'react-test-renderer';
 import { vi } from 'vitest';
 
 type MessageViewModuleFactory = () => unknown | Promise<unknown>;
@@ -95,4 +96,18 @@ export function installMessageViewCommonModuleMocks(
         const { createPartialStorageModuleMock } = await import('@/dev/testkit/mocks/storage');
         return createPartialStorageModuleMock(importOriginal, {});
     });
+}
+
+/**
+ * Hovers a web message row the way a pointer does. A closed web row mounts no action controls, so a test that
+ * reads or presses one reveals its row first.
+ */
+export async function revealTranscriptMessageActions(
+    screen: Readonly<{ findByTestId: (testId: string) => any }>,
+    messageId: string,
+): Promise<void> {
+    let host = screen.findByTestId(`transcript-message-actions:${messageId}`);
+    while (host && typeof host.props?.onPointerEnter !== 'function') host = host.parent;
+    if (!host) throw new Error(`No hover host for transcript message ${messageId}`);
+    await act(async () => { host.props.onPointerEnter(); });
 }

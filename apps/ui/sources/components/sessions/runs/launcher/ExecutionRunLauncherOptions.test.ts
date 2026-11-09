@@ -1,4 +1,4 @@
-import type { EffectiveActionInputField } from '@happier-dev/protocol';
+import type { EffectiveInputField  as EffectiveActionInputField} from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { describe, expect, it } from 'vitest';
 
 import { resolveExecutionRunLauncherOptionFields } from './ExecutionRunLauncherOptions';

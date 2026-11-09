@@ -31,6 +31,7 @@ await loadSyncSingletonForTests();
 const { createSessionFixture, createSessionMessagesFixture, createSessionViewerFixture, standardCleanup } = await import('@/dev/testkit');
 const { createPlainSessionCurrentProjectionRecordFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
 const { storage } = await import('@/sync/domains/state/storage');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { AgentStateSchema } = await import('@happier-dev/session-core/state');
 const { createReducer, reducer } = await import('@happier-dev/session-core/reducer');
 const { normalizeRawMessage } = await import('@happier-dev/session-core/raw');
@@ -74,7 +75,12 @@ afterEach(async () => {
 });
 
 describe('Next focus through the mounted RN-web transcript', () => {
-    it.each([false, true])('hands a native question to the transcript, then focuses the second via the pill (persisted native row: %s)', async (nativeTranscript) => {
+    it.each([
+        { nativeTranscript: false, nextKind: 'question' },
+        { nativeTranscript: true, nextKind: 'question' },
+        { nativeTranscript: false, nextKind: 'permission' },
+        { nativeTranscript: true, nextKind: 'permission' },
+    ] as const)('hands a native question to the transcript, then focuses the next $nextKind via the pill (persisted native row: $nativeTranscript)', async ({ nativeTranscript, nextKind }) => {
         // jsdom supplies no layout; only OS/browser measurement boundaries are substituted.
         vi.stubGlobal('ResizeObserver', class {
             observe() {} unobserve() {} disconnect() {}
@@ -104,6 +110,13 @@ describe('Next focus through the mounted RN-web transcript', () => {
                 tool: 'AskUserQuestion', kind: 'user_action', arguments: input, createdAt: now - 20 + index,
             } } }),
         })]));
+        if (nextKind === 'permission') sessions.second = createSessionFixture({
+            ...sessions.second!,
+            metadata: { path: '/tmp', host: 'test', flavor: 'codex' },
+            agentState: AgentStateSchema.parse({ requests: { second: {
+                tool: 'Bash', kind: 'permission', arguments: { command: 'cat /tmp/note.txt' }, createdAt: now - 19,
+            } } }),
+        });
         sessions.origin = createSessionFixture({ id: 'origin', serverId, active: true,
             metadata: { path: '/tmp', host: 'test', flavor: 'claude' }, agentState: AgentStateSchema.parse({ requests: {} }) });
         sessions.inactive = createSessionFixture({ id: 'inactive', serverId, active: false, activeAt: now - 1_000,
@@ -128,13 +141,18 @@ describe('Next focus through the mounted RN-web transcript', () => {
         // transcript through the real normalizer/reducer, never a hand-built ToolCall.
         const transcript = Object.fromEntries(Object.values(sessions).map(session => {
             const reducerState = createReducer();
+            const request = session.agentState?.requests?.[session.id];
             const raw = nativeTranscript ? [
                 normalizeRawMessage(`${session.id}-prompt`, null, now - 30, {
                     role: 'user', content: { type: 'text', text: 'Ask whether I prefer River or Meadow.' },
                 }, { seq: 1 }),
                 normalizeRawMessage(`${session.id}-native`, null, now - 20, {
-                    role: 'agent', content: { type: 'output', data: { type: 'assistant', uuid: `${session.id}-native`,
-                        message: { role: 'assistant', content: [{ type: 'tool_use', id: session.id, name: 'AskUserQuestion', input }] },
+                    role: 'agent', content: session.id === 'second' && nextKind === 'permission'
+                        ? { type: 'codex', data: { type: 'tool-call', callId: session.id,
+                            name: request!.tool, input: request!.arguments } }
+                        : { type: 'output', data: { type: 'assistant', uuid: `${session.id}-native`,
+                        message: { role: 'assistant', content: [{ type: 'tool_use', id: session.id,
+                            name: request?.tool ?? 'AskUserQuestion', input: request?.arguments ?? input }] },
                     } },
                 }, { seq: 2 }),
             ] : [];
@@ -148,12 +166,13 @@ describe('Next focus through the mounted RN-web transcript', () => {
             const wires = Object.values(sessions).map(session => {
                 const shared = session.id === 'shared';
                 const waiting = shared ? 1 : Object.keys(session.agentState?.requests ?? {}).length;
-                session.pendingPermissionRequestCount = shared ? waiting : 0;
-                session.pendingUserActionRequestCount = shared ? 0 : waiting;
+                const permission = shared || (session.id === 'second' && nextKind === 'permission');
+                session.pendingPermissionRequestCount = permission ? waiting : 0;
+                session.pendingUserActionRequestCount = permission ? 0 : waiting;
                 session.pendingRequestObservedAt = now;
                 session.viewer = createSessionViewerFixture({ relevance: { relevant: true, reasons: ['owned_by_me'] },
-                    ...(waiting ? { attention: { needsAttention: true, reasons: [shared ? 'permission_required' : 'user_action_required'],
-                        primary: shared ? 'permission_required' : 'user_action_required', presentation: 'full' } } : {}),
+                    ...(waiting ? { attention: { needsAttention: true, reasons: [permission ? 'permission_required' : 'user_action_required'],
+                        primary: permission ? 'permission_required' : 'user_action_required', presentation: 'full' } } : {}),
                 });
                 return SessionCurrentProjectionRecordV1Schema.parse({ ...session, metadataLayoutVersion: session.metadataLayoutVersion ?? 0,
                     ...(shared ? { ownerMetadata: sharedWire.ownerMetadata } : {}),
@@ -193,7 +212,7 @@ describe('Next focus through the mounted RN-web transcript', () => {
         }
         // The registration belongs to the app shell, outside the keyed Session
         // viewer scope that is replaced when a different destination opens.
-        const tree = () => <DestinationInstanceHost tabId="app-shell"
+        const tree = () => <InjectedAuthProvider credentials={connection!.credentials}><DestinationInstanceHost tabId="app-shell"
             ref={{ kind: 'newSession', params: {} }} pathname="/new" focused visible
             navigation={{ push: href => { routes.push(String(href)); }, replace: () => {}, back: () => {} }}>
             <AppPaneProvider><KeyboardShortcutProvider handlers={{}}><NextPendingNavigationHost />
@@ -203,7 +222,7 @@ describe('Next focus through the mounted RN-web transcript', () => {
                     <AppSessionTranscriptSourceProvider sessionId={currentId} serverId={serverId}><Destination /></AppSessionTranscriptSourceProvider>
                 </DestinationInstanceHost>
             </KeyboardShortcutProvider></AppPaneProvider>
-        </DestinationInstanceHost>;
+        </DestinationInstanceHost></InjectedAuthProvider>;
         container = document.createElement('div');
         document.body.appendChild(container);
         root = createRoot(container);
@@ -234,12 +253,50 @@ describe('Next focus through the mounted RN-web transcript', () => {
         await React.act(async () => container!.querySelector<HTMLElement>('[data-testid="ask-user-question.submit"]')!.click());
         await vi.waitFor(() => expect(container!.querySelector('[data-testid="pending-navigation-composer"]')).not.toBeNull());
         expect(responses).toHaveLength(1);
-        await React.act(async () => container!.querySelector<HTMLElement>('[data-testid="pending-navigation-composer"]')!.click());
-        expect(routes.at(-1)).toBe(`/session/second?serverId=${encodeURIComponent(serverId)}`);
+        await React.act(async () => {
+            const go = container!.querySelector<HTMLElement>('[data-testid="pending-navigation-composer"]')!;
+            go.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+            go.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+            go.focus();
+            expect(document.activeElement).toBe(go);
+            go.dispatchEvent(new MouseEvent('pointerup', { bubbles: true }));
+            go.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+            go.click();
+        });
+        await vi.waitFor(() => expect(routes.at(-1)).toBe(`/session/second?serverId=${encodeURIComponent(serverId)}`));
         currentId = 'second';
         await React.act(async () => root!.render(tree()));
-        await vi.waitFor(() => expect(document.activeElement).toBe(container!.querySelector('[data-testid="ask-user-question.option:0:0"]')));
+        const nextAnswerTestId = nextKind === 'permission' ? 'permission-footer.allow' : 'ask-user-question.option:0:0';
+        await vi.waitFor(() => {
+            const answer = container!.querySelector(`[data-testid="${nextAnswerTestId}"]`);
+            expect(answer).not.toBeNull();
+            expect(document.activeElement).toBe(answer);
+        });
         expect(landing).toMatchObject({ requestId: 'second', focusTarget: 'transcript' });
+        if (!nativeTranscript && nextKind === 'permission') {
+            // The pending placeholder lands first; the native transcript then supplies
+            // its persisted ordering coordinates without issuing another Next intent.
+            const previous = transcript.second!;
+            const raw = normalizeRawMessage('second-native', null, now - 20, {
+                role: 'agent', content: { type: 'codex', data: {
+                    type: 'tool-call', callId: 'second', name: 'Bash', input: { command: 'cat /tmp/note.txt' },
+                } },
+            }, { seq: 2 });
+            if (!raw || !previous.reducerState) throw new Error('Missing native transcript fixture');
+            const hydrated = reducer(previous.reducerState, [raw], sessions.second!.agentState);
+            const messagesById = { ...previous.messagesById,
+                ...Object.fromEntries(hydrated.messages.map(message => [message.id, message])) };
+            transcript.second = createSessionMessagesFixture({ ...previous,
+                messageIdsOldestFirst: Object.keys(messagesById), messagesById,
+                messagesVersion: previous.messagesVersion + 1,
+            });
+            await React.act(async () => publish());
+            await vi.waitFor(() => {
+                const answer = container!.querySelector('[data-testid="permission-footer.allow"]');
+                expect(answer).not.toBeNull();
+                expect(document.activeElement).toBe(answer);
+            });
+        }
         expect(responses).toHaveLength(1);
         await React.act(async () => expect(await invokeNextPendingRequest({ excluding: { serverId, sessionId: 'second' } })).toEqual({ status: 'opened' }));
         expect(routes.at(-1)).toBe(`/session/shared?serverId=${encodeURIComponent(serverId)}`);

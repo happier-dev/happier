@@ -24,7 +24,7 @@ vi.mock('@/modal', async () => {
     return createModalModuleMock({ spies: { confirm, alert } }).module;
 });
 
-describe('pending Session Actions confirmation ownership', () => {
+describe('pending Session Actions admission ownership', () => {
     let serverId = '';
     beforeEach(async () => {
         rpc.mockReset();
@@ -38,7 +38,7 @@ describe('pending Session Actions confirmation ownership', () => {
         await homes.reset();
     });
 
-    it.each(['clear', 'interrupt'] as const)('uses one policy confirmation before the real %s dispatch', async kind => {
+    it.each(['clear', 'interrupt'] as const)('dispatches the present user’s reversible %s intent without a duplicate dialog', async kind => {
         rpc.mockResolvedValue(kind === 'clear'
             ? { ok: true, sessionId: 'session-1', status: 'cleared' }
             : { ok: true, sessionId: 'session-1', localId: 'pending-1', status: 'interrupted' });
@@ -50,7 +50,7 @@ describe('pending Session Actions confirmation ownership', () => {
             signal: expect.any(AbortSignal),
             method: kind === 'clear' ? 'session.terminalComposer.clear' : 'session.pendingInput.interruptAndRun',
             payload: { sessionId: 'session-1', expectedStateAtMs: 42, ...(kind === 'interrupt' ? { localId: 'pending-1' } : {}) } });
-        expect(confirm).toHaveBeenCalledTimes(1);
+        expect(confirm).not.toHaveBeenCalled();
         expect(alert).not.toHaveBeenCalled();
     });
 
@@ -69,14 +69,4 @@ describe('pending Session Actions confirmation ownership', () => {
         expect(alert).not.toHaveBeenCalled();
     });
 
-    it.each(['clear', 'interrupt'] as const)('keeps a declined %s silent without dispatch', async kind => {
-        confirm.mockResolvedValue(false);
-        const hook = await renderHook(() => kind === 'clear'
-            ? useTerminalComposerClearAction('session-1', serverId).clearTerminalComposer
-            : usePendingInputInterruptAndRunAction('session-1', serverId).interruptAndRun);
-        await act(async () => { await hook.getCurrent()({ localId: 'pending-1', expectedStateAtMs: 42 }); });
-        expect(confirm).toHaveBeenCalledTimes(1);
-        expect(rpc).not.toHaveBeenCalled();
-        expect(alert).not.toHaveBeenCalled();
-    });
 });

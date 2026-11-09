@@ -218,7 +218,7 @@ describe('useSessionTranscriptNavigationEntries', () => {
 
         // No loaded row means no cursor: the newest page is a first-class request, not a reason
         // to fetch nothing.
-        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledWith('session-1', { limit: 40 });
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledWith('session-1', { limit: 40, signal: expect.any(AbortSignal) });
         const entries = rendered.getCurrent().transcriptNavigationEntries;
         expect(entries.map((entry) => entry.promptPreview)).toEqual([
             'Set up the project',
@@ -242,7 +242,7 @@ describe('useSessionTranscriptNavigationEntries', () => {
         const rendered = await renderHook(() => useSessionTranscriptNavigationEntries('session-1'));
         await drainRemoteHistoryPaging(4);
 
-        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledWith('session-1', { limit: 40, beforeSeq: 4 });
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledWith('session-1', { limit: 40, beforeSeq: 4, signal: expect.any(AbortSignal) });
         expect(rendered.getCurrent().transcriptNavigationEntries.map((entry) => entry.promptPreview)).toEqual([
             'Set up the project',
             'Deploy it',
@@ -268,7 +268,7 @@ describe('useSessionTranscriptNavigationEntries', () => {
         await drainRemoteHistoryPaging();
 
         expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledTimes(1);
-        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledWith('session-1', { limit: 40, beforeSeq: 1 });
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledWith('session-1', { limit: 40, beforeSeq: 1, signal: expect.any(AbortSignal) });
         const entries = rendered.getCurrent().transcriptNavigationEntries;
         expect(entries.map((entry) => entry.promptPreview)).toEqual([
             'Older prompt',
@@ -298,7 +298,7 @@ describe('useSessionTranscriptNavigationEntries', () => {
 
         // Asked for its own newest page — NOT a cursor read off the loaded rows, which for a fork
         // also contain read-only ancestor context numbered in a different session's seq space.
-        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledWith('session-1', { limit: 40 });
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledWith('session-1', { limit: 40, signal: expect.any(AbortSignal) });
         expect(rendered.getCurrent().transcriptNavigationEntries.map((entry) => entry.promptPreview)).toEqual([
             'Older prompt',
             'Set up the project',

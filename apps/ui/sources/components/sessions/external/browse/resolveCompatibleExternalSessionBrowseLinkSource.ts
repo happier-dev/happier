@@ -1,4 +1,4 @@
-import type { ExternalSessionsSource } from '@happier-dev/protocol';
+import type { ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 
 export type ExternalSessionBrowseCompatibleLinkSourceResolver = (ctx: Readonly<{
     selectedSource: ExternalSessionsSource;

@@ -5,7 +5,7 @@ import type { Message } from '@happier-dev/session-core/messages';
 import { SessionSkillCatalogListResponseV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { readSessionCapabilityNoticeV1 } from '@happier-dev/protocol/sessions/messages/sessionCapabilityNoticeV1';
 import { resolveSessionWorkspaceRootForMachine } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
-import { projectWorkspaceRefV1, resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { resolveSessionProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { resolveMcpToolDecisionV1 } from '@happier-dev/protocol/mcp/servers/tools/resolveMcpToolDecisionV1';
 import type { CapabilityCost } from '@/components/capabilities/facts/CapabilityFacts';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -27,6 +27,7 @@ import { useSkillsLibrary } from '@/sync/domains/skills/useSkillsLibrary';
 import { useFoundSkillsCache } from '@/sync/domains/skills/useFoundSkills';
 import { skillHref } from '@/components/settings/skills/skillsCollectionModel';
 import { useReachRulesLookup } from '@/sync/store/useReachRulesCatalog';
+import { workspaceRefResolutionContextV1 } from '@/sync/domains/workspaces/workspaceRefs';
 import type { SessionCapabilitiesLastKnown, SessionCapabilitiesModelInput } from './sessionCapabilitiesModel';
 import type { NewSessionCapabilitiesDraft } from './useSessionCapabilitiesPopover';
 
@@ -104,17 +105,14 @@ export function useSessionCapabilitiesDetail(
   }, [factsKey]);
   const { names, workspaceRefs } = useSkillPlaces(scope?.serverId ?? serverId);
   const context = React.useMemo(() => {
-    if (!machineId) return undefined;
+    if (!machineId || !scope) return undefined;
     const candidatePath = target.draft?.directory ?? metadata?.path ?? '';
     const directory = metadata ? resolveSessionWorkspaceRootForMachine({ metadata, machineId, candidatePath }).machinePath : candidatePath;
-    const workspaceId: unknown = metadata ? Reflect.get(metadata, 'workspaceId') : null;
-    const projectId: unknown = metadata ? Reflect.get(metadata, 'projectId') : null;
-    const ref = scope && directory && typeof workspaceId === 'string'
-      ? resolveWorkspaceRefV1(workspaceRefs, { serverId: scope.serverId, workspaceId, machineId, rootPath: directory }) : null;
-    const resolvedProject = ref?.kind === 'resolved' ? projectWorkspaceRefV1(ref.ref).projectKey : null;
-    // Until the accepted checkout is available, keep the Machine's resolved preview.
-    if (typeof workspaceId === 'string' && (ref?.kind !== 'resolved' || projectId !== undefined && projectId !== resolvedProject)) return undefined;
-    const projectKey = target.draft?.projectKey ?? (projectId === undefined || projectId === resolvedProject ? resolvedProject : null);
+    const project = resolveSessionProjectKeyV1(metadata ?? {}, scope.serverId, workspaceRefs,
+      { ...workspaceRefResolutionContextV1(), projectKey: target.draft?.projectKey });
+    // Until the accepted Project association is available, keep the Machine's resolved preview.
+    if (project.kind === 'unavailable') return undefined;
+    const projectKey = project.kind === 'resolved' ? project.projectKey.projectKey : null;
     return { machineId, machinePlatform: modelInput.view && 'machinePlatform' in modelInput.view ? modelInput.view.machinePlatform : machine?.platform ?? null,
       directory: directory || null, projectKey, agentId };
   }, [machineId, target.draft?.directory, target.draft?.projectKey, metadata, scope, workspaceRefs, modelInput.view, machine?.platform, agentId]);

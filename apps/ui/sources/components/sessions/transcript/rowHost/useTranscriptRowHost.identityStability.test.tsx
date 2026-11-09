@@ -12,14 +12,16 @@ import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     ExternalSessionOperationProgressV1Schema,
+    type ExternalSessionOperationProgressV1,
+} from '@happier-dev/protocol/sessions/external/operationV1';
+import {
     ExternalSessionOperationResumeInputV1Schema,
     ExternalSessionOperationRetryInputV1Schema,
     ExternalSessionOperationCancelInputV1Schema,
-    ExternalSessionOperationDiscardInputV1Schema,
-    type ExternalSessionOperationProgressV1,
-} from '@happier-dev/protocol';
+    ExternalSessionOperationDiscardInputV1Schema} from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { ApprovalRequestV1Schema, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol';
+import { ApprovalRequestV1Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { listTranscriptApprovalArtifactsForSession, type OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import { createToolCallMessageFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { ToolCallsGroupUnitToolRowWithSessionCommon } from '../toolCalls/units/ToolCallsGroupUnitToolRow';
@@ -155,7 +157,7 @@ function createRendererProps(overrides?: Partial<TranscriptItemRendererDeps['pro
         forkCommon: { ...settingsDefaults, executionRunsEnabled: false, agentSwitchingEnabled: false, sessionForkSupportSource: null },
         messageDisplayCommon: { ...settingsDefaults, workspacePath: null, debugInformationEnabled: false },
         toolChromeCommon: settingsDefaults,
-        toolRouteCommon: { messagesById: {}, reducerState: createReducer() },
+        toolRouteCommon: { reducerState: createReducer() },
         rollbackActionsByMessageId: {},
         rollbackRanges: [],
         messagesById: {},
@@ -171,8 +173,7 @@ function createRendererDeps(props: TranscriptItemRendererDeps['props']): Transcr
         buildRowShellSignature: (item) => buildTranscriptRowShellSignature({
             item, activeThinkingMessageId: null, expandedToolCallsAnchorMessageIds: new Set(),
             forkMessageMetadataById: props.forkMessageMetadataById, getMessageById: () => null,
-            getMessageRevisionById: () => 1, groupingMode: 'linear', latestCommittedActivityKey: null,
-            resolveActionDraftFieldOptions: () => [], resolveThinkingExpanded: () => false,
+            getMessageRevisionById: () => 1, groupingMode: 'linear', latestCommittedActivityKey: null, resolveThinkingExpanded: () => false,
             sessionActive: props.sessionActive, widthBucket: 'w', fontScaleKey: 'default',
         }),
         expandedToolCallsAnchorMessageIds: new Set<string>(),
@@ -231,7 +232,7 @@ describe('useTranscriptItemRenderer identity stability', () => {
             groupId: 'group', expanded: true, createdAt: 1, seq: message.seq ?? null }));
         const messagesById = Object.fromEntries(messages.map(message => [message.id, message]));
         const props = createRendererProps({ sessionId, messagesById,
-            toolRouteCommon: { messagesById, reducerState: createReducer() } });
+            toolRouteCommon: { reducerState: createReducer() } });
         const deps = { ...createRendererDeps(props), listData: items, itemsRef: createRef(items),
             getMessageById: (id: string) => messagesById[id] ?? null };
         function Rows(input: { approvals: readonly OpenApprovalArtifactForSession[]; reversed?: boolean }) {
@@ -317,7 +318,7 @@ describe('useTranscriptItemRenderer identity stability', () => {
                 const source = useSessionTranscriptSource();
                 const messagesById = source.useMessagesById();
                 const reducerState = source.useReducerState();
-                const toolRouteCommon = React.useMemo(() => ({ messagesById, reducerState }), [messagesById, reducerState]);
+                const toolRouteCommon = React.useMemo(() => ({ reducerState }), [reducerState]);
                 const renderer = useTranscriptItemRenderer({ ...deps, toolRouteCommon,
                     props: { ...props, messagesById, toolRouteCommon } });
                 return <>{items.map((item, index) =>

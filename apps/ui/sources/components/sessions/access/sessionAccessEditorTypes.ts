@@ -1,5 +1,9 @@
-import type { EffectiveSessionAccessLevelV1, PrincipalRefV1, SessionAccessLevelV1 } from '@happier-dev/protocol';
+import type { EffectiveSessionAccessLevelV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
+import type { PrincipalRefV1} from '@happier-dev/protocol/teams/principal';
+import type { SessionAccessLevelV1 } from '@happier-dev/protocol/sessions/access/sessionAccessGrantV1';
+import type { SessionBotTemplateSource } from '@/components/sessions/bots/templates/openBotTemplate';
 
+import type { SessionAccessQuery } from './sessionAccessQuery';
 import type { SessionCollaborationHandoff } from '@/components/sessions/collaboration/sessionCollaborationIntent';
 import type {
     ShareAvatarPresentation, ShareCandidateRowModel, ShareDirectoryKind, ShareDirectorySectionModel, ShareGrantRowModel,
@@ -38,7 +42,8 @@ export type SessionAccessDirectorySectionModel = Omit<ShareDirectorySectionModel
     candidates: readonly SessionAccessCandidateRowModel[];
     resolveCandidates?: (query: string, signal: AbortSignal) => Promise<readonly SessionAccessCandidateRowModel[]>;
 }>;
-export type SessionAccessDirectoryModel = Readonly<{ query: string; sections: readonly SessionAccessDirectorySectionModel[] }>;
+/** The typed text is not part of the model: it lives in the controller's `SessionAccessQuery`. */
+export type SessionAccessDirectoryModel = Readonly<{ sections: readonly SessionAccessDirectorySectionModel[] }>;
 export type SessionAccessSummaryPresentation = Readonly<{ label: string; accessibilityLabel: string; requiredByTeamPolicy: boolean }>;
 /**
  * Safe presentation of the current Account's server-admitted access.
@@ -200,9 +205,16 @@ export type SessionAccessEditorActions = Readonly<{
     /** The owner's deliberate update of a historical Session for sharing; live editors only. */
     updateHistoricalLayout?(): void;
 }>;
-export type SessionAccessEditorController = Readonly<{ model: SessionAccessEditorModel; actions: SessionAccessEditorActions }>;
+export type SessionAccessEditorController = Readonly<{
+    model: SessionAccessEditorModel;
+    actions: SessionAccessEditorActions;
+    /** The one owner of the typed search; `actions.setQuery` writes it, the editor subscribes. */
+    query: SessionAccessQuery;
+}>;
 export type SessionAccessEditorPresentation = 'compact' | 'full';
 export type SessionAccessEditorProps = Readonly<{
+    /** The controller's typed search; absent for a fixed presentation, which shows an empty field. */
+    query?: SessionAccessQuery;
     model: SessionAccessEditorModel;
     actions: SessionAccessEditorActions;
     presentation: SessionAccessEditorPresentation;
@@ -223,5 +235,7 @@ export type SessionAccessEditorProps = Readonly<{
     openRowRequest?: Readonly<{ key: string }>;
     /** The Session's responsible Account, tagged where its access is listed (Share panel). */
     responsibleAccountId?: string | null;
+    /** Existing Bot snapshot; the template entry owner decides whether the person can draft/reopen. */
+    templateSource?: Readonly<{ session: SessionBotTemplateSource; serverId: string }>;
     testID?: string;
 }>;

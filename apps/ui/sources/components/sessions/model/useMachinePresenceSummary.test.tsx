@@ -73,6 +73,8 @@ describe('reactive Machine presence', () => {
                     metadata: { ...neighbors[index]!.metadata!, displayName: `Changed neighbor ${index}` } }], false, { sourceServerId: serverId });
             });
             await act(async () => { recordMachineRequestFailed({ serverId: 'foreign-home', accountId: 'foreign-account', machineId: 'foreign-0' }); });
+            console.info('PERF_D4_SELECTED_MACHINE_COUNTS', JSON.stringify({ machines: 128, foreignArrivals: 8,
+                otherRowArrivals: 8, foreignRequestChanges: 1, foreignRowVisits, nameReads, renders: renders - beforeRenders }));
             expect(foreignRowVisits).toBe(0);
             expect(hook.getCurrent()).toBe(summary);
             expect(renders).toBe(beforeRenders);
@@ -212,6 +214,7 @@ describe('reactive Machine presence', () => {
                 return Reflect.get(target, property, receiver);
             } });
             await act(async () => storage.setState(state => ({ machineListByServerId: { ...state.machineListByServerId, [serverId]: measured } })));
+            console.info('PERF_D4_BULK_PRESENCE_COUNTS', JSON.stringify({ machines: rows.length, selectedIds: ids.length, ownHomeArrivals: 1, rowVisits }));
             expect(hook.getCurrent()[99]!.name).toBe('Changed last Machine');
             // One changed-Home publication needs the selected input, deadline and
             // presentation passes; none may search the entire array per requested ID.

@@ -1,7 +1,8 @@
 import { createSessionAccessActionChip } from '@/components/sessions/agentInput/definitions/createSessionAccessActionChip';
+import { useOpenExecutionRunLauncherDraft } from '@/components/sessions/runs/launcher/useOpenExecutionRunLauncherDraft';
 import * as React from 'react';
 import { useWorkspaceFileOpener } from '@/components/workspaces/files/useWorkspaceFileOpener';
-import type { BackendTargetRefV2Input } from '@happier-dev/protocol';
+import type { BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import type {
     AgentInputAttachmentsRowItem,
@@ -13,6 +14,7 @@ import { hasBrowserContextComposerAttachments } from '@/sync/domains/session/inp
 import { storage } from '@/sync/domains/state/storage';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { useSettingsSelector } from '@/sync/store/settingsReadHooks';
+import { t } from '@/text';
 import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
 import { createLinkedFilesActionChip } from '../definitions/createLinkedFilesActionChip';
@@ -20,8 +22,10 @@ import { createBrowserContextActionChip } from '../definitions/createBrowserCont
 import { createReviewCommentsActionChip } from '../definitions/createReviewCommentsActionChip';
 import { buildSessionAgentInputActionChips } from './buildSessionAgentInputActionChips';
 import { createAttachmentActionChip } from './createAttachmentActionChip';
+import { createScreenCaptureAttachmentActions } from './screenCaptureAttachmentActions';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import type { AttachmentFilePickerProps } from '@/components/sessions/attachments/AttachmentFilePicker.types';
 
 const selectActionChipSettings = (settings: Settings) => [
     settings.actionsSettingsV1, settings.experiments, settings.featureToggles,
@@ -35,10 +39,12 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
     accountScopeIsCurrent?: (() => boolean) | null;
     attachmentsUploadsEnabled: boolean;
     attachmentsUploadsAvailable?: boolean;
+    imageInputDisabledReason?: string;
     isReadOnly: boolean;
     isUploadingAttachments: boolean;
     onPickAttachmentFile: () => void;
     onPickAttachmentImage: () => void;
+    onAttachmentsPicked: AttachmentFilePickerProps['onAttachmentsPicked'];
     onPasteAttachmentImage?: () => void;
     onAppendLinkedPath: (path: string) => void;
     reviewCommentsEnabled: boolean;
@@ -58,6 +64,7 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
     actionChips: readonly AgentInputExtraActionChip[];
     attachmentRowItems: readonly AgentInputAttachmentsRowItem[];
 }> {
+    const openExecutionRunDraft = useOpenExecutionRunLauncherDraft();
     const { open: openFile, canOpen: canOpenFile } = useWorkspaceFileOpener();
     // These are the inputs read by the canonical Action placement policy. Draft
     // and unrelated settings publications must not rebuild the controls.
@@ -124,6 +131,15 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
                 onPickImage: params.onPickAttachmentImage,
                 onPasteImage: params.onPasteAttachmentImage,
                 disabled: params.isUploadingAttachments || params.attachmentsUploadsAvailable === false,
+                disabledReason: params.attachmentsUploadsAvailable === false ? t('files.transfers.uploadUnavailable') : undefined,
+                imageInputDisabledReason: params.imageInputDisabledReason,
+                screenCapture: params.sessionAddress && params.accountScope ? createScreenCaptureAttachmentActions({
+                    targetSession: { ...params.sessionAddress, accountId: params.accountScope.accountId },
+                    execute: async (actionId, input) => (await import('@/sync/ops/actions/defaultActionExecutor'))
+                        .createDefaultActionExecutor().execute(actionId, input, { surface: 'ui' }),
+                    openRecent: async () => (await import('@/components/screenCapture/recent/RecentCaptureModal'))
+                        .showRecentCaptureModal(params.onAttachmentsPicked),
+                }) : [],
             }));
         }
         if (!params.isReadOnly) {
@@ -144,16 +160,19 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
             defaultBackendTarget: params.defaultBackendTarget ?? null,
             defaultBackendId: params.defaultBackendId,
             readInstructionsText: params.readInstructionsText,
+            openExecutionRunDraft,
         }));
 
         return chips;
     }, [
+        openExecutionRunDraft,
         actionChipSettings,
         browserContextPresentation,
         reviewCommentsPresentation,
         params.sessionAccess,
         params.attachmentsUploadsEnabled,
         params.attachmentsUploadsAvailable,
+        params.imageInputDisabledReason,
         params.defaultBackendId,
         params.defaultBackendTarget,
         params.readInstructionsText,
@@ -162,6 +181,7 @@ export function useSessionAgentInputExtraActionChips(params: Readonly<{
         params.onAppendLinkedPath,
         params.onPickAttachmentFile,
         params.onPickAttachmentImage,
+        params.onAttachmentsPicked,
         params.onPasteAttachmentImage,
         params.sessionId,
         params.sessionAddress,

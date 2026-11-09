@@ -1,4 +1,6 @@
-import type { ReviewCommentV1, ReviewFinding } from '@happier-dev/protocol';
+import type { ReviewCommentV1} from '@happier-dev/protocol/reviews/comments/v1';
+import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
+import { groupReviewFindingSourcesV1 } from '@happier-dev/protocol/reviews/reviewFindingsApplyInputV1';
 
 import type { ReviewFindingThreadEntry } from '@/components/sessions/reviews/messages/resolveEffectiveReviewFindings';
 import { REVIEW_SEVERITY_RANK } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
@@ -42,28 +44,14 @@ export type ReviewFindingRowModel = Readonly<{
  */
 export function mergeReviewFindings(members: readonly ReviewMember[]): readonly ReviewFindingRowModel[] {
     const qualified = members.length > 1;
-    const rows: Array<{ rowId: string; finding: ReviewFinding; sources: ReviewFindingSource[] }> = [];
-    const rowByIdentity = new Map<string, (typeof rows)[number]>();
-    for (const member of members) {
-        for (const finding of member.findings) {
-            const comment = member.commentByFindingId.get(finding.id) ?? null;
-            const source: ReviewFindingSource = { member, finding, comment };
-            const identity = comment?.findingIdentity;
-            const existing = identity ? rowByIdentity.get(identity) : undefined;
-            // One reviewer can't agree with itself: a second finding of the same run stays its own row.
-            if (existing && !existing.sources.some((item) => item.member.runId === member.runId)) {
-                existing.sources.push(source);
-                if (REVIEW_SEVERITY_RANK[finding.severity] < REVIEW_SEVERITY_RANK[existing.finding.severity]) {
-                    existing.finding = finding;
-                }
-                continue;
-            }
-            const row = { rowId: qualified ? `${member.runId}:${finding.id}` : finding.id, finding, sources: [source] };
-            rows.push(row);
-            if (identity && !existing) rowByIdentity.set(identity, row);
-        }
-    }
-    return rows;
+    return groupReviewFindingSourcesV1(members.flatMap(member => member.findings.map(finding => ({
+        member, runId: member.runId, finding, comment: member.commentByFindingId.get(finding.id) ?? null,
+    })))).map(sources => {
+        const first = sources[0]!;
+        const finding = sources.reduce((selected, source) => REVIEW_SEVERITY_RANK[source.finding.severity] < REVIEW_SEVERITY_RANK[selected.severity]
+            ? source.finding : selected, first.finding);
+        return { rowId: qualified ? `${first.runId}:${first.finding.id}` : first.finding.id, finding, sources };
+    });
 }
 
 /** Most severe first (the most severe of a merged row's sources); report order within a severity. */

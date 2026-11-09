@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { applyScmReviewedMarkIntent, type ScmComparison, type ScmReviewedMarksRecord } from '@happier-dev/protocol';
+import { applyScmReviewedMarkIntent, type ScmReviewedMarksRecord } from '@happier-dev/protocol/scm/reviewedMarks';
+import { type ScmComparison} from '@happier-dev/protocol/scm/comparison';
 import { createTwoFilesPatch, parsePatch } from 'diff';
 import { SPECIMEN_COMPARISON, SPECIMEN_WALKTHROUGH } from '@/components/dev/changes/walkthroughSpecimenFixture';
 

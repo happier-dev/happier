@@ -1,3 +1,4 @@
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import * as React from 'react';
 import { editFollowPolicyV1, projectFollowPolicyEditorV1 } from '@happier-dev/protocol/sessions/follow/followPolicyEditorV1';
 import type { FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
@@ -198,6 +199,7 @@ export function SessionFollowSourcesEditor(props: Readonly<{
     sheet?: Readonly<{ onOpenSource?: (sourceKey: string) => void }>;
 }>) {
     const { theme } = useUnistyles();
+    const isSessionVisible = useSessionRecordingVisibility();
     const router = useRouter();
     const anchored = useIsTablet();
     const listPresentation = useListPresentation();
@@ -596,7 +598,8 @@ export function SessionFollowSourcesEditor(props: Readonly<{
 
     const sessionTitle = (sessionId: string) => {
         const session = homeSessions.find((candidate) => candidate.id === sessionId);
-        return { session, title: session ? getSessionName(session, serverId) : sessionId };
+        return { session, title: !isSessionVisible({ sessionId, serverId }) ? t('message.sessionReferenceUnavailable')
+            : session ? getSessionName(session, serverId) : sessionId };
     };
     const sourceIdentity = (source: FollowSourceRelationV1): Readonly<{
         key: string; ref: FollowSourceRefV1; sourceTitle: string; mark: React.ReactNode; icon: IconName;
@@ -609,7 +612,7 @@ export function SessionFollowSourcesEditor(props: Readonly<{
             case 'session': {
                 const { session, title } = sessionTitle(ref.sessionId);
                 return { key, ref, session, sourceTitle: title, icon: 'stack',
-                    mark: <FollowSessionMark session={session ?? null} serverId={serverId} /> };
+                    mark: <FollowSessionMark session={isSessionVisible({ sessionId: ref.sessionId, serverId }) ? session ?? null : null} serverId={serverId} /> };
             }
             case 'discussion': {
                 const index = discussionAddresses.findIndex((address) => address.discussionId === ref.discussionId);

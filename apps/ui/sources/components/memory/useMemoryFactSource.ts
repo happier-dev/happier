@@ -6,6 +6,7 @@ import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/us
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { readSessionNameIfNamed } from '@/utils/sessions/sessionUtils';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 
 type MemoryFactSource =
   | Readonly<{ kind: 'session'; session: Readonly<{ serverId: string; sessionId: string }>; messageId?: string }>
@@ -23,6 +24,7 @@ export function useMemoryFactSource(fact: MemoryFactV1): Readonly<{
 }> {
   const sourceKey = JSON.stringify(readMemoryFactSource(fact));
   const source = React.useMemo(() => readMemoryFactSource(fact), [sourceKey]);
+  const isSessionVisible = useSessionRecordingVisibility();
   const homeId = source?.kind === 'session' ? source.session.serverId : source?.discussion.serverId;
   const serverId = homeId ? resolveServerProfileScopeIdForIdentifier(homeId) : '';
   const serverIds = React.useMemo(() => serverId ? [serverId] : [], [serverId]);
@@ -83,7 +85,7 @@ export function useMemoryFactSource(fact: MemoryFactV1): Readonly<{
       const sourceId = source.kind === 'session' ? source.session.sessionId : source.discussion.discussionId;
       if (event.entityIds && !event.entityIds.includes(sourceId)) return;
       refresh();
-    });
+    }, { reconnect: 'refresh' });
     refresh();
     return () => {
       controller?.abort();
@@ -92,6 +94,7 @@ export function useMemoryFactSource(fact: MemoryFactV1): Readonly<{
     };
   }, [source, sourceKey, binding, serverId]);
 
-  return { source, title: loaded?.sourceKey === sourceKey && loaded.binding === binding
+  const identityVisible = source?.kind !== 'session' || isSessionVisible(source.session);
+  return { source, title: identityVisible && loaded?.sourceKey === sourceKey && loaded.binding === binding
     && binding?.isCurrent() ? loaded.title : null };
 }

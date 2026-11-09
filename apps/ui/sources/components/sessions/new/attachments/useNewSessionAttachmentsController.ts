@@ -32,7 +32,7 @@ import { useAttachmentDraftManager } from '@/components/sessions/attachments/use
 import { insertComposerAttachmentReferences, removeMountedComposerAttachmentReferences } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
-import { buildAttachmentMessageMeta, uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
+import { buildSessionAttachmentIngressMeta, uploadAttachmentDraftsToSession } from '@/components/sessions/attachments/uploadAttachmentDraftsToSession';
 import { blurActiveElementOnWeb, deferOnWeb } from '@/utils/platform/deferOnWeb';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -132,6 +132,11 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         : getActiveServerAccountScope();
     const removedFlowRef = React.useRef<string | null>(null);
     const attachmentDraftManager = useAttachmentDraftManager({
+        pictureEditAddress: () => {
+            const document = params.composerDocument;
+            const scope = draftScope;
+            return document?.isCurrent() && scope ? { scope, ref: document.ref } : null;
+        },
         enabled: attachmentsUploadsEnabled,
         maxFileBytes: attachmentsUploadConfig.maxFileBytes,
         memoryKey: normalizedFlowId ? newSessionAttachmentDraftKey(normalizedFlowId, draftScope) : null,
@@ -140,7 +145,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
             const document = params.composerDocument;
             const scope = draftScope;
             if (!document?.isCurrent() || !scope) return;
-            insertComposerAttachmentReferences({ ref: document.ref, scope, items: (drafts).map(draft => ({ draft })) });
+            insertComposerAttachmentReferences({ ref: document.ref, scope, items: drafts.map(draft => ({ draft })) });
         },
         onRemoveDraft: (attachmentId) => {
             const document = params.composerDocument;
@@ -259,6 +264,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
                 onUpdateDraft: updateReviewCommentDraft,
                 onDeleteDraft: deleteReviewCommentDraft,
                 onClearDrafts: discardReviewCommentDrafts,
+                disabled: params.isCreating,
             });
             if (reviewCommentsPresentation) {
                 chips.push(reviewCommentsPresentation.actionChip);
@@ -301,7 +307,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
         const submit = (opts?: HandleCreateSessionOptions) => {
             blurActiveElementOnWeb();
             deferOnWeb(() => {
-                params.handleCreateSession(opts);
+                params.handleCreateSession(options?.afterSend ? { ...opts, afterSend: options.afterSend } : opts);
             });
         };
 
@@ -322,7 +328,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
             structuredInputMetaOverrides?: Record<string, unknown>;
             onAfterCreatedSettled?: HandleCreateSessionOptions['onAfterCreatedSettled'];
             deferAcceptedDraftClearToDocument?: boolean;
-            composerSnapshot?: import('@happier-dev/protocol').ComposerSnapshotV1;
+            composerSnapshot?: import('@happier-dev/protocol/plugins/ui/composer').ComposerSnapshotV1;
         }>) => {
             const temporaryComputerSubmission = input.composerSnapshot ? {
                 composer: input.composerSnapshot,
@@ -385,7 +391,7 @@ export function useNewSessionAttachmentsController(params: Readonly<{
                 ...(temporaryComputerSubmission ? { temporaryComputerSubmission } : {}),
                 // Generic file upload and Temporary Computer need an existing
                 // Session ID; their prepared first turn still enters Message admission.
-                afterCreated: async ({ sessionId, effectiveSpawnServerId, launchAttempt, preuploadedAttachments, signal }) => {
+                afterCreated: async ({ sessionId, sessionTarget, effectiveSpawnServerId, launchAttempt, preuploadedAttachments, signal }) => {
                     const attachmentMessageLocalId = launchAttempt.attachmentMessageLocalId;
                     // Temporary Computer persists this first-turn id before
                     // materialization; its mounted send and recovery must agree
@@ -402,13 +408,14 @@ export function useNewSessionAttachmentsController(params: Readonly<{
                     if (hasAttachments) {
                         const uploaded = preuploadedAttachments ?? (await uploadAttachmentDraftsToSession({
                             sessionId,
+                            sessionTarget,
                             signal,
                             drafts: draftSnapshot,
                             config: attachmentsUploadConfig,
                             applyDraftPatch,
                             messageLocalId: attachmentMessageLocalId,
                         })).uploaded;
-                        attachmentsMetaOverrides = buildAttachmentMessageMeta(uploaded);
+                        attachmentsMetaOverrides = buildSessionAttachmentIngressMeta(uploaded);
                     }
 
                     const resolvedReviewCommentDrafts = hasReviewCommentDrafts

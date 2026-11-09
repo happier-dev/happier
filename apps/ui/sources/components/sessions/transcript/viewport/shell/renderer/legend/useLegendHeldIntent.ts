@@ -401,17 +401,24 @@ export function useLegendHeldIntent<TItem>(params: Readonly<{
     // invalidation is unchanged: `data` and `toSourceIndex` remain dependencies.
     const keyExtractorRef = React.useRef(keyExtractor);
     useCommittedTranscriptRef(keyExtractorRef, keyExtractor);
+    // A scheduled settle frame survives data commits while retaining the same keyed intent.
+    // Resolve that key against the committed rows, even when the frame was scheduled before
+    // history reconciliation changed its index.
+    const committedDataRef = React.useRef({ data, toSourceIndex });
+    useCommittedTranscriptRef(committedDataRef, { data, toSourceIndex });
 
     const resolveHeldIntentIndex = React.useCallback((intent: Extract<LegendHeldScrollIntent, { kind: 'index' }>): number => {
-        const currentIndex = data.findIndex((item, index) => (
-            keyExtractorRef.current(item, toSourceIndex(index)) === intent.key
+        const current = committedDataRef.current;
+        const currentIndex = current.data.findIndex((item, index) => (
+            keyExtractorRef.current(item, current.toSourceIndex(index)) === intent.key
         ));
         return currentIndex >= 0 ? currentIndex : intent.fallbackIndex;
     }, [data, toSourceIndex]);
 
     const resolveAnchorHoldDataIndex = React.useCallback((itemId: string): number => {
-        return data.findIndex((item, index) => (
-            keyExtractorRef.current(item, toSourceIndex(index)) === itemId
+        const current = committedDataRef.current;
+        return current.data.findIndex((item, index) => (
+            keyExtractorRef.current(item, current.toSourceIndex(index)) === itemId
         ));
     }, [data, toSourceIndex]);
 

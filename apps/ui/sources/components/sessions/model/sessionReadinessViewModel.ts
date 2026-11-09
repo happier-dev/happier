@@ -1,11 +1,11 @@
 import {
-    composeSessionReadinessV1, isSessionReadinessNativeSelectionV1, type SessionCredentialReadinessV1, type SessionReadinessAgentV1,
+    composeSessionReadinessV1, isSessionReadinessNativeSelectionV1, type SessionCredentialReadinessV1,
     type SessionReadinessFactsV1, type SessionReadinessRepairV1, type SessionReadinessV1,
 } from '@happier-dev/protocol/sessions/control/sessionReadinessV1';
 import type { MachineAgent, MachineAgentSignInSession } from '@/agents/machineAgents/machineAgentTypes';
 import type { MachineAgentsSnapshot } from '@/agents/machineAgents/machineAgentInventoryStore';
 import { projectMachineAgentForCredential, type MachineAgentCredentialSelection } from '@/agents/machineAgents/machineAgentModel';
-import { resolveMachineAgentStatus } from '@/components/machines/agents/machineAgentPresentation';
+import { resolveMachineAgentExecutionStateV1 } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { resolveSessionHandoffStartReadiness } from '@/sync/domains/sessionHandoff/resolveSessionHandoffStartReadiness';
 export { readSessionTeamCredentialReadiness, readSessionPersonalCredentialReadiness } from '@happier-dev/protocol/sessions/control/sessionReadinessV1';
@@ -31,22 +31,21 @@ export function buildSessionReadinessViewModel(input: Readonly<{
     signIn?: MachineAgentSignInSession | null;
     invocation: SessionReadinessFactsV1['invocation'];
     credential?: SessionCredentialReadinessV1;
+    /** The selected execution route consumes this credential for ordinary conversation. */
+    credentialRequiredForConversation?: boolean;
     mayRepairAgent: boolean;
     handoff?: Parameters<typeof resolveSessionHandoffStartReadiness>[0];
 }>) {
     const selectedAgent = input.selection ? projectMachineAgentForCredential(input.agent, input.selection) : null;
-    const presented = resolveMachineAgentStatus(selectedAgent, input.signIn, input.inventory.status);
-    const state: SessionReadinessAgentV1['state'] = presented.kind === 'ready' ? 'ready'
-        : presented.kind === 'needsSignIn' || presented.kind === 'waitingForSignIn' ? 'needsSignIn'
-        : presented.kind === 'notInstalled' || presented.kind === 'installing' || presented.kind === 'failed' ? 'notInstalled'
-        : presented.kind === 'unsupported' ? 'unsupported'
-        : presented.kind === 'checking' ? 'checking' : 'unknown';
+    const state = resolveMachineAgentExecutionStateV1({ inventoryState: selectedAgent?.state ?? 'unknown',
+        known: Boolean(selectedAgent && !selectedAgent.stale), checking: input.inventory.status === 'loading' });
     const nativeSelected = input.selection && !input.selection.providerRoute && isSessionReadinessNativeSelectionV1({
         metadata: { ...(input.selection.credentialBindings ? { connectedServices: input.selection.credentialBindings } : {}) },
         providerConnectionId: null,
     });
     const machineId = input.machine.selectedMachineId?.trim();
-    const repair: SessionReadinessRepairV1 | null = presented.kind === 'needsSignIn' && nativeSelected
+    const repair: SessionReadinessRepairV1 | null = state === 'needsSignIn' && nativeSelected
+        && input.signIn?.phase !== 'opening' && input.signIn?.phase !== 'waiting'
         && input.mayRepairAgent && machineId && selectedAgent?.signIn.nativeLogin === 'terminal'
         ? { actionId: 'machines.agents.signIn.start', input: { machineId, agentId: selectedAgent.agentId, method: 'native' } } : null;
     const readiness = composeSessionReadinessV1({ configured: input.configured,
@@ -56,7 +55,9 @@ export function buildSessionReadinessViewModel(input: Readonly<{
             ...(selectedAgent.definitionId ? { definitionId: selectedAgent.definitionId } : {}), state,
             current: !selectedAgent.stale && input.inventory.status === 'ready',
             observedAtMs: input.inventory.lastCheckedAt, repair } : null,
-        invocation: input.invocation, credential: input.credential ?? { kind: 'not_required' } });
+        invocation: input.invocation, credential: input.credential ?? { kind: 'not_required' } }, {
+        credentialRequiredForConversation: input.credentialRequiredForConversation,
+    });
     return { readiness, repair: readSessionReadinessRepair(readiness),
         handoff: input.handoff ? resolveSessionHandoffStartReadiness(input.handoff) : null };
 }

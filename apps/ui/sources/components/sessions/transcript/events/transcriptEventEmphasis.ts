@@ -1,6 +1,7 @@
 import type { Message } from "@happier-dev/session-core/messages";
 import { isSessionFollowWakeEventLocalId } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
 import { readHostFollowInputMeta } from '@/sync/domains/session/input/hostAuthoredInput';
+import { indexFollowWorkerCardsByInputLocalId } from './followWorkerCardDelivery';
 
 export type TranscriptEventEmphasis = 'normal' | 'deemphasized';
 export type TranscriptEventEmphasisByMessageId = Readonly<Record<string, TranscriptEventEmphasis>>;
@@ -48,7 +49,7 @@ export function resolveTranscriptHostWakeCountByMessageId(input: Readonly<{
     messagesById: Readonly<Record<string, Message>>;
 }>): TranscriptHostWakeCountByMessageId {
     const acceptedBatches = new Set<string>();
-    const cardByInputId = new Map<string, string>();
+    const cardByInputId = indexFollowWorkerCardsByInputLocalId(input.messagesById, input.messageIdsOldestFirst);
     for (const messageId of input.messageIdsOldestFirst) {
         const message = input.messagesById[messageId];
         if (message?.kind === 'agent-event'
@@ -56,10 +57,6 @@ export function resolveTranscriptHostWakeCountByMessageId(input: Readonly<{
             && 'followDeliveryProjection' in message
             && message.followDeliveryProjection?.status === 'woke') {
             acceptedBatches.add(message.localId);
-        }
-        if (message?.kind === 'agent-event' && message.event.type === 'worker-update'
-            && message.event.followInputLocalId && !cardByInputId.has(message.event.followInputLocalId)) {
-            cardByInputId.set(message.event.followInputLocalId, messageId);
         }
     }
     let counts: Record<string, number> | null = null;

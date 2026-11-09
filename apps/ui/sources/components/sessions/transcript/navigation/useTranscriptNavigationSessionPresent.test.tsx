@@ -2,7 +2,7 @@ import * as React from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createSessionFixture, renderHook, standardCleanup } from '@/dev/testkit';
-import type { SessionAwarenessProjectionV1 } from '@happier-dev/protocol';
+import type { SessionAwarenessProjectionV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
 import { createReadOnlySessionTranscriptSource } from '../source/readOnlySessionTranscriptSource';
 import { SessionTranscriptSourceProvider } from '../source/SessionTranscriptSourceContext';

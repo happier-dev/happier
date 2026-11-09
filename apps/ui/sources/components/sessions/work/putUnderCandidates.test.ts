@@ -7,6 +7,9 @@ import { canDropSessionUnder, listPutUnderCandidates, resolvePutUnderEligibility
 import { createSessionManagerEligibilitySnapshot, type SessionManagerEligibilitySnapshot } from '@/sync/ops/relations/sessionManagerEligibility';
 import { SessionManagerOptionsV1Schema } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { upsertServerProfile, setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
+import { resolveSessionRuntimePublication } from '@/sync/store/domains/sessionRuntimePublication';
+import { sessionRuntimeObservations } from '@/sync/domains/session/sessionRuntimeObservation';
+import { readPutUnderCandidatePresentation } from './putUnderPresentation';
 
 function session(id: string, overrides: Partial<Session> = {}): Session {
     return createSessionFixture({ id, serverId: 'home', updatedAt: 1, createdAt: 1, archivedAt: null, ...overrides });
@@ -26,6 +29,28 @@ function facts(sessions: Readonly<Record<string, Session>>, sessionId: string): 
 }
 
 describe('listPutUnderCandidates', () => {
+    it('reads current receipt recency for the opened chooser without replacing Session content or borrowing another Home', () => {
+        const lead = session('receipt-lead', { updatedAt: 2 });
+        const peer = session('receipt-peer', { updatedAt: 9 });
+        const foreignPeer = session(peer.id, { serverId: 'other-home', updatedAt: 9 });
+        const records = { self: session('self'), [lead.id]: lead, [peer.id]: peer };
+        try {
+            const receipt = { ...lead, updatedAt: 43 };
+            expect(resolveSessionRuntimePublication(lead, receipt, receipt)).toBe(lead);
+            const foreignReceipt = { ...foreignPeer, updatedAt: 1000 };
+            expect(resolveSessionRuntimePublication(foreignPeer, foreignReceipt, foreignReceipt)).toBe(foreignPeer);
+
+            expect(listPutUnderCandidates(records, records.self, facts(records, 'self')).map(item => item.id))
+                .toEqual([lead.id, peer.id]);
+            expect(readPutUnderCandidatePresentation(lead).updatedAt).toBe(43);
+            expect(readPutUnderCandidatePresentation(peer).updatedAt).toBe(9);
+            expect(lead.updatedAt).toBe(2);
+        } finally {
+            for (const address of [{ serverId: 'home', sessionId: lead.id },
+                { serverId: 'other-home', sessionId: peer.id }]) sessionRuntimeObservations.forget(address);
+        }
+    });
+
     it('offers Sessions on the same Home, never itself, its reports, archived or other-Home Sessions', () => {
         const sessions = Object.fromEntries([
             session('self'),

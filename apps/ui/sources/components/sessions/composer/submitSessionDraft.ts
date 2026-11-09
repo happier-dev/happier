@@ -95,7 +95,8 @@ export async function submitSessionDraft(input: Readonly<{
         }
         const isCurrent = () => account.accountLifetime.isCurrent() && !signal?.aborted;
         const sourceComposerRef = { kind: 'session', sessionId: sessionTarget.sessionId } as const;
-        const owner = createExistingSessionComposerDocumentOwner({ scope: sessionTarget, ref: sourceComposerRef, isCurrent });
+        const owner = createExistingSessionComposerDocumentOwner({ scope: sessionTarget, scopeLifetime: account.accountOnlyLifetime,
+            ref: sourceComposerRef, isCurrent });
         const document = owner.read().document;
         const currentness = owner.captureCurrentness();
         const key = sessionAttachmentDraftKey(resolveSessionAttachmentDraftScope(sessionTarget));
@@ -121,7 +122,7 @@ export async function submitSessionDraft(input: Readonly<{
                 requestedAction: { v: 1, kind: 'send_now' }, reply: 'none', structuredInput: captured.structuredInput,
             }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
                 serverId: sessionTarget.serverId, expectedAccountId: sessionTarget.accountId, signal }));
-            if (result.ok && isCurrent()) {
+            if (result.ok && account.accountOnlyLifetime.isCurrent()) {
                 owner.clearAccepted(currentness);
                 settleAttachmentDraftsForKey(key, drafts);
                 clearSessionMessagingDraftMutationAttempt({ scope: sessionTarget, sessionId: sessionTarget.sessionId, localId: attempt.localId });

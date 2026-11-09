@@ -44,7 +44,7 @@ export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionCo
 
     return (
         <View style={styles.section}>
-            {props.controls.map((control) => {
+            {props.controls.map((control, index) => {
                 const option = control.option;
                 const effectiveValue = control.effectiveValue;
                 const isBool = isBooleanConfigOptionType(option.type);
@@ -62,6 +62,7 @@ export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionCo
                             )}
                             style={({ pressed }) => [
                                 styles.optionRow,
+                                index > 0 ? styles.rowDivider : null,
                                 isDisabled ? styles.optionDisabled : null,
                                 pressed && !isDisabled ? transientStyles.optionRowPressed : null,
                             ]}
@@ -126,24 +127,46 @@ export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionCo
                 const highlightedValue = isDisabled
                     ? control.overriddenEffectiveValue ?? null
                     : effectiveValue;
+                const renderChoice = (choice: { value: string; name: string }, identity: string) => {
+                    const isSelected = choice.value === highlightedValue;
+                    return (
+                        <Pressable
+                            testID={`agent-input-config-option-option:${identity}`}
+                            key={identity}
+                            disabled={isDisabled}
+                            onPress={() => props.onSelectValue?.(option.id, choice.value)}
+                            style={({ pressed }) => [
+                                styles.choicePill,
+                                isSelected ? transientStyles.choicePillSelected : null,
+                                pressed && !isDisabled ? transientStyles.optionRowPressed : null,
+                            ]}
+                        >
+                            <Text style={[styles.choiceLabel, isSelected ? styles.choiceLabelSelected : null]}>
+                                {choice.name}
+                            </Text>
+                        </Pressable>
+                    );
+                };
 
                 return (
                     <View
                         key={option.id}
                         testID={`agent-input-config-option:${option.id}`}
-                        style={[styles.configCard, isDisabled ? styles.optionDisabled : null]}
+                        style={[styles.configCard, index > 0 ? styles.rowDivider : null, isDisabled ? styles.optionDisabled : null]}
                     >
-                        <Text style={styles.optionLabel}>
-                            {option.name}
-                        </Text>
-                        <Text
-                            testID={`agent-input-config-option-summary:${option.id}`}
-                            style={styles.optionDescription}
-                        >
-                            {control.isPending && requestedLabel
-                                ? t('agentInput.acp.pendingValue', { current: currentLabel, requested: requestedLabel })
-                                : t('agentInput.acp.currentValue', { value: currentLabel })}
-                        </Text>
+                        <View style={styles.optionHeader}>
+                            <Text style={[styles.optionLabel, styles.optionHeaderLabel]}>
+                                {option.name}
+                            </Text>
+                            <Text
+                                testID={`agent-input-config-option-summary:${option.id}`}
+                                style={[styles.optionDescription, styles.optionSummary]}
+                            >
+                                {control.isPending && requestedLabel
+                                    ? t('agentInput.acp.pendingValue', { current: currentLabel, requested: requestedLabel })
+                                    : t('agentInput.acp.currentValue', { value: currentLabel })}
+                            </Text>
+                        </View>
                         {isDisabled && control.disabledByOptionName ? (
                             <Text
                                 testID={`agent-input-config-option-overridden:${option.id}`}
@@ -160,54 +183,20 @@ export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionCo
 
                         {isSelect ? (
                             <View style={styles.choiceRow}>
-                                {option.groups?.map((group) => (
+                                {option.groups?.length ? option.groups.map((group) => (
                                     <View key={group.id} style={styles.group}>
                                         <Text accessibilityRole="header" style={styles.groupLabel}>{group.name}</Text>
                                         <View style={styles.choiceRow}>
-                                            {group.options.map((choice) => {
-                                                const isSelected = choice.value === highlightedValue;
-                                                const identity = choiceIdentity([option.id, group.id, choice.value]);
-                                                return (
-                                                    <Pressable
-                                                        testID={`agent-input-config-option-option:${identity}`}
-                                                        key={identity}
-                                                        disabled={isDisabled}
-                                                        onPress={() => props.onSelectValue?.(option.id, choice.value)}
-                                                        style={({ pressed }) => [styles.choicePill, isSelected ? transientStyles.choicePillSelected : null, pressed && !isDisabled ? transientStyles.optionRowPressed : null]}
-                                                    >
-                                                        <Text style={[styles.choiceLabel, isSelected ? styles.choiceLabelSelected : null]}>{choice.name}</Text>
-                                                    </Pressable>
-                                                );
-                                            })}
+                                            {group.options.map((choice) => renderChoice(
+                                                choice,
+                                                choiceIdentity([option.id, group.id, choice.value]),
+                                            ))}
                                         </View>
                                     </View>
+                                )) : option.options?.map((choice) => renderChoice(
+                                    choice,
+                                    choiceIdentity([option.id, choice.value]),
                                 ))}
-                                {option.options?.map((choice) => {
-                                    const isSelected = choice.value === highlightedValue;
-                                    const identity = choiceIdentity([option.id, choice.value]);
-                                    return (
-                                        <Pressable
-                                            testID={`agent-input-config-option-option:${identity}`}
-                                            key={identity}
-                                            disabled={isDisabled}
-                                            onPress={() => props.onSelectValue?.(option.id, choice.value)}
-                                            style={({ pressed }) => [
-                                                styles.choicePill,
-                                                isSelected ? transientStyles.choicePillSelected : null,
-                                                pressed && !isDisabled ? transientStyles.optionRowPressed : null,
-                                            ]}
-                                        >
-                                            <Text
-                                                style={[
-                                                    styles.choiceLabel,
-                                                    isSelected ? styles.choiceLabelSelected : null,
-                                                ]}
-                                            >
-                                                {choice.name}
-                                            </Text>
-                                        </Pressable>
-                                    );
-                                })}
                             </View>
                         ) : null}
                     </View>
@@ -218,19 +207,38 @@ export function AgentInputSessionConfigOptionsSection(props: AgentInputSessionCo
 }
 
 const styles = StyleSheet.create((theme) => ({
+    // One sheet per block of controls: rows divided by hairlines, not a stack of bordered cards.
     section: {
-        gap: theme.space.s8,
+        borderRadius: 12,
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: theme.colors.border.default,
+        backgroundColor: theme.colors.surface.base,
+        overflow: 'hidden',
+    },
+    rowDivider: {
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: theme.colors.border.subtle,
+    },
+    optionHeader: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        justifyContent: 'space-between',
+        gap: theme.space.s12,
+    },
+    optionHeaderLabel: {
+        flexShrink: 0,
+    },
+    optionSummary: {
+        flexShrink: 1,
+        textAlign: 'right',
+        fontVariant: ['tabular-nums'],
     },
     optionDisabled: {
         opacity: 0.5,
     },
     optionRow: {
-        borderRadius: 12,
         paddingHorizontal: theme.space.s10,
         paddingVertical: theme.space.s10,
-        backgroundColor: theme.colors.surface.base,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.border.default,
     },
     booleanContent: {
         flexDirection: 'row',
@@ -256,12 +264,8 @@ const styles = StyleSheet.create((theme) => ({
     },
     configCard: {
         gap: theme.space.s4,
-        borderRadius: 12,
         paddingHorizontal: theme.space.s10,
         paddingVertical: theme.space.s10,
-        backgroundColor: theme.colors.surface.base,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: theme.colors.border.default,
     },
     choiceRow: {
         flexDirection: 'row',

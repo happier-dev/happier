@@ -1,4 +1,4 @@
-import type { ApprovalRequest } from '@happier-dev/protocol';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { SessionCapabilitiesSetInputV1Schema, type SessionCapabilitiesSetInputV1 } from '@happier-dev/protocol/actions/specs/sessionCapabilities';
 import type { ReachDecisionV1 } from '@happier-dev/protocol/reach/resolveReachV1';
 import type { ReachRulesV1 } from '@happier-dev/protocol/reach/reachRuleV1';
@@ -38,8 +38,8 @@ export type CapabilityEnableApprovalInput = Readonly<{
     changeRules(change: ReachRulesChangeV1): Promise<ReachRulesWriteResult>;
     undoRules(): Promise<ReachRulesWriteResult>;
 }>;
-export function createCapabilityEnableApprovalController(input: CapabilityEnableApprovalInput) {
-    let snapshot: CapabilityEnableApprovalSnapshot = { status: 'idle', approved: false, errorCode: null, alwaysWrite: null };
+export function createCapabilityEnableApprovalController(input: CapabilityEnableApprovalInput, receipt?: CapabilityEnableApprovalSnapshot) {
+    let snapshot: CapabilityEnableApprovalSnapshot = receipt ?? { status: 'idle', approved: false, errorCode: null, alwaysWrite: null };
     let inFlight: Promise<void> | null = null;
     const listeners = new Set<() => void>();
     const publish = (patch: Partial<CapabilityEnableApprovalSnapshot>) => { snapshot = { ...snapshot, ...patch }; for (const listener of listeners) listener(); };
@@ -76,6 +76,6 @@ export function createCapabilityEnableApprovalController(input: CapabilityEnable
         else publish({ errorCode: result.message });
         return result;
     };
-    return { choose, undoAlways, getSnapshot: () => snapshot, listenerCount: () => listeners.size,
+    return { choose, undoAlways, getSnapshot: () => snapshot,
         subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; } };
 }

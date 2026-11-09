@@ -91,7 +91,7 @@ describe('Browser request lifetime through the mounted owner and real RPC', () =
         const hook = await renderHook(() => useSessionBrowserContextProductModel({ machineId: 'm1', serverId: fixture.home.id }), { wrapper: Wrapper });
         vi.useFakeTimers();
         let settled = false;
-        const pending = hook.getCurrent()!.annotationCaptureProvider!.captureAnnotation(capture);
+        const pending = hook.getCurrent()!.annotationCaptureProvider!.captureViewport!(capture);
         const observation = Promise.resolve(pending).finally(() => { settled = true; });
         try {
             await vi.waitFor(() => expect(fixture.requests.some(request => request.method === RPC_METHODS.DAEMON_BROWSER_CONTEXT_DISPATCH)).toBe(true));
@@ -102,7 +102,7 @@ describe('Browser request lifetime through the mounted owner and real RPC', () =
             expect(settled).toBe(true);
             expect(await observation).toMatchObject({ status: 'unavailable' });
             reply.resolve();
-            await hook.getCurrent()!.annotationCaptureProvider!.captureAnnotation({ ...capture, navigationGeneration: 1 });
+            await hook.getCurrent()!.annotationCaptureProvider!.captureViewport!({ ...capture, navigationGeneration: 1 });
             expect(fixture.requests.filter(request => request.method === RPC_METHODS.DAEMON_BROWSER_CONTEXT_DISPATCH)).toHaveLength(2);
         } finally { reply.resolve(); await observation; }
     });
@@ -111,7 +111,7 @@ describe('Browser request lifetime through the mounted owner and real RPC', () =
         const reply = createDeferred<void>();
         await setup(reply.promise);
         const controller = new AbortController();
-        const snapshot: import('@happier-dev/protocol').ComposerSnapshotV1 = {
+        const snapshot: import('@happier-dev/protocol/plugins/ui/composer').ComposerSnapshotV1 = {
             revision: 1, ref: { kind: 'session', sessionId: 's1' }, text: 'Look', references: [], layout: 'wrap',
             capabilities: { text: true, references: true, attachments: true, submit: true },
             state: { focused: true, editable: true, submittable: true, submitting: false, running: false },

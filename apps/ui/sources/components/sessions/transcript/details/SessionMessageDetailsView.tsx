@@ -8,6 +8,7 @@ import type { TextStyle, ViewStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useSessionAgentInputRoutingControls } from '@/components/sessions/agentInput/routing/useSessionAgentInputRoutingControls';
+import type { RunAnsweringEngine } from '@/components/sessions/runs/resolveExecutionRunSelectionLabel';
 import { SessionParticipantComposer, type ParticipantComposerPreparedSubmission } from '@/components/sessions/participants/composer/SessionParticipantComposer';
 import { Deferred } from '@/components/ui/forms/Deferred';
 import { Text } from '@/components/ui/text/Text';
@@ -149,6 +150,8 @@ function ToolCallDetailsView(props: Readonly<{
     header?: React.ReactNode;
     declinedApproval?: DeclinedApprovalDisposition | null;
     composerPlaceholder?: string;
+    /** A walkthrough's Run conversation: who answers (its model, `null` when unknown), named and not chosen. */
+    walkthroughEngine?: RunAnsweringEngine | null;
     submitPreparedMessage?: (submission: ParticipantComposerPreparedSubmission) => Promise<void>;
 }>) {
     const { theme } = useUnistyles();
@@ -157,7 +160,8 @@ function ToolCallDetailsView(props: Readonly<{
     const accountScopeResolution = useServerCredentialAccountScopeResolution(props.session.serverId);
     const accountScope = props.session.serverId === undefined ? undefined
         : accountScopeResolution.kind === 'bound' ? accountScopeResolution.scope : null;
-    const { messages: committedMessages } = useSessionMessages(props.sessionId);
+    // Attribution dividers and Run polling read structure, not streamed text; the shown row arrives via props.
+    const { messages: committedMessages } = useSessionMessages(props.sessionId, { textUpdates: false });
     // This screen shows one row from the transcript in isolation. Without the
     // transcript's divider index it would fall back to the Session's current
     // Agent, which is exactly the row a switched Session gets wrong.
@@ -246,6 +250,7 @@ function ToolCallDetailsView(props: Readonly<{
         isReadOnly: !canShowComposer,
         participantTargets,
         recipientState,
+        walkthroughConversation: props.walkthroughEngine !== undefined,
     });
 
     const extraActionChips = routingControls.extraActionChips;
@@ -297,6 +302,7 @@ function ToolCallDetailsView(props: Readonly<{
                     submitPreparedMessage={autoRecipient && recipientState.recipient
                         && participantRecipientsMatch(autoRecipient, recipientState.recipient) ? props.submitPreparedMessage : undefined}
                     {...(props.composerPlaceholder ? { placeholder: props.composerPlaceholder } : {})}
+                    fixedEngine={props.walkthroughEngine}
                 />
             ) : null}
         </View>
@@ -319,6 +325,8 @@ export const SessionMessageDetailsView = React.memo((props: Readonly<{
     declinedApproval?: DeclinedApprovalDisposition | null;
     /** What the composer invites, when the host knows who it talks to ("Reply to Walkthrough…"). */
     composerPlaceholder?: string;
+    /** A walkthrough's Run conversation: who answers (its model, `null` when unknown), named and not chosen. */
+    walkthroughEngine?: RunAnsweringEngine | null;
     submitPreparedMessage?: (submission: ParticipantComposerPreparedSubmission) => Promise<void>;
 }>) => {
     const { theme } = useUnistyles();
@@ -347,6 +355,7 @@ export const SessionMessageDetailsView = React.memo((props: Readonly<{
                         header={props.header}
                         declinedApproval={props.declinedApproval}
                         composerPlaceholder={props.composerPlaceholder}
+                        walkthroughEngine={props.walkthroughEngine}
                     />
                 ) : props.message.kind === 'agent-text' || props.message.kind === 'user-text' ? (
                     <TextFullView text={prepareTranscriptMessageBody(props.message).text ?? ''} />

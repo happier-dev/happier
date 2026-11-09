@@ -29,7 +29,7 @@ describe('accepted composer handoff with a browser draft conflict', () => {
         const otherStorage = createSessionDraftPersistenceStorage({
             legacy: { getAllKeys: () => [], getString: () => undefined, delete: () => {} },
             records: { list: () => records.listBrowserRecords('session-drafts-repository-v1:'),
-                update: records.updateBrowserRecord },
+                read: records.readBrowserRecord, updateMany: records.updateBrowserRecords },
         });
         await otherStorage.prepare();
         const otherTab = createSessionDraftRepository({ storage: otherStorage, syncEnabled: false, cipher: {

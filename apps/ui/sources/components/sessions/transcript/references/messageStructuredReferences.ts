@@ -141,8 +141,13 @@ function referenceIdentity(reference: TranscriptStructuredReference): string {
         : `session\u0000${reference.sessionId}`;
 }
 
+/**
+ * `ownSessionId` is the Session whose transcript renders the message. Stored mentions keep every
+ * participant (the provider prompt needs them), but the reference row is what the person sees, and
+ * a Session never lists itself in its own transcript. Inline chips are authored words and stay.
+ */
 export function resolveMessageStructuredReferences(
-    input: Readonly<{ meta: unknown; text: string }>,
+    input: Readonly<{ meta: unknown; text: string; ownSessionId?: string }>,
 ): MessageStructuredReferences {
     const envelope = readHappierStructuredInputV1FromMeta(input.meta);
     // D-4 precedence lives at one owner: with `mentions` present the legacy per-kind arrays
@@ -200,6 +205,7 @@ export function resolveMessageStructuredReferences(
         if (reference.kind === MENTION_KIND_V1.session) seen.add(`session\u0000${reference.sessionId}`);
     }
     const add = (reference: TranscriptStructuredReference): void => {
+        if (reference.kind === 'session' && reference.sessionId === input.ownSessionId) return;
         const identity = referenceIdentity(reference);
         if (seen.has(identity)) return;
         seen.add(identity);
@@ -242,13 +248,14 @@ export function resolveMessageStructuredReferences(
  * still arriving, and a half-arrived path must not flash a chip.
  */
 export function useMessageStructuredReferences(
-    input: Readonly<{ meta: unknown; text: string; enabled?: boolean }>,
+    input: Readonly<{ meta: unknown; text: string; ownSessionId?: string; enabled?: boolean }>,
 ): MessageStructuredReferences {
     const enabled = input.enabled !== false;
     const meta = input.meta;
     const text = input.text;
+    const ownSessionId = input.ownSessionId;
     return React.useMemo(
-        () => (enabled ? resolveMessageStructuredReferences({ meta, text }) : NO_PROJECTION),
-        [enabled, meta, text],
+        () => (enabled ? resolveMessageStructuredReferences({ meta, text, ownSessionId }) : NO_PROJECTION),
+        [enabled, meta, text, ownSessionId],
     );
 }

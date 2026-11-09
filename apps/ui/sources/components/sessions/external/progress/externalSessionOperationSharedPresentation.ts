@@ -2,7 +2,7 @@ import type {
     ExternalSessionOperationPhaseV1,
     ExternalSessionOperationSharedPresentationV1,
     ExternalSessionOperationStatusV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/operationV1';
 
 import type {
     ExternalSessionOperationTranslationKey,

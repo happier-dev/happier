@@ -1,7 +1,7 @@
 import React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createMessageStructuredPresentationV1 } from '@happier-dev/protocol';
+import { createMessageStructuredPresentationV1 } from '@happier-dev/protocol/sessions/messages/messageStructuredPresentationV1';
 import { renderWithSessionTranscriptSource, standardCleanup } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -151,6 +151,9 @@ describe('MessageView timestamps', () => {
     });
 
     it('projects eligible whole-message Actions through user, assistant, and structured MessageActionRows', async () => {
+        // A web row mounts its Actions once revealed; timestamps are off so this does not warm the formatter.
+        copyButtonsVisible = true;
+        timestampDisplayMode = 'never';
         const { MessageView } = await import('./MessageView');
         const {
             createPluginMessageActionHost,

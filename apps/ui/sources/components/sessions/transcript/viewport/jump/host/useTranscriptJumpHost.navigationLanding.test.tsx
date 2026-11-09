@@ -134,6 +134,23 @@ describe('transcript jump landing owns the navigation anchor', () => {
         }
     });
 
+    it('lands a Find reveal without the attention cue; its match fill is the only current mark', async () => {
+        const harness = createTranscriptJumpHostTestHarness({ sessionId: SESSION_ID, rows: ROWS, messages: MESSAGES });
+        const landed: unknown[] = [];
+        const hook = await harness.render({ onJumpLanded: (result: unknown) => { landed.push(result); } });
+        try {
+            await act(async () => {
+                await hook.getCurrent().jumpToTranscriptTarget({ kind: 'seq', seq: 7 }, { landingCue: false });
+            });
+            expect(harness.native.indexWrites.at(-1)).toMatchObject({ index: 0 });
+            expect(landed).toEqual([]);
+            await act(async () => { await hook.getCurrent().jumpToTranscriptTarget({ kind: 'seq', seq: 12 }); });
+            expect(landed).toEqual([{ status: 'scrolled', target: { kind: 'seq', seq: 12 } }]);
+        } finally {
+            await hook.unmount();
+        }
+    });
+
     it('lands a route message on the exact answer rather than the first row at the same sequence', async () => {
         getStorage().getState().sessionMessages[SESSION_ID]!.reducerState.messageIds.set('source-answer', 'a2');
         getStorage().getState().sessionMessages[SESSION_ID]!.reducerState.messageIds.set('second-answer', 'a3');

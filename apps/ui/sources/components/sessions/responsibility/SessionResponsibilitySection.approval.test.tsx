@@ -2,7 +2,8 @@ import * as React from 'react';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { CurrentCursorResponseSchema, tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { CurrentCursorResponseSchema} from '@happier-dev/protocol/changes';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { SetSessionResponsibilityResponseSchema } from '@happier-dev/protocol/sessions/access/sessionResponsibilityV1';
 
 // Imported from their owning testkit modules, never the `@/dev/testkit` barrel:

@@ -192,6 +192,86 @@ describe('saved Session spaces through the mounted query transport', () => {
             } finally { await pane.unmount(); }
         } finally { await boundary.dispose(); }
     });
+    it.each(['empty', 'paged', 'failed'] as const)('shows guidance only after an authoritative empty query settles (%s)', async outcome => {
+        const boundary = await createSessionListQuerySourceHarness();
+        const home = boundary.serverIds[0]!;
+        let release!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        let releaseNext!: () => void;
+        const nextGate = new Promise<void>(resolve => { releaseNext = resolve; });
+        try {
+            await boundary.http.selectHomes([home]);
+            const queries: unknown[] = [];
+            boundary.http.answer(home, '/v2/sessions/query', { select: input => {
+                queries.push(input);
+                const next = Boolean(input && typeof input === 'object' && 'cursor' in input && input.cursor);
+                return {
+                    body: outcome === 'failed' ? {} : SessionListQueryResponseV1Schema.parse({
+                        sessions: [], nextCursor: outcome === 'paged' && !next ? 'next-page' : null, hasNext: outcome === 'paged' && !next,
+                        attentionNextCursor: null, attentionHasNext: false,
+                    }),
+                    status: outcome === 'failed' ? 403 : 200,
+                    respondAfter: next ? nextGate : gate,
+                };
+            } });
+            const pane = await renderHook(() => {
+                const controller = useSessionListViewFilterController('active', undefined, 'sessions');
+                return { controller, state: useVisibleSessionListPaneState('all', {
+                    queryHomes: controller.pagingHomes,
+                    workFilter: controller.filters,
+                    filterControlsRequired: controller.filterControlsRequired,
+                }) };
+            });
+            try {
+                await waitForSessionListQueryState(() => expect(pane.getCurrent().state.query?.statesByServerId[home]?.phase).toBe('loading'));
+                expect(pane.getCurrent().state.showEmptyState).toBe(false);
+                release();
+                if (outcome === 'paged') {
+                    await waitForSessionListQueryState(() => expect(queries).toHaveLength(2));
+                    expect(queries[1]).toMatchObject({ cursor: 'next-page' });
+                    // A short candidate page is not authoritative empty guidance:
+                    // the query owner is still filling the requested visible page.
+                    expect(pane.getCurrent().state.query?.statesByServerId[home]?.phase).toBe('loading');
+                    expect(pane.getCurrent().state.showEmptyState).toBe(false);
+                    releaseNext();
+                }
+                await waitForSessionListQueryState(() => expect(pane.getCurrent().state.query?.statesByServerId[home]?.phase)
+                    .toBe(outcome === 'failed' ? 'error' : 'ready'));
+                expect(pane.getCurrent().state.queryPresentation).toMatchObject(outcome === 'failed'
+                    ? { kind: 'error' } : { kind: 'ready', complete: true });
+                expect(pane.getCurrent().state.showEmptyState).toBe(outcome !== 'failed');
+                await act(async () => pane.getCurrent().controller.setSearchQuery('missing session'));
+                expect(pane.getCurrent().state.showEmptyState).toBe(false);
+            } finally { await pane.unmount(); }
+        } finally { release(); releaseNext(); await boundary.dispose(); }
+    });
+
+    it('retains recovery controls for narrowed results while allowing default and all-accessible empty guidance', async () => {
+        const boundary = await createSessionListQuerySourceHarness();
+        const home = boundary.serverIds[0]!;
+        try {
+            await boundary.http.selectHomes([home]);
+            const controller = await renderHook(() => useSessionListViewFilterController());
+            try {
+                await vi.waitFor(() => expect(controller.getCurrent().filters.homeServerIds).toEqual([home]));
+                expect(controller.getCurrent().filterControlsRequired).toBe(false);
+                await act(async () => controller.getCurrent().updateFilters(previous => ({ ...previous, scope: 'all_accessible' })));
+                expect(controller.getCurrent().filterControlsRequired).toBe(false);
+                await act(async () => controller.getCurrent().setSearchQuery('missing session'));
+                expect(controller.getCurrent().filterControlsRequired).toBe(true);
+                await act(async () => controller.getCurrent().setSearchQuery(''));
+                expect(controller.getCurrent().filterControlsRequired).toBe(false);
+                await act(async () => controller.getCurrent().updateFilters(previous => ({ ...previous,
+                    tagIds: [{ serverId: home, tagId: 'selected-tag' }] })));
+                expect(controller.getCurrent().filterControlsRequired).toBe(true);
+                await act(async () => controller.getCurrent().resetFilters());
+                expect(controller.getCurrent().filterControlsRequired).toBe(false);
+                await act(async () => controller.getCurrent().updateFilters(previous => ({ ...previous, homeServerIds: [] })));
+                expect(controller.getCurrent().filterControlsRequired).toBe(true);
+            } finally { await controller.unmount(); }
+        } finally { await boundary.dispose(); }
+    });
+
     it.each(['picker', 'local filter', 'inactive surface', 'persisted warm picker'] as const)('demands exact private configured targets from compact display through the %s rather than their shared presentation', async demandVia => {
         const boundary = await createSessionListQuerySourceHarness();
         const home = boundary.serverIds[0]!;
@@ -477,5 +557,103 @@ describe('saved Session spaces through the mounted query transport', () => {
             await screen.unmount();
         } finally { standardCleanup(); await boundary.dispose(); }
     });
-
+    it('keeps local-field switches transport-free and requests one corpus for a structural scope switch', async () => {
+        const boundary = await createSessionListQuerySourceHarness();
+        const home = boundary.serverIds[0]!;
+        try {
+            // Core readiness precedes this independent startup reader. Answer
+            // its real empty Account census, then join its public queue before
+            // measuring user navigation; never filter its traffic from counts.
+            boundary.http.answer(home, PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'], {
+                body: PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse({ availabilityCursor: 0, snapshots: [] }),
+            });
+            boundary.http.answer(home, PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'], {
+                body: PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 0, pluginIds: [], intentReads: [], failedPluginIds: [] }),
+            });
+            await sync.awaitBootstrapForegroundAcquisition();
+            await sync.refreshPluginAccountAvailability();
+            await boundary.http.selectHomes([home]);
+            const base = normalizeSessionListFilterV1({ homeServerIds: [home], show: 'sessions', includeInactive: true });
+            const settings = settingsParse({ ...storage.getState().settings, collectionSpacesV1: CollectionSpacesV1Schema.parse({
+                v: 1, spaces: [
+                    { entityKind: 'sessionWork', id: 'working', name: 'Working', icon: { kind: 'icon', name: 'filter' },
+                        filter: { ...base, statuses: ['thinking'] }, includeNeedsYouEverywhere: false },
+                    { entityKind: 'sessionWork', id: 'branch', name: 'Branch', icon: { kind: 'icon', name: 'filter' },
+                        filter: { ...base, branches: { include: ['feature/p6'], exclude: [] } }, includeNeedsYouEverywhere: false },
+                    { entityKind: 'sessionWork', id: 'assigned', name: 'Assigned', icon: { kind: 'icon', name: 'filter' },
+                        filter: { ...base, scope: 'assigned_to_me' }, includeNeedsYouEverywhere: false },
+                ],
+            }) });
+            boundary.http.answer(home, '/v2/account/settings', { body: AccountSettingsV2GetResponseSchema.parse({
+                content: { t: 'plain', v: settings }, version: 2,
+            }) });
+            storage.setState({ settings, settingsVersion: 2,
+                settingsScope: { serverId: home, accountId: boundary.accountId(home) } });
+            const wire: Array<Readonly<{ method: string; path: string; input: unknown }>> = [];
+            boundary.http.answer(home, '/v1/account/encryption/currentness', { select(input, request) {
+                wire.push({ method: request.init?.method ?? 'GET', path: new URL(request.url).pathname, input });
+                return { body: createPlainAccountEncryptionCurrentnessFixture() };
+            } });
+            boundary.http.answer(home, '/v2/sessions/query', { select(input, request) {
+                wire.push({ method: request.init?.method ?? 'GET', path: new URL(request.url).pathname, input });
+                return { body: V2SessionListResponseSchema.parse({ sessions: [], nextCursor: null, hasNext: false,
+                    attentionNextCursor: null, attentionHasNext: false }) };
+            } });
+            const probe = await renderHook(() => {
+                const controller = useSessionListViewFilterController();
+                const source = useSessionListQuerySourceState({ enabled: controller.pagingHomes !== undefined,
+                    homes: controller.pagingHomes ?? [], emptySelectionComplete: controller.emptyQuerySelectionComplete });
+                return { controller, source, navigation: useSessionListSpaceNavigation(controller) };
+            });
+            const ready = async (spaceId: string) => waitForSessionListQueryState(() => {
+                const current = probe.getCurrent();
+                expect(current.controller.spacesReady).toBe(true);
+                expect(current.controller.queryEnabled).toBe(true);
+                expect(current.controller.selectedSpaceId).toBe(spaceId);
+                expect(current.source.statesByServerId[home]).toMatchObject({ phase: 'ready', appliedSourceKind: 'query',
+                    requestedQueryKey: current.controller.queryHomes[0]!.queryKey,
+                    appliedQueryKey: current.controller.queryHomes[0]!.queryKey });
+            });
+            await ready('my-work');
+            await act(async () => { expect(await probe.getCurrent().navigation.selectSpace('working')).toBe(true); });
+            await ready('working');
+            await flushHookEffects();
+            const baseline = boundary.http.requests.length;
+            const wireBaseline = wire.length;
+            expect(wireBaseline).toBeGreaterThan(0);
+            expect(boundary.http.requests.slice(0, baseline)).toEqual(expect.arrayContaining([
+                expect.objectContaining({ serverId: home, path: '/v1/account/encryption/currentness' }),
+            ]));
+            // Include every list/detail/read-batch/attention request, not only
+            // query POSTs, so a hidden fallback or hydration read fails the count.
+            const listRequests = () => boundary.http.requests.slice(baseline)
+                .filter(request => /^\/v[12]\/sessions(?:[/?]|$)/.test(request.path));
+            for (const spaceId of ['branch', 'working']) {
+                await act(async () => { expect(await probe.getCurrent().navigation.selectSpace(spaceId)).toBe(true); });
+                await ready(spaceId);
+                await flushHookEffects();
+                if (spaceId === 'branch') expect(probe.getCurrent().controller.filters.branches?.include).toEqual(['feature/p6']);
+                else expect(probe.getCurrent().controller.filters.statuses).toEqual(['thinking']);
+                expect(boundary.http.requests.slice(baseline)).toEqual([]);
+                expect(listRequests()).toEqual([]);
+                expect(wire).toHaveLength(wireBaseline);
+            }
+            await act(async () => { expect(await probe.getCurrent().navigation.selectSpace('assigned')).toBe(true); });
+            await ready('assigned');
+            await flushHookEffects();
+            const transportStarts = boundary.http.requests.slice(baseline).map(request => ({
+                serverId: request.serverId, path: request.path, input: request.input,
+            }));
+            // The empty assigned corpus needs no owner documents, so the
+            // canonical snapshot owner does not acquire Account key currentness.
+            expect(transportStarts).toEqual([
+                { serverId: home, path: '/v2/sessions/query', input: expect.objectContaining({ scope: 'assigned_to_me' }) },
+            ]);
+            expect(listRequests()).toHaveLength(1);
+            expect(wire.slice(wireBaseline).filter(request => request.path === '/v2/sessions/query')).toEqual([{ method: 'POST', path: '/v2/sessions/query',
+                input: expect.objectContaining({ scope: 'assigned_to_me' }) }]);
+            expect(wire.slice(wireBaseline).filter(request => request.path === '/v1/account/encryption/currentness')).toEqual([]);
+            await probe.unmount();
+        } finally { standardCleanup(); await boundary.dispose(); }
+    });
 });

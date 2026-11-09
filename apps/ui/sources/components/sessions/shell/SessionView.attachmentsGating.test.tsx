@@ -3,8 +3,9 @@ import * as React from 'react';
 import renderer from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen as renderCanonicalScreen } from '@/dev/testkit/render/renderScreen';
+import { renderHook } from '@/dev/testkit';
 import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNavigation';
-import { createPlainSessionByIdResponseFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionByIdResponseFixture, createSessionFixture, createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture, createPlainMachineRowFixture, createReadyMachineAgentInventoryFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -14,7 +15,7 @@ import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@h
 import { MachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { MachineOperationProtocolCapabilitiesV1Schema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
-import { readServerEnabledBit, tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { readServerEnabledBit, tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
@@ -27,6 +28,9 @@ import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHub
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import { SessionAttachmentUploadInitRequestV1Schema } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentUploadInitRequestV1';
+import { readComposerText } from '@/dev/testkit/readComposerText';
 
 vi.mock('socket.io-client', async (importOriginal) =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -34,6 +38,8 @@ vi.mock('socket.io-client', async (importOriginal) =>
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 const goalRequests: Array<{ method: string; params: unknown }> = [];
+const attachmentTransfers = new Map<string, { path: string; sizeBytes: number }>();
+let attachmentRecipientPublicKey = '';
 const abortRequests: Array<{ method: string; params: unknown }> = [];
 let abortAcknowledgement: Promise<void> = Promise.resolve();
 let releaseAbortAcknowledgement: (() => void) | undefined;
@@ -51,6 +57,25 @@ installDisconnectedServerSocketBoundary((socket) => {
     }
     const request = { method: payload.method, params: payload.params };
     const method = request.method.slice(request.method.indexOf(':') + 1);
+    // The external daemon boundary accepts the real Session carrier's strict
+    // request. Availability, Account routing, draft intake and encryption stay real.
+    if (request.method === `s1:${RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT}`) {
+      const init = SessionAttachmentUploadInitRequestV1Schema.parse(request.params);
+      if (typeof init.sizeBytes !== 'number') throw new Error('Expected finite attachment size');
+      const uploadId = `attachment-upload-${attachmentTransfers.size}`;
+      attachmentTransfers.set(uploadId, { path: `.happier/uploads/messages/${String(init.messageLocalId)}/${init.relativePath ?? String(init.fileName)}`,
+        sizeBytes: init.sizeBytes });
+      return { ok: true, result: { success: true, uploadId, chunkSizeBytes: 1024, recipientPublicKeyBase64: attachmentRecipientPublicKey } };
+    }
+    if (request.method === `s1:${RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK}`) return { ok: true, result: { success: true } };
+    if (request.method === `s1:${RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE}`) {
+      const params = request.params;
+      if (!params || typeof params !== 'object' || !('uploadId' in params) || typeof params.uploadId !== 'string') throw new Error('Expected attachment upload id');
+      const uploaded = attachmentTransfers.get(params.uploadId);
+      if (!uploaded) throw new Error('Attachment upload was not prepared');
+      return { ok: true, result: { success: true, ...uploaded, sha256: 'fixture-daemon-sha256',
+        attachmentHandle: { v: 1, sessionId: 's1', id: `handle-${params.uploadId}` } } };
+    }
     if (method === RPC_METHODS.CAPABILITIES_DETECT) return { ok: true, result: agentInventory.capabilities };
     if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return { ok: true,
       result: DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection: agentInventory.projection }),
@@ -166,6 +191,7 @@ const { AppPaneProvider } = await import('@/components/appShell/panes/AppPanePro
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { SessionView } = await import('./SessionView');
 const { AgentInput } = await import('@/components/sessions/agentInput');
+const { SessionParticipantComposer } = await import('@/components/sessions/participants/composer/SessionParticipantComposer');
 const { MINIMUM_CLI_VERSION } = await import('@/utils/system/versionUtils');
 const { storage } = await import('@/sync/domains/state/storage');
 const { useSessionFileUploadAvailability } = await import('@/components/sessions/files/useSessionFileUploadAvailability');
@@ -179,6 +205,7 @@ const { getFeatureBuildPolicyDecision } = await import('@/sync/domains/features/
 const { isMachineDaemonFiniteTransferApplicationSupported, isMachineDaemonIrohTransferApplicationSupported } = await import('@/sync/domains/transfers/runtime/transferRuntime/availability/machineDaemonTransferState');
 const { readCurrentMachineIrohEndpoint } = await import('@/sync/domains/transfers/runtime/transferRuntime/routing/resolveMachineCarrierPreselection');
 let actualUploadAvailability = false;
+let availabilityProbeRenders = 0;
 let actualGoalsEnabled = false;
 let uploadPrerequisites: Record<string, unknown> = {};
 let previousStorageState: ReturnType<typeof storage.getState>;
@@ -196,6 +223,7 @@ function serverFeatures(serverId: string) {
 }
 
 function TransferAvailabilityProbe() {
+  availabilityProbeRenders += 1;
   actualGoalsEnabled = useFeatureEnabled('agents.goals');
   actualUploadAvailability = useSessionFileUploadAvailability('s1', sessionState.session.serverId, 'attachment');
   const reachability = useSessionMachineReachability('s1', sessionState.session.serverId);
@@ -223,7 +251,7 @@ function TransferAvailabilityProbe() {
   return null;
 }
 
-async function renderScreen(element: Parameters<typeof renderCanonicalScreen>[0]) {
+async function renderScreen(element: Parameters<typeof renderCanonicalScreen>[0], expectedTransferAvailable?: boolean) {
   storage.getState().applySettingsLocal({ experiments: true, featureToggles: {
     'attachments.uploads': featureEnabledState['attachments.uploads'] === true,
   } });
@@ -248,8 +276,8 @@ async function renderScreen(element: Parameters<typeof renderCanonicalScreen>[0]
       setNativeProps() {}, setDropCaret() {}, measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(0, 0, 300, 100),
     }) });
   const metadata = readSessionOwnerMetadataView(sessionState.session);
-  const expectsTransferAvailable = attachmentsTransferAvailableState.value
-    && Boolean(metadata?.machineId && metadata.path);
+  const expectsTransferAvailable = expectedTransferAvailable ?? (attachmentsTransferAvailableState.value
+    && Boolean(metadata?.machineId && metadata.path));
   await waitForHomeGovernance(() => expect(actualUploadAvailability, JSON.stringify(uploadPrerequisites)).toBe(expectsTransferAvailable));
   return screen;
 }
@@ -307,10 +335,14 @@ describe('SessionView attachments gating', () => {
     attachmentsFeatureScopeState.enabledForServerId = null;
     featureEnabledState['attachments.uploads'] = false;
     actualUploadAvailability = false;
+    availabilityProbeRenders = 0;
     actualGoalsEnabled = false;
     uploadPrerequisites = {};
     abortRequests.length = 0;
     goalRequests.length = 0;
+    attachmentTransfers.clear();
+    attachmentRecipientPublicKey = (await import('@/sync/domains/transfers/runtime/transferRuntime/plumbing/transferChunkEncryption'))
+      .createTransferRecipientKeyPair().recipientPublicKeyBase64;
     fireAndForgetSpy.mockClear();
     abortAcknowledgement = Promise.resolve();
     releaseAbortAcknowledgement = undefined;
@@ -438,12 +470,41 @@ describe('SessionView attachments gating', () => {
 
     const agentInput = tree.findByType(AgentInput);
     expect(agentInput.props.onAttachmentsAdded).toBeUndefined();
+    expect((agentInput.props.extraActionChips ?? []).find((chip: AgentInputExtraActionChip) => chip.controlId === 'attachments'))
+      .toBeUndefined();
   });
 
-  it('fails closed when attachments.uploads is enabled but session file upload availability is false', async () => {
+  it.each(['owner', 'edit'] as const)('keeps Attach available for a Ready %s Session without a Machine carrier', async level => {
+    featureEnabledState['attachments.uploads'] = true;
+    attachmentsTransferAvailableState.value = false;
+    sessionState.session = createSessionFixture({ ...sessionState.session,
+      access: createSessionAccessFixture(level),
+      metadata: { ...sessionState.session.metadata!, path: level === 'owner' ? '/' : '/home/happier.guest' },
+    });
+    applySessionFixture();
+    const { sync } = await import('@/sync/sync');
+    expect(sync.getSessionAttachmentTransferContext('s1')).toBeUndefined();
+    expect(sync.getSessionAttachmentTransferContext('s1', { purpose: 'attachmentUpload',
+      target: { serverId: sessionHomeId, accountId: 'u1', sessionId: 's1' },
+    })).toBeDefined();
+    const { readSessionFileUploadAvailability } = await import('@/components/sessions/files/readSessionFileUploadAvailability');
+    expect((await readSessionFileUploadAvailability({ serverId: sessionHomeId, sessionId: 's1' })).uploadAvailable).toBe(true);
+    const screen = await renderScreen(<AppPaneProvider><SessionView id="s1" /></AppPaneProvider>, true);
+    const input = screen.tree.findByType(AgentInput);
+    expect(input.props.onAttachmentsAdded).toBeTypeOf('function');
+    const chip: AgentInputExtraActionChip | undefined = input.props.extraActionChips
+      .find((entry: AgentInputExtraActionChip) => entry.controlId === 'attachments');
+    expect(chip?.collapsedOptionsPopover?.rootStep).toMatchObject({
+      sections: [{ options: expect.arrayContaining([expect.objectContaining({ id: 'add-file', disabled: false })]) }],
+    });
+  });
+
+  it('fails closed when neither a live Session nor a Machine carrier is available', async () => {
     attachmentsFeatureScopeState.enabledForServerId = null;
     featureEnabledState['attachments.uploads'] = true;
     attachmentsTransferAvailableState.value = false;
+    sessionState.session.active = false;
+    applySessionFixture();
 
     let tree!: renderer.ReactTestRenderer;
     tree = (await renderScreen(<AppPaneProvider>
@@ -452,6 +513,66 @@ describe('SessionView attachments gating', () => {
 
     const agentInput = tree.findByType(AgentInput);
     expect(agentInput.props.onAttachmentsAdded).toBeUndefined();
+    // A missing transfer route disables Attach; it must not look like an absent feature.
+    const chip: AgentInputExtraActionChip | undefined = (agentInput.props.extraActionChips ?? [])
+      .find((entry: AgentInputExtraActionChip) => entry.controlId === 'attachments');
+    expect(chip?.collapsedAction?.({ tint: '#000', dismiss: vi.fn(), blurInput: vi.fn(), openCollapsedPopover: vi.fn() }))
+      .toMatchObject({ disabled: true, subtitle: 'files.transfers.uploadUnavailable' });
+  });
+
+  it('retains the participant Attach control with its recovery reason when both carriers are unavailable', async () => {
+    featureEnabledState['attachments.uploads'] = true;
+    attachmentsTransferAvailableState.value = false;
+    sessionState.session.active = false;
+    applySessionFixture();
+    const screen = await renderScreen(<AppPaneProvider><SessionParticipantComposer
+      sessionId="s1" serverId={sessionHomeId} canSendMessages recipient={null}
+    /></AppPaneProvider>, false);
+    const input = screen.tree.findByType(AgentInput);
+    const chip: AgentInputExtraActionChip | undefined = input.props.extraActionChips
+      .find((entry: AgentInputExtraActionChip) => entry.controlId === 'attachments');
+    expect(chip?.collapsedAction?.({ tint: '#000', dismiss: vi.fn(), blurInput: vi.fn(), openCollapsedPopover: vi.fn() }))
+      .toMatchObject({ disabled: true, subtitle: 'files.transfers.uploadUnavailable' });
+    expect(input.props.onAttachmentsAdded).toBeUndefined();
+  });
+
+  it('uses only the exact live Session, reacts to retirement/recovery, and ignores unrelated Session arrivals', async () => {
+    attachmentsTransferAvailableState.value = false;
+    await renderScreen(<></>, true);
+    const workspace = await renderHook(() => useSessionFileUploadAvailability('s1', sessionHomeId));
+    const otherHome = await renderHook(() => useSessionFileUploadAvailability('s1', otherHomeId, 'attachment'));
+    expect(workspace.getCurrent()).toBe(false);
+    expect(otherHome.getCurrent()).toBe(false);
+    const before = availabilityProbeRenders;
+    await renderer.act(async () => storage.getState().applySessions([
+      createSessionFixture({ id: 'unrelated-session', serverId: sessionHomeId, active: true }),
+    ]));
+    expect(availabilityProbeRenders - before).toBe(0);
+    await renderer.act(async () => storage.getState().applySessions([{ ...sessionState.session, active: false }]));
+    await waitForHomeGovernance(() => expect(actualUploadAvailability).toBe(false));
+    await renderer.act(async () => storage.getState().applySessions([{ ...sessionState.session, active: true }]));
+    await waitForHomeGovernance(() => expect(actualUploadAvailability).toBe(true));
+    await workspace.unmount();
+    await otherHome.unmount();
+  });
+
+  it.each(['main', 'participant'] as const)('eagerly uploads a picked folder through the %s composer Session carrier without a Machine carrier', async surface => {
+    featureEnabledState['attachments.uploads'] = true;
+    attachmentsTransferAvailableState.value = false;
+    const screen = await renderScreen(<AppPaneProvider>{surface === 'main'
+      ? <SessionView id="s1" />
+      : <SessionParticipantComposer sessionId="s1" serverId={sessionHomeId} canSendMessages recipient={null} />
+    }</AppPaneProvider>, true);
+    const input = screen.tree.findByType(AgentInput);
+    expect(input.props.onAttachmentsAdded).toBeTypeOf('function');
+    await renderer.act(async () => input.props.onAttachmentsAdded([], { sources: [{ kind: 'folder', name: 'project',
+      mimeType: 'inode/directory', entries: [{ relativePath: 'note.txt',
+        source: { kind: 'memory', name: 'note.txt', bytes: new Uint8Array([1, 2, 3]) } }],
+    }] }));
+    await waitForHomeGovernance(() => expect(screen.tree.findByType(AgentInput).props.attachmentRowItems)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ label: 'project', status: 'uploaded' })])));
+    expect(screen.tree.findByType(AgentInput).props.hasSendableAttachments).toBe(true);
+    expect([...attachmentTransfers.values()].some(transfer => transfer.sizeBytes === 3)).toBe(true);
   });
 
   it('keeps attachment handlers disabled when session-scoped uploads are not active for the viewed session', async () => {
@@ -484,11 +605,11 @@ describe('SessionView attachments gating', () => {
     expect((input.props.extraActionChips ?? []).some((chip: { controlId?: string }) => chip.controlId === 'goal')).toBe(false);
     await renderer.act(async () => { input.props.onChangeText('/goal set Ship goal UI'); });
     input = screen.tree.findByType(AgentInput);
-    expect(input.props.value).toBe('/goal set Ship goal UI');
+    expect(readComposerText(input)).toBe('/goal set Ship goal UI');
     await sendComposerAndWaitForTerminal(input);
     expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'session.workState.unsupportedMessage');
     expect(goalRequests).toEqual([]);
-    expect(screen.tree.findByType(AgentInput).props.value).toBe('/goal set Ship goal UI');
+    expect(readComposerText(screen.tree.findByType(AgentInput))).toBe('/goal set Ship goal UI');
   });
 
   it('submits native goal mutations through the command executor when editable goals are enabled', async () => {
@@ -508,6 +629,6 @@ describe('SessionView attachments gating', () => {
       { method: `s1:${SESSION_RPC_METHODS.SESSION_GOAL_SET}`, params: { objective: 'Ship goal UI' } },
     ]);
     expect(modalAlertSpy).not.toHaveBeenCalled();
-    expect(screen.tree.findByType(AgentInput).props.value).toBe('');
+    expect(readComposerText(screen.tree.findByType(AgentInput))).toBe('');
   });
 });

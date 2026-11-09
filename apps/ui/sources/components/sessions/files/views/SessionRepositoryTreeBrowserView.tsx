@@ -8,7 +8,7 @@ import { serializeSessionPaneUrlState } from '@/components/sessions/panes/url/se
 import { useSessionMachineName } from '@/components/sessions/agents/presentation/useSessionMachineName';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { useSessionMachineDisplayIdentity } from '@/components/sessions/model/useSessionMachineTarget';
-import type { CheckoutMachineScope } from '@/components/workspaces/reachability/checkoutReachability';
+import { useCheckoutReachability, type CheckoutMachineScope } from '@/components/workspaces/reachability/checkoutReachability';
 import { useSessionFileUploadAvailability } from '@/components/sessions/files/useSessionFileUploadAvailability';
 import { storage, useSessionDirectoryKind, useSessionProjectScmSnapshot, useSessionRepositoryTreeExpandedPaths, useSessionServerId, useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
@@ -20,13 +20,13 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { HAPPIER_TREE_ROW_METRICS as TREE_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
-import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
 import { usePaneHeaderSlotContent, type PaneHeaderLine } from '@/components/appShell/panes/paneHeaderSlot';
 import { selectScmChangedFiles } from '@/scm/scmStatusFiles';
 import { RepositoryTreeCreateMenu } from '@/components/workspaces/files/repositoryTree/RepositoryTreeCreateMenu';
 import type { FileMenuContext } from '@/components/workspaces/files/file/fileMenus';
 import { applyFileDiscardAction } from '@/scm/operations/applyFileDiscardAction';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
+import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 
 const styles = StyleSheet.create({
     root: { flex: 1 },
@@ -37,7 +37,7 @@ function SessionFilesRootHeading(props: Readonly<{ label: string }>) {
     const { theme } = useUnistyles();
     return (
         <View testID="repository-tree-session-files-root" accessibilityRole="header" style={[styles.sessionFilesRoot,
-            { minHeight: isTouchPrimaryPointer() ? TREE_ROW_METRICS.minHeightPx.touch : TREE_ROW_METRICS.minHeightPx.precise }]}>
+            { minHeight: useHappierTouchPrimaryPointer(Platform.OS) ? TREE_ROW_METRICS.minHeightPx.touch : TREE_ROW_METRICS.minHeightPx.precise }]}>
             <Icon name="folder" size={16} color={theme.colors.text.secondary} />
             <Text numberOfLines={1} style={[Typography.variant('label', 'semiBold'), { color: theme.colors.text.primary }]}>{props.label}</Text>
         </View>
@@ -51,8 +51,14 @@ function UnavailableSessionFiles(props: Readonly<{
     machineScope: CheckoutMachineScope | null;
     paneHeaderLine: PaneHeaderLine | null;
 }>) {
+    // The + keeps its place; its rows give the pane's one reason (lab FB1o).
+    const reachability = useCheckoutReachability(props.machineScope);
+    const unavailableReason = reachability.unreachable
+        ? t('projects.checkouts.notAnswering', { machine: reachability.machineName })
+        : t('files.pane.workspaceUnavailableReason');
     const action = React.useMemo(() => <RepositoryTreeCreateMenu createEnabled={false} uploadEnabled={false} isWeb={Platform.OS === 'web'}
-        uploadDestinationLabel={props.rootLabel} onSelect={ignoreUnavailableAction} />, [props.rootLabel]);
+        uploadDestinationLabel={props.rootLabel} unavailableReason={unavailableReason} onSelect={ignoreUnavailableAction} />,
+        [props.rootLabel, unavailableReason]);
     usePaneHeaderSlotContent(React.useMemo(() => ({ action, line: props.paneHeaderLine }), [action, props.paneHeaderLine]));
     return <View style={styles.root}><RepositoryTreeRootErrorState kind="unavailable" machineName={props.machineName} machineScope={props.machineScope} /></View>;
 }

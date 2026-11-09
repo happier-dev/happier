@@ -4,6 +4,7 @@ import { createSessionFixture, createSessionListRenderableSessionFixture } from 
 import type { Session } from '@/sync/domains/state/storageTypes';
 
 import { readSessionLineage } from './sessionLineage';
+import { readLockedSessionName } from '@/utils/sessions/sessionUtils';
 
 function session(id: string, name: string, lead: string | null): Session {
   return createSessionFixture({
@@ -15,6 +16,14 @@ function session(id: string, name: string, lead: string | null): Session {
 }
 
 describe('Session lineage (the manager chain above a Session)', () => {
+  it('names an unhydrated lead with the canonical locked identity', () => {
+    const sessions = { child: session('child', 'Child', 'lead') };
+    const rows = { 'home-a': { lead: createSessionListRenderableSessionFixture({ id: 'lead',
+      metadata: null, encryptionMode: 'e2ee', encryptedContentAvailability: undefined }) } };
+    expect(readSessionLineage(sessions, 'child', 'home-a', rows)).toEqual([
+      { sessionId: 'lead', title: readLockedSessionName() },
+    ]);
+  });
   it('names an unopened lead from the qualified list rather than a same-id transcript from another Home', () => {
     const sessions = {
       child: createSessionFixture({ id: 'child', serverId: 'home-a', manager: { sessionId: 'lead' } }),

@@ -7,12 +7,12 @@ import { Text } from '@/components/ui/text/Text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import type { SessionTranscriptActions } from '@/components/sessions/transcript/source/types';
-import { clearPermissionAnswerUnconfirmed } from './permissionActionFailure';
+import { clearPermissionAnswerUnconfirmedAfterPendingRead } from './permissionActionFailure';
 
 /**
  * The one presentation of "the answer may already be applied" for permission footers and question cards.
  * "Check again" reads the exact request through the source's scoped reader. A request still waiting releases
- * the controls; a settled one is published by the source and ends with its card; when the read cannot tell,
+ * transport uncertainty; a provider submission remains withheld until settlement; a settled one is published by the source and ends with its card; when the read cannot tell,
  * the answer stays unconfirmed and the notice says so.
  */
 export function PermissionAnswerUnconfirmedNotice(props: Readonly<{
@@ -36,11 +36,11 @@ export function PermissionAnswerUnconfirmedNotice(props: Readonly<{
         setChecking(true);
         setCouldNotCheck(false);
         try {
-            // Still waiting means the answer never landed, so answering again is no longer blind.
+            // A pending request resolves transport uncertainty, but a provider may still be applying a submitted answer.
             // Settled means the source already published the fresh Session; the card leaves the waiting
             // state with it, and the owning card ends the unconfirmed state then. Until it does, the
             // controls stay withheld, so a settled request is never offered another answer.
-            if (await readOutcome(props.requestId) === 'pending') clearPermissionAnswerUnconfirmed(props.requestKey);
+            if (await readOutcome(props.requestId) === 'pending') clearPermissionAnswerUnconfirmedAfterPendingRead(props.requestKey);
         } catch {
             log.log('[PermissionAnswerUnconfirmedNotice] request re-read failed');
             if (mounted.current) setCouldNotCheck(true);

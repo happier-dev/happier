@@ -1,6 +1,6 @@
-import { getCapabilitiesActionChipPlacement } from './capabilitiesActionChipPlacement';
 import * as React from 'react';
-import { Pressable, View, type LayoutChangeEvent } from 'react-native';
+import { View, type LayoutChangeEvent } from 'react-native';
+import type { HappierComposerChipProps } from '@happier-dev/plugin-ui/presentation';
 import { useUnistyles } from 'react-native-unistyles';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
@@ -15,13 +15,14 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { t } from '@/text';
+import { getCapabilitiesActionChipPlacement, SESSION_CAPABILITIES_CHIP_KEY, SESSION_CAPABILITIES_CHIP_GLYPH as CHIP_GLYPH } from './capabilitiesActionChipPlacement';
+import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
+export { getCapabilitiesActionChipPlacement, SESSION_CAPABILITIES_CHIP_KEY } from './capabilitiesActionChipPlacement';
 
-export const SESSION_CAPABILITIES_CHIP_KEY = 'session-capabilities';
 /** The lab popover's width: the menu grid (name | scope | action) stays in its wide form on desktop. */
 export const SESSION_CAPABILITIES_POPOVER_WIDTH_PX = 520;
 /** The popover caps at this share of the window; its body scrolls under the fixed add field and footer (lab §12). */
 export const SESSION_CAPABILITIES_POPOVER_HEIGHT_RATIO = 0.7;
-const CHIP_GLYPH = 'stack' as const;
 
 function AttentionDot() {
   const { theme } = useUnistyles();
@@ -98,8 +99,7 @@ export function createCapabilitiesActionChip(
         onHoverIn={params.onIntent}
         onPressIn={params.onIntent}
         onFocus={params.onIntent}
-        hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-        style={(pressed) => chipStyle(pressed.pressed)}
+        style={chipStyle}
       >
         {normalizeNodeForView(
           <Icon
@@ -154,8 +154,8 @@ function ReservedChipLabel(props: Readonly<{ label: string; textStyle: React.Com
 
 /** The chip's pressable; on mount with a route request it opens its own popover once and consumes the request. */
 const CapabilitiesChipPressable = React.forwardRef<
-  View,
-  React.ComponentProps<typeof Pressable> &
+  unknown,
+  HappierComposerChipProps &
     Readonly<{
       openRequest: Readonly<{ consume: () => void }> | null;
       open: () => void;
@@ -168,5 +168,5 @@ const CapabilitiesChipPressable = React.forwardRef<
     openRef.current();
     openRequest.consume();
   }, [openRequest]);
-  return <Pressable ref={ref} {...pressable} />;
+  return <AgentInputRailChip ref={ref} {...pressable} />;
 });

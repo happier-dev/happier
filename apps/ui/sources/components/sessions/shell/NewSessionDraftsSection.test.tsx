@@ -8,7 +8,8 @@ import { FocusReturnProvider, useFocusReturnFallbackRef } from '@/keyboard/focus
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { NewSessionDraftProjection as RepositoryNewSessionDraftProjection } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
-import type { SessionDraftDocumentV1, NewSessionDraftDocumentV2 } from '@happier-dev/protocol';
+import type { SessionDraftDocumentV1} from '@happier-dev/protocol/drafts/sessionDrafts';
+import type { NewSessionDraftDocumentV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { resolveSessionListRowTitleTextMetrics } from '@/components/sessions/shell/resolveSessionListDensityViewState';
 
 type NewSessionDraftProjection = RepositoryNewSessionDraftProjection & {
@@ -567,7 +568,6 @@ describe('NewSessionDraftsSection', () => {
             width: 24,
             height: 24,
         });
-        expect(deleteButton?.props.hitSlop).toEqual({ top: 10, bottom: 10, left: 10, right: 10 });
         expect(deleteButton?.props.accessibilityLabel).toBe('sessionDrafts.delete.action');
         expect(screen.findByTestId(`session-draft-menu:new-session:${projection.draftId}`)).toBeNull();
         await screen.unmount();

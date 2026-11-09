@@ -2,7 +2,6 @@ import * as React from 'react';
 import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { resolveTranscriptToolVisibility } from './resolveTranscriptToolVisibility';
 import {
-    useSessionActionDrafts,
     useSessionPendingMessages,
     useSessionReferenceTarget,
     useSetting,
@@ -104,7 +103,6 @@ export function useChatListRootState(props: ChatListProps) {
         serverId: props.session.serverId,
         sessionId: props.session.id,
     });
-    const actionDrafts = useSessionActionDrafts({ serverId: sessionServerId, sessionId: props.session.id });
     const transcriptGroupingMode = useSetting('transcriptGroupingMode');
     const transcriptGroupToolCalls = useSetting('transcriptGroupToolCalls');
     const transcriptShowToolCalls = useSetting('transcriptShowToolCalls');
@@ -306,10 +304,10 @@ export function useChatListRootState(props: ChatListProps) {
     // current. Exact Action occurrence/source admission remains with the shared
     // controller; an unrelated daemon observation is not transcript retirement.
     const pluginMessageActionProjection = useDaemonMergedProjectionInputs({
+        sections: ['actionsById', 'familiesById.pluginUi', 'resourcesById'],
         machineId: pluginActivityProjection.machineId,
         serverId: pluginActivityProjection.serverId,
         enabled: isExactOwner && pluginActivityProjection.interactionEnabled,
-        staleMs: 60_000,
     });
     const pluginMessageActionsReady = pluginActivityProjection.pluginUiProjection?.generation != null
         && pluginMessageActionProjection.inputs?.pluginProjectionV2 != null;
@@ -411,7 +409,6 @@ export function useChatListRootState(props: ChatListProps) {
     // measurement signature, so an offline Action cannot leave a hidden row's
     // reservation behind in the virtualizer.
     const { groupedItems, transcriptMaxTurnEntriesPerListItem } = useTranscriptRootDerivedItems({
-        actionDrafts,
         discardedPendingMessages,
         fork,
         forkAwareMessageDescriptors,

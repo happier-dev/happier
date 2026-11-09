@@ -5,7 +5,7 @@ import { z } from 'zod/mini';
 import {
     DaemonContributionRegistryProjectionDescribeResponseSchema,
     PluginProjectionV2Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createMachineFixture, createSessionFixture, renderScreen } from '@/dev/testkit';

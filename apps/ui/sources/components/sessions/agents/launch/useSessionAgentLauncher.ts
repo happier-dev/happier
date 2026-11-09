@@ -1,8 +1,8 @@
+import { prepareExecutionRunLauncherDraft, type ExecutionRunLauncherDraftSeed } from '@/components/sessions/runs/launcher/prepareExecutionRunLauncherDraft';
 import * as React from 'react';
-import type { WorkflowPluginSourceV1 } from '@happier-dev/protocol';
-import { useRouter, type Href } from '@/components/appShell/workspace/destinationRoute';
+import type { WorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows/workflowPluginSourceContractV1';
 
-import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
+import { useSessionAgentStartOpener } from './useSessionAgentStartOpener';
 import {
     createExecutionRunLauncherDetailsTab,
     createInteractiveExecutionRunDraftDetailsTab,
@@ -11,10 +11,7 @@ import {
     EXECUTION_RUN_LAUNCH_INTENTS,
     type ExecutionRunIntent,
 } from '@/components/sessions/runs/launcher/executionRunLauncherModel';
-import { resolveSessionRoutePathForSurface } from '@/components/workspaceCockpit/session/sessionCockpitState';
-import { useSessionCockpitSurfaceNavigation } from '@/components/workspaceCockpit/session/SessionCockpitSurfaceNavigation';
 import { createSessionSubagentLaunchDetailsTab } from '@/agents/registry/sessionSubagentUiBehavior';
-import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import {
     useSessionExecutionRunLaunchability,
     type SessionExecutionRunLaunchUnavailableReason,
@@ -23,11 +20,9 @@ import { resolveExecutionRunAvailableBackends } from '@/sync/domains/executionRu
 import type { SessionSubagent } from '@/sync/domains/session/subagents/types';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { DetailsTab } from '@/components/appShell/panes/model/appPaneReducer';
-import { useDeviceType } from '@/utils/platform/responsive';
+import type { WorkflowStartSource } from '@/components/workflows/run/workflowStartDetailsModel';
+import type { WorkflowStartReference } from '@/components/workflows/run/WorkflowStartPicker';
 
-import { publishInteractiveExecutionRunDraftNavigationIntent } from '@/components/sessions/runs/launcher/interactiveExecutionRunDraftNavigationIntent';
-import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
-import { readAgentStartDraftTarget } from './agentStartDrafts';
 import { useSessionBuiltinWorkflowStart } from './useSessionBuiltinWorkflowStart';
 
 export type SessionAgentLauncher = Readonly<{
@@ -42,29 +37,22 @@ export type SessionAgentLauncher = Readonly<{
      * The composer-first start for an ask; no intent is "Advanced…" (a review with every choice). A
      * preset starts it with a role (Second opinion: a review run by `second_opinion`).
      */
-    openRun: (intent?: ExecutionRunIntent, preset?: ExecutionRunStartPreset) => void;
+    openRun: (intent?: ExecutionRunIntent, preset?: ExecutionRunStartPreset, seed?: ExecutionRunLauncherDraftSeed) => void;
     /** Starts one of FIN's built-in workflows from this Session (its machine and folder). */
     startBuiltinWorkflow: (workflowId: string) => void;
     /** Starts a read-only plugin catalog source through that same Session start owner. */
     startPluginWorkflow: (source: WorkflowPluginSourceV1) => void;
+    /** Opens the chosen saved or catalog reference in the shared contextual Start body, named after it. */
+    startWorkflow: (reference: WorkflowStartReference | WorkflowStartSource) => void;
     /** Shows a Details tab where the person will see it (beside the Session, or the phone's Details). */
     openDetails: (tab: DetailsTab) => void;
-    /**
-     * Brings an unsent start back: its Details tab beside the Session, or on a phone, which has no tab
-     * for it, the Run page "New agent conversation" opens, where the same Session draft is shown.
-     */
+    /** Brings an unsent start back in the same contextual Details destination. */
     openStartDraft: (tab: DetailsTab) => void;
     /** The Agent's own launch surface (a team, a teammate), when it contributes one. */
     providerLaunch: Readonly<{ title: string; subtitle: string | null; open: () => void }> | null;
 }>;
 
-/**
- * One owner for how the Agents pane starts work, shared by its "+" menu and its empty state.
- *
- * Where a launch lands depends on the device: beside the Session a launcher opens as a Details tab;
- * on a phone, where a Details tab would open out of sight, it pushes the visible Run page (B18) or
- * shows the Details surface for an Agent-contributed launcher.
- */
+/** One command for Agents starts; the Details owner chooses their responsive placement. */
 export function useSessionAgentLauncher(params: Readonly<{
     sessionId: string;
     serverId?: string | null;
@@ -72,17 +60,13 @@ export function useSessionAgentLauncher(params: Readonly<{
     session: Session | null;
     subagents: readonly SessionSubagent[];
 }>): SessionAgentLauncher {
-    const router = useRouter();
-    const deviceType = useDeviceType();
-    const pane = useAppPaneScope(params.scopeId);
-    const cockpitNavigation = useSessionCockpitSurfaceNavigation();
+    const openStart = useSessionAgentStartOpener();
     const { launchUnavailableReason, executionRunsBackends } = useSessionExecutionRunLaunchability(
         params.sessionId,
         params.session,
         params.serverId,
     );
     const { sessionId, serverId } = params;
-    const phone = deviceType === 'phone';
 
     const intents = React.useMemo(() => {
         const available = executionRunsBackends ? resolveExecutionRunLauncherIntents(executionRunsBackends) : [];
@@ -96,60 +80,21 @@ export function useSessionAgentLauncher(params: Readonly<{
         [executionRunsBackends],
     );
 
-    const pushRunRoute = React.useCallback((intent?: ExecutionRunIntent, roleId?: string, title?: string) => {
-        const query = {
-            ...(intent ? { intent } : {}),
-            ...(roleId ? { roleId } : {}),
-            // What the start is called (Second opinion): the screen's title and its heading say the same name.
-            ...(roleId && title ? { title } : {}),
-        };
-        const route = buildScopedSessionRouteHref({
-            sessionId,
-            serverId,
-            suffix: '/runs/new',
-            ...(intent || roleId ? { query } : {}),
-        });
-        if (route) router.push(route as Href);
-    }, [router, serverId, sessionId]);
-
     const openDetails = React.useCallback((tab: DetailsTab) => {
-        pane.openDetailsTab(tab, { intent: 'preview' });
-        if (!phone) return;
-        if (cockpitNavigation) {
-            cockpitNavigation.switchSurface('tabs');
-            return;
-        }
-        router.push(resolveSessionRoutePathForSurface(sessionId, 'tabs', { serverId }) as Href);
-    }, [cockpitNavigation, pane, phone, router, serverId, sessionId]);
+        openStart(params.scopeId, tab);
+    }, [openStart, params.scopeId]);
 
     const openConversation = React.useCallback(() => {
-        if (phone) {
-            pushRunRoute();
-            return;
-        }
-        pane.openDetailsTab(createInteractiveExecutionRunDraftDetailsTab(), { intent: 'preview' });
-    }, [pane, phone, pushRunRoute]);
+        openDetails(createInteractiveExecutionRunDraftDetailsTab());
+    }, [openDetails]);
 
-    const openRun = React.useCallback((intent?: ExecutionRunIntent, preset?: ExecutionRunStartPreset) => {
-        if (phone) {
-            pushRunRoute(intent ?? 'review', preset?.roleId, preset?.title);
-            return;
-        }
-        pane.openDetailsTab(createExecutionRunLauncherDetailsTab(intent, preset), { intent: 'preview' });
-    }, [pane, phone, pushRunRoute]);
+    const openRun = React.useCallback((intent?: ExecutionRunIntent, preset?: ExecutionRunStartPreset, seed?: ExecutionRunLauncherDraftSeed) => {
+        openDetails(seed ? prepareExecutionRunLauncherDraft(seed) : createExecutionRunLauncherDetailsTab(intent, preset));
+    }, [openDetails]);
 
-    const openStartDraft = React.useCallback((tab: DetailsTab) => {
-        const target = phone ? readAgentStartDraftTarget(tab.resource) : null;
-        const address = normalizeSessionAddress(serverId, sessionId);
-        if (target?.discussion && address) {
-            // The same draft the wide pane keeps, found by its Discussion correlation (the Run page's
-            // existing handoff); the selected text stays out of route history.
-            router.push(publishInteractiveExecutionRunDraftNavigationIntent({ address, ...target.discussion }).href as Href);
-        } else if (target) pushRunRoute(target.intent ?? undefined, target.roleId ?? undefined, tab.title);
-        else openDetails(tab);
-    }, [openDetails, phone, pushRunRoute, router, serverId, sessionId]);
+    const openStartDraft = openDetails;
 
-    const startCatalogWorkflow = useSessionBuiltinWorkflowStart({ sessionId, serverId });
+    const startCatalogWorkflow = useSessionBuiltinWorkflowStart({ sessionId, serverId, scopeId: params.scopeId });
 
     const providerTab = React.useMemo(
         () => createSessionSubagentLaunchDetailsTab({ session: params.session, subagents: params.subagents }),
@@ -170,5 +115,6 @@ export function useSessionAgentLauncher(params: Readonly<{
         providerLaunch,
         startBuiltinWorkflow: startCatalogWorkflow,
         startPluginWorkflow: startCatalogWorkflow,
+        startWorkflow: startCatalogWorkflow,
     }), [openDetails, openStartDraft, agentIds, intents, launchUnavailableReason, openConversation, openRun, providerLaunch, startCatalogWorkflow]);
 }

@@ -47,7 +47,7 @@ vi.mock('./sessionListChrome', async () => {
     });
     return {
         ProjectGroupHeader: (props: any) => ReactModule.createElement('ProjectGroupHeader', props),
-        FolderGroupHeader: (props: any) => ReactModule.createElement('FolderGroupHeader', props),
+        SessionSectionHeader: (props: any) => ReactModule.createElement('SessionSectionHeader', props),
         CollapsibleSectionHeader,
     };
 });
@@ -70,7 +70,6 @@ describe('SessionListHeaderItem', () => {
         const commonProps = {
             collapsedKeys: {},
             projectHeaderViewModelByGroupKey: new Map(),
-            hasMultipleMachines: false,
             onOpenProject: vi.fn(),
             onCreateSessionFromWorkspaceScope: vi.fn(),
             onAddFolderToWorkspace: vi.fn(),
@@ -133,7 +132,7 @@ describe('SessionListHeaderItem', () => {
                 item={item}
                 collapsedKeys={{ [projectHeaderViewModel.collapseKey]: true }}
                 projectHeaderViewModelByGroupKey={new Map([[projectHeaderViewModel.collapseKey, projectHeaderViewModel]])}
-                hasMultipleMachines={true}
+
                 onOpenProject={onOpenProject}
                 onCreateSessionFromWorkspaceScope={onCreateSessionFromWorkspaceScope}
                 onAddFolderToWorkspace={vi.fn()}
@@ -147,12 +146,12 @@ describe('SessionListHeaderItem', () => {
         const firstProps = firstProjectHeader.props;
 
         await act(async () => {
-            screen.tree.update(
+            await screen.update(
                 <SessionListHeaderItem
                     item={{ ...item }}
                     collapsedKeys={{ [projectHeaderViewModel.collapseKey]: true }}
                     projectHeaderViewModelByGroupKey={new Map([[projectHeaderViewModel.collapseKey, projectHeaderViewModel]])}
-                    hasMultipleMachines={true}
+
                     onOpenProject={onOpenProject}
                     onCreateSessionFromWorkspaceScope={onCreateSessionFromWorkspaceScope}
                     onAddFolderToWorkspace={vi.fn()}
@@ -198,7 +197,7 @@ describe('SessionListHeaderItem', () => {
                 } as any}
                 collapsedKeys={{}}
                 projectHeaderViewModelByGroupKey={new Map()}
-                hasMultipleMachines={false}
+
                 onOpenProject={vi.fn()}
                 onCreateSessionFromWorkspaceScope={vi.fn()}
                 onAddFolderToWorkspace={vi.fn()}
@@ -208,7 +207,7 @@ describe('SessionListHeaderItem', () => {
             />,
         );
 
-        const folderHeader = screen.findByType('FolderGroupHeader');
+        const folderHeader = screen.findByType('SessionSectionHeader');
         expect(folderHeader.props).not.toHaveProperty('activeDropTargetId');
     });
 });

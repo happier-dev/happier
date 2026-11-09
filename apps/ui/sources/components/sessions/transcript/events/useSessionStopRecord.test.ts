@@ -23,9 +23,9 @@ describe('stop marker Session record observation', () => {
         } });
         const observed: unknown[] = [];
         const authority = { contentContext: { mode: 'plain' as const }, capabilities: { readTranscript: true, editSessionRecords: true } };
-        const stop = observeSessionStopRecord({ session, repository, authority,
+        const stop = observeSessionStopRecord({ session, repository,
             isCurrent: () => allowed, readCapabilities: () => allowed ? authority.capabilities : null,
-            readContentContext: () => authority.contentContext, renewAuthority: async () => ({ status: 'ok', value: authority }),
+            readContentContext: () => authority.contentContext,
             onChange: value => observed.push(value),
         }, 1000);
         await repository.refresh(session, query); await flushHookEffects();

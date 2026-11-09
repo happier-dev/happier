@@ -128,9 +128,6 @@ vi.mock('@/components/sessions/pending/PendingMessagesTranscriptBlock', () => ({
     PendingMessagesTranscriptBlock: () => React.createElement('PendingMessagesTranscriptBlock'),
 }));
 
-vi.mock('@/components/sessions/actions/SessionActionDraftCard', () => ({
-    SessionActionDraftCard: () => React.createElement('SessionActionDraftCard'),
-}));
 
 vi.mock('@/components/sessions/transcript/motion/TranscriptMotionProvider', () => ({
     TranscriptMotionProvider: (props: React.PropsWithChildren) => React.createElement(React.Fragment, null, props.children),
@@ -304,8 +301,9 @@ describe('ChatList message pins host wiring', () => {
             role: 'assistant',
             pinnedAtMs: 3_000,
         });
+        // The toggle settles through the canonical `session.messages.pins` Action, so wait for it.
         await act(async () => {
-            userRowProps?.onToggleMessagePin?.(assistantPin);
+            await userRowProps?.onToggleMessagePin?.(assistantPin);
         });
 
         expect(readPersistedSessionMessagePins('session-1', scopeA)).toEqual([

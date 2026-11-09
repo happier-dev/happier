@@ -3,6 +3,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SessionCapabilitiesGetOutputV1Schema } from '@happier-dev/protocol/actions/specs/sessionCapabilities';
 import { SessionSkillPlanV1Schema } from '@happier-dev/protocol/prompts/library/skills/resolveSessionSkillPlanV1';
+import { readSessionCapabilityOverrideV1, setSessionCapabilitySelectionItemV1 } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
+import type { SessionCapabilitiesChange } from './SessionCapabilitiesContent';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 
@@ -22,8 +24,11 @@ vi.mock('react-native-unistyles', async () => {
 
 afterEach(() => {
   standardCleanup();
-  vi.resetModules();
 });
+
+// Collect the real component graph before starting a test's renderer lifetime.
+const { buildSessionCapabilitiesModel } = await import('./sessionCapabilitiesModel');
+const { SessionCapabilitiesContent, sessionCapabilityRowRemovalState } = await import('./SessionCapabilitiesContent');
 
 type Entry = Readonly<{
   kind: 'skill' | 'mcp_server';
@@ -51,7 +56,8 @@ function view(entries: readonly Entry[]) {
         : entry.override === 'removed'
           ? false
           : entry.ruleOn,
-    reason: entry.ruleOn ? ('rule_on' as const) : ('rule_off' as const),
+    reason: entry.override === 'removed' ? ('session_removed' as const) : entry.override === 'added' ? ('session_added' as const)
+      : entry.ruleOn ? ('rule_on' as const) : ('rule_off' as const),
     sessionOverride: entry.override,
     decidedBy: {
       ruleId: entry.id,
@@ -88,15 +94,14 @@ async function render(
   options: Readonly<{
     preview?: boolean;
     knownRows?: Readonly<{ skills: number; mcp: number }>;
+    kind?: 'skills';
+    skillDetails?: Parameters<typeof SessionCapabilitiesContent>[0]['skillDetails'];
+    skillSection?: Parameters<typeof SessionCapabilitiesContent>[0]['skillSection'];
     undo?: Parameters<
       typeof import('./SessionCapabilitiesContent').SessionCapabilitiesContent
     >[0]['undo'];
   }> = {},
 ) {
-  const { buildSessionCapabilitiesModel } =
-    await import('./sessionCapabilitiesModel');
-  const { SessionCapabilitiesContent } =
-    await import('./SessionCapabilitiesContent');
   const model = buildSessionCapabilitiesModel({
     view: options.preview === false ? null : view(entries),
     state,
@@ -115,7 +120,7 @@ async function render(
     skillStatus: () => [],
     cost: () => ({ tokensWhenUsed: 1200 }),
   });
-  const changes: unknown[] = [];
+  const changes: Parameters<SessionCapabilitiesChange>[0][] = [];
   const onRetry = vi.fn();
   const screen = await renderScreen(
     <SessionCapabilitiesContent
@@ -126,11 +131,14 @@ async function render(
       onRetry={onRetry}
       undo={options.undo}
       knownRows={options.knownRows}
+      kind={options.kind}
+      skillDetails={options.skillDetails}
+      skillSection={options.skillSection}
       machineName="nl2"
       testID="caps"
     />,
   );
-  return { screen, changes, onRetry };
+  return { screen, changes, onRetry, model };
 }
 
 async function press(
@@ -150,20 +158,92 @@ async function press(
 }
 
 describe('SessionCapabilitiesContent', () => {
+  it('projects the same remove intent for controls and mounted commands, excluding Turn on and read-only rows', async () => {
+    const { model } = await render([
+      { kind: 'skill', id: 'inherited', ruleOn: true, override: null },
+      { kind: 'skill', id: 'added', ruleOn: false, override: 'added' },
+      { kind: 'skill', id: 'removed', ruleOn: true, override: 'removed' },
+    ]);
+    const rows = model.groups.flatMap(group => group.rows);
+    const inherited = rows.find(row => row.id === 'inherited');
+    const added = rows.find(row => row.id === 'added');
+    const removed = rows.find(row => row.id === 'removed');
+    if (!inherited || !added || !removed) throw new Error('Expected all row states');
+    expect(sessionCapabilityRowRemovalState(inherited)).toBe('off');
+    expect(sessionCapabilityRowRemovalState(added)).toBe('inherit');
+    expect(sessionCapabilityRowRemovalState(removed)).toBeNull();
+    expect(sessionCapabilityRowRemovalState({ ...inherited, action: { kind: 'turn_on', state: 'on' } })).toBeNull();
+    expect(sessionCapabilityRowRemovalState({ ...inherited, readOnlyReason: 'viewer' })).toBeNull();
+  });
+
+  it('groups displayed Skills by their maker without losing rows or duplicating the picker', async () => {
+    const { screen } = await render([
+      { kind: 'skill', id: 'bot-made', ruleOn: true, override: null },
+      { kind: 'skill', id: 'mine', ruleOn: true, override: null },
+    ], 'ready', { kind: 'skills', skillSection: id => id === 'bot-made'
+      ? { key: 'this-session', title: 'Made here' } : { key: 'yours', title: 'Yours' } });
+    expect(screen.findAll(node => node.props?.testID === 'caps:group:this-session').length).toBeGreaterThan(0);
+    expect(screen.findAll(node => node.props?.testID === 'caps:group:yours').length).toBeGreaterThan(0);
+    for (const id of ['bot-made', 'mine']) expect(screen.findAll(node => node.props?.testID === `caps:row:skill:${id}`).length).toBeGreaterThan(0);
+    await press(screen, 'caps:add');
+    expect(screen.findAll(node => typeof node.type === 'string' && node.props?.testID === 'caps:add:search' && typeof node.props?.onChangeText === 'function')).toHaveLength(1);
+  });
+
+  it('opens the selected skill through its supplied detail command while retaining its remove control', async () => {
+    const open = vi.fn();
+    const { screen, changes } = await render([
+      { kind: 'skill', id: 'review', ruleOn: true, override: null },
+    ], 'ready', { kind: 'skills', skillDetails: () => ({ description: 'Review code', onPress: open }) });
+    await press(screen, 'caps:row:skill:review');
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(changes).toEqual([]);
+    await press(screen, 'caps:row:skill:review:remove');
+    expect(changes).toEqual([{ kind: 'skill', id: 'review', state: 'off' }]);
+  });
+
+  it('keeps the Skills pane and its add picker scoped to skills', async () => {
+    const { screen, changes } = await render([
+      { kind: 'skill', id: 'included-skill', ruleOn: true, override: null },
+      { kind: 'skill', id: 'available-skill', ruleOn: false, override: null },
+      { kind: 'mcp_server', id: 'included-server', ruleOn: true, override: null },
+      { kind: 'mcp_server', id: 'available-server', ruleOn: false, override: null },
+    ], 'ready', { kind: 'skills' });
+    expect(screen.findAll(node => node.props?.testID === 'caps:row:skill:included-skill').length).toBeGreaterThan(0);
+    expect(screen.findAll(node => node.props?.testID === 'caps:row:mcp_server:included-server')).toHaveLength(0);
+    await press(screen, 'caps:add');
+    expect(screen.findAll(node => node.props?.testID === 'caps:add:pick:mcp_server:available-server')).toHaveLength(0);
+    await press(screen, 'caps:add:pick:skill:available-skill');
+    expect(changes).toEqual([{ kind: 'skill', id: 'available-skill', state: 'on' }]);
+  });
+
   it('turns an inherited row off, returns an added row to its rules, and turns a removed row back on', async () => {
     const { screen, changes } = await render([
       { kind: 'skill', id: 'code-review', ruleOn: true, override: null },
       { kind: 'skill', id: 'sql-migrations', ruleOn: false, override: 'added' },
       { kind: 'mcp_server', id: 'linear', ruleOn: true, override: 'removed' },
+      { kind: 'mcp_server', id: 'postgres', ruleOn: false, override: 'removed' },
     ]);
     await press(screen, 'caps:row:skill:code-review:remove');
     await press(screen, 'caps:row:skill:sql-migrations:remove');
     await press(screen, 'caps:row:mcp_server:linear:turn-on');
+    await press(screen, 'caps:row:mcp_server:postgres:turn-on');
     expect(changes).toEqual([
       { kind: 'skill', id: 'code-review', state: 'off' },
       { kind: 'skill', id: 'sql-migrations', state: 'inherit' },
       { kind: 'mcp_server', id: 'linear', state: 'inherit' },
+      { kind: 'mcp_server', id: 'postgres', state: 'on' },
     ]);
+    for (const [id, ruleOn] of [['linear', true], ['postgres', false]] as const) {
+      const change = changes.find(change => change.id === id);
+      if (!change) throw new Error('missing Turn on change');
+      const selection = setSessionCapabilitySelectionItemV1({}, change.kind, change.id, change.state);
+      const value = readSessionCapabilityOverrideV1(selection, change.kind, change.id);
+      const settled = await render([{ kind: 'mcp_server', id, ruleOn, override: value === 'on' ? 'added' : value === 'off' ? 'removed' : null }]);
+      expect(settled.model.groups[1]?.rows[0]).toMatchObject({ id, dimmed: false, action: { kind: 'remove' } });
+      expect(settled.model.groups[1]?.rows[0]?.line2).toEqual(ruleOn ? { kind: 'cost', cost: { tokensWhenUsed: 1200 } }
+        : { kind: 'change', change: 'added' });
+      expect(selection.mcp?.forceIncludeServerIds).toEqual(ruleOn ? [] : [id]);
+    }
   });
 
   it('adds an item that exists but is off here from the add field', async () => {

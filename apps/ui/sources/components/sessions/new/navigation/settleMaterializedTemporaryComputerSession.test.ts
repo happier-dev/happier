@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { readHappierStructuredInputV1FromMeta } from '@happier-dev/protocol';
+import { readHappierStructuredInputV1FromMeta } from '@happier-dev/protocol/runtime/input/structuredInputV1';
 import type { RunnerActivationProjectionV1 } from '@happier-dev/protocol/ephemeralRunner/projection';
 
 import {
@@ -15,6 +15,19 @@ import { uploadReviewedRunnerAttachments } from '@/sync/domains/ephemeralRunner/
 import { RunnerActivationClientError } from '@/sync/api/ephemeralRunner/runnerActivationClient';
 
 describe('buildTemporaryComputerFirstPrompt', () => {
+    it('delivers issued handles through raw ingress without authored attachment presentation', async () => {
+        const { RawIngressStructuredInputV1Schema } = await import('@happier-dev/protocol/runtime/input/structuredInputV1');
+        const attachmentHandle = { v: 1 as const, sessionId: 'session-a', id: 'issued-notes' };
+        const delivery = buildTemporaryComputerFirstPromptDelivery({
+            sessionId: 'session-a', composer: { text: 'Inspect this', references: [], attachments: [] },
+            uploaded: [{ id: 'file-a', name: 'notes.txt', path: 'uploads/notes.txt', sizeBytes: 8, attachmentHandle }],
+        });
+        expect(delivery.initialMessageText).toBe('Inspect this');
+        expect(RawIngressStructuredInputV1Schema.parse(delivery.metaOverrides?.happierStructuredInputV1))
+            .toEqual({ v: 1, sessionAttachments: [attachmentHandle] });
+        expect(delivery.metaOverrides).not.toHaveProperty('happier');
+        expect(delivery.metaOverrides).not.toHaveProperty('happierAttachments');
+    });
     it('preserves the exact reviewed prompt when there are no uploaded attachments', () => {
         expect(buildTemporaryComputerFirstPrompt({
             reviewedText: '  Keep my intentional spacing  ',
@@ -32,6 +45,7 @@ describe('buildTemporaryComputerFirstPrompt', () => {
                 mimeType: 'text/plain',
                 sizeBytes: 8,
                 sha256: 'a'.repeat(64),
+                attachmentHandle: { v: 1, sessionId: 'session-a', id: 'issued-file-a' },
             }],
         })).toBe('Inspect this');
     });
@@ -164,7 +178,8 @@ describe('createMaterializedTemporaryComputerSettlement', () => {
                 uploadFile: async () => {
                     events.push('upload:start');
                     await new Promise<void>((resolve) => { finishUpload = resolve; });
-                    return { success: true, path: '.happier/uploads/notes.txt', sizeBytes: 8, sha256: 'a'.repeat(64) };
+                    return { success: true, path: '.happier/uploads/notes.txt', sizeBytes: 8, sha256: 'a'.repeat(64),
+                        attachmentHandle: { v: 1, sessionId: 'session-a', id: 'issued-file-a' } };
                 },
             }),
             complete: admit,

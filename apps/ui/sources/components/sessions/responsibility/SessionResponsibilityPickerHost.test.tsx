@@ -55,7 +55,7 @@ vi.mock('@/sync/api/session/apiSessionResponsibility', async () => {
 });
 vi.mock('@/hooks/session/useSessionCollaborationAvailability', async () => {
     const actual = await vi.importActual<typeof import('@/hooks/session/useSessionCollaborationAvailability')>('@/hooks/session/useSessionCollaborationAvailability');
-    return { ...actual, useSessionCollaborationAvailability: () => 'available' };
+    return { ...actual, useSessionCollaborationAvailabilityState: () => 'available' };
 });
 vi.mock('@/sync/sync', () => ({
     sync: { getCredentials: () => ({ token: 'test-token', secret: new Uint8Array() }) },

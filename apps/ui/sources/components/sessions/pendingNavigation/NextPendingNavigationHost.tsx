@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { buildPendingNavigationFromSource } from '@/activity/source/buildPendingNavigationFromSource';
+import { usePendingNavigationProjection } from '@/activity/source/usePendingNavigationOverview';
 import { nextPendingRequest } from '@/activity/source/nextPendingRequest';
 import { navigateToPendingRequest } from '@/activity/source/navigateToPendingRequest';
 import {
@@ -10,7 +10,8 @@ import {
     type PendingNavigationResult,
     type PendingNavigationUnavailableReason,
 } from '@/activity/source/pendingNavigationRuntime';
-import { useActivityAttentionSummarySource } from '@/activity/source/useActivityAttentionSource';
+import { useActivityActiveServer, useActivityAttentionStoreSelector } from '@/activity/source/useActivityAttentionSource';
+import { storage } from '@/sync/domains/state/storageStore';
 import { useRouter, type Href } from '@/components/appShell/workspace/destinationRoute';
 import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider';
@@ -26,19 +27,27 @@ const NOTICE_KEY = 'session.pending.next';
 /** Mounted navigation port shared by Actions, global keys and the Session pill. */
 export function NextPendingNavigationHost() {
     const router = useRouter();
-    const summary = useActivityAttentionSummarySource();
-    const homeIds = React.useMemo(() => [
-        summary.activeServerId,
-        ...buildPendingNavigationFromSource({ source: summary, nowMs: Date.now() })
-            .map(candidate => candidate.address.serverId),
-    ], [summary]);
+    // Rendering needs only which Homes hold pending requests (to bind their scopes), from the one
+    // shared pending projection; the whole Activity source is read at invoke time, so a Session
+    // update elsewhere does not redraw the host.
+    const selectSource = useActivityAttentionStoreSelector(false);
+    const activeServerId = useActivityActiveServer().serverId;
+    const pending = usePendingNavigationProjection();
+    const homeIdsRef = React.useRef<readonly (string | null | undefined)[]>([]);
+    const homeIds = React.useMemo(() => {
+        const next = [activeServerId, ...pending.candidates.map(candidate => candidate.address.serverId)];
+        const previous = homeIdsRef.current;
+        if (next.length === previous.length && next.every((id, index) => id === previous[index])) return previous;
+        homeIdsRef.current = next;
+        return next;
+    }, [activeServerId, pending.candidates]);
     const bindings = useServerCredentialAccountScopeBindings(homeIds);
-    const source = React.useMemo(() => ({
-        ...summary,
+    const readSource = React.useCallback(() => ({
+        ...selectSource(storage.getState()),
         audienceScopes: new Map([...bindings].map(([serverId, binding]) => [serverId, binding.scope])),
-    }), [summary, bindings]);
-    const frameRef = React.useRef({ source, bindings, router });
-    frameRef.current = { source, bindings, router };
+    }), [bindings, selectSource]);
+    const frameRef = React.useRef({ readSource, bindings, router });
+    frameRef.current = { readSource, bindings, router };
     const mountedRef = React.useRef(false);
     const inFlightRef = React.useRef(new Set<Readonly<{ controller: AbortController; homeId: string | null }>>());
 
@@ -49,10 +58,11 @@ export function NextPendingNavigationHost() {
             return { status: 'unavailable', reason: options.signal?.aborted ? 'cancelled' : 'scope_changed' };
         }
         const frame = frameRef.current;
+        const source = frame.readSource();
         const lifetime = captureActiveServerAccountScopeCurrentness();
         const controller = new AbortController();
         const abort = () => { controller.abort(); };
-        const attempt = { controller, homeId: ownerScope?.serverId ?? frame.source.activeServerId ?? null };
+        const attempt = { controller, homeId: ownerScope?.serverId ?? source.activeServerId ?? null };
         inFlightRef.current.add(attempt);
         const retirement = lifetime.onRetire(abort);
         options.signal?.addEventListener('abort', abort, { once: true });
@@ -65,7 +75,7 @@ export function NextPendingNavigationHost() {
         try {
             if (!isCurrent()) return unavailable('scope_changed');
             const selected = await nextPendingRequest({
-                source: frame.source,
+                source,
                 nowMs: Date.now(),
                 excluding: options.excluding === undefined ? getFocusedSessionAddress() : options.excluding,
                 signal: controller.signal,
@@ -79,7 +89,7 @@ export function NextPendingNavigationHost() {
             const result = await navigateToPendingRequest({
                 target: selected,
                 details: selected.details,
-                source: frame.source,
+                source,
                 nowMs: Date.now(),
                 signal: controller.signal,
                 openRoute: (route) => {

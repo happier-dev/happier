@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ScmOperationState } from '@happier-dev/protocol';
+import type { ScmOperationState } from '@happier-dev/protocol/scm';
 
 type ScmRepositoryOperationKind = ScmOperationState['kind'];
 

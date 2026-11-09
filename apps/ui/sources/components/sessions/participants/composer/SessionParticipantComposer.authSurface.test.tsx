@@ -3,9 +3,11 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AccountProfileSchema, FeaturesResponseSchema } from '@happier-dev/protocol';
+import { AccountProfileSchema} from '@happier-dev/protocol/account/profile';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema, SessionConsumptionReplaceAckV1Schema } from '@happier-dev/protocol/sessions/sessionConsumptionV1';
 import { SessionUserMessageSendRequestSchema, SessionUserMessageSendResponseSchema } from '@happier-dev/protocol/sessions/userMessageRpc';
 import { MINIMUM_CLI_SESSION_USER_MESSAGE_RPC_VERSION } from '@/utils/system/versionUtils';
 import { createNotAuthenticatedError } from '@/sync/runtime/connectivity/authErrors';
@@ -129,6 +131,9 @@ installDisconnectedServerSocketBoundary((socket) => {
     });
     vi.spyOn(socket, 'emit').mockReturnValue(socket);
     vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, payload: unknown) => {
+        if (event === SESSION_CONSUMPTION_REPLACE_EVENT) {
+            return SessionConsumptionReplaceAckV1Schema.parse({ ok: true, ...SessionConsumptionReplaceV1Schema.parse(payload) });
+        }
         if (event !== SOCKET_RPC_EVENTS.CALL) return { ok: true };
         if (!payload || typeof payload !== 'object' || !('method' in payload)
             || typeof payload.method !== 'string' || !('params' in payload)) {

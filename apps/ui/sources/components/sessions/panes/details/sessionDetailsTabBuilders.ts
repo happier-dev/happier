@@ -43,6 +43,22 @@ export function createSessionDiscussionDetailsTab(
     };
 }
 
+/** Lab T3: Second opinion / Discuss… beside the transcript. The request itself stays in memory (see the opener). */
+export function createSessionSecondOpinionDetailsTab(input: Readonly<{
+    address: SessionAddress;
+    requestId: string;
+    intent: 'second_opinion' | 'discuss';
+}>) {
+    return {
+        key: `secondOpinion:${sessionAddressKey(input.address)}:${input.requestId}`,
+        kind: 'secondOpinion' as const,
+        title: input.intent === 'discuss'
+            ? t('session.collaboration.discussion.secondOpinion.discussTitle')
+            : t('session.collaboration.discussion.secondOpinion.title'),
+        resource: { kind: 'secondOpinion' as const, address: input.address, requestId: input.requestId, intent: input.intent },
+    };
+}
+
 /**
  * The Board destination, and — with an item — that item's own expanded
  * destination. They must not share a key: a single `board` tab instance would make
@@ -101,6 +117,7 @@ export function resolveSessionScmReviewComparisonLabel(comparison: SessionScmRev
         case 'turnCheckpoint': return t('scmComparison.scope.turn');
         case 'branch': return t('scmComparison.scope.branch', { head: comparison.head, base: comparison.base });
         case 'commit': return t('scmComparison.scope.commit', { commit: comparison.commit.slice(0, 7) });
+        case 'revisionRange': return `${comparison.baseOid.slice(0, 7)} → ${comparison.headOid.slice(0, 7)}`;
         case 'pullRequest': return `${comparison.locator.repository} #${comparison.locator.number}`;
     }
 }

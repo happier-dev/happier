@@ -1,7 +1,10 @@
 import { afterEach, expect, it } from 'vitest';
 import { act, renderHook, standardCleanup } from '@/dev/testkit';
 import { getSessionDraftSnapshot, resetSessionDraftRepositoryForTests, writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
-import { useExecutionRunLauncherDraft } from './useExecutionRunLauncherDraft';
+import { executionRunLauncherDraftKey } from '@/components/sessions/agents/launch/agentStartDrafts';
+import { readExecutionRunLauncherComparisonReview, useExecutionRunLauncherDraft } from './useExecutionRunLauncherDraft';
+import { createSessionScmReviewDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
+import type { ComparisonReviewDraftInput } from './useComparisonReviewDraft';
 
 const scope = { serverId: 'launcher-home', accountId: 'launcher-account' };
 const sessionId = 'delayed-launcher';
@@ -10,12 +13,66 @@ const address = { kind: 'session' as const, sessionId };
 
 afterEach(async () => { await standardCleanup(); resetSessionDraftRepositoryForTests(); });
 
+it('restores one comparison draft capture after opening another comparison source', async () => {
+    const branch: ComparisonReviewDraftInput = { cwd: '/repo', comparison: { kind: 'branch', base: 'main', head: 'HEAD' },
+        scopeLabel: 'main → HEAD', defaultWalkthrough: true,
+        origin: { scopeId: 'session:delayed-launcher', tab: createSessionScmReviewDetailsTab({
+            comparison: { kind: 'branch', base: 'main', head: 'HEAD' }, explain: true,
+        }) } };
+    const pending: ComparisonReviewDraftInput = { ...branch, comparison: { kind: 'workingTree' }, scopeLabel: 'Pending changes' };
+    const hook = await renderHook((comparisonReview: ComparisonReviewDraftInput) => useExecutionRunLauncherDraft({
+        lifetime, sessionId, comparisonReview, draftKey: executionRunLauncherDraftKey({ intent: 'review', comparisonReview }),
+        createDefaultInput: () => ({}),
+    }), { initialProps: branch });
+    await act(async () => hook.getCurrent().setUserActionInput({ comparisonId: 'captured-branch' }));
+    expect(readExecutionRunLauncherComparisonReview(getSessionDraftSnapshot(scope, address)?.document ?? null,
+        executionRunLauncherDraftKey({ intent: 'review', comparisonReview: branch }))).toEqual(branch);
+    await hook.rerender(pending);
+    expect(hook.getCurrent().actionInput.comparisonId).toBeUndefined();
+    await act(async () => hook.getCurrent().setUserActionInput({ comparisonId: 'captured-pending' }));
+    await hook.rerender(branch);
+    expect(hook.getCurrent().actionInput.comparisonId).toBe('captured-branch');
+});
+
+it('ignores malformed comparison context when reopening a retained draft', async () => {
+    const hook = await renderHook(() => useExecutionRunLauncherDraft({ lifetime, sessionId, draftKey: 'review',
+        createDefaultInput: () => ({}),
+    }));
+    await act(async () => hook.getCurrent().setUserActionInput({ engineIds: ['claude'] }));
+    const document = getSessionDraftSnapshot(scope, address)?.document;
+    const malformed = { cwd: '/repo', comparison: { kind: 'branch', base: 42, head: 'HEAD' },
+        scopeLabel: 'Changes', defaultWalkthrough: true };
+    await act(async () => writeExistingSessionDraft({ scope, sessionId,
+        patch: { executionRunLauncher: { key: 'review', patch: { selection: {
+            identity: hook.getCurrent().identity, actionInput: { engineIds: ['claude'] }, comparisonReview: malformed,
+        } } } } }));
+    expect(document).not.toBeNull();
+    expect(readExecutionRunLauncherComparisonReview(getSessionDraftSnapshot(scope, address)?.document ?? null, 'review')).toBeNull();
+});
+
 it('keeps detached launcher selections editable without Session draft currentness', async () => {
     const hook = await renderHook(() => useExecutionRunLauncherDraft({ lifetime, sessionId: null,
         draftKey: 'conversation', createDefaultInput: () => ({ modelId: 'default' }) }));
     await act(async () => hook.getCurrent().setUserActionInput({ modelId: 'chosen' }));
     expect(hook.getCurrent().actionInput).toEqual({ modelId: 'chosen' });
     expect(hook.getCurrent().captureSelection()).toBeNull();
+});
+
+it('checkpoints the first document edit without committing an unchanged launcher selection', async () => {
+    let renders = 0;
+    const hook = await renderHook(() => {
+        renders += 1;
+        return useExecutionRunLauncherDraft({ lifetime, sessionId,
+            draftKey: 'conversation', createDefaultInput: () => ({ backendTargetKeys: ['agent:claude'] }) });
+    });
+    const initial = hook.getCurrent();
+    const settledRenders = renders;
+    await act(async () => initial.onDocumentEdit());
+    expect(hook.getCurrent().captureSelection()).not.toBeNull();
+    expect(renders - settledRenders).toBe(0);
+    expect(hook.getCurrent().identity).toBe(initial.identity);
+    await act(async () => hook.getCurrent().setUserActionInput({ backendTargetKeys: ['agent:codex'] }));
+    expect(hook.getCurrent().actionInput).toEqual({ backendTargetKeys: ['agent:codex'] });
 });
 
 it('adopts selection and identity arriving after mount without rewriting the hydrated field', async () => {

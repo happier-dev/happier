@@ -1,7 +1,7 @@
 import {
     readExternalAgentObservationSessionState,
 } from '@happier-dev/agents';
-import type { ExternalSessionActivityV1 } from '@happier-dev/protocol';
+import type { ExternalSessionActivityV1 } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 
 export type ExternalAgentPresentationState =
     | 'working'
@@ -75,11 +75,16 @@ export function resolveExternalSessionCandidateActivityPresentation(
 }
 
 export function resolveExternalSessionStatusPillState(
-    presentation: ExternalSessionRuntimePresentation['externalAgent'],
+    presentation: Pick<ExternalSessionRuntimePresentation['externalAgent'], 'tone'>,
 ): 'live' | 'needsAttention' | 'neutral' {
     if (presentation.tone === 'live' || presentation.tone === 'ready') return 'live';
     if (presentation.tone === 'attention' || presentation.tone === 'warning') return 'needsAttention';
     return 'neutral';
+}
+
+/** Whether an external Agent in this state needs the user (input or a retrying failure); unknown never does. */
+export function externalAgentStateNeedsAttention(state: ExternalAgentPresentationState): boolean {
+    return resolveExternalSessionStatusPillState(EXTERNAL_AGENT_PRESENTATION_BY_STATE[state]) === 'needsAttention';
 }
 
 export function readExternalAgentObservationPresentationInput(

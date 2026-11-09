@@ -1,9 +1,9 @@
 import * as React from 'react';
-import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useServerCredentialAccountScopeResolutions } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
 
 import { useVisibleSessionListSummaryState } from '@/hooks/session/useVisibleSessionListSummaryState';
-import { useLaunchSelectionMachines, useMachineListByServerId, useMachineListStatusByServerId } from '@/sync/domains/state/storage';
+import { useMachineLaunchInventorySelection, type MachineLaunchInventoryInput } from '@/sync/domains/state/storage';
 import { useHomeViewSelectionSettings } from '@/hooks/server/useHomeViewSelectionSettings';
 
 import type { SessionGettingStartedViewModel } from './gettingStartedModel';
@@ -13,9 +13,6 @@ import { useSessionGettingStartedActiveServerProfile } from './useSessionGetting
 export function useSessionGettingStartedGuidanceBaseModel(): SessionGettingStartedViewModel {
     const { selection: summarySelection, summary: sessionSummary } = useVisibleSessionListSummaryState();
     const { serverSelectionGroups } = useHomeViewSelectionSettings();
-    const activeMachines = useLaunchSelectionMachines();
-    const machineListByServerId = useMachineListByServerId(true, 'launch');
-    const machineListStatusByServerId = useMachineListStatusByServerId();
     const selectionSnapshot = React.useMemo(() => ({
         activeTarget: summarySelection.activeTarget,
         activeServerId: summarySelection.activeServerId,
@@ -26,31 +23,28 @@ export function useSessionGettingStartedGuidanceBaseModel(): SessionGettingStart
         summarySelection.allowedServerIds,
     ]);
     const activeServerProfile = useSessionGettingStartedActiveServerProfile(summarySelection.activeServerId);
-    const bindings = useServerCredentialAccountScopeBindings([...summarySelection.allowedServerIds, summarySelection.activeServerId]);
+    const scopeResolutions = useServerCredentialAccountScopeResolutions([...summarySelection.allowedServerIds, summarySelection.activeServerId]);
     const reachabilityRevision = useMachineReachabilityRevision();
 
-    return React.useMemo(() => {
-        return buildSessionGettingStartedViewModel({
-            sessionsReady: sessionSummary.sessionsReady,
-            accountScopesByServerId: bindings,
-            sessionCount: sessionSummary.sessionCount,
-            activeMachines,
-            selection: selectionSnapshot,
-            serverSelectionGroups,
-            activeServerProfile,
-            machineListByServerId,
-            machineListStatusByServerId,
-        });
-    }, [
+    // A Machine row publishes for its own reasons (daemon state, heartbeats); a settled guidance answer redraws nothing.
+    const select = React.useCallback((inventory: MachineLaunchInventoryInput) => buildSessionGettingStartedViewModel({
+        sessionsReady: sessionSummary.sessionsReady,
+        accountScopeResolutionsByServerId: scopeResolutions,
+        sessionCount: sessionSummary.sessionCount,
+        activeMachines: inventory.activeMachines,
+        selection: selectionSnapshot,
+        serverSelectionGroups,
         activeServerProfile,
-        activeMachines,
-        machineListByServerId,
-        machineListStatusByServerId,
+        machineListByServerId: inventory.machineListByServerId,
+        machineListStatusByServerId: inventory.machineListStatusByServerId,
+    }), [
+        activeServerProfile,
         selectionSnapshot,
         serverSelectionGroups,
         sessionSummary.sessionCount,
         sessionSummary.sessionsReady,
-        bindings,
+        scopeResolutions,
         reachabilityRevision,
     ]);
+    return useMachineLaunchInventorySelection(select);
 }

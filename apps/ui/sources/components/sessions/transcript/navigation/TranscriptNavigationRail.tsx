@@ -8,6 +8,7 @@ import {
 } from '@/components/sessions/transcript/viewport/visibility/transcriptNavigationVisibilityStore';
 import {
     deriveTranscriptNavigationRailLayout,
+    resolveTranscriptNavigationRailMarkerWindow,
     type TranscriptNavigationRailPlatformOS,
 } from './deriveTranscriptNavigationRailLayout';
 import { resolveTranscriptNavigationRailMarkerMotion } from './resolveTranscriptNavigationRailMotion';
@@ -223,10 +224,14 @@ export function TranscriptNavigationRail(props: TranscriptNavigationRailProps) {
         });
     }, [props.onJumpToEntry]);
 
+    // Read through a render-synced handle so the press handler every marker holds keeps its identity
+    // while entries append or hydrate; otherwise each entries change re-rendered every mounted marker.
+    const entriesRef = React.useRef(props.entries);
+    entriesRef.current = props.entries;
     const activateEntryAtIndex = React.useCallback((index: number) => {
-        const entry = props.entries[index];
+        const entry = entriesRef.current[index];
         if (entry) activateEntry(entry);
-    }, [activateEntry, props.entries]);
+    }, [activateEntry]);
 
     const reducedMotion = props.reducedMotion === true;
 
@@ -518,6 +523,35 @@ export function TranscriptNavigationRail(props: TranscriptNavigationRailProps) {
 
     if (!railPresence.mounted) return null;
 
+    // Mount only the markers the rail viewport can reach, between where the scroller is (an
+    // outstanding move's last frame) and where it is headed. The active, focused and previewed
+    // markers stay mounted wherever they are.
+    const markerWindow = resolveTranscriptNavigationRailMarkerWindow({
+        entryCount: props.entries.length,
+        markerHeightPx: layout.markerHeightPx,
+        markerSpacingPx: layout.markerSpacingPx,
+        scrollTopPxs: [
+            layout.scrollTopPx,
+            scrollCommandRef.current?.positionPx ?? layout.scrollTopPx,
+            scrollCommandRef.current?.targetPx ?? layout.scrollTopPx,
+        ],
+        viewportHeightPx: layout.viewportMaxHeightPx,
+    });
+    const mountedMarkerIndexes: number[] = [];
+    for (let index = markerWindow.startIndex; index <= markerWindow.endIndex; index += 1) {
+        mountedMarkerIndexes.push(index);
+    }
+    for (const pinnedIndex of [activeIndex, focusedIndex, previewIndex]) {
+        if (
+            pinnedIndex === null
+            || pinnedIndex < 0
+            || pinnedIndex >= props.entries.length
+            || (pinnedIndex >= markerWindow.startIndex && pinnedIndex <= markerWindow.endIndex)
+            || mountedMarkerIndexes.includes(pinnedIndex)
+        ) continue;
+        mountedMarkerIndexes.push(pinnedIndex);
+    }
+
     // The chevrons are an on-demand affordance: quiet until the reader is
     // actually at the rail, so a resting minimap stays a minimap.
     const edgeAffordanceRevealed = railHovered || railFocusWithin;
@@ -577,7 +611,9 @@ export function TranscriptNavigationRail(props: TranscriptNavigationRailProps) {
                             },
                         ]}
                     >
-                        {props.entries.map((entry, index) => (
+                        {mountedMarkerIndexes.map((index) => {
+                            const entry = props.entries[index]!;
+                            return (
                             <TranscriptNavigationRailMarker
                                 key={entry.id}
                                 active={index === activeIndex}
@@ -601,7 +637,8 @@ export function TranscriptNavigationRail(props: TranscriptNavigationRailProps) {
                                 topPx={index * (layout.markerHeightPx + layout.markerSpacingPx)}
                                 visible={visibleAnchorIds.has(entry.id)}
                             />
-                        ))}
+                            );
+                        })}
                     </View>
                 </ScrollView>
                 {layout.showTopFade ? (

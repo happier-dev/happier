@@ -25,6 +25,8 @@ const modelStore = vi.hoisted(() => {
 
 const motionState = vi.hoisted(() => ({
     contextGaugeStyle: 'gauge' as 'gauge' | 'text' | 'hidden',
+    entrance: { kind: 'crossfade', durationMs: 150 } as { kind: 'crossfade' | 'travel'; durationMs: number },
+    reduceMotion: false,
 }));
 
 vi.mock('./useInstrumentStripModel', () => ({
@@ -35,8 +37,8 @@ vi.mock('@/components/instrument', () => ({
     useMotionPreferences: () => ({
         level: 'subtle',
         contextGaugeStyle: motionState.contextGaugeStyle,
-        entrance: { kind: 'crossfade', durationMs: 150 },
-        reduceMotion: false,
+        entrance: motionState.entrance,
+        reduceMotion: motionState.reduceMotion,
     }),
     INSTRUMENT_DURATIONS: { entrance: 360 },
     staggerDelayForIndex: (index: number) => Math.min(index, 7) * 50,
@@ -80,6 +82,10 @@ vi.mock('../resolveContextWarningWindowTokens', () => ({
     resolveContextWarningWindowTokens: () => 200_000,
 }));
 vi.mock('@/sync/domains/state/storage', async () => (await import('@/dev/testkit/mocks/storage')).createStorageModuleStub({ useSetting: () => false }));
+// The Account-scope hook reads the sync runtime singleton (a boundary); the strip only needs "no bound scope".
+vi.mock('@/sync/domains/scope/useServerCredentialAccountScopes', () => ({
+    useServerCredentialAccountScopeResolution: () => ({ kind: 'unbound' }),
+}));
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 
 import { SessionInstrumentStrip } from './SessionInstrumentStrip';
@@ -107,6 +113,8 @@ describe('SessionInstrumentStrip', () => {
     beforeEach(() => {
         modelStore.state.current = modelWith({});
         motionState.contextGaugeStyle = 'gauge';
+        motionState.entrance = { kind: 'crossfade', durationMs: 150 };
+        motionState.reduceMotion = false;
     });
     afterEach(() => {
         act(() => tree?.unmount());
@@ -286,6 +294,43 @@ describe('SessionInstrumentStrip', () => {
         layout(tree!, 340);
         const ctx = tree!.root.findAll((n) => n.props?.testID === 'ctx')[0];
         expect(ctx!.props['data-percent-text']).toBe(false);
+    });
+
+    it('fades a leaving instrument out with its entrance motion, and not at all under reduced motion', () => {
+        const wrapper = () => tree!.root.findAll((n) => 'exiting' in (n.props ?? {})
+            && n.findAll((c) => c.props?.testID === 'creating-badge').length > 0)[0]!;
+        const render = () => act(() => {
+            tree = create(<SessionInstrumentStrip statusBadges={[{ key: 'creating', label: 'Creating vercel-1', testID: 'creating-badge' }]} />);
+        });
+        motionState.entrance = { kind: 'travel', durationMs: 360 };
+        render();
+        // The same Reanimated layout primitive and kit duration as the entrance (a joined machine's badge settles).
+        expect(wrapper().props.exiting).toBeDefined();
+        act(() => tree!.unmount());
+        motionState.reduceMotion = true;
+        render();
+        expect(wrapper().props.exiting).toBeUndefined();
+    });
+
+    it('announces a popover badge as expanded exactly while its popover is open', () => {
+        act(() => {
+            tree = create(
+                <SessionInstrumentStrip
+                    statusBadges={[
+                        { key: 'work', label: 'Goal paused', testID: 'work-badge', renderPopover: ({ open }) => (open ? React.createElement('WorkPopover') : null) },
+                        { key: 'plain', label: 'Note', testID: 'plain-badge' },
+                    ]}
+                />,
+            );
+        });
+        const badge = (testID: string) => tree!.root.findAll((n) => n.props?.testID === testID)[0]!;
+        expect(badge('work-badge').props.accessibilityState).toEqual({ expanded: false });
+        // A badge that opens nothing has no expanded state to announce.
+        expect(badge('plain-badge').props.accessibilityState).toBeUndefined();
+        act(() => badge('work-badge').props.onPress());
+        expect(badge('work-badge').props.accessibilityState).toEqual({ expanded: true });
+        act(() => badge('work-badge').props.onPress());
+        expect(badge('work-badge').props.accessibilityState).toEqual({ expanded: false });
     });
 
     it('honors contextGaugeStyle="hidden" (no gauge) and "text" (warning line)', () => {

@@ -2,14 +2,16 @@ import React from 'react';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { flushHookEffects, installBrowserClipboardBoundary } from '@/dev/testkit';
 
-import { SessionCurrentProjectionRecordV1Schema, SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema } from '@happier-dev/protocol';
+import { SessionCurrentProjectionRecordV1Schema} from '@happier-dev/protocol/sessions/listing/response';
+import { SessionMetadataTuplePatchV1Schema, SessionMetadataTuplePatchSuccessV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers';
 import { SESSION_ACTION_RENAME_ID } from '@/components/sessions/actions/sessionActionIds';
 
 
 
-import { AccountProfileSchema } from '@happier-dev/protocol';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 
 
@@ -41,7 +43,7 @@ vi.mock('@/components/ui/forms/dropdown/ContextMenu', () => ({
     ContextMenu: (props: any) => React.createElement('ContextMenu', props),
 }));
 
-vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
+vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => true) }));
 
 vi.mock('@/components/ui/avatar/Avatar', () => ({
     Avatar: 'Avatar',
@@ -56,7 +58,8 @@ const navigateToSessionSpy = vi.fn();
 const platformState = vi.hoisted(() => ({
     os: 'ios' as 'ios' | 'android' | 'web',
 }));
-vi.mock('@/utils/platform/responsive', () => ({
+vi.mock('@/utils/platform/responsive', async (importOriginal) => ({
+    ...await importOriginal<typeof import('@/utils/platform/responsive')>(),
     useIsTablet: () => false,
 }));
 
@@ -136,7 +139,8 @@ function hasCopyDebugInformationMenuItem(items: unknown): boolean {
     if (!Array.isArray(items)) return false;
     return items.some((item: unknown) => {
         if (!item || typeof item !== 'object') return false;
-        return (item as { id?: unknown }).id === 'session.copyDebugInformation';
+        const entry = item as { id?: unknown; submenu?: { items?: unknown } };
+        return entry.id === 'session.copyDebugInformation' || hasCopyDebugInformationMenuItem(entry.submenu?.items);
     });
 }
 
@@ -144,6 +148,10 @@ describe('SessionItem context menu press suppression', () => {
     beforeEach(async () => {
 
 
+        const Clipboard = await import('expo-clipboard');
+        vi.mocked(Clipboard.setStringAsync).mockReset();
+        vi.mocked(Clipboard.setStringAsync).mockResolvedValue(true);
+        installBrowserClipboardBoundary(async text => { await Clipboard.setStringAsync(text); });
         previousStorageState = storage.getState();
         metadataRequests.length = 0;
         wireSession = undefined;
@@ -216,7 +224,7 @@ describe('SessionItem context menu press suppression', () => {
         const screen = await renderScreen(
             <SessionItem
                 session={session}
-                serverId="server_a"
+                serverId={account.serverId}
                 selected={false}
                 variant="default"
                 compact={false}
@@ -233,7 +241,7 @@ describe('SessionItem context menu press suppression', () => {
             await screen.update(
                 <SessionItem
                     session={session}
-                    serverId="server_a"
+                    serverId={account.serverId}
                     selected={false}
                     variant="default"
                     compact={false}
@@ -249,8 +257,9 @@ describe('SessionItem context menu press suppression', () => {
         expect(menus[0].props.items.some((item: { id?: string }) => item.id === SESSION_ACTION_RENAME_ID)).toBe(true);
     });
 
-    it('shows the copy information context menu item in developer mode', async () => {
-        storage.getState().applyLocalSettings({ devModeEnabled: true }, { persist: false });
+    it.each(['ios', 'android', 'web'] as const)('shows copy information with developer mode disabled on %s', async (platform) => {
+        platformState.os = platform;
+        storage.getState().applyLocalSettings({ devModeEnabled: false }, { persist: false });
         const SessionItem = await importSessionItem();
 
         const session = createSessionFixture({
@@ -265,21 +274,56 @@ describe('SessionItem context menu press suppression', () => {
             },
         });
 
-        const screen = await renderScreen(
-            <SessionItem
-                session={session}
-                serverId="server_a"
-                selected={false}
-                variant="default"
-                compact={false}
-                nativeContextMenuOpen={true}
-                onNativeContextMenuOpenChange={vi.fn()}
-            />,
-        );
+        let reopenMenu = () => {};
+        function CopyRow() {
+            const [open, setOpen] = React.useState(true);
+            reopenMenu = () => setOpen(true);
+            return <SessionItem session={session} serverId={account.serverId} selected={false}
+                variant="default" compact={false} nativeContextMenuOpen={open}
+                onNativeContextMenuOpenChange={setOpen} />;
+        }
+        const screen = await renderScreen(<CopyRow />);
 
-        const menus = screen.tree.root.findAllByType('ContextMenu' as React.ElementType);
-        expect(menus).toHaveLength(1);
-        expect(hasCopyDebugInformationMenuItem(menus[0].props.items)).toBe(true);
+        if (platform === 'web') {
+            const hoverTarget = screen.tree.root.findAll(node => typeof node.props?.onPointerEnter === 'function')[0];
+            await act(async () => { hoverTarget.props.onPointerEnter(); });
+        }
+        const menus = screen.tree.root.findAllByType((platform === 'web' ? 'DropdownMenu' : 'ContextMenu') as React.ElementType);
+        expect(menus.some(menu => hasCopyDebugInformationMenuItem(menu.props.items))).toBe(true);
+        const menu = menus.find(menu => hasCopyDebugInformationMenuItem(menu.props.items))!;
+        const copyMenu = menu.props.items.find((item: { id: string }) => item.id === 'session.copy');
+        expect(copyMenu?.submenu?.items.map((item: { id: string }) => item.id)).toEqual([
+            'session.copyDebugInformation', 'session.copySessionId', 'session.copyProviderSessionId',
+        ]);
+        const Clipboard = await import('expo-clipboard');
+        for (const [itemId, expected] of [
+            ['session.copySessionId', session.id],
+            ['session.copyProviderSessionId', 'claude-session-1'],
+        ]) {
+            await act(async () => { reopenMenu(); });
+            await flushHookEffects();
+            const currentMenu = screen.tree.root.findAllByType((platform === 'web' ? 'DropdownMenu' : 'ContextMenu') as React.ElementType)
+                .find(menu => hasCopyDebugInformationMenuItem(menu.props.items))!;
+            if (platform === 'web') {
+                let gestureActive = true;
+                vi.mocked(Clipboard.setStringAsync).mockImplementation(async () => {
+                    if (!gestureActive) throw new DOMException('', 'NotAllowedError');
+                    return true;
+                });
+                await act(async () => {
+                    const copying = currentMenu.props.onSelect(itemId);
+                    expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith(expected);
+                    gestureActive = false;
+                    await copying;
+                });
+            } else {
+                await act(async () => { await currentMenu.props.onSelect(itemId); });
+                await vi.waitFor(() => expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith(expected));
+                expect(screen.tree.root.findByType('ContextMenu' as React.ElementType).props.open).toBe(false);
+            }
+            expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith(expected);
+        }
+
     });
 
     it('copies debug information from the full cached session when row metadata is list-projected', async () => {
@@ -288,7 +332,7 @@ describe('SessionItem context menu press suppression', () => {
         const SessionItem = await importSessionItem();
         const fullSession = createSessionFixture({
             id: 'sess_debug_full',
-            serverId: 'server_a',
+            serverId: account.serverId,
             active: false,
             metadata: {
                 path: '/workspace/repo',
@@ -324,7 +368,7 @@ describe('SessionItem context menu press suppression', () => {
         const screen = await renderScreen(
             <SessionItem
                 session={rowSession}
-                serverId="server_a"
+                serverId={account.serverId}
                 selected={false}
                 variant="default"
                 compact={false}
@@ -337,6 +381,14 @@ describe('SessionItem context menu press suppression', () => {
         await act(async () => {
             await contextMenu.props.onSelect('session.copyDebugInformation');
         });
+        await vi.waitFor(() => expect(Clipboard.setStringAsync).toHaveBeenCalledWith([
+            'Happier session ID: sess_debug_full',
+            'agentInput.agent.codex session ID: codex-session-1',
+            'Happier logs: /tmp/happier/session.log',
+        ].join('\n')));
+
+        await act(async () => { await contextMenu.props.onSelect('session.copyProviderSessionId'); });
+        await vi.waitFor(() => expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith('codex-session-1'));
 
         expect(Clipboard.setStringAsync).toHaveBeenCalledWith([
             'Happier session ID: sess_debug_full',
@@ -469,7 +521,7 @@ describe('SessionItem context menu press suppression', () => {
         const screen = await renderScreen(
             <SessionItem
                 session={session}
-                serverId="server_a"
+                serverId={account.serverId}
                 selected={false}
                 variant="default"
                 compact={false}
@@ -486,7 +538,7 @@ describe('SessionItem context menu press suppression', () => {
             await screen.update(
                 <SessionItem
                     session={session}
-                    serverId="server_a"
+                    serverId={account.serverId}
                     selected={false}
                     variant="default"
                     compact={false}
@@ -663,7 +715,7 @@ describe('SessionItem context menu press suppression', () => {
             <SessionListSelectionProvider scopeKey="scope-a" visibleOrderedKeys={[selectionKey]}>
                 <SessionItem
                     session={session}
-                    serverId="server_a"
+                    serverId={account.serverId}
                     selectionKey={selectionKey}
                     selected={false}
                     variant="default"
@@ -698,7 +750,7 @@ describe('SessionItem context menu press suppression', () => {
             <SessionListSelectionProvider scopeKey="scope-a" visibleOrderedKeys={[selectionKey]}>
                 <SessionItem
                     session={session}
-                    serverId="server_a"
+                    serverId={account.serverId}
                     selectionKey={selectionKey}
                     selected={false}
                     variant="default"
@@ -734,7 +786,7 @@ describe('SessionItem context menu press suppression', () => {
         const screen = await renderScreen(
             <SessionListSelectionProvider scopeKey="scope-a" visibleOrderedKeys={keys} store={store}>
                 <SessionItem session={createSessionFixture({ id: 'second' })}
-                    serverId="server_a" selectionKey={keys[1]} />
+                    serverId={account.serverId} selectionKey={keys[1]} />
             </SessionListSelectionProvider>,
         );
         const row = screen.findByProps({ testID: 'session-list-item-second' });
@@ -749,7 +801,7 @@ describe('SessionItem context menu press suppression', () => {
         const screen = await renderScreen(
             <SessionListSelectionProvider scopeKey="scope-a" visibleOrderedKeys={[selectionKey]}>
                 <SessionItem session={createSessionFixture({ id: 'sess_touch_select' })}
-                    serverId="server_a" selectionKey={selectionKey} />
+                    serverId={account.serverId} selectionKey={selectionKey} />
             </SessionListSelectionProvider>,
         );
         const row = screen.findByProps({ testID: 'session-list-item-sess_touch_select' });
@@ -768,7 +820,7 @@ describe('SessionItem context menu press suppression', () => {
         const SessionItem = await importSessionItem();
         const session = createSessionFixture({
             id: 'sess_fork',
-            serverId: 'server_a',
+            serverId: account.serverId,
             active: true,
             metadata: {
                 flavor: 'claude',
@@ -782,7 +834,7 @@ describe('SessionItem context menu press suppression', () => {
         const screen = await renderScreen(
             <SessionItem
                 session={session}
-                serverId="server_a"
+                serverId={account.serverId}
                 selected={false}
                 variant="default"
                 compact={false}

@@ -5,14 +5,18 @@ import { createDeferred, createTestSessionTranscriptSource, flushHookEffects, re
     wrapWithSessionTranscriptSource } from '@/dev/testkit';
 import { createWorkflowInvocationIndexFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import {
-    materializeWorkflowAcceptedSnapshotV1,
+    materializeWorkflowAcceptedSnapshotV1} from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
+import {
     sealWorkflowAcceptedSnapshotStoredEnvelopeV1,
     serializeWorkflowStoredContentEnvelopeV1,
-    WorkflowRunRecipientCensusResponseV1Schema,
-    WorkflowRunListResultV1Schema,
-    WorkflowProgressEnvelopeV1Schema,
     sealWorkflowProgressStoredEnvelopeV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/workflows/workflowStoredContentV1';
+import {
+    WorkflowRunRecipientCensusResponseV1Schema} from '@happier-dev/protocol/workflows/workflowRunKeyV1';
+import {
+    WorkflowRunListResultV1Schema} from '@happier-dev/protocol/workflows/actionsV1';
+import {
+    WorkflowProgressEnvelopeV1Schema} from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { createWorkflowDefinitionFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';

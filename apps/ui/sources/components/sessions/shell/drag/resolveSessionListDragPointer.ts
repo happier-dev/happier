@@ -19,14 +19,12 @@
  *   live content bounds plus the live scroll offset, ready for the overlay's
  *   shared values.
  *
- * `../dev` note: `resolveSessionListInstruction` has no `folderSortMode` param
- * (folder-sort behaviour is resolved at commit time via
- * `SessionListGroupOrderChildKind`), so no sort mode is threaded here.
  */
 
 import {
     resolveTreeDropVisualGeometry,
     windowPointerToContentPointer,
+    containsPointer,
     type TreeContentRow,
     type TreeContentDropZone,
     type TreeDropContentGeometry,
@@ -43,6 +41,7 @@ import type { SessionListDragSnapshot } from './_types';
 import { resolveImplicitDropZoneBounds } from './resolveImplicitDropZoneBounds';
 import { resolveSessionListInstruction } from '../drop-resolution/resolveSessionListInstruction';
 import type { SessionListTreeDropResult, SessionListTreeModel } from '../drop-resolution/sessionListTreeTypes';
+import { SESSION_LIST_SUPPORTING_SECTIONS_NODE } from '../sessionListVirtualizedNodes';
 
 const IDLE_RESULT: TreeDropResult = Object.freeze({
     instruction: Object.freeze({ kind: 'idle' }),
@@ -126,6 +125,12 @@ export function resolveSessionListDragPointer(
     }
 
     const geometry = registry.getContentGeometry();
+    // Scheduled/Drafts occupies real content space, not a root/sibling gap.
+    // Exclude it before implicit zones can turn that space into a drop target.
+    if (geometry.rows.some(row => row.id === SESSION_LIST_SUPPORTING_SECTIONS_NODE.id
+        && containsPointer(row.bounds, contentPointer))) {
+        return { result: IDLE_RESULT, geometry: NONE_GEOMETRY };
+    }
 
     // The live registry never registers drop zones — it only tracks rows. Derive
     // the implicit root-edge / sibling-gap zones in content coordinates from the

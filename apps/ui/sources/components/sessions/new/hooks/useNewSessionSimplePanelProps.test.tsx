@@ -2,7 +2,7 @@ import * as React from 'react';
 import { createNewSessionPromptStore } from '@/components/sessions/new/hooks/screenModel/newSessionPromptStore';
 import { View } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
-import { createProviderErrorV1 } from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 import { renderHook, renderScreen } from '@/dev/testkit';
 import { createMachineActionChip } from '@/components/sessions/agentInput/definitions/createMachineActionChip';
@@ -125,6 +125,37 @@ describe('useNewSessionSimplePanelProps', () => {
         expect(hook.getCurrent().machineName).toContain('Mac Studio development rack');
         expect(hook.getCurrent().machineName).toContain('Work Home');
         expect(hook.getCurrent().machineName).not.toContain('Development');
+        await hook.unmount();
+    });
+
+    it('with no machine yet, asks where to run and leaves out the folder chip until a machine exists (58d AF1)', async () => {
+        const pathPopover = { renderContent: () => null };
+        const panel = createPanelProps({ selectedMachineId: null, pathPopover });
+        const params = (hasMachine: boolean | null) => ({
+            layout: panel,
+            creation: panel,
+            agent: { ...panel, selectedBackendTargetKey: 'codex' },
+            model: { ...panel, modelOptionsProbeState: { phase: 'idle' as const, onRefresh: () => {} } },
+            acp: {
+                ...panel,
+                acpSessionModeProbeState: { phase: 'idle' as const, onRefresh: () => {} },
+                acpConfigOptionsProbeState: { phase: 'idle' as const, onRefresh: () => {} },
+            },
+            machineAndResume: { ...panel, selectedMachine: null, hasMachine },
+            profile: panel,
+            targetServerId: 'home-a',
+            attachmentFlowId: undefined,
+        });
+        const hook = await renderHook((input: ReturnType<typeof params>) => useNewSessionScreenSimplePanelProps(input), { initialProps: params(false) });
+        // `null` is the machine chip's "no machine yet" state ("Run on…"); no folder exists to choose.
+        expect(hook.getCurrent().machineName).toBeNull();
+        expect(hook.getCurrent().pathPopover).toBeUndefined();
+        // An unknown machine list never hides the folder chip or claims there is no machine.
+        await hook.rerender(params(null));
+        expect(hook.getCurrent().machineName).toBeUndefined();
+        expect(hook.getCurrent().pathPopover).toBeDefined();
+        await hook.rerender(params(true));
+        expect(hook.getCurrent().pathPopover).toBeDefined();
         await hook.unmount();
     });
 

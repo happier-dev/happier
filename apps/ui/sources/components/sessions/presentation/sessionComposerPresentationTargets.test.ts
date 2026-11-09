@@ -1,10 +1,20 @@
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { resolve } from 'node:path';
+
 import type {
-    ComposerStagedMediaContentV1,
+    ComposerStagedMediaContentV1} from '@happier-dev/protocol/runtime/input/composerContentV1';
+import type {
     ComposerSnapshotV1,
     ComposerTransactionV1,
     ComposerTransactionResultV1,
-} from '@happier-dev/protocol';
-import { createActionExecutor, PluginContributesV2Schema, buildComposerReferenceMentionPayloadV1, readHappierStructuredInputV1FromMeta, type PluginProjectionV2, type ActionExecutorDeps } from '@happier-dev/protocol';
+} from '@happier-dev/protocol/plugins/ui/composer';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { PluginContributesV2Schema} from '@happier-dev/protocol/plugins/contributions/v2';
+import { buildComposerReferenceMentionPayloadV1} from '@happier-dev/protocol/runtime/input/composerReferenceProviderV1';
+import { readHappierStructuredInputV1FromMeta} from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { type PluginProjectionV2} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { type ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
 import { act } from 'react-test-renderer';
@@ -22,6 +32,7 @@ import {
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import type { releaseComposerContent, claimComposerContent } from '@/sync/domains/transfers/runtime/transferRuntime';
 import type { PluginUiComposerAttachmentProjection } from '@/sync/domains/plugins/ui/projection';
+import { createPluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { renderHook, requireComposerDraftDocument } from '@/dev/testkit';
@@ -57,6 +68,10 @@ vi.mock('react-native-mmkv', () => {
         delete(key: string) {
             persistentValues.delete(key);
         }
+
+        getAllKeys() {
+            return [...persistentValues.keys()];
+        }
     }
 
     return { MMKV };
@@ -83,7 +98,7 @@ import {
     createComposerPresentationTransactionApplier,
     flushPendingRegisteredSessionComposerActionChip,
     notifyComposerPresentationTargetChanged,
-    readSessionComposerActionChipAvailable,
+    readSessionComposerActionChipOffer,
     requestRegisteredSessionComposerActionChip,
     readComposerPresentationSnapshot,
     readComposerPresentationTarget,
@@ -96,6 +111,7 @@ import {
     type ComposerPresentationDocumentMutation,
     type ComposerPresentationTarget,
     useStableComposerPresentationTarget,
+    isScopedMountedComposerPresentationTargetReady,
 } from './sessionComposerPresentationTargets';
 import { applyCurrentSessionPresentationCommand } from './applyCurrentSessionPresentationCommand';
 import { executePromptPickerOpenAction } from '@/components/sessions/agentInput/commandMenu/promptPickerActionRuntime';
@@ -149,6 +165,48 @@ function createAttachmentTransactionApplier(
     return createComposerPresentationTransactionApplier({
         composerAttachmentsById: Object.fromEntries(entries.map((entry) => [entry.id, entry])),
     });
+}
+
+/** Execute the real Composer call site's options through the web export compiler. */
+function compileComposerScopeApplierOptions() {
+    const require = createRequire(import.meta.url);
+    const babel = require('@babel/core') as typeof import('@babel/core');
+    const filename = resolve(import.meta.dirname, 'useComposerScopePluginPresentation.tsx');
+    const source = readFileSync(filename, 'utf8');
+    const ast = babel.parseSync(source, {
+        filename, babelrc: false, configFile: false,
+        parserOpts: { plugins: ['typescript', 'jsx'] },
+    });
+    if (!ast) throw new Error('Expected the Composer presentation source');
+    let optionsSource: string | null = null;
+    babel.traverse(ast, {
+        CallExpression(path) {
+            if (!babel.types.isIdentifier(path.node.callee, { name: 'createComposerPresentationTransactionApplier' })) return;
+            const options = path.node.arguments[0];
+            if (options?.start == null || options.end == null) throw new Error('Expected applier options');
+            optionsSource = source.slice(options.start, options.end);
+        },
+    });
+    if (!optionsSource) throw new Error('Expected the Composer applier call site');
+    const appRoot = resolve(import.meta.dirname, '../../../..');
+    const transformed = babel.transformSync(`module.exports = (params, pluginProjectionRef, localizeMountedPluginText, exactSessionAddress) => (${optionsSource});`, {
+        filename, root: appRoot, babelrc: false,
+        configFile: resolve(appRoot, 'babel.config.js'),
+        envName: 'production',
+        caller: { name: 'metro', platform: 'web', isDev: false, supportsStaticESM: false } as never,
+    })?.code;
+    if (!transformed) throw new Error('Expected the Metro-compiled Composer options');
+    const compiledModule: { exports: unknown } = { exports: null };
+    Function('module', transformed)(compiledModule);
+    if (typeof compiledModule.exports !== 'function') throw new Error('Expected the compiled options factory');
+    type Options = Parameters<typeof createComposerPresentationTransactionApplier>[0];
+    // The runtime compiler is the external boundary; all admission/application below stays real.
+    return compiledModule.exports as (
+        params: { composer: ComposerSnapshotV1['ref']; accountLifetime: import('@/sync/domains/scope/activeServerAccountScope').ActiveServerAccountScopeLifetime | null },
+        projection: { current: Pick<Options, 'composerAttachmentsById'> },
+        localize: NonNullable<Options['localize']>,
+        address: { serverId: string; sessionId: string },
+    ) => Options;
 }
 
 function admittedContributor(input: Readonly<{
@@ -244,6 +302,42 @@ function createDocumentTarget(
 
 describe('composer presentation targets', () => {
     const cleanups: Array<() => void | Promise<void>> = [];
+
+    it('admits late Composer attachment authority after the production Metro transform and refuses its withdrawal', async () => {
+        const scope = { serverId: 'export-home', accountId: 'export-account' };
+        const ref = { kind: 'session', sessionId: 'session-1' } as const;
+        const address = { serverId: scope.serverId, sessionId: ref.sessionId };
+        activeScopeState.value = scope;
+        const target = createDocumentTarget(createSnapshot({ ref }));
+        cleanups.push(registerSessionComposerPresentationTarget(address, { ...target, readScope: () => scope }));
+        const foreign = createDocumentTarget(createSnapshot({ ref }));
+        cleanups.push(registerSessionComposerPresentationTarget(address, {
+            ...foreign, readScope: () => ({ ...scope, accountId: 'foreign-account' }),
+        }));
+        const entry = createAttachmentProjectionEntry({ pluginId: 'happier.triage', localId: 'entry', typeLabel: 'Entry' });
+        const projection = { current: { composerAttachmentsById: {} as Record<string, PluginUiComposerAttachmentProjection> } };
+        const options = compileComposerScopeApplierOptions()({ composer: ref, accountLifetime: {
+            scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }),
+        } }, projection,
+            createPluginLocalizedTextResolver({ projection: null, locale: 'en' }), address);
+        const applier = createComposerPresentationTransactionApplier(options);
+        // The stable applier is created before the presented daemon catalog arrives.
+        projection.current = { composerAttachmentsById: { [entry.id]: entry } };
+        const apply = (expectedRevision: number) => applier.applyWithAttachmentCustody({
+            ref, admittedContributor: admittedContributor({ pluginId: entry.pluginId }),
+            transaction: { expectedRevision, operations: [{ kind: 'attachment.add', attachmentLocalId: 'entry',
+                value: { key: '734', value: { entryId: '734' }, presentation: { label: 'Pull request 734' } } }] },
+        });
+        expect(await apply(1)).toMatchObject({ status: 'applied', revision: 2 });
+        expect(target.readCurrent().attachments).toHaveLength(1);
+        expect(foreign.readCurrent().attachments).toHaveLength(0);
+        projection.current = { composerAttachmentsById: {} };
+        expect(await apply(2)).toEqual({ status: 'invalidOperation', operationIndex: 0, reason: 'attachment_authority_mismatch' });
+        expect(target.readCurrent()).toMatchObject({ revision: 2, attachments: [expect.objectContaining({ key: '734' })] });
+        projection.current = { composerAttachmentsById: { [entry.id]: entry } };
+        expect(await apply(2)).toMatchObject({ status: 'applied' });
+        expect(target.readCurrent().attachments).toHaveLength(1);
+    });
 
     it('records only successful workflow and qualified widget Action publications in this Home Recent', async () => {
         const scope = { serverId: 'publication-home', accountId: 'publication-account' };
@@ -443,7 +537,7 @@ describe('composer presentation targets', () => {
             text: 'Investigate this', selection: { start: 12, end: 12 }, capabilities: { text: true, references: true, attachments: true, submit: true } }));
         cleanups.push(registerComposerPresentationTarget(document.readCurrent().ref, { ...document, readScope: () => scope, readAttachmentComposition: () => composition }));
         const source = { id: `${pluginId}/entry-reference`, pluginId, pluginVersion: '0.0.0', occurrenceId, definition: contributes.dragSources[0]! };
-        const projection: PluginProjectionV2 = { v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {},
+        const projection: PluginProjectionV2 = { v: 2, generation: 1, installedPackagesById: {}, agentsById: {}, actionsById: {}, 
             resourcesById: {}, settingsById: {}, diagnostics: [], familiesById: { dragSources: { family: 'dragSources', entriesById: { [source.id]: source } } } };
         const reference = { entryRef: { source: { pluginId: 'happier.example.source', localId: 'example-forge' }, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '42' },
             sourceInstance: { source: { pluginId: 'happier.example.source', localId: 'example-forge' }, sourceInstanceId: '11111111-1111-4111-8111-111111111111' },
@@ -521,6 +615,55 @@ describe('composer presentation targets', () => {
         composition = null;
         expect(await execute({ ...input, transaction: { ...input.transaction, expectedRevision: 2 } })).toMatchObject({ status: 'invalidOperation' });
         expect(document.readCurrent().revision).toBe(2);
+    });
+
+    it('pushes Account scope arrival and withdrawal from the stable mounted adapter without document edits', async () => {
+        const scope = { serverId: 'scope-arrival-home', accountId: 'scope-arrival-account' };
+        const ref = { kind: 'newSession', instanceId: 'scope-arrival-composer' } as const;
+        const document = createDocumentTarget(createSnapshot({ ref }));
+        const producer = await renderHook((currentScope: ServerAccountScope | null) => useStableComposerPresentationTarget(ref, {
+            ...document, readScope: () => currentScope,
+        }), { initialProps: null as ServerAccountScope | null });
+        cleanups.push(() => producer.unmount());
+        const target = producer.getCurrent();
+        cleanups.push(registerComposerPresentationTarget(ref, target));
+        const publishedScopes: Array<ServerAccountScope | null> = [];
+        cleanups.push(subscribeComposerPresentationTarget(ref, () => publishedScopes.push(target.readScope?.() ?? null)));
+
+        await producer.rerender(scope);
+        expect(producer.getCurrent()).toBe(target);
+        expect(publishedScopes).toEqual([scope]);
+        await producer.rerender({ ...scope });
+        expect(publishedScopes).toEqual([scope]);
+        await producer.rerender(null);
+        expect(publishedScopes).toEqual([scope, null]);
+        expect(document.readCurrent()).toMatchObject({ revision: 1, text: '' });
+    });
+
+    it.each(['session', 'newSession'] as const)('retains physical admission for a hidden %s without lending presented document authority', kind => {
+        const scope = { serverId: 'retained-home', accountId: 'retained-account' };
+        const ref = kind === 'session'
+            ? { kind: 'session' as const, sessionId: 'retained-session' }
+            : { kind: 'newSession' as const, instanceId: 'retained-new-session' };
+        let presented = true;
+        let current = true;
+        let documentScope: ServerAccountScope | null = scope;
+        const target = { ...createDocumentTarget(createSnapshot({ ref })),
+            readScope: () => documentScope, isCurrent: () => current, isPresented: () => presented };
+        cleanups.push(ref.kind === 'session'
+            ? registerSessionComposerPresentationTarget({ serverId: scope.serverId, sessionId: ref.sessionId }, target)
+            : registerComposerPresentationTarget(ref, target));
+        expect(isScopedMountedComposerPresentationTargetReady(ref, scope)).toBe(true);
+        presented = false;
+        expect(isScopedMountedComposerPresentationTargetReady(ref, scope)).toBe(true);
+        expect(readComposerPresentationSnapshot(ref, scope)).toBeNull();
+        documentScope = null;
+        expect(isScopedMountedComposerPresentationTargetReady(ref, scope)).toBe(false);
+        documentScope = { ...scope, accountId: 'foreign-account' };
+        expect(isScopedMountedComposerPresentationTargetReady(ref, scope)).toBe(false);
+        documentScope = scope;
+        current = false;
+        expect(isScopedMountedComposerPresentationTargetReady(ref, scope)).toBe(false);
     });
 
     afterEach(async () => {
@@ -847,7 +990,7 @@ describe('composer presentation targets', () => {
         const target = createDocumentTarget(createSnapshot({ text: 'Review', selection: { start: 1, end: 3 } }));
         cleanups.push(registerComposerPresentationTarget(target.readCurrent().ref, target));
         const projection: PluginProjectionV2 = { v: 2, generation: 1,
-            installedPackagesById: {}, agentsById: {}, actionsById: {},
+            installedPackagesById: {}, agentsById: {}, actionsById: {}, 
             resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [],
             contributionIntrospection: { version: 1, generation: 1, diagnostics: [], contributions: [{
                 version: 1, occurrenceId: 'live', contribution: { kind: 'localId', pluginId: 'acme.issues',
@@ -987,7 +1130,7 @@ describe('composer presentation targets', () => {
         const openActionChip = vi.fn((chipKey: string) => ready && chipKey === 'session-goal');
         const otherOpen = vi.fn(() => true);
 
-        expect(readSessionComposerActionChipAvailable(address, 'session-goal')).toBe(false);
+        expect(readSessionComposerActionChipOffer(address, 'session-goal')).toBe('no_composer');
         expect(requestRegisteredSessionComposerActionChip(address, 'session-goal')).toBe(false);
         cleanups.push(registerSessionComposerPresentationTarget(otherAddress, {
             ...createDocumentTarget(createSnapshot({ ref: { kind: 'session', sessionId: 'goal-session' } })),
@@ -1003,8 +1146,8 @@ describe('composer presentation targets', () => {
         }));
         // Registered but not on screen yet: the request stays pending.
         expect(openActionChip).toHaveBeenCalledWith('session-goal');
-        expect(readSessionComposerActionChipAvailable(address, 'session-goal')).toBe(true);
-        expect(readSessionComposerActionChipAvailable(address, 'other-chip')).toBe(false);
+        expect(readSessionComposerActionChipOffer(address, 'session-goal')).toBe('offered');
+        expect(readSessionComposerActionChipOffer(address, 'other-chip')).toBe('not_offered');
 
         ready = true;
         expect(flushPendingRegisteredSessionComposerActionChip(address)).toBe(true);
@@ -2507,6 +2650,34 @@ describe('persistent Session composer fallback', () => {
             } finally { unregister(); }
         } finally {
             storage.setState({ machineListByServerId: previousMachines, reviewCommentsDraftsByWorkspaceCacheKey: previousDrafts });
+        }
+    });
+
+    it('does not read persistent draft storage for mounted-only admission on unrelated storage pushes', () => {
+        const sessionId = 'session-mounted-admission-cost';
+        const ref = { kind: 'session', sessionId } as const;
+        activatePersistentSessionDraft(sessionId, 'draft');
+        const unregister = registerSessionComposerPresentationTarget(
+            { serverId: persistentSessionScope.serverId, sessionId },
+            { ...createDocumentTarget(createSnapshot({ ref })), readScope: () => persistentSessionScope },
+        );
+        const observed = vi.fn();
+        const dispose = subscribeComposerPresentationTarget(ref, observed, { includePersistentSession: false });
+        // Call-through measurement: the real store and all subscription logic remain live.
+        const reads = vi.spyOn(storage, 'getState');
+        try {
+            storage.setState({ reviewCommentsDraftsByWorkspaceCacheKey: {} });
+            expect(reads).not.toHaveBeenCalled();
+            expect(observed).not.toHaveBeenCalled();
+            notifyComposerPresentationTargetChanged(ref);
+            expect(observed).toHaveBeenCalledTimes(1);
+            dispose();
+            notifyComposerPresentationTargetChanged(ref);
+            expect(observed).toHaveBeenCalledTimes(1);
+        } finally {
+            reads.mockRestore();
+            dispose();
+            unregister();
         }
     });
 

@@ -1,5 +1,6 @@
 import { countChangedFilesOutlineRootFolders } from '@/components/workspaces/files/repositoryTree/buildChangedFilesOutlineTree';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
+import { scmChangeHasLineDelta } from '@/scm/scmLineDelta';
 
 export type TurnChangesSummary = Readonly<{
     fileCount: number;
@@ -17,6 +18,7 @@ export function summarizeTurnChanges(files: readonly ScmFileStatus[]): TurnChang
     let linesKnown = true;
     for (const file of files) {
         if (file.isComplete === false) linesKnown = false;
+        if (!scmChangeHasLineDelta(file)) continue;
         added += Math.max(0, file.linesAdded ?? 0);
         removed += Math.max(0, file.linesRemoved ?? 0);
     }

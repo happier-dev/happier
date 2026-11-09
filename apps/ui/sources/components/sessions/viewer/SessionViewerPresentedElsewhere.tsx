@@ -33,7 +33,7 @@ export function SessionViewerPresentedElsewhere(
         iconName={props.source === 'computer' ? 'desktop' : 'globe'}
         title={t('computerUse.presentation.presentedElsewhereTitle')}
         reason={t('computerUse.presentation.presentedElsewhereBody')}
-        action={{ label: t('computerUse.presentation.dockView'), onPress: dock }}
+        action={{ label: t('presentation.dockView'), onPress: dock }}
       />
     </View>
   );

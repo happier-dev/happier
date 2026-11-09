@@ -1,24 +1,40 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
-import { Icon } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { StatusDot } from '@/components/ui/status/StatusDot';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
+import { CapacityRing } from '@/components/ui/progress/CapacityRing';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { readSessionManagedSessionsPresentationV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import { readSessionLiveManagedSessionCountV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
+import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
+import { workStatusGlyphColor } from '@/components/work/status/workStatusTreatment';
+import { presentSessionAwarenessStateV1 } from '@/utils/sessions/sessionUtils';
 import { t } from '@/text';
 
 /**
  * The lead row's sub-session chip (ORC §3.8, D-S4; lab `session-H`): what its direct reports are doing,
  * read from the server's awareness `reports` count — never from the rows the list happens to hold.
  *
- * Quiet unless a report needs the person (an amber dot and the count, like every "needs you" in the
- * list); otherwise how many are still working; nothing once they have all settled.
+ * The canonical aggregate status remains visible independently of the count of reports that need
+ * the person, including unseen failures and news whose exact count is not projected.
  */
+
+const DISCLOSURE_WIDTH_PX = 14;
+/** The row's leading padding that sits left of the caret: the caret sits tight against the identity, pulled this far into the padding. */
+const DISCLOSURE_LEADING_PAD_PX = 6;
+/**
+ * The identity follows the caret with no gap, and the row's own press must keep it: the hit area reaches
+ * only backwards, into the leading padding nothing else presses and the row's edge bounds; never forwards,
+ * above or below. That is 20 px wide against the 24 px floor, which the caret's position cannot meet
+ * without moving the identity.
+ */
+const DISCLOSURE_HIT_REACH = { top: 0, bottom: 0, right: 0, left: DISCLOSURE_LEADING_PAD_PX } as const;
 
 const stylesheet = StyleSheet.create((theme) => ({
     chip: {
@@ -32,81 +48,88 @@ const stylesheet = StyleSheet.create((theme) => ({
         ...Typography.variant('micro', 'semiBold'),
         color: theme.colors.state.warning.foreground,
     },
-    working: {
-        ...Typography.tabular(),
-        ...Typography.variant('micro'),
-        color: theme.colors.text.secondary,
-    },
     total: {
         ...Typography.tabular(),
-        ...Typography.variant('meta'),
+        ...Typography.variant('micro'),
         color: theme.colors.text.tertiary,
     },
-    // The caret sits in the row's leading edge, tight against the identity (lab `.cm-car`).
+    // The caret sits in the row's leading edge, tight against the identity (lab `.cm-car`): the box ends
+    // where the identity begins, and its hit area takes the free space before it (`DISCLOSURE_HIT_REACH`).
     disclosure: {
         alignSelf: 'center',
-        width: 16,
+        width: DISCLOSURE_WIDTH_PX,
         height: 24,
-        marginLeft: -6,
-        marginRight: -2,
+        marginLeft: -DISCLOSURE_LEADING_PAD_PX,
         borderRadius: 6,
         alignItems: 'center',
         justifyContent: 'center',
     },
 }));
 
+/** The chip speaks only while reports are in progress or one of them needs the person or failed (ruling 2026-11-01). */
 export function hasSessionRowReportsChip(reports: Session['managedSessions'] | undefined): boolean {
     if (!reports) return false;
-    return readSessionManagedSessionsPresentationV1(reports).count > 0;
+    const live = readSessionLiveManagedSessionCountV1(reports);
+    return Math.min(Math.max(0, reports.finished), live) < live
+        || resolveWorkStatusTone({ kind: 'session_reports', facts: { reports, word: '' } }).tone !== 'neutral';
 }
 
+const PROGRESS_RING_PX = 12;
+const PROGRESS_STROKE_PX = 2;
+
+/**
+ * A lead row's progress over its sub-sessions (lab `clgroups` coordinator): a small ring and "3/5" while they are
+ * in progress, nothing once they have settled (calm ruling 2026-11-01; the count stays in the caret's label and the
+ * sub-sessions themselves). Healthy progress stays ink; a sub-session that needs the person or failed adds the
+ * amber or rose dot, and the count waiting on them.
+ */
 export const SessionRowReportsChip = React.memo((props: Readonly<{
     sessionId: string;
     occurrenceId?: string;
     reports: NonNullable<Session['managedSessions']>;
-    /** Its reports are folded under the row: say how many, quietly, and keep any needs-you dot. */
-    collapsed?: boolean;
 }>) => {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const status = readSessionManagedSessionsPresentationV1(props.reports);
-    const needsYou = status.bucket === 'needs_you' ? status.count : 0;
+    const presentation = readSessionManagedSessionsPresentationV1(props.reports);
+    const status = resolveWorkStatusTone({ kind: 'session_reports', facts: {
+        reports: props.reports,
+        word: presentation.state ? presentSessionAwarenessStateV1(presentation.state).statusText : '',
+    } });
+    const needsYou = props.reports.needsYou;
+    const attention = status.tone !== 'neutral';
     // Archived reports stay in the lead's record but are not sub-sessions a person can open from here.
     const liveReports = readSessionLiveManagedSessionCountV1(props.reports);
-    if (props.collapsed && liveReports > 0) {
-        return (
-            <View
-                testID={`session-row-reports-chip:${props.occurrenceId ?? props.sessionId}`}
-                accessible
-                accessibilityLabel={needsYou > 0
-                    ? t('sessionWork.list.reportsNeedYou', { count: needsYou })
-                    : t('sessionWork.list.subSessions', { count: liveReports })}
-                style={styles.chip}
-            >
-                <Text style={styles.total}>{liveReports}</Text>
-                {needsYou > 0 ? <StatusDot color={theme.colors.state.warning.foreground} /> : null}
-            </View>
-        );
-    }
-    if (needsYou > 0) {
-        return (
-            <View
-                testID={`session-row-reports-chip:${props.occurrenceId ?? props.sessionId}`}
-                accessible
-                accessibilityLabel={t('sessionWork.list.reportsNeedYou', { count: needsYou })}
-                style={styles.chip}
-            >
-                <StatusDot color={theme.colors.state.warning.foreground} />
-                <Text style={styles.needsYou}>{needsYou}</Text>
-            </View>
-        );
-    }
-    if (status.count <= 0) return null;
+    const finished = Math.min(Math.max(0, props.reports.finished), liveReports);
+    const inProgress = finished < liveReports;
+    if (!inProgress && !attention) return null;
+    const accessibilityLabel = [
+        status.word,
+        needsYou > 0 ? t('sessionWork.list.reportsNeedYou', { count: needsYou }) : '',
+        liveReports > 0 ? t('sessionWork.list.reportsDoneA11y', { finished, total: liveReports }) : '',
+    ].filter(Boolean).join('. ');
     return (
-        <View testID={`session-row-reports-chip:${props.occurrenceId ?? props.sessionId}`} style={styles.chip}>
-            <Text numberOfLines={1} style={styles.working}>{status.bucket === 'working'
-                ? t('sessionWork.list.reportsWorking', { count: status.count })
-                : `${status.count} · ${t('status.offline')}`}</Text>
+        <View
+            testID={`session-row-reports-chip:${props.occurrenceId ?? props.sessionId}`}
+            accessible
+            accessibilityLabel={accessibilityLabel}
+            style={styles.chip}
+        >
+            {inProgress ? (
+                <>
+                    <CapacityRing
+                        size={PROGRESS_RING_PX}
+                        strokeWidth={PROGRESS_STROKE_PX}
+                        ratio={finished / liveReports}
+                        color={theme.colors.text.secondary}
+                        trackColor={theme.colors.border.default}
+                    />
+                    <Text numberOfLines={1} style={styles.total}>
+                        {`${finished}/${liveReports}`}
+                    </Text>
+                </>
+            ) : null}
+            {attention ? <StatusDot color={workStatusGlyphColor(theme.colors, status.tone)} size={7} /> : null}
+            {attention && needsYou > 0 ? <Text style={styles.needsYou}>{needsYou}</Text> : null}
         </View>
     );
 });
@@ -137,11 +160,12 @@ export const SessionRowReportsDisclosure = React.memo(function SessionRowReports
             accessibilityLabel={collapsed
                 ? t('sessionWork.list.showReports', { name: props.name, count: props.count })
                 : t('sessionWork.list.hideReports', { name: props.name })}
-            hitSlop={8}
+            hitTarget={HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE}
+            hitReach={DISCLOSURE_HIT_REACH}
             onPress={toggle}
             style={styles.disclosure}
         >
-            <Icon name={collapsed ? 'caret-right' : 'caret-down'} size={11} color={theme.colors.text.tertiary} />
+            <DisclosureCaret expanded={!collapsed} size={11} />
         </HappierPressable>
     );
 });

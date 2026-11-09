@@ -1,9 +1,11 @@
 import * as React from 'react';
 import type {
-    AcpConfigOptionOverridesV1,
-    PersistedBackendTargetRefV2,
+    AcpConfigOptionOverridesV1} from '@happier-dev/protocol/sessions/metadata/overrides';
+import type {
+    PersistedBackendTargetRefV2} from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import type {
     SessionModelSelectionV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/providers/selection/v1';
 
 import {
     areRememberedEngineSelectionsEquivalent,

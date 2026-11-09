@@ -1,4 +1,4 @@
-import type { SessionInitialPromptV1 } from '@/sync/domains/sessionInitialPrompt/sessionInitialPromptV1';
+import type { SessionDraftTextAppend } from '@/components/sessions/composer/sessionDraftAppendAction';
 
 import { applySendToSessionTemplate } from './applySendToSessionTemplate';
 import { formatSelectedMessagesForClipboard } from './formatSelectedMessagesForClipboard';
@@ -21,12 +21,6 @@ export type SendTranscriptSelectionDestination =
         kind: 'newSession';
     }>;
 
-export type SendTranscriptSelectionWriteInitialPromptInput = Readonly<{
-    destinationSessionId: string;
-    serverId: string;
-    prompt: SessionInitialPromptV1;
-}>;
-
 export type SendTranscriptSelectionOpenNewSessionInput = Readonly<{
     promptText: string;
     sourceServerId: string;
@@ -46,9 +40,8 @@ export async function sendTranscriptSelectionToSession(params: Readonly<{
     bulkCopyFormat: TranscriptBulkCopyFormat;
     template: string;
     roleLabels: Readonly<{ user: string; assistant: string }>;
-    nowMs: () => number;
     chooseDestinationSessionId: (input: SendTranscriptSelectionChooseDestinationInput) => Promise<SendTranscriptSelectionDestination | null>;
-    writeInitialPrompt: (input: SendTranscriptSelectionWriteInitialPromptInput) => Promise<void>;
+    appendToDraft: (input: SessionDraftTextAppend) => Promise<void>;
     /** Opens New Session through its canonical seed/hydration owner. */
     openNewSession: (input: SendTranscriptSelectionOpenNewSessionInput) => Promise<boolean>;
     navigateToSession: (input: Readonly<{ sessionId: string; serverId: string }>) => void;
@@ -73,15 +66,6 @@ export async function sendTranscriptSelectionToSession(params: Readonly<{
     });
     if (!destination) return false;
 
-    const prompt: SessionInitialPromptV1 = {
-        v: 1,
-        text: promptText,
-        mode: 'append',
-        createdAtMs: params.nowMs(),
-        sourceMessageIds: params.selectedMessages.map((message) => message.id),
-        sourceSessionId: params.sourceSessionId,
-    };
-
     if (destination.kind === 'newSession') {
         return params.openNewSession({
             promptText,
@@ -98,10 +82,11 @@ export async function sendTranscriptSelectionToSession(params: Readonly<{
         });
     }
 
-    await params.writeInitialPrompt({
-        destinationSessionId: destination.sessionId,
+    await params.appendToDraft({
+        sessionId: destination.sessionId,
         serverId: destination.serverId,
-        prompt,
+        text: promptText,
+        sourceSessionId: params.sourceSessionId,
     });
     params.navigateToSession({ sessionId: destination.sessionId, serverId: destination.serverId });
     return true;

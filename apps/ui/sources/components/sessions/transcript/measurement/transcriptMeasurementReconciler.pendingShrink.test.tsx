@@ -31,7 +31,7 @@ function signatureFor(pendingMessages: PendingMessage[]) {
         item: { kind: 'pending-queue', id: 'pending-queue', pendingMessages, discardedMessages: [] },
         activeThinkingMessageId: null, expandedToolCallsAnchorMessageIds: new Set<string>(),
         forkMessageMetadataById: null, getMessageById: () => null, getMessageRevisionById: () => null,
-        groupingMode: 'linear', latestCommittedActivityKey: null, resolveActionDraftFieldOptions: () => [],
+        groupingMode: 'linear', latestCommittedActivityKey: null, 
         resolveThinkingExpanded: () => false, sessionActive: true,
         widthBucket: 'w:400', fontScaleKey: 'fs:1',
     });

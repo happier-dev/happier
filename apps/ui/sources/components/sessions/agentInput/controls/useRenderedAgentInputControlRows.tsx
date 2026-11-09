@@ -38,7 +38,7 @@ export function useRenderedAgentInputControlRows(params: Readonly<{
     actionMenuAnchorRef: React.RefObject<View | null>;
     onActionMenuPress: () => void;
     actionMenuOpen: boolean;
-    actionChipOpenStyle: import('react-native').ViewProps['style'];
+    actionChipOpenStyle: any;
     sessionModeChipControl: SessionModeChipControlLike | null;
     shouldRenderSessionModeChip: boolean;
     sessionModeChipAnchorRef: React.RefObject<View | null>;

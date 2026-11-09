@@ -47,6 +47,8 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
         phase: 'idle' | 'loading' | 'refreshing';
         refreshedAt: number | null;
         reason?: ProbedResourceFailure['reason'];
+        errorCode?: string;
+        retryable?: boolean;
         requestDisposition?: ProbedResourceFailure['requestDisposition'];
         onRefresh?: () => void;
     }>;
@@ -202,7 +204,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
         }
 
         const cacheEntry = readDynamicSessionModeProbeCache(preflightModesKey);
-        setFailure({ reason: cacheEntry?.reason, errorCode: cacheEntry?.errorCode, requestDisposition: cacheEntry?.requestDisposition });
+        setFailure({ reason: cacheEntry?.reason, errorCode: cacheEntry?.errorCode, retryable: cacheEntry?.retryable, requestDisposition: cacheEntry?.requestDisposition });
         const cached = cacheEntry?.kind === 'success' ? cacheEntry.value : null;
         const scopeStable = lastScopeKeyRef.current !== null && probeScopeKey !== null && lastScopeKeyRef.current === probeScopeKey;
         lastScopeKeyRef.current = probeScopeKey;
@@ -259,6 +261,7 @@ export function useNewSessionPreflightSessionModesState(params: Readonly<{
                 if (!res.supported) return { failure: {
                     reason: res.reason,
                     ...(res.errorCode ? { errorCode: res.errorCode } : {}),
+                    ...(res.retryable === undefined ? {} : { retryable: res.retryable }),
                     ...(res.requestDisposition ? { requestDisposition: res.requestDisposition } : {}),
                 } };
                 if (!res.response.ok) return null;

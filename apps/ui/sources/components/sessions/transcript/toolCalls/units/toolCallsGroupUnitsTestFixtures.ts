@@ -47,7 +47,6 @@ export function createTranscriptSessionCommonPropsFixture(overrides?: Readonly<{
             ...(overrides?.toolChromeCommon ?? {}),
         },
         toolRouteCommon: {
-            messagesById: {},
             reducerState: createReducer(),
         },
     };

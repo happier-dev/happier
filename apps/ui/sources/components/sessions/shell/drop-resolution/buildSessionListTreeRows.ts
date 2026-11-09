@@ -1,10 +1,6 @@
 import type { TreeContainerDropZone, TreeRow, WindowBounds } from '@/components/ui/treeDragDrop';
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
-import {
-    buildSessionFolderGroupKey,
-    resolveDurableWorkspaceRefForSessionListHeader,
-} from '@/sync/domains/session/folders';
 import { buildSessionListFolderOrderItemKey } from '@/sync/domains/session/listing/sessionListOrderingStateV1';
 import {
     buildSessionWorkspaceOrderItemKey,
@@ -18,13 +14,7 @@ import type {
     SessionListTreeRowMetadata,
 } from './sessionListTreeTypes';
 import { resolveWorkspaceRootTreeRowId, treeRowId } from './treeRowId';
-
-type FolderStackEntry = Readonly<{
-    rowId: string;
-    childGroupKey: string;
-    rootId: string;
-    workspace: SessionListTreeRowMetadata['workspace'];
-}>;
+import { readSessionListItemProjectKey } from './sessionListDestinationScope';
 
 export type BuildSessionListTreeRowsParams = Readonly<{
     items: ReadonlyArray<SessionListIndexItem>;
@@ -49,16 +39,6 @@ function normalizeDepth(value: unknown): number {
 
 function readHeaderWorkspaceKey(item: Extract<SessionListIndexItem, { type: 'header' }>): string {
     return String(item.groupKey ?? item.workspaceKey ?? item.title ?? '').trim();
-}
-
-function readHeaderRootGroupKey(item: Extract<SessionListIndexItem, { type: 'header' }>): string {
-    const workspace = item.workspace ?? resolveDurableWorkspaceRefForSessionListHeader(item);
-    if (!workspace) return readHeaderWorkspaceKey(item);
-    return buildSessionFolderGroupKey({
-        serverId: item.serverId,
-        workspace,
-        folderId: null,
-    });
 }
 
 function readWorkspaceOrderContainerId(item: Extract<SessionListIndexItem, { type: 'header' }>): string {
@@ -203,12 +183,12 @@ function collectVisibleSubtreeRows(params: Readonly<{
 export function buildSessionListTreeRows(params: BuildSessionListTreeRowsParams): SessionListTreeModel {
     const rowMetadataById = new Map<string, SessionListTreeRowMetadata>();
     const containerMetadataById = new Map<string, SessionListTreeContainerMetadata>();
+    const sectionContainerByGroupKey = new Map<string, SessionListTreeContainerMetadata>();
     const rows: TreeRow[] = [];
     const dropZones: TreeContainerDropZone[] = [];
 
     let activeRoot: SessionListTreeContainerMetadata | null = null;
     let activeWorkspaceOrderContainer: SessionListTreeContainerMetadata | null = null;
-    const folderStack: FolderStackEntry[] = [];
 
     params.items.forEach((item, itemIndex) => {
         if (item.type === 'header' && item.headerKind !== 'project' && item.headerKind !== 'folder') {
@@ -235,12 +215,13 @@ export function buildSessionListTreeRows(params: BuildSessionListTreeRowsParams)
                     folderId: null,
                     depth: 0,
                     workspace: item.workspace ?? null,
+                    serverId: item.serverId ?? null,
+                    destinationKind: item.headerKind === 'pinned' ? 'pinned' : 'other',
                 };
                 registerContainer(containerMetadataById, activeRoot);
             } else {
                 activeRoot = null;
             }
-            folderStack.length = 0;
             return;
         }
 
@@ -248,10 +229,9 @@ export function buildSessionListTreeRows(params: BuildSessionListTreeRowsParams)
             const workspaceKey = readHeaderWorkspaceKey(item);
             if (!workspaceKey) {
                 activeRoot = null;
-                folderStack.length = 0;
                 return;
             }
-            const groupKey = readHeaderRootGroupKey(item);
+            const groupKey = readHeaderWorkspaceKey(item);
             const rowId = resolveWorkspaceRootTreeRowId(item);
             if (!activeWorkspaceOrderContainer) {
                 const serverId = String(item.serverId ?? '').trim() || null;
@@ -277,9 +257,11 @@ export function buildSessionListTreeRows(params: BuildSessionListTreeRowsParams)
                 folderId: null,
                 depth: 0,
                 workspace: item.workspace ?? null,
+                serverId: item.serverId ?? item.workspace?.serverId ?? null,
+                destinationKind: 'project',
+                projectKey: readSessionListItemProjectKey(item),
             };
             registerContainer(containerMetadataById, activeRoot);
-            folderStack.length = 0;
 
             const metadata: SessionListTreeRowMetadata = {
                 rowId,
@@ -306,16 +288,17 @@ export function buildSessionListTreeRows(params: BuildSessionListTreeRowsParams)
             return;
         }
 
-        if (!activeRoot) return;
-
         if (item.type === 'header' && item.headerKind === 'folder' && item.folderId) {
-            const depth = normalizeDepth(item.folderDepth);
-            folderStack.length = Math.min(folderStack.length, depth);
-            const parent = depth > 0 ? folderStack[depth - 1] ?? null : null;
-            const containerId = parent?.rowId ?? activeRoot.containerId;
-            const containerGroupKey = parent?.childGroupKey ?? activeRoot.groupKey;
             const serverId = String(item.serverId ?? item.workspace?.serverId ?? '').trim();
             if (!serverId) return;
+            const rootId = JSON.stringify(['session-sections', serverId]);
+            const sectionRoot: SessionListTreeContainerMetadata = { containerId: rootId, kind: 'children', rootId, groupKey: rootId,
+                parentRowId: null, folderId: null, depth: 0, workspace: null, serverId,
+                destinationKind: 'section-order' };
+            registerContainer(containerMetadataById, sectionRoot);
+            activeRoot ??= sectionRoot;
+            const containerId = rootId;
+            const containerGroupKey = rootId;
             const rowId = treeRowId.folder(serverId, item.folderId);
             const groupKey = String(item.groupKey ?? '').trim();
 
@@ -324,10 +307,10 @@ export function buildSessionListTreeRows(params: BuildSessionListTreeRowsParams)
                 item,
                 itemIndex,
                 kind: 'folder',
-                rootId: activeRoot.rootId,
+                rootId,
                 containerId,
                 containerGroupKey,
-                parentRowId: parent?.rowId ?? null,
+                parentRowId: null,
                 orderKey: buildSessionListFolderOrderItemKey({
                     serverId: item.serverId ?? item.workspace?.serverId ?? null,
                     folderId: item.folderId,
@@ -335,34 +318,33 @@ export function buildSessionListTreeRows(params: BuildSessionListTreeRowsParams)
                 serverId,
                 sessionId: null,
                 folderId: item.folderId,
-                folderDepth: depth,
-                workspace: item.workspace ?? activeRoot.workspace,
+                folderDepth: 0,
+                workspace: null,
                 childContainerId: rowId,
                 childGroupKey: groupKey || null,
                 storageKind: null,
             };
             rowMetadataById.set(rowId, metadata);
-            registerContainer(containerMetadataById, {
+            const sectionContainer: SessionListTreeContainerMetadata = {
                 containerId: rowId,
                 kind: 'children',
-                rootId: activeRoot.rootId,
+                rootId,
                 groupKey: groupKey || containerGroupKey,
-                parentRowId: parent?.rowId ?? null,
+                parentRowId: null,
                 folderId: item.folderId,
-                depth: depth + 1,
-                workspace: item.workspace ?? activeRoot.workspace,
-            });
-            folderStack[depth] = {
-                rowId,
-                childGroupKey: groupKey || containerGroupKey,
-                rootId: activeRoot.rootId,
-                workspace: item.workspace ?? activeRoot.workspace,
+                depth: 1,
+                workspace: null,
+                serverId,
+                destinationKind: 'section',
             };
-            folderStack.length = depth + 1;
+            registerContainer(containerMetadataById, sectionContainer);
+            if (groupKey) sectionContainerByGroupKey.set(groupKey, sectionContainer);
             const row = buildTreeRow(metadata, readBounds(params.rowBoundsById, rowId));
             if (row) rows.push(row);
             return;
         }
+
+        if (!activeRoot) return;
 
         if (item.type === 'session') {
             const folderId = typeof item.folderId === 'string' && item.folderId.trim() ? item.folderId.trim() : null;
@@ -376,13 +358,16 @@ export function buildSessionListTreeRows(params: BuildSessionListTreeRowsParams)
             const serverId = typeof item.serverId === 'string'
                 ? item.serverId.trim()
                 : item.workspace?.serverId?.trim() ?? '';
-            const parentRowId = folderId && serverId ? treeRowId.folder(serverId, folderId) : null;
+            // Membership and visible placement differ for pins and filed children under a lead.
+            // The list's projected group owns geometry; folderId remains the stored assignment.
+            const presentationSection = item.groupKind === 'folder' ? sectionContainerByGroupKey.get(groupKey) : null;
+            const parentRowId = presentationSection?.containerId ?? null;
             const containerId = parentRowId ?? activeRoot.containerId;
-            const container = containerMetadataById.get(containerId) ?? activeRoot;
+            const container = presentationSection ?? containerMetadataById.get(containerId) ?? activeRoot;
             const sessionId = String(item.sessionId ?? '').trim();
             if (!sessionId) return;
             const rowId = serverId
-                ? treeRowId.session(serverId, sessionId, item.keyParts)
+                ? treeRowId.session(serverId, sessionId, item.keyParts, item.occurrenceRole)
                 : JSON.stringify(['session', null, sessionId]);
             const metadata: SessionListTreeRowMetadata = {
                 rowId,

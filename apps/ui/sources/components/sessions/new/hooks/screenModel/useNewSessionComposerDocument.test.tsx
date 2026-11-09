@@ -6,14 +6,17 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import {
     PluginProjectionV2Schema,
-    PluginManifestV2Schema,
-    readHappierStructuredInputV1FromMeta,
-    type ComposerAttachmentDraftV1,
     DaemonPluginUiComposerSurfaceCatalogEntryV1Schema,
     type DaemonPluginUiComposerSurfaceCatalogEntryV1,
     type PluginProjectionV2,
     type PluginProjectedComposerAttachmentEntryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+    PluginManifestV2Schema} from '@happier-dev/protocol/plugins/manifest/v2';
+import {
+    readHappierStructuredInputV1FromMeta} from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import {
+    type ComposerAttachmentDraftV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
 import {
     applyComposerPresentationTransaction,
     createComposerPresentationHostHandlers,
@@ -114,8 +117,6 @@ function entriesById(
         installedPackagesById: {},
         agentsById: {},
         actionsById: {},
-
-
         resourcesById: {},
         settingsById: {},
         familiesById: {

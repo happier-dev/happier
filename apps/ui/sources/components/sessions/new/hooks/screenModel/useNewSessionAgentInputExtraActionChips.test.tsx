@@ -6,7 +6,7 @@ import { array } from 'zod/mini';
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import { renderScreen } from '@/dev/testkit';
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
-import { SessionInitialTriggerV1Schema, type SessionInitialTriggerV1 } from '@happier-dev/protocol';
+import { SessionInitialTriggerV1Schema, type SessionInitialTriggerV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { act } from 'react-test-renderer';
 
 import { installNewSessionScreenModelCommonModuleMocks } from '../newSessionScreenModelTestHelpers';
@@ -177,6 +177,7 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
 
     it('creates the automation chip as draft-preserving navigation instead of a second settings editor', async () => {
         const { useNewSessionAgentInputExtraActionChips } = await import('./useNewSessionAgentInputExtraActionChips');
+        const onOpenAutomationEditor = vi.fn();
 
         let chips: ReadonlyArray<AgentInputExtraActionChip> = [];
 
@@ -188,7 +189,8 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
                 selectedMachineId: 'machine-a',
                 showAutomationActionChips: true,
                 automationLabel: 'Automate',
-                onOpenAutomationEditor: vi.fn(),
+                onOpenAutomationEditor,
+                showInitialTriggers: true, initialTriggers: [], onInitialTriggersChange: vi.fn(),
                 showServerPickerChip: false,
                 targetServerId: null,
                 targetServerName: 'Server A',
@@ -212,7 +214,11 @@ describe('useNewSessionAgentInputExtraActionChips', () => {
         // The chip hands the composed draft to the shared Automation editor; it
         // no longer embeds a full trigger/settings popover of its own.
         expect(automationChip?.collapsedContentPopover).toBeUndefined();
-        expect(automationChip?.collapsedAction).toBeUndefined();
+        const menuAction = automationChip?.collapsedAction?.({ tint: '#000', dismiss: () => {}, blurInput: () => {}, openCollapsedPopover: () => {} });
+        if (menuAction && !Array.isArray(menuAction) && 'onPress' in menuAction) menuAction.onPress?.();
+        expect(onOpenAutomationEditor).toHaveBeenCalledOnce();
+        const triggersChip = chips.find((chip) => chip.key === 'new-session-triggers');
+        expect(triggersChip?.placement?.id).not.toBe(automationChip?.placement?.id);
     });
 
     it('publishes transcript storage as a shared options popover with synced and direct explanations', async () => {

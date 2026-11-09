@@ -1,4 +1,5 @@
-import type { ComposerCapabilitiesV1, ComposerRefV1 } from '@happier-dev/protocol';
+import type { ComposerCapabilitiesV1} from '@happier-dev/protocol/plugins/ui/composer';
+import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 import type { PendingMessageWithdrawOutcomeV1 } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
 import type { SessionPendingWithdrawInputV1 } from '@happier-dev/protocol/sessions/control/pendingWithdrawV1';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';

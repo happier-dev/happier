@@ -28,6 +28,7 @@ import { markSessionRouteEnteredForSessionUiTelemetry } from '@/sync/runtime/per
 import { storage } from '@/sync/domains/state/storageStore';
 import { useSessionTerminalAvailability } from '@/components/sessions/terminal/useSessionTerminalAvailability';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
+import { AtmosphereSurfaceFrame } from '@/components/atmosphere/AtmosphereSurfaceFrame';
 import {
     serverAccountScopeKeySuffix,
     type ServerAccountScope,
@@ -202,12 +203,15 @@ export function SessionDestinationBody(props: Readonly<{
         return <SessionInvalidLinkFallback />;
     }
 
-    if (sessionSurfaceKey === null) {
+    if (routeSessionAddress === null || sessionSurfaceKey === null) {
         return <SessionInvalidLinkFallback />;
     }
 
     if (routeHydrationState.kind === 'loading' && !sessionCached && !authRecoveryActive) {
-        return <PaneLoadingFallback />;
+        // The route already supplies the atmosphere's address; Session detail is not a paint prerequisite.
+        return <AtmosphereSurfaceFrame surface={{ session: routeSessionAddress }} session focused={focused} visible={visible}>
+            <PaneLoadingFallback />
+        </AtmosphereSurfaceFrame>;
     }
 
     return (

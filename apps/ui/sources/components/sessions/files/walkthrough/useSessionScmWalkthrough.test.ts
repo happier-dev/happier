@@ -23,7 +23,6 @@ function entry(key: string, overrides: Partial<ScmDiffSummaryEntry> & Pick<ScmDi
         latestOutput: null,
         displayOutputs: null,
         error: null,
-        retryAttempt: 0,
         ...overrides,
     };
 }

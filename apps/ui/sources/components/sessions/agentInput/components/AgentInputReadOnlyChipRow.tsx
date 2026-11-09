@@ -5,10 +5,10 @@ import { StyleSheet } from 'react-native-unistyles';
 import { NATIVE_ACTION_CHIP_GAP_Y } from './agentInputChromeStyles';
 
 /**
- * A reading card's chip line: the engine, then the card's own chips (Step options). Each group is
- * sized to its chips, so on a narrow card the second group moves under the first instead of the
- * engine being squeezed to "Choos…" beside it (DESIGN-9 N34). On a wide card the engine group takes
- * the rest of the line and the card's chips sit at its end.
+ * A reading card's resolved control line. The primary and secondary groups receive already ordered
+ * nodes; the composer placement owner decides membership. Each group is sized to its controls, so
+ * on a narrow card the second group moves under the first instead of squeezing its labels
+ * (DESIGN-9 N34). On a wide card the first group takes the rest of the line and the second sits at its end.
  */
 export function AgentInputReadOnlyChipRow(props: Readonly<{
     engine: readonly React.ReactNode[];
@@ -49,9 +49,9 @@ const styles = StyleSheet.create(() => ({
         flexBasis: 'auto',
         minWidth: 0,
         overflow: 'visible',
-        ...(Platform.OS === 'web' ? { columnGap: 6, rowGap: 1 } : { marginBottom: -NATIVE_ACTION_CHIP_GAP_Y }),
+        ...(Platform.OS === 'web' ? { columnGap: 6, rowGap: NATIVE_ACTION_CHIP_GAP_Y } : { marginBottom: -NATIVE_ACTION_CHIP_GAP_Y }),
     },
-    /** On a shared line the engine takes the rest, so Step options sit at the line's end. */
+    /** On a shared line the primary group takes the rest; the secondary group sits at its end. */
     engine: {
         flexGrow: 1,
     },

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
-import { Pressable, View, type LayoutChangeEvent } from 'react-native';
-import Animated, { FadeIn, useAnimatedStyle, useSharedValue, withDelay, withTiming } from 'react-native-reanimated';
+import { View, type LayoutChangeEvent } from 'react-native';
+import Animated, { FadeIn, FadeOut, useAnimatedStyle, useSharedValue, withDelay, withTiming } from 'react-native-reanimated';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { INSTRUMENT_DURATIONS, staggerDelayForIndex, useMotionPreferences } from '@/components/instrument';
@@ -15,7 +15,7 @@ import { useSetting } from '@/sync/domains/state/storage';
 import type { ConnectedServiceQuotaGaugeViewModel } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 import { t } from '@/text';
 
-import type { AgentInputStatusBadge as AgentInputStatusBadgeDescriptor } from '../agentInputContracts';
+import type { AgentInputStatusBadge as AgentInputStatusBadgeDescriptor, AgentInputStatusRegion } from '../agentInputContracts';
 import { AgentInputStatusBadge } from '../status/AgentInputStatusBadge';
 import { AgentInputContentPopover } from '../components/AgentInputContentPopover';
 import { getContextWarning } from '../contextWarning';
@@ -29,11 +29,19 @@ import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { instrumentStripStyles } from './instrumentStripStyles';
 import { useInstrumentStripModel } from './useInstrumentStripModel';
 import { InstrumentFrame } from './InstrumentFrame';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 /** Below this available width, instruments drop their labels/icons to icon-only. */
 const COMPACT_WIDTH = 360;
 /** Below this available width, the cluster collapses behind a "•••" popover. */
 const COLLAPSE_WIDTH = 300;
+
+/**
+ * One item of the collapsible cluster. A narrow strip takes its width back from the items that
+ * `yield` first (plain values and quiet notes) and leaves the rest whole: a
+ * prominent badge keeps its label, a gauge its readout.
+ */
+type StripInstrument = Readonly<{ node: React.ReactNode; yields: boolean }>;
 
 /** One action ending the composer's status line, drawn by the shared text link. */
 export type SessionInstrumentStripLineAction = Readonly<{
@@ -96,6 +104,8 @@ export type SessionInstrumentStripProps = Readonly<{
     permission?: SessionInstrumentStripPermission | null;
     quota?: SessionInstrumentStripQuota | null;
     statusBadges?: ReadonlyArray<AgentInputStatusBadgeDescriptor>;
+    /** Admitted Composer regions; their surfaces own public ComposerStatusBadge items. */
+    statusRegions?: readonly AgentInputStatusRegion[];
     statusTrailingActions?: React.ReactNode;
     activeStatusBadgeKey?: string | null;
     onActiveStatusBadgeKeyChange?: (key: string | null) => void;
@@ -215,71 +225,89 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
     // The collapsible instruments (context/quota/git/badges). Permission never
     // collapses. Built per compactness so the <300px overflow popover can list
     // the FULL-SIZE variants while the inline row uses the measured compactness.
-    const buildCollapsibleInstruments = (compact: boolean): React.ReactNode[] => {
-        const instruments: React.ReactNode[] = [];
+    const buildCollapsibleInstruments = (compact: boolean): StripInstrument[] => {
+        const instruments: StripInstrument[] = [];
         if (showContextGauge && model.context) {
-            instruments.push(
-                <ContextGaugeInstrument
-                    key="context"
-                    model={model.context}
-                    showPercentText={!compact}
-                    showLabel={showUsageLabels}
-                    isStreaming={isStreaming}
-                    onRefresh={model.refreshContextUsage}
-                />,
-            );
+            instruments.push({
+                yields: false,
+                node: (
+                    <ContextGaugeInstrument
+                        key="context"
+                        model={model.context}
+                        showPercentText={!compact}
+                        showLabel={showUsageLabels}
+                        isStreaming={isStreaming}
+                        onRefresh={model.refreshContextUsage}
+                    />
+                ),
+            });
         } else if (contextGaugeStyle === 'text' && contextTextWarning) {
-            instruments.push(
-                <Text
-                    key="context-text"
-                    style={[instrumentStripStyles.instrumentValueText, { color: contextTextWarning.color }]}
-                    numberOfLines={1}
-                >
-                    {contextTextWarning.text}
-                </Text>,
-            );
+            instruments.push({
+                yields: true,
+                node: (
+                    <Text
+                        key="context-text"
+                        style={[instrumentStripStyles.instrumentValueText, { color: contextTextWarning.color }]}
+                        numberOfLines={1}
+                    >
+                        {contextTextWarning.text}
+                    </Text>
+                ),
+            });
         }
         if (showQuota && props.quota) {
-            instruments.push(
-                <QuotaRingInstrument
-                    key="quota"
-                    viewModel={props.quota.viewModel}
-                    metadata={props.metadata}
-                    agentId={props.agentId}
-                    onRecoveryCreditPress={props.quota.onRecoveryCreditPress}
-                    recoveryCreditPending={props.quota.recoveryCreditPending}
-                    showProviderGlyph={!compact}
-                    showLabels={showUsageLabels}
-                />,
-            );
+            instruments.push({
+                yields: false,
+                node: (
+                    <QuotaRingInstrument
+                        key="quota"
+                        viewModel={props.quota.viewModel}
+                        metadata={props.metadata}
+                        agentId={props.agentId}
+                        onRecoveryCreditPress={props.quota.onRecoveryCreditPress}
+                        recoveryCreditPending={props.quota.recoveryCreditPending}
+                        showProviderGlyph={!compact}
+                        showLabels={showUsageLabels}
+                    />
+                ),
+            });
         }
         if (showGit && model.git) {
-            instruments.push(
-                <GitDeltaInstrument
-                    key="git"
-                    git={model.git}
-                    compact={compact}
-                    onPress={props.onGitPress}
-                />,
-            );
+            instruments.push({
+                yields: false,
+                node: (
+                    <GitDeltaInstrument
+                        key="git"
+                        git={model.git}
+                        compact={compact}
+                        onPress={props.onGitPress}
+                    />
+                ),
+            });
         }
         for (const badge of badges) {
             const { key, renderPopover, onPress, ...rest } = badge;
-            instruments.push(
-                <AgentInputStatusBadge
-                    key={`badge-${key}`}
-                    anchorRef={renderPopover ? statusBadgeAnchorRef : undefined}
-                    onPress={renderPopover
-                        ? () => {
-                            setActiveStatusBadgeKey(activeStatusBadgeKey === key ? null : key);
-                            onPress?.();
-                        }
-                        : onPress}
-                    renderPopover={renderPopover}
-                    {...rest}
-                />,
-            );
+            instruments.push({
+                yields: badge.emphasis === 'quiet',
+                node: (
+                    <AgentInputStatusBadge
+                        key={`badge-${key}`}
+                        anchorRef={renderPopover ? statusBadgeAnchorRef : undefined}
+                        onPress={renderPopover
+                            ? () => {
+                                setActiveStatusBadgeKey(activeStatusBadgeKey === key ? null : key);
+                                onPress?.();
+                            }
+                            : onPress}
+                        renderPopover={renderPopover}
+                        // The strip owns whether a badge's popover is open, so it announces that to assistive tech.
+                        accessibilityState={renderPopover ? { expanded: activeStatusBadgeKey === key } : undefined}
+                        {...rest}
+                    />
+                ),
+            });
         }
+        for (const region of props.statusRegions ?? []) instruments.push({ yields: region.emphasis === 'quiet', node: region.node });
         return instruments;
     };
     const collapsibleInstruments = buildCollapsibleInstruments(isCompact);
@@ -377,8 +405,8 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
                 {isCollapsed && collapsibleInstruments.length > 0 ? (
                     <CollapsedInstrumentsChip instruments={buildCollapsibleInstruments(false)} />
                 ) : (
-                    collapsibleInstruments.map((node, index) => (
-                        <InstrumentEntrance key={(node as React.ReactElement).key ?? index} index={index} enabled={entranceEnabled}>
+                    collapsibleInstruments.map(({ node, yields }, index) => (
+                        <InstrumentEntrance key={(node as React.ReactElement).key ?? index} index={index} enabled={entranceEnabled} yields={yields}>
                             {node}
                         </InstrumentEntrance>
                     ))
@@ -402,8 +430,11 @@ export const SessionInstrumentStrip = React.memo(function SessionInstrumentStrip
     );
 });
 
-/** One-shot fade + 4px rise entrance, staggered per index via kit tokens (T5.1). */
-function InstrumentEntrance(props: Readonly<{ index: number; enabled: boolean; children: React.ReactNode }>) {
+/**
+ * One-shot fade + 4px rise entrance, staggered per index via kit tokens (T5.1). Leaving fades over the same
+ * duration, so a badge whose work ends (a created machine joining) settles instead of blinking out (lab af-create).
+ */
+function InstrumentEntrance(props: Readonly<{ index: number; enabled: boolean; yields: boolean; children: React.ReactNode }>) {
     const progress = useSharedValue(props.enabled ? 0 : 1);
     React.useEffect(() => {
         if (props.enabled) {
@@ -420,27 +451,31 @@ function InstrumentEntrance(props: Readonly<{ index: number; enabled: boolean; c
         opacity: progress.value,
         transform: [{ translateY: (1 - progress.value) * 4 }],
     }));
-    return <InstrumentFrame style={[instrumentStripStyles.instrumentEntrance, style]}>{props.children}</InstrumentFrame>;
+    return (
+        <InstrumentFrame style={[props.yields ? instrumentStripStyles.instrumentEntranceYielding : instrumentStripStyles.instrumentEntrance, style]}
+            exiting={props.enabled ? FadeOut.duration(INSTRUMENT_DURATIONS.entrance) : undefined}>
+            {props.children}
+        </InstrumentFrame>
+    );
 }
 
 /** Overflow collapse (<300px): a "•••" chip opening a full-size instrument list. */
-function CollapsedInstrumentsChip(props: Readonly<{ instruments: React.ReactNode[] }>) {
+function CollapsedInstrumentsChip(props: Readonly<{ instruments: StripInstrument[] }>) {
     const { theme } = useUnistyles();
     const anchorRef = React.useRef(null);
     const [open, setOpen] = React.useState(false);
     return (
         <>
             <View ref={anchorRef}>
-                <Pressable
+                <HappierPressable
                     testID="session-instrument-overflow-chip"
                     accessibilityRole="button"
                     accessibilityLabel={t('instrument.strip.moreLabel')}
-                    hitSlop={10}
                     onPress={() => setOpen((previous) => !previous)}
                     style={[instrumentStripStyles.overflowChip, { backgroundColor: theme.colors.surface.pressedOverlay }]}
                 >
                     <Text style={instrumentStripStyles.overflowChipText}>•••</Text>
-                </Pressable>
+                </HappierPressable>
             </View>
             <AgentInputContentPopover
                 open={open}
@@ -451,7 +486,7 @@ function CollapsedInstrumentsChip(props: Readonly<{ instruments: React.ReactNode
                 testID="session-instrument-overflow-popover"
                 content={(
                     <View style={instrumentStripStyles.overflowPopover}>
-                        {props.instruments.map((node, index) => (
+                        {props.instruments.map(({ node }, index) => (
                             <View key={index} style={instrumentStripStyles.overflowPopoverRow}>
                                 {node}
                             </View>

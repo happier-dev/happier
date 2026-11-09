@@ -1,7 +1,7 @@
 import { isExternalSessionOperationTerminalStatusV1 } from '@happier-dev/protocol/sessions/external/operationV1';
 import type {
     ExternalSessionOperationSharedPresentationV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/operationV1';
 
 export type ExternalSessionOperationShellPresentation = Readonly<{
     running: boolean;

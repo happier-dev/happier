@@ -1,7 +1,8 @@
 import * as React from 'react';
 
-import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
 import { useSessionListAttentionActivity } from '../useSessionListAttentionInteraction';
+import { Platform } from 'react-native';
+import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 
 /**
  * Phone "Organize list" mode (DnD lab K1): the one intentional moment a phone list drags. Rows show
@@ -26,7 +27,7 @@ const INERT: SessionListOrganizeMode = Object.freeze({
 const SessionListOrganizeModeContext = React.createContext<SessionListOrganizeMode>(INERT);
 
 export function SessionListOrganizeModeProvider(props: React.PropsWithChildren): React.ReactElement {
-    const available = isTouchPrimaryPointer();
+    const available = useHappierTouchPrimaryPointer(Platform.OS);
     const [active, setActive] = React.useState(false);
     const setAttentionHeld = useSessionListAttentionActivity();
     const enter = React.useCallback(() => {

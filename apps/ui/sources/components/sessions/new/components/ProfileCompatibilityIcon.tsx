@@ -1,5 +1,5 @@
 import React from 'react';
-import { useAcpCatalog } from '@/sync/store/useAcpCatalog';
+import { useAcpCatalogData } from '@/sync/store/useAcpCatalog';
 import { View, ViewStyle } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
@@ -48,7 +48,7 @@ export function ProfileCompatibilityIcon({ profile, backendEntries: backendEntri
     const { theme } = useUnistyles();
     const styles = stylesheet;
     const enabledAgentIds = useEnabledAgentIds();
-    const { snapshot: acpCatalog } = useAcpCatalog();
+    const acpCatalog = useAcpCatalogData(undefined, { enabled: !Array.isArray(backendEntriesOverride) });
     const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
     const backendEntries = React.useMemo(() => {
         if (Array.isArray(backendEntriesOverride)) {
@@ -56,7 +56,7 @@ export function ProfileCompatibilityIcon({ profile, backendEntries: backendEntri
         }
         return getResolvedBackendCatalogEntries({
             enabledAgentIds,
-            acpCatalogSnapshot: acpCatalog?.catalog,
+            retainedAcpCatalogRecord: acpCatalog,
             backendEnabledByTargetKey: backendEnabledByTargetKey as Record<string, boolean> | undefined,
         });
     }, [acpCatalog, backendEnabledByTargetKey, backendEntriesOverride, enabledAgentIds]);

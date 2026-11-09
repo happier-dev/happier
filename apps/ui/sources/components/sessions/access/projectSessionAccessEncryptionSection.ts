@@ -1,4 +1,4 @@
-import type { SessionDataKeyEnvelopeItemV1, SessionDataKeyEnvelopeSummaryV1 } from '@happier-dev/protocol';
+import type { SessionDataKeyEnvelopeItemV1, SessionDataKeyEnvelopeSummaryV1 } from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';
 
 import { t } from '@/text';
 

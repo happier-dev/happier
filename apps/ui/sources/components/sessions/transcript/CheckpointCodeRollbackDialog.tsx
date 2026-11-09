@@ -12,7 +12,7 @@ import {
     resolveCheckpointCodeRollbackChoices,
 } from '@/sync/domains/sessionRollback/checkpointCodeRollback';
 import { t, type TranslationKeyNoParams } from '@/text';
-import type { CheckpointCodeRollbackBackupMode, SessionRollbackCodeMode } from '@happier-dev/protocol';
+import type { CheckpointCodeRollbackBackupMode, SessionRollbackCodeMode } from '@happier-dev/protocol/sessions/control/rollback/checkpointCodeRollback';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
 export type CheckpointCodeRollbackDialogConfirmValue = Readonly<{

@@ -5,7 +5,7 @@ import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope
 import type {
     ExternalSessionOperationProgressV1,
     ExternalSessionOperationSharedPresentationV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/operationV1';
 
 import { machineExternalSessionOperationStatus } from '@/sync/ops/machineExternalSessions';
 import {

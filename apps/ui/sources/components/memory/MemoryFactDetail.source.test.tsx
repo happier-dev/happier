@@ -12,6 +12,8 @@ import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { act, createDeferred, flushHookEffects } from '@/dev/testkit';
 import type { DiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
+import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
 
 const homes = createHomeGovernanceHarness();
 const httpBoundary = { ...homes, request: createSessionReadBatchFetchBoundary(homes.request) };
@@ -48,7 +50,25 @@ it('loads a Discussion source title from the shared authorized Discussion reader
     await screen.pressByTestIdAsync('fact.source');
     expect(opened).toEqual(fact.decision?.sourceMessageRef);
 });
-afterEach(() => { standardCleanup(); getStorage().setState(initial, true); });
+afterEach(() => { standardCleanup(); setScreenSharingPrivacyActive(false); getStorage().setState(initial, true); });
+
+it('masks a recording-private fact source title while preserving its exact message link', async () => {
+    const session = createSessionFixture({ id: 'source-session', encryptionMode: 'plain',
+        metadata: { path: '/project', host: 'host', summary: { text: 'Confidential decision source', updatedAt: 1 } } });
+    homes.answer(serverId, '/v2/sessions/source-session', { body: createPlainSessionByIdResponseFixture(session) });
+    getStorage().setState({ settings: { ...getStorage().getState().settings, sessionListHiddenTagIdsWhileRecording: { [serverId]: ['private'] } },
+        sessionOrganizationTagAssignmentsBySessionKey: {
+            [buildSessionOrganizationSessionKey(serverId, session.id)]: { sessionId: session.id, tagIds: ['private'] },
+        } });
+    const opened = vi.fn();
+    const screen = await renderScreen(<MemoryFactDetail testID="fact" fact={decision()} documentRef={null} serverId={serverId}
+        viewerAccountId="alice" archived={false} onOpenSession={opened} />);
+    await waitForHomeGovernance(() => expect(sourceTitle(screen)).toBe('Confidential decision source'));
+    await act(async () => setScreenSharingPrivacyActive(true));
+    expect(sourceTitle(screen)).not.toBe('Confidential decision source');
+    await screen.pressByTestIdAsync('fact.source');
+    expect(opened).toHaveBeenCalledWith(expect.objectContaining({ serverId, sessionId: session.id }));
+});
 
 function sourceDiscussion() {
     return DiscussionSummaryV1Schema.parse({
@@ -114,6 +134,19 @@ it('does not use a different legacy Session as the decision source when the real
     const screen = await renderScreen(<MemoryFactDetail testID="fact" fact={fact} documentRef={null} serverId={serverId} viewerAccountId="alice" archived={false} />);
     await waitForHomeGovernance(() => expect(homes.requests.some(request => request.path.startsWith('/v2/sessions/source-session'))).toBe(true));
     expect(sourceTitle(screen)).not.toBe('Unrelated legacy title');
+});
+
+it('keeps a retained title for the exact source private after the current source read is denied', async () => {
+    const session = createSessionFixture({ id: 'source-session', encryptionMode: 'plain',
+        metadata: { path: '/private', host: 'host', summary: { text: 'Retained private source title', updatedAt: 1 } } });
+    getStorage().getState().applySessions([session]);
+    homes.answer(serverId, '/v2/sessions/source-session', { status: 403, body: { error: 'forbidden' } });
+    const screen = await renderScreen(<MemoryFactDetail testID="fact" fact={decision()} documentRef={null}
+        serverId={serverId} viewerAccountId="alice" archived={false} />);
+    await waitForHomeGovernance(() => expect(homes.requests.some(request => request.path.startsWith('/v2/sessions/source-session'))).toBe(true));
+    await flushHookEffects();
+    expect(sourceTitle(screen)).not.toBe('Retained private source title');
+    expect(getStorage().getState().sessions['source-session']?.metadata?.summary?.text).toBe('Retained private source title');
 });
 
 it('discards an in-flight source title when the admitting Account retires', async () => {

@@ -12,6 +12,7 @@ import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { usePaneMainBodyPresentation } from '@/components/ui/panels/paneMainComposerAnchor';
 import { useSessionViewContentBottomSpacing } from './useSessionViewContentBottomSpacing';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 export type SessionViewLayoutProps = Readonly<{
     content: React.ReactNode;
@@ -108,31 +109,29 @@ export function SessionViewLayout(props: SessionViewLayoutProps) {
             </View>
 
             {showBackButton && (
-                <Pressable
-                    {...hiddenProps}
-                    onPress={props.onBackPress}
-                    testID="session-view-landscape-back-button"
-                    style={{
-                        position: 'absolute',
-                        top: safeArea.top + 8,
-                        left: 16,
-                        zIndex: 1000,
-                        width: 44,
-                        height: 44,
-                        borderRadius: 22,
-                        backgroundColor: resolveThemeColor(theme.colors.chrome.header.background).alpha(0.9).rgb().string(),
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        ...shadowLevelStyle(theme.colors.shadowLevels[4]),
-                    }}
-                    hitSlop={15}
-                >
-                    <Icon
-                        name={Platform.OS === 'ios' ? 'caret-left' : 'arrow-left'}
-                        size={24}
-                        color={theme.colors.text.primary}
-                    />
-                </Pressable>
+                // The pane owner's hidden boundary is a host View's (pointer, inert, aria-hidden, native hiding):
+                // the portable pressable takes none of them, so the boundary wraps it.
+                <View {...hiddenProps} style={{ position: 'absolute', top: safeArea.top + 8, left: 16, zIndex: 1000 }}>
+                    <HappierPressable
+                        onPress={props.onBackPress}
+                        testID="session-view-landscape-back-button"
+                        style={{
+                            width: 44,
+                            height: 44,
+                            borderRadius: 22,
+                            backgroundColor: resolveThemeColor(theme.colors.chrome.header.background).alpha(0.9).rgb().string(),
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            ...shadowLevelStyle(theme.colors.shadowLevels[4]),
+                        }}
+                    >
+                        <Icon
+                            name={Platform.OS === 'ios' ? 'caret-left' : 'arrow-left'}
+                            size={24}
+                            color={theme.colors.text.primary}
+                        />
+                    </HappierPressable>
+                </View>
             )}
         </>
     );

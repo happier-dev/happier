@@ -8,6 +8,7 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { installShippedNativeFrameScheduler } from '@/dev/testkit/legend/shippedNativeLegendRuntime';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { WorkspaceAppShellProvider } from '@/components/appShell/workspace/WorkspaceAppShellProvider';
+import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { BrowserPresentationRetentionProvider } from '@/components/browser/surfaces/browserPresentationRetention';
 import { storage } from '@/sync/domains/state/storageStore';
 import { resetSessionSurfaceVisibilityForTests, getSessionSurfaceVisibilitySnapshot } from '@/sync/domains/session/sessionSurfaceVisibility';
@@ -23,6 +24,20 @@ import { SessionViewerSourceAccountScopeProvider } from '@/components/sessions/v
 import { ComputerScreenViewer } from '@/components/computer/ComputerScreenViewer';
 import { AgentInput } from '@/components/sessions/agentInput';
 import { LegendList, type LegendListRef } from '@legendapp/list/react-native';
+import { DEFAULT_HOME_ATMOSPHERE } from '@happier-dev/protocol/account/settings/accountSettings';
+import { AtmosphereLayer } from '@/components/atmosphere/AtmosphereLayer';
+import { atmosphereStageStore } from '@/components/atmosphere/atmosphereStage';
+import { pictureStore } from '@/components/atmosphere/pictureStore';
+import type { BackdropWorkerRequest, BackdropWorkerResponse } from '@/components/atmosphere/backdropCanvas.types';
+import { GlassRuntimeEnvironmentProvider, GlassAtmosphereBehindSetterProvider } from '@/components/ui/glass/glassRuntimeEnvironment';
+import type { GlassMaterialEnvironment } from '@/components/ui/glass/glassMaterial';
+import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+
+// Platform drawing/storage adapters, as in AtmosphereLayer's composed tests.
+vi.mock('@/components/atmosphere/BackdropCanvas', async () => import('@/components/atmosphere/BackdropCanvas.web'));
+vi.mock('@/components/atmosphere/WallpaperHaze', async () => import('@/components/atmosphere/WallpaperHaze.web'));
+vi.mock('@/components/atmosphere/pictureStore', async () => import('@/components/atmosphere/pictureStore.web'));
 
 // Static Session consumers capture the Socket factory during collection; install
 // the canonical external boundary before those imports, then configure it below.
@@ -56,7 +71,8 @@ afterEach(async () => {
 });
 const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'account-shell' })).toString('base64url')}.signature` };
 
-async function withSessionFixture(run: (serverId: string) => Promise<void>) {
+async function withSessionFixture(run: (serverId: string) => Promise<void>,
+    request?: Parameters<typeof restoreServerAccountForTest>[0]['request']) {
     await prepareSessionDraftPersistenceStorage();
     await loadSyncSingletonForTests();
     const previousState = storage.getState();
@@ -64,7 +80,7 @@ async function withSessionFixture(run: (serverId: string) => Promise<void>) {
     // adapters own an unavailable fixture Home. No hydration or admission owner is mocked.
     const account = await restoreServerAccountForTest({
         serverUrl: 'https://shell-test.example', credentials,
-        request: async () => Response.json({ error: 'fixture_home_offline' }, { status: 503 }),
+        request: request ?? (async () => Response.json({ error: 'fixture_home_offline' }, { status: 503 })),
     });
     const serverId = account.home.id;
     const frameGlobals = ['requestAnimationFrame', 'cancelAnimationFrame'] as const;
@@ -92,12 +108,100 @@ async function withSessionFixture(run: (serverId: string) => Promise<void>) {
     }
 }
 
+// A retained destination must use a tab admitted by the real workspace owner. An
+// invented tab id is interpreted as a removed destination when its viewer portals.
+function WorkspaceSessionDestination(props: Readonly<{ id: string; serverId: string }>) {
+    const workspace = useOptionalWorkspaceNavigation();
+    const tabId = workspace?.state.groups[workspace.state.focusedGroupId]?.activeTabId;
+    if (!tabId || !workspace?.state.tabs[tabId]) throw new Error('Expected an admitted workspace tab');
+    return <DestinationInstanceHost tabId={tabId} ref={{ kind: 'session', params: props }}
+        pathname={`/session/${props.id}`} focused visible navigation={workspace.navigationForTab(tabId)}>
+        <SessionDestinationBody />
+    </DestinationInstanceHost>;
+}
+
 describe('SessionDestinationBody workspace activation', () => {
+    it('keeps Home pictures hidden while cold Session data and Project membership are unknown', async () => {
+        let release: (() => void) | undefined;
+        let sessionReads = 0;
+        let paints = 0;
+        const localId = 'cold-session-atmosphere';
+        vi.stubGlobal('Worker', class {
+            onmessage: ((event: { data: BackdropWorkerResponse }) => void) | null = null;
+            postMessage(message: BackdropWorkerRequest) {
+                if (!('request' in message)) return;
+                const { width: w, height: h } = message.request;
+                queueMicrotask(() => this.onmessage?.({ data: { id: message.id, ok: true,
+                    result: { rgba: new Uint8ClampedArray(w * h * 4), w, h } } }));
+            }
+            terminate() {}
+        });
+        vi.stubGlobal('ImageData', class {
+            constructor(public data: Uint8ClampedArray, public width: number, public height: number) {}
+        });
+        try {
+            await pictureStore.put({ localId, kind: 'user', data: new Blob(['cached prepared picture']) });
+            await withSessionFixture(async serverId => {
+                storage.setState({ isDataReady: true, settings: { ...storage.getState().settings,
+                    homeAtmosphere: { ...DEFAULT_HOME_ATMOSPHERE, source: 'picture', showOn: ['sessions'],
+                        picture: { ref: { kind: 'user', localId }, layout: 'wallpaper' } },
+                } });
+                function Shell() {
+                    const [atmosphereBehind, setBehind] = React.useState<GlassMaterialEnvironment['atmosphereBehind']>('none');
+                    return <GlassRuntimeEnvironmentProvider value={{ atmosphereBehind }}>
+                        <GlassAtmosphereBehindSetterProvider value={setBehind}>
+                            <AtmosphereLayer sheetRadius={12} chrome={false} />
+                            <InjectedAuthProvider credentials={credentials}><AppPaneProvider>
+                                <DestinationInstanceHost tabId="cold" ref={{ kind: 'session', params: { id: 'cold-atmosphere', serverId } }}
+                                    pathname="/session/cold-atmosphere" focused visible
+                                    navigation={{ push: () => {}, replace: () => {}, back: () => {} }}>
+                                    <SessionDestinationBody />
+                                </DestinationInstanceHost>
+                            </AppPaneProvider></InjectedAuthProvider>
+                        </GlassAtmosphereBehindSetterProvider>
+                    </GlassRuntimeEnvironmentProvider>;
+                }
+                const screen = await renderScreen(<Shell />, { createNodeMock: element => element.type === 'canvas'
+                    ? { getContext: () => ({ putImageData() { paints++; } }) }
+                    : { measureInWindow: (done: (x: number, y: number, width: number, height: number) => void) => done(0, 0, 80, 60) },
+                });
+                try {
+                    await vi.waitFor(() => expect(sessionReads).toBe(1));
+                    expect(screen.findAllByType(PaneLoadingFallback)).toHaveLength(1);
+                    expect(storage.getState().sessions['cold-atmosphere']).toBeUndefined();
+                    expect(screen.findAllByType(SessionView)).toHaveLength(0);
+                    // docs/surface-states.md: panes inherit the shell coat; unknown
+                    // membership must still never use Home's picture as a placeholder.
+                    expect(atmosphereStageStore.get().pictureShown).toBe(false);
+                    expect(paints).toBe(0);
+                    expect(sessionReads).toBe(1);
+                } finally {
+                    await screen.unmount();
+                    release?.();
+                }
+            }, async (input, init) => {
+                const path = new URL(input instanceof Request ? input.url : String(input)).pathname;
+                if (path === '/v2/sessions/read-batch' && String(init?.body).includes('cold-atmosphere')) {
+                    sessionReads++;
+                    await new Promise<void>(resolve => { release = resolve; });
+                }
+                return Response.json({ error: 'fixture_home_offline' }, { status: 503 });
+            });
+        } finally {
+            release?.();
+            await pictureStore.remove(localId);
+            vi.unstubAllGlobals();
+        }
+    });
+
     it('keeps Session content, list, draft and the open Computer viewer across breakpoints and resets for another Session', async () => {
         await withSessionFixture(async serverId => {
             storage.setState({ isDataReady: true, settings: { ...storage.getState().settings,
                 mobileWorkspaceExperienceV1: 'cockpit', transcriptGroupingMode: 'linear',
-            } });
+            },
+                // Computer lives in the header menu when the optional action rail is hidden.
+                localSettings: { ...storage.getState().localSettings, uiMultiPanePanelsEnabled: false },
+            });
             const messages: Message[] = Array.from({ length: 24 }, (_, index) => ({
                 kind: 'user-text', id: `message-${index}`, seq: index + 1, localId: null,
                 createdAt: index + 1, text: `Discuss the next change ${index + 1}.`,
@@ -112,10 +216,7 @@ describe('SessionDestinationBody workspace activation', () => {
             const body = (id = 'focused') => <InjectedAuthProvider credentials={credentials}><AppPaneProvider>
                 <WorkspaceAppShellProvider>
                 <BrowserPresentationRetentionProvider>
-                <DestinationInstanceHost tabId="responsive-viewer" ref={{ kind: 'session', params: { id, serverId } }}
-                    pathname={`/session/${id}`} focused visible navigation={{ push: () => {}, replace: () => {}, back: () => {} }}>
-                    <SessionDestinationBody />
-                </DestinationInstanceHost>
+                <WorkspaceSessionDestination id={id} serverId={serverId} />
                 </BrowserPresentationRetentionProvider>
                 </WorkspaceAppShellProvider>
             </AppPaneProvider></InjectedAuthProvider>;
@@ -144,16 +245,22 @@ describe('SessionDestinationBody workspace activation', () => {
                 screen.findAllByType(AgentInput)[0].props.onChangeText('Keep this draft while resizing');
             });
             expect(listRef.current?.getState().scroll).toBe(480);
-            expect(screen.findAllByType(AgentInput)[0].props.value).toBe('Keep this draft while resizing');
+            expect(screen.findAllByType(AgentInput)[0].props.value.getPrompt()).toBe('Keep this draft while resizing');
             const assertContentRetained = () => {
                 expect(loadedContent()).toHaveLength(1);
                 expect(loadedContent()[0]).toBe(content);
                 expect(screen.findAllByType(LegendList)[0]).toBe(list);
                 expect(screen.findAllByType(LegendList)[0].props.ref).toBe(listRef);
                 expect(listRef.current?.getState().scroll).toBe(480);
-                expect(screen.findAllByType(AgentInput)[0].props.value).toBe('Keep this draft while resizing');
+                expect(screen.findAllByType(AgentInput)[0].props.value.getPrompt()).toBe('Keep this draft while resizing');
             };
-            await screen.pressByTestIdAsync('session-header-computer-button');
+            const computerMenu = screen.findAllByType(DropdownMenu).find(menu =>
+                menu.props.items.some((item: Readonly<{ id: string }>) => item.id === 'header.openComputer'));
+            expect(computerMenu).toBeDefined();
+            expect(computerMenu!.props.items.find((item: Readonly<{ id: string }>) => item.id === 'header.openComputer'))
+                .toMatchObject({ disabled: false });
+            // Exercise the real header menu Action; portal geometry is outside this continuity journey.
+            await act(async () => { computerMenu!.props.onSelect('header.openComputer'); });
             // The local Action actually opened the viewer before the responsive shell is replaced.
             expect(screen.findHostByTestId('session-viewer-host')).not.toBeNull();
             await act(async () => {

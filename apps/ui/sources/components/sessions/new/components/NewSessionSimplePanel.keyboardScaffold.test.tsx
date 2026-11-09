@@ -6,6 +6,7 @@ import { act } from 'react-test-renderer';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { OVERLAY_CAPSULE_ROW_HEIGHT } from '@/components/ui/overlays/OverlayCapsuleButton';
+import { resolveComposerBottomOffset } from '@/components/sessions/keyboardAvoidance/composerKeyboardGeometry';
 
 import { installNewSessionComponentsCommonModuleMocks } from './newSessionComponentsTestHelpers';
 
@@ -27,6 +28,7 @@ const testState = vi.hoisted(() => ({
     scaffoldRender: null as ScaffoldRender | null,
     platformOs: 'ios' as 'ios' | 'android' | 'web',
     keyboardLayout: null as TestKeyboardLayout | null,
+    timingFinished: true,
 }));
 
 function setTestKeyboardHeight(height: number): void {
@@ -46,7 +48,9 @@ vi.mock('@/utils/navigation/safeRouterBack', () => ({
 // suite opts the canonical reanimated mock into settling `withTiming` completion callbacks.
 vi.mock('react-native-reanimated', async () => {
     const { createReanimatedModuleMock } = await import('@/dev/testkit/mocks/reanimated');
-    return createReanimatedModuleMock({ settleTimingCallbacks: true });
+    const mock = createReanimatedModuleMock({ settleTimingCallbacks: true });
+    return { ...mock, withTiming: (value: number, config: Parameters<typeof mock.withTiming>[1], callback?: (finished: boolean) => void) =>
+        mock.withTiming(value, config, callback ? () => callback(testState.timingFinished) : undefined) };
 });
 
 installNewSessionComponentsCommonModuleMocks({
@@ -84,7 +88,8 @@ installNewSessionComponentsCommonModuleMocks({
     },
 });
 
-vi.mock('@/components/ui/popover', () => ({
+vi.mock('@/components/ui/popover', async importOriginal => ({
+    ...(await importOriginal<typeof import('@/components/ui/popover')>()),
     PopoverBoundaryProvider: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
         React.createElement(React.Fragment, null, props.children),
 }));
@@ -205,12 +210,17 @@ function createFloatingPanelProps(
     } as unknown as React.ComponentProps<typeof import('./NewSessionSimplePanel').NewSessionSimplePanel>;
 }
 
+// Load the real panel graph outside a test's deadline; focused selections otherwise spend their
+// entire first test transforming the screen rather than exercising the animation boundary.
+await import('./NewSessionSimplePanel');
+
 describe('NewSessionSimplePanel keyboard scaffold integration', () => {
     beforeEach(() => {
         testState.agentInputProps = [];
         testState.scaffoldAvailablePanelHeight = 360;
         testState.scaffoldRender = null;
         testState.platformOs = 'ios';
+        testState.timingFinished = true;
         safeRouterBackSpy.mockReset();
     });
 
@@ -242,7 +252,7 @@ describe('NewSessionSimplePanel keyboard scaffold integration', () => {
         }
     });
 
-    it('floats the web composer on its own full-window backdrop, with its leave control in the status row on a phone', async () => {
+    it('seats the phone web Modal with the shared band and leaves outside dismissal available', async () => {
         testState.platformOs = 'web';
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
@@ -250,8 +260,9 @@ describe('NewSessionSimplePanel keyboard scaffold integration', () => {
         try {
             screen = await renderScreen(<NewSessionSimplePanel {...createFloatingPanelProps()} />);
 
-            // Web `/new` is a transparent route too: the panel paints one backdrop of its own (a press
-            // closes) and the composer's leave control rides its status row.
+            expect(screen.findAllHostsByTestId('new-session-scrim').some(node => node.props.pointerEvents === 'none')).toBe(true);
+            await screen.pressByTestIdAsync('new-session-backdrop-dismiss');
+            expect(safeRouterBackSpy).toHaveBeenCalled();
             expect(testState.scaffoldRender?.props.surface).toBe('transparent');
             expect(screen.tree.root.findAll(
                 (node) => node.props?.testID === 'new-session-scrim',
@@ -282,21 +293,42 @@ describe('NewSessionSimplePanel keyboard scaffold integration', () => {
         await screen.unmount();
     });
 
-    it('rests the floating composer at its own side margin, not the home-indicator inset', async () => {
-        testState.platformOs = 'ios';
+    it.each([
+        ['ios', 'the home indicator', 0, 12],
+        ['ios', 'the app bar it is presented over', 80, 12],
+        ['android', 'the app bar it is presented over', 80, 8],
+    ] as const)('keeps the %s floating band clear of %s from its padded wrapper', async (platform, _label, bottomChrome, bottomPadding) => {
+        testState.platformOs = platform;
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+        const { SessionCockpitBottomChromeHeightContext } = await import('@/components/workspaceCockpit/session/SessionCockpitChromeRegistry');
         let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
 
         try {
-            screen = await renderScreen(<NewSessionSimplePanel {...createFloatingPanelProps()} />);
+            screen = await renderScreen(<SessionCockpitBottomChromeHeightContext.Provider value={bottomChrome}>
+                <NewSessionSimplePanel {...createFloatingPanelProps({ newSessionBottomPadding: bottomPadding })} />
+            </SessionCockpitBottomChromeHeightContext.Provider>);
 
-            // A floating card is not seated against the screen edge, so the home-indicator inset is
-            // the wrong resting gap — it leaves the card visibly higher than its own side margin.
-            // 16 - 12: the composer wrapper already pads 12 below the card, so only the remainder
-            // belongs to the scaffold. The scaffold resolves the resting offset as
-            // max(keyboardHeight, safeAreaBottom), and the keyboard is always taller than this
-            // remainder, so keyboard-open positioning is untouched.
-            expect(testState.scaffoldRender?.props.safeAreaBottom).toBe(4);
+            const band = screen.findAllHostsByTestId('new-session-scrim')[0]!;
+            const bandBottom = Object.assign({}, ...[band.props.style].flat(Infinity)).bottom as number;
+            const safeAreaBottom = testState.scaffoldRender?.props.safeAreaBottom as number;
+            // The band is a sibling of the WHOLE padded card wrapper. Its bottom is measured
+            // from the scaffold's seat, without adding the card's internal bottom padding again.
+            const restingOffset = resolveComposerBottomOffset({ keyboardHeight: 0, safeAreaBottom });
+            expect(restingOffset + bandBottom).toBe(bottomChrome);
+            const keyboardOffset = resolveComposerBottomOffset({ keyboardHeight: 300, safeAreaBottom });
+            expect(keyboardOffset + bandBottom).toBeGreaterThanOrEqual(bottomChrome);
+        } finally {
+            act(() => { screen?.tree.unmount(); });
+        }
+    });
+
+    it('rests the web phone floating card at its own side margin', async () => {
+        testState.platformOs = 'web';
+        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        try {
+            screen = await renderScreen(<NewSessionSimplePanel {...createFloatingPanelProps({ shouldBottomAnchor: true })} />);
+            expect(testState.scaffoldRender?.props.safeAreaBottom).toBe(16 - 12);
         } finally {
             act(() => { screen?.tree.unmount(); });
         }
@@ -371,6 +403,16 @@ describe('NewSessionSimplePanel keyboard scaffold integration', () => {
                 screen?.tree.unmount();
             });
         }
+    });
+
+    it('settles an interrupted exit directly instead of leaving the composer disabled behind a timer', async () => {
+        const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
+        testState.timingFinished = false;
+        const screen = await renderScreen(<NewSessionSimplePanel {...createFloatingPanelProps()} />);
+        try {
+            screen.pressByTestId('new-session-composer-close');
+            expect(safeRouterBackSpy).toHaveBeenCalledWith(expect.objectContaining({ fallbackHref: '/' }));
+        } finally { await screen.unmount(); }
     });
 
     it('keeps a pending launch on screen when the backdrop is tapped', async () => {

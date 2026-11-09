@@ -11,14 +11,17 @@ import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtur
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
-import { ApprovalRequestSchema, SessionCurrentProjectionRecordV1Schema, buildApprovalRequestArtifactHeaderV1, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ApprovalRequestSchema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { SessionCurrentProjectionRecordV1Schema} from '@happier-dev/protocol/sessions/listing/response';
+import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionOwnerCompatibilityViewV1, SessionMetadataOwnerPatchV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { McpServerCatalogV1Schema, McpServerCatalogRowMutationV1Schema } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { resolveReachV1 } from '@happier-dev/protocol/reach/resolveReachV1';
 import { SessionCapabilitiesSetOutputV1Schema } from '@happier-dev/protocol/actions/specs/sessionCapabilities';
-import type { ApprovalRequest } from '@happier-dev/protocol';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { readPendingCapabilityApplyV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1, PromptLibraryCatalogKeyV1Schema, PromptLibraryRowMutationV1Schema,
     PromptLibraryRecordV1Schema, type PromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
@@ -56,21 +59,51 @@ const { readSessionCapabilityApplyChange, sessionCapabilityApplyNotice } = await
 const { McpAlwaysAllowDecision } = await import('@/components/tools/shell/permissions/McpAlwaysAllowDecision');
 const { PermissionPromptCard } = await import('@/components/tools/shell/permissions/PermissionPromptCard');
 const { ResolvedMcpToolIdentityV1Schema } = await import('@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1');
+const { useMcpAlwaysAllow } = await import('@/components/tools/shell/permissions/useMcpAlwaysAllow');
+
+it('retires all full controllers after 128 untouched MCP cards leave', async () => {
+    const accountId = 'retirement-owner';
+    const serverId = await homes.addHome({ name: 'Retirement Home', serverUrl: 'https://retirement.test', accountId });
+    const identity = ResolvedMcpToolIdentityV1Schema.parse({ server: 'docs', tool: 'write', item: { serverId: 'docs' }, serverTitle: 'Docs',
+        decision: { exposed: true, approval: 'ask', effectClass: 'write', source: 'server_default' } });
+    // Observe strong registry entries without replacing any controller or domain logic.
+    const insertions = vi.spyOn(Map.prototype, 'set');
+    try {
+        function Card({ id }: { id: number }) {
+            useMcpAlwaysAllow({ requestId: `retirement-card-${id}`, identity, scope: { serverId, accountId }, canWriteCatalog: true,
+                answerForSession: async () => { throw new Error('Untouched card must not answer'); } });
+            return null;
+        }
+        const screen = await renderScreen(React.createElement(React.Fragment, null,
+            Array.from({ length: 128 }, (_, id) => React.createElement(Card, { key: id, id }))));
+        const entries = insertions.mock.calls.flatMap(([key], index) => typeof key === 'string' && key.includes('retirement-card-')
+            ? [{ map: insertions.mock.contexts[index] as Map<string, unknown>, key }] : []);
+        expect(entries.length).toBeGreaterThanOrEqual(128);
+        await act(async () => screen.tree.unmount());
+        const retained = new Set(entries.filter(({ map, key }) => {
+            const value = map.get(key);
+            return value !== null && typeof value === 'object' && 'controller' in value;
+        }).map(({ key }) => key));
+        expect(retained.size).toBe(0);
+    } finally { insertions.mockRestore(); }
+});
 
 beforeEach(async () => { await homes.reset(); installHomeGovernanceBoundaries(httpBoundary); await loadSyncSingletonForTests(); machineTransport.mockReset(); });
 afterEach(async () => { standardCleanup(); await homes.reset(); });
 
-it('loads the MCP server default and saves Always allow after the answered tray card unmounts', async () => {
-    const accountId = 'mcp-tray-owner';
-    const serverId = await homes.addHome({ name: 'MCP Tray Home', serverUrl: 'https://mcp-tray.test', accountId });
+it.each(['success', 'retry', 'sibling'] as const)('loads the MCP server default and saves Always allow after tray unmount (%s)', async mode => {
+    const failsFirstSave = mode === 'retry';
+    const accountId = `mcp-tray-owner-${mode}`;
+    const serverId = await homes.addHome({ name: 'MCP Tray Home', serverUrl: `https://mcp-tray-${mode}.test`, accountId });
     let catalog = McpServerCatalogV1Schema.parse({ v: 1, servers: [{ id: 'docs', name: 'docs', title: 'Docs', transport: 'http',
         remote: { url: 'https://docs.test/mcp', headers: {} }, env: {}, createdAt: 1, updatedAt: 1,
         tools: { default: 'allow_read_only', overrides: {} } }], bindings: [] });
     let revision = 1;
+    let refuseSave = failsFirstSave;
     homes.answer(serverId, 'GET /v1/account/entity-rows/mcp', { select: () => ({ body: { status: 'present', revision, content: { t: 'plain', v: catalog } } }) });
     homes.answer(serverId, 'POST /v1/account/entity-rows/mcp', { select: input => {
         const mutation = McpServerCatalogRowMutationV1Schema.parse(input);
-        if (mutation.expectedRevision !== revision) return { body: { status: 'conflict', revision } };
+        if (refuseSave || mutation.expectedRevision !== revision) return { body: { status: 'conflict', revision } };
         if (mutation.content?.t !== 'plain') throw new Error('Expected Plain catalog');
         catalog = mutation.content.v;
         return { body: { status: 'updated', revision: ++revision, cursor: revision } };
@@ -99,6 +132,7 @@ it('loads the MCP server default and saves Always allow after the answered tray 
     await vi.waitFor(() => expect(screen.getTextContent()).toContain('capabilities.mcp.tools.defaultReadOnly'));
     expect(screen.findByTestId('permission-prompt-tool-settings')).toBeTruthy();
     await act(async () => { screen.pressByTestId('permission-footer.always-allow'); await answered.promise; });
+    const sibling = mode === 'sibling' ? await renderScreen(React.createElement(Settled)) : null;
     await act(async () => { screen.tree.unmount(); });
     await act(async () => { acknowledge.resolve(); });
     // A later Details/transcript view sees the request's result without answering it twice.
@@ -106,7 +140,17 @@ it('loads the MCP server default and saves Always allow after the answered tray 
         return React.createElement(McpAlwaysAllowDecision, { requestId: 'mcp-tray', identity, scope, canWriteCatalog: true, pending: false,
             answerForSession: async () => { throw new Error('Already answered'); }, renderDecision: () => null });
     }
+    if (sibling) {
+        await vi.waitFor(() => expect(sibling.getTextContent()).toContain('capabilities.session.toolAsk.savedIn'));
+        await act(async () => sibling.tree.unmount());
+    }
     screen = await renderScreen(React.createElement(Settled));
+    if (failsFirstSave) {
+        await vi.waitFor(() => expect(screen.findByTestId('permission-footer.always-allow-retry')).toBeTruthy());
+        expect(catalog.servers[0]?.tools?.overrides.write).toBeUndefined();
+        refuseSave = false;
+        await act(async () => { screen.pressByTestId('permission-footer.always-allow-retry'); });
+    }
     await vi.waitFor(() => expect(catalog.servers[0]?.tools?.overrides.write).toBe('allow'));
     expect(screen.findByTestId('permission-footer.always-allow-settled')).toBeTruthy();
     await vi.waitFor(() => expect(screen.getTextContent()).toContain('capabilities.session.toolAsk.savedIn'));
@@ -116,8 +160,10 @@ it('loads the MCP server default and saves Always allow after the answered tray 
 it.each(['always', 'reject', 'cannot_resume', 'tray', 'tray_failed', 'tray_account_changed', 'remount', 'skill_revision'] as const)('uses the existing Agent approval with reason and a D33-qualified %s decision', async choice => {
     const skillRevision = choice === 'skill_revision';
     const tray = choice === 'tray' || choice === 'tray_failed' || choice === 'tray_account_changed' || skillRevision;
-    const accountId = 'capability-owner';
-    const serverId = await homes.addHome({ name: 'Capability Home', serverUrl: 'https://capability-approval.test', accountId,
+    // Each scenario owns its Account row history; a production snapshot must never accept a lower revision
+    // just because the HTTP fixture has been reset for the next test.
+    const accountId = `capability-owner-${choice}`;
+    const serverId = await homes.addHome({ name: 'Capability Home', serverUrl: `https://capability-approval-${choice}.test`, accountId,
         serverIdentityId: 'srv_capability-home-identity' });
     let itemId = 'linear-id';
     if (skillRevision) {
@@ -296,6 +342,11 @@ it.each(['always', 'reject', 'cannot_resume', 'tray', 'tray_failed', 'tray_accou
     if (choice === 'reject' || choice === 'cannot_resume') {
         expect(hook.getCurrent().state?.status).toBe(choice === 'reject' ? 'rejected' : 'decision_failed');
         expect(revision).toBe(1); expect(row.metadataVersion).toBe(1);
+        await hook.unmount();
+        hook = await mount(approval);
+        await vi.waitFor(() => expect(hook.getCurrent().ready).toBe(true));
+        // No save, retry or inverse remains: retired view-local outcomes do not own a controller.
+        expect(hook.getCurrent().state?.status).toBe('idle');
     } else {
         const settled = ApprovalRequestSchema.parse(JSON.parse(homes.artifacts(serverId).readPlainBody(artifact.id)!));
         if (choice === 'tray_account_changed') {
@@ -305,7 +356,7 @@ it.each(['always', 'reject', 'cannot_resume', 'tray', 'tray_failed', 'tray_accou
             await homes.switchAccount(serverId, accountId);
             hook = await mount(settled);
             await vi.waitFor(() => expect(hook.getCurrent().ready).toBe(true));
-            expect(hook.getCurrent().state).toMatchObject({ status: 'decision_failed', approved: false });
+            expect(hook.getCurrent().state).toMatchObject({ status: 'idle', approved: false });
             return;
         }
         if (choice === 'tray_failed') {

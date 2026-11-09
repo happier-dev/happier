@@ -47,11 +47,13 @@ describe('Session server-start draft composer presentation', () => {
         const presentation = presentSessionServerStartDraftComposer({
             seed: { directory: '/workspace', agentId: 'claude' },
             target,
+            anchor: { kind: 'rect', rect: { left: 12, top: 24, width: 100, height: 30 } },
         });
         const shown = presentedConfig();
 
         expect(modal.show).toHaveBeenCalledWith(expect.objectContaining({
             closeOnBackdrop: true,
+            chrome: expect.objectContaining({ phonePresentation: 'sheet', anchor: expect.objectContaining({ kind: 'rect' }) }),
             props: expect.objectContaining({
                 seed: { directory: '/workspace', agentId: 'claude' },
                 target,

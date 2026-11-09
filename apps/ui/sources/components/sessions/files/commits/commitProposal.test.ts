@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { ScmCommitPlanApplication, ScmComparison, ScmDiffSummaryCommitPlan } from '@happier-dev/protocol';
+import type { ScmCommitPlanApplication} from '@happier-dev/protocol/scm/diffSummaryCommitPlan';
+import type { ScmComparison} from '@happier-dev/protocol/scm/comparison';
+import type { ScmDiffSummaryCommitPlan } from '@happier-dev/protocol/scm/diffSummary';
 
 import { buildCommitProposal } from './commitProposal';
 import { buildCommitPlanAcceptance } from './commitPlanAcceptance';

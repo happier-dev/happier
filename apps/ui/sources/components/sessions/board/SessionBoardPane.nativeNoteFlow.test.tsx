@@ -208,7 +208,6 @@ describe('SessionBoardPane native Note flow', () => {
                             sessionId="session-1"
                             serverId="home-1"
                             host="details"
-                            resolvePrimaryHost={() => 'details'}
                             density="full"
                             layout="grid"
                         />
@@ -294,7 +293,6 @@ describe('SessionBoardPane native Note flow', () => {
                             sessionId="session-1"
                             serverId="home-1"
                             host="details"
-                            resolvePrimaryHost={() => 'details'}
                             density="full"
                             layout="grid"
                         />

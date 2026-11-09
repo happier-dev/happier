@@ -1,4 +1,5 @@
 import { activeReviewFileKeyForSession, openChangedFileFromList } from '@/components/workspaces/scm/review/activeReviewFile';
+import { usePaneContentInsetPx } from '@/components/ui/lists/listPresentation';
 import * as React from 'react';
 import { SessionRightPanelGitCommitTab } from '@/components/sessions/panes/git/SessionRightPanelGitCommitTab';
 import { ScmCommitSelectionToggleButton, ScmCommitSelectionCheckGlyph } from '@/components/sessions/sourceControl/commitSelection/ScmCommitSelectionToggleButton';
@@ -37,7 +38,6 @@ export type SessionRightPanelGitCommitTabContentProps = Readonly<{
     serverId?: string;
     sessionPath: string | null;
     scmSnapshot: ScmWorkingSnapshot;
-    workspaceTouchedPaths: string[];
 
 
     commitSelectionPaths: readonly string[];
@@ -92,6 +92,7 @@ export type SessionRightPanelGitCommitTabContentProps = Readonly<{
 
 export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRightPanelGitCommitTabContentProps) => {
     const copyFeedback = useHappierCopyFeedback();
+    const contentInsetPx = usePaneContentInsetPx();
     const commitSelectionUiEnabled = props.commitSelectionUiEnabled === true;
     const branch = props.scmSnapshot?.branch?.detached ? null : props.scmSnapshot?.branch?.head ?? null;
     const commitPlan = useSessionCommitPlan({ sessionId: props.sessionId, serverId: props.serverId, enabled: props.active !== false, branch });
@@ -134,7 +135,6 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
     const changed = useChangedFilesData({
         sessionId: props.sessionId,
         scmSnapshot: props.scmSnapshot,
-        workspaceTouchedPaths: props.workspaceTouchedPaths,
 
 
         searchQuery: '',
@@ -455,7 +455,7 @@ export const SessionRightPanelGitCommitTabContent = React.memo((props: SessionRi
         />
         {compactProposal}
         {!compactProposal && commitPlan.undoDiscard ? (
-            <View style={{ paddingHorizontal: 12, paddingVertical: 8 }}>
+            <View style={{ paddingHorizontal: contentInsetPx, paddingVertical: 8 }}>
                 <SurfaceStateCard testID="git-proposed-commits-discarded" size="line" kind="success" title={t('commitProposal.discarded')}
                     action={{ label: t('commitProposal.undo'), onPress: commitPlan.undoDiscard }} accessibilitySemantics="status" />
             </View>

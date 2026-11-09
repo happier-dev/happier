@@ -1,3 +1,7 @@
+import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
+import { getAgentCore } from '@/agents/catalog/catalog';
+import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
+import { t } from '@/text';
 import { AgentNativeResumeIdentityV1Schema } from '@happier-dev/protocol/agents/nativeResumeIdentityV1';
 import type { Metadata } from '@happier-dev/session-core/state';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -13,6 +17,9 @@ export type SessionDebugInformationSession = Readonly<{
 
 export type SessionDebugInformation = Readonly<{
     text: string;
+    happierSessionId: string;
+    providerDisplayName: string | null;
+    providerSessionId: string | null;
     happierSessionLogPath: string | null;
     providerSessionArtifactPath: string | null;
 }>;
@@ -96,7 +103,22 @@ export function buildSessionDebugInformation(params: Readonly<{
 
     return {
         text: lines.join('\n'),
+        happierSessionId: params.session.id,
+        providerDisplayName,
+        providerSessionId,
         happierSessionLogPath,
         providerSessionArtifactPath: providerSessionArtifactPath ?? null,
     };
+}
+
+/** All information entry points use the current owner metadata and native resume identity. */
+export function buildSessionDebugInformationForSession(session: SessionDebugInformationSession): SessionDebugInformation {
+    const metadata = readSessionOwnerMetadataView(session);
+    const agentId = resolveAgentIdFromSessionMetadata(metadata) ?? '';
+    const core = getAgentCore(agentId);
+    return buildSessionDebugInformation({
+        session,
+        providerDisplayName: core ? t(core.displayNameKey) : formatAgentLikeIdForDisplay(agentId),
+        providerSessionId: resolveProviderSessionIdForDebug({ metadata, vendorResumeIdField: core?.resume.vendorResumeIdField }),
+    });
 }

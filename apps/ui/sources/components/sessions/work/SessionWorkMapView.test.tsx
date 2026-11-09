@@ -47,7 +47,7 @@ describe('SessionWorkMapView', () => {
         const command = projection.projectCommands[0];
         const map = projectSessionWorkMap({ managerSessionId: 'lead', leadTitle: 'Lead', projection });
         const onOpenItem = vi.fn();
-        const screen = await renderScreen(<SessionWorkMapView map={map} projection={projection} testIDPrefix="work-map" onOpenItem={onOpenItem} />);
+        const screen = await renderScreen(<SessionWorkMapView map={map} projection={projection} showFacts testIDPrefix="work-map" onOpenItem={onOpenItem} />);
         const node = screen.findByTestId(`work-map-node-${command.key}`);
         expect(node).not.toBeNull();
         await pressTestInstanceAsync(node!);
@@ -77,7 +77,7 @@ describe('SessionWorkMapView', () => {
         };
         const map = projectSessionWorkMap({ managerSessionId: 'lead', leadTitle: 'Lead', projection });
         const screen = await renderScreen(
-            <SessionWorkMapView map={map} projection={projection} testIDPrefix="work-map" onOpenItem={vi.fn()} />,
+            <SessionWorkMapView map={map} projection={projection} showFacts testIDPrefix="work-map" onOpenItem={vi.fn()} />,
         );
 
         const nodeStyles = (sessionId: string) => {
@@ -96,5 +96,31 @@ describe('SessionWorkMapView', () => {
         expect(busy).not.toContainEqual(workStatusSurfaceStyle('danger'));
         // The lead carries no state of its own (S-6).
         expect(nodeStyles('lead')).not.toContainEqual(workStatusSurfaceStyle('attention'));
+    }, 180_000);
+
+    it('draws one line per sidebar node and the facts only where the map has room, and the lead says what it waits on', async () => {
+        const { SessionWorkMapView } = await import('./SessionWorkMapView');
+        const { projectSessionWorkMap } = await import('./workMapProducer');
+        const busy = { ...report('busy', { state: 'thinking', bucket: 'working', tone: 'neutral', attentionType: null, word: 'Working' }), facts: ['asks a question'] };
+        const projection: WorkProjection = {
+            sessions: [busy], workflows: [], backgroundRuns: [], agents: [], projectCommands: [], archivedSessions: [],
+            summary: { outstanding: 1, needsYou: 0, stalled: 0, sessions: 1, runs: 0 },
+        };
+        const map = projectSessionWorkMap({ managerSessionId: 'lead', leadTitle: 'Lead', projection });
+        const sidebar = await renderScreen(
+            <SessionWorkMapView map={map} projection={projection} showFacts={false} testIDPrefix="work-map" onOpenItem={vi.fn()} />,
+        );
+        expect(sidebar.getTextContent()).not.toContain('asks a question');
+        // The lead's state slot: what it waits on, untinted (S-6).
+        expect(sidebar.getTextContent()).toContain('sessionWork.map.waitingOn');
+        await sidebar.unmount();
+        const details = await renderScreen(
+            <SessionWorkMapView map={map} projection={projection} showFacts testIDPrefix="work-map" onOpenItem={vi.fn()} />,
+        );
+        expect(details.getTextContent()).toContain('asks a question');
+        await details.unmount();
+        const idle = projectSessionWorkMap({ managerSessionId: 'lead', leadTitle: 'Lead',
+            projection: { ...projection, summary: { ...projection.summary, outstanding: 0 } } });
+        expect(idle.nodes.find((node) => node.kind === 'lead')?.status).toBeNull();
     }, 180_000);
 });

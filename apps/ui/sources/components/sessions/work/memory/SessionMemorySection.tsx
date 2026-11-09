@@ -9,6 +9,7 @@ import { MemoryDocumentBody } from '@/components/memory/MemoryDocumentBody';
 import { MemorySearchPanel } from '@/components/memory/MemorySearchPanel';
 import { useMemoryDocument } from '@/components/memory/useMemoryDocument';
 import { useMemoryCreationReceipt } from '@/components/memory/useMemoryCreationReceipt';
+import { SessionIntentConflictLine } from '@/components/sessions/work/SessionIntentConflictLine';
 import { WorkSection, WorkSectionEmptyLine } from '@/components/sessions/work/WorkSection';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -27,13 +28,15 @@ import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { resolveSessionInstructionsAccess } from '../instructions/SessionInstructionsSection';
-import { useSessionContextLayers, type SessionContextLayers } from '../context/useSessionContextLayers';
+import type { SessionContextLayers } from '../context/useSessionContextLayers';
+import { SessionContextLayersObservation } from '../context/SessionContextLayersScope';
 
 /** Key facts shown in the pane before "Show all N" (lab `c-mem A`). */
 const COLLAPSED_FACTS = 5;
 
 type MemorySelection = Readonly<{
-    /** Still resolving which document this Session writes to (its Project's rows are being read). */
+    /** Coverage of the layer that decides which document this Session writes to. */
+    status: 'loading' | 'ready' | 'unavailable';
     resolving: boolean;
     ref: PromptDocArtifactRefV1 | null;
     scope: 'session' | 'project' | 'account';
@@ -49,13 +52,23 @@ export function selectSessionMemory(layers: SessionContextLayers, serverId: stri
         return row ? { kind: 'doc' as const, artifactId: row.entry.ref.artifactId, serverId: row.entry.ref.serverId ?? serverId } : null;
     };
     const own = layers.session.find(row => row.entry.id === 'session.memory' && row.entry.ref.kind === 'doc');
-    return selectMemoryTargetV1({ isBot: layers.isBot,
+    const statusWithEntryCoverage = <T extends 'none' | 'pending' | 'ready' | 'unavailable'>(status: T,
+        rows: SessionContextLayers['account']): T | 'pending' | 'unavailable' => status === 'unavailable'
+            || rows.some(row => row.presentationStatus === 'unavailable') ? 'unavailable'
+            : rows.some(row => row.presentationStatus === 'loading') ? 'pending' : status;
+    const projectStatus = statusWithEntryCoverage(layers.project.status, layers.project.rows);
+    const accountStatus = statusWithEntryCoverage(layers.accountStatus, layers.account);
+    const selection = selectMemoryTargetV1({ isBot: layers.isBot,
         botRef: own ? { kind: 'doc', artifactId: own.entry.ref.artifactId, serverId: own.entry.ref.serverId ?? serverId } : null,
-        project: { status: layers.project.rows.some(row => row.kind === 'unknown') ? 'unavailable' : layers.project.status,
-            ref: refOf(layers.project.rows) },
-        account: { status: layers.account.some(row => row.kind === 'unknown') ? 'unavailable' : layers.accountStatus,
-            ref: refOf(layers.account) },
+        project: { status: projectStatus, ref: refOf(layers.project.rows) },
+        account: { status: accountStatus, ref: refOf(layers.account) },
     });
+    const status = layers.isBot && own?.presentationStatus === 'loading' ? 'loading'
+        : layers.isBot && own?.presentationStatus === 'unavailable' ? 'unavailable'
+            : selection.resolving && selection.scope === 'project' ? projectStatus === 'unavailable' ? 'unavailable' : 'loading'
+                : selection.resolving && selection.scope === 'account' ? accountStatus === 'unavailable' ? 'unavailable' : 'loading'
+                    : 'ready';
+    return { ...selection, status };
 }
 
 /**
@@ -73,18 +86,18 @@ export const SessionMemorySection = React.memo(function SessionMemorySection(pro
     const ownerMetadata = React.useMemo(() => readSessionOwnerMetadataView(session), [session]);
     if (access !== 'readable' || !ownerMetadata) return null;
     // A pending choice belongs to this Session, including while another Session opens in Info.
-    return <SessionMemoryBody key={JSON.stringify([serverId, session.id])} session={session} serverId={serverId} ownerMetadata={ownerMetadata} />;
+    return <SessionContextLayersObservation params={{ sessionId: session.id, serverId, ownerMetadata, metadataVersion: session.metadataVersion }}>
+        {layers => <SessionMemoryBody key={JSON.stringify([serverId, session.id])} session={session} serverId={serverId} layers={layers} />}
+    </SessionContextLayersObservation>;
 });
 
 const SessionMemoryBody = React.memo(function SessionMemoryBody(props: Readonly<{
     session: Session;
     serverId: string;
-    ownerMetadata: unknown;
+    layers: SessionContextLayers;
 }>) {
     const { session, serverId } = props;
-    const layers = useSessionContextLayers({
-        sessionId: session.id, serverId, ownerMetadata: props.ownerMetadata, metadataVersion: session.metadataVersion,
-    });
+    const { layers } = props;
     const enabled = layers.memoryEnabled;
     const preparationScope = React.useMemo(() => ({ type: 'session' as const, sessionId: session.id }), [session.id]);
     const preparationBasis = React.useMemo(() => JSON.stringify([session.metadataVersion, layers]), [layers, session.metadataVersion]);
@@ -93,11 +106,15 @@ const SessionMemoryBody = React.memo(function SessionMemoryBody(props: Readonly<
         serverId, scopeKey: JSON.stringify([session.id, selection.scope]), attachedRef: selection.ref,
     });
     // The Action's saved receipt proves this document even while its attachment cannot be resolved.
-    const resolving = selection.resolving && receipt === null;
+    const resolving = selection.status === 'loading' && receipt === null;
+    const unavailable = selection.status === 'unavailable' && receipt === null;
+    const refreshing = selection.scope === 'project' && layers.project.refreshing;
     const source = useMemoryDocument({ ref, serverId, enabled });
     // Keep the renderer's draft/notice mounted through the owning catalog's read; unknown is not empty.
     const displayedSource = React.useMemo(() => resolving
-        ? { ...source, status: 'loading' as const, view: null, target: null, stale: false } : source, [resolving, source]);
+        ? { ...source, status: 'loading' as const, view: null, target: null, stale: false }
+        : unavailable ? { ...source, status: 'unavailable' as const, view: null, target: null, stale: false }
+            : refreshing ? { ...source, target: null } : source, [refreshing, resolving, source, unavailable]);
     const navigateToSession = useNavigateToSession();
     const openSession = React.useCallback((ref: Readonly<{ serverId: string; sessionId: string; messageId?: string }>) => {
         fireAndForget(navigateToSession(ref.sessionId, { serverId: ref.serverId, messageId: ref.messageId }), { tag: 'SessionMemorySection.source' });
@@ -113,14 +130,18 @@ const SessionMemoryBody = React.memo(function SessionMemoryBody(props: Readonly<
 
     // A refused switch says so in the section, beside the switch it did not move, until the next attempt.
     const [refused, setRefused] = React.useState(false);
+    // A choice the Session was no longer at the revision for is held, not lost: the switch keeps the current value.
+    const [heldChoice, setHeldChoice] = React.useState<boolean | null>(null);
     const setEnabled = React.useCallback((next: boolean) => {
         if (pendingChoice !== null) return;
         setPendingChoice(next);
         setRefused(false);
+        setHeldChoice(null);
         fireAndForget((async () => {
             try {
                 const outcome = readMemoryActionOutcome(await memoryDocumentActions.setSessionMemory(sessionTarget, next));
-                if (outcome === 'refused' || outcome === 'conflict') setRefused(true);
+                if (outcome === 'conflict') setHeldChoice(next);
+                else if (outcome === 'refused') setRefused(true);
             } catch {
                 setRefused(true);
             } finally {
@@ -130,11 +151,12 @@ const SessionMemoryBody = React.memo(function SessionMemoryBody(props: Readonly<
     }, [pendingChoice, sessionTarget]);
 
     const shownEnabled = pendingChoice ?? enabled;
+    const factCount = displayedSource.view?.facts?.length ?? 0;
     const documentAccess = displayedSource.view?.access ?? null;
     const shared = displayedSource.stale ? null : displayedSource.view?.shared ?? null;
-    const readOnly = ref !== null && (documentAccess === null || documentAccess === 'view');
+    const readOnly = refreshing || ref !== null && (documentAccess === null || documentAccess === 'view');
     const canRemember = !readOnly && Boolean(displayedSource.target || (!ref && !resolving && displayedSource.status === 'none'));
-    const footer = resolving || (ref && (documentAccess === null || shared === null)) ? undefined : shared
+    const footer = resolving || unavailable || (ref && (documentAccess === null || shared === null)) ? undefined : shared
         ? joinHappierFacts(t('memoryContext.memory.accessShared'), t('memoryContext.memory.writesAskFirst'))
         : joinHappierFacts(selection.scope === 'project' ? t('memoryContext.session.projectMemory')
             : selection.scope === 'account' ? t('memoryContext.session.yourMemory') : t('memoryContext.memory.accessPrivate'),
@@ -148,7 +170,9 @@ const SessionMemoryBody = React.memo(function SessionMemoryBody(props: Readonly<
             title={t('memoryContext.memory.title')}
             count=""
             icon="cpu"
-            summary={shownEnabled ? t('common.on') : t('common.off')}
+            // Closed in Setup it reads like the lab: "On · 16", the count once the document is read.
+            summary={!shownEnabled ? t('common.off')
+                : factCount > 0 ? joinHappierFacts(t('common.on'), String(factCount)) : t('common.on')}
             nativeID="memory"
             action={enabled ? (
                 <View style={styles.actions}>
@@ -175,7 +199,15 @@ const SessionMemoryBody = React.memo(function SessionMemoryBody(props: Readonly<
                 </View>
             ) : null}
         >
-            {refused ? (
+            {heldChoice !== null ? (
+                <SessionIntentConflictLine
+                    testID="session-work-memory.conflict"
+                    subject={t('memoryContext.memory.title')}
+                    current={enabled ? t('common.on') : t('common.off')}
+                    onApply={() => setEnabled(heldChoice)}
+                    onKeep={() => setHeldChoice(null)}
+                />
+            ) : refused ? (
                 <SurfaceFreshnessLine testID="session-work-memory.refused" tone="warning" reason={t('memoryContext.session.refused')} />
             ) : null}
             {/* Search takes the section's body: what you look through, not the switch that turns it on. */}

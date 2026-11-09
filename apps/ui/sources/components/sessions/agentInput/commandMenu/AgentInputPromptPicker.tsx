@@ -24,8 +24,11 @@ import { AgentInputCommandMenu } from './AgentInputCommandMenu';
 import { buildPromptPickerRows, type PromptPickerRow } from './promptPickerRows';
 import { usePromptPickerLibrary } from './usePromptPickerLibrary';
 import { resolvePromptPickerKeyAction } from './promptPickerKeyboard';
-import { PromptPickerFooter, PromptPickerNotice, PromptPickerPreview, PromptPickerRowContent, PromptPickerSaveRow, PromptPickerSkeletonRow } from './PromptPickerParts';
+import { SurfaceStateCard } from '@/components/ui/surfaces';
+import { PromptPickerFooter, PromptPickerPreview, PromptPickerRowContent, PromptPickerSaveRow, PromptPickerSkeletonRow } from './PromptPickerParts';
 import type { SaveMessageAsPromptSaved } from '@/components/sessions/transcript/messageActions/useSaveMessageAsPrompt';
+import type { PromptPickerActionPort } from './promptPickerActionPort';
+import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
 
 /** The library half of the picker, as the open leaf's data owner publishes it. */
 export type PromptPickerLibrarySnapshot = Readonly<{
@@ -45,8 +48,10 @@ export type AgentInputPromptPickerProps = Readonly<{
     anchor: CommandMenuAnchor;
     serverId: string;
     sessionId: string | null;
+    composerRef?: ComposerRefV1;
     onRequestClose: () => void;
-    onApply: (expand: () => Promise<RenderedPromptTemplateTextV1>, mode: 'insert' | 'send') => Promise<boolean>;
+    onApply: (expand: () => Promise<RenderedPromptTemplateTextV1>, mode: 'insert' | 'send', signal?: AbortSignal) => Promise<boolean>;
+    onActionPortChange?: (port: PromptPickerActionPort | null) => void;
     canSend: boolean;
 }>;
 
@@ -104,7 +109,12 @@ export type PromptPickerViewProps = AgentInputPromptPickerProps & Readonly<{
 export function PromptPickerView(props: PromptPickerViewProps) {
     const { library, history } = props;
     const [query, setQuery] = React.useState(props.initialQuery ?? '');
-    const [selectedId, setSelectedId] = React.useState<string | null>(null);
+    const [selectedId, setSelectedIdState] = React.useState<string | null>(null);
+    const selectedIdRef = React.useRef<string | null>(null);
+    const setSelectedId = React.useCallback((id: string | null) => {
+        selectedIdRef.current = id;
+        setSelectedIdState(id);
+    }, []);
     const [applyError, setApplyError] = React.useState(false);
     const [inputFocused, setInputFocused] = React.useState(false);
     const [openedAtMs] = React.useState(() => props.nowMs ?? Date.now());
@@ -166,19 +176,51 @@ export function PromptPickerView(props: PromptPickerViewProps) {
         if (row.kind === 'doc') return library.read(row.document.artifactId, props.serverId);
         return row.kind === 'builtIn' ? row.prompt.body : row.entry.text;
     }, [library.read, props.serverId]);
-    const apply = React.useCallback(async (row: PromptPickerRow | undefined, mode: 'insert' | 'send') => {
+    const apply = React.useCallback(async (row: PromptPickerRow | undefined, mode: 'insert' | 'send', signal?: AbortSignal): Promise<boolean> => {
         // The row being named is a form, not a prompt to insert.
-        if (!row || row.id === saving?.id || (mode === 'send' && !props.canSend)) return;
+        if (!row || row.id === saving?.id || (mode === 'send' && !props.canSend) || signal?.aborted) return false;
         setApplyError(false);
         try {
             const accepted = await props.onApply(async () => {
                 const markdown = await readRow(row);
                 return row.kind === 'history' ? { text: markdown }
                     : renderPromptTemplateTextV1({ templateMarkdown: markdown, argsText: '' });
-            }, mode);
+            }, mode, signal);
             if (!accepted) setApplyError(true);
-        } catch { setApplyError(true); }
+            return accepted;
+        } catch { setApplyError(true); return false; }
     }, [props.onApply, props.canSend, readRow, saving?.id]);
+    const actionState = React.useRef({ rows, selected, apply, history, library });
+    actionState.current = { rows, selected, apply, history, library };
+    React.useLayoutEffect(() => {
+        if (!props.onActionPortChange) return;
+        props.onActionPortChange({
+            select(selection) {
+                const current = actionState.current;
+                const row = current.rows.find(candidate => selection.kind === 'doc'
+                    ? candidate.kind === 'doc' && candidate.document.artifactId === selection.artifactId
+                    : selection.kind === 'builtIn' ? candidate.kind === 'builtIn' && candidate.prompt.token === selection.token
+                    : candidate.kind === 'history' && candidate.entry.serverId === selection.serverId
+                        && candidate.entry.sessionId === selection.sessionId && candidate.entry.messageId === selection.messageId);
+                if (!row) return current.library.isLoading || current.history.isLoading ? 'notReady' : 'notFound';
+                setSelectedId(row.id);
+                return 'selected';
+            },
+            apply(mode, signal) {
+                const current = actionState.current;
+                const row = selectedIdRef.current
+                    ? current.rows.find(candidate => candidate.id === selectedIdRef.current) : current.selected;
+                return current.apply(row, mode, signal);
+            },
+            history: {
+                read: () => actionState.current.history,
+                page: signal => actionState.current.history.loadMore(signal),
+                retry: signal => actionState.current.history.retry(signal),
+                stop: () => actionState.current.history.stop(),
+            },
+        });
+        return () => props.onActionPortChange?.(null);
+    }, [props.onActionPortChange]);
     const toggleFavorite = React.useCallback(async (row: PromptPickerRow | undefined) => {
         if (row?.kind === 'history') { startSave(row); return; }
         if (row?.kind !== 'doc') return;
@@ -235,14 +277,15 @@ export function PromptPickerView(props: PromptPickerViewProps) {
         onMoveUp={() => move(-1)} onMoveDown={() => move(1)} onSelect={(_, index) => { void apply(rows[index], 'insert'); }}
         onRequestClose={props.onRequestClose} preserveHostFocus={false} maxWidth={width} placement="top" phoneSheetTitle={t('agentInput.promptPicker.title')}
         // Where a preview stands beside the list, the picker takes the room both need, centred on the composer.
-        {...(wide ? { centerOnAnchorMaxWidth: Math.min(PICKER_WIDTH_WITH_PREVIEW, width - PICKER_WINDOW_MARGIN_PX * 2) } : { matchAnchorWidth: true })} fillHeight maxHeight={wide ? PICKER_HEIGHT_WITH_PREVIEW : PICKER_HEIGHT}
+        {...(wide ? { centerOnAnchorMaxWidth: Math.min(PICKER_WIDTH_WITH_PREVIEW, width - PICKER_WINDOW_MARGIN_PX * 2) } : { matchAnchorWidth: true })} fillHeight emptyStateAlign="start" maxHeight={wide ? PICKER_HEIGHT_WITH_PREVIEW : PICKER_HEIGHT}
         testID="agent-input-prompt-picker"
         leadingEmptyGroup={!query && !library.isLoading && !libraryUnavailable && !hasFavorites && rows.length > 0
             ? { title: groups.favorites, hint: t('agentInput.promptPicker.favoritesInvite') } : undefined}
         emptyState={library.isLoading && !rows.length ? <PromptPickerSkeletonRow testID="prompt-picker-loading" />
-            : <PromptPickerNotice testID="prompt-picker-empty" text={query
-                ? t('agentInput.promptPicker.noMatchesFor', { query: query.trim() })
-                : t('agentInput.promptPicker.empty')} action={query ? { label: t('agentInput.promptPicker.clear'), onPress: () => setQuery('') } : undefined} />}
+            // The list's own empty states: one quiet line on the rows' label edge, said as it changes.
+            : <SurfaceStateCard testID="prompt-picker-empty" size="line" lineDensity="menu" kind="empty" accessibilitySemantics="status"
+                title={query ? t('agentInput.promptPicker.noMatchesFor', { query: query.trim() }) : t('agentInput.promptPicker.empty')}
+                action={query ? { label: t('agentInput.promptPicker.clear'), onPress: () => setQuery(''), testID: 'prompt-picker-empty:action' } : undefined} />}
         header={<View>
             <SelectionListSearchHeader value={query} onChangeText={(value) => { setQuery(value); setSelectedId(null); }}
                 placeholder={t('agentInput.promptPicker.placeholder')} canPop={false} onKeyPress={onKeyPress}
@@ -253,9 +296,11 @@ export function PromptPickerView(props: PromptPickerViewProps) {
                 rightAdornment={isPhone ? undefined : hardwareKeyboard ? <KeyHint label="esc" />
                     : <IconButton iconName="x" accessibilityLabel={t('common.close')} variant="plain" onPress={props.onRequestClose} testID="prompt-picker-close" />}
                 style={styles.header} />
-            {libraryUnavailable ? <PromptPickerNotice testID="prompt-picker-library-error" tone="error" text={t('agentInput.promptPicker.libraryError')}
-                action={{ label: t('common.retry'), onPress: library.retry }} />
-                : library.coverage === 'partial' && !library.isLoading ? <PromptPickerNotice text={t('agentInput.promptPicker.partialLibrary')} />
+            {libraryUnavailable ? <SurfaceStateCard testID="prompt-picker-library-error" size="line" lineDensity="menu" kind="error"
+                accessibilitySemantics="alert" title={t('agentInput.promptPicker.libraryError')}
+                action={{ label: t('common.retry'), onPress: library.retry, testID: 'prompt-picker-library-error:action' }} />
+                : library.coverage === 'partial' && !library.isLoading ? <SurfaceStateCard testID="prompt-picker-library-partial" size="line"
+                    lineDensity="menu" kind="unavailable" accessibilitySemantics="status" title={t('agentInput.promptPicker.partialLibrary')} />
                 : null}
         </View>}
         preview={wide ? {
@@ -282,7 +327,6 @@ function focusOnMount(node: { focus?: () => void } | null) {
 
 const styles = StyleSheet.create((theme) => ({
     header: {
-        minHeight: 44,
         backgroundColor: 'transparent',
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: theme.colors.border.default,

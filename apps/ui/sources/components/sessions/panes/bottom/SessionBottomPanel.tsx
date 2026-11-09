@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { SessionTerminalMemberV1 } from '@happier-dev/protocol';
+import type { SessionTerminalMemberV1 } from '@happier-dev/protocol/terminal/workspace';
 import { Platform, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
@@ -15,7 +15,8 @@ import { useOpenTerminalJump } from '@/components/sessions/terminal/jump/useOpen
 import { resolveAttachedTerminalUnavailableMessage, useOpenAttachedSessionTerminal } from '@/components/sessions/terminal/openAttachedSessionTerminal';
 import type { SessionTerminalDescriptor } from '@/components/sessions/terminal/presentation/describeSessionTerminal';
 import { useSessionTerminalDescribeContext, useSessionTerminalTabDescriptors } from '@/components/sessions/terminal/presentation/useSessionTerminalPresentation';
-import { readSessionTerminalWorkspace } from '@/components/sessions/terminal/sessionTerminalWorkspace';
+import { readSessionTerminalWorkspace, selectSessionTerminalWorkspaceHost } from '@/components/sessions/terminal/sessionTerminalWorkspace';
+import { useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import {
     buildSessionTerminalNewMenuItems,
     buildSessionTerminalPaneMenuItems,
@@ -31,7 +32,7 @@ import { getStorage } from '@/sync/domains/state/storage';
 import { selectLocalServiceLaunchTargets, useLocalServiceLauncherState } from '@/sync/domains/local/services/launch';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { useMachinePresenceMembership } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { resolveOptionalSessionScreenTestId, useSessionScreenTestIdsEnabled } from '../../shell/sessionScreenTestIds';
 
 /** A terminal narrower than the session's own minimum content width is too narrow to read; a split stops there. */
@@ -52,6 +53,7 @@ function basename(path: string | null | undefined): string | null {
 export const SessionBottomPanel = React.memo((props: Readonly<{ sessionId: string; scopeId: string; onRequestClose?: () => void }>) => {
     const pane = useAppPaneScope(props.scopeId);
     const openActions = usePaneDestinationWindowActions(props.scopeId, 'bottom');
+    const renderTerminals = useAppPaneContext(value => selectSessionTerminalWorkspaceHost(value.state, props.scopeId) === 'bottom');
     const { theme } = useUnistyles();
     const router = useRouter();
     const activeTabId = pane.scopeState?.bottom?.activeTabId ?? null;
@@ -178,6 +180,7 @@ export const SessionBottomPanel = React.memo((props: Readonly<{ sessionId: strin
             sessionId={props.sessionId}
             scopeId={props.scopeId}
             currentDockLocation="bottom"
+            presentationId={tabMenu.presentationId}
             terminal={member}
             chrome="none"
             title={state.descriptor?.title}
@@ -187,7 +190,7 @@ export const SessionBottomPanel = React.memo((props: Readonly<{ sessionId: strin
             onRequestClose={requestClose}
             testIdPrefix={sessionScreenTestIdsEnabled ? `session-bottompanel-terminal-${member.id}` : null}
         />
-    ), [context, props.scopeId, props.sessionId, requestClose, sessionScreenTestIdsEnabled]);
+    ), [context, props.scopeId, props.sessionId, requestClose, sessionScreenTestIdsEnabled, tabMenu.presentationId]);
 
     return (
         <View
@@ -201,6 +204,7 @@ export const SessionBottomPanel = React.memo((props: Readonly<{ sessionId: strin
                 >
                         <SessionTerminalWorkspaceView
                             scopeId={props.scopeId}
+                            renderTerminals={renderTerminals}
                             workspace={workspace}
                             tabs={tabs}
                             renderLeaf={renderLeaf}
@@ -221,7 +225,7 @@ export const SessionBottomPanel = React.memo((props: Readonly<{ sessionId: strin
                             paneMenuItems={paneMenuItems}
                             onPaneMenuSelect={onPaneMenuSelect}
                             onHide={requestClose}
-                            onOpenUrl={(url) => { void openExternalUrl(url, Platform.OS === 'web' ? { platformOS: 'web' } : undefined); }}
+                            onOpenUrl={(url) => { void openExternalUrl(url); }}
                             emptyAction={openShell}
                             testIdPrefix={sessionScreenTestIdsEnabled ? 'session-bottompanel-terminals' : undefined}
                         />

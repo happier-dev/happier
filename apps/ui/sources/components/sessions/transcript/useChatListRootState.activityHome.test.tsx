@@ -6,7 +6,7 @@ import { resolveExternalSessionOperationOriginAvailability } from '@/components/
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createServerScopedMachineRpcBoundaryMock } from '@/dev/testkit/mocks/serverScopedRpc';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
@@ -71,7 +71,7 @@ describe('transcript root activity Home', () => {
         const machine = createMachineFixture({ id: 'machine-1', active: true, activeAt: Date.now() });
         storage.getState().applyMachines([machine], true, { sourceServerId: account.home.id });
         storage.getState().applySessions([session]);
-        const read = () => loadDaemonMergedProjectionCacheEntry({ machineId: machine.id, serverId: account.home.id,
+        const read = () => loadDaemonMergedProjectionCacheEntry({ sections: 'complete', machineId: machine.id, serverId: account.home.id,
             accountLifetime: lifetime, reuseFreshReady: false });
         const initial = await read();
         expect(initial).toMatchObject({ kind: 'ready' });

@@ -18,10 +18,7 @@ function signatureFor(item: TranscriptRowShellItem) {
         getMessageRevisionById: () => null,
         groupingMode: 'linear',
         item,
-        latestCommittedActivityKey: null,
-        // No `action-draft` row in this file; the option resolver is exercised in
-        // `actionDraftStatusChurn.consumers.test.ts`.
-        resolveActionDraftFieldOptions: () => [],
+        latestCommittedActivityKey: null, 
         resolveThinkingExpanded: () => false,
         sessionActive: true,
         widthBucket: 'w:400',

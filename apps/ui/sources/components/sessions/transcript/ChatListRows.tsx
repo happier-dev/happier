@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, type LayoutChangeEvent } from 'react-native';
+import { View, type LayoutChangeEvent, type StyleProp, type ViewStyle } from 'react-native';
 
 import { TranscriptOriginSourceProvider, useTranscriptMessage } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
 import type { Metadata } from '@happier-dev/session-core/state';
@@ -63,6 +63,8 @@ export const ChatListMessageRow = React.memo(function ChatListMessageRow(props: 
     approvalRequests?: readonly OpenApprovalArtifactForSession[];
     messagePins: readonly PersistedSessionMessagePinV1[];
     onToggleMessagePin: (pin: PersistedSessionMessagePinV1) => void;
+    /** The row host's spacing adjustment, applied to the row's own outer box instead of a wrapper. */
+    style?: StyleProp<ViewStyle>;
 } & Partial<TranscriptSessionCommonProps>) {
     const originSessionId = props.originSessionId ?? props.sessionId;
     const committedMessage = useTranscriptMessage(props.messageId, originSessionId);
@@ -120,7 +122,7 @@ export const ChatListMessageRow = React.memo(function ChatListMessageRow(props: 
         />
     );
     return (
-        <View testID={`${TRANSCRIPT_WEB_MESSAGE_PREPEND_ANCHOR_TEST_ID_PREFIX}${props.messageId}`}>
+        <View testID={`${TRANSCRIPT_WEB_MESSAGE_PREPEND_ANCHOR_TEST_ID_PREFIX}${props.messageId}`} style={props.style}>
             <View testID={`transcript-message-${props.messageId}`}>
                 <TranscriptOriginSourceProvider originSessionId={originSessionId} readOnly={props.isReadOnlyContext === true} visualContext={props.visualContext}>
                     {messageView}

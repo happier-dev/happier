@@ -16,6 +16,7 @@ import type { WorkspaceFileOpen } from '@/components/workspaces/files/useWorkspa
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { resolveReviewCommentDraftAnchorsForPrompt } from '@/components/sessions/reviews/comments/resolveReviewCommentDraftAnchorsForPrompt';
 import { Icon } from '@/components/ui/icons/Icon';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 function renderSnippetLines(params: {
     draftId: string;
@@ -139,26 +140,24 @@ export function ReviewCommentsDraftsModal(props: CustomModalInjectedProps & Read
                                     </Text>
                                 </View>
                                 {sessionId && props.openFile ? (
-                                    <Pressable
+                                    <HappierPressable
                                         accessibilityLabel={t('files.reviewComments.jump')}
                                         accessibilityRole="button"
-                                        hitSlop={8}
                                         onPress={() => jumpToDraft(draft)}
                                         style={styles.jumpButton}
                                         testID={`review-comment-draft-jump:${draft.id}`}
                                     >
                                         <Text style={styles.jumpButtonText}>{t('files.reviewComments.jump')}</Text>
-                                    </Pressable>
+                                    </HappierPressable>
                                 ) : null}
-                                <Pressable
+                                <HappierPressable
                                     accessibilityLabel={t('common.delete')}
                                     accessibilityRole="button"
-                                    hitSlop={8}
                                     onPress={() => deleteDraft(draft.id)}
                                     testID={`review-comment-draft-delete:${draft.id}`}
                                 >
                                     <Icon name="trash" size={16} color={theme.colors.state.danger.foreground ?? theme.colors.text.secondary} />
-                                </Pressable>
+                                </HappierPressable>
                             </View>
 
                             <View style={styles.snippet} testID={`review-comment-draft-context-preview:${draft.id}`}>

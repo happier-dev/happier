@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
-import { ProviderConnectionIdSchema, type SessionModelSelectionV1 } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema} from '@happier-dev/protocol/providers/ids';
+import { type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
 import { DaemonProviderModelProjectionGroupV1Schema } from '@happier-dev/protocol/rpc';
 
 import { createResolvedAgentCatalogEntryFixture } from '@/dev/testkit/fixtures/agentCatalogFixtures';

@@ -3,10 +3,12 @@ import type { TeamCredentialResourceCatalogEntryV1, TeamCredentialRouteV1 } from
 
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { describeDirectDeliveryVisibility, readDirectDeliveryVisibility, type DirectDeliveryVisibility } from './directDeliveryDisclosure';
 
 export type TeamCredentialSelectionConsequence = Readonly<{
     deliveryMode: TeamCredentialRouteV1;
     directDisclosure: 'required' | 'not_applicable';
+    materialVisibility: DirectDeliveryVisibility | null;
     recipient: Readonly<{ mode: 'current_account'; count: 1 }>;
     visibilityRequirement: 'team_visibility_required' | 'team_context_required' | 'none';
 }>;
@@ -31,6 +33,7 @@ export function projectTeamCredentialSelectionConsequence(
         directDisclosure: includesDirect && resource.directDeliveryRecorded !== true
             ? 'required'
             : 'not_applicable',
+        materialVisibility: includesDirect ? readDirectDeliveryVisibility() : null,
         recipient: { mode: 'current_account', count: 1 },
         visibilityRequirement: resource.sessionUsePolicy === 'team_visibility_required'
             ? 'team_visibility_required'
@@ -55,7 +58,8 @@ export function useTeamCredentialSelectionCoordinator(homeIdentity: string | nul
         if (consequence.directDisclosure === 'required') {
             const confirmed = await Modal.confirm(
                 t('teams.credentials.directUse.title'),
-                t('teams.credentials.directUse.body'),
+                [t('teams.credentials.directUse.body'), consequence.materialVisibility
+                    ? describeDirectDeliveryVisibility(consequence.materialVisibility) : null].filter(Boolean).join('\n\n'),
                 {
                     confirmText: t('common.continue'),
                     cancelText: t('common.cancel'),

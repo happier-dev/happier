@@ -4,7 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { HAPPIER_MENU_ROW_TEXT, HAPPIER_STATE_LINE_METRICS } from '@happier-dev/plugin-ui/presentation';
 
-import { CapabilityRow } from '@/components/capabilities/row/CapabilityRow';
+import { CapabilityRow, type CapabilityRowProps } from '@/components/capabilities/row/CapabilityRow';
 import { presentCapabilityStatus } from '@/components/capabilities/status/capabilityStatusPresentation';
 import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayoutWidth';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -41,20 +41,33 @@ export type SessionCapabilitiesUndo = Readonly<{
   onUndo: () => void;
 }>;
 
+/** The row control and mounted commands use the same Session removal intent. */
+export function sessionCapabilityRowRemovalState(row: SessionCapabilityRowModel): 'off' | 'inherit' | null {
+  if (row.action.kind === 'turn_on' || row.readOnlyReason !== null || row.dimmed) return null;
+  return row.line2?.kind === 'change' && row.line2.change === 'added' ? 'inherit' : 'off';
+}
+
 export type SessionCapabilitiesContentProps = Readonly<{
   model: SessionCapabilitiesModel;
+  /** A dedicated destination uses the same controls for one capability kind. */
+  kind?: 'skills';
+  skillDetails?: (skillId: string) => Pick<CapabilityRowProps, 'description' | 'mark' | 'note' | 'onPress'>;
+  skillSection?: (skillId: string) => Readonly<{ key: string; title: string; order?: number }>;
+  adding?: boolean;
+  onAddingChange?: (adding: boolean) => void;
   onChange: SessionCapabilitiesChange;
   /** Present while the last change can still be taken back; drawn by the shared line state above the footer. */
   undo?: SessionCapabilitiesUndo | null;
   testID: string;
   /** The popover's remaining height budget; the body scrolls under the fixed add field and footer. */
   maxHeight?: number;
-  /** The MCP server's identity mark (P7 `McpServerMark`), by catalog id. */
+  /** The MCP server's admitted identity mark, by catalog id. */
   renderMark?: (serverId: string) => React.ReactNode;
   /** The explicit retry for a failed or offline preview (always issues the request). */
   onRetry?: () => void;
   /** Destinations: the Skills and MCP servers pages ("Browse" for an empty group). */
   onOpen?: (destination: 'skills' | 'mcp') => void;
+  openUnavailableReason?: string | null;
   /** Display name of the session's machine, for the offline line. */
   machineName?: string;
   /** The rows each group held when last seen: the first-load placeholders reserve that many (else the preview size). */
@@ -98,10 +111,29 @@ export function SessionCapabilitiesContent(
   props: SessionCapabilitiesContentProps,
 ): React.ReactElement {
   const { model } = props;
+  const groups = React.useMemo(() => (props.kind ? model.groups.filter(group => group.kind === props.kind) : model.groups)
+    .flatMap(group => {
+      const sectionFor = props.skillSection;
+      if (group.kind !== 'skills' || !sectionFor || group.rows.length === 0) return [{ ...group, key: group.kind, sectionCount: undefined }];
+      const sections = new Map<string, Readonly<{ key: string; title: string; order?: number }> & { rows: SessionCapabilityRowModel[] }>();
+      for (const row of group.rows) {
+        const section = sectionFor(row.id);
+        const existing = sections.get(section.key);
+        if (existing) existing.rows.push(row);
+        else sections.set(section.key, { ...section, rows: [row] });
+      }
+      const result: Array<SessionCapabilitiesModel['groups'][number] & { key: string; sectionCount: number | undefined }> = [...sections.values()].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+        .map(section => ({ ...group, key: section.key, title: section.title, rows: section.rows,
+          nativeRow: null, sectionCount: section.rows.filter(row => !row.dimmed).length }));
+      if (group.nativeRow) result.push({ ...group, key: 'native', rows: [], sectionCount: 0 });
+      return result;
+    }), [model.groups, props.kind, props.skillSection]);
   // The phone sheet's title band sits on the 16 px gutter; menu rows start 12 px in, so the sheet's own
   // content takes the difference and the rows' text meets the title's edge.
   const onPhone = useDeviceType() === 'phone';
-  const [adding, setAdding] = React.useState(false);
+  const [localAdding, setLocalAdding] = React.useState(false);
+  const adding = props.adding ?? localAdding;
+  const setAdding = (value: boolean) => { setLocalAdding(value); props.onAddingChange?.(value); };
   const [expanded, setExpanded] = React.useState<ReadonlySet<string>>(
     () => new Set(),
   );
@@ -109,7 +141,7 @@ export function SessionCapabilitiesContent(
     (key: string) => setExpanded((current) => new Set(current).add(key)),
     [],
   );
-  const hasRows = model.groups.some(
+  const hasRows = groups.some(
     (group) => group.rows.length > 0 || group.nativeRow !== null,
   );
   const resolvingWithoutRows = model.state === 'resolving' && !hasRows;
@@ -159,8 +191,8 @@ export function SessionCapabilitiesContent(
       ) : null}
       {groupsUnknown
         ? null
-        : model.groups.map((group, index) => {
-            const open = expanded.has(group.kind);
+        : groups.map((group, index) => {
+            const open = props.kind !== undefined || expanded.has(group.kind);
             const visible = open
               ? group.rows
               : group.rows.slice(0, GROUP_PREVIEW_ROWS);
@@ -169,13 +201,13 @@ export function SessionCapabilitiesContent(
             // Unknown is never zero: the heading of a group still loading carries no count.
             const count = resolvingWithoutRows
               ? undefined
-              : group.kind === 'skills'
+              : group.sectionCount !== undefined ? group.sectionCount : group.kind === 'skills'
                 ? model.counts.skills
                 : model.counts.mcp;
             return (
               <View
-                key={group.kind}
-                testID={`${props.testID}:group:${group.kind}`}
+                key={group.key}
+                testID={`${props.testID}:group:${group.key}`}
                 style={index > 0 ? styles.groupDivider : null}
               >
                 <CollectionListGroupLabel
@@ -218,6 +250,7 @@ export function SessionCapabilitiesContent(
                       row={row}
                       onChange={props.onChange}
                       renderMark={props.renderMark}
+                      skillDetails={props.skillDetails}
                       testID={`${props.testID}:row:${row.key}`}
                     />
                   ))}
@@ -245,7 +278,7 @@ export function SessionCapabilitiesContent(
                           ? t('capabilities.session.sheet.noSkills')
                           : t('capabilities.session.sheet.noServers')
                       }
-                      {...(props.onOpen
+                      {...(props.onOpen && !props.openUnavailableReason
                         ? {
                             action: {
                               label: t('capabilities.session.sheet.browse'),
@@ -278,7 +311,7 @@ export function SessionCapabilitiesContent(
     <View style={styles.footer}>
       {adding ? (
         <SessionCapabilityAddField
-          items={model.addItems}
+          items={props.kind ? model.addItems.filter(item => item.kind === 'skill') : model.addItems}
           onChange={props.onChange}
           onDone={() => setAdding(false)}
           testID={`${props.testID}:add`}
@@ -297,24 +330,29 @@ export function SessionCapabilitiesContent(
           style={styles.cost}
           testID={`${props.testID}:cost`}
         >
-          {model.costLine}
+          {props.kind ? null : model.costLine}
         </Text>
         {props.onOpen ? (
           <View style={styles.destinations}>
             <TextLinkButton
               size="meta"
               tone="strong"
-              label={t('capabilities.skills.title')}
+              label={t(props.kind ? 'capabilities.skills.pane.allSkills' : 'capabilities.skills.title')}
+              disabled={Boolean(props.openUnavailableReason)}
+              accessibilityLabel={props.openUnavailableReason
+                ? `${t(props.kind ? 'capabilities.skills.pane.allSkills' : 'capabilities.skills.title')}: ${props.openUnavailableReason}`
+                : undefined}
               onPress={() => props.onOpen?.('skills')}
               testID={`${props.testID}:open:skills`}
             />
-            <TextLinkButton
+            {props.openUnavailableReason ? <Text variant="meta">{props.openUnavailableReason}</Text> : null}
+            {props.kind ? null : <TextLinkButton
               size="meta"
               tone="strong"
               label={t('capabilities.session.mcpServers')}
               onPress={() => props.onOpen?.('mcp')}
               testID={`${props.testID}:open:mcp`}
-            />
+            />}
           </View>
         ) : null}
       </View>
@@ -326,6 +364,7 @@ export function SessionCapabilitiesContent(
       testID={props.testID}
       style={[
         styles.root,
+        props.kind ? { flex: 1 } : null,
         onPhone ? styles.rootPhone : null,
         props.maxHeight !== undefined ? { maxHeight: props.maxHeight } : null,
       ]}
@@ -366,10 +405,12 @@ function SessionCapabilityRow(
     row: SessionCapabilityRowModel;
     onChange: SessionCapabilitiesChange;
     renderMark?: (serverId: string) => React.ReactNode;
+    skillDetails?: SessionCapabilitiesContentProps['skillDetails'];
     testID: string;
   }>,
 ) {
   const { row } = props;
+  const details = row.kind === 'skill' ? props.skillDetails?.(row.id) : undefined;
   const set = (state: 'on' | 'off' | 'inherit') =>
     props.onChange({ kind: row.kind, id: row.id, state });
   const status = row.line2?.kind === 'status' ? row.line2.status : null;
@@ -377,17 +418,17 @@ function SessionCapabilityRow(
   const fixLabel = fix
     ? presentCapabilityStatus(fix, 'row').fixLabel
     : undefined;
-  const removable = row.readOnlyReason === null && !row.dimmed;
+  const removalState = sessionCapabilityRowRemovalState(row);
+  const rowAction = row.action;
   const action =
-    row.action.kind === 'turn_on' ? (
+    rowAction.kind === 'turn_on' ? (
       <TextLinkButton
         tone="strong"
         label={t('capabilities.status.fix.turnOn')}
         accessibilityLabel={t('capabilities.session.sheet.turnOnLabel', {
           item: row.title,
         })}
-        // A session removal is undone by returning to what the rules give; a native overlay is cleared the same way.
-        onPress={() => set('inherit')}
+        onPress={() => set(rowAction.state)}
         testID={`${props.testID}:turn-on`}
       />
     ) : (
@@ -400,7 +441,7 @@ function SessionCapabilityRow(
             testID={`${props.testID}:fix`}
           />
         ) : null}
-        {removable ? (
+        {removalState !== null ? (
           <IconButton
             iconName="x"
             size={24}
@@ -411,13 +452,7 @@ function SessionCapabilityRow(
             tooltip={t('capabilities.session.sheet.removeLabel', {
               item: row.title,
             })}
-            onPress={() =>
-              set(
-                row.line2?.kind === 'change' && row.line2.change === 'added'
-                  ? 'inherit'
-                  : 'off',
-              )
-            }
+            onPress={() => set(removalState)}
             testID={`${props.testID}:remove`}
           />
         ) : null}
@@ -433,7 +468,9 @@ function SessionCapabilityRow(
     <CapabilityRow
       density="menu"
       title={row.title}
-      description={description}
+      description={description ?? details?.description}
+      note={details?.note}
+      onPress={details?.onPress}
       status={status}
       {...(row.line2?.kind === 'cost'
         ? { facts: { cost: row.line2.cost, presentation: 'row' as const } }
@@ -441,7 +478,7 @@ function SessionCapabilityRow(
       whereSummary={row.scope}
       mark={
         row.mark === 'none'
-          ? undefined
+          ? details?.mark
           : props.renderMark?.(row.mark.mcpServerId)
       }
       action={action}

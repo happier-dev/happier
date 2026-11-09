@@ -12,6 +12,7 @@ import {
     type NewSessionHostParams,
 } from '@/components/sessions/new/navigation/newSessionHost';
 import type { SessionSpawnNewActionExecutor } from '@/sync/ops/actions/sessionSpawnNewAction';
+import { EmbedSessionCreationFailure } from '@/embed/runtime/creationFailure';
 
 import { EmbeddedNewChatWelcome } from './EmbeddedNewChatWelcome';
 import { EmbeddedSessionPartClaimsScope, EmbeddedSessionPartsProvider, EmbeddedSessionStandardLayout, type EmbeddedSessionPartsValue } from './EmbeddedSessionParts';
@@ -35,6 +36,7 @@ export function createEmbeddedNewChatSpawnExecutor(input: Readonly<{
         try {
             created = await input.readOnCreate()(spawnInput, { attemptId: context.actionRequestId ?? '' });
         } catch (error) {
+            if (error instanceof EmbedSessionCreationFailure) return error.actionResult;
             // The host could not say whether its spawn landed. A retryable failure keeps this launch
             // attempt, so Retry asks again with the same identity and never creates a second Session.
             // Retryability is typed: the host's own `retryable`, else the protocol's for its code
@@ -101,7 +103,10 @@ export function EmbeddedSessionNewChat(props: Readonly<{
     }), []);
     const onHandedOff = React.useCallback(() => {
         const sessionId = createdSessionIdRef.current;
-        if (sessionId) onCreatedRef.current(sessionId);
+        if (sessionId) {
+            targetRef.current.onPresented(sessionId);
+            onCreatedRef.current(sessionId);
+        }
     }, []);
     const creationProfile = React.useMemo<NewSessionCreationProfile>(() => ({
         hostBindsMachine: true,

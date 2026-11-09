@@ -9,6 +9,8 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { installShippedNativeFrameScheduler } from '@/dev/testkit/legend/shippedNativeLegendRuntime';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { parseDecryptedSessionMetadata } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { storage } from '@/sync/domains/state/storageStore';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
@@ -16,11 +18,15 @@ import { AppPaneScopeHost } from '@/components/appShell/panes/AppPaneScopeHost';
 import { ChatList } from '@/components/sessions/transcript/ChatList';
 import { AgentInput } from '@/components/sessions/agentInput/AgentInput';
 import { PermissionFooter } from '@/components/tools/shell/permissions/PermissionFooter';
+import { ToolView } from '@/components/tools/shell/views/ToolView';
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import { SessionView } from '../SessionView';
 import { EmbeddedSessionNewChat } from './EmbeddedSessionNewChat';
 import { getSessionComposerDraftSnapshot, resetSessionDraftRepositoryForTests } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { SessionChat, SessionComposer, SessionProvider, SessionTranscript } from '@happier-dev/plugin-ui';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { createToolCallMessageFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { PluginUiHostPresentationScope } from '@happier-dev/plugin-ui/advanced';
 import { projectHappierUiEnvironment } from '@happier-dev/plugin-ui/environment';
 import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
@@ -33,8 +39,15 @@ import {
     type SessionViewEmbeddedPresentation,
 } from './EmbeddedSessionProvider';
 
-// Only platform adapters and Metro's lazy module loader are replaced. All Session owners,
+// Only platform adapters, the external recycler and Metro's lazy module loader are replaced. All Session owners,
 // stores, catalogs, transcript interaction and rendered controls run their production logic.
+vi.mock('@legendapp/list/react-native', async importOriginal => {
+    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
+    // The test renderer has no measured viewport. Render the native recycler's rows so the
+    // approval assertion reaches the real ToolView rather than only the composer prompt.
+    return createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>(),
+        emitViewability: true, emitLoadDuringLayout: true }).module;
+});
 vi.mock('socket.io-client', async (importOriginal) => {
     const { createSocketIoClientBoundary } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
     return createSocketIoClientBoundary(importOriginal);
@@ -138,6 +151,84 @@ afterEach(async () => {
 });
 
 describe('EmbeddedSessionProvider', () => {
+    it.each([true, false])('honors the read-only plugin presentation for inactive Action approvals (%s)', async readOnly => {
+        const session = storage.getState().sessions.s1!;
+        const approval = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
+            createdBy: { surface: 'agent', sessionId: 's1' }, actionId: 'session.title.set',
+            requestedSurface: 'ui', executionOriginV1: { v: 1, authority: 'present_user', surface: 'ui',
+                caller: { kind: 'host' }, serverId: account.home.id, sessionId: 's1',
+                target: { kind: 'session', sessionId: 's1' }, actionId: 'session.title.set', requestId: 'title-request' },
+            actionArgs: { sessionId: 's1', title: 'Investigation' }, summary: 'Name this investigation',
+            origin: { kind: 'transcript_tool_call', sessionId: 's1', toolName: 'action_execute' } });
+        const message = createToolCallMessageFixture({ id: 'tool-approval', tool: {
+            ...createToolCallMessageFixture().tool, id: 'call-approval', name: 'mcp__happier__action_execute',
+            input: { actionId: approval.actionId, input: approval.actionArgs },
+        } });
+        storage.setState({ settings: { ...storage.getState().settings, transcriptGroupingMode: 'linear',
+                transcriptGroupToolCalls: false, toolViewTimelineChromeMode: 'cards' },
+            sessions: { s1: { ...session, active: false } }, sessionMessages: {
+            s1: createSessionMessagesFixture({ isLoaded: true, messageIdsOldestFirst: [message.id], messagesById: { [message.id]: message } }),
+        } });
+        storage.getState().applyArtifacts([{ id: 'approval-embedded', title: approval.summary, isDecrypted: true,
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+            sourceServerId: account.home.id,
+            header: buildApprovalRequestArtifactHeaderV1(approval, { legacyServerId: account.home.id }),
+            body: JSON.stringify(approval),
+        }]);
+        const lifetime: ActiveServerAccountScopeLifetime = {
+            scope: { serverId: account.home.id, accountId: 'account-1' },
+            isCurrent: () => true, onRetire: () => ({ dispose: () => undefined }),
+        };
+        const environment = projectHappierUiEnvironment(createPluginSurfaceContextFixture());
+        const presentationHost = createPluginUiPrivatePresentationHost(undefined, {
+            renderSessionPart: input => renderPluginSessionPart(input, { accountLifetime: lifetime, presented: true, focusEligible: true }),
+        });
+        const render = (readOnly: boolean) => host(
+            <PluginUiHostPresentationScope environment={environment} presentationHost={presentationHost}>
+                <SessionChat sessionId="s1" variant={readOnly ? 'transcript' : 'chat'} />
+            </PluginUiHostPresentationScope>,
+        );
+        const screen = await renderScreen(render(readOnly));
+        const tool = screen.tree.find(matchesComponent(ToolView));
+        const controls = (testID: string) => tool.findAll(node => typeof node.type === 'string' && node.props.testID === testID);
+        expect(controls('approval-prompt-card')).toHaveLength(1);
+        if (readOnly) {
+            expect(controls('approval-prompt-approve')).toHaveLength(0);
+            expect(controls('approval-prompt-reject')).toHaveLength(0);
+        } else {
+            expect(controls('approval-prompt-approve')[0]?.props.disabled).toBe(false);
+            expect(controls('approval-prompt-reject')[0]?.props.disabled).toBe(false);
+        }
+    });
+
+    it.each([0, 1])('offers only granted native models when the frame has no owner metadata view (layout %s)', async (metadataLayoutVersion) => {
+        const agentTargetKey = 'agent:happier.agent.codex/codex';
+        const allowed = { agentTargetKey, providerConnectionId: null, modelId: 'gpt-6-luna' };
+        const { projectComposerOptionsInputV1 } = await import('@happier-dev/protocol/embed');
+        const metadata = { path: '/tmp', host: 'test-host', flavor: 'codex' };
+        storage.setState({ sessions: { s1: createSessionFixture({
+            id: 's1', serverId: account.home.id, active: true, ownerMetadataView: null,
+            metadataLayoutVersion,
+            metadata: metadataLayoutVersion === 1
+                ? parseDecryptedSessionMetadata(projectSessionSharedMetadataV1({ metadata }), metadataLayoutVersion)
+                : metadata,
+            composerOptionsInput: projectComposerOptionsInputV1({ sessionModelsV1: {
+                v: 1, agentId: 'codex', updatedAt: 1, currentModelId: 'gpt-6-luna',
+                availableModels: [{ id: 'gpt-6-luna', name: 'Luna' }, { id: 'other-model', name: 'Other' }],
+            } }),
+        }) } });
+        const screen = await renderScreen(host(embedded({ ...CHAT, modelPicker: true, allowedModels: [allowed] })));
+        const input = screen.tree.findAll(matchesComponent(AgentInput))[0];
+        expect(React.isValidElement(input.props.modelContentOverride)).toBe(true);
+        const detail = await renderScreen(input.props.modelContentOverride);
+        const allowedId = `model-picker-overlay-option:${JSON.stringify([agentTargetKey, null, allowed.modelId])}`;
+        expect(detail.findByTestId(allowedId)).not.toBeNull();
+        expect(detail.findByTestId(`model-picker-overlay-option:${JSON.stringify([agentTargetKey, null, 'other-model'])}`)).toBeNull();
+        expect(detail.findByTestId('model-picker-overlay-option:automatic')).toBeNull();
+        expect(detail.getTextContent()).not.toContain('agentInput.model.configureInCli');
+        expect(detail.getTextContent()).not.toContain('agentInput.model.custom');
+    });
+
     it('keeps the exact Home in Session parts rendered outside the plugin mount tree', async () => {
         const lifetime: ActiveServerAccountScopeLifetime = {
             scope: { serverId: account.home.id, accountId: 'account-1' },
@@ -179,7 +270,9 @@ describe('EmbeddedSessionProvider', () => {
             })}>
                 <SessionProvider sessionId="s1" readOnly={readOnly}>
                     <SessionTranscript testID="plugin-transcript" />
+                    <SessionTranscript testID="plugin-duplicate-transcript" />
                     <SessionComposer testID="plugin-composer" />
+                    <SessionComposer testID="plugin-duplicate-composer" />
                     <NestingProbe />
                 </SessionProvider>
             </PluginUiHostPresentationScope>
@@ -188,6 +281,8 @@ describe('EmbeddedSessionProvider', () => {
         expect(screen.tree.findAll(matchesComponent(ChatList))).toHaveLength(1);
         expect(screen.tree.findAll(matchesComponent(AgentInput))).toHaveLength(1);
         expect(screen.tree.findAllHostsByTestId('plugin-transcript')).toHaveLength(1);
+        expect(screen.tree.findAllHostsByTestId('plugin-duplicate-transcript')).toHaveLength(0);
+        expect(screen.tree.findAllHostsByTestId('plugin-duplicate-composer')).toHaveLength(0);
         expect(screen.tree.findHostByTestId('plugin-nesting')?.props.beneath).toBe(true);
         const controller = screen.tree.findByType(EmbeddedSessionProvider);
         expect(controller.props).toMatchObject({ serverId: account.home.id,
@@ -225,14 +320,18 @@ describe('EmbeddedSessionProvider', () => {
         expect(screen.tree.findAll(matchesComponent(AgentInput))).toHaveLength(0);
     });
 
-    it('restores the admitted new-chat draft across loading remounts without sharing it with another intent', async () => {
-        const draftScope = { serverId: account.home.id, accountId: 'account-1' };
+    it('admits a spawn-only embed draft without an Account lifetime and restores it across loading remounts', async () => {
+        // A new-chat child has only its admitted create target. Unlike an existing-session child,
+        // it never establishes an embedSession Sync scope or Account-scoped draft transport.
+        const draftScope = { serverId: 'https://spawn-only.example', accountId: 'account-1' };
         const draftId = '00000000-0000-4000-8000-000000000001';
         const renderNewChat = (identity: string) => host(<EmbeddedSessionNewChat
-            target={{ kind: 'new', creation: { draftId: identity, draftScope }, onCreate: async () => ({ sessionId: 'created' }) }}
-            serverId={account.home.id} onCreated={() => {}}
+            target={{ kind: 'new', creation: { draftId: identity, draftScope }, onCreate: async () => ({ sessionId: 'created' }), onPresented: () => {} }}
+            serverId={draftScope.serverId} onCreated={() => {}}
         />);
         const screen = await renderScreen(renderNewChat(draftId));
+        await vi.waitFor(() => expect(screen.tree.findHostByTestId('new-session-composer-input')).not.toBeNull());
+        expect(screen.tree.findHostByTestId('new-session-draft-loading')).toBeNull();
         await act(async () => { screen.tree.changeTextByTestId('new-session-composer-input', 'Unsent embedded draft'); });
         expect(screen.tree.findHostByTestId('new-session-composer-input')?.props.value).toBe('Unsent embedded draft');
         await screen.update(host(<span>Loading</span>));
@@ -248,6 +347,11 @@ describe('EmbeddedSessionProvider', () => {
         expect(screen.tree.findAll(matchesComponent(ChatList))).toHaveLength(1);
         expect(screen.tree.findAll(matchesComponent(AgentInput))).toHaveLength(1);
         expect(screen.tree.findAll(matchesComponent(AppPaneScopeHost))).toHaveLength(0);
+    });
+
+    it('asks what its host asks in an empty embedded composer, never the new-session question', async () => {
+        const screen = await renderScreen(host(embedded({ ...CHAT, composerPlaceholder: 'Reply in this step…' })));
+        expect(screen.tree.findAll(matchesComponent(AgentInput))[0]?.props.placeholder).toBe('Reply in this step…');
     });
 
     it('renders embedded composer Elements through the root material runtime', async () => {

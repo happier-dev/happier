@@ -21,7 +21,9 @@ import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDi
 import { useMachineDisplayNamesById, useSessionSelector } from '@/sync/store/hooks';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolvePortableServerIdentityForRoutingId } from '@/sync/domains/server/resolvePortableServerIdentityForRoutingId';
-import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
+import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
+import { readMachineAdministrationTargetRouteParams } from '@/sync/domains/machines/administration/targetSelection';
 import { useOpenDiscussion } from '@/components/discussions/useOpenDiscussion';
 import { seedDiscussionDraft } from '@/components/discussions/useDiscussionDraft';
 import { buildDiscussionAccountMentionPayload } from '@/components/discussions/discussionComposerDocument';
@@ -33,13 +35,12 @@ const GLYPH_SIZE_PX = 14;
 
 /**
  * Both repairs need a person to finish them (a sign-in terminal, an OAuth or device step), so the
- * button opens the page that runs that exact Action with its continuation, rather than starting an
- * attempt nobody here could complete.
+ * button presents the exact continuation in its owning sign-in surface.
  */
 export function useOpenSessionReadinessRepair(scope: ServerAccountScope) {
   const router = useRouter();
   return React.useCallback(
-    (repair: SessionReadinessRepairV1) => {
+    (repair: SessionReadinessRepairV1, event?: unknown) => {
       if (repair.actionId === 'machines.agents.signIn.start') {
         router.push({
           pathname: '/(app)/settings/agents/[agentId]',
@@ -51,12 +52,11 @@ export function useOpenSessionReadinessRepair(scope: ServerAccountScope) {
         } as never);
         return;
       }
-      router.push({ pathname: '/(app)/settings/connected-services/connect', params: {
-        service: buildQualifiedPluginContributionKey(repair.input.account.service),
-        accountId: repair.input.account.accountId, machineId: repair.input.machineId,
-        serverIdentityId: resolvePortableServerIdentityForRoutingId(scope.serverId) ?? undefined,
-        expectedAccountId: scope.accountId,
-      } } as never);
+      void presentConnectSheet({ scope, service: repair.input.account.service,
+        account: repair.input.account, intent: 'reconnect', anchor: resolvePressTriggerAnchor(event),
+        initialMachineTarget: readMachineAdministrationTargetRouteParams({ machineId: repair.input.machineId,
+          serverIdentityId: resolvePortableServerIdentityForRoutingId(scope.serverId) ?? undefined }),
+      });
     },
     [router, scope.serverId, scope.accountId],
   );
@@ -164,7 +164,7 @@ export const SessionReadinessChecklist = React.memo(function SessionReadinessChe
               size="small"
               display="secondary"
               title={repair.label}
-              onPress={() => openRepair(repair.repair)}
+              onPress={(event?: unknown) => openRepair(repair.repair, event)}
             />
           ) : offerAsk && ownerName ? (
             <RoundButton

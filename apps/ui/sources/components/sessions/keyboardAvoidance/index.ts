@@ -1,6 +1,8 @@
 export {
     ComposerKeyboardProvider,
     useComposerKeyboardLayout as useComposerKeyboardLayoutContext,
+    useComposerOverlayOpen,
+    useReportComposerOverlayOpen,
 } from './ComposerKeyboardContext';
 export type { ComposerKeyboardLayout } from './ComposerKeyboardContext';
 export { ComposerKeyboardFloatingInset } from './ComposerKeyboardFloatingInset';

@@ -25,6 +25,17 @@ function SessionContextMark(): React.ReactElement {
     return <Icon name="house" size={ICON_SIZE.lg} color={theme.colors.text.secondary} />;
 }
 
+/** The template's mark, as the Info Template row and the header menu draw it, so this row joins the sheet's leading column. */
+function TemplateMark(): React.ReactElement {
+    const { theme } = useUnistyles();
+    return <Icon name="file-text" size={ICON_SIZE.lg} color={theme.colors.text.secondary} />;
+}
+
+function SessionChoiceCaret(props: Readonly<{ open?: boolean }>): React.ReactElement {
+    const { theme } = useUnistyles();
+    return <Icon name={props.open ? 'caret-up' : 'caret-down'} size={ICON_SIZE.sm} color={theme.colors.text.secondary} />;
+}
+
 function SessionContextOptionMark(props: Readonly<{ personal: boolean }>): React.ReactElement {
     const { theme } = useUnistyles();
     return <Icon name={props.personal ? 'lock' : 'users'} size={ICON_SIZE.lg} color={theme.colors.text.secondary} />;
@@ -102,6 +113,8 @@ function buildEncryptionSection(model: SessionAccessEditorModel, actions: Sessio
         label: encryption.showAllLabel,
         accessibilityLabel: encryption.showAllLabel,
         icon: () => <SessionEncryptionMark people />,
+        // A disclosure, so it carries the caret that says it opens the list below it.
+        rightAccessory: () => <SessionChoiceCaret open={encryption.recipientsView === 'all'} />,
         onSelect: actions.toggleAllRecipients,
     }];
     if (recipients) {
@@ -158,11 +171,14 @@ export function isSessionAccessEditable(model: SessionAccessEditorModel): boolea
 export function createSessionShareSheetAdapter(input: Readonly<{
     model: SessionAccessEditorModel;
     actions: SessionAccessEditorActions;
+    /** The typed search, read when the handoff is chosen. */
+    readQuery: () => string;
     /** The Session's in-app route; absent for a session that doesn't exist yet. */
     linkPath?: string;
     responsibleAccountId?: string | null;
     publicLink?: ShareSheetAdapter['publicLink'];
     onOpenFullSurface?: (handoff: SessionCollaborationHandoff) => void;
+    onGiveBotCopy?: () => void;
 }>): ShareSheetAdapter<SessionAccessGrantRowModel> {
     const { model, actions } = input;
     const encryptionForGrant = (row: SessionAccessGrantRowModel): SessionAccessEncryptionRecipientRowModel | undefined => {
@@ -218,6 +234,8 @@ export function createSessionShareSheetAdapter(input: Readonly<{
                     id: 'session-context', testID: `${idPrefix}session-access-context`,
                     label: t('session.access.context'), subtitle: current?.label,
                     icon: () => <SessionContextMark />, onSelect: () => onExpand('session-context'),
+                    // A choice, so it carries the select caret every other choice trigger has.
+                    rightAccessory: () => <SessionChoiceCaret />,
                     expandedContentInset: 'none',
                     expandedContent: () => <View>{context.options.map((option) => <Item
                         key={option.teamId ?? 'personal'}
@@ -284,6 +302,12 @@ export function createSessionShareSheetAdapter(input: Readonly<{
                 rightAccessory: notice.action === 'clear_access' ? () => <ShareRowAction label={t('session.access.private')}
                     testID={`${idPrefix}session-access-clear-draft`} onPress={actions.clearAccess} /> : undefined });
             const trailing: SelectionListSectionDescriptor[] = notices.length ? [{ kind: 'static', id: 'status', options: notices }] : [];
+            if (input.onGiveBotCopy) trailing.push({ kind: 'static', id: 'bot-template', options: [{
+                id: 'give-bot-copy', testID: `${idPrefix}session-access-give-bot-copy`,
+                label: t('botTemplates.giveCopyEllipsis'), subtitle: t('botTemplates.giveCopyDescription'),
+                icon: () => <TemplateMark />,
+                onSelect: input.onGiveBotCopy,
+            }] });
             // The anchored composer popover is otherwise a dead end on a wide desktop: this is its one
             // route into the same Collaboration destination with Access focused.
             const openFullSurface = input.onOpenFullSurface;
@@ -292,7 +316,7 @@ export function createSessionShareSheetAdapter(input: Readonly<{
                 testID: `${idPrefix}session-access-open-collaboration`,
                 label: t('session.access.openCollaboration'),
                 // The destination reloads the roster itself; what it cannot rebuild is what was typed.
-                onSelect: () => openFullSurface({ query: model.directory.query }),
+                onSelect: () => openFullSurface({ query: input.readQuery() }),
             }] });
             return { leading, afterAccess, trailing };
         },

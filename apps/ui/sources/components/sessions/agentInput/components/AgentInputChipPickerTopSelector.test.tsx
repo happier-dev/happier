@@ -9,6 +9,7 @@ import { createUnistylesMock } from '@/dev/testkit/mocks/unistyles';
 import { HorizontalScrollableRow } from '@/components/ui/scroll/HorizontalScrollableRow';
 
 import { installAgentInputCommonModuleMocks } from '../agentInputTestHelpers';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -52,7 +53,6 @@ describe('AgentInputChipPickerTopSelector', () => {
     it('names every one-tap tab and keeps the last tab reachable in the shared horizontal scroll row', async () => {
         const { AgentInputChipPickerTopSelector } = await import('./AgentInputChipPickerTopSelector');
         const { AGENT_INPUT_CHIP_PICKER_OPTION_ICON_SIZE } = await import('./agentInputChipPickerOptionStyles');
-        const { resolveMinimumInteractiveTargetSize } = await import('@/components/ui/interactiveTargetSize');
         const onFocusOption = vi.fn();
 
         const screen = await renderScreen(<AgentInputChipPickerTopSelector
@@ -94,7 +94,7 @@ describe('AgentInputChipPickerTopSelector', () => {
 
         const codexStyle = flattenStyle(codexButton?.props.style({ pressed: false }));
         const claudeStyle = flattenStyle(claudeButton?.props.style({ pressed: false }));
-        const tabTarget = Math.max(HAPPIER_PAGE_METRICS.controlHeightPx, resolveMinimumInteractiveTargetSize('web'));
+        const tabTarget = Math.max(HAPPIER_PAGE_METRICS.controlHeightPx, HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE);
         expect(codexStyle.minWidth).toBe(tabTarget);
         expect(codexStyle.minHeight).toBe(tabTarget);
         // Content-sized tabs retain their full name and never shrink past the scroll end.

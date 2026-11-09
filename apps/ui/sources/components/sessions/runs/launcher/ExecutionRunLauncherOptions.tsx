@@ -1,4 +1,4 @@
-import type { EffectiveActionInputField } from '@happier-dev/protocol';
+import type { EffectiveInputField  as EffectiveActionInputField} from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import * as React from 'react';
 import { View } from 'react-native';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
@@ -175,7 +175,7 @@ export const ExecutionRunLauncherOptions = React.memo((props: Readonly<{
     profileChoices: readonly ExecutionRunLauncherProfileChoice[];
     selectedProfileId: string;
     selectedPermissionMode: string;
-    permissionModeOptions: readonly ActionFieldOption[];
+    permissionModeOptions: readonly Pick<ActionFieldOption, 'value' | 'label'>[];
     fields: readonly EffectiveActionInputField[];
     input: Record<string, unknown>;
     editable: boolean;

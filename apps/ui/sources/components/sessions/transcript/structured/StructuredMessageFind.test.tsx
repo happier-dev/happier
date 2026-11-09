@@ -1,8 +1,9 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { selectActiveTestHomeForTests } from '@/dev/testkit/fixtures/persistedHomeProfiles';
 import { createSessionFixture, createSessionMessagesFixture, createTestSessionTranscriptSource, createToolCallMessageFixture, renderScreen, wrapWithSessionTranscriptSource } from '@/dev/testkit';
-import { createMessageStructuredPresentationV1 } from '@happier-dev/protocol';
+import { createMessageStructuredPresentationV1 } from '@happier-dev/protocol/sessions/messages/messageStructuredPresentationV1';
 import { ReviewCommentsV1Schema } from '@happier-dev/protocol/messages/structured/reviewCommentsV1';
 import { normalizeRawMessage } from '@happier-dev/session-core/raw';
 import { createReducer, reducer } from '@happier-dev/session-core/reducer';
@@ -241,3 +242,6 @@ describe('Structured transcript Find', () => {
         expect(mutations).toContainEqual({ reason: 'expand', sourceId: 'structured-find:structured-worker-title' });
     });
 });
+
+// P03-TESTKIT-SERVER: the unconfigured test build seeds no Home; select one through the real owner.
+beforeEach(async () => { await selectActiveTestHomeForTests(); });

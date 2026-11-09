@@ -1,4 +1,4 @@
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { WaitActionInputV1Schema } from '@happier-dev/protocol/actions/specs/wait';
 import { maybeParseJson } from '@happier-dev/protocol/activity/parseJson';

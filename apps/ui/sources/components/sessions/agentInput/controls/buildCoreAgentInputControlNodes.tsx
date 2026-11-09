@@ -32,7 +32,7 @@ export function buildCoreAgentInputControlNodes(params: Readonly<{
     actionMenuAnchorRef: React.RefObject<View | null>;
     onActionMenuPress: () => void;
     actionMenuOpen: boolean;
-    actionChipOpenStyle: import('react-native').ViewProps['style'];
+    actionChipOpenStyle: any;
     sessionModeChipControl: SessionModeChipControlLike | null | undefined;
     shouldRenderSessionModeChip: boolean;
     sessionModeChipAnchorRef: React.RefObject<View | null>;

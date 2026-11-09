@@ -9,9 +9,8 @@ import type { NewSessionProfileAvailabilityReason } from '@/components/sessions/
 import type { AIBackendProfile } from '@/sync/domains/profiles/profileCompatibility';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
-import type { Settings } from '@/sync/domains/settings/settings';
-import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
-import type { SessionModelSelectionV1 } from '@happier-dev/protocol';
+import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/state/newSessionInteractionSchemas';
+import type { SessionModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
 import type { SessionModelPickerExperimentalConfirmationController } from '@/components/sessions/modelPicker/SessionModelPicker';
 import type { NewSessionEngineOptionDetailProps } from '@/components/sessions/new/components/NewSessionEngineOptionDetail';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -49,7 +48,6 @@ type BuildNewSessionAgentPickerOptionsParams = Readonly<{
     selectedModelId: string;
     selectedModelSelection?: SessionModelSelectionV1 | null;
     selectedConfigOverrides?: Readonly<Record<string, string>>;
-    readSettings: () => Settings;
     refreshProbe?: OptionPickerProbeState | null;
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
     favoriteBackendTargetKeys?: ReadonlyArray<string>;
@@ -141,8 +139,7 @@ export function buildNewSessionAgentPickerOptions(
             capabilityServerId: params.capabilityServerId,
             projectionCurrent: params.projectionCurrent,
             selectedPath: params.selectedPath,
-            readSettings: params.readSettings,
-            refreshProbe: params.refreshProbe,
+                refreshProbe: params.refreshProbe,
             onSelectFavoriteModel: params.onSelectFavoriteModel,
             onSelectFavoriteModelOptionValue: params.onSelectFavoriteModelOptionValue,
             onToggleFavoriteModel: params.onToggleFavoriteModel,
@@ -221,8 +218,7 @@ export function buildNewSessionAgentPickerOptions(
                 selectedMachineId: params.selectedMachineId,
                 capabilityServerId: params.capabilityServerId,
                 selectedPath: params.selectedPath,
-                readSettings: params.readSettings,
-                refreshProbe: params.refreshProbe,
+                        refreshProbe: params.refreshProbe,
                 favoriteModelSelections: params.favoriteModelSelections ?? [],
                 onToggleFavoriteModel: params.onToggleFavoriteModel,
                 favoriteEngine: params.onToggleFavoriteBackendTarget ? {

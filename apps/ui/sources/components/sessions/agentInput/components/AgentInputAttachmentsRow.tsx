@@ -10,6 +10,11 @@ import {
     type NativeScrollEvent,
     type NativeSyntheticEvent,
 } from 'react-native';
+import Reanimated, { FadeIn } from 'react-native-reanimated';
+
+import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { WordCrossFade } from '@/components/ui/motion/WordCrossFade';
+import { Tooltip } from '@/components/ui/overlays/Tooltip';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { hapticsLight } from '@/components/ui/theme/haptics';
@@ -30,11 +35,10 @@ import type {
 } from '../agentInputContracts';
 import { readAgentInputImageNumbers } from '../agentInputContracts';
 import { ImageNumberBadge } from '@/components/ui/referenceChip/ImageNumberBadge';
-import { isHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
-import { Tooltip } from '@/components/ui/overlays/Tooltip';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE, useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 
 /** A draft image the composer already holds as a direct URI (the draft owns and revokes it). */
-type ComposerAttachmentImagePreviewItem = Readonly<{ key: string; uri: string; title: string; mimeType?: string }>;
+type ComposerAttachmentImagePreviewItem = Readonly<{ key: string; uri: string; title: string; mimeType?: string; edit?: import('@/components/ui/media/stage/mediaStageItems').StagePictureEdit }>;
 
 type AttachmentVerticalViewport = Readonly<{
     offset: number;
@@ -99,6 +103,7 @@ function resolveAttachmentImagePreviewItems(items: readonly AgentInputAttachment
             uri: imagePreviewUri,
             title: attachment.label,
             mimeType: attachment.preview?.mimeType,
+            edit: attachment.stageEdit,
         });
     }
     return previews;
@@ -155,10 +160,12 @@ function TrayPictureTile(props: Readonly<{
     removeTestID: string | undefined;
     removeAccessibilityLabel: string;
     removeRef?: (target: unknown | null) => void;
+    /** The picture carries marks: the pen badge reopens them (lab `ia · I3`). */
+    onEditMarks?: () => void;
 }>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
-    const touch = isHappierTouchPrimaryPointer(Platform.OS);
+    const touch = useHappierTouchPrimaryPointer(Platform.OS);
     const [hovered, setHovered] = React.useState(false);
     const [focused, setFocused] = React.useState(false);
     return (
@@ -168,6 +175,24 @@ function TrayPictureTile(props: Readonly<{
             onPointerLeave={() => setHovered(false)}
         >
             {props.children}
+            {props.onEditMarks ? (
+                <Reanimated.View entering={FadeIn.duration(motionTokens.guardMoment.wordCrossFadeMs)} style={styles.attachmentImagePenFrame}>
+                    <Tooltip label={t('files.annotate.editMarks')} testID="agent-input-attachment-edit-marks" focusable={false}>
+                        <HappierPressable
+                            testID="agent-input-attachment-pen"
+                            accessibilityLabel={t('files.annotate.editMarks')}
+                            accessibilityRole="button"
+                            onPress={props.onEditMarks}
+                            hitTarget={HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE}
+                            hitReach={ATTACHMENT_CORNER_REMOVE_HIT_REACH}
+                        >
+                            <View style={styles.attachmentImagePenDisc}>
+                                <Icon name="pencil-simple" size={ATTACHMENT_CORNER_REMOVE_ICON_SIZE} color={styles.attachmentImageRemoveIcon.color} />
+                            </View>
+                        </HappierPressable>
+                    </Tooltip>
+                </Reanimated.View>
+            ) : null}
             {props.onRemove ? (
                 <HappierPressable
                     controlRef={props.removeRef}
@@ -176,6 +201,7 @@ function TrayPictureTile(props: Readonly<{
                     accessibilityRole="button"
                     onPress={props.onRemove}
                     onFocusChange={setFocused}
+                    hitTarget={HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE}
                     hitReach={ATTACHMENT_CORNER_REMOVE_HIT_REACH}
                     style={[
                         styles.attachmentImageRemoveFrame,
@@ -342,6 +368,26 @@ const stylesheet = StyleSheet.create((theme) => ({
     attachmentImageRemoveIcon: {
         color: theme.colors.surface.base,
     },
+    // Lab I3: the pen sits on the corner opposite the number, on the same ink disc as remove.
+    attachmentImageFill: {
+        width: '100%',
+        height: '100%',
+    },
+    attachmentImagePenFrame: {
+        position: 'absolute',
+        right: theme.space.s2,
+        bottom: theme.space.s2,
+    },
+    attachmentImagePenDisc: {
+        width: ATTACHMENT_CORNER_REMOVE_SIZE,
+        height: ATTACHMENT_CORNER_REMOVE_SIZE,
+        borderRadius: ATTACHMENT_CORNER_REMOVE_SIZE / 2,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: theme.colors.text.primary,
+        borderWidth: 2,
+        borderColor: theme.colors.surface.base,
+    },
     // The rail's scroll frame clips; it reaches up and right into the row's padding by the corner
     // control's overhang, so the control is not cut while the tray keeps its height.
     compactRail: {
@@ -368,6 +414,12 @@ const stylesheet = StyleSheet.create((theme) => ({
         borderWidth: 1,
         borderColor: theme.colors.border.default,
         backgroundColor: theme.colors.surface.base,
+    },
+    // The card body clips its content to the card's lower corners; the header above it never clips, so its
+    // preview and remove controls reach past the card edge (DESIGN.md → touch targets are hit areas).
+    surfaceBody: {
+        borderBottomLeftRadius: 11,
+        borderBottomRightRadius: 11,
         overflow: 'hidden',
     },
     surfaceHeader: {
@@ -484,6 +536,9 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const stage = useMediaStage();
+    // Touch neighbours split the 6 px chip gap. A fine pointer's neighbour has no extension;
+    // the remove icon's 24 px target reaches 4 px into that gap without moving its drawn box.
+    const chipRemoveHitReach = useHappierTouchPrimaryPointer(Platform.OS) ? ATTACHMENT_CHIP_REMOVE_HIT_REACH : undefined;
     const [surfaceLayouts, setSurfaceLayouts] = React.useState<Readonly<Record<string, AttachmentSurfaceLayout>>>({});
     const [contentSurfaceBandTop, setContentSurfaceBandTop] = React.useState<number | null>(null);
     const [compactRailViewport, setCompactRailViewport] = React.useState<CompactRailViewport>({
@@ -754,7 +809,8 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
                                     accessibilityLabel={item.removeAccessibilityLabel ?? t('common.remove')}
                                     accessibilityRole="button"
                                     onPress={() => requestAttachmentRemoval(item, onRemove)}
-                                    hitReach={ATTACHMENT_CHIP_REMOVE_HIT_REACH}
+                                    hitTarget={HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE}
+                                    hitReach={chipRemoveHitReach}
                                     style={styles.surfaceRemoveButton}
                                     testID={removeTestID}
                                 >
@@ -762,14 +818,16 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
                                 </HappierPressable>
                             ) : null}
                         </View>
-                        {renderAttachmentErrorFeedback(item)}
-                        {props.verticalViewport ? (
-                            shouldMountSurfaceBody(item) ? item.renderedContent : null
-                        ) : (
-                            <LazyMountOnScreen>
-                                {item.renderedContent}
-                            </LazyMountOnScreen>
-                        )}
+                        <View style={styles.surfaceBody}>
+                            {renderAttachmentErrorFeedback(item)}
+                            {props.verticalViewport ? (
+                                shouldMountSurfaceBody(item) ? item.renderedContent : null
+                            ) : (
+                                <LazyMountOnScreen>
+                                    {item.renderedContent}
+                                </LazyMountOnScreen>
+                            )}
+                        </View>
                     </View>
                 )}
             </AttachmentRowPreviewTrigger>
@@ -810,7 +868,8 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
                     accessibilityLabel={badge.removeAccessibilityLabel ?? t('common.remove')}
                     accessibilityRole="button"
                     onPress={() => requestAttachmentRemoval(badge, onRemove)}
-                    hitReach={ATTACHMENT_CHIP_REMOVE_HIT_REACH}
+                    hitTarget={HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE}
+                    hitReach={chipRemoveHitReach}
                     testID={badge.removeTestID ?? (badge.testID ? `${badge.testID}-remove` : undefined)}
                 >
                     <Icon name="x" size={ATTACHMENT_REMOVE_ICON_SIZE} color={theme.colors.text.secondary} />
@@ -905,26 +964,32 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
                 : null;
         const imagePreviewIndex = attachmentImagePreviewItems.findIndex((item) => item.uri === imagePreviewUri && item.title === att.label);
 
+        const openImageStage = (annotate: boolean) => {
+            const openIndex = imagePreviewIndex >= 0 ? imagePreviewIndex : 0;
+            stage.open(attachmentImagePreviewItems.map((item, index) => ({
+                kind: 'image' as const,
+                title: item.title,
+                alphaCapable: resolveFileViewerKind({ path: item.title, mimeType: item.mimeType }).alphaCapable,
+                edit: item.edit,
+                ...(annotate && index === openIndex ? { annotate: true } : {}),
+                source: { enabled: true, mimeType: item.mimeType, source: { kind: 'uri' as const, uri: item.uri } },
+                originRef: { current: (attachmentFocusTargetsRef.current.get(item.key) ?? null) as View | null },
+            })), openIndex);
+        };
+
         if (imagePreviewUri) {
             return (
                 <AttachmentRowPreviewTrigger
                     key={att.key}
                     item={att}
-                    fallbackOnPress={() => {
-                        stage.open(attachmentImagePreviewItems.map((item) => ({
-                            kind: 'image' as const,
-                            title: item.title,
-                            alphaCapable: resolveFileViewerKind({ path: item.title, mimeType: item.mimeType }).alphaCapable,
-                            source: { enabled: true, mimeType: item.mimeType, source: { kind: 'uri' as const, uri: item.uri } },
-                            originRef: { current: (attachmentFocusTargetsRef.current.get(item.key) ?? null) as View | null },
-                        })), imagePreviewIndex >= 0 ? imagePreviewIndex : 0);
-                    }}
+                    fallbackOnPress={() => openImageStage(false)}
                 >
                     {({ anchorRef, onPress, onRemove }) => (
                         <TrayPictureTile
                             removeTestID={att.onRemove ? att.removeTestID ?? `agent-input-attachment-remove:${att.key}` : undefined}
                             removeAccessibilityLabel={att.removeAccessibilityLabel ?? t('common.remove')}
                             onRemove={att.onRemove ? () => requestAttachmentRemoval(att, onRemove) : undefined}
+                            {...(att.hasImageMarks ? { onEditMarks: () => openImageStage(true) } : {})}
                         >
                             <HappierPressable
                                 controlRef={attachmentFocusRef(att.key, anchorRef)}
@@ -935,11 +1000,14 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
                                 testID={`agent-input-attachment-image:${att.key}`}
                             >
                                 <TrayPictureBacking alphaCapable={resolveTrayPictureAlphaCapable(att)} checkerboardTestID={`agent-input-attachment-checkerboard:${att.key}`} />
-                                <Image
-                                    source={{ uri: imagePreviewUri }}
-                                    style={[{ width: '100%', height: '100%' }, styles.attachmentImage]}
-                                    contentFit="cover"
-                                />
+                                {/* Done swaps the picture in place with one short fade (MIS §8.2). */}
+                                <WordCrossFade wordKey={imagePreviewUri} style={styles.attachmentImageFill}>
+                                    <Image
+                                        source={{ uri: imagePreviewUri }}
+                                        style={[{ width: '100%', height: '100%' }, styles.attachmentImage]}
+                                        contentFit="cover"
+                                    />
+                                </WordCrossFade>
                                 {renderPictureState(att, attachmentError, percent)}
                             </HappierPressable>
                         </TrayPictureTile>
@@ -977,7 +1045,8 @@ export const AgentInputAttachmentsRow = React.memo(function AgentInputAttachment
                 accessibilityLabel={att.removeAccessibilityLabel ?? t('common.remove')}
                 accessibilityRole="button"
                 onPress={() => requestAttachmentRemoval(att, onRemove)}
-                hitReach={ATTACHMENT_CHIP_REMOVE_HIT_REACH}
+                hitTarget={HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE}
+                hitReach={chipRemoveHitReach}
             >
                 <Icon name="x-circle" size={ATTACHMENT_REMOVE_ICON_SIZE} color={theme.colors.text.secondary} />
             </HappierPressable>

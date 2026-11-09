@@ -27,6 +27,7 @@ import { MINIMUM_CLI_PENDING_QUEUE_V2_VERSION } from '@/utils/system/versionUtil
 import { DiscussionSelectionSourceV1Schema } from '@happier-dev/protocol/discussions/content';
 import { RpcError, RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import type { ChatListInternalProps } from '@/components/sessions/transcript/chatListTypes';
+import type { NormalizedMessage } from '@happier-dev/session-core/raw';
 
 
 // Static pane/runtime imports use the same Socket boundary as the restored Home.
@@ -314,8 +315,8 @@ vi.mock('@/components/sessions/panes/useRegisterSessionPaneDriver', () => ({
 vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
     useSessionPaneUrlSync: () => {},
 }));
-vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
-    ChatHeaderView: React.memo((props: any) => {
+vi.mock('@/components/sessions/shell/view/SessionPaneHeader', () => ({
+    SessionPaneHeader: React.memo((props: any) => {
         chatHeaderRenderSpy(props);
         return null;
     }),
@@ -1603,6 +1604,41 @@ describe('SessionView (transcript rendering for seq-only sessions)', () => {
         expect(appPaneScopeHostRenderSpy).not.toHaveBeenCalled();
         expect(agentInputRenderSpy).not.toHaveBeenCalled();
 
+        await screen.unmount();
+    });
+
+    it('keeps the real shell support reader stable while an admitted transcript tail streams', async () => {
+        const screen = await renderSessionView();
+        await act(async () => {
+            shellStorage.getState().applyMessages('s1', Array.from({ length: 1_000 }, (_, index): NormalizedMessage => ({
+                id: `prefix-${index}`, seq: 1, localId: null, createdAt: 1,
+                role: 'agent', isSidechain: false,
+                content: [{ type: 'text', text: `Earlier paragraph ${index}`, uuid: `prefix-${index}`, parentUUID: null }],
+            })));
+        });
+        await flushHookEffects({ cycles: 5, turns: 5 });
+        appPaneScopeHostRenderSpy.mockClear();
+        chatHeaderRenderSpy.mockClear();
+        agentInputRenderSpy.mockClear();
+        chatListRenderSpy.mockClear();
+        const version = shellStorage.getState().sessionMessages.s1!.messagesVersion;
+        for (let index = 0; index < 5; index += 1) {
+            await act(async () => {
+                shellStorage.getState().applyMessages('s1', [{
+                    id: 'stream-tail', seq: 2, localId: 'stream-tail', createdAt: 2,
+                    role: 'agent', isSidechain: false,
+                    content: [{ type: 'text', text: `Streaming tail ${index}`, uuid: 'stream-tail', parentUUID: null }],
+                    meta: { happierStreamSegmentV1: { v: 1, segmentKind: 'assistant', segmentLocalId: 'stream-tail',
+                        segmentState: 'streaming', startedAtMs: 2, updatedAtMs: index + 3 } },
+                }]);
+            });
+        }
+        await flushHookEffects({ cycles: 2, turns: 1 });
+        expect(shellStorage.getState().sessionMessages.s1!.messagesVersion).toBe(version + 5);
+        expect(appPaneScopeHostRenderSpy).not.toHaveBeenCalled();
+        expect(chatHeaderRenderSpy).not.toHaveBeenCalled();
+        expect(agentInputRenderSpy).not.toHaveBeenCalled();
+        expect(chatListRenderSpy).toHaveBeenCalled();
         await screen.unmount();
     });
 

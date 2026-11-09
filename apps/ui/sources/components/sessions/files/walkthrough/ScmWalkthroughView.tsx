@@ -9,14 +9,14 @@ import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { resolveExecutionRunAgentMarkId, resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
-import { resolveRunNativeModelLabel } from '@/components/sessions/runs/resolveExecutionRunSelectionLabel';
-import { useRunSessionModels } from '@/components/sessions/runs/useRunSessionModels';
+import { useRunAnsweringEngine } from '@/components/sessions/runs/useRunAnsweringEngine';
 import { selectScmDiffSummaryProducerModel } from '@/sync/domains/scm/diffSummary/state';
 import { getPreferredLanguage, t } from '@/text';
 import { RunWorkNotifications } from '@/components/sessions/work/RunWorkNotifications';
 
 import type { SessionScmReviewComparison } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import { resolveScmDiffSummaryDiscussionTarget } from '@/sync/domains/scm/diffSummary/discussion';
+import { useAskSessionReveal } from '@/components/ui/code/selection/useAskSessionReveal';
 import { getSessionComposerDraftSnapshot, writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { ScmDiffSummaryModelPicker } from '@/components/settings/sourceControl/ScmDiffSummaryModelPicker';
 import { ScmDiffSummaryStartOptions, scmDiffSummaryPrerequisiteOf, scmDiffSummaryStartOptionsOf, useOpenExplainChangesSetting, useSummaryModelChoice } from '@/components/sessions/files/comparison/ScmDiffSummaryStartOptions';
@@ -28,7 +28,9 @@ import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFo
 
 import type { useScmDiffSummaryBinding } from '@/components/sessions/files/comparison/useScmDiffSummaryBinding';
 import { WalkthroughView, type WalkthroughViewLayout } from './WalkthroughView';
-import { buildWalkthroughReading, EMPTY_WALKTHROUGH_READING, type WalkthroughPhase, type WalkthroughStop } from './walkthroughReading';
+import { WalkthroughStopExchangesProvider, type WalkthroughStopExchangesSource } from './WalkthroughStopExchanges';
+import { EMPTY_WALKTHROUGH_READING, type WalkthroughPhase, type WalkthroughStop } from './walkthroughReading';
+import { useWalkthroughReading } from './useWalkthroughReading';
 import { useScmReviewedMarks } from '../comparison/useScmReviewedMarks';
 import { useWalkthroughSavedActions } from './WalkthroughSavedActions';
 import type { ScmComparisonMenuSection } from '@/components/sessions/files/comparison/ScmComparisonMoreMenu';
@@ -89,16 +91,19 @@ export const ScmWalkthroughView = React.memo(function ScmWalkthroughView(props: 
     const openExplainSetting = useOpenExplainChangesSetting();
     const key = viewModel?.requestKey;
     const runId = viewModel?.executionRunId ?? null;
-    const marks = useScmReviewedMarks({ comparison: capturedComparison, serverId: props.serverId ?? null, host: bound.host });
-    const reading = React.useMemo(() => (capturedComparison
-        ? buildWalkthroughReading({
+    const marks = useScmReviewedMarks({ comparison: capturedComparison, serverId: props.serverId ?? null, host: bound.host,
+        observation: 'keyed',
+        writeUnavailableReason: bound.machineReachable ? null : t('walkthrough.notice.offlineA11y') });
+    const reading = useWalkthroughReading(capturedComparison
+        ? {
             comparison: capturedComparison,
             walkthrough: viewModel?.outputs?.walkthrough ?? null,
             analysis: viewModel?.analysis ?? null,
             reviewed: marks.record,
+            reviewedRecordSource: marks.recordSource,
             provenance: viewModel?.savedResult?.walkthroughProvenance,
-        })
-        : null), [capturedComparison, marks.record, viewModel?.analysis, viewModel?.outputs?.walkthrough, viewModel?.savedResult?.walkthroughProvenance]);
+        }
+        : null, 'keyed');
 
     const discussion = React.useMemo(() => (props.sessionId
         ? resolveScmDiffSummaryDiscussionTarget({
@@ -111,6 +116,8 @@ export const ScmWalkthroughView = React.memo(function ScmWalkthroughView(props: 
         })
         : null), [canSend, props.serverId, props.sessionId, runId, viewModel?.latestRun]);
     const onOpenComposer = props.onOpenComposer;
+    // An Ask about a stop shows the composer the way every Ask does: over the reading on a phone (lab WT3-D1p).
+    const revealAsk = useAskSessionReveal(onOpenComposer);
     const sessionId = props.sessionId;
     const onAsk = React.useMemo(() => {
         if (!sessionId || !onOpenComposer || discussion?.kind !== 'continue' || !scope || !cwd || !viewModel?.savedResult) return props.onAskStop;
@@ -122,9 +129,9 @@ export const ScmWalkthroughView = React.memo(function ScmWalkthroughView(props: 
             writeExistingSessionDraft({ scope, sessionId, patch: { ...(question ? { text: currentText ? `${currentText}\n\n${question}` : question } : {}),
                 routing: { recipient: StrictJsonValueSchema.parse({ mode: 'scm_diff_summary', recipient,
                 target: { cwd, resultId: saved.resultId, expectedRevision: saved.revision, stopIds: [stop.id] } }) } } });
-            onOpenComposer();
+            revealAsk();
         };
-    }, [bound.isCurrent, cwd, discussion, onOpenComposer, props.sessionId, props.onAskStop, scope?.serverId, scope?.accountId, viewModel?.savedResult]);
+    }, [bound.isCurrent, cwd, discussion, onOpenComposer, revealAsk, props.sessionId, props.onAskStop, scope?.serverId, scope?.accountId, viewModel?.savedResult]);
     const saved = viewModel?.savedResult;
     const updateWitnessed = useWitnessedUpdateNotice(saved, reading?.phase ?? 'none');
     const nativeTurns = !sessionId ? viewModel?.latestRun?.inputTurns : null;
@@ -159,6 +166,13 @@ export const ScmWalkthroughView = React.memo(function ScmWalkthroughView(props: 
     // The generator's own transcript is the existing run destination, never the human discussion thread.
     const router = useRouter();
     const conversationHref = discussion?.kind === 'continue' ? discussion.href : null;
+    // Questions asked about a stop, with their answers, read from the generator's transcript under that stop (lab WT3-D1).
+    const latestRun = viewModel?.latestRun;
+    const exchangeStopIds = React.useMemo(() => reading?.stops.map((stop) => stop.id) ?? [], [reading?.stops]);
+    const exchangeSource = React.useMemo<WalkthroughStopExchangesSource | null>(() => (sessionId && runId && saved && latestRun?.runId === runId
+        ? { sessionId, runId, sidechainId: latestRun.sidechainId, resultId: saved.resultId, stopIds: exchangeStopIds }
+        : null), [exchangeStopIds, latestRun?.runId, latestRun?.sidechainId, runId, saved?.resultId, sessionId]);
+    const openConversation = React.useMemo(() => (conversationHref ? () => router.push(conversationHref as never) : null), [conversationHref, router]);
     const phone = props.layout === 'phone';
     // A phone lists it as a named row of the comparison menu; the wide bar keeps the quiet icon.
     const conversationAction = conversationHref && !phone ? (
@@ -225,21 +239,24 @@ export const ScmWalkthroughView = React.memo(function ScmWalkthroughView(props: 
     const markAgentId = resolveExecutionRunAgentMarkId(producerTarget, theme);
     // Who wrote the reading, by name ("Opus 5.5 read all 14"): the model when the result records it, else the
     // Agent beside its mark ("Codex read all 2"), and only then the generic "The model".
-    // The Session's own model list names the model on a cold load, before the picker catalog arrives.
-    const sessionModels = useRunSessionModels(props.sessionId, props.serverId);
+    const { engine: producerEngine } = useRunAnsweringEngine({ backendTarget: producerTarget, modelId: producerModelId,
+        selection: producerSelection, sessionId: props.sessionId, serverId: props.serverId,
+        machineId: bound.host.machineId, cwd, catalogProfiles: modelChoices.catalogProfiles });
     const producerLabel = React.useMemo(() => {
-        if (producerModelId) return resolveRunNativeModelLabel(producerTarget, modelChoices.catalogProfiles, producerSelection, sessionModels)(producerModelId) ?? producerModelId;
+        if (producerEngine) return producerEngine.label;
         try { return resolveExecutionRunBackendLabel(producerTarget); } catch { return null; }
-    }, [producerModelId, producerTarget, producerSelection, modelChoices.catalogProfiles, sessionModels]);
-    const marksAvailable = capturedComparison !== null && marks.record !== null && marks.unavailableReason === null;
+    }, [producerEngine, producerTarget]);
+    const marksReadable = capturedComparison !== null && marks.record !== null;
     const setReviewed = marks.setReviewed;
-    const onToggleReviewed = React.useMemo(() => (marksAvailable
+    const onToggleReviewed = React.useMemo(() => (marksReadable
         ? (stop: WalkthroughStop) => setReviewed(stop.changeRefs, !stop.reviewed)
-        : undefined), [marksAvailable, setReviewed]);
+        : undefined), [marksReadable, setReviewed]);
 
     // The saved result's operations are rows of the comparison menu; what they open renders under the header.
     const savedActions = useWalkthroughSavedActions(saved && cwd && key && operations ? {
         result: saved, cwd, operations,
+        editorKey: JSON.stringify([scope?.serverId, scope?.accountId, bound.host.sessionId, bound.host.machineId, cwd, saved.resultId]),
+        paneScopeId: bound.paneScopeId,
         nativeDiscussion: !sessionId,
         nativeDiscussionReply,
         onUndo, undoing,
@@ -272,11 +289,14 @@ export const ScmWalkthroughView = React.memo(function ScmWalkthroughView(props: 
         const sections = [findSection, conversationSection, savedActions.section].filter((section): section is ScmComparisonMenuSection => Boolean(section));
         return sections.length > 0 ? sections : undefined;
     }, [findSection, conversationSection, savedActions.section]);
+    const notifySource = runId ? sessionId ? { kind: 'execution_run' as const, sessionId, runId }
+        : machine?.machineId ? { kind: 'execution_run' as const, machineId: machine.machineId, runId } : null : null;
 
     return (
         <View style={{ flex: 1, minHeight: 0 }}>
             {props.renderBar(<>{explainAction}{findAction}{conversationAction}</>, savedSections, reviewStatus)}
             {modelChoice.choosing ? <ScmDiffSummaryModelPicker value={model} onChange={setModel} modelChoices={modelChoices} machineId={machine?.machineId} serverId={props.serverId} /> : null}
+            <WalkthroughStopExchangesProvider source={exchangeSource} modelLabel={producerLabel} onOpenConversation={openConversation}>
             <WalkthroughView
                 reading={reading ?? EMPTY_WALKTHROUGH_READING}
                 restoreState={bound.restoreState}
@@ -293,8 +313,11 @@ export const ScmWalkthroughView = React.memo(function ScmWalkthroughView(props: 
                 active={props.active}
                 offline={offline}
                 onToggleReviewed={onToggleReviewed}
-                reviewedProgressAvailable={marksAvailable}
+                marksDisabledReason={marks.unavailableReason}
+                reviewedProgressAvailable={marksReadable}
+                reviewedProgressPending={marks.pending}
                 onAsk={onAsk}
+                askPending={Boolean(sessionId && onOpenComposer && runId && discussion?.kind === 'unknown')}
                 onOpenFile={props.onOpenFile}
                 onShowFiles={props.onShowFiles}
                 // The band is the way back from the last change; without Undo the reading's own provenance marks carry it.
@@ -313,15 +336,14 @@ export const ScmWalkthroughView = React.memo(function ScmWalkthroughView(props: 
                 onRetry={bound.admission ? undefined : onStart}
                 onChooseModel={modelChoice.choose}
                 endedConversation={saved && sessionId && discussion?.kind === 'unavailable' ? { onStartNew, onAskSession } : null}
-                notify={machine?.machineId && cwd && runId && capturedComparison && viewModel?.resultId
+                notify={notifySource && capturedComparison && viewModel?.resultId
                     ? <RunWorkNotifications serverId={props.serverId}
-                        source={{ kind: 'execution_run', machineId: machine.machineId, runId, ...(sessionId ? { sessionId } : {}) }}
-                        project={{ machineId: machine.machineId, directory: cwd }}
-                        selectedOutput={{ output: 'walkthrough', comparisonId: capturedComparison.id, resultId: viewModel.resultId,
-                            message: t('sessionWork.notify.walkthroughUpdate') }} /> : null}
+                        source={notifySource}
+                        selectedOutput={{ output: 'walkthrough', comparisonId: capturedComparison.id, resultId: viewModel.resultId }} /> : null}
                 savedActions={savedActions.panel}
                 findSurfaceId={findSurfaceId}
             />
+            </WalkthroughStopExchangesProvider>
         </View>
     );
 });

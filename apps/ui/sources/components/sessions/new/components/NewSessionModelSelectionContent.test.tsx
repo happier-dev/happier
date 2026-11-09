@@ -3,10 +3,12 @@ import { act } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { FavoriteModelSelectionV1Schema } from '@/sync/domains/models/favoriteModelSelections';
 import {
-    createProviderErrorV1,
-    ProviderConnectionIdSchema,
+    createProviderErrorV1} from '@happier-dev/protocol/providers/errors';
+import {
+    ProviderConnectionIdSchema} from '@happier-dev/protocol/providers/ids';
+import {
     type ProviderBoundModelRef,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/providers/selection/v1';
 
 import { createResolvedAgentCatalogEntryFixture } from '@/dev/testkit/fixtures/agentCatalogFixtures';
 import { renderScreen } from '@/dev/testkit';

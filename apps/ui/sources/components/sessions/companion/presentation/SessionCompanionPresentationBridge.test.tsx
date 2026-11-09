@@ -1,4 +1,7 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
+import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+import { CurrentSessionPresentationActionInputV1Schema } from '@happier-dev/protocol/sessions';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createStorageModuleStub } from '@/dev/testkit/mocks/storage';
@@ -14,6 +17,8 @@ import { SessionBoardContinuityProvider, useSessionBoardContinuity } from '../..
 import { readPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import {
     SessionBoardControllerOwner,
+    useMountedSessionBoardController,
+    type MountedSessionBoardController,
 } from '../../board/SessionBoardControllerProvider';
 import type { SessionBoardBinding } from '../../board/observeSessionBoard';
 import { SessionCompanionPresentationBridge } from './SessionCompanionPresentationBridge';
@@ -92,10 +97,43 @@ function snapshotWithViews(viewIds: readonly string[]): SessionBoardSnapshot {
     } as Parameters<typeof projectSessionBoard>[0]);
 }
 
+function snapshotWithReadableTranscriptItem(
+    reachability: SessionBoardSnapshot['reachability'],
+): SessionBoardSnapshot {
+    return projectSessionBoard({
+        layout: undefined,
+        items: new Map([['visual-1', { revision: 'ssr1:item', outcome: { status: 'ready', value: {
+            v: 1,
+            destination: 'transcript',
+            title: 'Visual',
+            frame: 'card',
+            height: { mode: 'auto', fallback: 'regular' },
+            source: { kind: 'hostedHtml', source: artifactHtmlBundleFromBodyV1('<p>Visual</p>') },
+        } } }]]),
+        capabilities: { readTranscript: true, editSessionRecords: true },
+        freshness: 'fresh',
+        reachability,
+        loading: 'idle',
+        incomplete: false,
+    });
+}
+
 type ContinuityProbe = { current: ReturnType<typeof useSessionBoardContinuity> };
 
 function ContinuityProbe(props: Readonly<{ probe: ContinuityProbe }>): null {
     props.probe.current = useSessionBoardContinuity(OWNER_ADDRESS);
+    return null;
+}
+
+function InlineOccurrences(props: Readonly<{ probe: { current: MountedSessionBoardController | null } }>): null {
+    const mounted = useMountedSessionBoardController(OWNER_ADDRESS);
+    props.probe.current = mounted;
+    const report = mounted?.reportInlineTranscriptDemand;
+    React.useEffect(() => {
+        const releaseFirst = report?.('visual-1', 'first');
+        const releaseSecond = report?.('visual-1', 'second');
+        return () => { releaseFirst?.(); releaseSecond?.(); };
+    }, [report]);
     return null;
 }
 
@@ -104,7 +142,9 @@ function Harness(props: Readonly<{
     bridgeAddress?: SessionAddress;
     applierRef: React.MutableRefObject<SessionPresentationIntentApplier | null>;
     openBoard: ReturnType<typeof vi.fn>;
+    revealBoardItem?: ReturnType<typeof vi.fn>;
     continuityProbe?: ContinuityProbe;
+    inlineProbe?: { current: MountedSessionBoardController | null };
 }>): React.ReactElement {
     const bridgeAddress = props.bridgeAddress ?? OWNER_ADDRESS;
     return (
@@ -126,12 +166,13 @@ function Harness(props: Readonly<{
                 callerHostedHtmlRuntime={null}
             >
                 {props.continuityProbe ? <ContinuityProbe probe={props.continuityProbe} /> : null}
+                {props.inlineProbe ? <InlineOccurrences probe={props.inlineProbe} /> : null}
                 <SessionCompanionPresentationBridge
                     sessionId={bridgeAddress.sessionId}
                     serverId={bridgeAddress.serverId}
                     applierRef={props.applierRef}
                     openBoard={props.openBoard}
-                    revealBoardItem={() => ({ status: 'applied' })}
+                    revealBoardItem={props.revealBoardItem ?? (() => ({ status: 'applied' }))}
                     returnToChat={() => ({ status: 'applied' })}
                     openFullSurface={() => ({ status: 'applied' })}
                 />
@@ -146,11 +187,38 @@ describe('SessionCompanionPresentationBridge Board currentness', () => {
     });
     afterEach(() => standardCleanup());
 
+    it.each(['ready', 'unavailable'] as const)('transfers only to the exact requested live occurrence and refuses a retired occurrence with %s Board', async board => {
+        const applierRef = { current: null } as React.MutableRefObject<SessionPresentationIntentApplier | null>;
+        const probe: { current: MountedSessionBoardController | null } = { current: null };
+        const readyBinding = { status: 'ready', snapshot: projectSessionBoard({
+            layout: undefined,
+            items: new Map([['visual-1', { revision: 'ssr1:item', outcome: { status: 'ready', value: {
+                v: 1, destination: 'transcript', title: 'Visual', frame: 'card', height: { mode: 'auto', fallback: 'regular' },
+                source: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Visual' } } },
+            } } }]]),
+            capabilities: { readTranscript: true, editSessionRecords: true }, freshness: 'fresh', reachability: 'reachable',
+            loading: 'idle', incomplete: false,
+        }) } as const;
+        const binding: SessionBoardBinding = board === 'ready' ? readyBinding : { status: 'unavailable', reason: 'board_feature_disabled' };
+        const screen = await renderScreen(<Harness binding={binding} applierRef={applierRef} inlineProbe={probe} openBoard={vi.fn()} />);
+        expect(probe.current?.resolveInlineTranscriptOccurrence('visual-1')).toBe('first');
+        const { intent } = CurrentSessionPresentationActionInputV1Schema.parse({
+            intent: { kind: 'chat.item.show', widgetId: 'visual-1', occurrenceId: 'second' },
+        });
+        if (intent.kind !== 'chat.item.show') throw new Error('Expected the requested Chat occurrence intent');
+        await act(async () => { expect(applierRef.current?.(intent)).toEqual({ status: 'applied' }); });
+        expect(probe.current?.resolveInlineTranscriptOccurrence('visual-1')).toBe('second');
+        await act(async () => { expect(applierRef.current?.({ ...intent, occurrenceId: 'retired' })).toEqual({ status: 'unavailable' }); });
+        expect(probe.current?.resolveInlineTranscriptOccurrence('visual-1')).toBe('second');
+        await screen.update(<Harness binding={binding} applierRef={applierRef} openBoard={vi.fn()} />);
+        await act(async () => { expect(applierRef.current?.(intent)).toEqual({ status: 'unavailable' }); });
+        await screen.unmount();
+        expect(applierRef.current).toBeNull();
+    });
+
     it.each([
         ['feature-disabled', { status: 'unavailable', reason: 'board_feature_disabled' } as const, OWNER_ADDRESS],
         ['forbidden or revoked', { status: 'unavailable', reason: 'forbidden' } as const, OWNER_ADDRESS],
-        ['offline', { status: 'ready', snapshot: snapshot('offline', 'stale') } as const, OWNER_ADDRESS],
-        ['unknown reachability', { status: 'ready', snapshot: snapshot('unknown', 'stale') } as const, OWNER_ADDRESS],
         ['wrong exact address', { status: 'ready', snapshot: snapshot('reachable', 'fresh') } as const, {
             serverId: 'home-2',
             sessionId: OWNER_ADDRESS.sessionId,
@@ -172,18 +240,36 @@ describe('SessionCompanionPresentationBridge Board currentness', () => {
         expect(openBoard).not.toHaveBeenCalled();
     });
 
-    // Freshness is not authorization. An Agent's own Board write marks the
-    // repository stale before it reveals what it made; last-known Board
-    // content stays a valid navigation target while its Home is reachable.
+    it('opens a readable transcript item in the local panel while Board reachability is still unknown', async () => {
+        const applierRef = { current: null } as React.MutableRefObject<SessionPresentationIntentApplier | null>;
+        const revealBoardItem = vi.fn(() => ({ status: 'applied' as const }));
+        await renderScreen(
+            <Harness
+                binding={{ status: 'ready', snapshot: snapshotWithReadableTranscriptItem('unknown') }}
+                applierRef={applierRef}
+                openBoard={vi.fn()}
+                revealBoardItem={revealBoardItem}
+            />,
+        );
+
+        expect(applierRef.current?.({ kind: 'board.item.reveal', widgetId: 'visual-1' }))
+            .toEqual({ status: 'applied' });
+        expect(revealBoardItem).toHaveBeenCalledWith('visual-1');
+    });
+
+    // Opening the local pane creates content demand. Network readiness and
+    // freshness cannot be prerequisites for that first navigation.
     it.each([
-        ['fresh', 'fresh'],
-        ['stale', 'stale'],
-    ] as const)('applies Board presentation through the reachable exact-Session binding when its repository is %s', async (_label, freshness) => {
+        ['fresh', 'reachable', 'fresh'],
+        ['stale', 'reachable', 'stale'],
+        ['offline', 'offline', 'stale'],
+        ['not yet demanded', 'unknown', 'stale'],
+    ] as const)('opens the exact-Session Board when its repository is %s', async (_label, reachability, freshness) => {
         const applierRef = { current: null } as React.MutableRefObject<SessionPresentationIntentApplier | null>;
         const openBoard = vi.fn(() => ({ status: 'applied' as const }));
         await renderScreen(
             <Harness
-                binding={{ status: 'ready', snapshot: snapshot('reachable', freshness) }}
+                binding={{ status: 'ready', snapshot: snapshot(reachability, freshness) }}
                 applierRef={applierRef}
                 openBoard={openBoard}
             />,

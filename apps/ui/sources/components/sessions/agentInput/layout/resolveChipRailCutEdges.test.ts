@@ -13,6 +13,12 @@ describe('resolveChipRailCutEdges', () => {
         expect(resolveChipRailCutEdges({ ...rail, items })).toEqual({ end: { solidUntilPx: 250, clearFromPx: 256 } });
     });
 
+    it('keeps a chip that is mostly in view on the ordinary fade instead of hiding it behind a gap (QA-PHONE P2)', () => {
+        // The 390 composer: a 298px rail whose folder chip starts at 155 and runs past the end.
+        expect(resolveChipRailCutEdges({ viewportWidth: 298, scrollLeft: 0, items: [chip(0, 149), chip(155, 420)] })).toEqual({});
+        expect(resolveChipRailCutEdges({ ...rail, scrollLeft: 120, items: [chip(-120, 150), chip(156, 290)] })).toEqual({});
+    });
+
     it('leaves a rail alone when every chip is whole, or when it is scrolled to its end', () => {
         expect(resolveChipRailCutEdges({ ...rail, items: [chip(0, 80), chip(86, 170)] })).toEqual({});
         expect(resolveChipRailCutEdges({ ...rail, scrollLeft: 120, items: [chip(-120, -40), chip(0, 60), chip(66, 270)] })).toEqual({});

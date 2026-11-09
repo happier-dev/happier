@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { flushHookEffects, invokeTestInstanceHandler, standardCleanup } from '@/dev/testkit';
+import { invokeTestInstanceHandler, standardCleanup } from '@/dev/testkit';
 import { createSessionFilesViewFixture, fileViewSnapshot, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from './sessionFilesViewTestkit';
 import { createSessionFileNativeTransferBoundary } from '../sessionFileNativeTransferTestkit';
 import { createExpoFileSystemFileMock } from '@/dev/testkit/mocks/expoFileSystem';
@@ -16,6 +16,7 @@ const { FilePageHeader } = await import('@/components/workspaces/files/file/File
 const { FileContentPanel } = await import('@/components/workspaces/files/file/FileContentPanel');
 const { FileViewerBody } = await import('@/components/workspaces/files/file/FileViewerBody');
 const { FileTooLargeState } = await import('@/components/workspaces/files/file/FilePageStates');
+const { FloatingOverlay } = await import('@/components/ui/overlays/FloatingOverlay');
 
 let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
 let transfer: ReturnType<typeof createSessionFileNativeTransferBoundary>;
@@ -80,8 +81,19 @@ function menuItem(screen: Awaited<ReturnType<typeof renderFile>>, id: string) {
 
 async function selectMenuItem(screen: Awaited<ReturnType<typeof renderFile>>, id: string) {
     await screen.pressByTestIdAsync('file-details-header.menu.trigger');
-    await flushHookEffects({ cycles: 4 });
+    if (!screen.findHostByTestId(`file-menu-${id}`)) {
+        // The real menu virtualizes long text-file action lists. Scroll its
+        // native viewport before selecting the Download row below the fold.
+        const overlay = screen.findByType(FloatingOverlay);
+        const scroller = overlay.findAll(node => typeof node.type === 'string' && typeof node.props.onScroll === 'function')[0]!;
+        await act(async () => invokeTestInstanceHandler(scroller, 'onScroll', {
+            nativeEvent: { contentOffset: { y: overlay.props.maxHeight * 2 },
+                layoutMeasurement: { height: overlay.props.maxHeight } },
+        }));
+    }
+    await vi.waitFor(() => expect(screen.findHostByTestId(`file-menu-${id}`)).not.toBeNull());
     await screen.pressByTestIdAsync(`file-menu-${id}`);
+    await vi.waitFor(() => expect(screen.findHostByTestId(`file-menu-${id}`)).toBeNull());
 }
 
 describe('shared file reader content actions', () => {

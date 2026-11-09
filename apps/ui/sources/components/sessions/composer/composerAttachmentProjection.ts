@@ -1,9 +1,11 @@
 import * as React from 'react';
 import {
-    type ComposerAttachmentViewV1,
-    type ComposerContentHandleV1,
+    type ComposerAttachmentViewV1} from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import {
+    type ComposerContentHandleV1} from '@happier-dev/protocol/runtime/input/composerContentV1';
+import {
     type PluginProjectedComposerAttachmentEntryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { resolvePluginUiIconName } from '@/components/plugins/surfaces/iconToken/resolvePluginUiIconToken';
 import { Icon } from '@/components/ui/icons/Icon';

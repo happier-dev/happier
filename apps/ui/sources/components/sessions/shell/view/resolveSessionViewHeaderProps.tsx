@@ -1,27 +1,19 @@
 import { Typography } from '@/constants/Typography';
 import * as React from 'react';
-import { ChatHeaderCompactContext } from '@/components/sessions/transcript/chatHeaderCompact';
+import { useDetailsTabHeaderActionsCompact } from '@/components/appShell/panes/details/header/DetailsTabHeader';
 
 import type { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { Platform, Pressable, View } from 'react-native';
+import { Platform, View } from 'react-native';
 
 import { SessionHeaderActionMenu } from '@/components/sessions/actions/SessionHeaderActionMenu';
 import { resolvePluginSessionHeaderActionPresentations } from '@/components/sessions/actions/pluginHeaderActions';
-import { SessionHeaderBrowserButton } from '@/components/sessions/actions/SessionHeaderBrowserButton';
-import { SessionHeaderComputerButton } from '@/components/sessions/actions/SessionHeaderComputerButton';
 import { SessionHeaderIconWithCount } from '@/components/sessions/actions/SessionHeaderIconWithCount';
 import { SessionHeaderInfoButton } from '@/components/sessions/actions/SessionHeaderInfoButton';
-import {
-    SESSION_HEADER_ACTION_SIZE_PX,
-    SESSION_HEADER_ICON_SIZE_PX,
-    resolveSessionHeaderActionTargetPx,
-} from '@/components/sessions/actions/sessionHeaderIconMetrics';
-import { SessionHeaderSubagentsButton } from '@/components/sessions/actions/SessionHeaderSubagentsButton';
-import { SessionHeaderTerminalButton } from '@/components/sessions/actions/SessionHeaderTerminalButton';
-import { SessionHeaderWorkStrip } from '@/components/sessions/work/SessionHeaderWorkStrip';
+import { SessionHeaderActionButton } from '@/components/sessions/actions/SessionHeaderActionButton';
+import { SESSION_HEADER_ICON_SIZE_PX } from '@/components/sessions/actions/sessionHeaderIconMetrics';
 import { SessionHeaderRoleChip } from '@/components/roles/session/SessionHeaderRoleChip';
 import { PendingNavigationPill } from '@/components/sessions/pendingNavigation/PendingNavigationPill';
-import { EMPTY_WORK_SUMMARY, type WorkSummary } from '@/components/sessions/work/workProjection';
+import type { WorkSummary } from '@/components/sessions/work/workProjection';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
@@ -39,9 +31,9 @@ import { formatSessionPath } from '@/utils/sessions/formatPathRelativeToHome';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { isVoiceConversationCustodySessionMetadata } from '@happier-dev/protocol/voice/sessionBinding';
 import { readSessionRoleIdV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
-import { LruMap } from '@/utils/cache/lruMap';
 
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import type { PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { PluginSurfaceOpenHandler } from '@/components/plugins/surfaces/openPluginSurface';
 import type { PluginSurfaceScopedLaunchFacts } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
 import { createPluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
@@ -49,7 +41,6 @@ import { normalizePluginSurfacePlatform } from '@/components/plugins/surfaces/pl
 
 import { resolveSessionViewBadges } from './resolveSessionViewBadges';
 import { resolveSessionViewHeaderActionItems } from './resolveSessionViewHeaderActionItems';
-import { readSessionListShellCacheMaxEntriesFromEnv } from '../sessionListShellCacheConfig';
 import {
     resolveExternalSessionIdentityPresentation,
 } from '../../presentation/externalSessionIdentityPresentation';
@@ -57,16 +48,16 @@ import type { ExternalSessionRuntimePresentation } from '../../presentation/exte
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 import { WorkStatusGlyph } from '@/components/work/status/WorkStatusGlyph';
 import { Icon } from '@/components/ui/icons/Icon';
-import { ActionOperationActivityButton } from '@/components/inbox/actionOperations/ActionOperationActivityButton';
 import { resolveSessionCompanionHeaderPlacement } from '@/components/sessions/companion/sessionCompanionHeaderPlacement';
 import { resolveSessionCompanionHeaderIntent } from '@/components/sessions/companion/sessionCompanionHeaderIntent';
+import { readSessionBotFaceFacts, type SessionBotFaceFacts } from '@/components/sessions/bots/face/sessionBotFaceFacts';
+import { readBotActivity, type BotActivity } from '@/components/sessions/bots/botActivity';
 import type { SessionCompanionPlacement } from '@/components/sessions/companion/layout/resolveSessionCompanionPlacement';
 import type { SessionCompanionAvailability } from '@/components/sessions/companion/state/useSessionCompanionPreference';
 import {
     SESSION_BOARD_DESTINATION,
     SESSION_BOARD_HEADER_MENU_ACTION_ID,
 } from '@/components/sessions/board/sessionBoardDestination';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 export type SessionViewHeaderProps = Readonly<{
     title: string;
@@ -76,6 +67,9 @@ export type SessionViewHeaderProps = Readonly<{
     badges?: ReadonlyArray<string>;
     onBackPress?: () => void;
     avatarId?: string;
+    /** A Bot's face (Bot Sessions only); the avatar slot draws it instead of the generic avatar. */
+    botFace?: SessionBotFaceFacts | null;
+    botActivity?: BotActivity;
     agentId?: string | null;
     rightElement?: React.ReactNode;
     backgroundColor?: string;
@@ -106,6 +100,8 @@ type ResolveSessionViewHeaderPropsInput = Readonly<{
     windowWidth: number;
     actionRailVisible?: boolean;
     mobileTerminalTabAvailable?: boolean;
+    /** Browser is a destination of this Session on this device (desktop/web with Browser enabled). */
+    browserMenuEntryAvailable?: boolean;
     sessionAutomationsEnabledCount: number;
     sessionExecutionRunsSupported: boolean;
     showAutomations: boolean;
@@ -137,6 +133,7 @@ type ResolveSessionViewHeaderPropsInput = Readonly<{
      */
     pluginUiProjection?: PluginUiProjectionModel | null;
     pluginUiLocale?: string | null;
+    localizePluginText?: PluginLocalizedTextResolver;
     pluginUiScopedLaunchFacts?: PluginSurfaceScopedLaunchFacts | null;
     /** Existing Session Account-lifetime predicate for action execution. */
     pluginUiScopeIsCurrent?: (() => boolean) | null;
@@ -179,128 +176,6 @@ const DELETED_HEADER_PROPS: SessionViewHeaderProps = {
     flavor: null,
 };
 
-const SESSION_VIEW_HEADER_PROPS_CACHE = new LruMap<string, SessionViewHeaderProps>({
-    maxEntries: readSessionListShellCacheMaxEntriesFromEnv(),
-});
-
-type OptionalHeaderActionOwner = 'board' | 'companion' | 'plugin';
-
-/** The incumbent header owns exactly one optional direct action. */
-function resolveOptionalHeaderActionOwner(input: Readonly<{
-    shouldFoldHeaderIconActions: boolean;
-    boardPrefersDirect: boolean;
-    companionPrefersDirect: boolean;
-    pluginActionCount: number;
-}>): OptionalHeaderActionOwner | null {
-    if (input.shouldFoldHeaderIconActions) return null;
-    if (input.boardPrefersDirect) return 'board';
-    if (input.companionPrefersDirect) return 'companion';
-    return input.pluginActionCount === 1 ? 'plugin' : null;
-}
-
-function buildSessionViewHeaderPropsCacheKey(input: Readonly<{
-    sessionId: string;
-    sessionServerId: string | null | undefined;
-    sessionMachineId: string | null | undefined;
-    title: string;
-    subtitle: string | undefined;
-    subtitleEllipsizeMode: 'head' | 'tail' | undefined;
-    avatarId: string | undefined;
-    // Part of the key, not just the props: the header renders this, so a session whose agent
-    // changes must not be served the previous agent's cached header.
-    agentId: string | null | undefined;
-    sessionInfoHref: string;
-    sessionRunsHref: string;
-    sessionAutomationsHref: string;
-    isConnected: boolean;
-    flavor: string | null;
-    storageBadge: string | null;
-    providerBadge: string | null;
-    actionRailVisible: boolean;
-    mobileTerminalTabAvailable: boolean;
-    shouldFoldHeaderIconActions: boolean;
-    shouldShowSubagentsButton: boolean;
-    subagentActiveCount: number;
-    workOutstandingCount: number;
-    workNeedsYouCount: number;
-    workStalledCount: number;
-    roleId: string | null;
-    sessionExecutionRunsSupported: boolean;
-    showAutomations: boolean;
-    actionIconColor: string;
-    headerTintColor: string;
-    statusErrorColor: string;
-    paneScopeId: string;
-    sessionAutomationsEnabledCount: number;
-    headerMenuExtraItemIdsKey: string;
-    pluginUiLocale: string | null;
-    pluginUiScopedServerId: string | null;
-    pluginUiScopedMachineId: string | null;
-    pluginUiInteractionEnabled: boolean;
-    externalAgentState: ExternalSessionRuntimePresentation['externalAgent']['state'] | null;
-    workspaceSyncConflictedLinkCount: number;
-    workspaceSyncUnknownLinkCount: number;
-    hasBoardHeaderAction: boolean;
-    companionAvailability: SessionCompanionAvailability | null;
-    companionPreferenceExists: boolean;
-    companionVisible: boolean;
-    companionItemCount: number;
-    // The Companion header intent reads both of these, so a key without them
-    // serves a stale intent when only the placement facts move.
-    companionPlacement: SessionCompanionPlacement | null;
-    companionIsPhone: boolean;
-    hasCollaborationHeader: boolean;
-}>): string {
-    return JSON.stringify([
-        input.sessionId,
-        input.sessionServerId ?? '',
-        input.sessionMachineId ?? '',
-        input.title,
-        input.subtitle ?? '',
-        input.subtitleEllipsizeMode ?? '',
-        input.avatarId ?? '',
-        input.agentId ?? '',
-        input.sessionInfoHref,
-        input.sessionRunsHref,
-        input.sessionAutomationsHref,
-        input.isConnected,
-        input.flavor ?? '',
-        input.storageBadge ?? '',
-        input.providerBadge ?? '',
-        input.actionRailVisible,
-        input.mobileTerminalTabAvailable,
-        input.shouldFoldHeaderIconActions,
-        input.shouldShowSubagentsButton,
-        input.subagentActiveCount,
-        input.workOutstandingCount,
-        input.workNeedsYouCount,
-        input.workStalledCount,
-        input.roleId,
-        input.sessionExecutionRunsSupported,
-        input.showAutomations,
-        input.actionIconColor,
-        input.headerTintColor,
-        input.statusErrorColor,
-        input.paneScopeId,
-        input.sessionAutomationsEnabledCount,
-        input.headerMenuExtraItemIdsKey,
-        input.pluginUiLocale ?? '',
-        input.pluginUiScopedServerId ?? '',
-        input.pluginUiScopedMachineId ?? '',
-        input.pluginUiInteractionEnabled,
-        input.externalAgentState ?? '',
-        input.workspaceSyncConflictedLinkCount,
-        input.workspaceSyncUnknownLinkCount,
-        input.hasBoardHeaderAction,
-        input.companionAvailability ?? '',
-        input.companionPreferenceExists,
-        input.companionVisible,
-        input.companionItemCount,
-        input.companionPlacement,
-        input.companionIsPhone,
-        input.hasCollaborationHeader,
-    ]);
-}
 
 export function shouldFoldSessionHeaderIconActions(windowWidth: number): boolean {
     return windowWidth < 520;
@@ -361,6 +236,8 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         ? voiceConversation ? 'tail' as const : input.workspaceSubtitleEllipsizeMode ?? 'head' as const
         : undefined;
     const avatarId = getSessionAvatarId(session);
+    const botFace = readSessionBotFaceFacts(session, session.serverId ?? null);
+    const botActivity = botFace ? readBotActivity(session, Date.now()) : undefined;
     const agentId = readSessionPresentationAgentId(session);
     const isConnected = getSessionStatus(session).isConnected;
     const flavor = agentId;
@@ -379,6 +256,8 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
             subtitle,
             subtitleEllipsizeMode,
             avatarId,
+            botFace,
+            botActivity,
             agentId,
             badges: resolveSessionViewBadges({
                 storageBadge: resolvedStorageBadge,
@@ -390,80 +269,24 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         };
     }
     // The leaf subscribes to its selected role; catalog/snapshot edits do not invalidate the shell.
-    const roleId = shouldFoldHeaderIconActions ? null : readSessionRoleIdV1(ownerMetadata);
-    const cacheKey = buildSessionViewHeaderPropsCacheKey({
-        sessionId: session.id,
-        sessionServerId: session.serverId,
-        sessionMachineId: ownerMetadata?.machineId ?? null,
-        title,
-        subtitle,
-        subtitleEllipsizeMode,
-        avatarId,
-        agentId,
-        sessionInfoHref: input.sessionInfoHref,
-        sessionRunsHref: input.sessionRunsHref,
-        sessionAutomationsHref: input.sessionAutomationsHref,
-        isConnected,
-        flavor,
-        storageBadge: resolvedStorageBadge,
-        providerBadge: resolvedProviderBadge,
-        actionRailVisible: input.actionRailVisible === true,
-        mobileTerminalTabAvailable: input.mobileTerminalTabAvailable === true,
-        shouldFoldHeaderIconActions,
-        shouldShowSubagentsButton: input.shouldShowSubagentsButton,
-        subagentActiveCount: input.subagentActiveCount,
-        workOutstandingCount: input.workSummary?.outstanding ?? 0,
-        workNeedsYouCount: input.workSummary?.needsYou ?? 0,
-        workStalledCount: input.workSummary?.stalled ?? 0,
-        roleId,
-        sessionExecutionRunsSupported: input.sessionExecutionRunsSupported,
-        showAutomations: input.showAutomations,
-        actionIconColor: input.actionIconColor,
-        headerTintColor: input.headerTintColor,
-        statusErrorColor: input.statusErrorColor,
-        paneScopeId: input.paneScopeId,
-        sessionAutomationsEnabledCount: input.sessionAutomationsEnabledCount,
-        headerMenuExtraItemIdsKey: (input.headerMenuExtraItems ?? []).map((item) => item.id).join('|'),
-        pluginUiLocale: input.pluginUiLocale ?? null,
-        pluginUiScopedServerId: input.pluginUiScopedLaunchFacts?.serverId ?? null,
-        pluginUiScopedMachineId: input.pluginUiScopedLaunchFacts?.machineId ?? null,
-        pluginUiInteractionEnabled: input.pluginUiScopedLaunchFacts?.interactionEnabled === true,
-        externalAgentState: input.externalSessionRuntime?.externalAgent.state ?? null,
-        workspaceSyncConflictedLinkCount: input.workspaceSyncAttention?.conflictedLinkCount ?? 0,
-        workspaceSyncUnknownLinkCount: input.workspaceSyncAttention?.unknownLinkCount ?? 0,
-        hasBoardHeaderAction: input.boardHeaderAction !== undefined,
-        companionAvailability: input.companionHeaderAction?.availability ?? null,
-        companionPreferenceExists: input.companionHeaderAction?.preferenceExists === true,
-        companionVisible: input.companionHeaderAction?.visible === true,
-        companionItemCount: input.companionHeaderAction?.itemCount ?? 0,
-        companionPlacement: input.companionHeaderAction?.placement ?? null,
-        companionIsPhone: input.companionHeaderAction?.isPhone === true,
-        hasCollaborationHeader: input.collaborationHeader !== undefined,
-    });
-
-    // Plugin actions and workspace-conflict navigation carry live authority.
-    // Scalar cache keys cannot distinguish a same-generation successor or a
-    // same-count conflict moving between relationships, so retain the LRU only
-    // for authority-free headers rather than caching stale action closures.
-    const hasLiveUiAuthority = input.pluginUiProjection != null
-        || (input.workspaceSyncAttention?.conflictedLinkCount ?? 0) > 0
-        || (input.workspaceSyncAttention?.unknownLinkCount ?? 0) > 0
-        || input.boardHeaderAction !== undefined;
-    if (!hasLiveUiAuthority) {
-        const cached = SESSION_VIEW_HEADER_PROPS_CACHE.get(cacheKey);
-        if (cached) {
-            return cached;
-        }
-    }
+    // The role stays on every width; a tight title row takes its compact mark (SessionPaneHeader).
+    const roleId = readSessionRoleIdV1(ownerMetadata);
+    // SessionView owns mounted identity with useMemo. Global retention would keep
+    // pane callbacks and their component trees alive after navigation.
 
     const resolvedBadges = resolveSessionViewBadges({
         storageBadge: resolvedStorageBadge,
         providerBadge: resolvedProviderBadge,
     });
+    // The rail carries Work, Terminal, Browser, People and Computer; while it is not on screen they are
+    // reached from ⋯ (calm-shell R2-1). Activity lives in the title strip, Automations in ⋯ and Habits.
+    const destinationsInMenu = input.actionRailVisible !== true;
     const resolvedFoldedHeaderItems = resolveSessionViewHeaderActionItems({
-        shouldFoldHeaderIconActions,
-        shouldShowSubagentsButton: input.shouldShowSubagentsButton,
-        subagentActiveCount: input.subagentActiveCount,
+        destinationsInMenu,
+        workAvailable: input.shouldShowSubagentsButton || (input.workSummary?.outstanding ?? 0) > 0,
+        workCount: input.workSummary?.outstanding ?? input.subagentActiveCount,
+        terminalAvailable: !input.mobileTerminalTabAvailable,
+        browserAvailable: input.browserMenuEntryAvailable === true,
         showAutomations: input.showAutomations,
         actionIconColor: input.actionIconColor,
     });
@@ -474,6 +297,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
     const pluginHeaderActions = resolvePluginSessionHeaderActionPresentations({
         projection: input.pluginUiProjection,
         locale: input.pluginUiLocale,
+        localize: input.localizePluginText,
         scopedLaunchFacts: input.pluginUiScopedLaunchFacts,
         policyContext: createPluginUiPolicyEvaluationContext({
             platform: normalizePluginSurfacePlatform(Platform.OS),
@@ -486,25 +310,13 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
             headerActionsFolded: shouldFoldHeaderIconActions,
         })
         : null;
-    // Board content/open state has the established first claim. A deliberate
-    // Companion preference follows, then a sole plugin action. Every unselected
-    // candidate remains in the incumbent overflow menu.
-    const optionalDirectActionOwner = resolveOptionalHeaderActionOwner({
-        shouldFoldHeaderIconActions,
-        boardPrefersDirect: !input.actionRailVisible && input.boardHeaderAction?.preferDirect === true,
-        companionPrefersDirect: preferredCompanionPlacement === 'direct',
-        pluginActionCount: pluginHeaderActions.length,
-    });
-    const boardHeaderActionPlacement = optionalDirectActionOwner === 'board' ? 'direct' : 'overflow';
-    const companionHeaderActionPlacement = preferredCompanionPlacement === null
-        ? null
-        : optionalDirectActionOwner === 'companion'
-            ? 'direct'
-            : 'overflow';
+    // Board, Companion and plugin actions keep their scope and invocation but live in ⋯: the header
+    // carries only what is about this Session's state (calm-shell `cshead.H1`).
+    const companionHeaderActionPlacement = preferredCompanionPlacement === null ? null : 'overflow';
     const companionHeaderIntent = input.companionHeaderAction
         ? resolveSessionCompanionHeaderIntent(input.companionHeaderAction)
         : null;
-    if (input.boardHeaderAction && boardHeaderActionPlacement === 'overflow') {
+    if (input.boardHeaderAction) {
         resolvedHeaderMenuExtraItems.push({
             id: SESSION_BOARD_HEADER_MENU_ACTION_ID,
             title: t(SESSION_BOARD_DESTINATION.labelKey),
@@ -515,11 +327,7 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
             />,
         });
     }
-    const pluginHeaderActionPlacement = optionalDirectActionOwner === 'plugin' ? 'direct' : 'overflow';
-    const headerInteractiveTargetSize = resolveSessionHeaderActionTargetPx();
-    const headerInteractiveHitSlop = headerInteractiveTargetSize > SESSION_HEADER_ACTION_SIZE_PX
-        ? undefined
-        : 15;
+    const pluginHeaderActionPlacement = 'overflow' as const;
 
     // Keeps dev's web-blur wrapper: navigating away from a focused web control without blurring it
     // leaves the caret behind on the outgoing screen.
@@ -544,39 +352,14 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         subtitle,
         subtitleEllipsizeMode,
         avatarId,
+        botFace,
+        botActivity,
         agentId,
         rightElement: (
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                 <PendingNavigationPill address={normalizeSessionAddress(session.serverId, input.sessionId)} presentation="header" />
-                <ActionOperationActivityButton
-                    preferredSessionAddress={normalizeSessionAddress(session.serverId, input.sessionId)}
-                    testID="session-header-action-operations"
-                    buttonSize={SESSION_HEADER_ACTION_SIZE_PX}
-                    iconSize={SESSION_HEADER_ICON_SIZE_PX}
-                />
-                {boardHeaderActionPlacement === 'direct' && input.boardHeaderAction ? (
-                    <Pressable
-                        testID="session-header-board-button"
-                        onPress={input.boardHeaderAction.onPress}
-                        hitSlop={headerInteractiveHitSlop}
-                        style={({ pressed }) => ({
-                            width: headerInteractiveTargetSize,
-                            height: headerInteractiveTargetSize,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            opacity: pressed ? motionTokens.press.opacity : 1,
-                        })}
-                        accessibilityRole="button"
-                        accessibilityLabel={t(SESSION_BOARD_DESTINATION.labelKey)}
-                    >
-                        <Icon
-                            name={SESSION_BOARD_DESTINATION.icon}
-                            size={SESSION_HEADER_ICON_SIZE_PX}
-                            color={input.headerTintColor}
-                        />
-                    </Pressable>
-                ) : null}
-                {input.externalSessionRuntime ? (
+                {/* No current evidence about the external Agent shows nothing rather than an "unknown" chip. */}
+                {input.externalSessionRuntime && input.externalSessionRuntime.externalAgent.state !== 'unknown' ? (
                     <View
                         testID={`session-header-external-agent-status-${input.externalSessionRuntime.externalAgent.state}`}
                         accessibilityLabel={t(input.externalSessionRuntime.externalAgent.labelKey)}
@@ -611,6 +394,20 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
                         </HeaderChipLabel>
                     </View>
                 ) : null}
+                {workspaceSyncAttentionLabel && input.onOpenWorkspaceSyncConflicts ? (
+                    <SessionHeaderActionButton
+                        onPress={input.onOpenWorkspaceSyncConflicts}
+                        accessibilityLabel={workspaceSyncAttentionLabel}
+                    >
+                        <SessionHeaderIconWithCount
+                            count={workspaceSyncAttentionBadgeCount}
+                            badgeColor={input.statusErrorColor}
+                        >
+                            <Icon name="warning" size={SESSION_HEADER_ICON_SIZE_PX} color={input.headerTintColor} />
+                        </SessionHeaderIconWithCount>
+                    </SessionHeaderActionButton>
+                ) : null}
+                {/* Follow (a quiet chip) and the one ⋯ with every rare entry. */}
                 <SessionHeaderActionMenu
                     sessionId={input.sessionId}
                     session={session}
@@ -626,77 +423,10 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
                     companionHeaderActionPlacement={companionHeaderActionPlacement}
                     companionHeaderIntent={companionHeaderIntent}
                     collaborationHeader={input.collaborationHeader}
+                    destinationsInMenu={destinationsInMenu}
+                    // Session details live in the rail's Info tab; without a visible rail the header keeps (i), before ⋯.
+                    beforeMenu={destinationsInMenu ? <SessionHeaderInfoButton onPress={openSessionInfo} /> : null}
                 />
-                {!shouldFoldHeaderIconActions && (input.workSummary?.outstanding ?? 0) > 0 ? (
-                    <SessionHeaderWorkStrip
-                        sessionId={input.sessionId}
-                        serverId={session.serverId ?? null}
-                        scopeId={input.paneScopeId}
-                        summary={input.workSummary ?? EMPTY_WORK_SUMMARY}
-                    />
-                ) : !shouldFoldHeaderIconActions && !input.actionRailVisible ? (
-                    <SessionHeaderSubagentsButton
-                        scopeId={input.paneScopeId}
-                        activeCount={input.subagentActiveCount}
-                    />
-                ) : null}
-                {!input.actionRailVisible && !input.mobileTerminalTabAvailable ? (
-                    <SessionHeaderTerminalButton sessionId={input.sessionId} scopeId={input.paneScopeId} />
-                ) : null}
-                <SessionHeaderComputerButton sessionId={input.sessionId} serverId={session.serverId ?? null} />
-                <SessionHeaderBrowserButton sessionId={input.sessionId} scopeId={input.paneScopeId} />
-                {workspaceSyncAttentionLabel && input.onOpenWorkspaceSyncConflicts ? (
-                    <Pressable
-                        onPress={input.onOpenWorkspaceSyncConflicts}
-                        hitSlop={headerInteractiveHitSlop}
-                        style={({ pressed }) => ({
-                            width: headerInteractiveTargetSize,
-                            height: headerInteractiveTargetSize,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            opacity: pressed ? motionTokens.press.opacity : 1,
-                        })}
-                        accessibilityRole="button"
-                        accessibilityLabel={workspaceSyncAttentionLabel}
-                    >
-                        <SessionHeaderIconWithCount
-                            count={workspaceSyncAttentionBadgeCount}
-                            badgeColor={input.statusErrorColor}
-                        >
-                            <Icon name="warning" size={SESSION_HEADER_ICON_SIZE_PX} color={input.headerTintColor} />
-                        </SessionHeaderIconWithCount>
-                    </Pressable>
-                ) : null}
-{/* Never folded. Session details used to be reachable by pressing the avatar, which was
-                shown on every width; moving that navigation to an icon that folds below 520pt would
-                delete the only path to it on phones rather than tidy the row. */}
-                <SessionHeaderInfoButton onPress={openSessionInfo} />
-                {!shouldFoldHeaderIconActions && input.showAutomations && input.sessionAutomationsEnabledCount > 0 ? (
-                    <Pressable
-                        onPress={() => input.navigateWithBlurOnWeb(() => input.router.push(input.sessionAutomationsHref as any))}
-                        hitSlop={15}
-                        style={({ pressed }) => ({
-                            width: 44,
-                            height: 44,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            opacity: pressed ? motionTokens.press.opacity : 1,
-                        })}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('session.openAutomations')}
-                    >
-                        <SessionHeaderIconWithCount
-                            count={input.sessionAutomationsEnabledCount}
-                            badgeColor={input.statusErrorColor}
-                        >
-                            <Icon
-                                name="timer"
-                                size={SESSION_HEADER_ICON_SIZE_PX}
-                                color={input.headerTintColor}
-                            />
-                        </SessionHeaderIconWithCount>
-                    </Pressable>
-                ) : null}
             </View>
         ),
         badges: resolvedBadges,
@@ -704,13 +434,10 @@ export function resolveSessionViewHeaderProps(input: ResolveSessionViewHeaderPro
         flavor,
     };
 
-    if (!hasLiveUiAuthority) {
-        SESSION_VIEW_HEADER_PROPS_CACHE.set(cacheKey, next);
-    }
     return next;
 }
 
 /** A header chip's words, left out while the header is tight; its accessible label and mark stay. */
 function HeaderChipLabel(props: Readonly<{ children: React.ReactNode }>): React.ReactElement | null {
-    return React.useContext(ChatHeaderCompactContext) ? null : <>{props.children}</>;
+    return useDetailsTabHeaderActionsCompact() ? null : <>{props.children}</>;
 }

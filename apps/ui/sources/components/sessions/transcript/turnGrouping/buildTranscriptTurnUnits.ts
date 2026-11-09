@@ -181,10 +181,13 @@ function appendToolGroupUnits(params: Readonly<{
         });
     }
 
-    // The footer separates the group from the next message and closes card backgrounds.
+    // A collapsed group without previews is one header, with no empty body or footer row.
+    if (visibleToolMessageIds.length === 0) return;
+
+    // The footer separates a visible body from the next message and closes card backgrounds.
     params.output.push({
         kind: 'tool-group-footer',
-        hasVisibleTools: visibleToolMessageIds.length > 0,
+        hasVisibleTools: true,
         id: `${params.groupId}#footer`,
         groupId: params.groupId,
         toolMessageIds,

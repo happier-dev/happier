@@ -5,6 +5,7 @@ import { SurfaceStateCard, type SurfaceStateAction } from '@/components/ui/surfa
 import { retryServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
 import type { ServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { t } from '@/text';
+import { openAddHome } from '@/components/homes/add/openAddHome';
 
 export type UnboundServerCredentialAccountScopeResolution =
     Exclude<ServerCredentialAccountScopeResolution, Readonly<{ kind: 'bound' }>>;
@@ -58,7 +59,7 @@ export function UnboundSessionHomeScopeCard(props: Readonly<{
     testIDPrefix: string;
 }>): React.ReactElement {
     const router = useRouter();
-    const openHomes = React.useCallback(() => router.push('/server'), [router]);
+    const openHomes = React.useCallback(() => openAddHome(router), [router]);
 
     if (props.resolution.kind === 'resolving') {
         return (

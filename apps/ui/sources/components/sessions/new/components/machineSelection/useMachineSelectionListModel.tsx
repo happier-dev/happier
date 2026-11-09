@@ -400,6 +400,26 @@ function copySetupOption(
     };
 }
 
+type RetainedMachineOption = Readonly<{ facts: readonly unknown[]; option: SelectionListOption }>;
+
+/**
+ * Keep the row's option when every fact it was built from stands. A retained row's handlers re-check its availability
+ * with the resolvers that produced those facts: equal facts mean the row answers the same today.
+ */
+function retainMachineRowOption(
+    previous: ReadonlyMap<string, RetainedMachineOption>,
+    next: Map<string, RetainedMachineOption>,
+    key: string,
+    facts: readonly unknown[],
+    build: () => SelectionListOption,
+): SelectionListOption {
+    const held = previous.get(key);
+    const retained = held && held.facts.length === facts.length && held.facts.every((fact, index) => Object.is(fact, facts[index])) ? held : null;
+    const entry = retained ?? { facts, option: build() };
+    next.set(key, entry);
+    return entry.option;
+}
+
 export function useMachineSelectionListModel<TMachine extends MachineDisplayRenderable = Machine>(
     params: BuildMachineSelectionListModelParams<TMachine>,
 ): MachineSelectionListModel {
@@ -555,7 +575,16 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
     const hasOpenManagedPresets = typeof params.onOpenManagedPresets === 'function';
     const hasConnectMachine = typeof params.onConnectMachine === 'function';
 
+    // Each row's handlers are reached through `handlersRef`, so only row facts may rebuild the model:
+    // the popover overlay re-invokes its content per render and rebuilds these rows with fresh closures.
+    const temporaryComputersKey = JSON.stringify(params.temporaryComputers ?? null);
+    // A real arrival for one Machine rebuilds this model; every row whose facts stand keeps its option, so the
+    // list redraws only the rows that changed (its row retention compares options by identity).
+    const rowOptionsRef = React.useRef(new Map<string, RetainedMachineOption>());
     const model = React.useMemo(() => {
+        const previousRowOptions = rowOptionsRef.current;
+        const nextRowOptions = new Map<string, RetainedMachineOption>();
+        rowOptionsRef.current = nextRowOptions;
         const inputPlaceholder = params.showSearch
             ? params.searchPlaceholder ?? t('newSession.machinePicker.searchPlaceholder')
             : undefined;
@@ -965,7 +994,13 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                 options: bucket.machines.map((machine) => {
                     const availability = resolveRowAvailability(machine, group.serverId, params.resolveMachineAvailability, purpose, resolveMachinePlacementFacts, params.workerSubject, scopeForServer(group.serverId));
                     const presentation = params.resolveMachinePresentation?.(machine);
-                    return {
+                    const isFavorite = bucketModel.favoriteMachineIdSet.has(machine.id);
+                    return retainMachineRowOption(previousRowOptions, nextRowOptions, `${group.serverId}|${bucket.id}|${machine.id}`, [
+                        machine, group.serverId, params.serverId, presentation?.title, presentation?.subtitle, machineNames.get(machine.id),
+                        availability.selectable, availability.reason, JSON.stringify(availability.copySetupAction ?? null), params.workerPlacement?.workspace,
+                        machinesByEnrolledMachineIdByServerId[group.serverId]?.[machine.id], bucket.id === 'shared', isFavorite,
+                        params.showCliGlyphs, params.autoDetectCliGlyphs, params.showFavorites, favoriteToggle, params.testIdPrefix, scopeForServer(group.serverId),
+                    ], () => ({
                         id: machine.id,
                         testID: buildOptionTestID(params.testIdPrefix, machine),
                         label: presentation?.title ?? machineNames.get(machine.id) ?? machine.id,
@@ -997,7 +1032,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                                 showCliGlyphs={params.showCliGlyphs}
                                 autoDetectCliGlyphs={params.autoDetectCliGlyphs}
                                 showFavoriteToggle={params.showFavorites}
-                                isFavorite={bucketModel.favoriteMachineIdSet.has(machine.id)}
+                                isFavorite={isFavorite}
                                 onToggleFavorite={favoriteToggle}
                             />
                         ),
@@ -1005,7 +1040,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                             if (!resolveRowAvailability(machine, group.serverId, params.resolveMachineAvailability, purpose, resolveMachinePlacementFacts, params.workerSubject, scopeForServer(group.serverId)).selectable) return;
                             selectMachine(machine);
                         },
-                    } satisfies SelectionListOption;
+                    } satisfies SelectionListOption));
                 }),
             }));
             const poolGroup = poolGroups.find((candidate) => candidate.serverId === group.serverId);
@@ -1061,7 +1096,11 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                 options = group.machines.map((machine) => {
                     const availability = resolveRowAvailability(machine, group.serverId, params.resolveMachineAvailability, purpose, resolveMachinePlacementFacts, params.workerSubject, scopeForServer(group.serverId));
                     const presentation = params.resolveMachinePresentation?.(machine);
-                    return {
+                    return retainMachineRowOption(previousRowOptions, nextRowOptions, `${group.serverId}::${machine.id}`, [
+                        machine, group.serverId, presentation?.title, presentation?.subtitle, machineNames.get(machine.id),
+                        availability.selectable, availability.reason, JSON.stringify(availability.copySetupAction ?? null), params.workerPlacement?.workspace,
+                        machinesByEnrolledMachineIdByServerId[group.serverId]?.[machine.id], params.testIdPrefix, scopeForServer(group.serverId),
+                    ], () => ({
                         id: `${group.serverId}::${machine.id}`,
                         testID: buildOptionTestID(params.testIdPrefix, machine),
                         label: presentation?.title ?? machineNames.get(machine.id) ?? machine.id,
@@ -1096,7 +1135,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                             if (!resolveRowAvailability(machine, group.serverId, params.resolveMachineAvailability, purpose, resolveMachinePlacementFacts, params.workerSubject, scopeForServer(group.serverId)).selectable) return;
                             selectScopedMachine(machine);
                         },
-                    } satisfies SelectionListOption;
+                    } satisfies SelectionListOption));
                 });
             }
 
@@ -1203,7 +1242,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
         params.searchPlaceholder,
         params.emptyStateLabel,
         params.sectionTitles,
-        params.temporaryComputers,
+        temporaryComputersKey,
         params.managedMachines,
         machinesByEnrolledMachineIdByServerId,
         params.selectedManagedMachine,

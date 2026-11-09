@@ -21,17 +21,43 @@ export type ComposerKeyboardLayout = Readonly<{
 
 const ComposerKeyboardContext = React.createContext<ComposerKeyboardLayout | null>(null);
 
+/**
+ * Whether one of the composer's own overlays (the prompt picker) spans the bottom of the transcript.
+ * Transcript controls floating there step aside while it is open; only their small leaves read it.
+ */
+const ComposerOverlayOpenContext = React.createContext(false);
+const ComposerOverlayReportContext = React.createContext<((open: boolean) => void) | null>(null);
+
 export function ComposerKeyboardProvider(props: Readonly<{
     children: React.ReactNode;
     layout: ComposerKeyboardLayout;
 }>): React.ReactElement {
+    const [overlayOpen, setOverlayOpen] = React.useState(false);
     return (
         <ComposerKeyboardContext.Provider value={props.layout}>
-            {props.children}
+            <ComposerOverlayReportContext.Provider value={setOverlayOpen}>
+                <ComposerOverlayOpenContext.Provider value={overlayOpen}>
+                    {props.children}
+                </ComposerOverlayOpenContext.Provider>
+            </ComposerOverlayReportContext.Provider>
         </ComposerKeyboardContext.Provider>
     );
 }
 
 export function useComposerKeyboardLayout(): ComposerKeyboardLayout | null {
     return React.useContext(ComposerKeyboardContext);
+}
+
+export function useComposerOverlayOpen(): boolean {
+    return React.useContext(ComposerOverlayOpenContext);
+}
+
+/** The composer reports its overlay while it is open; unmounting closes it. */
+export function useReportComposerOverlayOpen(open: boolean): void {
+    const report = React.useContext(ComposerOverlayReportContext);
+    React.useEffect(() => {
+        if (!report || !open) return undefined;
+        report(true);
+        return () => report(false);
+    }, [open, report]);
 }

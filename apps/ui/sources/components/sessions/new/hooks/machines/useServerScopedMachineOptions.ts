@@ -11,6 +11,8 @@ import {
 import { useMachineListByServerId, useMachineListStatusByServerId } from '@/sync/domains/state/storage';
 import { resolveServerScopedMachineInventory } from '@/sync/domains/machines/resolveServerScopedMachines';
 import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
+import { linkMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { retainShallow } from '@/sync/domains/state/structuralSharing';
 
 export type ServerScopedMachinePresentation = MachineDisplayRenderable & Readonly<{
     serverId: string;
@@ -53,15 +55,13 @@ function normalizeServerIds(ids: ReadonlyArray<string>): string[] {
 }
 
 function buildServerScopedMachine(machine: Machine, params: Readonly<{ serverId: string; serverName: string }>): ServerScopedMachine {
-    return {
+    const row = {
         ...machine,
-        // Semantic inventory stays stable across heartbeats. Keep its receipt
-        // fields attached to the source instead of freezing an old lease here.
-        get activeAt() { return machine.activeAt; },
-        get updatedAt() { return machine.updatedAt; },
         serverId: params.serverId,
         serverName: params.serverName,
     };
+    linkMachineActivity(machine, row);
+    return row;
 }
 
 function buildServerProfilesSignature(profilesById: ReadonlyMap<string, ServerProfile>): string {
@@ -82,6 +82,21 @@ function useStableValueBySignature<Value>(value: Value, signature: string): Valu
         stableRef.current = { signature, value };
     }
     return stableRef.current.value;
+}
+
+/** A group is unchanged when its facts match and every row is the same projected row (compared by identity). */
+function retainScopedMachineGroups(
+    previous: ServerScopedMachineGroup[] | undefined,
+    next: ServerScopedMachineGroup[],
+): ServerScopedMachineGroup[] {
+    if (!previous) return next;
+    const groups = next.map((group, index) => {
+        const held = previous[index];
+        if (!held || held.machines.length !== group.machines.length
+            || group.machines.some((machine, rowIndex) => machine !== held.machines[rowIndex])) return group;
+        return retainShallow(held, { ...group, machines: held.machines });
+    });
+    return previous.length === groups.length && groups.every((group, index) => group === previous[index]) ? previous : groups;
 }
 
 export function useServerScopedMachineOptions(params: UseServerScopedMachineOptionsParams): ServerScopedMachineGroup[] {
@@ -116,6 +131,7 @@ export function useServerScopedMachineOptions(params: UseServerScopedMachineOpti
         source: Machine;
         row: ServerScopedMachine;
     }>>>>(new Map());
+    const publishedGroups = React.useRef<ServerScopedMachineGroup[] | undefined>(undefined);
 
     return React.useMemo(() => {
         const activeServerId = String(params.activeServerId ?? '').trim();
@@ -157,7 +173,9 @@ export function useServerScopedMachineOptions(params: UseServerScopedMachineOpti
             };
         });
         scopedRows.current = nextRows;
-        return groups;
+        // A refresh that changes no row republishes nothing: the picker's list model keys on this identity.
+        publishedGroups.current = retainScopedMachineGroups(publishedGroups.current, groups);
+        return publishedGroups.current;
     }, [
         allowedServerIds,
         params.activeMachines,

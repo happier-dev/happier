@@ -56,7 +56,7 @@ export function useSessionViewerMachine(
   };
 }
 
-/** Source identity shared by the switch and the accessible frame name in every picture state. */
+/** Source identity in the frame's accessible name in every picture state: the selected window or display, else its kind. */
 export function resolveSessionViewerSourceLabel(
   source: SessionViewerSource,
   targetTitle?: string | null,

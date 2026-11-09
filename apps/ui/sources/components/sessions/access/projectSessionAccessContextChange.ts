@@ -1,8 +1,10 @@
 import type {
-    PrincipalRefV1,
-    SessionAccessLevelV1,
+    PrincipalRefV1} from '@happier-dev/protocol/teams/principal';
+import type {
+    SessionAccessLevelV1} from '@happier-dev/protocol/sessions/access/sessionAccessGrantV1';
+import type {
     SessionTeamCredentialBindingConsequenceV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { t } from '@/text';
 
 import { projectSessionAccessCredentialConsequences } from './projectSessionAccessEditorSnapshot';

@@ -14,13 +14,6 @@ import type { CommitMoveTarget } from './CommitProposalParts';
 import type { CommitProposalActions } from './CommitProposalView';
 import type { ReadCommitHookDiff } from './CommitHookChanges';
 
-/**
- * While an accepted run is in flight, its per-commit progress is read from the saved result (U5 core:
- * "Read/progress uses result.read"); the accept call itself resolves only when the run stops. The read
- * cadence exists only for that in-flight window and ends with it.
- */
-const APPLY_PROGRESS_READ_MS = 1_000;
-
 function newGroupId(): string {
     return `commit-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 }
@@ -56,14 +49,8 @@ export function useScmCommitPlan(params: Readonly<{
         : supportedComparison && (bound.restoreState === 'restoring' || bound.restoreState === 'unavailable') ? bound.restoreState : 'none';
     const [busy, setBusy] = React.useState(false);
     const key = viewModel?.requestKey ?? null;
-    // Progress timers belong to the foreground reader, not the machine Action's lifetime.
-    const progressTimers = React.useRef(new Set<ReturnType<typeof setInterval>>());
     React.useEffect(() => {
         setBusy(false);
-        return () => {
-            for (const timer of progressTimers.current) clearInterval(timer);
-            progressTimers.current.clear();
-        };
     }, [bound.isCurrent]);
 
     const current = bound.isCurrent;
@@ -112,24 +99,13 @@ export function useScmCommitPlan(params: Readonly<{
         ? buildCommitPlanAcceptance({ comparison, plan, application })
         : null), [application, comparison, plan]);
 
-    /** Runs an accept-like call while reading its per-commit progress until it settles. */
+    /** Saved-result push owns progress, including execution after a separate approval. */
     const runApplication = React.useCallback(async (call: () => Promise<ScmCommitPlanOperationResult>) => {
         if (!operations || !cwd || !saved) return;
         setBusy(true); setError(null);
-        let settled = false;
-        let reading = false;
-        const progress = setInterval(() => {
-            if (settled || reading || !current()) return;
-            reading = true;
-            void reread().finally(() => { reading = false; });
-        }, APPLY_PROGRESS_READ_MS);
-        progressTimers.current.add(progress);
         try {
             await report(await call());
         } finally {
-            settled = true;
-            clearInterval(progress);
-            progressTimers.current.delete(progress);
             if (current()) setBusy(false);
         }
     }, [current, cwd, operations, reread, report, saved, setError]);

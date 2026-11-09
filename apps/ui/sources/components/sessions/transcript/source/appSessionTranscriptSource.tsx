@@ -19,7 +19,7 @@ import {
     readSessionMessagesSnapshot,
     useSessionForkSupportSource, useSessionInteractionSource,
     useSessionMessages, useSessionMessagesById, useSessionMessagesReducerState,
-    useSessionTranscriptIds, useSessionWorkspacePath, useSocketStatus,
+    useSessionTranscriptIds, useSessionTranscriptLoaded, useSessionWorkspacePath, useSocketStatus,
     type MessageStoreRef,
 } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -112,7 +112,8 @@ export function useSessionIntentionalRestartSourceEvents(): readonly TranscriptI
 function selectIntentionalRestartEvents(messages: readonly Message[]): readonly TranscriptIntentionalRestartEvent[] {
     const events: TranscriptIntentionalRestartEvent[] = [];
     for (const message of messages) {
-        if (message.kind === 'agent-event' && message.event.type === 'connected-service-account-switch') {
+        if (message.kind === 'agent-event' && (message.event.type === 'connected-service-account-switch'
+            || message.event.type === 'connected-service-account-switch-attempt')) {
             events.push({ event: message.event, createdAtMs: message.createdAt });
         }
     }
@@ -293,6 +294,9 @@ export function TranscriptOriginSourceProvider(props: Readonly<{
         : <TranscriptOriginAppSourceRoot key={`app:${source.serverId ?? ''}:${props.originSessionId ?? source.sessionId}`} source={source} sessionId={props.originSessionId ?? source.sessionId}>
             {props.children}
         </TranscriptOriginAppSourceRoot>;
+    // Without its own fork visual context a row inherits the transcript's: a provider here would only
+    // re-publish that value, one more layer and one origin parse per mounted row.
+    if (props.visualContext === undefined) return children;
     return <TranscriptVisualContextProvider visualContext={props.visualContext}>{children}</TranscriptVisualContextProvider>;
 }
 
@@ -319,7 +323,7 @@ function TranscriptOriginAppSourceRoot(props: Readonly<{ source: SessionTranscri
             useConnectionState: parent.useConnectionState,
             history: {
                 useState: () => {
-                    const { isLoaded } = useSessionTranscriptIds(sessionId);
+                    const isLoaded = useSessionTranscriptLoaded(sessionId);
                     const window = useSourceTargetWindow(sessionId);
                     const available = getStorage()(() => sync.getSessionOlderMessagesAvailability(sessionId));
                     return React.useMemo(() => projectHistoryFrontiers({ isLoaded, hasOlder: available ?? true, isLoadingOlder: false }, window), [available, isLoaded, window]);
@@ -361,7 +365,7 @@ function AppSessionTranscriptSourceRoot(props: AppSourceProviderProps) {
             },
             history: {
                 useState: () => {
-                    const { isLoaded } = useSessionTranscriptIds(sessionId);
+                    const isLoaded = useSessionTranscriptLoaded(sessionId);
                     const window = useSourceTargetWindow(sessionId, loadOlderOverride == null);
                     const loading = React.useSyncExternalStore(subscribe, () => olderLoadCount > 0, () => olderLoadCount > 0);
                     const loadingNewer = React.useSyncExternalStore(subscribe, () => newerLoadCount > 0, () => newerLoadCount > 0);

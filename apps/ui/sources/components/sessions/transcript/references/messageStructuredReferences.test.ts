@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MENTION_KIND_V1, buildMentionRefForKindV1, type MentionRefV1 } from '@happier-dev/protocol';
+import { MENTION_KIND_V1, buildMentionRefForKindV1, type MentionRefV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
 import { buildComposerReferenceMentionPayloadV1 } from '@happier-dev/protocol/runtime/input/composerReferenceProviderV1';
 
@@ -204,5 +204,21 @@ describe('resolveMessageStructuredReferences', () => {
         });
 
         expect(references.row).toEqual([{ kind: 'session', sessionId: 'sess_ok', label: null }]);
+    });
+    it("never lists the transcript's own Session in the reference row, and leaves every other reference alone", () => {
+        const meta = metaWithMentions([
+            sessionMention('sess_receiver', '@Session "Receiver"', 'Receiver'),
+            sessionMention('sess_peer', '@Session "Peer"', 'Peer'),
+            fileMention('src/a.ts', '@src/a.ts'),
+        ]);
+        const text = 'Ready; @Session "Peer" checked @src/a.ts.';
+        expect(resolveMessageStructuredReferences({ meta, text, ownSessionId: 'sess_receiver' }).row).toEqual([
+            { kind: 'session', sessionId: 'sess_peer', label: 'Peer' }, { kind: 'file', path: 'src/a.ts' },
+        ]);
+        // Another transcript (or a caller with no transcript) still shows the receiver: the stored identity is untouched.
+        expect(resolveMessageStructuredReferences({ meta, text, ownSessionId: 'sess_other' }).row.map(reference => reference.kind === 'session' ? reference.sessionId : reference.path))
+            .toEqual(['sess_receiver', 'sess_peer', 'src/a.ts']);
+        expect(resolveMessageStructuredReferences({ meta: metaWithMentions([sessionMention('sess_receiver', '@self')]), text: '@self',
+            ownSessionId: 'sess_receiver' }).row).toEqual([]);
     });
 });

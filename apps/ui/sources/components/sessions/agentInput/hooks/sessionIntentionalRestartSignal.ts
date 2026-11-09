@@ -1,7 +1,5 @@
-import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { AgentEvent } from "@happier-dev/session-core/raw";
-
-export const SESSION_INTENTIONAL_RESTART_FAILSAFE_MS = 30_000;
 
 export type SessionIntentionalRestartReason =
     | 'manual_auth_switch'
@@ -57,36 +55,16 @@ export function createManualAuthSwitchRestartSignal(input: Readonly<{
     };
 }
 
-function applyRestartFailsafe(input: Readonly<{
-    signal: SessionIntentionalRestartSignal;
-    nowMs: number;
-    failsafeMs: number;
-}>): SessionIntentionalRestartSignal {
-    if (
-        input.signal.status !== 'restarting'
-        || input.nowMs - input.signal.startedAtMs < input.failsafeMs
-    ) {
-        return input.signal;
-    }
-    return {
-        ...input.signal,
-        status: 'pending_confirmation',
-    };
-}
-
 export function resolveSessionIntentionalRestartState(input: Readonly<{
     signals: ReadonlyArray<SessionIntentionalRestartSignal | null | undefined>;
-    nowMs: number;
-    failsafeMs?: number;
+    recoveryEvidenceAtMs?: number | null;
 }>): SessionIntentionalRestartState {
-    const failsafeMs = input.failsafeMs ?? SESSION_INTENTIONAL_RESTART_FAILSAFE_MS;
-    const signal = input.signals.find((candidate): candidate is SessionIntentionalRestartSignal => Boolean(candidate));
-    if (!signal) return null;
-    return applyRestartFailsafe({
-        signal,
-        nowMs: input.nowMs,
-        failsafeMs,
-    });
+    let latest: SessionIntentionalRestartState = null;
+    for (const signal of input.signals) {
+        if (signal && (!latest || signal.startedAtMs >= latest.startedAtMs)) latest = signal;
+    }
+    const recoveredAtMs = readFiniteTimestamp(input.recoveryEvidenceAtMs);
+    return latest && recoveredAtMs !== null && recoveredAtMs > latest.startedAtMs ? null : latest;
 }
 
 export type SessionIntentionalRestartSourceEvent = Readonly<{
@@ -120,6 +98,16 @@ function deriveConnectedServiceEventRestartSignal(
     sourceEvent: SessionIntentionalRestartSourceEvent,
 ): SessionIntentionalRestartSignal | null {
     const event = sourceEvent.event;
+    if (event.type === 'connected-service-account-switch-attempt') {
+        if (event.attemptedContinuityMode !== 'restart' && event.action !== 'restart_requested') return null;
+        if (event.outcome !== 'failed' && event.outcome !== 'terminal') return null;
+        return {
+            status: 'failed',
+            attemptId: `connected-service-account-switch-attempt:${Math.trunc(sourceEvent.createdAtMs)}`,
+            reason: 'runtime_auth_recovery',
+            startedAtMs: sourceEvent.createdAtMs,
+        };
+    }
     if (event.type !== 'connected-service-account-switch') return null;
     if (event.mode !== 'restart_resume') return null;
     return {
@@ -133,23 +121,16 @@ function deriveConnectedServiceEventRestartSignal(
 export function deriveSessionIntentionalRestartSignals(input: Readonly<{
     runtimeIssue: SessionRuntimeIssueV1 | null | undefined;
     events: ReadonlyArray<SessionIntentionalRestartSourceEvent>;
-    recoveryEvidenceAtMs?: number | null;
 }>): ReadonlyArray<SessionIntentionalRestartSignal> {
-    const recoveryEvidenceAtMs = typeof input.recoveryEvidenceAtMs === 'number' && Number.isFinite(input.recoveryEvidenceAtMs)
-        ? input.recoveryEvidenceAtMs
-        : null;
-    const isSuperseded = (signal: SessionIntentionalRestartSignal): boolean => (
-        recoveryEvidenceAtMs !== null && recoveryEvidenceAtMs > signal.startedAtMs
-    );
     const signals: SessionIntentionalRestartSignal[] = [];
     const runtimeIssueSignal = deriveRuntimeIssueRestartSignal(input.runtimeIssue);
-    if (runtimeIssueSignal && !isSuperseded(runtimeIssueSignal)) {
-        signals.push(runtimeIssueSignal);
-    }
-    const latestEvent = input.events[input.events.length - 1];
-    if (latestEvent) {
-        const signal = deriveConnectedServiceEventRestartSignal(latestEvent);
-        if (signal && !isSuperseded(signal)) signals.push(signal);
+    if (runtimeIssueSignal) signals.push(runtimeIssueSignal);
+    for (let index = input.events.length - 1; index >= 0; index -= 1) {
+        const signal = deriveConnectedServiceEventRestartSignal(input.events[index]);
+        if (signal) {
+            signals.push(signal);
+            break;
+        }
     }
     return signals;
 }

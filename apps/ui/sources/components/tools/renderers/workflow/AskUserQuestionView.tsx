@@ -10,7 +10,7 @@ import { useSessionTranscriptSource } from '@/components/sessions/transcript/sou
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { Text, TextInput } from '@/components/ui/text/Text';
-import { resolveAgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
+import { buildAgentRequestSemanticSummary, resolveAgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import {
     useOpenAttachedSessionTerminal,
@@ -22,6 +22,7 @@ import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 import { Icon } from '@/components/ui/icons/Icon';
 import { getAgentBehavior } from '@/agents/catalog/catalog';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { AGENT_SCOPED_PLUGIN_SETTINGS_SECTIONS } from '@/agents/registry/agentScopedPluginSettingsDeclarations';
 import type { PluginProjectionEditableSettingField } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { useServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -317,7 +318,9 @@ function normalizeCanonicalQuestion(value: Record<string, unknown>): Question | 
 function normalizeLegacyQuestion(value: Record<string, unknown>): Question | null {
     if (typeof value.question !== 'string') return null;
     const header = readOptionalString(value.header);
-    const answerKey = value.question.trim().length > 0 ? value.question : header;
+    const answerKey = buildAgentRequestSemanticSummary({
+        kind: 'user_action', toolName: 'AskUserQuestion', toolInput: { questions: [value] },
+    }).questions[0]?.answerKey;
     if (!answerKey) return null;
     const options = Array.isArray(value.options)
         ? value.options.map((option) => normalizeQuestionOption(option, false))
@@ -377,7 +380,7 @@ function resolveFreeformAnswer(
     };
 }
 
-function parseAskUserQuestionAnswersFromToolResult(result: unknown): Record<string, string> | null {
+function readAskUserQuestionResult(result: unknown): Record<string, unknown> | null {
     let parsedResult = result;
     if (typeof parsedResult === 'string') {
         try {
@@ -386,8 +389,29 @@ function parseAskUserQuestionAnswersFromToolResult(result: unknown): Record<stri
             return null;
         }
     }
-    if (!parsedResult || typeof parsedResult !== 'object') return null;
-    const maybeAnswers = (parsedResult as { answers?: unknown }).answers;
+    return isRecord(parsedResult) ? parsedResult : null;
+}
+
+function isDismissedQuestion(tool: ToolViewProps['tool']): boolean {
+    return tool.permission?.status === 'denied'
+        || (tool.state === 'completed' && readAskUserQuestionResult(tool.result)?.status === 'declined');
+}
+
+function isPendingAskUserQuestionRequest(request: unknown): boolean {
+    return isRecord(request) && request.tool === 'AskUserQuestion'
+        && resolveAgentRequestKind({ toolName: request.tool, requestKind: request.kind }) === 'user_action';
+}
+
+function reportQuestionResponseFailure(error: unknown, requestKey: string): void {
+    if (readPermissionActionDisposition(error) === 'outcomeUnknown') {
+        markPermissionAnswerUnconfirmed(requestKey, error);
+    } else {
+        Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.failedToSendMessage'));
+    }
+}
+
+function parseAskUserQuestionAnswersFromToolResult(result: unknown): Record<string, string> | null {
+    const maybeAnswers = readAskUserQuestionResult(result)?.answers;
     if (!maybeAnswers || typeof maybeAnswers !== 'object' || Array.isArray(maybeAnswers)) return null;
 
     const answers: Record<string, string> = {};
@@ -409,6 +433,8 @@ export const projectAskUserQuestionDisplayText: ToolDisplayTextProjector = (tool
         resolveDeclaredAskUserQuestionDialog(behavior, normalized?.happierDialog));
     if (!input) return [];
     const answers = parseAskUserQuestionAnswersFromToolResult(tool.result);
+    if (isDismissedQuestion(tool)) return input.questions.flatMap((question, index) =>
+        toolTextBlock(`tool-question-${index}-prompt`, question.question));
     if (tool.state === 'completed') return input.questions.flatMap((question, index) => [
         ...toolTextBlock(`tool-question-${index}-answer-label`, `${question.header ?? question.question}:`),
         ...toolTextBlock(`tool-question-${index}-answer`, answers?.[question.answerKey] ?? '-'),
@@ -567,15 +593,20 @@ const styles = StyleSheet.create((theme) => ({
         marginLeft: theme.space.s2,
     },
     footer: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        alignItems: 'center',
-        justifyContent: 'space-between',
         gap: theme.space.s12,
         marginTop: theme.space.s4,
         paddingTop: theme.space.s12,
         borderTopWidth: 1,
         borderTopColor: theme.colors.border.default,
+    },
+    footerActions: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: theme.space.s12,
+    },
+    submitButtonTrailing: {
+        marginLeft: 'auto',
     },
     footerHint: {
         ...Typography.variant('body'),
@@ -678,7 +709,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
     const [selections, setSelections] = React.useState<Map<number, Set<number>>>(new Map());
     const [freeformAnswers, setFreeformAnswers] = React.useState<Map<number, string>>(new Map());
     const [isSubmitting, setIsSubmitting] = React.useState(false);
-    const [isSubmitted, setIsSubmitted] = React.useState(false);
+    const [submissionOutcome, setSubmissionOutcome] = React.useState<'answered' | 'dismissed' | null>(null);
 
     // Parse input
     const rawInput = tool.input;
@@ -690,6 +721,8 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
     const accountScope = explicitServerId === undefined ? undefined
         : accountScopeResolution.kind === 'bound' ? accountScopeResolution.scope : null;
     const daemonMergedProjection = useDaemonMergedProjectionInputs({
+        // The declared setting mutation reads the Agent and its editable settings groups.
+        sections: AGENT_SCOPED_PLUGIN_SETTINGS_SECTIONS,
         machineId,
         serverId: serverId || null,
         enabled: Boolean(sessionId && machineId),
@@ -750,11 +783,10 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
     // responder; an answer it still holds keeps the form withdrawn.
     const hasActiveAskUserQuestionRequest = executionRun !== undefined
         ? executionRun.respond !== undefined && toolCallId !== null && !executionRun.pendingRequestIds.has(toolCallId)
-        : activeMatchingRequest?.tool === 'AskUserQuestion' &&
-            resolveAgentRequestKind({ toolName: activeMatchingRequest.tool, requestKind: activeMatchingRequest.kind }) === 'user_action';
+        : isPendingAskUserQuestionRequest(activeMatchingRequest);
     const canInteract =
         isRunning &&
-        !isSubmitted &&
+        !submissionOutcome &&
         !isSubmitting &&
         !answerUnconfirmed &&
         canApprovePermissions &&
@@ -924,16 +956,13 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
                 if (respond === undefined || executionRun.pendingRequestIds.has(toolCallId)) return;
                 setIsSubmitting(true);
                 await respond({ requestId: toolCallId, answers });
-                setIsSubmitted(true);
+                setSubmissionOutcome('answered');
                 return;
             }
             if (!sessionId || !actions) return;
 
             const latestRequest = currentFacts.current.agentState?.requests?.[toolCallId];
-            const hasLiveMatchingRequest =
-                latestRequest?.tool === 'AskUserQuestion' &&
-                resolveAgentRequestKind({ toolName: latestRequest.tool, requestKind: latestRequest.kind }) === 'user_action';
-            if (!hasLiveMatchingRequest) {
+            if (!isPendingAskUserQuestionRequest(latestRequest)) {
                 return;
             }
 
@@ -970,7 +999,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
             // terminal here. Remembering the choice is a SEPARATE outcome: a
             // failed preference write must be reported as such and must never
             // re-offer submit for a request that has already been answered.
-            setIsSubmitted(true);
+            setSubmissionOutcome('answered');
             const currentOwnerMetadata = currentFacts.current.ownerMetadata;
             const currentServerId = source.serverId ?? '';
             const currentAgentId = resolveAgentIdFromSessionMetadata(currentOwnerMetadata);
@@ -1012,12 +1041,8 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
                 }
             }
         } catch (error) {
-            setIsSubmitted(false);
-            if (readPermissionActionDisposition(error) === 'outcomeUnknown') {
-                markPermissionAnswerUnconfirmed(answerRequestKey);
-            } else {
-                Modal.alert(t('common.error'), error instanceof Error ? error.message : t('errors.failedToSendMessage'));
-            }
+            setSubmissionOutcome(null);
+            reportQuestionResponseFailure(error, answerRequestKey);
         } finally {
             setIsSubmitting(false);
         }
@@ -1039,8 +1064,32 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
         answerRequestKey,
     ]);
 
+    const handleDismiss = React.useCallback(async () => {
+        if (!toolCallId || !canInteract) return;
+        const respond = (() => {
+            if (executionRun !== undefined) {
+                const send = executionRun.respond;
+                if (!send || executionRun.pendingRequestIds.has(toolCallId)) return null;
+                return () => send({ requestId: toolCallId, approved: false });
+            }
+            if (!sessionId || !actions || !isPendingAskUserQuestionRequest(currentFacts.current.agentState?.requests?.[toolCallId])) return null;
+            return () => actions.answerUserAction({ id: toolCallId, decision: 'reject' });
+        })();
+        if (!respond) return;
+        setIsSubmitting(true);
+        try {
+            await respond();
+            if (executionRun === undefined) markTranscriptPromptAnswered(source, toolCallId);
+            setSubmissionOutcome('dismissed');
+        } catch (error) {
+            reportQuestionResponseFailure(error, answerRequestKey);
+        } finally {
+            setIsSubmitting(false);
+        }
+    }, [sessionId, toolCallId, actions, executionRun, canInteract, source, answerRequestKey]);
+
     // The asker withdrew it: the reason replaces the form; nothing is left to answer.
-    if (!isSubmitted && tool.permission?.status === 'canceled') {
+    if (!submissionOutcome && tool.permission?.status === 'canceled') {
         return (
             <ToolSectionView>
                 <View testID="ask-user-question.withdrawn" style={styles.submittedContainer}>
@@ -1056,8 +1105,21 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
         );
     }
 
+    if (submissionOutcome === 'dismissed' || isDismissedQuestion(tool)) {
+        return (
+            <ToolSectionView>
+                <View testID="ask-user-question.dismissed" style={styles.submittedContainer}>
+                    <Text style={styles.stateTitle}>{t('tools.askUserQuestion.dismissed')}</Text>
+                    {questions.map((q, qIndex) => (
+                        <ToolFindText key={`${q.answerKey}:${qIndex}`} messageId={messageId} blockId={`tool-question-${qIndex}-prompt`} text={q.question} style={styles.withdrawnQuestion} />
+                    ))}
+                </View>
+            </ToolSectionView>
+        );
+    }
+
     // Show submitted state
-    if (isSubmitted || tool.state === 'completed') {
+    if (submissionOutcome === 'answered' || tool.state === 'completed') {
         const answersFromResult = parseAskUserQuestionAnswersFromToolResult(tool.result);
         const answerRows = questions.map((q, qIndex) => {
             const selected = selections.get(qIndex);
@@ -1088,7 +1150,7 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
             return { key: `${q.answerKey}:${qIndex}`, qIndex, label: q.header ?? q.question, value: selectedLabels, reason: firstSelectedDescription };
         });
         const thisClient = readAnsweringClientCategory();
-        const answeredElsewhere = !isSubmitted && completedRequest?.answeringClientCategory !== undefined
+        const answeredElsewhere = submissionOutcome !== 'answered' && completedRequest?.answeringClientCategory !== undefined
             && thisClient !== undefined && completedRequest.answeringClientCategory !== thisClient;
         const canRemember = questionV1?.lasting === true && Boolean(messageId && sessionId && source.serverId);
         const rememberSeed: SaveMemoryDecisionSeed | null = canRemember && messageId && sessionId && source.serverId ? {
@@ -1315,30 +1377,46 @@ export const AskUserQuestionView = React.memo<ToolViewProps>(({ tool, messageId,
                 {(canInteract || isSubmitting || answerUnconfirmed) && (
                     <View style={styles.footer}>
                         <Text testID="ask-user-question.hint" style={styles.footerHint}>{formatFooterHint(footerHint)}</Text>
-                        <PermissionDecisionButton
-                            testID="ask-user-question.submit"
-                            hitReach={theme.space.s12 / 2}
-                            accessibilityRole="button"
-                            accessibilityLabel={t('tools.askUserQuestion.submit')}
-                            accessibilityState={{
-                                disabled: !allQuestionsAnswered || isSubmitting || answerUnconfirmed,
-                                busy: isSubmitting,
-                            }}
-                            style={[
-                                styles.submitButton,
-                                questionV1?.mode === 'continue' && styles.submitButtonQuiet,
-                                (!allQuestionsAnswered || isSubmitting || answerUnconfirmed) && styles.submitButtonDisabled,
-                            ]}
-                            onPress={handleSubmit}
-                            disabled={!allQuestionsAnswered || isSubmitting || answerUnconfirmed}
-                            activeOpacity={0.7}
-                        >
-                            {isSubmitting ? (
-                                <ActivitySpinner size="small" color={questionV1?.mode === 'continue' ? theme.colors.text.primary : theme.colors.button.primary.tint} />
-                            ) : (
-                                <Text style={[styles.submitButtonText, questionV1?.mode === 'continue' && styles.submitButtonTextQuiet]}>{t('tools.askUserQuestion.submit')}</Text>
-                            )}
-                        </PermissionDecisionButton>
+                        <View style={styles.footerActions}>
+                            <PermissionDecisionButton
+                                testID="ask-user-question.dismiss"
+                                hitReach={theme.space.s12 / 2}
+                                accessibilityRole="button"
+                                accessibilityLabel={t('tools.askUserQuestion.dismiss')}
+                                accessibilityState={{ disabled: isSubmitting || answerUnconfirmed, busy: isSubmitting }}
+                                style={[styles.submitButton, styles.submitButtonQuiet, (isSubmitting || answerUnconfirmed) && styles.submitButtonDisabled]}
+                                onPress={handleDismiss}
+                                disabled={isSubmitting || answerUnconfirmed}
+                                activeOpacity={0.7}
+                            >
+                                <Text style={[styles.submitButtonText, styles.submitButtonTextQuiet]}>{t('tools.askUserQuestion.dismiss')}</Text>
+                            </PermissionDecisionButton>
+                            <PermissionDecisionButton
+                                testID="ask-user-question.submit"
+                                hitReach={theme.space.s12 / 2}
+                                accessibilityRole="button"
+                                accessibilityLabel={t('tools.askUserQuestion.submit')}
+                                accessibilityState={{
+                                    disabled: !allQuestionsAnswered || isSubmitting || answerUnconfirmed,
+                                    busy: isSubmitting,
+                                }}
+                                style={[
+                                    styles.submitButton,
+                                    styles.submitButtonTrailing,
+                                    questionV1?.mode === 'continue' && styles.submitButtonQuiet,
+                                    (!allQuestionsAnswered || isSubmitting || answerUnconfirmed) && styles.submitButtonDisabled,
+                                ]}
+                                onPress={handleSubmit}
+                                disabled={!allQuestionsAnswered || isSubmitting || answerUnconfirmed}
+                                activeOpacity={0.7}
+                            >
+                                {isSubmitting ? (
+                                    <ActivitySpinner size="small" color={questionV1?.mode === 'continue' ? theme.colors.text.primary : theme.colors.button.primary.tint} />
+                                ) : (
+                                    <Text style={[styles.submitButtonText, questionV1?.mode === 'continue' && styles.submitButtonTextQuiet]}>{t('tools.askUserQuestion.submit')}</Text>
+                                )}
+                            </PermissionDecisionButton>
+                        </View>
                     </View>
                 )}
             </View>

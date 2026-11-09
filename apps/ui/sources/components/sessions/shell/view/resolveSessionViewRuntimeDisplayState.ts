@@ -20,7 +20,7 @@ export type SessionViewRuntimeDisplayState = Readonly<{
 type Input = Readonly<{
     session: Session;
     isSessionActive: boolean;
-    isResumable: boolean;
+    isResumable: boolean | null;
     isMachineReachable: boolean;
     machineReachability: SessionMachineReachability;
     allowInputWhileInactive: boolean;
@@ -42,7 +42,7 @@ function buildCacheKey(input: Input): string {
         input.session.agentState?.controlledByUser === true ? 1 : 0,
         input.session.agentState?.localControl ?? null,
         input.isSessionActive ? 1 : 0,
-        input.isResumable ? 1 : 0,
+        input.isResumable,
         input.isMachineReachable ? 1 : 0,
         input.machineReachability,
         input.allowInputWhileInactive ? 1 : 0,

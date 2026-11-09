@@ -19,7 +19,6 @@ import {
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createMachineFixture, createRootLayoutFeaturesResponse } from '@/dev/testkit';
-import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { PluginProjectionV2Schema, DaemonContributionRegistryProjectionDescribeResponseSchema, DaemonPluginSettingsGetRequestSchema, DaemonPluginSettingsSetRequestSchema, DaemonPluginSettingsGetResponseSchema, DaemonPluginSettingsSetResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PluginAccountSettingsMutationRequestV1Schema, PluginAccountSettingsReadResponseV1Schema, PluginAccountSettingsMutationResponseV1Schema } from '@happier-dev/protocol/plugins/settings/accountSettingsV1';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadActionOutputV1Schema,
@@ -34,6 +33,7 @@ Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const sessionDeny = vi.fn();
 const sendMessage = vi.fn();
 const sessionAllowWithAnswers = vi.fn();
+let questionRpcFailure: Readonly<{ name: 'PluginError'; code: string; message: string; retryable: boolean }> | null = null;
 const readRequestOutcome = vi.fn<(requestId: string) => Promise<'pending' | 'settled'>>();
 const pluginSettingsRecords = new Map<string, { revision: number; values: Record<string, unknown> }>();
 const daemonSettingRequests: unknown[] = [];
@@ -79,17 +79,16 @@ async function renderScreen(element: React.ReactElement) {
     const read = () => props.session ?? readSessionFixture();
     await act(async () => {
         storage.setState({ sessions: { s1: readSessionFixture() } });
-        const machine = createMachineFixture({ id: 'machine-1', activeAt: Date.now() });
-        if (!machine.metadata) throw new Error('Question machine fixture must carry metadata');
-        storage.getState().applyMachines([{ ...machine, metadata: { ...machine.metadata, daemonTerminalSessionAttachSupported: daemonSessionAttachSupported } }], true, { sourceServerId: account.serverId });
-        // Account-qualified projection reads use the scoped RPC transport,
-        // whose cold machine-key lookup asks for the exact Home census row.
-        homes.answer(account.serverId, '/v1/machines/machine-1', { body: {
-            machine: createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' }),
-        } });
+        const machine = storage.getState().machines['machine-1'];
+        if (!machine?.metadata) throw new Error('Question machine fixture must carry admitted metadata');
+        // The Account harness already hydrated this row through the real reader.
+        // Retain its transport facts when varying the attached-terminal boundary.
+        storage.getState().applyMachines([{ ...machine,
+            metadata: { ...machine.metadata, daemonTerminalSessionAttachSupported: daemonSessionAttachSupported },
+        }], true, { sourceServerId: account.serverId });
         const metadata = readSessionOwnerMetadataView(read());
         if (metadata?.machineId && read().serverId === account.serverId) {
-            const projection = await loadDaemonMergedProjectionCacheEntry({ machineId: metadata.machineId, serverId: read().serverId });
+            const projection = await loadDaemonMergedProjectionCacheEntry({ sections: 'complete', machineId: metadata.machineId, serverId: read().serverId });
             expect(projection?.kind, JSON.stringify({
                 reason: projection?.kind === 'error' ? projection.reason : null,
                 requests: daemonProjectionRequests,
@@ -174,6 +173,9 @@ installDisconnectedServerSocketBoundary((socket) => {
             throw new Error('Malformed question daemon RPC');
         }
         const method = raw.method.slice(raw.method.indexOf(':') + 1);
+        if (method === RPC_METHODS.SESSION_USER_ACTION_ANSWER && questionRpcFailure) {
+            return { ok: true, result: questionRpcFailure };
+        }
         if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
             daemonProjectionRequests.push(raw.params);
             return { ok: true, result: DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection: daemonProjection }) };
@@ -295,6 +297,29 @@ describe('AskUserQuestionView', () => {
         expect(projectAskUserQuestionDisplayText(tool)).toEqual([
             { id: 'tool-question-0-answer-label', text: 'Q1:', format: 'plain', kind: 'toolBody' },
             { id: 'tool-question-0-answer', text: 'B', format: 'plain', kind: 'toolBody' },
+        ]);
+    });
+
+    it('dismisses the exact pending question through the user-action decision and keeps its prompt visible', async () => {
+        const screen = await renderScreen(React.createElement(AskUserQuestionView, makeToolViewProps(makeTool(), { sessionId: 's1' })));
+
+        await pressTestInstanceAsync(screen.findByProps({ testID: 'ask-user-question.dismiss' }), 'dismiss question');
+
+        expect(sessionAllowWithAnswers).toHaveBeenCalledExactlyOnceWith({ id: 'toolu_1', decision: 'reject' });
+        expect(sendMessage).not.toHaveBeenCalled();
+        expect(screen.getTextContent()).toContain('tools.askUserQuestion.dismissed');
+        expect(screen.getTextContent()).toContain('Pick one');
+        expect(screen.findAllByProps({ testID: 'ask-user-question.submit' })).toHaveLength(0);
+    });
+
+    it('renders a settled declined question without a fabricated blank answer', async () => {
+        const tool = makeTool({ state: 'completed', result: { status: 'declined' }, permission: { id: 'toolu_1', status: 'denied' } });
+        const screen = await renderScreen(React.createElement(AskUserQuestionView, makeToolViewProps(tool, { sessionId: 's1' })));
+
+        expect(screen.getTextContent()).toContain('tools.askUserQuestion.dismissed');
+        expect(screen.getTextContent()).toContain('Pick one');
+        expect(projectAskUserQuestionDisplayText(tool)).toEqual([
+            { id: 'tool-question-0-prompt', text: 'Pick one', format: 'plain', kind: 'toolBody' },
         ]);
     });
 
@@ -451,10 +476,11 @@ describe('AskUserQuestionView', () => {
             } });
         }
         clearProjectedAgentUiBehaviorDescriptors();
-        publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId: account.serverId });
+        publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId: account.serverId }, 'authority');
         sessionDeny.mockReset();
         sendMessage.mockReset();
         sessionAllowWithAnswers.mockReset();
+        questionRpcFailure = null;
         readRequestOutcome.mockReset();
         daemonSessionAttachSupported = true;
         supportsAnswersInPermission = true;
@@ -473,6 +499,33 @@ describe('AskUserQuestionView', () => {
         expect(sessionAllowWithAnswers).toHaveBeenCalledWith({ id: 'toolu_1', answers: { 'Pick one': ['A'] } });
         expect(sessionDeny).toHaveBeenCalledTimes(0);
         expect(sendMessage).toHaveBeenCalledTimes(0);
+    });
+
+    it('preserves the native dialog question id when submitting its stable choice', async () => {
+        // QA-UNIFIED-live/32-trust-before.json: the native dialog publishes an id
+        // alongside legacy question/options fields; the request owner answers by id.
+        const screen = await renderView(makeTool({
+            input: {
+                happierDialog: { kind: 'recognized', dialogId: 'trust_folder', secondaryAction: 'open_terminal' },
+                questions: [{
+                    id: 'claudeUnifiedTerminalTrustFolder',
+                    header: 'Trust this folder',
+                    question: 'Claude needs your permission to trust and run code from this folder.',
+                    multiSelect: false,
+                    options: [
+                        { choice: 'trust_once', label: 'Trust and proceed', description: 'Trust this workspace for this prompt.' },
+                        { choice: 'reject_once', label: 'Do not trust', description: 'Reject this workspace for this prompt.' },
+                    ],
+                }],
+            },
+        }));
+
+        await chooseOptionAndSubmit(screen, 'Trust and proceed');
+
+        expect(sessionAllowWithAnswers).toHaveBeenCalledExactlyOnceWith({
+            id: 'toolu_1', answers: { claudeUnifiedTerminalTrustFolder: ['trust_once'] },
+        });
+        expect(sendMessage).not.toHaveBeenCalled();
     });
 
     it('answers the qualified Home B request when the same-ID active Home A has no request', async () => {
@@ -536,6 +589,28 @@ describe('AskUserQuestionView', () => {
             await pressPressableByLabel(screen, 'tools.askUserQuestion.submit');
             expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(2);
         });
+    });
+
+    it('keeps a provider-submitted answer withheld when the request is still pending', async () => {
+        const requestId = 'toolu_submission_unconfirmed';
+        activeAskUserQuestionRequestId = requestId;
+        questionRpcFailure = { name: 'PluginError', code: 'STRUCTURED_QUESTION_SUBMISSION_UNCONFIRMED',
+            message: 'Provider acknowledgment pending', retryable: true };
+        const { createAppSessionTranscriptActions } = await import('@/components/sessions/transcript/source/appSessionTranscriptActions');
+        sessionAllowWithAnswers.mockImplementationOnce(createAppSessionTranscriptActions('s1', account.serverId).answerUserAction);
+        const screen = await renderView(makeTool({ permission: { id: requestId, status: 'pending' } }));
+        await chooseOptionAndSubmit(screen, 'A');
+
+        expectNoAlert(screen);
+        expect(screen.findAllByProps({ testID: 'ask-user-question.answer-unconfirmed' })).toHaveLength(1);
+        readRequestOutcome.mockResolvedValueOnce('pending');
+        await pressTestInstanceAsync(screen.findByProps({ testID: 'ask-user-question.check-again' }), 'check again');
+
+        expect(screen.findByProps({ testID: 'ask-user-question.submit' }).props.accessibilityState.disabled).toBe(true);
+        expect(screen.findByProps({ testID: 'ask-user-question.option:0:0' }).props.accessibilityState)
+            .toEqual({ checked: true, disabled: true });
+        await pressPressableByLabel(screen, 'tools.askUserQuestion.submit');
+        expect(sessionAllowWithAnswers).toHaveBeenCalledTimes(1);
     });
 
     describe('when Check again finds the question already settled', () => {
@@ -1027,13 +1102,15 @@ describe('AskUserQuestionView', () => {
             body: PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1, pluginIds: ['acme.review'],
                 intentReads: [{ pluginId: 'acme.review', response: intentRead }], failedPluginIds: [], nextCursor: null }),
         });
-        const [{ createActivePluginAccountAvailabilityProjectionHydrator }, { applyPluginAccountAvailabilityProjectionRefresh }] = await Promise.all([
+        const [{ createActivePluginAccountAvailabilityProjectionHydrator }, { applyPluginAccountAvailabilityProjectionRefresh, readPluginAccountAvailability }] = await Promise.all([
             import('@/sync/api/plugins/availability/pluginAvailabilityProjection'),
             import('@/sync/domains/plugins/availability/projection'),
         ]);
         const availability = await createActivePluginAccountAvailabilityProjectionHydrator().refresh();
         if (!availability) throw new Error('Question Account Availability scope retired');
         applyPluginAccountAvailabilityProjectionRefresh(availability);
+        expect(readPluginAccountAvailability({ serverId: account.serverId, accountId: 'account-a' })
+            .readCurrentSettingsDeclaration({ pluginId: 'acme.review' })).toMatchObject({ kind: 'available' });
         askUserQuestionSessionState.current = {
             serverId: account.serverId,
             metadataLayoutVersion: 1,
@@ -1080,7 +1157,7 @@ describe('AskUserQuestionView', () => {
             'Remember this scope?': ['always_include'],
         } });
         expect(daemonSettingRequests).toEqual([]);
-        expect(pluginSettingsRecords.get('acme.review')).toEqual({ revision: 2, values: {
+        expect(pluginSettingsRecords.get('acme.review'), screen.getTextContent()).toEqual({ revision: 2, values: {
             reviewScopePreference: 'always_include',
         } });
         expect(homes.requestsFor('/v1/account/plugin-settings/acme.review').filter(request => request.input !== null)).toEqual([
@@ -1205,7 +1282,7 @@ describe('AskUserQuestionView', () => {
         // an old render closure would wrongly persist its now-disallowed
         // choice. The real invalidation also refreshes the subscribed hook;
         // settlement must use the canonical projection/descriptor currentness.
-        publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId: account.serverId });
+        publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId: account.serverId }, 'authority');
         daemonProjection.generation += 1;
         publishReviewAskUserQuestionDescriptor([]);
 
@@ -1607,6 +1684,20 @@ describe('AskUserQuestionView', () => {
         expect(respond).toHaveBeenCalledWith({ requestId: 'toolu_1', answers: { 'Pick one': ['A'] } });
         expect(sessionAllowWithAnswers).not.toHaveBeenCalled();
         expect(sessionDeny).not.toHaveBeenCalled();
+    });
+
+    it('dismisses an execution-run question through its existing responder without Session authority', async () => {
+        const respond = vi.fn(async () => {});
+        const screen = await renderView(makeTool(), {
+            sessionId: undefined,
+            executionRun: { executionRunId: 'run1', respond, pendingRequestIds: new Set() },
+        });
+
+        await pressTestInstanceAsync(screen.findByProps({ testID: 'ask-user-question.dismiss' }), 'dismiss question');
+
+        expect(respond).toHaveBeenCalledExactlyOnceWith({ requestId: 'toolu_1', approved: false });
+        expect(sessionAllowWithAnswers).not.toHaveBeenCalled();
+        expect(screen.getTextContent()).toContain('tools.askUserQuestion.dismissed');
     });
 
     it('supports freeform questions with no options by submitting typed answers', async () => {

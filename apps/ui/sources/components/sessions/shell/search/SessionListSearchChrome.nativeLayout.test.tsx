@@ -1,8 +1,10 @@
 import * as React from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { flattenTestStyle, renderScreen, standardCleanup } from '@/dev/testkit';
+import { layoutHitArea } from '@/dev/testkit/harness/hitFrameReach';
 import { installSessionShellCommonModuleMocks } from '../sessionShellTestHelpers';
+import { resolveHappierMinimumInteractiveTargetSize } from '@happier-dev/plugin-ui/environment';
 
 vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () => ({
     splitStreamingRevealTextParts: () => [],
@@ -58,17 +60,22 @@ describe('SessionListSearchChrome native layout', () => {
 
     it('gives every header and field action the touch floor on a touch platform', async () => {
         const { SessionListSearchChrome } = await import('./SessionListSearchChrome');
-        const { resolveMinimumInteractiveTargetSize } = await import('@/components/ui/interactiveTargetSize');
+        const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
         const screen = await renderScreen(
-            <SessionListSearchChrome
-                searchQuery="responsive"
-                onSearchQueryChange={vi.fn()}
-            />,
+            <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}>
+                <SessionListSearchChrome
+                    searchQuery="responsive"
+                    onSearchQueryChange={vi.fn()}
+                />
+            </HappierUiPlatformProvider>,
         );
 
+        // Each action keeps its drawn square; a finger reaches the iOS floor through the hit area.
         for (const testID of ['session-list-search-trigger', 'session-list-view-options-trigger', 'session-list-search-close']) {
-            const [button] = screen.root.findAllByProps({ testID });
-            expect(button?.props.minimumInteractiveTargetSize).toBe(resolveMinimumInteractiveTargetSize('ios'));
+            const host = screen.findHostByTestId(testID);
+            const style = flattenTestStyle(host?.props.style);
+            const area = await layoutHitArea(() => screen.findHostByTestId(testID), { width: Number(style.width), height: Number(style.height) });
+            expect(area.height, testID).toBe(resolveHappierMinimumInteractiveTargetSize('ios'));
         }
     });
 });

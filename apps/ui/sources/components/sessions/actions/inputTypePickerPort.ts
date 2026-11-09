@@ -12,7 +12,6 @@ import {
 } from '@happier-dev/protocol/inputs/runtime';
 
 import { t } from '@/text';
-
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 
 /** Host-private discovery; Plugin UI forms continue to consume the unchanged exact-reference port. */
@@ -74,7 +73,8 @@ export function createInputTypePickerPort(host: InputTypePickerPortHost): HostIn
             // source; only a whole Usage query opens the host's dialog. The field is named by its type,
             // because a group saved before its choices were declared still carries the older hint.
             ? host.openHostPicker !== undefined && (
-                field.inputType.hostType === 'agentParticipant' && host.canOpenHostPicker?.(field.inputType) === true
+                (field.inputType.hostType === 'agentParticipant' || field.inputType.hostType === 'savedSecretReference')
+                    && host.canOpenHostPicker?.(field.inputType) === true
                 || field.inputType.hostType === 'usageQuery' && field.inputType.field === undefined
                     && field.optionsSourceId === undefined && field.options === undefined)
             : pickerFor(field.inputType, field) !== null) ? {

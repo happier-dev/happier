@@ -7,7 +7,7 @@ import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contribut
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { SessionServerStartSpawnDraftV1Schema, type SessionServerStartSpawnDraftV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import { createMachineFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createMachineFixture, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -59,6 +59,7 @@ const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration
 const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool');
 const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
 const { SessionServerStartDraftComposerModal } = await import('./SessionServerStartDraftComposerModal');
+const { useNewSessionOrganizationPlacement } = await import('./organization/useNewSessionOrganizationPlacement');
 const { SessionAuthoringControls } = await import('@/components/sessions/authoring/controls/SessionAuthoringControls');
 const { PathSelectionList } = await import('./components/PathSelectionList');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
@@ -177,15 +178,17 @@ describe('mounted Session server-start recipe composer', () => {
         const screen = await renderScreen(<SessionServerStartDraftComposerModal
             seed={{ existingDraft: draft }} target={target} onResolve={onResolve} onClose={() => {}}
             setChrome={value => { chrome = value; }} />);
+        function submitButton() {
+            if (chrome?.kind !== 'card') throw new Error('Missing card');
+            const footer = chrome.footer as React.ReactElement<{ children: React.ReactNode }>;
+            const button = React.Children.toArray(footer.props.children).find(child =>
+                React.isValidElement<{ title: string }>(child) && child.type === RoundButton && child.props.title === 'newSession.recipeComposerSubmit');
+            if (!React.isValidElement<{ disabled: boolean }>(button)) throw new Error('Missing submit');
+            return button;
+        }
         async function submit() {
             await waitForHomeGovernance(() => {
-                expect(chrome?.kind).toBe('card');
-                if (chrome?.kind !== 'card') throw new Error('Missing card');
-                const footer = chrome.footer as React.ReactElement<{ children: React.ReactNode }>;
-                const button = React.Children.toArray(footer.props.children).find(child =>
-                    React.isValidElement<{ title: string }>(child) && child.type === RoundButton && child.props.title === 'newSession.recipeComposerSubmit');
-                if (!React.isValidElement<{ disabled: boolean }>(button)) throw new Error('Missing submit');
-                expect(button.props.disabled).toBe(false);
+                expect(submitButton().props.disabled).toBe(false);
             });
             if (chrome?.kind !== 'card') throw new Error('Missing card');
             const footer = await renderScreen(<>{chrome.footer}</>);
@@ -194,15 +197,68 @@ describe('mounted Session server-start recipe composer', () => {
             expect(onResolve).toHaveBeenCalledTimes(1);
             return SessionServerStartSpawnDraftV1Schema.parse(onResolve.mock.calls[0]![0]);
         }
-        return { screen, submit };
+        return { screen, submit, submitButton };
     }
 
+    it('keeps Account section placement before a Machine is selected and after same-Home placement changes', async () => {
+        const draft = recipe();
+        const initialProps: Pick<Parameters<typeof useNewSessionOrganizationPlacement>[0], 'executionTarget' | 'directory'> = {
+            executionTarget: null, directory: '',
+        };
+        const hook = await renderHook((props: typeof initialProps) => useNewSessionOrganizationPlacement({
+            serverId,
+            ...props,
+            initialPlacement: draft.organizationPlacement,
+        }), { initialProps });
+
+        await waitForHomeGovernance(() => {
+            expect(hook.getCurrent().folderTargets.some(target => target.folderId === 'intake')).toBe(true);
+            expect(hook.getCurrent().valid).toBe(true);
+        });
+        expect(hook.getCurrent().placement).toEqual(draft.organizationPlacement);
+        expect(hook.getCurrent().selectedSectionAddress).toEqual({ serverId, sectionId: 'intake' });
+
+        await hook.rerender({ executionTarget: { serverId, machineId: 'machine-2' }, directory: '/another-project' });
+        expect(hook.getCurrent().placement).toEqual(draft.organizationPlacement);
+        expect(hook.getCurrent().valid).toBe(true);
+        await hook.unmount();
+    });
+
+    it('does not bind a retained placement to another Account during same-Home hydration', async () => {
+        const draft = recipe();
+        const hook = await renderHook(() => useNewSessionOrganizationPlacement({
+            serverId,
+            executionTarget: null,
+            directory: '',
+            initialPlacement: draft.organizationPlacement,
+            initialPlacementScope: { serverId, accountId: 'retired-account' },
+        }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().folderTargets.some(target => target.folderId === 'intake')).toBe(true));
+        expect(hook.getCurrent().placement).toEqual(draft.organizationPlacement);
+        expect(hook.getCurrent().valid).toBe(false);
+        expect(hook.getCurrent().sectionSelectionValid).toBe(false);
+        expect(hook.getCurrent().sections.some(section => section.address.serverId === serverId
+            && section.address.sectionId === 'intake')).toBe(true);
+
+        await act(async () => { hook.getCurrent().setSectionAddress({ serverId: otherServerId, sectionId: 'intake' }); });
+        expect(hook.getCurrent().placement).toEqual(draft.organizationPlacement);
+        expect(hook.getCurrent().selectedSectionAddress).toEqual({ serverId, sectionId: 'intake' });
+        expect(hook.getCurrent().valid).toBe(false);
+
+        await act(async () => { hook.getCurrent().setSectionAddress({ serverId, sectionId: 'intake' }); });
+        expect(hook.getCurrent().placement).toEqual({ folderId: 'intake', tagIds: [] });
+        expect(hook.getCurrent().valid).toBe(true);
+        expect(hook.getCurrent().sectionSelectionValid).toBe(true);
+        await hook.unmount();
+    });
+
     it.each([
-        { name: 'canonical Home', aliasHost: false, aliasRecipe: false, fresh: false },
-        { name: 'saved recipe Home alias', aliasHost: false, aliasRecipe: true, fresh: false },
-        { name: 'mounted and saved Home aliases', aliasHost: true, aliasRecipe: true, fresh: false },
-        { name: 'fresh connected Codex recipe without a launch profile', aliasHost: false, aliasRecipe: false, fresh: true },
-    ])('composes a mounted external plugin recipe with $name and all authoring controls', async ({ aliasHost, aliasRecipe, fresh }) => {
+        { name: 'canonical Home', aliasHost: false, aliasRecipe: false, fresh: false, managed: false },
+        { name: 'saved recipe Home alias', aliasHost: false, aliasRecipe: true, fresh: false, managed: false },
+        { name: 'mounted and saved Home aliases', aliasHost: true, aliasRecipe: true, fresh: false, managed: false },
+        { name: 'fresh connected Codex recipe without a launch profile', aliasHost: false, aliasRecipe: false, fresh: true, managed: false },
+        { name: 'fresh managed directory seed', aliasHost: false, aliasRecipe: false, fresh: true, managed: true },
+    ])('composes a mounted external plugin recipe with $name and all authoring controls', async ({ aliasHost, aliasRecipe, fresh, managed }) => {
         const draft = recipe();
         const requestedDraft = aliasRecipe
             ? { ...draft, executionTarget: { ...draft.executionTarget, serverId: serverAlias } }
@@ -224,7 +280,7 @@ describe('mounted Session server-start recipe composer', () => {
                 destination: { pluginId: requestSurface.pluginId, localId: 'settings' }, container: 'appPage' } });
         const request = { hostAction: { action: 'session.spawn_new', projection: 'serverStartDraft' },
             draft: PluginUiJsonObjectV1Schema.parse({ ...(fresh
-                ? { directory: '/tmp', agentId: 'codex', permissionMode: 'default' }
+                ? { ...(managed ? { directoryIntent: { kind: 'managed' } } : { directory: '/tmp' }), agentId: 'codex', permissionMode: 'default' }
                 : { existingDraft: requestedDraft }),
                 candidates: [{ projectKey: { id: 'project-intake' }, serverId: aliasRecipe ? serverAlias : serverId,
                     machineId: 'machine-1', rootPath: '/repo', reachable: true, worktrees: [] }] }) } as const;
@@ -232,14 +288,14 @@ describe('mounted Session server-start recipe composer', () => {
         vi.mocked(Modal.show).mockClear();
         const unwiredHost = createPluginSurfaceHostApi({ surfaceContext: requestSurface });
         const unwired = createCanonicalPluginReactNativeHostApiAdapter({ surface, requestSurface,
-            requestIdPrefix: 'unwired-recipe', handleRequest: unwiredHost.handleRequest, installedMethods: unwiredHost.installedMethods });
+            handleRequest: unwiredHost.handleRequest, installedMethods: unwiredHost.installedMethods });
         try {
             await expect(unwired.api.selectActionInput(request)).rejects.toMatchObject({ code: 'unsupported_method' });
             expect(Modal.show).not.toHaveBeenCalled();
         } finally { unwired.dispose(); }
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
             surface,
-            requestSurface, requestIdPrefix: 'recipe-request', handleRequest: host.handleRequest, installedMethods: host.installedMethods,
+            requestSurface, handleRequest: host.handleRequest, installedMethods: host.installedMethods,
         });
         let selection: ReturnType<PluginUiHostApi['selectActionInput']> | undefined;
         let earlySettlement: unknown = null;
@@ -263,6 +319,9 @@ describe('mounted Session server-start recipe composer', () => {
             try {
                 await waitForHomeGovernance(() => expect(dialog.findAllByType(SessionAuthoringControls).length,
                     dialog.getTextContent()).toBe(2));
+                if (managed) {
+                    expect(dialog.findByTestId('server-start-draft-directory')?.props.detail).toBe('newSession.folder.noFolder');
+                }
                 const facts = dialog.findAllByType(SessionAuthoringControls)[0]!.props.facts;
                 expect(facts.agentPickerContext).toMatchObject({ serverId, machineId: 'machine-1' });
                 expect(facts.agentTargets).toEqual(expect.arrayContaining([expect.objectContaining({
@@ -303,7 +362,7 @@ describe('mounted Session server-start recipe composer', () => {
                     const settled = await selection;
                     expect(settled).toMatchObject({ kind: 'serverStartDraft', draft: {
                         executionTarget: { serverId, machineId: 'machine-1' },
-                        directory: { kind: 'path', path: '/tmp' },
+                        directory: managed ? { kind: 'managed' } : { kind: 'path', path: '/tmp' },
                         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
                         modelSelection: { ref: { modelId: 'gpt-6.1-sol' } },
                         configuration: { options: { reasoning_effort: { value: 'low' } } },
@@ -371,7 +430,7 @@ describe('mounted Session server-start recipe composer', () => {
             accountEncryptionMode: 'plain', targetedContributions: undefined, mount: { kind: 'destination',
                 destination: { pluginId: requestSurface.pluginId, localId: 'list' }, container: 'appPage' } });
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface, requestSurface,
-            requestIdPrefix: 'triage-recipe', handleRequest: host.handleRequest, installedMethods: host.installedMethods });
+            handleRequest: host.handleRequest, installedMethods: host.installedMethods });
         let phase: TriageEntrySessionStartPhaseV1 = { kind: 'idle' };
         const observe = (next: TriageEntrySessionStartPhaseV1) => { phase = next; };
         const plugin = await renderScreen(<PluginHostApiProvider hostApi={adapter.api}>
@@ -428,7 +487,7 @@ describe('mounted Session server-start recipe composer', () => {
         } finally { adapter.dispose(); await plugin.unmount(); }
     });
 
-    it('retains Folder, configuration and tool policy through save/reopen and rejects a second Home folder', async () => {
+    it('retains section, configuration and tool policy through save/reopen and refuses foreign same-id substitution', async () => {
         const draft = recipe();
         const mounted = await mount(draft);
         await waitForHomeGovernance(() => expect(mounted.screen.findAllByType(DropdownMenu).some(node =>
@@ -437,7 +496,7 @@ describe('mounted Session server-start recipe composer', () => {
         await mounted.screen.unmount();
         const changed = await mount(draft);
         await act(async () => { changed.screen.findByType(PathSelectionList).props.onChangeDraftPath('/elsewhere'); });
-        expect(await changed.submit()).toEqual({ ...draft, directory: { kind: 'path', path: '/elsewhere' }, organizationPlacement: { folderId: null, tagIds: ['mail'] } });
+        expect(await changed.submit()).toEqual({ ...draft, directory: { kind: 'path', path: '/elsewhere' } });
         await changed.screen.unmount();
         for (const existing of [false, true]) {
             const configurationDraft = recipe(existing);
@@ -458,40 +517,47 @@ describe('mounted Session server-start recipe composer', () => {
         }
 
         storage.getState().applyMachines([createMachineFixture({ id: 'machine-1', active: true, activeAt: Date.now() })], true, { sourceServerId: otherServerId });
+        storage.getState().upsertSessionOrganizationFolderOptimistic(otherServerId, {
+            folderId: 'intake', folderKey: 'foreign-intake', parentFolderId: null, parentFolderKey: null,
+            sortKey: null, archivedAt: null, createdAt: 1, updatedAt: 1,
+            display: { t: 'plain', v: { name: 'Other Account intake' } },
+            displayState: { status: 'available', value: { name: 'Other Account intake' } },
+        });
         const otherHome = await mount(draft, { serverId: otherServerId, machineId: 'machine-1' });
         await waitForHomeGovernance(() => expect(otherHome.screen.findAllByType(SessionAuthoringControls).length).toBeGreaterThan(0));
-        expect(otherHome.screen.findAllByType(DropdownMenu).some(node => node.props.items?.some((item: { id: string }) => item.id === 'intake'))).toBe(false);
-        expect((await otherHome.submit()).organizationPlacement).toEqual({ folderId: null, tagIds: ['mail'] });
+        await waitForHomeGovernance(() => expect(otherHome.screen.findAllByType(DropdownMenu).some(node =>
+            node.props.items?.some((item: { id: string }) => item.id === 'intake'))).toBe(true));
+        expect(otherHome.submitButton().props.disabled).toBe(true);
+        await act(async () => {
+            otherHome.screen.findAllByType(DropdownMenu).find(node => node.props.testID === 'server-start-draft-folder')!.props.onSelect('root');
+        });
+        expect((await otherHome.submit()).organizationPlacement).toEqual({ folderId: null, tagIds: [] });
         await otherHome.screen.unmount();
     });
 
-    it.each(['cold', 'unavailable', 'different workspace'] as const)(
+    it.each(['cold', 'retired folders gate', 'legacy workspace'] as const)(
         'roundtrips an unchanged managed recipe when its Folder projection is %s', async (projectionState) => {
             const draft = SessionServerStartSpawnDraftV1Schema.parse({
                 ...recipe(), directory: { kind: 'managed' },
             });
             if (projectionState === 'cold') storage.getState().clearSessionOrganizationForServer(serverId);
-            if (projectionState === 'unavailable') {
+            if (projectionState === 'retired folders gate') {
                 foldersEnabled = false;
                 storage.getState().applySettingsLocal({ featureToggles: { 'sessions.folders': false } });
             }
-            // The saved recipe is the authoring authority. A local projection may be cold,
-            // unavailable, or still describe the folder's former workspace.
+            // A no-invoke recipe retains its authored placement. Retired workspace
+            // eligibility and Folder opt-in cannot narrow the Account's choices.
             const mounted = await mount(draft);
             const emitted = await mounted.submit();
             expect(emitted).toEqual(draft);
             // The retained Folder stays in view and never reads as the workspace root.
-            if (projectionState === 'unavailable') {
-                // Folders are off: the saved one is shown read-only, as kept.
-                const folderRow = mounted.screen.findAllByType(Item).find(node => node.props.testID === 'server-start-draft-folder');
-                expect(folderRow?.props.detail).toBe('common.unavailable');
-                expect(folderRow?.props.subtitle).toBe('newSession.recipeComposerFolderRetained');
-            } else {
-                // A cold or foreign projection still offers the choice, naming the kept Folder as kept.
-                const trigger = mounted.screen.findAllByType(DropdownMenu)
-                    .find(node => node.props.testID === 'server-start-draft-folder')?.props.itemTrigger;
+            const trigger = mounted.screen.findAllByType(DropdownMenu)
+                .find(node => node.props.testID === 'server-start-draft-folder')?.props.itemTrigger;
+            if (projectionState === 'cold') {
                 expect(trigger?.detailFormatter?.(null)).toBe('common.unavailable');
                 expect(trigger?.subtitleFormatter?.(null)).toBe('newSession.recipeComposerFolderRetained');
+            } else {
+                expect(trigger?.detailFormatter?.(null)).toContain('Intake');
             }
             await mounted.screen.unmount();
             const reopened = await mount(emitted);
@@ -513,7 +579,7 @@ describe('mounted Session server-start recipe composer', () => {
         const editingDirectory = await mount(draft);
         await act(async () => { editingDirectory.screen.findByType(PathSelectionList).props.onChangeDraftPath('/elsewhere'); });
         expect(await editingDirectory.submit()).toEqual({
-            ...draft, directory: { kind: 'path', path: '/elsewhere' }, organizationPlacement: { folderId: null, tagIds: ['mail'] },
+            ...draft, directory: { kind: 'path', path: '/elsewhere' },
         });
         await editingDirectory.screen.unmount();
     });

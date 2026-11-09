@@ -13,7 +13,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
-import { AUTHORING_MEMORY_ROUTE_V1 } from '@happier-dev/protocol';
+import { AUTHORING_MEMORY_ROUTE_V1 } from '@happier-dev/protocol/account/authoringMemory';
 
 installDisconnectedServerSocketBoundary();
 vi.mock('@/text', async () => {
@@ -27,6 +27,10 @@ vi.mock('@/modal', async () => {
 
 import { PutUnderSessionModal } from './PutUnderSessionModal';
 import { PUT_UNDER_TOP_LEVEL_OPTION_ID } from './putUnderChooser';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { readLockedSessionName } from '@/utils/sessions/sessionUtils';
+import { ExecutionRunAgentMark } from '@/components/sessions/runs/ExecutionRunAgentMark';
+import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 
 async function captureDisplayedChoice(screen: Awaited<ReturnType<typeof renderScreen>>, id: string) {
     return vi.waitFor(() => {
@@ -42,12 +46,14 @@ describe('PutUnderSessionModal captured scope', () => {
     let account: Awaited<ReturnType<typeof restoreServerAccountForTest>>;
     let previous: ReturnType<ReturnType<typeof getStorage>['getState']>;
     const relationWrites: string[] = [];
+    const sessionContentReads: string[] = [];
     beforeEach(async () => {
         await loadSyncSingletonForTests();
         previous = getStorage().getState();
         retireActiveServerAccountScopeLifetime();
         relationWrites.length = 0;
-        account = await restoreServerAccountForTest({ serverUrl: 'https://put-under.test', accountId: 'account_a', request: async (url, init) => {
+        sessionContentReads.length = 0;
+        account = await restoreServerAccountForTest({ serverUrl: 'https://put-under.test', accountId: 'account_a', request: createSessionReadBatchFetchBoundary(async (url, init) => {
             const path = new URL(String(url)).pathname;
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
@@ -60,14 +66,56 @@ describe('PutUnderSessionModal captured scope', () => {
                 return Response.json({ sessionId: 'self', currentManagerSessionId: 'lead', candidates: input.candidateSessionIds.map(sessionId => ({ sessionId, allowed: true })) });
             }
             if (path.endsWith('/manager')) relationWrites.push(path);
+            // Count candidate bodies (including batched snapshot/turn/message reads), not
+            // the Account's independent active-list or metadata-upgrade bootstrap reads.
+            const candidateRead = /^\/v[12]\/sessions\/(lead|review)(?:\/|$)/.test(path);
+            if (candidateRead && (init?.method ?? 'GET') === 'GET') sessionContentReads.push(path);
             return Response.json({});
-        } });
+        }) });
         getStorage().setState({ profileScope: { serverId: account.home.id, accountId: 'account_a' }, sessions: {
             self: createSessionFixture({ id: 'self', serverId: account.home.id, manager: { sessionId: 'lead' } }),
             lead: createSessionFixture({ id: 'lead', serverId: account.home.id }),
         } });
     });
     afterEach(async () => { standardCleanup(); await account?.dispose(); retireActiveServerAccountScopeLifetime(); getStorage().setState(previous, true); });
+
+    it('puts leads first and gives every candidate a quiet second line, so a long title keeps to one line', async () => {
+        const state = getStorage().getState();
+        getStorage().setState({ sessions: { ...state.sessions,
+            peer: createSessionFixture({ id: 'peer', serverId: account.home.id, updatedAt: 90, createdAt: 1 }),
+            lead: createSessionFixture({ id: 'lead', serverId: account.home.id, updatedAt: 10, createdAt: 1,
+                managedSessions: { total: 2, working: 2, needsYou: 0, stalled: 0, finished: 0, attentionPrimary: null } }),
+        } });
+        const screen = await renderScreen(<PutUnderSessionModal sessionId="self" serverId={account.home.id} onClose={vi.fn()} />);
+        await vi.waitFor(() => {
+            const options = screen.root.findByType<typeof SelectionList>(SelectionList).props.rootStep.sections
+                .flatMap(section => section.kind === 'static' ? section.options : []);
+            expect(options.map(option => option.id)).toEqual([PUT_UNDER_TOP_LEVEL_OPTION_ID, 'lead', 'peer']);
+            expect(options.find(option => option.id === 'lead')?.subtitle).toContain('sessionWork.strip.stillWorking');
+            expect(options.find(option => option.id === 'peer')?.subtitle).toBeTruthy();
+        });
+    });
+
+    it('uses the held sidebar identity for unopened candidates without reading Session content', async () => {
+        const source = createSessionFixture({ id: 'lead', serverId: account.home.id, encryptionMode: 'e2ee',
+            encryptedContentAvailability: undefined, metadata: null, active: true, presence: undefined });
+        const declared = createSessionFixture({ id: 'review', serverId: account.home.id, metadataLayoutVersion: 1,
+            metadata: { path: '', host: '', v: 1, agentPresentation: { agentId: 'acme.reviewer' } },
+            ownerMetadataView: { name: 'Review release', path: '/repo', host: 'work' } });
+        getStorage().setState({ sessions: { self: getStorage().getState().sessions.self! },
+            sessionListRowsByServerId: { [account.home.id]: {
+                lead: buildSessionListRenderableFromSession(source),
+                review: buildSessionListRenderableFromSession(declared),
+            } } });
+        const screen = await renderScreen(<PutUnderSessionModal sessionId="self" serverId={account.home.id} onClose={vi.fn()} />);
+        expect((await captureDisplayedChoice(screen, 'lead')).option.label).toBe(readLockedSessionName());
+        const review = (await captureDisplayedChoice(screen, 'review')).option;
+        expect(review.label).toBe('Review release');
+        expect(React.isValidElement<{ agentId: string | null }>(review.icon) && review.icon.type === ExecutionRunAgentMark
+            ? review.icon.props.agentId : null).toBe('acme.reviewer');
+        expect(relationWrites).toEqual([]);
+        expect(sessionContentReads).toEqual([]);
+    });
 
     it('retires an open chooser when its Account lifetime ends', async () => {
         const onClose = vi.fn();

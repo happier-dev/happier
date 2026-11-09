@@ -1,3 +1,6 @@
+import * as React from 'react';
+
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useLaunchSelectionMachines } from '@/sync/store/hooks';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
@@ -14,6 +17,8 @@ export type NewSessionMachinePickerInventory = Readonly<{
     favoriteMachineIds: ReadonlyArray<string>;
 }>;
 
+const NO_MACHINES: ReadonlyArray<Machine> = [];
+
 /** Mounted only by the open picker; every destination family consumes the same Home groups. */
 export function useNewSessionMachinePickerInventory(inventory: NewSessionMachinePickerInventory) {
     const activeMachines = useLaunchSelectionMachines();
@@ -25,14 +30,12 @@ export function useNewSessionMachinePickerInventory(inventory: NewSessionMachine
         inventoryPurpose: 'launch',
     });
     const poolGroups = useMachinePoolGroups(groups);
-    const machines = groups.find((group) => areServerProfileIdentifiersEquivalent(group.serverId, inventory.targetServerId))?.machines ?? [];
-    return {
-        groups,
-        poolGroups,
-        ...resolveNewSessionMachinePickerHistory({
-            machines,
-            recentMachinePaths: inventory.recentMachinePaths,
-            favoriteMachineIds: inventory.favoriteMachineIds,
-        }),
-    };
+    const machines = groups.find((group) => areServerProfileIdentifiersEquivalent(group.serverId, inventory.targetServerId))?.machines;
+    // The rows below feed the picker's whole-list model: an equal answer keeps its identity.
+    const history = React.useMemo(() => resolveNewSessionMachinePickerHistory({
+        machines: machines ?? NO_MACHINES,
+        recentMachinePaths: inventory.recentMachinePaths,
+        favoriteMachineIds: inventory.favoriteMachineIds,
+    }), [machines, inventory.recentMachinePaths, inventory.favoriteMachineIds]);
+    return { groups, poolGroups, ...history };
 }

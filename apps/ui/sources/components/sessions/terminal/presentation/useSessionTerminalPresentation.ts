@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { readSessionPresentationAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
-import type { SessionTerminalWorkspaceV1 } from '@happier-dev/protocol';
+import type { SessionTerminalWorkspaceV1 } from '@happier-dev/protocol/terminal/workspace';
 
 import { getAgentCore } from '@/agents/catalog/catalog';
 import { useSessionMachineTarget } from '@/components/sessions/model/useSessionMachineTarget';
 import { parseSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { getStorage, useAllMachines, useMachineListForServer } from '@/sync/domains/state/storage';
+import { getStorage, useActiveMachineFacts, useMachineListForServer } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
@@ -15,8 +15,7 @@ import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { resolveSessionTerminalIdentity } from '../sessionTerminalMode';
 import { useTerminalSurfaceSummaries } from '../terminalSurfaceSummary';
 import {
-    describeSessionTerminal,
-    describeSessionTerminalTab,
+    describeSessionTerminalTabs,
     type SessionTerminalDescribeContext,
     type SessionTerminalTabDescriptor,
 } from './describeSessionTerminal';
@@ -63,7 +62,7 @@ export function useSessionTerminalDescribeContext(sessionId: string, serverId: s
     });
     const machineTarget = useSessionMachineTarget(sessionId, serverId);
     const scopedMachines = useMachineListForServer(serverId ?? '');
-    const activeMachines = useAllMachines();
+    const activeMachines = useActiveMachineFacts();
     const machines = serverId ? scopedMachines ?? activeMachines : activeMachines;
     return React.useMemo(() => {
         const names = new Map<string, string>();
@@ -101,12 +100,7 @@ export function useSessionTerminalTabDescriptors(input: Readonly<{
         resolveSessionTerminalIdentity({ sessionId, scopeId, terminal }).terminalKey
     ))), [scopeId, sessionId, workspace.tabs]);
     const summaries = useTerminalSurfaceSummaries(terminalKeys);
-    return React.useMemo(() => {
-        let index = 0;
-        return workspace.tabs.map((tab) => describeSessionTerminalTab(tab, tab.terminals.map((terminal) => (
-            describeSessionTerminal(terminal, summaries[index++] ?? null, context)
-        ))));
-    }, [context, summaries, workspace.tabs]);
+    return React.useMemo(() => describeSessionTerminalTabs(workspace.tabs, summaries, context), [context, summaries, workspace.tabs]);
 }
 
 export function useSessionTerminalScopeServerId(scopeId: string): string | null {

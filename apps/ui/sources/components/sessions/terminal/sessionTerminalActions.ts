@@ -116,7 +116,6 @@ export async function invokeSessionTerminalAction(request: Readonly<{
                 if (target.kind === 'workspace_shell') target = { ...target, workspace: admitted.workspace };
                 else if (target.kind === 'machine_shell') {
                     target = { kind: 'workspace_shell', workspace: admitted.workspace,
-                        ...(target.initialCommand === undefined ? {} : { initialCommand: target.initialCommand }),
                         ...(target.launch === undefined ? {} : { launch: target.launch }) };
                 }
             }

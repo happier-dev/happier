@@ -15,7 +15,7 @@ import {
   type SessionListFilterV1,
 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { SESSION_WORK_STATUS_FILTERS_V1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
-import type { SessionListScopeV1 } from '@happier-dev/protocol';
+import type { SessionListScopeV1 } from '@happier-dev/protocol/sessions/listing/query';
 
 import type { IconName } from '@/components/ui/icons/Icon';
 import { readSessionListFilterAgentLabel } from './useSessionListFilterLocalOptions';

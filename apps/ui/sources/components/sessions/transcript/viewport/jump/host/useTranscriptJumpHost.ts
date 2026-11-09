@@ -109,6 +109,8 @@ type ExplicitJumpTakeoverEffects = ReturnType<TranscriptLifecycleHost['planExpli
 type ActiveExplicitJumpOperation = Readonly<{
     releaseTakeover(): void;
     signal?: AbortSignal;
+    /** False for a Find reveal: the landed match's own fill is the cue, so the row attention ring stays off. */
+    landingCue: boolean;
 }>;
 type PendingJumpLandingNotification = Readonly<{
     operation: ActiveExplicitJumpOperation | null;
@@ -355,7 +357,7 @@ export type TranscriptJumpHost = Readonly<{
     jumpToBottomAffordance: ReturnType<typeof resolveJumpToBottomAffordanceState>;
     jumpToTranscriptTarget(
         target: TranscriptJumpTarget,
-        options?: Readonly<{ align?: TranscriptViewportJumpAlignment; preferTargetWindow?: boolean; signal?: AbortSignal }>,
+        options?: Readonly<{ align?: TranscriptViewportJumpAlignment; preferTargetWindow?: boolean; signal?: AbortSignal; landingCue?: boolean }>,
     ): Promise<TranscriptJumpResult>;
     preemptExplicitJumpForUserTakeover(): void;
     /**
@@ -952,11 +954,13 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         // Scroll/route settlement must release its own entry gate immediately.
         // The landing feedback waits for that gate's real presentation release,
         // otherwise its highlight can expire beneath the first-paint cover.
+        const operation = currentExplicitJumpOperationRef.current;
+        if (operation?.landingCue === false) return;
         if (isTranscriptPresentedRef.current) {
             onJumpLanded?.(result);
         } else {
             pendingJumpLandingNotificationRef.current = {
-                operation: currentExplicitJumpOperationRef.current,
+                operation,
                 result,
                 serverId: transcriptSource.serverId,
                 sessionId,
@@ -1036,7 +1040,7 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
 
     const jumpToTranscriptTarget = React.useCallback(async (
         target: TranscriptJumpTarget,
-        options?: Readonly<{ align?: TranscriptViewportJumpAlignment; preferTargetWindow?: boolean; signal?: AbortSignal }>,
+        options?: Readonly<{ align?: TranscriptViewportJumpAlignment; preferTargetWindow?: boolean; signal?: AbortSignal; landingCue?: boolean }>,
     ): Promise<TranscriptJumpResult> => {
         if (options?.signal?.aborted) return { status: 'aborted' };
         const targetRequest = resolveTranscriptJumpTargetRequest(target);
@@ -1055,7 +1059,7 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
             if (writeBarrierStarted) endExplicitJumpWriteBarrier();
             rendererTakeoverRelease?.();
         };
-        const operation: ActiveExplicitJumpOperation = { releaseTakeover, signal: options?.signal };
+        const operation: ActiveExplicitJumpOperation = { releaseTakeover, signal: options?.signal, landingCue: options?.landingCue !== false };
         pendingJumpLandingNotificationRef.current = null;
         const previousRenderWait = pendingTargetRenderRef.current;
         pendingTargetRenderRef.current = null;

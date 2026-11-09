@@ -1,10 +1,10 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
-import type { ReviewCommentV1 } from '@happier-dev/protocol';
-import { REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1 } from '@happier-dev/protocol';
+import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
+import { REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1 } from '@happier-dev/protocol/reviews/reviewFindingsApplyInputV1';
 
-import { changeTextTestInstance, renderScreen, standardCleanup } from '@/dev/testkit';
+import { changeTextTestInstance, createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
 import { installToolShellCommonModuleMocks } from '@/components/tools/shell/views/ToolView.testHelpers';
 import { getStorage } from '@/sync/domains/state/storage';
 import { createReducer } from '@happier-dev/session-core/reducer';
@@ -24,6 +24,7 @@ import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { currentPendingEnqueueAck } from '@/sync/engine/pending/pendingQueueV2.testHelpers';
 import { sync } from '@/sync/sync';
+import * as serverScopedSend from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionSendMessage';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -36,7 +37,8 @@ const sessionExecutionRunActionSpy = vi.fn(async (..._args: any[]): Promise<any>
 const sessionExecutionRunListSpy = vi.fn(async (..._args: any[]): Promise<any> => ({ runs: [] }));
 const sessionExecutionRunGetSpy = vi.fn(async (..._args: any[]): Promise<any> => ({ ok: false, error: 'not found' }));
 let submitMessageSpy: MockInstance<typeof sync.submitMessage>;
-const homeRoute = vi.hoisted(() => ({ current: null as null | ((request: any) => Response | undefined) }));
+let actionSendSpy: MockInstance<typeof serverScopedSend.sendSessionMessageWithServerScope>;
+const homeRoute = vi.hoisted(() => ({ current: null as null | ((request: any) => Response | Promise<Response | undefined> | undefined) }));
 const home = vi.hoisted(() => ({ serverId: '', otherServerId: '' }));
 
 function renderWithSessionTranscriptSource(element: React.ReactElement, source = createTestSessionTranscriptSource({
@@ -96,12 +98,12 @@ function commentFor(findingId: string, overrides: Partial<ReviewCommentV1> = {})
  * what the next list returns (another surface deciding meanwhile).
  */
 function serveComments(initial: readonly ReviewCommentV1[], onList?: (listCount: number, comments: Map<string, ReviewCommentV1>) => void,
-    onGet?: (getCount: number, comments: Map<string, ReviewCommentV1>) => void) {
+    onGet?: (getCount: number, comments: Map<string, ReviewCommentV1>) => void, beforeTransition?: () => Promise<void>) {
     const comments = new Map(initial.map((comment) => [comment.id, comment]));
     const transitions: Array<Record<string, unknown>> = [];
     let listCount = 0;
     let getCount = 0;
-    homeRoute.current = (request: ServedHomeRequest) => {
+    homeRoute.current = async (request: ServedHomeRequest) => {
         if (request.path === '/v1/reviews/comments' && request.method === 'GET') {
             listCount += 1;
             onList?.(listCount, comments);
@@ -119,6 +121,7 @@ function serveComments(initial: readonly ReviewCommentV1[], onList?: (listCount:
         const body = request.body as Record<string, unknown>;
         const commentId = decodeURIComponent(match[1]!);
         transitions.push({ commentId, ...body });
+        await beforeTransition?.();
         const current = comments.get(commentId)!;
         if (body.expectedServerRevision !== current.serverRevision) {
             return Response.json({ error: 'review_comment_conflict' }, { status: 409 });
@@ -220,6 +223,7 @@ beforeEach(async () => {
     }) } });
     // Observe the public call without replacing Sync's submission/admission logic.
     submitMessageSpy = vi.spyOn(sync, 'submitMessage');
+    actionSendSpy = vi.spyOn(serverScopedSend, 'sendSessionMessageWithServerScope');
 });
 
 afterEach(async () => {
@@ -241,6 +245,7 @@ afterEach(async () => {
     sessionExecutionRunGetSpy.mockReset();
     sessionExecutionRunGetSpy.mockResolvedValue({ ok: false, error: 'not found' });
     submitMessageSpy?.mockRestore();
+    actionSendSpy?.mockRestore();
     getStorage().setState(previousStorageState);
 });
 
@@ -357,14 +362,15 @@ describe('ReviewFindingsMessageCard', () => {
         });
         await flush();
 
-        expect(submitMessageSpy).toHaveBeenCalledTimes(1);
-        const [sessionId, text] = submitMessageSpy.mock.calls[0]! as unknown as [string, string];
+        expect(submitMessageSpy).not.toHaveBeenCalled();
+        expect(actionSendSpy).toHaveBeenCalledTimes(1);
+        const { sessionId, message: text } = actionSendSpy.mock.calls[0]![0];
         expect(sessionId).toBe('sess_1');
         expect(text.startsWith(REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1)).toBe(true);
         expect(text).toContain('comment-f1');
         expect(text).toContain('"expectedServerRevision": 7');
         expect(text).not.toContain('comment-f2');
-        await expect(submitMessageSpy.mock.results[0]?.value).resolves.toMatchObject({ persistence: 'pending' });
+        await expect(actionSendSpy.mock.results[0]?.value).resolves.toMatchObject({ ok: true });
     });
 
     it('leaves out of Implement a fix that was switched to Ignore while the decisions were being re-read', async () => {
@@ -388,10 +394,39 @@ describe('ReviewFindingsMessageCard', () => {
         });
         await flush();
 
-        expect(submitMessageSpy).toHaveBeenCalledTimes(1);
-        const text = (submitMessageSpy.mock.calls[0]! as unknown as [string, string])[1];
+        expect(submitMessageSpy).not.toHaveBeenCalled();
+        expect(actionSendSpy).toHaveBeenCalledTimes(1);
+        const text = actionSendSpy.mock.calls[0]![0].message;
         expect(text).toContain('comment-f2');
         expect(text).not.toContain('comment-f1');
+        expect(screen.findByTestId('review-finding-triage:f1:reject')!.props.accessibilityState).toMatchObject({ checked: true });
+    });
+
+    it('waits for a pending choice before Apply can read canonical acceptance', async () => {
+        const transition = createDeferred<void>();
+        serveComments([
+            commentFor('f1', { reviewTriageStatus: 'accept', state: 'open' }),
+            commentFor('f2', { reviewTriageStatus: 'accept', state: 'open' }),
+        ], undefined, undefined, () => transition.promise);
+        const screen = await renderScreen(<ReviewFindingsMessageCard serverId={home.serverId}
+            payload={payloadFor([finding('f1', 'high'), finding('f2', 'low')])} sessionId="sess_1" canSendMessages presentation="page" />);
+        await flush();
+        try {
+            await screen.pressByTestIdAsync('review-finding-triage:f1:reject');
+            await flush();
+            expect(screen.findByTestId('review-findings-publish-accepted')!.props.disabled).toBe(true);
+            await screen.pressByTestIdAsync('review-findings-publish-accepted');
+            await flush();
+            expect(actionSendSpy).not.toHaveBeenCalled();
+        } finally {
+            transition.resolve(undefined);
+        }
+        await flush();
+        await screen.pressByTestIdAsync('review-findings-publish-accepted');
+        await flush();
+        expect(actionSendSpy).toHaveBeenCalledTimes(1);
+        expect(actionSendSpy.mock.calls[0]![0].message).toContain('comment-f2');
+        expect(actionSendSpy.mock.calls[0]![0].message).not.toContain('comment-f1');
     });
 
     it('asks the reviewer that found a finding in that finding\'s own thread', async () => {
@@ -662,7 +697,8 @@ describe('ReviewFindingsMessageCard', () => {
             commentFor('g2', { id: 'comment-g2', runId: 'run_2', findingIdentity: IDENTITY_B }),
         ], undefined, (_getCount, comments) => {
             if (applying) applyReads += 1;
-            if (mode === 'shared comment changed on reread' && applyReads === 2) {
+            // Apply reads a shared durable reference once, after the card's initial read.
+            if (mode === 'shared comment changed on reread' && applyReads === 1) {
                 const comment = comments.get('comment-f1')!;
                 comments.set(comment.id, { ...comment, state: 'dismissed', reviewTriageStatus: 'reject', serverRevision: 5 });
             }
@@ -701,11 +737,11 @@ describe('ReviewFindingsMessageCard', () => {
             await screen.pressByTestIdAsync('review-findings-publish-accepted');
             await flush();
             if (mode === 'shared comment changed on reread') {
-                expect(applyReads).toBe(2);
-                expect(submitMessageSpy).not.toHaveBeenCalled();
+                expect(applyReads).toBe(1);
+                expect(actionSendSpy).not.toHaveBeenCalled();
             } else {
-                expect(submitMessageSpy).toHaveBeenCalledTimes(1);
-                const text = submitMessageSpy.mock.calls[0]![1] as string;
+                expect(actionSendSpy).toHaveBeenCalledTimes(1);
+                const text = actionSendSpy.mock.calls[0]![0].message;
                 expect(text.match(/"commentId": "comment-f1"/g)).toHaveLength(1);
             }
         }

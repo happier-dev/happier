@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { type View } from 'react-native';
-import { HappierComposerChip } from '@happier-dev/plugin-ui/presentation';
+import { AgentInputRailChip } from './agentInputChipRowReach';
 
 import { Text } from '@/components/ui/text/Text';
 import { ICON_SIZE, Icon, type IconName } from '@/components/ui/icons/Icon';
@@ -20,12 +20,11 @@ export function createSessionModeActionChip(params: Readonly<{
 }>): React.ReactNode {
     const testID = 'agent-input-session-mode-chip';
     return (
-        <HappierComposerChip
+        <AgentInputRailChip
             ref={params.anchorRef}
             testID={testID}
             key="mode"
             onPress={params.onPress}
-            hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
             style={params.chipStyle}
             accessibilityRole="button"
             accessibilityLabel={params.accessibilityLabel}
@@ -34,6 +33,6 @@ export function createSessionModeActionChip(params: Readonly<{
             {params.showLabel ? (
                 <Text testID={params.labelTestID} style={params.textStyle}>{params.label}</Text>
             ) : null}
-        </HappierComposerChip>
+        </AgentInputRailChip>
     );
 }

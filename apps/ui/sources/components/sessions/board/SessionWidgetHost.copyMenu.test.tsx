@@ -61,11 +61,9 @@ async function menuIds(
     serverId: 'home-1',
     item,
     host: 'inlineTranscript',
-    primaryHost: null,
     density: 'compact',
     frame: 'reply',
     canEdit: false,
-    executableCurrentness: 'not_executable',
     testID: 'widget',
   } satisfies SessionWidgetHostProps;
   const screen = await renderScreen(<SessionWidgetHost {...props} />);
@@ -132,3 +130,4 @@ describe('a visual’s copies in its ⋯ menu', () => {
     expect(await menuIds({ ...note, revision: null })).not.toContain('copyToSession');
   });
 });
+

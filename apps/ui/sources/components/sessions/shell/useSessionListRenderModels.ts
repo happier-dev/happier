@@ -18,12 +18,14 @@ import {
 } from '@/sync/domains/state/storage';
 
 import { filterCollapsedSessionListItems } from './filterCollapsedSessionListItems';
+import { useSessionListGroupMachineFacts } from './useSessionListGroupMachineFacts';
 import { buildSessionListProjectHeaderViewModels, type SessionListProjectHeaderViewModel } from './sessionListProjectHeaderViewModels';
 import {
     buildSessionListReachabilitySummary,
     createSessionListReachabilitySummaryCache,
     retireSessionListReachabilitySummaryCacheServerScope,
 } from './buildSessionListReachabilitySummary';
+import { projectSessionWorkspaceColors } from '@/sync/domains/session/organization/projectWorkspaceColors';
 import { buildSessionListRowViewModels, type SessionListRowViewModel } from './sessionListRowViewModels';
 import type { SessionAttentionStandingPolicy } from '@/sync/domains/session/organization/attentionStanding';
 import {
@@ -290,6 +292,7 @@ export function useSessionListRenderModels(input: Readonly<{
     collapsedGroupKeys: Readonly<Record<string, boolean>>;
     machineDisplayById?: Readonly<Record<string, MachineDisplayRenderable>>;
     workspaceLabels: Readonly<Record<string, string>>;
+    workspaceColorsByServerId?: SessionOrganizationListViewState['workspaceColorsByServerId'];
     workspaceRefsServerId?: string;
     legacyWorkspaceLabelDisplayStatesByKey?: SessionOrganizationListViewState['labelDisplayStatesByKey'];
     workspaceRefs: ReadonlyArray<WorkspaceRefV1>;
@@ -496,6 +499,9 @@ export function useSessionListRenderModels(input: Readonly<{
         return (storeMachines: Record<string, MachineDisplayRenderable>) => {
             const machines = input.machineDisplayById ?? storeMachines;
             if (machines === previousMachines && previousPresentation) return previousPresentation;
+            const workspaceColorsByServerId = Object.fromEntries(Object.entries(input.workspaceColorsByServerId ?? {}).map(([serverId, workspaceColors]) => [serverId,
+                projectSessionWorkspaceColors({ workspaceColors, workspaceRefs: normalizedShellState.workspaceRefs,
+                    censusServerId: serverId === input.workspaceRefsServerId ? serverId : undefined, machines })]));
             const sessionReachabilitySummary = measureSessionListRenderDerivation(
                 'ui.sessionsList.render.reachabilityDisplayMap',
                 () => ({
@@ -509,6 +515,7 @@ export function useSessionListRenderModels(input: Readonly<{
                     machinesById: machines,
                     renderablesByKey: reachabilityRenderablesByKey,
                     workspaceRefs: normalizedShellState.workspaceRefs,
+                    workspaceColorsByServerId,
                     workspacePathDisplayModeV1: input.workspacePathDisplayModeV1,
                     resolveSessionRenderable: (item) => {
                         const key = buildSessionListReachabilityRenderableKey(item.serverId, item.sessionId, item.keyParts);
@@ -521,6 +528,7 @@ export function useSessionListRenderModels(input: Readonly<{
                 machinesById: machines,
                 projectOrganizations: input.projectOrganizations,
                 workspaceLabels: normalizedShellState.workspaceLabels,
+                workspaceColorsByServerId: input.workspaceColorsByServerId,
                 workspaceRefsServerId: input.workspaceRefsServerId,
                 legacyWorkspaceLabelDisplayStatesByKey: input.legacyWorkspaceLabelDisplayStatesByKey,
                 workspaceRefs: normalizedShellState.workspaceRefs,
@@ -531,9 +539,12 @@ export function useSessionListRenderModels(input: Readonly<{
             return previousPresentation;
         };
     }, [input.machineDisplayById, input.workspacePathDisplayModeV1, input.projectOrganizations,
-        input.workspaceRefsServerId, input.legacyWorkspaceLabelDisplayStatesByKey, normalizedShellState.workspaceLabels, listItems,
+        input.workspaceRefsServerId, input.workspaceColorsByServerId, input.legacyWorkspaceLabelDisplayStatesByKey, normalizedShellState.workspaceLabels, listItems,
         normalizedShellState.workspaceRefs, reachabilityRenderablesByKey]);
-    const { sessionReachabilitySummary, projectHeaderViewModelState } = useMachineDisplayById(selectMachinePresentation);
+    const { sessionReachabilitySummary, projectHeaderViewModelState: baseProjectHeaderState } = useMachineDisplayById(selectMachinePresentation);
+    const projectHeaderViewModelState = useSessionListGroupMachineFacts({ listItems,
+        membershipItems: selectionScopeListItems, headerState: baseProjectHeaderState,
+        machinesById: input.machineDisplayById, active: input.rowSubscriptionKeys?.size !== 0 });
 
     const rowViewModels = React.useMemo(() => {
         if (!deriveRowViewModels) {

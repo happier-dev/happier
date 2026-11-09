@@ -47,12 +47,14 @@ describe('Find across a walkthrough', () => {
   it('admits a thousand captured files without publishing a snapshot per file', () => {
     const file = reading.stops[0]!.files[0]!;
     const fileCount = 1_000;
+    const stops = [{ ...reading.stops[0]!, files: Array.from({ length: fileCount }, (_, index) => ({
+        ...file, path: `file-${index}.ts`, unifiedDiff: '@@ -1 +1 @@\n-old\n+needle\n',
+      })) }];
     const largeReading = {
       ...reading,
-      stops: [{ ...reading.stops[0]!, files: Array.from({ length: fileCount }, (_, index) => ({
-        ...file, path: `file-${index}.ts`, unifiedDiff: '@@ -1 +1 @@\n-old\n+needle\n',
-      })) }],
+      stops,
       others: [],
+      code: { stops, others: [] },
     };
     const model = createChangedFilesReviewFind();
     const iterate = Map.prototype[Symbol.iterator];

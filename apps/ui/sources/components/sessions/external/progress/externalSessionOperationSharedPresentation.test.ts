@@ -1,6 +1,6 @@
 import {
     ExternalSessionOperationSharedPresentationV1Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/external/operationV1';
 import { describe, expect, it } from 'vitest';
 
 import { presentExternalSessionOperationShared } from './externalSessionOperationSharedPresentation';

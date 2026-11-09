@@ -25,6 +25,7 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 
 const navigation = vi.hoisted(() => ({ push: vi.fn() }));
 const userConfirmation = vi.hoisted(() => vi.fn(async () => true));
+const unavailableNotice = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     return createExpoRouterMock({ router: { push: navigation.push } }).module;
@@ -33,7 +34,7 @@ vi.mock('@react-navigation/native', async () =>
     (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock());
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock({ spies: { confirm: userConfirmation } }).module;
+    return createModalModuleMock({ spies: { confirm: userConfirmation, alertAsync: unavailableNotice } }).module;
 });
 let home: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>> | undefined;
 afterEach(async () => {
@@ -43,6 +44,7 @@ afterEach(async () => {
     navigation.push.mockReset();
     userConfirmation.mockReset();
     userConfirmation.mockResolvedValue(true);
+    unavailableNotice.mockClear();
 });
 async function prepare(handleRequest?: (path: string, init?: RequestInit) => Promise<Response | null>) {
     const catalog = createPromptLibraryCatalogBoundary();
@@ -59,6 +61,15 @@ async function prepare(handleRequest?: (path: string, init?: RequestInit) => Pro
 }
 
 describe('Ask Happier ordinary authoring', () => {
+    it('explains a New Bot refusal from the real mounted Action without opening a draft', async () => {
+        const { lifetime, executeAction } = await prepare(async path => path === '/v2/account/settings'
+            ? Response.json({ version: 1, content: { t: 'plain', v: { actionsSettingsV1: {
+                v: 1, actions: { 'session.authoring.open': { enabled: false } },
+            } } } }) : null);
+        expect(await openNewBotDraft(lifetime, executeAction)).toMatchObject({ kind: 'unavailable', reason: 'client_unavailable' });
+        expect(unavailableNotice).toHaveBeenCalledTimes(1);
+        expect(navigation.push).not.toHaveBeenCalled();
+    });
     it('captures the mounted screen for an Ask opener reparented outside its React provider', async () => {
         const { home: fixture, lifetime } = await prepare();
         const credentials = await TokenStorage.getCredentialsForServerUrl(fixture.home.serverUrl);

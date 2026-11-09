@@ -83,7 +83,10 @@ export async function executeLocalServiceActionWithAdmission(input: Readonly<{
     if (!isLocalServiceActionAdmissionCurrent(admission)) return cancelled();
     const context: UiActionExecutorContext = { ...request.context,
         ...(admission.expectedAccountId ? { expectedAccountId: admission.expectedAccountId } : {}),
-        ...(admission.signal ? { signal: admission.signal } : {}),
+        // Closing the issuing view retires its reviews/receipt observation, not a
+        // person's submitted Start. The Action executor captures Home/Account
+        // authority and owns native execution independently of this UI lifetime.
+        ...(admission.signal && request.actionId !== 'localServices.launcher.start' ? { signal: admission.signal } : {}),
     };
     let dispatched = false;
     const retired = () => dispatched && request.actionId === 'localServices.launcher.start'

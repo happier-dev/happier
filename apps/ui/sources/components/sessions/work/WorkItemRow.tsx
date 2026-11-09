@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View, type LayoutChangeEvent } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { HAPPIER_PAGE_METRICS, HAPPIER_WORK_PANE_METRICS, HappierWorkRowShell, useHappierPageSection, type HappierWorkRowShellProps } from '@happier-dev/plugin-ui/presentation';
-import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 
 import { SessionAgentActivitySummary } from '@/components/sessions/agents/presentation/SessionAgentActivitySummary';
 import type { SessionAgentActivityPresentation } from '@/components/sessions/agents/presentation/sessionAgentActivityPresentation';
@@ -17,7 +17,7 @@ import { useServerScopedMachine } from '@/sync/store/hooks';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 
 import { useSessionWorkSources } from './sessionWorkSources';
-import { resolveWorkItemContextActions, type WorkItem } from './workProjection';
+import { endsWithQuietTime, resolveWorkItemContextActions, type WorkItem } from './workProjection';
 import { describeWorkKind, WORKER_KIND_GLYPHS } from './workerKindGlyphs';
 
 /**
@@ -162,16 +162,18 @@ function iconFor(item: WorkItem): SessionAgentActivityPresentation['iconName'] {
 }
 
 /**
- * The kind a row says first in its subtitle ("Workflow run · 7 of 12"; a Session with no Agent mark): the list
- * groups by state, so the kind is no longer a section title. Background runs and in-session agents
- * draw through their roster row, whose presenter already leads with their kind.
+ * The kind a row says first in its subtitle ("Session · asks a question", "Workflow run · 7 of 12"):
+ * the list groups by state, so the kind is no longer a section title. Background runs and in-session
+ * agents draw through their roster row, whose presenter already leads with their kind.
  */
 function readFacts(item: WorkItem): readonly string[] {
     // An untitled run is named by its kind already: the subtitle never repeats its title.
-    // A Session that already leads with its Agent's mark is not said again as "Session", so its machine survives.
-    return (item.kind === 'session' && item.agentId === null) || item.kind === 'workflow_run'
+    return item.kind === 'session' || item.kind === 'workflow_run'
         ? [describeWorkKind(item.kind), ...item.facts].filter((fact) => fact !== item.title) : item.facts;
 }
+
+/** What the person has not seen yet reads in a strong title, as an unread Session does in its list. */
+const UNSEEN_STATES: ReadonlySet<string> = new Set(['unread', 'finished_unseen']);
 
 export function presentWorkItem(item: WorkItem): SessionAgentActivityPresentation {
     const phase = phaseFor(item);
@@ -182,7 +184,8 @@ export function presentWorkItem(item: WorkItem): SessionAgentActivityPresentatio
         agentId: item.agentId,
         // A Work row states its word; it never runs a clock of its own.
         startedAtMs: null,
-        atMs: null,
+        atMs: item.atMs ?? null,
+        unread: UNSEEN_STATES.has(item.status.state),
         facts: readFacts(item),
         statusLabel: item.status.word,
         statusTone: item.status.tone,
@@ -340,13 +343,14 @@ const WorkItemRowBody = React.memo((props: WorkItemRowProps & Readonly<{
     const { item, onOpen } = props;
     const facts = props.facts;
     const hasOperation = props.trailingAccessory != null;
+    const quietTime = !hasOperation && endsWithQuietTime(item);
     const presentation = React.useMemo(() => {
         const base = presentWorkItem(item);
         // A row with its own operation beside it (an archived Session's Unarchive) is named by its
         // section, so its state word is not written a second time at the row's edge.
-        const own = hasOperation ? { ...base, statusLabel: '' } : base;
+        const own = hasOperation || quietTime ? { ...base, statusLabel: '' } : base;
         return facts ? { ...own, facts } : own;
-    }, [facts, hasOperation, item]);
+    }, [facts, hasOperation, item, quietTime]);
     const onPress = React.useCallback(() => onOpen(item), [item, onOpen]);
     const localRowRef = React.useRef<View>(null);
     const rowRef = props.anchorRef ?? localRowRef;
@@ -369,7 +373,8 @@ const WorkItemRowBody = React.memo((props: WorkItemRowProps & Readonly<{
                     testID={`session-work-summary:${item.key}`}
                     presentation={presentation}
                     titleTailStart={props.titleTailStart}
-                    trailingState={hasOperation ? undefined : { word: item.status.word, tone: item.status.tone }}
+                    showTime={quietTime}
+                    trailingState={hasOperation || quietTime ? undefined : { word: item.status.word, tone: item.status.tone }}
                 />
             </WorkRowShell>
             {liveMapRunId === null ? null : (

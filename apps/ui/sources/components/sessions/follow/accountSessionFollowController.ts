@@ -5,7 +5,7 @@ import type {
     SessionFollowErrorCodeV1,
     SetSessionFollowRequest,
     SetSessionFollowResponse,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/sessions/follow/api';
 
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { FollowEventKindV1, FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';

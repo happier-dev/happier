@@ -1,11 +1,12 @@
 import * as React from 'react';
-import { Pressable, StyleSheet, type View } from 'react-native';
+import { StyleSheet, type View } from 'react-native';
 
 import { Text } from '@/components/ui/text/Text';
 import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { t } from '@/text';
 import { Icon } from '@/components/ui/icons/Icon';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE } from './agentInputChipIconMetrics';
+import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
 
 const styles = StyleSheet.create({
     chip: { maxWidth: '100%', flexShrink: 1 },
@@ -21,21 +22,21 @@ export function createMachineActionChip(params: Readonly<{
     textStyle: any;
     onPress: () => void;
 }>): React.ReactNode {
+    // `null`: no machine yet, so the chip asks where to run (58d AF1); its picker offers creating or adding one.
     const label = params.machineName === null
-        ? t('agentInput.noMachinesAvailable')
+        ? t('agentInput.runOn')
         : (typeof params.machineName === 'string'
             ? params.machineName
             : t('newSession.selectMachineTitle'));
     return (
-        <Pressable
+        <AgentInputRailChip
             ref={params.anchorRef}
             key="machine"
             testID="agent-input-machine-chip"
             onPress={params.onPress}
             accessibilityRole="button"
             accessibilityLabel={label}
-            hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-            style={(state) => [params.chipStyle(state.pressed), styles.chip]}
+            style={(pressed) => [params.chipStyle(pressed), styles.chip]}
         >
             {normalizeNodeForView(<Icon name="desktop" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={params.tint} style={AGENT_INPUT_CHIP_ICON_STYLE} />)}
             {/* Optional origin/Home context precedes the exact Machine, so width pressure
@@ -45,6 +46,6 @@ export function createMachineActionChip(params: Readonly<{
                     {label}
                 </Text>
             ) : null}
-        </Pressable>
+        </AgentInputRailChip>
     );
 }

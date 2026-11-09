@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import type { ToolViewProps } from '../core/_registry';
 import { coerceToolResultRecord } from '../../legacy/coerceToolResultRecord';
@@ -53,7 +54,7 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: theme.space.s12,
         borderRadius: 8,
-        backgroundColor: theme.colors.surface.inset,
+        backgroundColor: glassContentFill(theme.colors.surface.inset, theme.colors, { nested: true }),
         gap: theme.space.s6,
     },
     path: {

@@ -640,7 +640,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         const screen = await renderSessionView();
         try {
             expect(queueLine(screen)?.text).toBe('workflows.problem.conversationUnavailable');
-            await pressQueueLineAction(screen, 'session.newSessionSameSetup');
+            await pressQueueLineAction(screen, 'sessionInfo.newSessionSameSetup');
             await vi.waitFor(() => expect(routerPushSpy).toHaveBeenCalledWith(expect.objectContaining({
                 pathname: '/new', params: expect.objectContaining({ draftId: expect.any(String) }),
             })));
@@ -1305,6 +1305,47 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             expect(storage.getState().sessionPending.s1.messages).toMatchObject([{ localId: 'held-input', pendingDeliveryStatus: 'server_queued' }]);
             expect(readSessionOwnerMetadataView(currentSession())?.sessionExplicitStopV1).toEqual(ownerMetadataView.sessionExplicitStopV1);
             expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
+        } finally { await screen.unmount(); }
+    });
+
+    async function stoppedSession() {
+        storage.setState({ settings: { ...storage.getState().settings, sessionInactiveResumePolicy: 'online_only' } });
+        setMachineOnline(true);
+        const { writeSessionExplicitStopV1ToMetadata } = await import('@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1');
+        const ownerMetadataView = writeSessionExplicitStopV1ToMetadata({ ...readSessionOwnerMetadataView(currentSession())! },
+            { v: 1, cause: 'explicit_stop', requestId: 'person-stop', requestedAtMs: 100 });
+        updateSession({ metadataLayoutVersion: 1, ownerMetadataView, active: false, presence: 0 });
+    }
+
+    it('resumes a stopped session when the person presses Send', async () => {
+        await stoppedSession();
+        resumeResponse = async () => ({ type: 'success', sessionId: 's1' });
+        const screen = await renderSessionView({ routeServerId: runtime.serverId });
+        try {
+            await changeText(screen, 'Pick this back up.');
+            await send(screen);
+            await waitForSubmittedDraft(screen);
+            await vi.waitFor(() => expect(resumeCalls()).toHaveLength(1));
+            expect(pendingWrites()).toHaveLength(1);
+            expect(resumeCalls()[0]?.payload).toMatchObject({ executionAuthorization: { provenance: 'user_request' } });
+            expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
+        } finally { await screen.unmount(); }
+    });
+
+    it('keeps the message queued and says why when resuming a stopped session fails', async () => {
+        await stoppedSession();
+        resumeResponse = async () => ({ type: 'error', errorCode: 'SPAWN_FAILED', errorMessage: 'The machine refused this session.' });
+        const screen = await renderSessionView({ routeServerId: runtime.serverId });
+        try {
+            await changeText(screen, 'Keep this if it fails.');
+            await send(screen);
+            await waitForSubmittedDraft(screen);
+            await publishDurablePendingState(durablePendingRow('held-input', 'enqueue'));
+            await vi.waitFor(() => expect(resumeCalls()).toHaveLength(1));
+            expect(queueLine(screen)).toMatchObject({ text: 'session.pendingActivation.held.title' });
+            expect(storage.getState().sessionPending.s1.messages).toMatchObject([{ localId: 'held-input', pendingDeliveryStatus: 'server_queued' }]);
+            await vi.waitFor(() => expect(modalMockState.current?.spies.alert).toHaveBeenCalledOnce());
+            expect(JSON.stringify(modalMockState.current?.spies.alert.mock.calls[0])).toContain('The machine refused this session.');
         } finally { await screen.unmount(); }
     });
 

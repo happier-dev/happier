@@ -1,7 +1,15 @@
 import * as React from 'react';
-import { useSessionLatestThinkingMessageActivityAtMs, useSessionLatestThinkingMessageId, useSetting } from '@/sync/domains/state/storage';
+import {
+    readSessionLatestThinkingMessageActivityAtMs,
+    useSessionLatestThinkingMessageActivity,
+    useSessionLatestThinkingMessageId,
+    useSetting,
+} from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
-import { resolveActiveThinkingMessageId } from '@/components/sessions/transcript/thinking/resolveActiveThinkingMessageId';
+import {
+    isThinkingActivityFresh,
+    resolveActiveThinkingMessageIdFromFreshness,
+} from '@/components/sessions/transcript/thinking/resolveActiveThinkingMessageId';
 
 export function useTranscriptRootThinkingState(params: Readonly<{
     latestCommittedActivityKey: string | null;
@@ -10,34 +18,39 @@ export function useTranscriptRootThinkingState(params: Readonly<{
 }>) {
     const { latestCommittedActivityKey, sessionId, sessionThinking } = params;
     const latestThinkingMessageId = useSessionLatestThinkingMessageId(sessionId);
-    const latestThinkingMessageActivityAtMs = useSessionLatestThinkingMessageActivityAtMs(sessionId);
     const transcriptThinkingPulseStaleMs = useSetting('transcriptThinkingPulseStaleMs');
     const staleMs = typeof transcriptThinkingPulseStaleMs === 'number' && Number.isFinite(transcriptThinkingPulseStaleMs)
         ? transcriptThinkingPulseStaleMs
         : settingsDefaults.transcriptThinkingPulseStaleMs;
     const [thinkingPulseNow, setThinkingPulseNow] = React.useState(() => Date.now());
+    // Each thinking delta restamps the activity time; the root subscribes only to whether it is fresh.
+    const thinkingActivityFresh = useSessionLatestThinkingMessageActivity(sessionId,
+        (activityAtMs) => isThinkingActivityFresh(activityAtMs, thinkingPulseNow, staleMs));
 
     React.useEffect(() => {
-        if (sessionThinking !== true) return;
-        if (typeof latestThinkingMessageActivityAtMs !== 'number') return;
+        if (sessionThinking !== true || !thinkingActivityFresh) return;
         if (typeof staleMs !== 'number' || !Number.isFinite(staleMs) || staleMs <= 0) return;
 
-        const staleAt = latestThinkingMessageActivityAtMs + staleMs;
-        const delayMs = staleAt - Date.now();
-        if (delayMs <= 0) return;
+        let timer: ReturnType<typeof setTimeout> | null = null;
+        // The deadline follows the latest stamp, read when the previous deadline arrives.
+        const arm = () => {
+            const activityAtMs = readSessionLatestThinkingMessageActivityAtMs(sessionId);
+            if (typeof activityAtMs !== 'number') return;
+            const now = Date.now();
+            if (!isThinkingActivityFresh(activityAtMs, now, staleMs)) {
+                setThinkingPulseNow(now);
+                return;
+            }
+            timer = setTimeout(arm, activityAtMs + staleMs - now + 1);
+        };
+        arm();
+        return () => { if (timer !== null) clearTimeout(timer); };
+    }, [sessionId, sessionThinking, staleMs, thinkingActivityFresh]);
 
-        const t = setTimeout(() => setThinkingPulseNow(Date.now()), delayMs);
-        return () => clearTimeout(t);
-    }, [latestThinkingMessageActivityAtMs, sessionThinking, staleMs]);
-
-    return React.useMemo(() => {
-        return resolveActiveThinkingMessageId({
-            sessionThinking,
-            latestThinkingMessageId,
-            latestCommittedMessageId: latestCommittedActivityKey,
-            latestThinkingMessageActivityAtMs,
-            nowMs: thinkingPulseNow,
-            staleMs,
-        });
-    }, [latestCommittedActivityKey, latestThinkingMessageActivityAtMs, latestThinkingMessageId, sessionThinking, staleMs, thinkingPulseNow]);
+    return React.useMemo(() => resolveActiveThinkingMessageIdFromFreshness({
+        sessionThinking,
+        latestThinkingMessageId,
+        latestCommittedMessageId: latestCommittedActivityKey,
+        thinkingActivityFresh,
+    }), [latestCommittedActivityKey, latestThinkingMessageId, sessionThinking, thinkingActivityFresh]);
 }

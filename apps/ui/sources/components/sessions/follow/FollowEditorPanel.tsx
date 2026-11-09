@@ -68,6 +68,7 @@ export function FollowEditorPanel(
                 leading={props.mark}
                 title={props.title}
                 subtitle={props.subtitle}
+                subtitleLines={2}
               />
             }
             footer={

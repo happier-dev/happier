@@ -27,6 +27,7 @@ const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/back
 const { NewSessionEmbeddedHostProvider } = await import('../navigation/newSessionHost');
 const { useNewSessionScreenModel } = await import('./useNewSessionScreenModel');
 const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
+const { rememberLastNewSessionAgentPickerView, rememberLastUsedBackendSelection } = await import('@/sync/domains/state/newSessionTargetUiState');
 
 beforeEach(async () => { network.resetRequests(); storage.setState(storage.getInitialState(), true); await prepareSessionDraftPersistenceStorage(); });
 afterEach(async () => { standardCleanup(); clearDaemonMergedProjectionCacheForTests(); await disconnectActiveServerConnection(); });
@@ -53,7 +54,7 @@ describe('remembered launch profile through real New Session state', () => {
         observeMachinePresenceForTest(scope, ['studio']);
         storage.getState().applyAuthoringMemory({ lastUsedProfile: 'deleted-profile' });
         // A cold Home can reuse this current projection without demanding any new Machine work.
-        const projection = await renderHook(() => useDaemonMergedProjectionInputs({ machineId: 'studio', serverId: savedHome.id }));
+        const projection = await renderHook(() => useDaemonMergedProjectionInputs({ sections: 'complete', machineId: 'studio', serverId: savedHome.id }));
         await act(async () => { await vi.waitFor(() => expect(projection.getCurrent().phase, projection.getCurrent().failureReason).toBe('ready')); });
         const host = { params: { machineId: 'studio', backendTargetKey: explicitTargetKey }, targetServerId: savedHome.id,
             setParams: () => {}, openDraft: () => {}, onHandedOff: () => {}, demanded: false };
@@ -97,10 +98,10 @@ describe('remembered launch profile through real New Session state', () => {
         });
         expect(renders - settledRenders).toBe(0);
         for (const backendId of ['codex', 'claude', 'codex']) {
-            await act(async () => storage.getState().applySettingsLocal({
-                lastUsedBackendTarget: { kind: 'backend', backendId },
-                lastNewSessionAgentPickerViewV1: { kind: 'backend', backendTargetKey: `agent:happier.agent.${backendId}/${backendId}` },
-            }));
+            await act(async () => {
+                rememberLastUsedBackendSelection(scope, { lastUsedBackendTarget: { kind: 'backend', backendId } });
+                rememberLastNewSessionAgentPickerView(scope, { kind: 'backend', backendTargetKey: `agent:happier.agent.${backendId}/${backendId}` });
+            });
         }
         expect(renders - settledRenders).toBe(0);
         // Locality must not freeze real New Session inputs at mount.

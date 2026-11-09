@@ -1,10 +1,22 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol';
+import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 
 describe('resolveNewSessionCapabilityProbeContext (stability)', () => {
+    it('keys dependent catalogs by exact draft config values while retaining the existing probe context', async () => {
+        const { withNewSessionConfigOptionOverrides } = await import('./newSessionCapabilityProbeContext');
+        const base = { cacheKeySuffixParts: ['acp'], capabilityParams: { profileId: 'work' } };
+        const first = withNewSessionConfigOptionOverrides(base, { ' provider ': '', format: ' ' });
+        const equivalent = withNewSessionConfigOptionOverrides(base, { format: ' ', ' provider ': '' });
+        const switched = withNewSessionConfigOptionOverrides(base, { ' provider ': 'gateway' });
+
+        expect(first?.capabilityParams).toEqual({ profileId: 'work', configOptionOverrides: { ' provider ': '', format: ' ' } });
+        expect(first).toBe(equivalent);
+        expect(first?.cacheKeySuffixParts).not.toEqual(switched?.cacheKeySuffixParts);
+        expect(withNewSessionConfigOptionOverrides(base, {})).toBe(base);
+    });
     it('includes the selected launch profile in every session-control probe context', async () => {
         vi.resetModules();
         vi.doMock('@/agents/registry/registryUiBehavior', () => ({

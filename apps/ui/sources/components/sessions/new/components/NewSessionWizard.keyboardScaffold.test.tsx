@@ -12,7 +12,6 @@ installNewSessionComponentsCommonModuleMocks({
         return createReactNativeWebMock({
             Platform: { OS: 'ios', select: (values: Record<string, unknown>) => values.ios ?? values.native ?? values.default },
             Dimensions: { get: () => ({ width: 390, height: 700, scale: 1, fontScale: 1 }) },
-            useWindowDimensions: () => ({ width: 390, height: 700, scale: 1, fontScale: 1 }),
         });
     },
 });

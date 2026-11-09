@@ -323,7 +323,8 @@ const styles = StyleSheet.create((theme) => ({
     },
     messageBody: { marginTop: 3, ...Typography.variant('body'), color: theme.colors.text.secondary },
     rationale: { marginTop: 3, ...Typography.variant('reading'),  color: theme.colors.text.secondary,  },
-    meta: { marginTop: theme.space.s6, flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: theme.space.s6 },
+    // One status line beneath the title; it wraps within the column rather than running past the card (phone C3).
+    meta: { marginTop: theme.space.s6, alignItems: 'flex-start' },
     headerActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s2, marginTop: -3 },
     row: {
         flexDirection: 'row',
@@ -336,9 +337,10 @@ const styles = StyleSheet.create((theme) => ({
         borderTopColor: theme.colors.border.default,
     },
     rowPhone: { paddingLeft: theme.space.s16, gap: theme.space.s8 },
-    rowNested: { paddingLeft: theme.space.s12, borderTopWidth: 0 },
+    // A nested row lets its block's inset show through (the hook's changes read as one block, not white rows).
+    rowNested: { paddingLeft: theme.space.s12, borderTopWidth: 0, backgroundColor: 'transparent' },
     rowFocused: { backgroundColor: theme.colors.surface.inset },
     rowHook: { backgroundColor: theme.colors.state.warning.background },
     part: { flexShrink: 0, ...Typography.variant('meta'), color: theme.colors.text.tertiary, fontVariant: ['tabular-nums'],  },
-    moveSlot: { width: 30 },
+    moveSlot: { width: 30, height: 30 },
 }));

@@ -10,11 +10,16 @@ import { SessionHeaderPullHost, SessionHeaderPullTarget } from '@/components/ses
 import { resolveOptionalSessionScreenTestId, useSessionScreenTestIdsEnabled } from '@/components/sessions/shell/sessionScreenTestIds';
 import { executeSessionLifecycleAction } from '@/components/sessions/actions/sessionActionExecution';
 import { Avatar } from '@/components/ui/avatar/Avatar';
+import { SessionBotFace } from '@/components/sessions/bots/face/SessionBotFace';
+import { SessionBotFaceMark } from '@/components/sessions/bots/SessionBotFaceMark';
+import type { SessionBotFaceFacts } from '@/components/sessions/bots/face/sessionBotFaceFacts';
+import type { BotActivity } from '@/components/sessions/bots/botActivity';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { HEADER_BAND_SUBTITLE_TEXT, HEADER_BAND_TITLE_TEXT } from '@/components/ui/layout/headerBand';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { PaneMainBody } from '@/components/ui/panels/paneMainComposerAnchor';
 import { Text, TextInput } from '@/components/ui/text/Text';
+import { StatusPill } from '@/components/ui/status/StatusPill';
 import { Typography } from '@/constants/Typography';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -32,6 +37,10 @@ export type SessionPaneHeaderProps = Readonly<{
     subtitleEllipsizeMode?: 'head' | 'tail';
     badges?: ReadonlyArray<string>;
     avatarId?: string;
+    /** A Bot's face; drawn in the avatar slot in place of the generic avatar. */
+    botFace?: SessionBotFaceFacts | null;
+    /** The Bot's state, shown in its mouth; a Bot keeps its colour while it sleeps (lab R6 header). */
+    botActivity?: BotActivity;
     /** Canonical machine-scoped Agent identity mark, shown in place of the avatar on request. */
     agentIdentity?: React.ReactNode;
     isConnected?: boolean;
@@ -51,6 +60,8 @@ export type SessionPaneHeaderProps = Readonly<{
      * same `session.title.set` Action menu Rename uses. Absent where the title cannot be renamed.
      */
     rename?: Readonly<{ sessionId: string; serverId: string | null }>;
+    /** A Bot whose face this person may change: its face opens the face chooser (`session.bot.face.set`). */
+    editBotFace?: Readonly<{ sessionId: string; serverId: string | null }>;
 }>;
 
 /**
@@ -60,6 +71,7 @@ export type SessionPaneHeaderProps = Readonly<{
  * hands the controls to the band, which keeps them beside the title and compacts them when room is short.
  */
 export const SessionPaneHeader = React.memo(function SessionPaneHeader(props: SessionPaneHeaderProps) {
+    const { theme } = useUnistyles();
     const identityMode = useSetting('sessionHeaderIdentityDisplay');
     const testIdsEnabled = useSessionScreenTestIdsEnabled();
     const isConnected = props.isConnected ?? true;
@@ -76,7 +88,11 @@ export const SessionPaneHeader = React.memo(function SessionPaneHeader(props: Se
     // nothing rather than silently falling back to the avatar.
     const identity = identityMode === 'none' ? null
         : identityMode === 'agentLogo' ? props.agentIdentity ?? null
-            : props.avatarId ? <Avatar id={props.avatarId} size={32} monochrome={!isConnected} flavor={props.flavor} /> : null;
+            : props.botFace ? (props.editBotFace
+                // A Bot this header may edit offers its face chooser from the face itself (lab R6 header).
+                ? <SessionBotFaceMark sessionId={props.editBotFace.sessionId} serverId={props.editBotFace.serverId} facts={props.botFace} size={32} mood={props.botActivity} />
+                : <SessionBotFace facts={props.botFace} size={32} mood={props.botActivity} />)
+                : props.avatarId ? <Avatar id={props.avatarId} size={32} monochrome={!isConnected} flavor={props.flavor} /> : null;
     const pullable = props.onPullAllTabs !== undefined;
     const titleControl = (
         <PullTarget pullable={pullable}>
@@ -94,8 +110,8 @@ export const SessionPaneHeader = React.memo(function SessionPaneHeader(props: Se
                     style={[styles.title, styles.titleInput]}
                 />
             ) : (
-                <SessionHeaderTitle title={props.title} accessory={props.titleAccessory} badges={props.badges}
-                    testIdsEnabled={testIdsEnabled} onBeginRename={props.rename ? editing.begin : undefined}
+                <SessionHeaderTitle title={props.title} accessory={props.titleAccessory}
+                    onBeginRename={props.rename ? editing.begin : undefined}
                     triggerRef={editing.titleTriggerRef} lineageAbove={props.lineage != null} />
             )}
         </PullTarget>
@@ -117,7 +133,17 @@ export const SessionPaneHeader = React.memo(function SessionPaneHeader(props: Se
             ) : undefined}
             titleControl={titleControl}
             overline={props.lineage}
-            metaLeading={props.subtitle ? <SessionHeaderSubtitle text={props.subtitle} mode={props.subtitleEllipsizeMode ?? 'tail'} /> : undefined}
+            metaLeading={props.badges?.length || props.subtitle ? (
+                <View style={styles.metadataRow} testID={resolveOptionalSessionScreenTestId(testIdsEnabled, 'session-header-metadata')}>
+                    {props.subtitle ? <SessionHeaderSubtitle text={props.subtitle} mode={props.subtitleEllipsizeMode ?? 'tail'} /> : null}
+                    {props.badges?.map((badge, index) => (
+                        <StatusPill key={`${badge}:${index}`} variant="neutral" chrome="plain" hideDot
+                            foregroundColor={theme.colors.text.secondary}
+                            label={badge} labelVariant="phrase" labelNumberOfLines={1}
+                            testID={resolveOptionalSessionScreenTestId(testIdsEnabled, `session-header-badge:${index}`)} />
+                    ))}
+                </View>
+            ) : undefined}
             actions={editing.draft === null ? props.rightElement : undefined}
             buttons={buttons}
             notice={editing.reason ? <Text testID="session-header-title-reason" style={styles.reason}>{editing.reason}</Text> : undefined}
@@ -144,15 +170,13 @@ export const SessionPaneHeader = React.memo(function SessionPaneHeader(props: Se
 const LINEAGE_SEAM_HIT_REACH = { top: 0 } as const;
 
 /**
- * The title with its role chip and badges. The title keeps its natural width when it can; the chip is
+ * The title with its role chip. The title keeps its natural width when it can; the chip is
  * whole or compact (never cut), measured whole only in its full form so the compact form never flips
  * back. On desktop the title is the rename field's place: click or Enter begins editing.
  */
 function SessionHeaderTitle(props: Readonly<{
     title: string;
     accessory?: React.ReactNode;
-    badges?: ReadonlyArray<string>;
-    testIdsEnabled: boolean;
     onBeginRename?: () => void;
     triggerRef?: (instance: HappierFocusable | null) => void;
     /** The lineage breadcrumb sits flush above the title: its hit area keeps that side, the title's stops at the seam. */
@@ -198,12 +222,7 @@ function SessionHeaderTitle(props: Readonly<{
                     </SessionHeaderTitleAccessoryCompactContext.Provider>
                 </View>
             ) : null}
-            {props.badges?.map((badge, index) => (
-                <View key={`${badge}:${index}`} style={styles.badge}
-                    testID={resolveOptionalSessionScreenTestId(props.testIdsEnabled, `session-header-badge:${index}`)}>
-                    <Text numberOfLines={1} style={styles.badgeText}>{badge}</Text>
-                </View>
-            ))}
+
         </View>
     );
 }
@@ -351,18 +370,12 @@ const styles = StyleSheet.create((theme) => ({
         minWidth: 0,
         overflow: 'hidden',
     },
-    badge: {
-        flexShrink: 100,
+    metadataRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s6,
+        flexShrink: 1,
         minWidth: 0,
-        overflow: 'hidden',
-        borderRadius: theme.borderRadius.md,
-        backgroundColor: theme.colors.state.neutral.background,
-    },
-    badgeText: {
-        ...Typography.variant('micro', 'semiBold'),
-        color: theme.colors.state.neutral.foreground,
-        paddingHorizontal: theme.space.s8,
-        paddingVertical: theme.space.s2,
     },
     subtitle: {
         ...HEADER_BAND_SUBTITLE_TEXT,

@@ -1,3 +1,4 @@
+import { SessionDirectoryIntentV1Schema, type SessionDirectoryIntentV1 } from '@happier-dev/protocol/sessions/creation/sessionDirectoryIntentV1';
 import { maxCodeUnits } from '@happier-dev/protocol/strings/maxCodeUnits';
 import {
     SessionServerStartSpawnDraftV1Schema,
@@ -21,6 +22,7 @@ import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/
 const SessionServerStartDraftSeedSchema = z.strictObject({
     existingDraft: mini.optional(SessionServerStartSpawnDraftV1Schema),
     directory: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(4_096))),
+    directoryIntent: z.optional(SessionDirectoryIntentV1Schema),
     // Host Agent routing id: qualified `<pluginId>/<localId>` for an installed
     // Agent, so the seed bound is that contract rather than a bare local id.
     agentId: z.optional(z.string().check(z.trim(), z.minLength(1), maxCodeUnits(MAX_AGENT_ROUTING_ID_BYTES))),
@@ -32,11 +34,14 @@ const SessionServerStartDraftSeedSchema = z.strictObject({
     })),
     checkoutIntent: mini.optional(PluginUiSessionCheckoutIntentV1Schema),
     candidates: z.optional(z.array(PluginUiSessionPlacementCandidateV1Schema)),
-});
+}).check(z.refine(seed => seed.directory === undefined || seed.directoryIntent === undefined, {
+    message: 'Directory and directory intent are mutually exclusive', path: ['directoryIntent'],
+}));
 
 export type SessionServerStartDraftSeed = Readonly<{
     existingDraft?: SessionServerStartSpawnDraftV1;
     directory?: string;
+    directoryIntent?: SessionDirectoryIntentV1;
     agentId?: string;
     permissionMode?: PermissionMode;
     profileId?: string;
@@ -108,6 +113,7 @@ function readSeed(draft: PluginUiJsonObjectV1 | undefined): ReadSeed | null {
         seed: {
             ...(existingDraft ? { existingDraft } : {}),
             ...(parsed.data.directory ? { directory: parsed.data.directory } : {}),
+            ...(parsed.data.directoryIntent ? { directoryIntent: parsed.data.directoryIntent } : {}),
             ...(parsed.data.agentId ? { agentId: parsed.data.agentId } : {}),
             ...(parsed.data.permissionMode ? { permissionMode: parsed.data.permissionMode as PermissionMode } : {}),
             ...(parsed.data.profileId ? { profileId: parsed.data.profileId } : {}),

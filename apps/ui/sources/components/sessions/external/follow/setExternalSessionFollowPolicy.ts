@@ -1,12 +1,14 @@
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { ExternalSessionFollowPolicy } from '@happier-dev/protocol/sessions/external/linked-metadata';
+import { ExternalSessionBackgroundFollowActionResultV1Schema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 
 import { updateMetadataWithExternalSessionFollowPolicy } from '@/sync/domains/session/external/externalSessionFollowMetadata';
 import { readExternalSessionLink, type ExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
 import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
-import { machineExternalSessionFollowPolicySet } from '@/sync/ops/machineExternalSessions';
+import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { sync } from '@/sync/sync';
 
 /**
@@ -84,6 +86,7 @@ export function setExternalSessionFollowPolicy(params: Readonly<{
     serverId: string | null;
     link: ExternalSessionLink;
     policy: ExternalSessionFollowPolicy;
+    registerApproval: (registration: ActionApprovalContinuation) => void;
     signal?: AbortSignal;
 }>): Promise<ExternalSessionFollowMutationOutcome> {
     const identity = resolveLinkMutationIdentity(params.link);
@@ -92,29 +95,51 @@ export function setExternalSessionFollowPolicy(params: Readonly<{
     }
     const scopeKey = `${params.serverId ?? ''}:${serializeLinkMutationIdentity(identity)}`;
     const accountCurrentness = captureActiveServerAccountScopeCurrentness();
+    const isIntentCurrent = () => {
+        const current = resolveCurrentSessionLinkIdentity(params.sessionId);
+        return !params.signal?.aborted && accountCurrentness.isCurrent()
+            && current !== null
+            && serializeLinkMutationIdentity(current) === serializeLinkMutationIdentity(identity);
+    };
     const prior = inFlightByScopeKey.get(scopeKey);
     const request = (prior ?? Promise.resolve())
         .catch(() => undefined)
         .then(async (): Promise<ExternalSessionFollowMutationOutcome> => {
-            if (params.signal?.aborted || !accountCurrentness.isCurrent()) {
+            if (!isIntentCurrent()) {
                 return { kind: 'stale' };
             }
             const controller = new AbortController();
             const abort = () => controller.abort();
             const retirement = accountCurrentness.onRetire(abort);
             params.signal?.addEventListener('abort', abort, { once: true });
-            let result: Awaited<ReturnType<typeof machineExternalSessionFollowPolicySet>>;
+            const executeAction = createFrontDoorActionExecute(undefined, {
+                isExternalSessionFollowIntentCurrent: isIntentCurrent,
+                hostActionApprovalLifetime: { actionId: 'sessions.external.backgroundFollow.set',
+                    surface: 'ui', signal: controller.signal },
+                onBlockingApprovalPending: pending => params.registerApproval({
+                    artifactId: pending.artifactId, scope: pending.scope, signal: pending.signal ?? controller.signal,
+                    refreshAfterExecution: false,
+                    // The canonical blocking executor retains this invocation
+                    // and its exact-link precondition until the decision.
+                    onExecuted: async () => 'ignored',
+                }),
+            });
+            let result: ReturnType<typeof ExternalSessionBackgroundFollowActionResultV1Schema.parse>;
             try {
-                result = await machineExternalSessionFollowPolicySet({
-                    machineId: identity.machineId,
+                const admitted = await executeAction('sessions.external.backgroundFollow.set', {
                     sessionId: params.sessionId,
-                    agentId: identity.agentId,
-                    remoteSessionId: identity.remoteSessionId,
-                    source: identity.source,
                     enabled: params.policy === 'background_follow',
-                }, { serverId: params.serverId, signal: controller.signal });
+                }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+                    serverId: params.serverId ?? undefined, signal: controller.signal });
+                if (!admitted.ok) {
+                    return !isIntentCurrent() || admitted.errorCode === 'external_session_follow_intent_stale'
+                        ? { kind: 'stale' }
+                        : { kind: 'refused', reason: 'error' };
+                }
+                requireActionSuccess(admitted);
+                result = ExternalSessionBackgroundFollowActionResultV1Schema.parse(admitted.result);
             } catch {
-                return accountCurrentness.isCurrent() && !controller.signal.aborted
+                return isIntentCurrent() && !controller.signal.aborted
                     ? { kind: 'failed' }
                     : { kind: 'stale' };
             } finally {

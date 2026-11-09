@@ -7,6 +7,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { serverAccountScopeListKey } from '@/sync/domains/scope/serverAccountScope';
 import type { ServerCredentialAccountScopeResolution } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { getDemoModeServerId } from '@/demoMode/runtime/enterExitDemoMode';
 
 import {
     createSessionListViewFilterDefaults,
@@ -61,7 +62,14 @@ function ensureCredentialChangeSubscription(): void {
 }
 
 function retentionKey(contextKey: string): string {
-    return contextKey.trim();
+    const key = contextKey.trim();
+    const demoHome = getDemoModeServerId();
+    return key === GLOBAL_SESSION_LIST_CONTEXT_KEY && demoHome ? `${key}:demo:${demoHome}` : key;
+}
+
+/** Drop only the temporary list intent; the person's retained view keeps its original slot. */
+export function clearDemoSessionListViewFilters(serverId: string): void {
+    retainedFiltersByKey.delete(`${GLOBAL_SESSION_LIST_CONTEXT_KEY}:demo:${serverId}`);
 }
 
 function getOrCreateEntry(
@@ -264,7 +272,7 @@ export function useSessionListViewFilters(input: UseSessionListViewFiltersInput)
     const key = retentionKey(contextKey);
     const retained = React.useMemo(
         () => getOrCreateEntry(contextKey, defaults),
-        [contextKey],
+        [contextKey, key],
     );
     retained.defaults = defaults;
     reconcileAccountScopeResolutions(
@@ -400,7 +408,7 @@ export function useSessionListViewFilters(input: UseSessionListViewFiltersInput)
         const savedSpace = latest.savedSpace ?? retained.savedSpace;
         const defaults = savedSpace
             ? normalizeSessionListViewFilters({ ...savedSpace.filter, searchQuery: '' }, latest.viewContext, latest.fixedShow, latest.fixedIncludeInactive)
-            : normalizeSessionListViewFilters(createSessionListViewFilterDefaults(latest.defaults), latest.viewContext, latest.fixedShow, latest.fixedIncludeInactive);
+            : normalizeSessionListViewFilters(createSessionListViewFilterDefaults(retained.defaults), latest.viewContext, latest.fixedShow, latest.fixedIncludeInactive);
         // Clearing re-enters default-following: the restored selection becomes the
         // new baseline, so Homes mounting after this point join again.
         retained.defaultHomeServerIds = defaults.homeServerIds;

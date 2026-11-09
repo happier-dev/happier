@@ -53,6 +53,7 @@ import {
     type ExternalSessionIdentityPresentation,
 } from '../presentation/externalSessionIdentityPresentation';
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
+import { resolveEffectiveSessionAppearanceColor, sessionAppearanceColorKey, type SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
 
 function appendUniqueSearchReason(
     reasons: SessionListContextualSearchReason[],
@@ -92,9 +93,11 @@ export type SessionReachableDisplay = Readonly<{
     machineLabel: string;
     workspaceSubtitle: string;
     workspaceSubtitleEllipsizeMode: WorkspaceDisplayEllipsizeMode;
+    appearanceColor?: SessionAppearanceColor | null;
 }>;
 
 export type SessionListRowViewModel = Readonly<{
+    appearanceColor: SessionAppearanceColor | null;
     groupKey: string;
     sessionKey: string | null;
     session: SessionListRenderableSession | null;
@@ -227,6 +230,8 @@ const SESSION_LIST_ROW_VIEW_MODEL_CACHE = new LruMap<string, RowViewModelCacheEn
 });
 
 export type BuildSessionListRowViewModelInput = Readonly<{
+    appearanceColor?: SessionAppearanceColor | null;
+    appearanceColorsBySessionKey?: ReadonlyMap<string, SessionAppearanceColor>;
     item: Extract<SessionListIndexItem, { type: 'session' }>;
     unscopedSelectionIsUnique: boolean;
     reachableSessionDisplay?: SessionReachableDisplay;
@@ -410,6 +415,10 @@ export function buildSessionListRowViewModel(input: BuildSessionListRowViewModel
     const reminderWakeAtMs = reminder?.state === 'scheduled' ? reminder.remindAt : null;
 
     const rowViewModel: SessionListRowViewModel = {
+        appearanceColor: resolveEffectiveSessionAppearanceColor({
+            sessionColor: input.appearanceColor ?? (sessionKey ? input.appearanceColorsBySessionKey?.get(sessionKey) : null),
+            workspaceColor: reachableDisplay?.appearanceColor,
+        }),
         groupKey,
         sessionKey,
         session,
@@ -532,6 +541,7 @@ export function resolveSessionListUnscopedSelectionIsUnique(
 }
 
 export function buildSessionListRowViewModels(input: Readonly<{
+    appearanceColorsBySessionKey?: ReadonlyMap<string, SessionAppearanceColor>;
     listItems: ReadonlyArray<SessionListIndexItem>;
     reachableSessionDisplayById: ReadonlyMap<string, SessionReachableDisplay>;
     reachableSessionDisplayByKey?: ReadonlyMap<string, SessionReachableDisplay>;
@@ -575,6 +585,7 @@ export function buildSessionListRowViewModels(input: Readonly<{
 
 function buildRowViewModelSignature(viewModel: SessionListRowViewModel): string {
     return JSON.stringify([
+        sessionAppearanceColorKey(viewModel.appearanceColor),
         viewModel.groupKey,
         viewModel.sessionKey ?? '',
         viewModel.sessionStatus?.state ?? '',

@@ -15,13 +15,14 @@ const PENDING = { kind: 'workingTree' } as const;
 export function useSessionCommitPlan(params: Readonly<{
     sessionId: string;
     serverId?: string | null;
+    scopeId?: string;
     enabled: boolean;
     branch: string | null;
     onOpenComposer?: () => void;
     restoration?: ScmWalkthroughRestoration;
 }>) {
     const comparison = params.enabled ? PENDING : null;
-    const bound = useSessionScmDiffSummaryBinding({ sessionId: params.sessionId, serverId: params.serverId, comparison, output: 'commitPlan', restoration: params.restoration });
+    const bound = useSessionScmDiffSummaryBinding({ sessionId: params.sessionId, serverId: params.serverId, paneScopeId: params.scopeId, comparison, output: 'commitPlan', restoration: params.restoration });
     const onAskHookFailure = React.useCallback((proposal: CommitProposal) => {
         const scope = bound.scope;
         const prompt = buildCommitHookFixPrompt(proposal);

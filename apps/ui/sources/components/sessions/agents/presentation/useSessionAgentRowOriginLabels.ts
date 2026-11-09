@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ExecutionRunLaunchOrigin } from '@happier-dev/protocol';
+import type { ExecutionRunLaunchOrigin } from '@happier-dev/protocol/execution/runs/startRequest';
 
 import { useDiscussionTitles } from '@/components/discussions/useDiscussionTitles';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';

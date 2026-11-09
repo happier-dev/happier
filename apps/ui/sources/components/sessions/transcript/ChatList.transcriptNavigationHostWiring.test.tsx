@@ -35,7 +35,7 @@ let capturedNavigationRailProps: Array<{
     onJumpToEntry: (entry: TranscriptNavigationEntry, request: TranscriptNavigationRailJumpRequest) => void;
 }> = [];
 
-const buildChatListItemsMock = vi.fn((opts: Readonly<{
+const buildChatListItemsMock = vi.hoisted(() => vi.fn((opts: Readonly<{
     messageIdsOldestFirst?: readonly string[];
     messagesById?: Readonly<Record<string, Message>>;
 }>) => (opts.messageIdsOldestFirst ?? []).map((id) => {
@@ -47,7 +47,7 @@ const buildChatListItemsMock = vi.fn((opts: Readonly<{
         createdAt: message?.createdAt ?? 0,
         seq: typeof message?.seq === 'number' ? message.seq : null,
     };
-}));
+})));
 
 vi.mock('react-native-mmkv', () => {
     class MMKV {
@@ -182,9 +182,6 @@ vi.mock('@/components/sessions/pending/PendingMessagesTranscriptBlock', () => ({
     PendingMessagesTranscriptBlock: () => React.createElement('PendingMessagesTranscriptBlock'),
 }));
 
-vi.mock('@/components/sessions/actions/SessionActionDraftCard', () => ({
-    SessionActionDraftCard: () => React.createElement('SessionActionDraftCard'),
-}));
 
 vi.mock('@/components/sessions/transcript/motion/TranscriptMotionProvider', () => ({
     TranscriptMotionProvider: (props: React.PropsWithChildren) => React.createElement(React.Fragment, null, props.children),
@@ -604,10 +601,11 @@ describe('ChatList transcript navigation host wiring', () => {
             await Promise.resolve();
         });
 
-        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledWith('session-1', {
+        // The history owner also passes its cancellation signal; this host test pins only the cursor.
+        expect(fetchUserMessageHistoryPageMock).toHaveBeenCalledWith('session-1', expect.objectContaining({
             limit: 40,
             beforeSeq: 7,
-        });
+        }));
         const latestRailProps = capturedNavigationRailProps.at(-1);
         expect(latestRailProps?.entries.map((entry) => ({
             kind: entry.kind,

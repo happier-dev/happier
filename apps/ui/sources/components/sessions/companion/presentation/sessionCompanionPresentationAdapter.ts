@@ -5,6 +5,7 @@ import type {
 
 import type { PresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import type { SessionViewerPresentationPort } from '@/components/sessions/viewer/sessionViewerPresentation';
+import type { SessionWorkPresentationBinding } from '@/components/sessions/work/sessionWorkPresentation';
 import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { t } from '@/text';
 
@@ -35,31 +36,32 @@ export type SessionBoardPresentationMutationOutcome = SessionPresentationMutatio
 export type SessionCompanionMutationObserver = (outcome: SessionCompanionMutationOutcome) => void;
 
 export type SessionBoardPresentationPort = Readonly<{
-    /** Exact mounted Board binding is current and reachable for presentation. */
+    /** Exact mounted Board binding admits local presentation independently of content loading. */
     availability: 'ready' | 'unavailable';
     /** Reveals the Board beside Chat or in focused Details. */
     open: (mode: 'beside_chat' | 'focus') => SessionBoardPresentationMutationOutcome;
     selectView: (viewId: string) => SessionBoardPresentationMutationOutcome;
     revealItem: (input: Readonly<{ widgetId: string; viewId?: string }>) => SessionBoardPresentationMutationOutcome;
-    /** The current Board repository resolves this view and the viewer may read it. */
-    canReadView: (viewId: string) => boolean;
-    /** Exact current item, optionally constrained to the requested current view. */
-    canReadItem: (widgetId: string, viewId?: string) => boolean;
+    /** Null means the canonical layout has not resolved this view yet. */
+    canReadView: (viewId: string) => boolean | null;
+    /** Exact readable item and optional view membership; null means the canonical read is pending. */
+    canReadItem: (widgetId: string, viewId?: string) => boolean | null;
 }>;
 
 export type SessionPresentationPorts = Readonly<{
     companion: SessionCompanionController;
     board: SessionBoardPresentationPort;
     viewer?: SessionViewerPresentationPort;
+    work?: Pick<SessionWorkPresentationBinding, 'apply'>;
     /** Exact mounted Session catalogs admit new personal references; existing refs remain editable when unavailable. */
     canAddCompanionItem: (item: SessionCompanionItemRefV1) => boolean;
     /** Returns to Chat preserving draft, selection, anchor and keyboard focus. */
     returnToChat: () => SessionPresentationMutationOutcome;
     /**
-     * Runs a readable Board item's one live body in its Chat reply ("Show here"). `unavailable`
+     * Runs a readable item's one live body in its Chat reply ("Show here"). `unavailable`
      * while no reply that draws the item is on screen.
      */
-    showItemInChat: (itemId: string) => SessionPresentationMutationOutcome;
+    showItemInChat: (itemId: string, occurrenceId?: string) => SessionPresentationMutationOutcome;
     /** Opens the incumbent full Companion destination; it owns route currentness. */
     openFullSurface: () => SessionPresentationMutationOutcome;
     publishNotice: (notice: PresentationNotice) => void;
@@ -235,10 +237,17 @@ export function applySessionPresentationIntent(
     if (
         intent.kind.startsWith('board.')
         && exactPorts.board.availability !== 'ready'
+        && (intent.kind !== 'board.item.reveal'
+            || !exactPorts.board.canReadItem(intent.widgetId, intent.viewId))
     ) {
         return UNAVAILABLE;
     }
     switch (intent.kind) {
+        case 'work.view.select':
+        case 'work.recent.show_more':
+        case 'work.map.expand':
+            return exactPorts.work?.apply(intent) ?? UNAVAILABLE;
+
         case 'viewer.open':
         case 'viewer.close':
         case 'viewer.source.select':
@@ -255,13 +264,12 @@ export function applySessionPresentationIntent(
             );
 
         case 'chat.item.show': {
-            if (exactPorts.board.availability !== 'ready') return UNAVAILABLE;
-            if (!exactPorts.board.canReadItem(intent.widgetId)) return INVALID_TARGET;
+            // Readable mounted replies own Chat eligibility, independently of Board membership.
             return fromPresentationOutcome(
                 exactPorts,
                 'chat.item.show',
                 t('sessionBoard.companion.notices.shownInChat'),
-                exactPorts.showItemInChat(intent.widgetId),
+                exactPorts.showItemInChat(intent.widgetId, intent.occurrenceId),
             );
         }
 
@@ -274,7 +282,8 @@ export function applySessionPresentationIntent(
             );
 
         case 'board.view.select': {
-            if (!exactPorts.board.canReadView(intent.viewId)) return INVALID_TARGET;
+            const readable = exactPorts.board.canReadView(intent.viewId);
+            if (readable !== true) return readable === null ? UNAVAILABLE : INVALID_TARGET;
             return fromPresentationOutcome(
                 exactPorts,
                 'board.view.select',
@@ -284,8 +293,8 @@ export function applySessionPresentationIntent(
         }
 
         case 'board.item.reveal': {
-            if (!exactPorts.board.canReadItem(intent.widgetId, intent.viewId)) return INVALID_TARGET;
-            if (intent.viewId !== undefined && !exactPorts.board.canReadView(intent.viewId)) return INVALID_TARGET;
+            const readable = exactPorts.board.canReadItem(intent.widgetId, intent.viewId);
+            if (readable !== true) return readable === null ? UNAVAILABLE : INVALID_TARGET;
             return fromPresentationOutcome(
                 exactPorts,
                 'board.item.reveal',

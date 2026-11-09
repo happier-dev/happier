@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import type { ScmBranchListEntry } from '@happier-dev/protocol';
+import type { ScmBranchListEntry } from '@happier-dev/protocol/scm/branches';
+import type { ScmPullRequestSummary } from '@happier-dev/protocol/scm/pullRequests';
 
 import { ScmDiffSummaryFailureNotice } from '@/components/sessions/files/comparison/ScmDiffSummaryFailureNotice';
 import { ScmDiffSummaryModelPicker } from '@/components/settings/sourceControl/ScmDiffSummaryModelPicker';
@@ -35,12 +36,7 @@ import {
     type GitPullRequestFormPlacement,
 } from './gitPullRequestFormState';
 
-export type GitPullRequestCreated = Readonly<{
-    number: number | null;
-    url: string;
-    title: string;
-    base: string;
-}>;
+export type GitPullRequestCreated = ScmPullRequestSummary;
 
 const EMPTY_DRAFT: SessionScmPullRequestDraftV1 = { title: '', body: '', draft: false, base: null };
 
@@ -66,11 +62,11 @@ export const GitPullRequestForm = React.memo(function GitPullRequestForm(props: 
     const { theme } = useUnistyles();
     const scmDraft = useSessionScmDraft({ sessionId: props.sessionId, serverId: props.serverId });
     const draft = scmDraft.draft.pullRequest ?? EMPTY_DRAFT;
-    const model = resolveSourceControlPullRequestViewModel({ snapshot: props.snapshot });
+    const model = resolveSourceControlPullRequestViewModel({ snapshot: props.snapshot, baseBranch: draft.base });
     const provider = resolveGitPullRequestProvider(props.snapshot);
     const head = model.headBranch;
     const base = draft.base ?? model.baseBranch;
-    const inAppCreate = model.primaryAction?.kind === 'open-or-reuse';
+    const inAppCreate = model.kind === 'create' && (model.primaryAction === null || model.primaryAction.kind === 'open-or-reuse');
     const draftSupported = inAppCreate && props.snapshot.capabilities?.writePullRequestDraftCreate === true;
     const [busy, setBusy] = React.useState(false);
     const [result, setResult] = React.useState<GitPullRequestFormAfterCreate | null>(null);
@@ -87,9 +83,10 @@ export const GitPullRequestForm = React.memo(function GitPullRequestForm(props: 
         const names = new Set<string>();
         if (base) names.add(base);
         if (model.baseBranch) names.add(model.baseBranch);
+        if (props.snapshot.repo.defaultBranch) names.add(props.snapshot.repo.defaultBranch);
         for (const name of branches) if (name !== head) names.add(name);
         return Array.from(names, (name) => ({ id: name, title: name }));
-    }, [base, branches, head, model.baseBranch]);
+    }, [base, branches, head, model.baseBranch, props.snapshot.repo.defaultBranch]);
 
     const bodyDraft = useGitPullRequestBodyDraft({
         sessionId: props.sessionId, serverId: props.serverId, head, base, body: draft.body,
@@ -135,7 +132,7 @@ export const GitPullRequestForm = React.memo(function GitPullRequestForm(props: 
                 const next = resolveGitPullRequestFormAfterCreate(outcome);
                 if (next.openedProviderPage) await openExternalUrl(next.openedProviderPage);
                 if (next.created) {
-                    props.onCreated({ ...next.created, title: current.title.trim(), base });
+                    props.onCreated(next.created);
                 }
                 if (next.clearDraft) scmDraft.setPullRequest(null);
                 setResult(next);
@@ -198,7 +195,8 @@ export const GitPullRequestForm = React.memo(function GitPullRequestForm(props: 
                     label={t('sessionGitPullRequest.form.base')}
                     items={baseItems}
                     selectedId={base}
-                    onSelect={(id) => update({ base: id === model.baseBranch ? null : id })}
+                    placeholder={t('sessionGitPullRequest.form.chooseBase')}
+                    onSelect={(id) => update({ base: id })}
                     disabled={busy}
                 />
             </View>

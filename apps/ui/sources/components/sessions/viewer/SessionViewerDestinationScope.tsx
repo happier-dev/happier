@@ -1,9 +1,10 @@
 import * as React from 'react';
 
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { useServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { ServerCredentialAccountScopeBindingProvider, useServerCredentialAccountScopeBinding, type ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
 import { CLOSED_SESSION_VIEWER, type SessionViewerPresentationState } from './sessionViewerPresentation';
+import { SessionBoardControllerProvider } from '@/components/sessions/board/SessionBoardControllerProvider';
 
 function createPresentationState(isCurrent: () => boolean = () => true) {
     let state = CLOSED_SESSION_VIEWER;
@@ -37,7 +38,7 @@ type DestinationSessionOwner = Readonly<{
 const DestinationViewerContext = React.createContext<DestinationSessionOwner | null>(null);
 
 /**
- * Session Account authority and viewer presentation outlive classic/cockpit shell replacement.
+ * Session Account authority, Board execution and viewer presentation outlive route/shell replacement.
  * The destination owns their lifetime; the shell still owns pane callbacks, and the retained
  * source owns its stream.
  */
@@ -45,7 +46,8 @@ export function SessionViewerDestinationScope(props: React.PropsWithChildren<Rea
     sessionId: string;
     serverId: string | null;
 }>>): React.ReactElement {
-    const { binding } = useServerCredentialAccountScopeBinding(props.serverId);
+    const credentialScope = useServerCredentialAccountScopeBinding(props.serverId);
+    const { binding } = credentialScope;
     const scope = React.useMemo<DestinationViewerScope | null>(() => binding ? {
         sessionId: props.sessionId,
         accountLifetime: binding,
@@ -53,7 +55,14 @@ export function SessionViewerDestinationScope(props: React.PropsWithChildren<Rea
     } : null, [binding, props.sessionId]);
     const owner = React.useMemo<DestinationSessionOwner>(() => ({ sessionId: props.sessionId, serverId: props.serverId, scope }),
         [props.serverId, props.sessionId, scope]);
-    return <DestinationViewerContext.Provider value={owner}>{props.children}</DestinationViewerContext.Provider>;
+    // The Session's Board, approval, plugin and hosted-HTML runtimes share this one Home resolution.
+    return <DestinationViewerContext.Provider value={owner}>
+        <ServerCredentialAccountScopeBindingProvider serverId={props.serverId} state={credentialScope}>
+            <SessionBoardControllerProvider sessionId={props.sessionId} serverId={props.serverId}>
+                {props.children}
+            </SessionBoardControllerProvider>
+        </ServerCredentialAccountScopeBindingProvider>
+    </DestinationViewerContext.Provider>;
 }
 
 function useMatchingSessionDestinationOwner(sessionId: string, serverId: string | null): DestinationSessionOwner | null {

@@ -1,4 +1,5 @@
-import type { PrincipalRefV1, SessionAccessLevelV1, SessionGrantIntentV1 } from '@happier-dev/protocol';
+import type { PrincipalRefV1} from '@happier-dev/protocol/teams/principal';
+import type { SessionAccessLevelV1, SessionGrantIntentV1 } from '@happier-dev/protocol/sessions/access/sessionAccessGrantV1';
 
 /**
  * Composes one grant mutation for a principal of any kind.

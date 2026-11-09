@@ -1,11 +1,13 @@
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { ActionsSettingsV1Schema, buildApprovalRequestArtifactHeaderV1, type ApprovalRequestV2 } from '@happier-dev/protocol';
+import { afterEach, beforeAll, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
+import { ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
+import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { resetPendingQueueState } from '@/sync/engine/pending/pendingQueueV2.testHelpers';
 import { storage } from '@/sync/domains/state/storage';
@@ -13,7 +15,7 @@ import { setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProf
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
-import type { ArtifactCreateRequest, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { createEphemeralComposerDocumentOwner } from './composerDocumentOwner';
 import { withdrawPendingMessageToComposerWithActionApproval } from './pendingMessageComposerDocumentOwner';
 
@@ -35,24 +37,28 @@ describe('pending withdrawal persisted Ask continuation', () => {
         let recordedRequest: ApprovalRequestV2 | null = null;
         let registered: ActionApprovalContinuation | null = null;
         const mutations: string[] = [];
+        const requestPaths: string[] = [];
+        const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => scope.accountId, encryptionMode: 'plain' });
         setRuntimeFetch(async (input, init) => {
             const url = new URL(String(input));
+            requestPaths.push(url.pathname);
             expect(url.origin).toBe('https://server-a');
             if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (url.pathname === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {
                 actionsSettingsV1: { v: 1, actions: { 'session.pending.withdraw': { approvalRequiredSurfaces: ['ui'] } } },
             } }, version: 1 });
-            mutations.push(url.pathname);
-            expect(url.pathname).toBe('/v1/artifacts');
-            // Echo the real Artifact transport request, not a reconstructed domain result.
-            const create = JSON.parse(String(init?.body)) as ArtifactCreateRequest;
-            const envelope = decodePlainArtifactStoredContent(create.body);
-            if (!envelope || typeof envelope !== 'object' || !('body' in envelope) || typeof envelope.body !== 'string') throw new Error('Missing persisted approval body');
-            const request = StoredApprovalRequestSchema.parse(JSON.parse(envelope.body));
-            if (request.v !== 2) throw new Error('Expected current approval origin');
-            recordedRequest = request;
-            return Response.json({ ...create, ownerAccountId: scope.accountId, access: 'owner', encryptionMode: 'plain',
-                headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+            const response = artifacts.handle(url.pathname, init);
+            if (!response) throw new Error(`Unexpected pending withdrawal boundary: ${url.pathname}`);
+            const served = await response;
+            if (init?.method === 'POST' && url.pathname === '/v1/artifacts') {
+                mutations.push(url.pathname);
+                const created = artifacts.list()[0];
+                if (!created) throw new Error('Missing persisted approval body');
+                const request = StoredApprovalRequestSchema.parse(JSON.parse(artifacts.readPlainBody(created.id)!));
+                if (request.v !== 2) throw new Error('Expected current approval origin');
+                recordedRequest = request;
+            }
+            return served;
         });
         const composer = createEphemeralComposerDocumentOwner({
             ref: { kind: 'session', sessionId: 'session-a' }, capabilities: { text: true, references: true, attachments: true, submit: true },
@@ -60,13 +66,21 @@ describe('pending withdrawal persisted Ask continuation', () => {
         const original = { text: 'Original typed input', structuredInputMentions: [], composerAttachments: [] };
         const cancellation = new AbortController();
         let settled = false;
+        const executor = createDefaultActionExecutor();
+        let refusalCode: string | undefined;
+        onTestFailed(() => console.error('Pending withdrawal admission boundary', { refusalCode, requestPaths, settled }));
         const result = withdrawPendingMessageToComposerWithActionApproval({
             composer, document: original, isCurrent: () => !cancellation.signal.aborted,
-            actionExecutor: createDefaultActionExecutor(), scope, signal: cancellation.signal,
+            actionExecutor: { execute: async (...args: Parameters<typeof executor.execute>) => {
+                const outcome = await executor.execute(...args);
+                if (!outcome.ok) refusalCode = outcome.errorCode;
+                return outcome;
+            } }, scope, signal: cancellation.signal,
             withdrawInput: { sessionId: 'session-a', localId: 'pending-a', serverId: scope.serverId },
             context: { serverId: scope.serverId, expectedAccountId: scope.accountId, surface: 'ui', defaultSessionId: 'session-a' },
             registerApproval: (continuation) => { registered = continuation; },
         }).then((value) => { settled = true; return value; });
+        onTestFinished(async () => { cancellation.abort(); await result; });
         await vi.waitFor(() => expect(registered).not.toBeNull());
         expect(settled).toBe(false);
         expect(composer.read().document.text).toBe('');

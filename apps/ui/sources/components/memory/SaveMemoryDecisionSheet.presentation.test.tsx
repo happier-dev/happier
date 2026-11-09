@@ -16,6 +16,7 @@ vi.mock('react-native', async () => {
   const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
   return createReactNativeNativeMock({ platformOS: 'ios' }, {
     useWindowDimensions: () => ({ width: viewport.width, height: 900, scale: 1, fontScale: 1 }),
+    Dimensions: { get: () => ({ width: viewport.width, height: 900, scale: 1, fontScale: 1 }) },
   });
 });
 // Safe-area measurements come from the device SDK; the overlay policy stays real.

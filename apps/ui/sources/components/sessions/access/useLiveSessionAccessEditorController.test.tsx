@@ -3,12 +3,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import tweetnacl from 'tweetnacl';
 import {
-    type AccountDisplayProfileV1,
-    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
-    encodeSessionDataKeyEnvelopeCursorV1,
-    signAccountContentKeyBindingV1,
+    type AccountDisplayProfileV1} from '@happier-dev/protocol/account/accountDisplayProfileV1';
+import {
+    CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import {
+    encodeSessionDataKeyEnvelopeCursorV1} from '@happier-dev/protocol/sessions/encryption/sessionDataKeyEnvelopes';
+import {
+    signAccountContentKeyBindingV1} from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
+import {
     tryWriteServerEnabledBitInPlace,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/features/serverEnabledBit';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -174,6 +178,7 @@ async function setupHome(options: Readonly<{ sharing: boolean; encrypted: boolea
         granted: false,
         grantAccessLevel: 'view' as 'view' | 'edit' | 'admin',
         grantMode: 'normal' as 'normal' | 'malformed_after_commit' | 'malformed_without_commit',
+        grantFailure: null as null | Readonly<{ status: number; code: string }>,
         mutationChanged: true,
         mutationGate: null as Promise<void> | null,
         primaryTeamId: null as string | null,
@@ -183,6 +188,7 @@ async function setupHome(options: Readonly<{ sharing: boolean; encrypted: boolea
         contextMode: 'normal' as 'normal' | 'denied' | 'malformed_after_commit' | 'malformed_without_commit',
         contextArchived: false,
         candidatePolicyUnavailable: false,
+        candidatePolicyGate: null as Promise<void> | null,
         envelopePages: sessionEncrypted ? [{ summary: { prepared: 0, pending: 0, invalid: 0, recipientKeyUnavailable: 0 }, items: [] }] as EnvelopePage[] : [],
         envelopeStatus: 200,
         uploaded: null as null | { recipientAccountId: string; encryptedDataKey: string },
@@ -257,6 +263,7 @@ async function setupHome(options: Readonly<{ sharing: boolean; encrypted: boolea
         }
         if (path === '/v2/sessions/access-candidates/inspect') {
             candidatePaths.push(path);
+            await state.candidatePolicyGate;
             if (state.candidatePolicyUnavailable) return Response.json({ error: 'not_found' }, { status: 404 });
             const body = JSON.parse(String(init?.body)) as { subjects: Array<{ kind: string; teamId?: string }> };
             const team = TEAM_DIRECTORY.items.find((item) => item.id === state.primaryTeamId);
@@ -337,6 +344,7 @@ async function setupHome(options: Readonly<{ sharing: boolean; encrypted: boolea
             return new Response(JSON.stringify({ changed: state.mutationChanged, primaryTeamId: state.primaryTeamId }));
         }
         if (path === '/v2/sessions/access-grants/set') {
+            if (state.grantFailure) return Response.json({ error: state.grantFailure.code, statusCode: state.grantFailure.status }, { status: state.grantFailure.status });
             const body = JSON.parse(String(init?.body)) as {
                 accessLevel: 'view' | 'edit' | 'admin';
                 accountEnvelopeInput?: { encryptedDataKey: string };
@@ -482,6 +490,30 @@ afterEach(async () => {
 });
 
 describe('useLiveSessionAccessEditorController encrypted-access preparation', () => {
+    it.each(['database_transaction_conflict_exhausted', 'database_connection_unavailable'])(
+        'keeps a refused Team Add unchanged and explains the retryable Home failure: %s', async code => {
+            const home = await setupHome({ sharing: true, encrypted: false });
+            TEAM_DIRECTORY.items = [{ id: 'team-design', name: 'Design', policy: {
+                sessionCreationPolicy: 'team_default', externalSharingPolicy: 'allowed',
+            } }];
+            home.state.grantFailure = { status: 503, code };
+            const controller = await mountController(home.profile.id);
+            const teamSection = () => controller().model.directory.sections.find(section => section.kind === 'team')!;
+            await vi.waitFor(() => expect(teamSection().candidates).toHaveLength(1));
+
+            await act(async () => { controller().actions.addPrincipal({ kind: 'team', teamId: 'team-design' }); });
+            await vi.waitFor(() => expect(teamSection().candidates[0]?.operation.kind).toBe('error'));
+            expect(teamSection().candidates[0]?.operation).toMatchObject({ kind: 'error', error: {
+                code, message: t(code === 'database_connection_unavailable' ? 'session.access.outcomeUnknown' : 'approvals.transientFailure'), retryable: true,
+            } });
+            expect(controller().model.grants).toHaveLength(0);
+            expect(home.state.granted).toBe(false);
+            // The failed intent settles; only the person's retry can send another write.
+            await act(async () => { await Promise.resolve(); });
+            expect(home.paths.filter(path => path === '/v2/sessions/access-grants/set')).toHaveLength(1);
+        },
+    );
+
     it.each([undefined, RECIPIENT_ID])('admits manual preparation through its exact Action before sealing: %s', async recipient => {
         const home = await setupHome({ sharing: true, encrypted: true });
         home.state.granted = true;
@@ -534,13 +566,13 @@ describe('useLiveSessionAccessEditorController encrypted-access preparation', ()
         await act(async () => { publishHomeAccountChange(home.profile.id, [SESSION_ID]); });
         await vi.waitFor(() => expect(latest!.model.grants).toHaveLength(0));
         expect([home.envelopeStates.length, home.teamPaths.length, home.candidatePaths.length]).toEqual(detailCounts);
-        expect(latest!.model.directory.query).toBe('Alice');
+        expect(latest!.query.read()).toBe('Alice');
 
         home.state.envelopePages.push({ summary: { prepared: 0, pending: 1, invalid: 0, recipientKeyUnavailable: 0 }, items: [] });
         await screen.update(<Probe serverId={home.profile.id} detailsDemanded onRender={onRender} />);
         await vi.waitFor(() => expect(home.envelopeStates.length).toBeGreaterThan(detailCounts[0]!));
         await vi.waitFor(() => expect(latest!.model.encryption?.statusKey).toBe('needs_attention'));
-        expect(latest!.model.directory.query).toBe('Alice');
+        expect(latest!.query.read()).toBe('Alice');
     });
 
     it('starts preparation for a replacement Session while the previous scope is still in flight', async () => {
@@ -612,6 +644,31 @@ describe('useLiveSessionAccessEditorController encrypted-access preparation', ()
         await vi.waitFor(() => expect(controller().model.context?.primaryTeamId).toBe('team-acme'));
         expect(home.paths).toContain('/v2/sessions/access-context/set');
         expect(home.teamPaths).toContain('/v1/teams/list');
+    });
+
+    it('keeps a successful context change quiet while its admitted policy is revalidated', async () => {
+        const home = await setupHome({ sharing: true, encrypted: false });
+        TEAM_DIRECTORY.items = [{
+            id: 'team-acme',
+            name: 'Acme',
+            policy: { sessionCreationPolicy: 'private_default', externalSharingPolicy: 'allowed' },
+        }];
+        let releasePolicyInspection = () => {};
+        home.state.candidatePolicyGate = new Promise<void>((resolve) => { releasePolicyInspection = resolve; });
+        const controller = await mountController(home.profile.id);
+        await vi.waitFor(() => expect(controller().model.context?.options).toEqual(expect.arrayContaining([
+            expect.objectContaining({ teamId: 'team-acme', label: 'Acme' }),
+        ])));
+
+        act(() => { controller().actions.setContext('team-acme'); });
+        await vi.waitFor(() => expect(controller().model.context?.primaryTeamId).toBe('team-acme'));
+        await vi.waitFor(() => expect(home.candidatePaths).toHaveLength(1));
+
+        expect(controller().model.notice).toBeUndefined();
+        await act(async () => { releasePolicyInspection(); });
+        await vi.waitFor(() => expect(controller().model.context?.operation).toBe('idle'));
+        expect(controller().model.notice).toBeUndefined();
+        expect(home.candidatePaths).toHaveLength(1);
     });
 
     it('keeps a typed context denial visible without changing the acknowledged context', async () => {
@@ -869,18 +926,18 @@ describe('useLiveSessionAccessEditorController encrypted-access preparation', ()
         await vi.waitFor(() => expect(controller().model.grants[0]?.level).toMatchObject({ value: 'view' }));
 
         await act(async () => { controller().actions.setQuery('ada'); });
-        expect(controller().model.directory.query).toBe('ada');
+        expect(controller().query.read()).toBe('ada');
 
         await act(async () => { controller().actions.setAccessLevel(GRANT_ROW.grant.subject, 'edit'); });
         await vi.waitFor(() => expect(controller().model.grants[0]?.level).toMatchObject({ value: 'edit' }));
         // Editing a live row is not a new search: the candidate list the user was
         // reading must not be rebuilt under the pointer.
-        expect(controller().model.directory.query).toBe('ada');
+        expect(controller().query.read()).toBe('ada');
 
         const operationBeforeAdd = controller().model.grants[0]?.operation;
         await act(async () => { controller().actions.addPrincipal({ kind: 'account', accountId: RECIPIENT_ID }); });
         try {
-            await vi.waitFor(() => expect(controller().model.directory.query).toBe(''));
+            await vi.waitFor(() => expect(controller().query.read()).toBe(''));
         } catch {
             const { runWithServerRequestAuthorityForServerAccountScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope');
             const { readSessionSnapshotForAuthority, SessionSnapshotReadError } = await import('@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority');
@@ -893,7 +950,7 @@ describe('useLiveSessionAccessEditorController encrypted-access preparation', ()
                     ...(error instanceof SessionSnapshotReadError ? { errorCode: error.errorCode, httpStatus: error.httpStatus }
                         : error instanceof Error ? { message: error.message } : {}) }),
             );
-            expect(controller().model.directory.query, JSON.stringify({
+            expect(controller().query.read(), JSON.stringify({
                 operationBeforeAdd, snapshotProbe, grants: controller().model.grants,
                 issue: controller().model.content.issue, paths: home.paths,
             })).toBe('');

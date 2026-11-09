@@ -1,10 +1,9 @@
 import * as React from 'react';
 import { View, type ViewProps, type ViewStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
+import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
 
 import type { Theme } from '@/theme';
-import { glassSurfaceBackgroundColor } from '@/components/ui/glass/glassSurfacePaint';
-import { SurfaceRim } from '@/components/ui/surfaces/SurfaceRim';
 
 import { TranscriptJumpAttention } from './navigation/TranscriptJumpHighlightOverlay';
 
@@ -29,7 +28,12 @@ export function userMessageBubbleContentPadding(theme: Theme) {
     return { paddingHorizontal: 14, paddingVertical: theme.space.s8 } as const satisfies ViewStyle;
 }
 
-/** The live user bubble (committed and queued), also rendered at static props by appearance previews. */
+/**
+ * The live user bubble (committed and queued), also rendered at static props by appearance previews.
+ * Its fill alone marks the prompt: no hairline and no rim (those are for what floats). Solid, it is its own
+ * fill. Over glass content it takes the material's inner translucent fill (the ink tint inner surfaces use),
+ * so the prompt keeps its step over the picture instead of inheriting the page plane, which a picture clears.
+ */
 export function UserMessageBubble(props: Readonly<{
     theme?: Theme;
     discarded?: boolean;
@@ -44,18 +48,17 @@ export function UserMessageBubble(props: Readonly<{
     const { theme: currentTheme } = useUnistyles();
     const theme = props.theme ?? currentTheme;
     const style = {
-        backgroundColor: glassSurfaceBackgroundColor(theme.colors.message.user.background, 'content', true),
+        backgroundColor: glassContentFill(theme.colors.message.user.background, theme.colors),
         ...(props.padding === 'parts' ? null : userMessageBubbleContentPadding(theme)),
         borderRadius: theme.parts.userBubble.radius,
         maxWidth: '100%' as const,
         ...(props.discarded ? { opacity: 0.65 } : null),
     };
-    const rim = <SurfaceRim role="bubble" radius={theme.parts.userBubble.radius} border="surface" theme={theme} />;
     return props.attention
         ? (
             <TranscriptJumpAttention {...props.attention} style={style} viewProps={{ onLayout: props.onLayout, testID: props.testID }}>
-                {props.children}{rim}
+                {props.children}
             </TranscriptJumpAttention>
         )
-        : <View style={style} onLayout={props.onLayout} testID={props.testID}>{props.children}{rim}</View>;
+        : <View style={style} onLayout={props.onLayout} testID={props.testID}>{props.children}</View>;
 }

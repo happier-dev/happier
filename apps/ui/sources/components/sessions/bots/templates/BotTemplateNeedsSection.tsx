@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native-unistyles';
 import { botTemplateEditorStyles as styles } from './botTemplateEditorStyles';
 import { BotTemplateSoftwareNeedV1Schema, BotTemplateAccountNeedV1Schema, BotTemplateMcpNeedV1Schema,
     type BotTemplateContentV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
@@ -42,7 +43,7 @@ export function BotTemplateNeedsSection(props: Props) {
         action={<SectionActionButton title={t('common.add')} icon="plus" testID="bot-template-need-add" expanded={adding}
             onPress={() => props.buffer.editNeedAuthoring({ open: !adding })} />}>
         {keys.map(need => <NeedEditor key={`${need.kind}:${need.key}`} {...props} kind={need.kind} needKey={need.key} />)}
-        {!adding && !keys.length ? <SectionContentRow><Text variant="meta">{t('botTemplates.noNeeds')}</Text></SectionContentRow> : null}
+        {!adding && !keys.length ? <SectionContentRow><Text variant="meta" style={inkStyles.quiet}>{t('botTemplates.noNeeds')}</Text></SectionContentRow> : null}
         {adding ? <AddNeed {...props} /> : null}
     </ItemGroup>;
 }
@@ -76,7 +77,7 @@ function NeedEditor(props: Props & Readonly<{ kind: NeedKind; needKey: string }>
                         mcpServers: draft.content.needs.mcpServers.map(item => item.key === need.key ? { ...item, definition: change(item.definition) } : item),
                     } },
                 }))} onCommit={commit} />
-                <SectionContentRow><Text variant="meta">{t('botTemplates.mcpReview')}</Text>
+                <SectionContentRow><Text variant="meta" style={inkStyles.quiet}>{t('botTemplates.mcpReview')}</Text>
                     <CodeBlockView code={JSON.stringify(need.definition, null, 2)} language="json" wrap />
                 </SectionContentRow>
             </> : null}
@@ -193,12 +194,17 @@ function AddNeed(props: Props) {
             {transport === 'stdio' ? <McpField label={t('botTemplates.arguments')} value={args} onChange={args => props.buffer.editNeedAuthoring({ args })} multiline testID="bot-template-mcp-arguments" />
                 : <McpField label={t('botTemplates.headerNames')} value={headerNames} onChange={headerNames => props.buffer.editNeedAuthoring({ headerNames })} multiline testID="bot-template-mcp-headers" />}
             <McpField label={t('botTemplates.envNames')} value={envNames} onChange={envNames => props.buffer.editNeedAuthoring({ envNames })} multiline testID="bot-template-mcp-env" />
-            <SectionContentRow><Text variant="meta">{t('botTemplates.mcpReview')}</Text></SectionContentRow>
+            <SectionContentRow><Text variant="meta" style={inkStyles.quiet}>{t('botTemplates.mcpReview')}</Text></SectionContentRow>
         </> : null}
-        {error ? <SectionContentRow><Text accessibilityLiveRegion="polite">{t('botTemplates.invalidNeed')}</Text></SectionContentRow> : null}
+        {error ? <SectionContentRow><Text style={inkStyles.error} accessibilityLiveRegion="polite">{t('botTemplates.invalidNeed')}</Text></SectionContentRow> : null}
         <SectionContentRow><RoundButton title={t('common.add')} disabled={kind !== 'mcpServers' && !items.some(item => item.id === selection)} onPress={add} testID="bot-template-need-confirm" /></SectionContentRow>
     </>;
 }
+
+const inkStyles = StyleSheet.create(theme => ({
+    quiet: { color: theme.colors.text.secondary },
+    error: { color: theme.colors.status.error },
+}));
 
 function McpField(props: Readonly<{ label: string; value: string; onChange: (value: string) => void; multiline?: boolean; testID?: string; onCommit?: () => void }>) {
     return <Item title={props.label} accessoryLayout={props.multiline ? 'stacked' : 'adaptive'} rightElement={<InlineTextField style={styles.field} multiline={props.multiline}

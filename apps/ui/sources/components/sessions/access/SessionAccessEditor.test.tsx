@@ -2,7 +2,9 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { SessionAccessEditor } from './SessionAccessEditor';
+import { createSessionAccessQuery } from './sessionAccessQuery';
 import type { SessionAccessCandidateRowModel, SessionAccessEditorActions, SessionAccessEditorModel, SessionAccessGrantRowModel } from './sessionAccessEditorTypes';
+import { createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { installBrowserClipboardBoundary } from '@/dev/testkit/harness/browserClipboardBoundary';
 
 vi.mock('react-native', async () => {
@@ -44,7 +46,7 @@ const team: SessionAccessGrantRowModel = {
 function model(overrides: Partial<SessionAccessEditorModel> = {}): SessionAccessEditorModel {
     return {
         revision: 1, accessMode: 'editable', content: { phase: 'ready', hasLastAcknowledgedSnapshot: true }, owner: null,
-        grants: [alice, team], directory: { query: 'unrelated search', sections: [] },
+        grants: [alice, team], directory: { sections: [] },
         summary: { label: 'Custom access', accessibilityLabel: 'Session access', requiredByTeamPolicy: true }, ...overrides,
     };
 }
@@ -57,7 +59,18 @@ const ISSUE_ROW_TEST_ID = 'session-access-editor:list:session-access:option:issu
 describe('SessionAccessEditor', () => {
     beforeEach(() => announceAccessibilityMessage.mockClear());
     afterEach(() => vi.useRealTimers());
-
+    it('offers one independent-copy pointer only for an existing Bot the person can steer', async () => {
+        const bot = createSessionFixture({ metadata: { path: '/garden', host: 'home', bot: { kind: 'bot' } } });
+        const source = { session: bot, serverId: 'home' };
+        const screen = await renderScreen(<SessionAccessEditor model={model()} actions={actions()} presentation="compact" templateSource={source} />);
+        expect(screen.findByTestId('session-access-give-bot-copy')).not.toBeNull();
+        expect(screen.findByTestId('session-access-grant-account:alice')).not.toBeNull();
+        await screen.update(<SessionAccessEditor model={model()} actions={actions()} presentation="full"
+            templateSource={{ ...source, session: { ...bot, access: createSessionAccessFixture('view') } }} />);
+        expect(screen.findByTestId('session-access-give-bot-copy')).toBeNull();
+        await screen.update(<SessionAccessEditor model={model()} actions={actions()} presentation="full" />);
+        expect(screen.findByTestId('session-access-give-bot-copy')).toBeNull();
+    });
     it('adds different principal kinds without closing and preserves source-ranked results', async () => {
         vi.useFakeTimers();
         const intent = actions();
@@ -70,12 +83,12 @@ describe('SessionAccessEditor', () => {
         });
         const people = candidate('account');
         const group = candidate('group');
-        const directory = { query: 'provider-ranked-query', sections: ([people, group]).map((row) => ({
+        const directory = { sections: ([people, group]).map((row) => ({
             kind: row.principal.ref.kind, title: row.principal.ref.kind, candidates: [row], status: 'idle' as const,
             cursor: null, hasMore: false, loadingMore: false,
             resolverKey: `home-one:${row.principal.ref.kind}`, resolveCandidates: async () => [row],
         })) };
-        const screen = await renderScreen(<SessionAccessEditor model={model({ directory })} actions={intent} presentation="full" onRequestClose={close} />);
+        const screen = await renderScreen(<SessionAccessEditor model={model({ directory })} query={createSessionAccessQuery('provider-ranked-query')} actions={intent} presentation="full" onRequestClose={close} />);
         await flushHookEffects({ runOnlyPendingTimers: true });
         expect(screen.findByTestId('session-access-candidate-account:bob')).not.toBeNull();
         await screen.pressByTestIdAsync('session-access-candidate-account:bob');
@@ -144,23 +157,24 @@ describe('SessionAccessEditor', () => {
     it('pages only the browsed directory through the canonical list footer', async () => {
         vi.useFakeTimers();
         const intent = actions();
-        const directory = { query: 'acme', sections: [{
+        const query = createSessionAccessQuery('acme');
+        const directory = { sections: [{
             kind: 'group' as const, title: 'Groups', candidates: [], status: 'idle' as const,
             cursor: 'group-page-two', hasMore: true, loadingMore: false,
         }] };
-        const screen = await renderScreen(<SessionAccessEditor model={model({ directory })} actions={intent} presentation="full" />);
+        const screen = await renderScreen(<SessionAccessEditor model={model({ directory })} query={query} actions={intent} presentation="full" />);
         await screen.pressByTestIdAsync('session-access-browse:group');
         await flushHookEffects({ runOnlyPendingTimers: true });
         await screen.pressByTestIdAsync('session-access-editor:list:pagination:more');
         expect(intent.loadMore).toHaveBeenCalledWith('group');
         expect(intent.addPrincipal).not.toHaveBeenCalled();
-        await screen.update(<SessionAccessEditor model={model({ revision: 2, directory: { ...directory, sections: [{ ...directory.sections[0], loadingMore: true }] } })} actions={intent} presentation="full" />);
+        await screen.update(<SessionAccessEditor model={model({ revision: 2, directory: { ...directory, sections: [{ ...directory.sections[0], loadingMore: true }] } })} query={query} actions={intent} presentation="full" />);
         expect(screen.findByTestId('session-access-editor:list:pagination:loading')).not.toBeNull();
     });
     it('routes a failed directory footer through the directory retry owner', async () => {
         vi.useFakeTimers();
         const intent = actions();
-        const directory = { query: '', sections: [{
+        const directory = { sections: [{
             kind: 'group' as const, title: 'Groups', candidates: [], status: 'error' as const,
             error: { code: 'session_access_directory_failed', message: 'Unavailable', retryable: true },
             cursor: 'group-retry', hasMore: true, loadingMore: false,
@@ -207,7 +221,7 @@ describe('SessionAccessEditor', () => {
         const intent = actions();
         const openFullSurface = vi.fn();
         const screen = await renderScreen(
-            <SessionAccessEditor model={model()} actions={intent} presentation="compact" onOpenFullSurface={openFullSurface} />,
+            <SessionAccessEditor model={model()} query={createSessionAccessQuery('unrelated search')} actions={intent} presentation="compact" onOpenFullSurface={openFullSurface} />,
         );
         await screen.pressByTestIdAsync('session-access-open-collaboration');
         expect(openFullSurface).toHaveBeenCalledTimes(1);
@@ -529,7 +543,7 @@ describe('SessionAccessEditor', () => {
                 displayName: 'Developers', accessibilityLabel: 'Developers, Acme Group' },
             addition: { kind: 'allowed' }, operation: { kind: 'idle' },
         };
-        const directory = { query: '', sections: [{
+        const directory = { sections: [{
             kind: 'group' as const, title: 'Groups', candidates: [candidate], status: 'idle' as const,
             cursor: null, hasMore: false, loadingMore: false,
             resolverKey: 'home-one:group', resolveCandidates: async () => [candidate],

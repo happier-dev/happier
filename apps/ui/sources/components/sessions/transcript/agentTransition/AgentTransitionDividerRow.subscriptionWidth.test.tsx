@@ -8,7 +8,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { useSession } from '@/sync/domains/state/storage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { MetadataSchema } from '@happier-dev/session-core/state';
-import type { SessionAgentTransitionDividerV1 } from '@happier-dev/protocol';
+import type { SessionAgentTransitionDividerV1 } from '@happier-dev/protocol/sessions/agentTransitionDivider';
 
 import { AgentTransitionDividerRow } from './AgentTransitionDividerRow';
 import { TranscriptSeparatorRow } from '../separators/TranscriptSeparatorRow';

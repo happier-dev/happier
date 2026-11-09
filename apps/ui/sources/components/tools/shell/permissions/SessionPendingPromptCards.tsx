@@ -11,6 +11,7 @@ import type { PendingPermissionRequest } from '@/utils/sessions/sessionUtils';
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import { buildSessionMessageRouteId } from '@happier-dev/session-core/messages';
 import { resolvePermissionToolCallLocations } from '@/utils/sessions/permissions/resolvePermissionToolCallLocations';
+import { useRetainedToolCallLocations } from '@/utils/sessions/permissions/useRetainedToolCallLocations';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
 import { PendingNavigationSettledNotice } from '@/components/sessions/pendingNavigation/PendingNavigationSettledNotice';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
@@ -51,7 +52,7 @@ export const SessionPendingPromptCards = React.memo(function SessionPendingPromp
     const messageIdsOldestFirst = source.useMessageIdsOldestFirst();
     const messagesById = source.useMessagesById();
     const reducerState = source.useReducerState();
-    const locations = React.useMemo(() => {
+    const locations = useRetainedToolCallLocations(React.useMemo(() => {
         if (source.sessionId !== props.sessionId || (serverId !== undefined && source.serverId !== serverId)) return EMPTY_LOCATIONS;
         return resolvePermissionToolCallLocations({
             permissionIds: [...props.permissions, ...props.userActions].map((request) => request.id),
@@ -60,7 +61,7 @@ export const SessionPendingPromptCards = React.memo(function SessionPendingPromp
             toolIdToMessageId: reducerState?.toolIdToMessageId,
             resolveRouteMessageId: (messageId) => buildSessionMessageRouteId({ messageId, messagesById, reducerState }),
         });
-    }, [messageIdsOldestFirst, messagesById, props.permissions, props.sessionId, props.userActions, reducerState, serverId, source]);
+    }, [messageIdsOldestFirst, messagesById, props.permissions, props.sessionId, props.userActions, reducerState, serverId, source]));
     const address = normalizeSessionAddress(serverId ?? source.serverId, props.sessionId);
     const chrome = props.chrome ?? 'inline';
     return (

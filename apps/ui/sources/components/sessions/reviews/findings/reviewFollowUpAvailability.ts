@@ -1,4 +1,5 @@
-import type { ExecutionRunStructuredRunRef, ReviewFollowUpFailureCode } from '@happier-dev/protocol';
+import type { ExecutionRunStructuredRunRef} from '@happier-dev/protocol/messages/structured/executionRunStructuredRunRef';
+import type { ReviewFollowUpFailureCode } from '@happier-dev/protocol/execution/runs/index';
 
 import { t } from '@/text';
 

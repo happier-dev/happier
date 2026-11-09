@@ -1,79 +1,57 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
-import { flattenTestStyle, renderScreen } from '@/dev/testkit';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
-import { installSessionExecutionRunDetailsCommonModuleMocks } from './sessionExecutionRunDetailsTestHelpers';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+    act, flattenTestStyle, installBrowserClipboardBoundary, renderScreen,
+    reportPopoverContentLayout, standardCleanup, withPopoverWebGlobals,
+} from '@/dev/testkit';
 import { ExecutionRunPublicStateSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
-
-
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
-
-installSessionExecutionRunDetailsCommonModuleMocks({
-    storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-        return createStorageModuleStub({
-            storage: {
-                getState: () => ({
-                    settings: {
-                        acpCatalogSettingsV1: { v: 2, backends: [] },
-                    },
-                }),
-            },
-        });
-    },
-    text: async () => {
-        const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-        return createTextModuleMock({
-            translate: (key, values) => {
-                if (key.endsWith('.readOnly')) return 'Read only';
-                if (key === 'session.subagents.intent.review') return 'Review';
-                if (key === 'executionRuns.details.labels.backend' && values?.value) return `Backend: ${String(values.value)}`;
-                if (key === 'executionRuns.details.labels.permissions' && values?.value) {
-                    return `Permissions: ${String(values.value)}`;
-                }
-                if (key === 'executionRuns.details.labels.mode' && values?.value) return `Mode: ${String(values.value)}`;
-                if (key === 'executionRuns.details.labels.runId' && values?.value) return `Run ID: ${String(values.value)}`;
-                if (key === 'executionRuns.details.labels.statusValue' && values?.value) return `Status: ${String(values.value)}`;
-                if (key === 'executionRuns.details.launchOrigin.discussion' && values?.discussionId) {
-                    return `Started from discussion ${String(values.discussionId)}`;
-                }
-                if (key === 'executionRuns.details.titles.executionRunWithIntent' && values?.intent) {
-                    return `${String(values.intent)} Subagent`;
-                }
-                return key;
-            },
-        });
-    },
-    unistyles: async () => {
-        const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
-        return createUnistylesMock();
-    },
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
+vi.mock('@/text', async () => {
+    const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
+    return createTextModuleMock({
+        translate: (key, values) => {
+            if (key.endsWith('.readOnly')) return 'Read only';
+            if (key === 'session.subagents.intent.review') return 'Review';
+            if (key === 'executionRuns.details.labels.backend' && values?.value) return `Backend: ${String(values.value)}`;
+            if (key === 'executionRuns.details.labels.permissions' && values?.value) {
+                return `Permissions: ${String(values.value)}`;
+            }
+            if (key === 'executionRuns.details.labels.mode' && values?.value) return `Mode: ${String(values.value)}`;
+            if (key === 'executionRuns.details.labels.runId' && values?.value) return `Run ID: ${String(values.value)}`;
+            if (key === 'executionRuns.details.labels.statusValue' && values?.value) return `Status: ${String(values.value)}`;
+            if (key === 'executionRuns.details.launchOrigin.discussion' && values?.discussionId) {
+                return `Started from discussion ${String(values.discussionId)}`;
+            }
+            if (key === 'executionRuns.details.titles.executionRunWithIntent' && values?.intent) {
+                return `${String(values.intent)} Subagent`;
+            }
+            return key;
+        },
+    });
 });
 
-vi.mock('@/components/ui/text/Text', () => ({
-    Text: ({ children, ...props }: any) => React.createElement('Text', props, children),
-}));
-const clipboardWrites = vi.hoisted(() => [] as string[]);
-vi.mock('expo-clipboard', () => ({
-    setStringAsync: async (value: string) => { clipboardWrites.push(value); },
-}));
-vi.mock('@/components/ui/popover', () => ({
-    Popover: (props: { open: boolean; children: React.ReactNode | ((input: { maxHeight: number; maxWidth: number }) => React.ReactNode) }) => {
-        if (!props.open) return null;
-        return React.createElement('Popover', null, typeof props.children === 'function'
-            ? props.children({ maxHeight: 560, maxWidth: 400 })
-            : props.children);
-    },
-}));
-vi.mock('@/components/ui/overlays/FloatingOverlay', () => ({
-    FloatingOverlay: (props: { children: React.ReactNode }) => React.createElement('FloatingOverlay', null, props.children),
-}));
+const writeClipboardText = vi.fn(async (_value: string) => {});
+let restorePopoverGlobals: () => void;
+beforeEach(() => {
+    restorePopoverGlobals = withPopoverWebGlobals();
+    writeClipboardText.mockClear();
+    installBrowserClipboardBoundary(writeClipboardText);
+});
+afterEach(() => {
+    standardCleanup();
+    restorePopoverGlobals();
+});
 
 const { SessionExecutionRunInfoCard } = await import('./SessionExecutionRunInfoCard');
 
 /** The run's facts live behind ⋯ → Run details; open the menu and read the whole card. */
 async function openRunMenu(screen: Awaited<ReturnType<typeof renderScreen>>): Promise<string> {
     await screen.pressByTestIdAsync('session-run-details-actions-menu');
+    await act(async () => reportPopoverContentLayout(screen.tree, { width: 340, height: 500 }));
     return JSON.stringify(screen.tree.toJSON());
 }
 
@@ -181,10 +159,11 @@ describe('SessionExecutionRunInfoCard', () => {
         await screen.pressByTestIdAsync('session-run-details-stop');
         expect(onStop).toHaveBeenCalledTimes(1);
         const actionTarget = screen.findByTestId('session-run-details-actions-menu');
-        expect(flattenTestStyle(actionTarget?.props.style)).toEqual(expect.objectContaining({
-            minWidth: resolveMinimumInteractiveTargetSize('web'),
-            minHeight: resolveMinimumInteractiveTargetSize('web'),
-        }));
+        // The ⋯ is drawn as the icon button's own square; its target is a hit area, never a drawn size.
+        const drawn = flattenTestStyle(actionTarget?.props.style);
+        expect(drawn.minWidth).toBeUndefined();
+        expect(drawn.minHeight).toBeUndefined();
+        expect(drawn.width).toBe(28);
         // Nothing of the run's plumbing leads the page.
         expect(screen.getTextContent()).not.toContain('run_1');
 
@@ -200,7 +179,7 @@ describe('SessionExecutionRunInfoCard', () => {
         expect(onCancel).toHaveBeenCalledTimes(1);
         await openRunMenu(screen);
         await screen.pressByTestIdAsync('session-run-menu-copy-result');
-        expect(clipboardWrites.at(-1)).toBe('The fix is right for desktop.');
+        expect(writeClipboardText).toHaveBeenLastCalledWith('The fix is right for desktop.');
         await openRunMenu(screen);
         await screen.pressByTestIdAsync('session-run-menu-show-in-transcript');
         expect(onShowInTranscript).toHaveBeenCalledTimes(1);
@@ -418,7 +397,7 @@ describe('SessionExecutionRunInfoCard', () => {
 
 
 it('retains idle long-lived run controls without showing a live elapsed clock', async () => {
-    const { ExecutionRunPublicStateSchema } = await import('@happier-dev/protocol');
+    const { ExecutionRunPublicStateSchema} = await import('@happier-dev/protocol/execution/runs/responseSchemas');
     const run = ExecutionRunPublicStateSchema.parse({
         runId: 'idle', callId: 'call-idle', sidechainId: 'sidechain-idle', intent: 'delegate',
         backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'default',

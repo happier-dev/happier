@@ -6,25 +6,20 @@ import { renderScreen, standardCleanup, type RenderScreenResult } from '@/dev/te
 import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import type { SessionTerminalWorkspaceCommand } from '@/components/sessions/terminal/sessionTerminalWorkspace';
-import type { SessionTerminalWorkspaceV1 } from '@happier-dev/protocol';
+import type { SessionTerminalWorkspaceV1 } from '@happier-dev/protocol/terminal/workspace';
 import { DocumentTabStrip } from '@/components/ui/navigation/DocumentTabStrip';
 import { SessionTerminalStrip } from '@/components/sessions/terminal/strip/SessionTerminalStrip';
 import type { SessionTerminalTabDescriptor } from '@/components/sessions/terminal/presentation/describeSessionTerminal';
 
 import { SessionTerminalPage, SessionTerminalPageView } from './SessionTerminalPage';
+import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { storage } from '@/sync/domains/state/storage';
+import { readSessionTerminalWorkspaceForScope } from '@/components/sessions/terminal/sessionTerminalWorkspaceRuntime';
 
-const actions = vi.hoisted(() => ({ execute: vi.fn(async () => ({ ok: true })) }));
-
-// The recipient-envelope HTTP API is not part of a terminal journey. Fail if this harness reaches it.
-vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
-    const unused = () => { throw new Error('Terminal page unexpectedly reached the recipient-envelope API'); };
-    return {
-        createSessionDataKeyEnvelopeClient: unused,
-        readSessionDataKeyEnvelopeCollectionPage: unused,
-        prepareSessionDataKeyEnvelopesForScope: unused,
-        prepareSessionDataKeyEnvelopesDetached: unused,
-    };
-});
+vi.mock('socket.io-client', async original =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
 
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -39,49 +34,57 @@ vi.mock('@/components/ui/popover', async (importOriginal) => {
     const { createInlinePopoverModuleMock } = await import('@/dev/testkit/mocks/popover');
     return createInlinePopoverModuleMock(importOriginal);
 });
-// The Action front door is the page's only write path; its executors have their own tests.
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', () => ({
-    createFrontDoorActionExecute: () => actions.execute,
-}));
-// The leaf owns the PTY transport (a machine RPC boundary) and is covered by its own controller
-// tests; here it only has to show which terminal the page put on screen.
-vi.mock('@/components/sessions/terminal/SessionEmbeddedTerminalPane', () => ({
-    SessionEmbeddedTerminalPane: (props: { terminal?: { id: string } }) => React.createElement('TerminalLeaf', { terminalId: props.terminal?.id }),
-}));
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
 
 // The pane provider persists its scopes device-locally, so each case uses its own session scope.
 let sessionCounter = 0;
 let sessionId = 's1';
 let scopeId = createSessionPaneScopeId(sessionId, 'home-a');
 let dispatchCommand: ((command: SessionTerminalWorkspaceCommand) => void) | null = null;
+let account: Awaited<ReturnType<typeof createSecretSettingsTestHarness>> | null = null;
+let retireExecutorLoader: (() => void) | null = null;
+let previousStorage = storage.getState();
 
 function CommandBridge() {
     const { dispatch } = useAppPaneContext();
+    React.useEffect(() => { dispatch({ type: 'activateScope', scopeId }); }, [dispatch]);
     dispatchCommand = (command) => dispatch({ type: 'terminalWorkspace', scopeId, command });
     return null;
 }
 
 async function renderPage(): Promise<RenderScreenResult> {
+    retireExecutorLoader = await installRealActionExecutorModuleLoader();
+    account = await createSecretSettingsTestHarness({ settings: (await import('@/sync/domains/settings/settings')).settingsParse({}) });
+    scopeId = createSessionPaneScopeId(sessionId, account.scope.serverId);
+    storage.setState({ sessions: { [sessionId]: createSessionFixture({ id: sessionId, serverId: account.scope.serverId }) } });
     return renderScreen(
         <AppPaneProvider>
             <CommandBridge />
-            <SessionTerminalPage sessionId={sessionId} scopeId={scopeId} testIdPrefix="term" />
+            <SessionTerminalPage sessionId={sessionId} scopeId={scopeId} testIdPrefix="term" presentation="page" />
         </AppPaneProvider>,
     );
 }
 
-function shownTerminalId(screen: RenderScreenResult): string | undefined {
-    return screen.root.findAll((node) => (node.type as unknown) === 'TerminalLeaf')[0]?.props.terminalId;
+function shownTerminalId(): string | undefined {
+    const workspace = readSessionTerminalWorkspaceForScope(scopeId);
+    return workspace?.tabs.find(tab => tab.id === workspace.activeTabId)?.focusedTerminalId;
 }
 
 describe('the phone Terminal page', () => {
     beforeEach(() => {
-        actions.execute.mockClear();
+        previousStorage = storage.getState();
         sessionCounter += 1;
         sessionId = `s${sessionCounter}`;
         scopeId = createSessionPaneScopeId(sessionId, 'home-a');
     });
-    afterEach(standardCleanup);
+    afterEach(async () => {
+        standardCleanup();
+        await account?.dispose();
+        account = null;
+        retireExecutorLoader?.();
+        retireExecutorLoader = null;
+        storage.setState(previousStorage, true);
+    });
 
     it.each(['page', 'strip'] as const)('keeps all 120 %s tab visual inputs unchanged on an event-owner publication', async variant => {
         const tabs: readonly SessionTerminalTabDescriptor[] = Array.from({ length: 120 }, (_, index) => ({
@@ -137,29 +140,29 @@ describe('the phone Terminal page', () => {
     it('shows the session terminal workspace as chips and opens a shell in a new tab from +', async () => {
         const screen = await renderPage();
         expect(screen.findByTestId('term-chip-embedded')).toBeTruthy();
-        expect(shownTerminalId(screen)).toBe('embedded');
+        expect(shownTerminalId()).toBe('embedded');
 
         await screen.pressByTestIdAsync('term-new-shell');
 
-        expect(actions.execute).toHaveBeenCalledWith(
-            'session.terminals.open',
-            { target: { kind: 'workspace_shell' }, scopeId },
-            expect.objectContaining({ surface: 'ui', defaultSessionId: sessionId }),
-        );
+        await vi.waitFor(() => expect(readSessionTerminalWorkspaceForScope(scopeId)?.tabs).toHaveLength(2));
+        expect(readSessionTerminalWorkspaceForScope(scopeId)?.tabs[1]?.terminals[0]?.target).toEqual({ kind: 'workspace_shell' });
+        expect(shownTerminalId()).not.toBe('embedded');
     });
 
     it('focuses a chip’s terminal through the Action owner and closes a tab from its ×', async () => {
         const screen = await renderPage();
         await act(async () => {
-            dispatchCommand?.({ type: 'open', terminal: { id: 'vite', target: { kind: 'workspace_shell', initialCommand: 'yarn dev' } } });
+            dispatchCommand?.({ type: 'open', terminal: { id: 'vite', target: { kind: 'session_attach' } } });
         });
-        expect(shownTerminalId(screen)).toBe('vite');
+        expect(shownTerminalId()).toBe('vite');
 
         await screen.pressByTestIdAsync('term-chip-embedded');
-        expect(actions.execute).toHaveBeenLastCalledWith('session.terminals.focus', { terminalId: 'embedded', scopeId }, expect.anything());
+        await vi.waitFor(() => expect(shownTerminalId()).toBe('embedded'));
 
+        await screen.pressByTestIdAsync('term-chip-vite');
+        await vi.waitFor(() => expect(shownTerminalId()).toBe('vite'));
         await screen.pressByTestIdAsync('term-chip-close-vite');
-        expect(actions.execute).toHaveBeenLastCalledWith('session.terminals.close_tab', { tabId: 'vite', scopeId }, expect.anything());
+        await vi.waitFor(() => expect(readSessionTerminalWorkspaceForScope(scopeId)?.tabs.map(tab => tab.id)).toEqual(['embedded']));
     });
 
     it('pages a split tab: the open chip names the half on screen and a tap shows the next half', async () => {
@@ -172,14 +175,14 @@ describe('the phone Terminal page', () => {
                 minimumTerminalWidthPx: 320,
             });
         });
-        expect(shownTerminalId(screen)).toBe('vite');
+        expect(shownTerminalId()).toBe('vite');
         // The meta line offers the other half (lab B2p: a split tab is a pager).
         expect(screen.findAllByTestId('term-pager-next').length).toBeGreaterThan(0);
 
         await screen.pressByTestIdAsync('term-chip-embedded');
 
         // The tab id stays `embedded`; its focused half is the split's second member.
-        expect(actions.execute).toHaveBeenLastCalledWith('session.terminals.focus', { terminalId: 'embedded', scopeId }, expect.anything());
+        await vi.waitFor(() => expect(shownTerminalId()).toBe('embedded'));
     });
 
 });

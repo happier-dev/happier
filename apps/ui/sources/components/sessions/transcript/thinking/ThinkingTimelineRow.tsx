@@ -7,6 +7,7 @@ import { ThinkingPulseLabel } from '@/components/sessions/transcript/motion/Thin
 import { Typography } from '@/constants/Typography';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 
 export const ThinkingTimelineRow = React.memo(function ThinkingTimelineRow(props: {
     id: string;
@@ -67,11 +68,7 @@ export const ThinkingTimelineRow = React.memo(function ThinkingTimelineRow(props
                     </View>
                 </View>
                 <View style={styles.headerRight}>
-                    <Icon
-                        name={expanded ? 'caret-up' : 'caret-down'}
-                        size={16}
-                        color={theme.colors.text.secondary}
-                    />
+                    <DisclosureCaret expanded={expanded} size={16} />
                 </View>
             </Pressable>
 

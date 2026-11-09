@@ -1,6 +1,8 @@
 import { SessionOrganizationMoveInputSchema, type SessionOrganizationMoveOutput } from '@happier-dev/protocol/actions/sessionOrganizationMoveAction';
 import { commitSessionListDragIntent, resolveSessionListDragIntent, type CommitSessionListDragIntentContext } from './commitSessionListDragIntent';
 import type { SessionOrganizationMutationScope } from '@/sync/ops/sessionOrganization/sessionOrganizationMutationOwner';
+import { resolveSessionListTreeDropDestination } from '../commit/applySessionListTreeDropOperation';
+import { resolveSessionListDestinationFolderId } from '../drop-resolution/sessionListDestinationScope';
 
 export type SessionListOrganizationAction = (request: Readonly<{ input: unknown; mutationScope: SessionOrganizationMutationScope; signal?: AbortSignal }>) => Promise<SessionOrganizationMoveOutput>;
 
@@ -34,6 +36,13 @@ export function createSessionListOrganizationActionAdapter(
         if (!admission.ok) return { status: 'refused', reason: admission.relationReason ?? admission.reason };
         // Reporting relationships have their own Action and authority; this operation cannot bypass it.
         if (admission.effect !== 'organization') return { status: 'refused', reason: 'unsupported_operation' };
+        const destination = resolveSessionListTreeDropDestination(admission);
+        // Section membership/order have their own policies. A mounted replay cannot lend UI
+        // authority or bypass the person's per-operation overrides through a generic move.
+        if (admission.source.metadata.kind === 'folder' || (admission.source.metadata.kind === 'session'
+            && destination && admission.source.metadata.folderId !== resolveSessionListDestinationFolderId(admission.source.metadata, destination.container))) {
+            return { status: 'refused', reason: 'unsupported_operation' };
+        }
         try {
             const result = await commitSessionListDragIntent({ intent, context });
             return result.ok ? { status: 'applied' } : { status: 'refused', reason: result.reason };

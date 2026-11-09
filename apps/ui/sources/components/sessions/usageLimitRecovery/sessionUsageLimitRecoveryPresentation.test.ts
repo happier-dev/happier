@@ -1,6 +1,6 @@
 import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
 import { describe, expect, it } from 'vitest';
-import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol';
+import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 import {
     buildSessionUsageLimitRecoveryPresentation,

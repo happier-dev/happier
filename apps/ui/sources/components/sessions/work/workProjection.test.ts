@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { SessionWorkflowRunHeadlineV1Schema, type SessionWorkflowRunHeadlineV1 } from '@happier-dev/protocol';
+import { SessionWorkflowRunHeadlineV1Schema, type SessionWorkflowRunHeadlineV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -17,7 +17,7 @@ import { NO_SESSION_AGENT_ACTIVITY_ATTENTION } from '@/sync/domains/session/agen
 import { createActionOperationSelectors } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { createActionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { resolveActionOperationStatus } from '@/components/inbox/actionOperations/actionOperationPresentation';
-import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { projectSessionWorkMap } from './workMapProducer';
 import {
     captureMachinePresenceObservation,
@@ -77,7 +77,8 @@ function agentEntry(overrides: Partial<AgentActivityEntry> & Pick<AgentActivityE
 }
 
 function managed(id: string, state: WorkManagedRunSource['run']['state'], needsAttention = false): WorkManagedRunSource {
-    return { run: { id, state, workflowCustodyState: null }, title: `Run ${id}`, word: state, needsAttention };
+    return { run: createWorkflowRunSummaryFixture({ id, state, workflowCustodyState: null,
+        attentionRequired: needsAttention, invocationAttentionRequired: needsAttention }), title: `Run ${id}`, word: state };
 }
 
 function headline(runId: string, completedAgents: number, totalAgents: number): SessionWorkflowRunHeadlineV1 {
@@ -108,6 +109,38 @@ function input(overrides: Partial<WorkProjectionInput>): WorkProjectionInput {
 }
 
 describe('projectWork', () => {
+    it('says what each report is doing and who it reports to, never the lead\'s own machine (lab convo-W8full)', () => {
+        const projection = projectWork(input({
+            describeReportsTo: (lead) => `reports to ${lead}`,
+            reportSessions: [
+                report({ sessionId: 'api', managerSessionId: 'lead', title: 'Idempotent retries', activity: 'Runbook drafted', atMs: 1_000 }),
+                report({ sessionId: 'ledger', managerSessionId: 'api', title: 'Backfill intent ledger', facts: ['Studio Mac'] }),
+            ],
+        }));
+        const [api, ledger] = projection.sessions;
+        // A report of the lead says what it did; nothing repeats "reports to" down a list where every row does.
+        expect(api?.facts).toEqual(['Runbook drafted']);
+        expect(api?.atMs).toBe(1_000);
+        // A report of a report names its lead, and keeps a machine that is not the lead's.
+        expect(ledger?.facts).toEqual(['reports to Idempotent retries', 'Studio Mac']);
+    });
+
+    it('uses owner-projected Workflow failure and hold facts', () => {
+        const run = createWorkflowRunSummaryFixture({ state: 'failed', attentionRequired: false,
+            failureUnseen: false, invocationAttentionRequired: false });
+        const project = (flags: Partial<typeof run>) => projectWork(input({ managedRuns: [{
+            run: { ...run, ...flags }, title: 'Failed run', word: 'Failed',
+        }] }));
+        expect(project({}).workflows[0]?.status).toMatchObject({ tone: 'neutral', bucket: 'finished', attentionType: null });
+        const unseen = project({ failureUnseen: true, attentionRequired: true });
+        expect(unseen.workflows[0]?.status)
+            .toMatchObject({ tone: 'danger', bucket: 'needs_you', attentionType: 'update' });
+        expect(unseen.summary).toMatchObject({ outstanding: 0, needsYou: 0 });
+        expect(groupWorkByState(unseen)).toMatchObject({ needsYou: [], working: [] });
+        expect(groupWorkByState(unseen).recent.map(item => item.key)).toEqual([`run:${run.id}`]);
+        expect(project({ invocationAttentionRequired: true, attentionRequired: true }).workflows[0]?.status)
+            .toMatchObject({ tone: 'attention', bucket: 'needs_you', attentionType: 'decision' });
+    });
     it('keeps an idle retained Run inspectable without counting it as outstanding work', () => {
         const idle = agentEntry({ id: 'run:writer', kind: 'execution_run', status: 'running', runId: 'writer', isActive: false });
         const settled = projectWork(input({ agentEntries: [idle] }));
@@ -122,7 +155,7 @@ describe('projectWork', () => {
 
     it.each([
         { active: false, latestTurnStatus: 'failed' as const, needsYou: 0, stalled: 0, outstanding: 0, group: 'recent' as const },
-        { active: true, latestTurnStatus: 'failed' as const, needsYou: 1, stalled: 0, outstanding: 1, group: 'needsYou' as const },
+        { active: true, latestTurnStatus: 'failed' as const, needsYou: 0, stalled: 0, outstanding: 0, group: 'recent' as const },
         { active: false, latestTurnStatus: 'in_progress' as const, needsYou: 0, stalled: 1, outstanding: 1, group: 'recent' as const },
     ])('agrees with direct-report counts and lead settlement for $active / $latestTurnStatus', ({ active, latestTurnStatus, needsYou, stalled, outstanding, group }) => {
         const now = Date.now();
@@ -192,7 +225,7 @@ describe('projectWork', () => {
             setupReview: { kind: 'pendingApproval', code: 'project_setup_effect_changed', reviewedEffectDigest: 'reviewed', reviewedEffect: {} },
         }] });
         projection = read();
-        expect(projection.projectCommands[0].status).toEqual({ bucket: 'needs_you', tone: 'attention', word: 'needs_review' });
+        expect(projection.projectCommands[0].status).toMatchObject({ bucket: 'needs_you', tone: 'attention', word: 'needs_review' });
         expect(groupWorkByState(projection).needsYou.map((item) => item.key)).toEqual([key]);
         expect(projection.summary).toMatchObject({ outstanding: 1, needsYou: 1, runs: 1 });
         expect(projection.projectCommands[0].operation?.snapshot.state).toBe('accepted');
@@ -432,7 +465,7 @@ describe('projectWork', () => {
             const current = { ...run, workflowCustodyState };
             const history = describeWorkflowRunState(current.state, { workflowCustodyState });
             const projection = projectWork(input({ managedRuns: [{
-                run: current, title: 'Stopping run', word: history.label, needsAttention: false,
+                run: current, title: 'Stopping run', word: history.label,
             }] }));
             expect(projection.workflows[0]?.status.word).toBe(history.label);
             return { history, projection, groups: groupWorkByState(projection) };

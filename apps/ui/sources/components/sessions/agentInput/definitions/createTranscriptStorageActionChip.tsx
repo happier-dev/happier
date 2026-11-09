@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import type { AgentInputExtraActionChipRenderContext } from '@/components/sessions/agentInput/agentInputContracts';
@@ -12,6 +12,7 @@ import { t } from '@/text';
 import type { NewSessionTranscriptStorage } from '@/components/sessions/new/modules/newSessionTranscriptStorage';
 import { Icon } from '@/components/ui/icons/Icon';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE, AGENT_INPUT_MENU_ICON_SIZE_PX } from './agentInputChipIconMetrics';
+import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
 
 function buildTranscriptStorageOptions(): ReadonlyArray<AgentInputChipPickerOption> {
     return [
@@ -76,11 +77,10 @@ const TranscriptStorageChip = React.memo(function TranscriptStorageChip(props: T
     return (
         <>
             <View ref={anchorRef} collapsable={false} style={{ alignSelf: 'flex-start' }}>
-                <Pressable
+                <AgentInputRailChip
                     testID="agent-input-storage-chip"
                     onPress={() => setOpen((current) => !current)}
-                    hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                    style={({ pressed }) => props.ctx.chipStyle(Boolean(pressed))}
+                    style={(pressed) => props.ctx.chipStyle(Boolean(pressed))}
                     accessibilityRole="button"
                     accessibilityLabel={t('settingsSession.defaultStorage.title')}
                 >
@@ -97,7 +97,7 @@ const TranscriptStorageChip = React.memo(function TranscriptStorageChip(props: T
                                 : t('sessionsList.storagePersistedTab')}
                         </Text>
                     ) : null}
-                </Pressable>
+                </AgentInputRailChip>
             </View>
 
             <AgentInputSelectionListPopover

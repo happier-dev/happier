@@ -1,17 +1,18 @@
 import * as React from 'react';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { ComposerSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/composer';
 
 import type {
     DaemonPluginUiComposerSurfaceCatalogEntryV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
     DaemonPluginUiComposerSurfaceCatalogEntryV1Schema,
     PluginProjectionV2Schema,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { renderScreen } from '@/dev/testkit';
 import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
-import { createComposerPresentationTransactionApplier } from './sessionComposerPresentationTargets';
+import { createComposerPresentationTransactionApplier, registerComposerPresentationTarget } from './sessionComposerPresentationTargets';
 
 const pluginSurfaceHostSpy = vi.hoisted(() => vi.fn());
 
@@ -80,8 +81,20 @@ const lifetime = {
     isCurrent: () => true,
     onRetire: () => ({ dispose() {} }),
 };
+const scope = { serverId: 'server-1', accountId: 'composer-account' };
 
 describe('ComposerPluginSurface', () => {
+    beforeEach(() => {
+        const ref = { kind: 'newSession', instanceId: 'new-session-1' } as const;
+        const snapshot = ComposerSnapshotV1Schema.parse({
+            revision: 1, ref, text: '', references: [], attachments: [], layout: 'wrap',
+            capabilities: { text: true, references: true, attachments: true, submit: true },
+            state: { focused: false, editable: true, submittable: true, submitting: false, running: false },
+        });
+        onTestFinished(registerComposerPresentationTarget(ref, {
+            readScope: () => scope, readSnapshot: () => snapshot, readRevision: () => 1, replace: () => 1,
+        }));
+    });
     it('reuses the one PluginSurfaceHost composer arm with the supplied truthful target', async () => {
         const { ComposerPluginSurface } = await import('./ComposerPluginSurface');
         const baseCatalogEntry = createCatalogEntry();
@@ -103,6 +116,7 @@ describe('ComposerPluginSurface', () => {
         const catalogEntry = inputs.composerSurfaceCatalog![0]!;
 
         await renderScreen(<ComposerPluginSurface
+            scope={scope}
             request={{
                 contribution: catalogEntry.contribution,
                 occurrenceId: 'generation-1',
@@ -182,6 +196,7 @@ describe('ComposerPluginSurface', () => {
             const catalogEntry = inputs.composerSurfaceCatalog![0]!;
             return (
                 <ComposerPluginSurface
+                    scope={scope}
                     request={{
                         contribution: catalogEntry.contribution,
                         occurrenceId,
@@ -237,6 +252,7 @@ describe('ComposerPluginSurface', () => {
         const inputs = publishDaemonMergedProjectionInputs({ projection, composerSurfaceCatalog: [rawCatalogEntry] });
         const catalogEntry = inputs.composerSurfaceCatalog![0]!;
         const renderComposerSurface = () => renderScreen(<ComposerPluginSurface
+            scope={scope}
             request={{
                 contribution: catalogEntry.contribution,
                 occurrenceId: 'generation-1',

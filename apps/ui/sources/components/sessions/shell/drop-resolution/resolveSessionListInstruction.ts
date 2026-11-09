@@ -2,6 +2,7 @@ import { resolveTreeInstruction, type TreeDropResult, type WindowPointer } from 
 import { resolveSessionListItemOrganizationEligibility } from '@/sync/domains/sessionList/sessionListIndex';
 import { SESSION_FOLDER_MAX_DEPTH } from '@/sync/domains/session/folders/constants';
 import { isSessionListSessionSiblingReorder } from '@/sync/domains/session/listing/sessionListLayout';
+import { canMoveSessionListSourceToContainer, resolveSessionListDestinationFolderId } from './sessionListDestinationScope';
 
 import type {
     SessionListInstructionBlockReason,
@@ -63,7 +64,7 @@ function isSessionSiblingReorder(params: Readonly<{
     if (!destination) return false;
     return isSessionListSessionSiblingReorder({
         sourceFolderId: params.source.metadata.folderId,
-        destinationFolderId: destination.folderId,
+        destinationFolderId: resolveSessionListDestinationFolderId(params.source.metadata, destination),
     });
 }
 
@@ -105,14 +106,16 @@ export function resolveSessionListInstruction(params: Readonly<{
                     return params.tree.containerMetadataById.get(zone.containerId)?.kind === 'workspace-order'
                         && zone.containerId === params.source.metadata.containerId;
                 }
-                return zone.rootId === params.source.metadata.rootId;
+                const container = params.tree.containerMetadataById.get(zone.containerId);
+                return Boolean(container && canMoveSessionListSourceToContainer(params.source.metadata, container));
             },
             canNestInto: (_source, targetId) => {
                 if (params.source.metadata.kind === 'workspace-root') return false;
                 const target = params.tree.rowMetadataById.get(targetId);
                 if (!target) return false;
                 if (target.kind === 'session') return false;
-                return target.rootId === params.source.metadata.rootId;
+                const container = target.childContainerId ? params.tree.containerMetadataById.get(target.childContainerId) : null;
+                return Boolean(container && canMoveSessionListSourceToContainer(params.source.metadata, container));
             },
             canAdoptLeaf: (_source, target) => {
                 const canPutSessionUnder = params.canPutSessionUnder;
@@ -131,7 +134,8 @@ export function resolveSessionListInstruction(params: Readonly<{
                         && targetMetadata.containerId === params.source.metadata.containerId;
                 }
                 if (targetMetadata.kind === 'workspace-root') return false;
-                return targetMetadata.rootId === params.source.metadata.rootId;
+                const container = params.tree.containerMetadataById.get(targetMetadata.containerId);
+                return Boolean(container && canMoveSessionListSourceToContainer(params.source.metadata, container));
             },
         },
     });

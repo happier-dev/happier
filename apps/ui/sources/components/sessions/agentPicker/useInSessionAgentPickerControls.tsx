@@ -35,7 +35,7 @@ import {
     serverAccountScopeKeySuffix,
     type ServerAccountScope,
 } from '@/sync/domains/scope/serverAccountScope';
-import { useSettings } from '@/sync/store/hooks';
+import { useAgentUiSettings } from '@/agents/catalog/useAgentUiSettings';
 import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
 import { getConnectedAccountCatalogValue } from '@/sync/store/settings/connectedAccountCatalogSnapshot';
 
@@ -181,7 +181,8 @@ function InSessionAgentPickerDetailContent(props: Omit<
     Parameters<typeof buildSessionAgentPickerDetailContent>[0],
     'settings' | 'connectedServices'
 > & Readonly<{ accountScope: ServerAccountScope | null }>) {
-    const settings = useSettings();
+    const settings = useAgentUiSettings({ agentIds: [props.runtimeCarrierAgentId ?? props.agentCatalogEntry.agentId],
+        machineId: props.selectedMachineId, accountScope: props.accountScope, domain: 'runtime' });
     const { accountScope, ...detail } = props;
     const current = getConnectedAccountCatalogValue(accountScope, 'purposes');
     const identity = detail.agentCatalogEntry.identity;
@@ -196,7 +197,7 @@ function InSessionAgentPickerDetailContent(props: Omit<
             }),
         )
         : null;
-    return buildSessionAgentPickerDetailContent({ ...detail, settings, connectedServices });
+    return buildSessionAgentPickerDetailContent({ ...detail, accountScope, settings, connectedServices });
 }
 
 /** A target Agent starts at its own defaults, exactly as New Session starts it. */

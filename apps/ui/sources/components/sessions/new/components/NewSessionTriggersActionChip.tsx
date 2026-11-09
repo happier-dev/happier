@@ -1,9 +1,10 @@
-import { getNewSessionTriggersActionChipPlacement } from '../newSessionActionChipPlacements';
 import * as React from 'react';
 import { Pressable, View } from 'react-native';
 import { SessionInitialTriggerV1Schema, type SessionInitialTriggerV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import { getNewSessionTriggersActionChipPlacement, NEW_SESSION_TRIGGERS_CHIP_KEY as CHIP_KEY } from '../newSessionActionChipPlacements';
+export { getNewSessionTriggersActionChipPlacement } from '../newSessionActionChipPlacements';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE } from '@/components/sessions/agentInput/definitions/agentInputChipIconMetrics';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
@@ -29,8 +30,6 @@ type InitialTriggersProps = Readonly<{
     machineId: string | null;
     serverId: string | null;
 }>;
-
-const CHIP_KEY = 'new-session-triggers';
 
 /** Draft-only consumer. Session birth is the sole trigger writer. */
 export function createNewSessionTriggersActionChip(props: InitialTriggersProps): AgentInputExtraActionChip {

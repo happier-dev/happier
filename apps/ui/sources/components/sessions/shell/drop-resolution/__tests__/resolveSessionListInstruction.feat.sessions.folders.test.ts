@@ -9,6 +9,7 @@ import { buildSessionListDragSource } from '../buildSessionListDragSource';
 import { buildSessionListTreeRows } from '../buildSessionListTreeRows';
 import { resolveSessionListInstruction } from '../resolveSessionListInstruction';
 import { treeRowId } from '../treeRowId';
+import { isSessionTreeRowId } from '../treeRowId';
 
 const workspaceA: SessionFolderWorkspaceRefV1 = {
     t: 'workspaceScope',
@@ -147,6 +148,24 @@ function buildTree(items = mixedWorkspaceItems()) {
 }
 
 describe('resolveSessionListInstruction', () => {
+    it('keeps mirror geometry separate while drag metadata retains one Session address', () => {
+        const base = sessionItem({ id: 'mirrored', groupKey: 'project-a', folderId: null, depth: 0, workspace: workspaceA });
+        const shelf = { ...base, occurrenceRole: 'needsYou' as const, groupKey: 'attention' };
+        const baseId = treeRowId.session('server-a', 'mirrored');
+        const shelfId = treeRowId.session('server-a', 'mirrored', undefined, 'needsYou');
+        const tree = buildSessionListTreeRows({
+            items: [projectHeader('attention', workspaceA), shelf, projectHeader('project-a', workspaceA), base],
+            rowBoundsById: new Map([[shelfId, bounds(40)], [baseId, bounds(160)]]),
+        });
+        const sessionRows = [...tree.rowMetadataById.values()].filter(item => item.kind === 'session');
+        expect(sessionRows).toHaveLength(2);
+        expect(tree.rows.filter(item => isSessionTreeRowId(item.id)).map(item => item.bounds.y)).toEqual([40, 160]);
+        expect(sessionRows.map(item => [item.serverId, item.sessionId])).toEqual([
+            ['server-a', 'mirrored'], ['server-a', 'mirrored'],
+        ]);
+        expect(buildSessionListDragSource({ tree, sourceRowId: shelfId }).metadata).toMatchObject({ serverId: 'server-a', sessionId: 'mirrored' });
+    });
+
     it('keeps delimiter-bearing qualified Session tree rows distinct', () => {
         const first = treeRowId.session('https://home.example/a', 'b:c');
         const second = treeRowId.session('https://home.example/a:b', 'c');
@@ -381,7 +400,7 @@ describe('resolveSessionListInstruction', () => {
 
         expect(reorderAroundFolder.instruction.kind).toBe('blocked');
         expect(reorderAroundFolder.visual).toEqual({ kind: 'none' });
-        expect(reorderAroundFolder.sessionListBlockReason).toBe('ordering-mode');
+        expect(reorderAroundFolder.instruction).toMatchObject({ reason: 'workspace-scope-mismatch' });
 
         const folderTree = buildTree();
         const containment = resolveSessionListInstruction({
@@ -402,7 +421,7 @@ describe('resolveSessionListInstruction', () => {
         expect(containment.sessionListBlockReason).toBeUndefined();
     });
 
-    it('blocks folder nesting for a session without a durable workspace scope', () => {
+    it('admits same-Home section membership without a workspace scope', () => {
         const items: SessionListIndexItem[] = [
             projectHeader('project-a', workspaceA),
             {
@@ -439,11 +458,11 @@ describe('resolveSessionListInstruction', () => {
             foldersFeatureEnabled: true,
         });
 
-        expect(result.instruction.kind).toBe('blocked');
-        expect(result.sessionListBlockReason).toBe('scope-unavailable');
+        expect(result.instruction).toMatchObject({ kind: 'nest-into', targetId: treeRowId.folder('server-a', 'folder-a') });
+        expect(result.sessionListBlockReason).toBeUndefined();
     });
 
-    it('blocks cross-workspace drops', () => {
+    it('admits same-Home sections across workspace roots', () => {
         const tree = buildTree();
 
         const result = resolveSessionListInstruction({
@@ -453,11 +472,7 @@ describe('resolveSessionListInstruction', () => {
             foldersFeatureEnabled: true,
         });
 
-        expect(result.instruction).toEqual({
-            kind: 'blocked',
-            reason: 'workspace-scope-mismatch',
-            hintTargetId: treeRowId.folder('server-a', 'folder-c'),
-        });
+        expect(result.instruction).toMatchObject({ kind: 'nest-into', targetId: treeRowId.folder('server-a', 'folder-c') });
     });
 
     it('resolves a session drop into a sibling folder as a nest instruction', () => {
@@ -481,12 +496,29 @@ describe('resolveSessionListInstruction', () => {
     });
 
     it('resolves a session drop onto workspace-root whitespace as a scoped root move', () => {
-        const tree = buildTree();
+        const tree = buildSessionListTreeRows({
+            items: [
+                projectHeader('project-a', workspaceA),
+                sessionItem({ id: 'root-a', groupKey: 'project-a', folderId: null, depth: 0, workspace: workspaceA }),
+                projectHeader('project-b', workspaceB),
+                folderHeader({ id: 'folder-a', groupKey: 'section-a', depth: 0, workspace: workspaceA }),
+                sessionItem({ id: 'inside-a', groupKey: 'section-a', folderId: 'folder-a', depth: 1, workspace: workspaceA }),
+            ],
+            rowBoundsById: new Map([
+                [treeRowId.workspaceRoot('project-a'), bounds(0)],
+                [treeRowId.session('server-a', 'root-a'), bounds(40)],
+                [treeRowId.workspaceRoot('project-b'), bounds(120)],
+                [treeRowId.folder('server-a', 'folder-a'), bounds(200)],
+                [treeRowId.session('server-a', 'inside-a'), bounds(240)],
+            ]),
+            dropZoneBounds: [{ containerId: treeRowId.workspaceRoot('project-a'), role: 'root-after-last',
+                bounds: { x: 0, y: 84, width: 320, height: 16 } }],
+        });
 
         const result = resolveSessionListInstruction({
             tree,
             source: buildSessionListDragSource({ tree, sourceRowId: treeRowId.session('server-a', 'inside-a') }),
-            pointer: pointer(250),
+            pointer: pointer(90),
             foldersFeatureEnabled: true,
         });
 
@@ -499,25 +531,27 @@ describe('resolveSessionListInstruction', () => {
     });
 
     it('resolves workspace-root whitespace using implicit production drop zones', () => {
-        const items = mixedWorkspaceItems();
         const tree = buildSessionListTreeRows({
-            items,
+            items: [
+                projectHeader('project-a', workspaceA),
+                sessionItem({ id: 'root-a', groupKey: 'project-a', folderId: null, depth: 0, workspace: workspaceA }),
+                projectHeader('project-b', workspaceB),
+                folderHeader({ id: 'folder-a', groupKey: 'section-a', depth: 0, workspace: workspaceA }),
+                sessionItem({ id: 'inside-a', groupKey: 'section-a', folderId: 'folder-a', depth: 1, workspace: workspaceA }),
+            ],
             rowBoundsById: new Map<string, WindowBounds>([
                 [treeRowId.workspaceRoot('project-a'), bounds(0)],
-                [treeRowId.folder('server-a', 'folder-a'), bounds(40)],
-                [treeRowId.session('server-a', 'inside-a'), bounds(80)],
-                [treeRowId.folder('server-a', 'child-a'), bounds(120)],
-                [treeRowId.folder('server-a', 'folder-b'), bounds(160)],
-                [treeRowId.session('server-a', 'root-a'), bounds(200)],
-                [treeRowId.workspaceRoot('project-b'), bounds(300)],
-                [treeRowId.folder('server-a', 'folder-c'), bounds(340)],
+                [treeRowId.session('server-a', 'root-a'), bounds(40)],
+                [treeRowId.workspaceRoot('project-b'), bounds(120)],
+                [treeRowId.folder('server-a', 'folder-a'), bounds(200)],
+                [treeRowId.session('server-a', 'inside-a'), bounds(240)],
             ]),
         });
 
         const result = resolveSessionListInstruction({
             tree,
             source: buildSessionListDragSource({ tree, sourceRowId: treeRowId.session('server-a', 'inside-a') }),
-            pointer: pointer(250),
+            pointer: pointer(90),
             foldersFeatureEnabled: true,
         });
 
@@ -567,7 +601,7 @@ describe('resolveSessionListInstruction', () => {
         });
     });
 
-    it('resolves whitespace after an expanded folder subtree as a root sibling insertion', () => {
+    it('does not mix Session rows into the section header order', () => {
         const tree = buildSessionListTreeRows({
             items: mixedWorkspaceItems(),
             rowBoundsById: new Map<string, WindowBounds>([
@@ -589,26 +623,15 @@ describe('resolveSessionListInstruction', () => {
             foldersFeatureEnabled: true,
         });
 
-        expect(result.instruction).toEqual({
-            kind: 'reorder-before',
-            targetId: treeRowId.folder('server-a', 'folder-b'),
-            containerId: treeRowId.workspaceRoot('project-a'),
-            parentId: null,
-            depth: 0,
-        });
-        expect(result.visual).toEqual({
-            kind: 'line',
-            targetId: treeRowId.folder('server-a', 'folder-b'),
-            edge: 'top',
-            depth: 0,
-        });
+        expect(result.instruction).toMatchObject({ kind: 'blocked', reason: 'workspace-scope-mismatch' });
+        expect(result.visual).toEqual({ kind: 'none' });
     });
 
-    it('blocks folder drops into descendants', () => {
+    it('keeps imported child sections flat and refuses nesting their definitions', () => {
         const tree = buildTree();
 
         const source = buildSessionListDragSource({ tree, sourceRowId: treeRowId.folder('server-a', 'folder-a') });
-        expect(source.excludedDescendantIds.has(treeRowId.folder('server-a', 'child-a'))).toBe(true);
+        expect(source.excludedDescendantIds.has(treeRowId.folder('server-a', 'child-a'))).toBe(false);
 
         const result = resolveSessionListInstruction({
             tree,
@@ -619,7 +642,7 @@ describe('resolveSessionListInstruction', () => {
 
         expect(result.instruction).toEqual({
             kind: 'blocked',
-            reason: 'descendant-cycle',
+            reason: 'workspace-scope-mismatch',
             hintTargetId: treeRowId.folder('server-a', 'child-a'),
         });
     });

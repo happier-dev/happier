@@ -23,6 +23,7 @@ const sessionListState = vi.hoisted(() => ({
 
 const filterControllerState = vi.hoisted(() => ({
     controller: {
+        get displayFilters() { return this.filters; },
         filters: {
             scope: 'my_work',
             attention: 'any',
@@ -98,9 +99,9 @@ vi.mock('@/components/sessions/shell/ExternalSessionsEmptyState', () => ({
 vi.mock('@/components/sessions/shell/HiddenInactiveSessionsEmptyState', () => ({
     HiddenInactiveSessionsEmptyState: (props: any) => React.createElement('HiddenInactiveSessionsEmptyState', props),
 }));
-vi.mock('@/components/ui/feedback/ActivitySpinner', () => ({
-    ActivitySpinner: (props: any) => React.createElement('ActivitySpinner', props),
-}));
+
+// Collect the real module graph before timing the rendered loading-state contracts.
+const { SessionsListPaneContent } = await import('./SessionsListPaneContent');
 
 describe('SessionsListPaneContent (loading)', () => {
     beforeEach(() => {
@@ -122,9 +123,8 @@ describe('SessionsListPaneContent (loading)', () => {
             showEmptyState: false,
         };
 
-        const { SessionsListPaneContent } = await import('./SessionsListPaneContent');
         const screen = await renderScreen(
-            <SessionsListPaneContent storageKind="persisted" fallbackGuidanceVariant="sidebar" />,
+            <SessionsListPaneContent fallbackGuidanceVariant="sidebar" />,
             {
                 flushOptions: { cycles: 0 },
             },
@@ -136,9 +136,8 @@ describe('SessionsListPaneContent (loading)', () => {
     });
 
     it('uses the retained filter controller query when resolving the global pane', async () => {
-        const { SessionsListPaneContent } = await import('./SessionsListPaneContent');
         const screen = await renderScreen(
-            <SessionsListPaneContent storageKind="all" fallbackGuidanceVariant="sidebar" />,
+            <SessionsListPaneContent fallbackGuidanceVariant="sidebar" />,
             { flushOptions: { cycles: 0 } },
         );
 
@@ -164,9 +163,8 @@ describe('SessionsListPaneContent (loading)', () => {
             showEmptyState: false,
         };
 
-        const { SessionsListPaneContent } = await import('./SessionsListPaneContent');
         const screen = await renderScreen(
-            <SessionsListPaneContent storageKind="persisted" fallbackGuidanceVariant="sidebar" />,
+            <SessionsListPaneContent fallbackGuidanceVariant="sidebar" />,
             {
                 flushOptions: { cycles: 0 },
             },
@@ -191,9 +189,8 @@ describe('SessionsListPaneContent (loading)', () => {
             showEmptyState: true,
         };
 
-        const { SessionsListPaneContent } = await import('./SessionsListPaneContent');
         const screen = await renderScreen(
-            <SessionsListPaneContent storageKind="direct" fallbackGuidanceVariant="sidebar" />,
+            <SessionsListPaneContent fallbackGuidanceVariant="sidebar" />,
         );
 
         expect(screen.findByType('ExternalSessionsEmptyState' as any)).toBeTruthy();
@@ -214,9 +211,8 @@ describe('SessionsListPaneContent (loading)', () => {
             hasHiddenInactiveSessions: true,
         };
 
-        const { SessionsListPaneContent } = await import('./SessionsListPaneContent');
         const screen = await renderScreen(
-            <SessionsListPaneContent storageKind="persisted" fallbackGuidanceVariant="sidebar" />,
+            <SessionsListPaneContent fallbackGuidanceVariant="sidebar" />,
         );
 
         expect(screen.findByType('HiddenInactiveSessionsEmptyState' as any)).toBeTruthy();

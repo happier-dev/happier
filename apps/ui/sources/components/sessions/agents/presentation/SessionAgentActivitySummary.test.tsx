@@ -6,6 +6,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
 import { NO_SESSION_AGENT_ACTIVITY_ATTENTION, type AgentActivityEntry } from '@/sync/domains/session/agentActivity';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -43,6 +45,36 @@ async function stateWordStyle(status: AgentActivityEntry['status']) {
 }
 
 describe('SessionAgentActivitySummary', () => {
+    it('withdraws the retained live elapsed clock and reopens at the current start and status', async () => {
+        const now = Date.parse('2026-09-30T12:00:00.000Z');
+        vi.useFakeTimers({ now });
+        const census = installTimerCensus((stack) => stack.includes('agentActivityClock') ? 'elapsed' : null);
+        const initial = { ...entry('running'), startedAtMs: now - 2_000, endedAtMs: null };
+        const draw = (active: boolean, value: AgentActivityEntry = initial) => <PluginSurfaceFocusEligibilityProvider active={active}>
+            <SessionAgentActivitySummary presentation={resolveSessionAgentActivityPresentation({ entry: value })} testID="live" />
+        </PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderScreen(draw(true));
+        try {
+            expect(census.read()).toEqual([{ kind: 'interval', delayMs: 1000, consumer: 'elapsed' }]);
+            const first = screen.findByTestId('live:elapsed')?.props.children;
+            await screen.update(draw(false));
+            const before = census.readFires();
+            await act(async () => { vi.advanceTimersByTime(300_000); });
+            expect(census.readFires()).toEqual(before);
+            expect(census.read()).toEqual([]);
+            await screen.update(draw(true));
+            expect(screen.findByTestId('live:elapsed')?.props.children).not.toBe(first);
+            const updated = { ...initial, status: 'succeeded' as const, endedAtMs: Date.now() };
+            await screen.update(draw(true, updated));
+            expect(screen.findByTestId('live:elapsed')).toBeNull();
+            expect(screen.findByTestId('live:live')).toBeNull();
+            expect(census.read()).toEqual([]);
+        } finally {
+            await screen.unmount();
+            census.stop();
+            vi.useRealTimers();
+        }
+    });
     it('keeps a finished age on its display deadline while the genuine live elapsed leaf advances', async () => {
         const now = Date.parse('2026-09-30T12:00:00.000Z');
         vi.useFakeTimers({ now });

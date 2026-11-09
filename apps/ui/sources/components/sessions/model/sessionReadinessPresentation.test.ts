@@ -65,11 +65,11 @@ describe('presentSessionReadiness', () => {
         unavailableReason: 'unavailable',
       }),
     ).toMatchObject({ tone: 'unknown', repair: null });
-    const probing = present({
-      machine: { status: 'probing', machineId: 'm1' },
+    const pending = present({
+      machine: { status: 'unknown', machineId: 'm1' },
     });
-    expect(probing.tone).toBe('unknown');
-    expect(probing.title).not.toBe(t('session.collaboration.readiness.ready'));
+    expect(pending.tone).toBe('unknown');
+    expect(pending.title).not.toBe(t('session.collaboration.readiness.ready'));
   });
 
   it('says one Machine cause for an offline Bot and offers no borrowed repair', () => {
@@ -137,7 +137,7 @@ describe('presentSessionReadinessChecklist', () => {
       agent: { agentId: 'codex', state: 'ready', current: false, observedAtMs: 1, repair: null },
       invocation: null,
     })).toEqual([['machine', 'bad'], ['agent', 'unknown'], ['invocation', 'unknown']]);
-    expect(checklist({ machine: { status: 'probing', machineId: 'm1' } })[0]).toEqual(['machine', 'unknown']);
+    expect(checklist({ machine: { status: 'unknown', machineId: 'm1' } })[0]).toEqual(['machine', 'unknown']);
     expect(checklist({ agent: { agentId: 'codex', state: 'needsSignIn', current: true, observedAtMs: 1, repair: null } })[1])
       .toEqual(['agent', 'bad']);
   });

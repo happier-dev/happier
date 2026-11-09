@@ -1,4 +1,3 @@
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import type { PromptStackEntryV1 } from '@happier-dev/protocol/prompts/library/promptStacksV1';
 import { isPromptStackSystemAppendPlacementV1 } from '@happier-dev/protocol/prompts/library/promptPlacementV1';
@@ -9,16 +8,18 @@ import {
     type SessionPromptStackEntryV1,
 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
+import { resolveSessionProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import * as React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { useActiveServerAccountScope, getStorage } from '@/sync/domains/state/storage';
-import { usePromptStackEntryPresentations, type PromptStackEntryPresentation } from '@/components/settings/prompts/stacks/promptStackEntryPresentation';
-import { captureActiveServerAccountScopeCurrentness, captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { readCurrentProjectAccountRows } from '@/sync/store/domains/projectAccountRows';
-import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { usePromptStackEntryPresentations, type PromptStackEntryPresentation, type PromptStackEntryPresentationStatus } from '@/components/settings/prompts/stacks/promptStackEntryPresentation';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { readCurrentProjectAccountRows, readProjectAccountWorkspaceRefs } from '@/sync/domains/workspaces/projectAccountRows';
+import { workspaceRefResolutionContextV1 } from '@/sync/domains/workspaces/workspaceRefs';
+import { useProjectSource } from '@/components/projects/sources/useProjectSources';
 import { resolveWorkspaceDisplayNameFromPath } from '@/sync/domains/workspaces/resolveWorkspaceDisplayNameFromPath';
 import { useHomeAiLaunchProfileCatalog } from '@/sync/store/useAiLaunchProfiles';
 import { usePromptLibraryCatalogValue } from '@/sync/store/usePromptLibraryCatalog';
@@ -30,6 +31,7 @@ export type SessionContextRow = Readonly<{
     entry: SessionPromptStackEntryV1;
     title: string | null;
     kind: PromptStackEntryPresentation['kind'];
+    presentationStatus: PromptStackEntryPresentationStatus;
     /** Recheck the same qualified header owner before acting on a rendered row. */
     currentPresentation: () => PromptStackEntryPresentation;
     /** Read on the next turn: enabled at its source, not switched off here, and memory is on for memory. */
@@ -45,7 +47,9 @@ export type SessionContextLayers = Readonly<{
     memoryEnabled: boolean;
     account: readonly SessionContextRow[];
     profile: Readonly<{ status: 'pending' | 'ready' | 'unavailable'; name: string | null; rows: readonly SessionContextRow[] }>;
-    project: Readonly<{ status: 'none' | 'pending' | 'ready' | 'unavailable'; name: string | null; rows: readonly SessionContextRow[] }>;
+    project: Readonly<{ status: 'none' | 'pending' | 'ready' | 'unavailable';
+        /** Retained display content is readable while the owner refreshes; it grants no mutation authority. */
+        refreshing: boolean; name: string | null; rows: readonly SessionContextRow[] }>;
     session: readonly SessionContextRow[];
     sessionStackValid: boolean;
 }>;
@@ -53,7 +57,6 @@ export type SessionContextLayers = Readonly<{
 const StoredStack = createStoredReadSchema(SessionPromptStackV1Schema);
 const StoredDisabled = createStoredReadSchema(SessionDisabledInheritedEntryIdsV1Schema);
 const NO_ENTRIES: readonly PromptStackEntryV1[] = [];
-type ProjectRead = Readonly<{ key: string; isCurrent: () => boolean; status: 'pending' | 'ready' | 'unavailable'; entries: readonly PromptStackEntryV1[] }>;
 
 function field(metadata: unknown, key: string): unknown {
     return metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? Reflect.get(metadata, key) : undefined;
@@ -66,7 +69,7 @@ function text(value: unknown): string | null {
  * What an open Work pane shows as the Session's Context (lab `c-mem O`, plan 65 §2): the four layers
  * the prompt-stack resolver reads in order — Account, Profile, Project, Session — with each entry's
  * effective on/off. Display-only: it reuses the layers' own owners (the coding catalog row, the
- * Profile catalog, `readUiSessionProjectPromptStack`, the Session's `work` fields) and the resolver's
+ * Profile catalog, admitted Project rows/exact Source reader, the Session's `work` fields) and the resolver's
  * own switch rule; preparation never consumes this projection.
  */
 export function useSessionContextLayers(params: Readonly<{
@@ -84,72 +87,45 @@ export function useSessionContextLayers(params: Readonly<{
     const profileCatalog = useHomeAiLaunchProfileCatalog(accountKnown && profileId ? activeScope : null, profileId);
     // Retained raw rows remain readable display content; only the admitted selection establishes readiness.
     const profile = profileCatalog.selectedProfile ?? profileCatalog.profiles.find(candidate => candidate.id === profileId);
-    // Observe stable owner rows, not its refresh status (our own read also publishes that status).
+    // The Account sync/change owner admits and refreshes these rows. Display never starts a census.
     const [workspaceRows, organizationRows, projectOwnerStatus, projectCoverage] = getStorage()(useShallow(state => {
         const current = readCurrentProjectAccountRows(state);
-        return [current?.workspaceRefs, current?.organizations, current?.status, current?.coverage] as const;
+        return [readProjectAccountWorkspaceRefs(state), current?.organizations, current?.status, current?.coverage] as const;
     }));
 
     const work = field(ownerMetadata, 'work');
-    const workspaceId = text(field(ownerMetadata, 'workspaceId'));
-    const projectId = text(field(ownerMetadata, 'projectId'));
     const path = text(field(ownerMetadata, 'path'));
-    const hasProject = accountKnown && (workspaceId !== null || projectId !== null);
-    const projectKey = JSON.stringify([serverId, activeScope?.accountId, params.sessionId, workspaceId, projectId,
-        resolveSessionMachineId(ownerMetadata), path]);
-    const [projectRead, setProjectRead] = React.useState<ProjectRead | null>(null);
-    const metadataRef = React.useRef(ownerMetadata);
-    metadataRef.current = ownerMetadata;
-    const versionRef = React.useRef(params.metadataVersion);
-    versionRef.current = params.metadataVersion;
-    React.useEffect(() => {
-        if (!hasProject) return;
-        const lifetime = captureActiveServerAccountScopeCurrentness();
-        let controller: AbortController | null = null;
-        const refresh = () => {
-            if (!lifetime.isCurrent()) return;
-            controller?.abort();
-            const request = new AbortController();
-            controller = request;
-            setProjectRead((previous) => ({ key: projectKey, isCurrent: lifetime.isCurrent, status: 'pending',
-                entries: previous?.key === projectKey && previous.isCurrent() ? previous.entries : NO_ENTRIES }));
-            void (async () => {
-                const metadata = metadataRef.current;
-                if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return;
-                try {
-                    const [{ captureLazyActionAccountContext }, { readUiSessionProjectPromptStack }] = await Promise.all([
-                        import('@/sync/ops/actions/actionAccountContext'),
-                        import('@/sync/ops/actions/readUiMemoryInheritedContext'),
-                    ]);
-                    const account = await captureLazyActionAccountContext(serverId, request.signal);
-                    try {
-                        const context: ActionExecutorContext = { serverId, surface: 'ui', signal: request.signal };
-                        const entries = await readUiSessionProjectPromptStack(account,
-                            { metadata: { ...metadata }, revision: versionRef.current }, context);
-                        if (!request.signal.aborted && lifetime.isCurrent()) setProjectRead({ key: projectKey, isCurrent: lifetime.isCurrent, status: 'ready', entries });
-                    } finally {
-                        account.dispose();
-                    }
-                } catch {
-                    if (!request.signal.aborted && lifetime.isCurrent()) {
-                        setProjectRead((previous) => ({ key: projectKey, isCurrent: lifetime.isCurrent, status: 'unavailable',
-                            entries: previous?.key === projectKey && previous.isCurrent() ? previous.entries : NO_ENTRIES }));
-                    }
-                }
-            })();
-        };
-        const retirement = lifetime.onRetire(() => { controller?.abort(); setProjectRead(null); });
-        const unsubscribe = subscribeHomeAccountChange(event => {
-            if (areServerProfileIdentifiersEquivalent(event.serverId, serverId)) refresh();
-        });
-        refresh();
-        return () => { controller?.abort(); retirement.dispose(); unsubscribe(); };
-    }, [activeLifetime, hasProject, projectKey, serverId, workspaceRows, organizationRows]);
+    const machineId = resolveSessionMachineId(ownerMetadata);
+    const projectAssociation = React.useMemo(() => resolveSessionProjectKeyV1(
+        ownerMetadata && typeof ownerMetadata === 'object' && !Array.isArray(ownerMetadata) ? { ...ownerMetadata, machineId } : null,
+        serverId, accountKnown ? workspaceRows : undefined, workspaceRefResolutionContextV1(),
+    ), [accountKnown, machineId, ownerMetadata, serverId, workspaceRows]);
+    const hasProject = accountKnown && projectAssociation.kind === 'resolved';
+    const projectId = hasProject && projectAssociation.kind === 'resolved' ? projectAssociation.projectKey.projectKey : null;
+    const sourceId = hasProject && projectAssociation.kind === 'resolved' ? projectAssociation.ref?.source?.sourceId ?? null : null;
+    const source = useProjectSource(accountKnown ? activeLifetime : null, sourceId);
+    const projectEntries = React.useMemo(() => {
+        if (!hasProject || !workspaceRows) return NO_ENTRIES;
+        const entries = sourceId ? source.source?.source.attachments?.flatMap(attachment => attachment.purpose === 'context' ? [attachment.entry] : [])
+            : organizationRows?.find(row => areServerProfileIdentifiersEquivalent(row.key.serverId, serverId)
+                && row.key.projectKey === projectId)?.value.promptStack;
+        return entries?.map(entry => ({ ...entry, ref: { ...entry.ref, serverId: entry.ref.serverId ?? serverId } })) ?? NO_ENTRIES;
+    }, [hasProject, organizationRows, projectId, serverId, source.source, sourceId, workspaceRows]);
+    const projectStatus: SessionContextLayers['project']['status'] = projectAssociation.kind === 'none' ? 'none'
+        : !accountKnown || projectOwnerStatus === 'locked' || projectOwnerStatus === 'refused'
+            || projectOwnerStatus === 'error' && !workspaceRows
+            || projectOwnerStatus === 'ready' && (projectCoverage !== 'complete' || projectAssociation.kind !== 'resolved') ? 'unavailable'
+            : !workspaceRows ? 'pending'
+                : projectAssociation.kind !== 'resolved' || !projectAssociation.ref ? 'unavailable'
+                    : sourceId && !source.source ? source.status === 'initial' || source.status === 'loading' ? 'pending' : 'unavailable'
+                        : 'ready';
+    const projectRefreshing = projectStatus === 'ready'
+        && (projectOwnerStatus !== 'ready' || sourceId !== null && source.status !== 'ready');
 
     const stack = React.useMemo(() => StoredStack.safeParse(field(work, 'promptStack') ?? []), [work]);
     const entries = React.useMemo(() => [...(coding.value?.entries ?? NO_ENTRIES), ...(profile?.promptStack ?? NO_ENTRIES),
-        ...(projectRead?.key === projectKey && projectRead.isCurrent() ? projectRead.entries : NO_ENTRIES), ...(stack.success ? stack.data : NO_ENTRIES)],
-        [activeLifetime, coding.value?.entries, profile?.promptStack, projectRead, projectKey, stack]);
+        ...projectEntries, ...(stack.success ? stack.data : NO_ENTRIES)],
+        [coding.value?.entries, profile?.promptStack, projectEntries, stack]);
     const presentations = usePromptStackEntryPresentations(entries, serverId);
     return React.useMemo((): SessionContextLayers => {
         const memoryEnabled = readSessionMemoryEnabledV1(ownerMetadata);
@@ -161,13 +137,14 @@ export function useSessionContextLayers(params: Readonly<{
             .filter((entry) => isPromptStackSystemAppendPlacementV1(entry.placement))
             .map((entry) => {
                 const { kind, title } = presentations(entry);
+                const presentationStatus = presentations.status(entry);
                 const off = !entry.enabled ? (layer === 'session' ? 'session' : 'source')
                     : layer !== 'session' && disabled.has(entry.id) ? 'session'
                         : kind === 'memory' && !memoryEnabled ? 'memory' : null;
-                return { layer, entry, kind, off, on: kind !== 'unknown' && off === null, title,
+                return { layer, entry, kind, presentationStatus, off,
+                    on: presentationStatus !== 'unavailable' && off === null, title,
                     currentPresentation: () => presentations(entry) };
             });
-        const project = projectRead?.key === projectKey && projectRead.isCurrent() ? projectRead : null;
         return {
             accountKnown,
             accountStatus: coding.status === 'ready' ? 'ready' : coding.status === 'loading' ? 'pending' : 'unavailable',
@@ -178,15 +155,13 @@ export function useSessionContextLayers(params: Readonly<{
                 : profileCatalog.status === 'ready' && profileCatalog.selectedProfile ? 'ready' : 'unavailable',
                 name: profile?.name ?? null, rows: rows('profile', profile?.promptStack ?? NO_ENTRIES) },
             project: {
-                status: !hasProject ? 'none'
-                    : projectOwnerStatus === 'error' || projectOwnerStatus === 'locked' || projectOwnerStatus === 'refused'
-                        || projectOwnerStatus === 'ready' && projectCoverage !== 'complete' ? 'unavailable'
-                        : projectOwnerStatus === 'loading' || projectOwnerStatus === 'idle' ? 'pending' : project?.status ?? 'pending',
+                status: projectStatus,
+                refreshing: projectRefreshing,
                 name: path ? resolveWorkspaceDisplayNameFromPath(path) : null,
-                rows: rows('project', project?.entries ?? NO_ENTRIES),
+                rows: rows('project', projectEntries),
             },
             session: rows('session', stack.success ? stack.data : NO_ENTRIES),
             sessionStackValid: stack.success,
         };
-    }, [activeLifetime, accountKnown, presentations, stack, coding.status, coding.value?.entries, hasProject, ownerMetadata, path, profileId, profileCatalog.status, profileCatalog.selectedProfile, profile?.name, profile?.promptStack, projectKey, projectRead, projectOwnerStatus, projectCoverage, work]);
+    }, [activeLifetime, accountKnown, presentations, stack, coding.status, coding.value?.entries, ownerMetadata, path, profileId, profileCatalog.status, profileCatalog.selectedProfile, profile?.name, profile?.promptStack, projectStatus, projectRefreshing, projectEntries, work]);
 }

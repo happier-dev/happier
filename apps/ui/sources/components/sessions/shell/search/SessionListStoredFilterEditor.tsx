@@ -64,6 +64,7 @@ export function SessionListStoredFilterEditor(
       includeInactive={false}
       inactiveVisibilityAvailable={false}
       fixedShow="sessions"
+      evaluator="daemonRule"
       fixedHomeServerIds={fixedHomes}
       labels={labels}
       updateFilters={save}

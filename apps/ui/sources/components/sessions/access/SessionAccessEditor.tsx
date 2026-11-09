@@ -3,10 +3,16 @@ import { announceAccessibilityMessage } from '@/components/ui/accessibility/anno
 import { ShareSheet } from '@/components/sharing/ShareSheet';
 import { createSessionShareSheetAdapter, isSessionAccessEditable } from './sessionShareSheetAdapter';
 import type { SessionAccessEditorProps } from './sessionAccessEditorTypes';
+import { useSessionAccessQueryText } from './sessionAccessQuery';
+import { useOpenBotTemplate } from '@/components/sessions/bots/templates/openBotTemplate';
 
 /** The session share sheet: the one `ShareSheet` with the session adapter. */
 export function SessionAccessEditor(props: SessionAccessEditorProps): React.ReactElement {
     const { model, actions, presentation, onRequestClose, testID = 'session-access-editor' } = props;
+    // The editor is the one subscriber to the typed search: a key re-renders this field and its
+    // result list, never the host that mounted the controller.
+    const query = useSessionAccessQueryText(props.query);
+    const giveBotCopy = useOpenBotTemplate(props.templateSource?.session ?? null, props.templateSource?.serverId ?? '');
     // Encrypted-access preparation is slow, asynchronous and invisible to a screen reader once the
     // summary row has been read. The projector already decides what a material state is, so this
     // only reports the moment one is *reached*: a committed count tick and a later recipient page
@@ -21,11 +27,12 @@ export function SessionAccessEditor(props: SessionAccessEditorProps): React.Reac
         announceAccessibilityMessage(encryptionAnnouncement);
     }, [encryptionAnnouncement, encryptionStatusKey]);
     const adapter = createSessionShareSheetAdapter({
-        model, actions,
+        model, actions, readQuery: () => props.query?.read() ?? '',
         ...(props.linkPath ? { linkPath: props.linkPath } : {}),
         responsibleAccountId: props.responsibleAccountId,
         publicLink: props.publicLink,
         ...(props.onOpenFullSurface ? { onOpenFullSurface: props.onOpenFullSurface } : {}),
+        ...(giveBotCopy ? { onGiveBotCopy: () => { void giveBotCopy().then(() => onRequestClose?.()); } } : {}),
     });
     const sheetModel = {
         revision: model.revision,
@@ -33,7 +40,7 @@ export function SessionAccessEditor(props: SessionAccessEditorProps): React.Reac
         stale: model.content.phase === 'error' && model.content.hasLastAcknowledgedSnapshot,
         owner: model.owner,
         grants: model.grants,
-        directory: model.directory,
+        directory: { query, sections: model.directory.sections },
     };
     return <ShareSheet model={sheetModel} actions={actions} adapter={adapter} presentation={presentation}
         onRequestClose={onRequestClose} openRowRequest={props.openRowRequest} testID={testID} />;

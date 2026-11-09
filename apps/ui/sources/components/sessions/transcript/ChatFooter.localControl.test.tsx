@@ -7,6 +7,7 @@ import { getSessionLocalControlState } from '@/sync/domains/session/control/sess
 import { shouldOfferLocalControlRelease } from '@/sync/domains/session/control/localControlSwitch';
 import { installTranscriptCommonModuleMocks, resetTranscriptCommonModuleMockState } from './transcriptTestHelpers';
 import { ChatFooter } from './ChatFooter';
+import { WarningActionBanner } from '@/components/sessions/shell/view/WarningActionBanner';
 
 (
     globalThis as typeof globalThis & {
@@ -66,6 +67,7 @@ type ChatFooterTestProps = Omit<ChatFooterProps, 'externalControl'> & Readonly<{
 const UNKNOWN_EXTERNAL_AGENT_PRESENTATION: ExternalControl['externalAgentPresentation'] = {
     state: 'unknown',
     labelKey: 'status.externalStatusUnknown',
+    needsAttention: false,
     agentLabel: null,
     machineLabel: null,
 };
@@ -257,6 +259,7 @@ describe('ChatFooter (local control)', () => {
                 externalAgentPresentation: {
                     state: 'idle',
                     labelKey: 'status.ready',
+                    needsAttention: false,
                     agentLabel: null,
                     machineLabel: null,
                 },
@@ -291,6 +294,7 @@ describe('ChatFooter (local control)', () => {
                 externalAgentPresentation: {
                     state: 'waiting',
                     labelKey: 'status.needsInputExternally',
+                    needsAttention: true,
                     agentLabel: 'Codex',
                     machineLabel: 'MacBook Pro',
                 },
@@ -318,13 +322,15 @@ describe('ChatFooter (local control)', () => {
                 externalAgentPresentation: {
                     state: 'unknown',
                     labelKey: 'status.externalStatusUnknown',
+                    needsAttention: false,
                     agentLabel: null,
                     machineLabel: null,
                 },
             },
         });
 
-        expect(screen.getTextContent()).toContain('status.externalStatusUnknown');
+        expect(screen.getTextContent()).toContain('externalSessions.externalAgentRunsOutsideHappier');
+        expect(screen.getTextContent()).not.toContain('externalSessions.externalAgentTakeOverHint');
         expect(screen.getTextContent()).not.toContain('chatFooter.externalSessionTakeoverAvailable');
         expect(screen.findByTestId('session-chatFooter-takeOverDirect')).toBeNull();
     });
@@ -383,42 +389,53 @@ describe('ChatFooter (local control)', () => {
         expect(onRequestTakeoverPreflight).toHaveBeenCalledTimes(1);
     });
 
-    it('renders Import into Happier as a separate primary external-session action', async () => {
+    it('keeps one external-session footer row with Take over primary and Import into Happier secondary', async () => {
         const onRequestMaterialize = vi.fn(async () => {});
+        const onRequestTakeoverPreflight = vi.fn(async () => {});
         const screen = await renderFooter({
             externalControl: {
                 statusKnown: true,
                 machineOnline: true,
-                runnerActive: true,
-                activity: 'running',
+                runnerActive: false,
+                trustedPid: null,
+                activity: 'idle',
+                canTakeOverDirect: true,
+                canTakeOverPersist: false,
                 takeoverPreflightInFlight: false,
                 takeoverInFlight: null,
+                onRequestTakeoverPreflight,
                 materialize: {
                     requestEnabled: true,
                     inFlight: false,
                     onRequest: onRequestMaterialize,
                 },
             },
-        } as any);
+        });
 
-        expect(screen.findByTestId('session-chatFooter-importIntoHappier')).not.toBeNull();
-        expect(screen.getTextContent()).toContain('externalSessions.operationTitleMaterialize');
+        const banners = screen.findAllByType(WarningActionBanner);
+        expect(banners.map((banner) => banner.props.testID)).toEqual(['session-chatFooter-externalControl']);
+        expect(banners[0]?.props.actionTestID).toBe('session-chatFooter-takeOverDirect');
+        expect(banners[0]?.props.secondaryActions?.map((action: { testID: string }) => action.testID))
+            .toEqual(['session-chatFooter-importIntoHappier']);
 
         await act(async () => {
             screen.pressByTestId('session-chatFooter-importIntoHappier');
         });
-
         expect(onRequestMaterialize).toHaveBeenCalledTimes(1);
+        expect(onRequestTakeoverPreflight).not.toHaveBeenCalled();
     });
 
-    it('keeps Import into Happier available to perform its current-status preflight', async () => {
+    it('makes Import into Happier the one primary, with its purpose, when Take over is not offered', async () => {
         const onRequestMaterialize = vi.fn(async () => {});
         const screen = await renderFooter({
             externalControl: {
                 statusKnown: false,
                 machineOnline: false,
                 runnerActive: false,
+                trustedPid: null,
                 activity: 'unknown',
+                canTakeOverDirect: false,
+                canTakeOverPersist: false,
                 takeoverPreflightInFlight: false,
                 takeoverInFlight: null,
                 materialize: {
@@ -427,10 +444,13 @@ describe('ChatFooter (local control)', () => {
                     onRequest: onRequestMaterialize,
                 },
             },
-        } as any);
+        });
 
-        const action = screen.findByTestId('session-chatFooter-importIntoHappier');
-        expect(action?.props.disabled).toBe(false);
+        const banners = screen.findAllByType(WarningActionBanner);
+        expect(banners.map((banner) => banner.props.testID)).toEqual(['session-chatFooter-externalControl']);
+        expect(banners[0]?.props.actionTestID).toBe('session-chatFooter-importIntoHappier');
+        expect(banners[0]?.props.secondaryActions ?? []).toEqual([]);
+        expect(banners[0]?.props.disabled).toBe(false);
         expect(screen.getTextContent()).toContain('externalSessions.operationMaterializeAvailable');
         await act(async () => {
             screen.pressByTestId('session-chatFooter-importIntoHappier');
@@ -455,7 +475,8 @@ describe('ChatFooter (local control)', () => {
             },
         });
 
-        expect(screen.getTextContent()).toContain('status.externalStatusUnknown');
+        expect(screen.getTextContent()).toContain('externalSessions.externalAgentRunsOutsideHappier');
+        expect(screen.getTextContent()).toContain('externalSessions.externalAgentTakeOverHint');
         expect(screen.getTextContent()).not.toContain('chatFooter.externalSessionTakeoverAvailable');
         expect(screen.findByTestId('session-chatFooter-takeOverDirect')).not.toBeNull();
     });
@@ -503,5 +524,71 @@ describe('ChatFooter (local control)', () => {
         expect(screen.getTextContent()).toContain('chatFooter.switchingToDirectTakeover');
         expect(screen.findByTestId('session-chatFooter-takeOverDirect')).toBeNull();
         expect(screen.findByTestId('session-chatFooter-takeOverPersist')).toBeNull();
+    });
+
+    it.each([
+        ['unknown', 'status.externalStatusUnknown', false, 'neutral'],
+        ['working', 'status.workingExternally', false, 'neutral'],
+        ['idle', 'status.ready', false, 'neutral'],
+        ['waiting', 'status.needsInputExternally', true, 'warning'],
+        ['retrying', 'status.retryingExternally', true, 'warning'],
+    ] as const)('styles the %s external-Agent footer by whether it needs the user', async (state, labelKey, needsAttention, tone) => {
+        const screen = await renderFooter({
+            externalControl: {
+                statusKnown: true,
+                machineOnline: true,
+                runnerActive: false,
+                trustedPid: null,
+                activity: 'idle',
+                canTakeOverDirect: true,
+                canTakeOverPersist: false,
+                takeoverPreflightInFlight: false,
+                takeoverInFlight: null,
+                onRequestTakeoverPreflight: vi.fn(async () => {}),
+                materialize: null,
+                externalAgentPresentation: {
+                    state,
+                    labelKey,
+                    needsAttention,
+                    agentLabel: 'Codex',
+                    machineLabel: 'MacBook Pro',
+                },
+            },
+        });
+
+        const banner = screen.findAllByType(WarningActionBanner)
+            .find((instance) => instance.props.testID === 'session-chatFooter-externalControl');
+        expect(banner?.props.tone).toBe(tone);
+    });
+
+    it('says where an unreported external session runs and what Take over does, instead of an unknown status', async () => {
+        const screen = await renderFooter({
+            externalControl: {
+                statusKnown: false,
+                machineOnline: false,
+                runnerActive: false,
+                trustedPid: null,
+                activity: 'unknown',
+                canTakeOverDirect: false,
+                canTakeOverPersist: false,
+                takeoverPreflightInFlight: false,
+                takeoverInFlight: null,
+                onRequestTakeoverPreflight: vi.fn(async () => {}),
+                materialize: null,
+                externalAgentPresentation: {
+                    state: 'unknown',
+                    labelKey: 'status.externalStatusUnknown',
+                    needsAttention: false,
+                    agentLabel: 'Codex',
+                    machineLabel: 'MacBook Pro',
+                },
+            },
+        });
+
+        const text = screen.getTextContent();
+        expect(text).toContain('externalSessions.externalAgentRunsOnMachine');
+        expect(text).toContain('externalSessions.externalAgentTakeOverHint');
+        expect(text).not.toContain('status.externalStatusUnknown');
+        expect(screen.findByTestId('session-chatFooter-takeOverDirect')).not.toBeNull();
     });
 });

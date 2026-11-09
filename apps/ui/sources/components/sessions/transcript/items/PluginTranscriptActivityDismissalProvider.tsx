@@ -88,7 +88,7 @@ function createDismissalOwner(): PluginTranscriptActivityDismissalOwner {
                 accountEntries.entries.delete(key);
             }
         }
-    });
+    }, { deletedSessionIds: true });
 
     return Object.freeze({
         acquire(binding) {

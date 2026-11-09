@@ -1,6 +1,5 @@
-import { getConnectedServicesAuthActionChipPlacement } from './agentInputActionChipPlacements';
 import * as React from 'react';
-import { Platform, Pressable } from 'react-native';
+import { Platform } from 'react-native';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
 import type { AgentInputContentPopoverHeader, AgentInputPopoverContent } from '@/components/sessions/agentInput/components/AgentInputContentPopover';
@@ -9,8 +8,11 @@ import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeFor
 import { Icon } from '@/components/ui/icons/Icon';
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { t } from '@/text';
+import { getConnectedServicesAuthActionChipPlacement } from './agentInputActionChipPlacements';
+export { getConnectedServicesAuthActionChipPlacement } from './agentInputActionChipPlacements';
 
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE, AGENT_INPUT_MENU_ICON_SIZE_PX } from './agentInputChipIconMetrics';
+import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
 
 export type ConnectedServicesAuthActionChipSource = 'native' | 'connected' | 'mixed' | 'unknown';
 
@@ -67,13 +69,12 @@ export function createConnectedServicesAuthActionChip(params: Readonly<{
             scrollEnabled: false,
         },
         render: ({ chipStyle, iconColor, showLabel, textStyle, countTextStyle, chipAnchorRef, toggleCollapsedPopover }) => (
-            <Pressable
+            <AgentInputRailChip
                 ref={chipAnchorRef}
                 testID={params.testID ?? 'new-session-connected-services-auth-chip'}
-                {...webAuthSourceProps}
+                webAttributes={webAuthSourceProps}
                 onPress={() => toggleCollapsedPopover?.('new-session-connected-services-auth')}
-                hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                style={(pressed) => chipStyle(pressed.pressed)}
+                style={chipStyle}
             >
                 {normalizeNodeForView(<Icon name="path" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={iconColor} style={AGENT_INPUT_CHIP_ICON_STYLE} />)}
                 {showLabel ? (
@@ -83,7 +84,7 @@ export function createConnectedServicesAuthActionChip(params: Readonly<{
                         countTextStyle={countTextStyle}
                     />
                 ) : null}
-            </Pressable>
+            </AgentInputRailChip>
         ),
     };
 }

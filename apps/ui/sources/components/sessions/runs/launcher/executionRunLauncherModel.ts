@@ -5,6 +5,7 @@ import { resolveExecutionRunIntentTitle } from '@/components/sessions/runs/resol
 import { t } from '@/text';
 import { ExecutionRunIntentSchema } from '@happier-dev/protocol/execution/runs/index';
 import type { DiscussionSelectionSourceV1 } from '@happier-dev/protocol/discussions/content';
+import type { ComparisonReviewDraftInput } from './useComparisonReviewDraft';
 
 export const EXECUTION_RUN_LAUNCH_INTENTS = ['review', 'plan', 'delegate'] as const;
 
@@ -62,6 +63,15 @@ export type ExecutionRunStartPreset = Readonly<{
     title: string;
 }>;
 
+/** Review acceptance accompanies the resulting Run, including results that started partially. */
+export type ExecutionRunReviewPresentation = Readonly<{
+    reviewersNotStarted?: readonly string[];
+    reviewRunIds?: readonly string[];
+    comparisonId?: string;
+    narrationError?: string | null;
+    walkthrough?: boolean;
+}>;
+
 export function createExecutionRunLauncherDetailsTab(intent?: ExecutionRunIntent, preset?: ExecutionRunStartPreset): DetailsTab {
     const baseKey = intent ? `execution-run-launcher:${intent}` : 'execution-run-launcher';
     return {
@@ -80,6 +90,18 @@ export function createExecutionRunLauncherDetailsTab(intent?: ExecutionRunIntent
             ...(preset ? { roleId: preset.roleId } : {}),
         },
     };
+}
+
+/** Changes opens the same Run draft with the exact comparison, never a second review presenter. */
+export function createComparisonReviewExecutionRunDraftDetailsTab(
+    comparisonReview: ComparisonReviewDraftInput,
+    detachedWorkspace?: Readonly<{ machineId: string; cwd: string }>,
+    sessionId?: string,
+): DetailsTab {
+    const tab = createExecutionRunLauncherDetailsTab('review');
+    return { ...tab, resource: { kind: 'executionRunLauncher', intent: 'review', comparisonReview,
+        ...(detachedWorkspace ? { sessionId: null, workspace: detachedWorkspace } : {}),
+        ...(sessionId ? { sessionId } : {}) } };
 }
 
 /**
@@ -130,12 +152,14 @@ export function createExecutionRunDetailsTab(
     recovery?: Readonly<{ retryInputLocalId: string; initialText?: string }>,
     title?: string | null,
     detachedWorkspace?: Readonly<{ machineId: string; cwd: string }>,
+    review?: ExecutionRunReviewPresentation,
 ): DetailsTab {
     return {
         key: `execution-run:${runId}`,
         kind: 'executionRun',
         title: title?.trim() || t('runPage.untitledRun'),
         resource: { kind: 'executionRun', runId, ...(recovery ?? {}),
+            ...(review ?? {}),
             ...(detachedWorkspace ? { sessionId: null, workspace: detachedWorkspace } : {}) },
     };
 }

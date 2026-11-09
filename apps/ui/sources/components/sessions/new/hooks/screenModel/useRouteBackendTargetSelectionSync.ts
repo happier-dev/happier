@@ -1,5 +1,5 @@
 import React from 'react';
-import type { BackendTargetRefV2, PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
+import type { BackendTargetRefV2, PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';

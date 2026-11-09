@@ -19,6 +19,12 @@ function file(fullPath: string, linesAdded: number, linesRemoved: number, extra:
 }
 
 describe('summarizeTurnChanges', () => {
+    it('counts media files in the turn without their line statistics', () => {
+        expect(summarizeTurnChanges([file('a.ts', 3, 1), file('guide.pdf', 100, 50), file('image.png', 40, 20),
+            file('recording.mp4', 20, 10), file('sound.mp3', 10, 5), file('opaque.dat', 9, 4, { isBinary: true })]))
+            .toEqual({ fileCount: 6, folderCount: 0, added: 3, removed: 1, linesKnown: true });
+    });
+
     it('counts 214 files and their root folder without building or sorting file rows', () => {
         const files = Array.from({ length: 214 }, (_, index) => file(`src/File${String(index).padStart(3, '0')}.ts`, 1, 2));
         // Call-through observation of real sort work; the outline and summary implementations stay real.

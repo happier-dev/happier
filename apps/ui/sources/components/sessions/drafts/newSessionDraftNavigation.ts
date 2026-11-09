@@ -12,9 +12,13 @@ export function buildNewSessionDraftContinueRoute(draftId: string, scope: Server
 export async function navigateToSavedNewSessionDraft(draftId: string, scope: ServerAccountScope,
     isCurrent: () => boolean): Promise<boolean> {
     try {
-        const { router } = await import('expo-router');
+        const [{ router }, { interceptNewSessionEntry }] = await Promise.all([
+            import('expo-router'),
+            import('@/components/sessions/new/navigation/newSessionEntry'),
+        ]);
         if (!isCurrent()) return false;
-        router.push(buildNewSessionDraftContinueRoute(draftId, scope));
+        const href = buildNewSessionDraftContinueRoute(draftId, scope);
+        if (!interceptNewSessionEntry(href)) router.push(href);
         return true;
     } catch {
         return false;

@@ -743,13 +743,11 @@ export function SessionHandoffProgressModal({ onClose, setChrome, title, message
                         expanded={detailsExpanded}
                         onExpandedChange={setDetailsExpanded}
                         showDivider={false}
-                        header={({ expanded, headerProps }) => (
+                        header={({ headerProps }) => (
                             <Item
                                 {...headerProps}
                                 testID="session-handoff-progress-details-toggle"
                                 title={t('common.details')}
-                                showChevron={false}
-                                rightElement={<Icon name={expanded ? 'caret-down' : 'caret-right'} size={16} color={theme.colors.text.secondary} />}
                             />
                         )}
                     >

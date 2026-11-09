@@ -70,7 +70,9 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
     target: SessionServerStartDraftTarget;
 }>) {
     const existingDraft = props.seed.existingDraft;
-    const seededDirectory = props.seed.directory ?? (existingDraft?.directory.kind === 'path' ? existingDraft.directory.path : undefined);
+    const seededDirectoryIntent = props.seed.directoryIntent
+        ?? (props.seed.directory ? { kind: 'path' as const, path: props.seed.directory } : existingDraft?.directory);
+    const seededDirectory = seededDirectoryIntent?.kind === 'path' ? seededDirectoryIntent.path : undefined;
     const machines = useActiveMachineFacts();
     const machineListByServerId = useMachineListByServerId();
     const machineListStatusByServerId = useMachineListStatusByServerId();
@@ -112,6 +114,7 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
         seededDirectory ?? selectedPlacement.directory ?? machine?.metadata?.homeDir ?? ''
     ));
     const [directoryEdited, setDirectoryEdited] = React.useState(false);
+    const noFolderSelected = !directoryEdited && seededDirectoryIntent?.kind === 'managed';
     // A row reads as selected only while the working directory is that checkout; the chosen Machine and Home outlive it.
     const directoryCandidateIndex = findSessionServerStartCandidateForDirectory({
         candidates: props.seed.candidates, target: selectedTarget, directory,
@@ -149,7 +152,7 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
         serverId: selectedTarget.serverId,
         executionTarget: selectedTarget,
         directory: directory.trim(),
-        directoryKind: !directoryEdited && existingDraft?.directory.kind === 'managed' ? 'managed' : 'path',
+        directoryKind: noFolderSelected ? 'managed' : 'path',
         initialPlacement: existingDraft?.organizationPlacement ?? null,
         initialPlacementServerId: existingDraft?.executionTarget.serverId,
         reconcileWorkspace: organizationScopeEdited,
@@ -176,7 +179,7 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
         // This surface only authors a recipe. Keeping an unchanged placement does
         // not invoke the feature-gated Session creation path.
         && (organization.valid || !organizationScopeEdited)
-        && (directory.trim().length > 0 || (!directoryEdited && existingDraft?.directory.kind === 'managed'));
+        && (directory.trim().length > 0 || noFolderSelected);
     const resolveDraft = React.useCallback((): SessionServerStartSpawnDraftV1 | null => {
         const agentTarget = selection.agentTarget;
         if (!agentTarget || !canSubmit) return null;
@@ -188,6 +191,7 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
             const authoringDraft = existingDraft ? null : buildNewSessionAuthoringDraftFromResolvedInputs({
                 executionTarget: { kind: 'machine', target: selectedTarget },
                 directory: directory.trim(),
+                directoryKind: noFolderSelected ? 'managed' : 'path',
                 checkoutCreationDraft: null,
                 prompt: '',
                 displayText: '',
@@ -222,7 +226,8 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
                 edits: {
                     executionTarget: selectedTarget,
                     agentTarget,
-                    ...(directoryEdited || !existingDraft ? { directory: { kind: 'path', path: directory.trim() } } : {}),
+                    ...(directoryEdited || !existingDraft ? { directory: noFolderSelected
+                        ? { kind: 'managed' } : { kind: 'path', path: directory.trim() } } : {}),
                     permissionMode,
                     ...(changed('modelSelection') ? { modelSelection: selection.modelSelection ?? undefined } : {}),
                     ...(changed('profileId') ? { profileId: selection.profileId ?? undefined } : {}),
@@ -242,10 +247,10 @@ export function useSessionServerStartDraftRecipe(props: Readonly<{
             setError(true);
             return null;
         }
-    }, [canSubmit, directory, directoryEdited, edited, existingDraft, organization.placement, props, selectedTarget, selection]);
+    }, [canSubmit, directory, directoryEdited, edited, existingDraft, noFolderSelected, organization.placement, props, selectedTarget, selection]);
     // The candidate this draft names stays drawn even when its Machine is no longer a launch choice.
     const placementRows = useSessionPlacementCandidateRows(props.seed.candidates, directoryCandidateIndex < 0 ? undefined : directoryCandidateIndex);
-    return { canSubmit, resolveDraft, selectedTarget, selectedPlacement, machine, directory, setDirectory,
+    return { canSubmit, resolveDraft, selectedTarget, selectedPlacement, machine, directory, noFolderSelected, setDirectory,
         setDirectoryEdited, directoryCandidateIndex, setSelectedCandidateIndex, error, setError, facts, agentTargets,
         selection, changeFields, changeField, organization, folderMenuOpen, setFolderMenuOpen, folderOptions,
         retainedFolderId, folderResolved, folderChoosable, showFolder, daemonMergedProjection,

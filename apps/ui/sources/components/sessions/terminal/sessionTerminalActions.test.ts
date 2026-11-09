@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { appPaneReduce, createAppPaneState } from '@/components/appShell/panes/model/appPaneReducer';
+import { PANE_SIZING_DEFAULTS } from '@/components/appShell/panes/layout/paneSizing';
 import { invokeSessionTerminalAction } from './sessionTerminalActions';
 import { registerSessionTerminalWorkspaceOwner, registerSessionTerminalSplitMeasurements } from './sessionTerminalWorkspaceRuntime';
 import { createEmptyTerminalSurfaceState, readTerminalSurfaceState, replaceTerminalSurfaceState } from './terminalSurfaceStateCache';
@@ -281,7 +282,7 @@ describe('mounted terminal Actions', () => {
         let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'activateScope', scopeId });
         const retire = registerSessionTerminalWorkspaceOwner({ getState: () => state, dispatch: (action) => { state = appPaneReduce(state, action); } });
         let width = 500;
-        const retireMeasurement = registerSessionTerminalSplitMeasurements(scopeId, () => ({ availableWidthPx: width, minimumTerminalWidthPx: 320 }));
+        const retireMeasurement = registerSessionTerminalSplitMeasurements(scopeId, () => ({ availableWidthPx: width, minimumTerminalWidthPx: PANE_SIZING_DEFAULTS.mainMinPx }));
         try {
             const opened = await invokeSessionTerminalAction({ actionId: 'session.terminals.open', input: { scopeId,
                 target: { kind: 'terminal_view', machineId: 'machine', terminalId: 'borrowed-pty', terminalKey: 'another-session', cwd: '/repo', sessionId: 'another-session' } } });
@@ -292,7 +293,9 @@ describe('mounted terminal Actions', () => {
             expect(await invokeSessionTerminalAction({ actionId: 'session.terminals.split', input: { scopeId, target: { kind: 'workspace_shell' } } }))
                 .toMatchObject({ ok: false, errorCode: 'terminal_split_unavailable' });
             expect(state).toBe(narrowBefore);
-            width = 1000;
+            // R374's dock was 1060 px wide. Its two canonical terminal minima fit;
+            // a refusal at this size is not explained by the width policy alone.
+            width = 1060;
             const split = await invokeSessionTerminalAction({ actionId: 'session.terminals.split', input: { scopeId, target: { kind: 'workspace_shell' } } });
             expect(split).toMatchObject({ ok: true });
             const current = await invokeSessionTerminalAction({ actionId: 'session.terminals.list', input: { scopeId } });

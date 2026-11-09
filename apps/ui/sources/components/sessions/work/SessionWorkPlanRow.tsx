@@ -11,7 +11,7 @@ import {
 } from '@/components/settings/prompts/stacks/promptStackEntryPresentation';
 import { Item } from '@/components/ui/lists/Item';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
-import { useArtifacts } from '@/sync/domains/state/storage';
+import { useArtifact, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useSessionSelector } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
@@ -58,17 +58,19 @@ function PlanRow(props: Readonly<{ entryJson: string; serverId: string }>) {
     [props.entryJson],
   );
   const entries = React.useMemo(() => [entry], [entry]);
-  const presentation = usePromptStackEntryPresentations(
+  const presentations = usePromptStackEntryPresentations(
     entries,
     props.serverId,
-  )(entry);
-  const updatedAt =
-    useArtifacts().find((artifact) => artifact.id === entry.ref.artifactId)
-      ?.updatedAt ?? null;
+  );
+  const presentation = presentations(entry);
+  const status = presentations.status(entry);
+  const scope = useActiveServerAccountScope(entry.ref.serverId ?? props.serverId);
+  const artifact = useArtifact(scope ? entry.ref.artifactId : '');
+  const updatedAt = artifact?.draft ? null : artifact?.updatedAt ?? null;
   const href = promptStackEntryHref(entry, presentation.kind, props.serverId);
   const title =
     presentation.title ??
-    (presentation.kind === 'unknown'
+    (status === 'unavailable'
       ? t('common.unavailable')
       : t('promptLibrary.untitledPrompt'));
   const detail = updatedAt
@@ -79,6 +81,7 @@ function PlanRow(props: Readonly<{ entryJson: string; serverId: string }>) {
       testID="session-work-plan"
       title={t('sessionWork.plan')}
       detail={detail}
+      loading={status === 'loading'}
       density="compact"
       onPress={href ? () => router.push(href as never) : undefined}
       mode={href ? 'interactive' : 'info'}

@@ -14,7 +14,7 @@ import type {
     SecretChoiceByProfileIdByEnvVarName,
 } from '@/utils/secrets/secretRequirementApply';
 import { sync } from '@/sync/sync';
-import { useSavedSecretCatalog } from '@/components/secrets/useSavedSecretCatalog';
+import { useSavedSecretReferenceResolver } from '@/components/secrets/useSavedSecretCatalog';
 
 type PersistedDraftLike = Readonly<{
     selectedSecretIdByProfileIdByEnvVarName?: unknown;
@@ -35,8 +35,7 @@ export function useNewSessionSecretSelectionState(params: Readonly<{
     selectedProfile: AIBackendProfile | null;
     secretBindingsByProfileId: SecretBindingsByProfileId;
     setSecretBindingsByProfileId: Parameters<typeof useSecretRequirementFlow>[0]['setSecretBindingsByProfileId'];
-    secrets: SavedSecret[];
-    setSecrets: (next: SavedSecret[]) => void;
+    secrets: readonly SavedSecret[];
     selectedMachineId: string | null;
     machineEnvPresence: UseMachineEnvPresenceResult;
     useProfiles: boolean;
@@ -71,7 +70,8 @@ export function useNewSessionSecretSelectionState(params: Readonly<{
     shouldShowSecretSection: boolean;
     resolveSavedSecretReference: (ref: string) => SavedSecretReferenceResolution;
 }> {
-    const savedSecretCatalog = useSavedSecretCatalog({ personalSecrets: params.secrets });
+    // The composer stays mounted on Home: it consumes only the references it resolves.
+    const savedSecretReferences = useSavedSecretReferenceResolver();
     const [selectedSecretIdByProfileIdByEnvVarName, setSelectedSecretIdByProfileIdByEnvVarName] = React.useState<SecretChoiceByProfileIdByEnvVarName>(() => {
         const raw = params.persistedDraft?.selectedSecretIdByProfileIdByEnvVarName;
         if (!raw || typeof raw !== 'object') return {};
@@ -155,7 +155,6 @@ export function useNewSessionSecretSelectionState(params: Readonly<{
         selectedMachineId: params.selectedMachineId,
         machineEnvPresence: params.machineEnvPresence,
         secrets: params.secrets,
-        setSecrets: params.setSecrets,
         secretBindingsByProfileId: params.secretBindingsByProfileId,
         setSecretBindingsByProfileId: params.setSecretBindingsByProfileId,
         selectedSecretIdByProfileIdByEnvVarName,
@@ -216,8 +215,8 @@ export function useNewSessionSecretSelectionState(params: Readonly<{
 
     const selectedSavedSecret = React.useMemo(() => {
         if (!selectedSecretId) return null;
-        return savedSecretCatalog.resolveReference(selectedSecretId).secret;
-    }, [savedSecretCatalog.resolveReference, selectedSecretId]);
+        return savedSecretReferences.resolve(selectedSecretId).secret;
+    }, [savedSecretReferences.resolve, selectedSecretId]);
 
     React.useEffect(() => {
         if (!params.selectedProfileId) return;
@@ -302,6 +301,6 @@ export function useNewSessionSecretSelectionState(params: Readonly<{
         activeSecretSource,
         secretRequirements,
         shouldShowSecretSection,
-        resolveSavedSecretReference: savedSecretCatalog.resolveReference,
+        resolveSavedSecretReference: savedSecretReferences.resolve,
     };
 }

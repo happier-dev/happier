@@ -1,6 +1,5 @@
+import type { InputFieldHint  as ActionInputFieldHint} from '@happier-dev/protocol/inputs/inputFields';
 import type { PublicActionInputById } from '@happier-dev/protocol/actions/actionSpecs';
-import type { ActionInputFieldHint } from '@happier-dev/protocol';
-import { actionInputOptionValueKey } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import type { ActionFieldOption } from './ActionInputFields';
 import type { InputFieldOptionsState } from './inputFieldOptionsStore';
 import type { InputOptionsConsumerV1 } from '@happier-dev/protocol/inputs';
@@ -52,8 +51,3 @@ export function buildSessionActionFieldOptionsResolver(lists: SessionActionField
         : projected[field.optionsSourceId] ?? EMPTY_OPTIONS;
 }
 
-/** Changes only when option content can change row geometry; availability is interaction-only. */
-export function buildSessionActionFieldOptionsHeightSignature(lists: SessionActionFieldOptionLists): string {
-    return JSON.stringify(Object.entries(lists).map(([key, options]) => [key,
-        options.map((option) => [actionInputOptionValueKey(option.value), option.label, option.description])]));
-}

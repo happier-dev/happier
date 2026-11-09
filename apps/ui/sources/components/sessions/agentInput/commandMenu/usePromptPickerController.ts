@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { TextInputState, MultiTextInputHandle } from '@/components/ui/forms/MultiTextInput';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
+import type { PromptPickerActionPort } from './promptPickerActionPort';
 
 type PickerInput = Readonly<{
     composerKey: string;
@@ -23,11 +24,16 @@ export function usePromptPickerController(input: PickerInput) {
     const latest = React.useRef(input);
     latest.current = input;
     const admission = React.useRef<Admission | null>(null);
+    const actionPortRef = React.useRef<PromptPickerActionPort | null>(null);
+    const setActionPort = React.useCallback((port: PromptPickerActionPort | null) => {
+        actionPortRef.current = admission.current ? port : null;
+    }, []);
     const [isOpen, setOpen] = React.useState(false);
 
     const dismiss = React.useCallback((restoreFocus: boolean) => {
         const pending = admission.current;
         admission.current = null;
+        actionPortRef.current = null;
         pending?.dispose?.();
         setOpen(false);
         if (!restoreFocus || !pending || latest.current.composerKey !== pending.composerKey
@@ -61,15 +67,18 @@ export function usePromptPickerController(input: PickerInput) {
     React.useEffect(() => () => {
         const pending = admission.current;
         admission.current = null;
+        actionPortRef.current = null;
         pending?.dispose?.();
     }, []);
 
     const apply = React.useCallback(async (
         expand: () => Promise<Readonly<{ text: string; argumentRange?: readonly [number, number] }>>,
         mode: 'insert' | 'send',
+        signal?: AbortSignal,
     ): Promise<boolean> => {
         const pending = admission.current;
         const isCurrent = () => pending !== null && admission.current === pending
+            && !signal?.aborted
             && pending.currentness.isCurrent()
             && latest.current.composerKey === pending.composerKey
             && latest.current.stateRef.current === pending.snapshot
@@ -93,5 +102,5 @@ export function usePromptPickerController(input: PickerInput) {
             pending.busy = false;
         }
     }, [dismiss]);
-    return { isOpen, open, close, apply };
+    return { isOpen, open, close, apply, actionPortRef, setActionPort };
 }

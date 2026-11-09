@@ -13,10 +13,6 @@ function buildStyles(overrides?: Partial<{
     overlaySectionTitle: object;
     overlayOptionRow: object;
     overlayOptionRowPressed: object;
-    overlayRadioOuter: object;
-    overlayRadioOuterSelected: object;
-    overlayRadioOuterUnselected: object;
-    overlayRadioInner: object;
     overlayOptionLabel: object;
     overlayOptionLabelSelected: object;
     overlayOptionLabelUnselected: object;
@@ -27,10 +23,6 @@ function buildStyles(overrides?: Partial<{
         overlaySectionTitle: {},
         overlayOptionRow: {},
         overlayOptionRowPressed: {},
-        overlayRadioOuter: {},
-        overlayRadioOuterSelected: {},
-        overlayRadioOuterUnselected: {},
-        overlayRadioInner: {},
         overlayOptionLabel: {},
         overlayOptionLabelSelected: {},
         overlayOptionLabelUnselected: {},
@@ -111,13 +103,10 @@ describe('PermissionModePicker', () => {
     });
 
     it('fails closed when selected mode is not present in options', async () => {
-        const radioInnerStyle = { marker: 'inner' };
-        const { screen } = await renderPicker({
-            selected: 'plan' as unknown as PermissionMode,
-            styles: buildStyles({ overlayRadioInner: radioInnerStyle }),
-        });
+        const { screen } = await renderPicker({ selected: 'plan' as unknown as PermissionMode });
 
-        expect(screen.findByTestId('permission-mode-default')).toBeTruthy();
-        expect(screen.findAll((node) => node.props?.style === radioInnerStyle)).toHaveLength(1);
+        // The first option stands in for an unknown mode: exactly one radio reads as chosen.
+        const checked = ['default', 'yolo'].map((mode) => screen.findByTestId(`permission-mode-${mode}`)?.props.accessibilityState?.checked);
+        expect(checked).toEqual([true, false]);
     });
 });

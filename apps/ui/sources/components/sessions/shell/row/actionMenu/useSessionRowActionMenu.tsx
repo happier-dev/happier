@@ -5,7 +5,7 @@ import { confirmSessionArchive } from '@/components/sessions/actions/confirmSess
 import * as React from 'react';
 import type { View } from 'react-native';
 
-import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import type { DropdownMenuItem, DropdownMenuSelection } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
 import {
     SESSION_ACTION_ARCHIVE_ID,
@@ -47,6 +47,12 @@ import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 
 import { buildSessionRowMoreMenuItems } from './buildSessionRowActionMenuItems';
+import {
+    resolveSessionAppearanceColorMenuChoice,
+    type SessionAppearanceColorMenuInput,
+} from '@/components/sessions/organization/sessionAppearanceColorMenu';
+import type { SessionAppearanceColor } from '@/sync/domains/session/organization/appearanceColor';
+import { SESSION_ACTION_SET_APPEARANCE_COLOR_ID } from '@/components/sessions/actions/sessionActionIds';
 import { readSessionSectionMoveMenuChoice } from '@/components/sessions/organization/sessionSectionMoveMenu';
 import type { SessionRowSectionMove, SessionRowSpaceMembership } from '../../useSessionListRowMoveActionHandlers';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -60,6 +66,16 @@ import {
 import { handleSessionReminderMenuSelection, isSessionReminderMenuItemId } from './handleSessionReminderMenuSelection';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { useApplySessionReminderPresetIntent } from '@/sync/store/settingsWriters';
+import { useSessionRowPluginActions } from './useSessionRowPluginActions';
+
+function findMenuItem(items: readonly DropdownMenuItem[], itemId: string): DropdownMenuItem | null {
+    for (const item of items) {
+        if (item.id === itemId) return item;
+        const nested = item.submenu ? findMenuItem(item.submenu.items, itemId) : null;
+        if (nested) return nested;
+    }
+    return null;
+}
 
 function showActionError(error: unknown): void {
     if (error instanceof HappyError) {
@@ -142,6 +158,7 @@ export function useSessionRowActionMenu(params: Readonly<{
     onSetTags?: ((newTags: string[]) => void) | null;
     onTogglePinned?: (() => void) | null;
     leadingMenuItems?: readonly DropdownMenuItem[];
+    trailingMenuItems?: readonly DropdownMenuItem[];
     onSelectLeadingMenuItem?: (itemId: string) => boolean | Promise<boolean>;
     /** The Bots roster's compact menu instead of the list's; its Open row runs `onOpen`. */
     surface?: 'rowMenu' | 'botsRoster';
@@ -160,13 +177,25 @@ export function useSessionRowActionMenu(params: Readonly<{
     setContextMenuOpen: (open: boolean) => void;
     openTagsMenuFromContext: () => void;
     reminder?: SessionReminderPresentation | null;
+    /** The session's own colour menu; null hides it (server without session appearances). */
+    appearance?: (SessionAppearanceColorMenuInput & Readonly<{
+        onChange: (color: SessionAppearanceColor | null) => void;
+    }>) | null;
+    /** Closes this row's open menus (an item that kept them open while it loaded is ready). */
+    closeMenus?: () => void;
 }>): SessionRowActionMenuState {
     const target = params.target;
     const spaceMembershipMenu = React.useMemo(
         () => params.menuOpen && params.surface !== 'botsRoster' ? params.spaceMembership?.readMenu(params.iconColor) ?? null : null,
         [params.iconColor, params.menuOpen, params.spaceMembership, params.surface],
     );
-
+    const [customColorPickerLoading, setCustomColorPickerLoading] = React.useState(false);
+    const appearanceMenu = React.useMemo(
+        () => (params.appearance ? { ...params.appearance, customPickerLoading: customColorPickerLoading } : null),
+        [customColorPickerLoading, params.appearance],
+    );
+    const pluginActions = useSessionRowPluginActions({ serverId: target.serverId, sessionId: target.sessionId,
+        open: params.menuOpen === true });
     const archivePending = useSessionArchivePending(normalizeSessionAddress(target.serverId, target.sessionId));
     const [reminderPresets] = useSettingMutable('sessionReminderPresetsV1');
     const applyReminderPresetIntent = useApplySessionReminderPresetIntent();
@@ -322,28 +351,36 @@ export function useSessionRowActionMenu(params: Readonly<{
             }]
             : [];
         if (params.surface === 'botsRoster') {
-            return buildSessionRowMoreMenuItems({ target, iconColor: params.iconColor, surface: 'botsRoster', archivePending });
+            return [...pluginActions.items,
+                ...buildSessionRowMoreMenuItems({ target, iconColor: params.iconColor, surface: 'botsRoster', archivePending })];
         }
         return buildSessionRowMoreMenuItems({
             target,
-        archivePending,
+            archivePending,
             iconColor: params.iconColor,
             leadingItems: [
                 ...selectItem,
                 ...(params.leadingMenuItems ?? []),
+                ...pluginActions.items,
             ],
+            trailingItems: params.trailingMenuItems,
             canMoveToFolder: typeof params.onMoveToFolder === 'function',
             sectionMoveItems: params.menuOpen ? params.sectionMove?.readMenuItems(params.iconColor) ?? null : null,
             spaceMembershipMenu,
             reminderPresets,
             reminder: params.reminder,
             reminderNowMs: Date.now(),
+            appearance: appearanceMenu,
         });
     }, [
+        appearanceMenu,
+        spaceMembershipMenu,
         archivePending,
+        pluginActions.items,
         params.iconColor,
         params.touchPrimaryPointer,
         params.leadingMenuItems,
+        params.trailingMenuItems,
         params.onEnterSelectionMode,
         params.onMoveToFolder,
         params.sectionMove,
@@ -356,13 +393,34 @@ export function useSessionRowActionMenu(params: Readonly<{
         target,
     ]);
 
-    const handleMoreMenuSelect = React.useCallback(async (itemId: string) => {
+    const handleMoreMenuSelect = React.useCallback(async (itemId: string, selection?: DropdownMenuSelection) => {
         const membershipChoice = spaceMembershipMenu?.choices.get(itemId);
         if (membershipChoice) {
             spaceMembershipMenu?.choose(membershipChoice);
             return;
         }
-
+        // Invoke the registered owner in the gesture, before unrelated async admission.
+        if ((findMenuItem(params.leadingMenuItems ?? [], itemId) || findMenuItem(params.trailingMenuItems ?? [], itemId))
+            && await params.onSelectLeadingMenuItem?.(itemId)) return;
+        if (await pluginActions.select(itemId, selection)) return;
+        if (params.appearance && itemId.startsWith(`${SESSION_ACTION_SET_APPEARANCE_COLOR_ID}:`)) {
+            const appearance = params.appearance;
+            try {
+                const color = await resolveSessionAppearanceColorMenuChoice({
+                    menuId: SESSION_ACTION_SET_APPEARANCE_COLOR_ID,
+                    itemId,
+                    current: appearance.current,
+                    inherited: appearance.inherited,
+                    serverId: target.serverId,
+                    onPickerLoading: setCustomColorPickerLoading,
+                    closeMenus: params.closeMenus,
+                });
+                if (color !== undefined) appearance.onChange(color);
+            } catch (error) {
+                showActionError(error);
+            }
+            return;
+        }
         if (isSessionReminderMenuItemId(itemId)) {
             await handleSessionReminderMenuSelection({
                 itemId,
@@ -398,9 +456,6 @@ export function useSessionRowActionMenu(params: Readonly<{
         const sectionChoice = readSessionSectionMoveMenuChoice(itemId);
         if (sectionChoice) {
             params.sectionMove?.choose(sectionChoice);
-            return;
-        }
-        if (await params.onSelectLeadingMenuItem?.(itemId)) {
             return;
         }
         if (itemId === SESSION_ACTION_MOVE_TO_FOLDER_ID) {
@@ -470,8 +525,9 @@ export function useSessionRowActionMenu(params: Readonly<{
         }
     }, [
         spaceMembershipMenu,
-        params.sectionMove,
+        params.appearance,
         confirmArchiveSession,
+        pluginActions.select,
         performStopMutation,
         handleAttentionStandingAction,
         handleReadStateAction,
@@ -483,7 +539,10 @@ export function useSessionRowActionMenu(params: Readonly<{
         params.onOpen,
         params.onOpenFollowEditor,
         params.onMoveToFolder,
+        params.sectionMove,
         params.onSelectLeadingMenuItem,
+        params.leadingMenuItems,
+        params.trailingMenuItems,
         params.flightOriginRef,
         reminderPresets,
         applyReminderPresetIntent,
@@ -529,7 +588,7 @@ export function useSessionRowActionMenu(params: Readonly<{
         target.isPinned,
     ]);
 
-    const handleContextMenuSelect = React.useCallback((itemId: string) => {
+    const handleContextMenuSelect = React.useCallback((itemId: string, selection?: DropdownMenuSelection) => {
         if (itemId === SESSION_ROW_ACTION_SELECT_ID) {
             params.setContextMenuOpen(false);
             params.onEnterSelectionMode?.();
@@ -549,9 +608,14 @@ export function useSessionRowActionMenu(params: Readonly<{
             }).catch(showActionError);
             return;
         }
+        // An item that loads first keeps the menu open; its owner closes it when ready.
+        if (findMenuItem(contextMenuItems, itemId)?.keepMenuOpen) {
+            void handleMoreMenuSelect(itemId, selection);
+            return;
+        }
         params.setContextMenuOpen(false);
-        void handleMoreMenuSelect(itemId);
-    }, [handleMoreMenuSelect, params, target]);
+        void handleMoreMenuSelect(itemId, selection);
+    }, [contextMenuItems, handleMoreMenuSelect, params, target]);
 
     return {
         tagMenuItems,

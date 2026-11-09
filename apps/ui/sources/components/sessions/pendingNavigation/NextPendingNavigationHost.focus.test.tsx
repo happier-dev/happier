@@ -19,7 +19,10 @@ installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
+const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { SessionCurrentProjectionRecordV1Schema } = await import('@happier-dev/protocol/sessions/listing/response');
+const { buildSessionMessagesPath } = await import('@happier-dev/protocol/sessions/messages/sessionMessagesPageV1');
+const { sync } = await import('@/sync/sync');
 const { AgentStateSchema } = await import('@happier-dev/session-core/state');
 const { SessionActionConfirmationRequestV1Schema } = await import('@happier-dev/protocol/sessions/metadata/sessionActionConfirmationsV1');
 const { buildSessionListRenderableFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
@@ -33,11 +36,16 @@ const { SessionPendingPromptCards } = await import('@/components/tools/shell/per
 const { invokeNextPendingRequest, usePendingNavigationLanding } = await import('@/activity/source/pendingNavigationRuntime');
 const { NextPendingNavigationHost } = await import('./NextPendingNavigationHost');
 const { PendingNavigationPill } = await import('./PendingNavigationPill');
+const { PendingNavigationSettledNotice } = await import('./PendingNavigationSettledNotice');
 const initialState = storage.getState();
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let answerRpc: Parameters<typeof installSessionActionRpcBoundary>[0] = () => { throw new Error('Unexpected Session RPC'); };
 // Install before restoring the Account: its persistent Socket must use this same external responder.
 const responses = installSessionActionRpcBoundary((request, context) => answerRpc(request, context));
+
+function AccountBoundary({ children }: React.PropsWithChildren) {
+    return <InjectedAuthProvider credentials={connection?.credentials ?? null}>{children}</InjectedAuthProvider>;
+}
 
 beforeEach(() => { vi.stubGlobal('window', new EventTarget()); });
 afterEach(async () => {
@@ -52,6 +60,87 @@ afterEach(async () => {
 });
 
 describe('Next focus across workspace navigation updates', () => {
+    it('uses one admitted snapshot and lets the destination show a request answered elsewhere on the way', async () => {
+        const serverUrl = 'https://next-settled.test';
+        const accountId = 'next-owner';
+        const serverId = await homes.addHome({ name: 'Next settled', serverUrl, accountId });
+        await homes.selectHomes([serverId]);
+        connection = await restoreServerAccountForTest({ serverUrl, accountId, request: createSessionReadBatchFetchBoundary(homes.request) });
+        const now = Date.now();
+        let session = createSessionFixture({ id: 'answered-on-way', serverId, active: true, activeAt: now,
+            metadata: { path: '/tmp', host: 'test', flavor: 'claude' },
+            pendingUserActionRequestCount: 1, pendingPermissionRequestCount: 0, pendingRequestObservedAt: now,
+            agentState: AgentStateSchema.parse({ requests: { question: {
+                tool: 'AskUserQuestion', kind: 'user_action', arguments: {}, createdAt: now - 10,
+            } } }), viewer: createSessionViewerFixture({ relevance: { relevant: true, reasons: ['owned_by_me'] },
+                attention: { needsAttention: true, reasons: ['user_action_required'], primary: 'user_action_required', presentation: 'full' } }),
+        });
+        function publish() {
+            const wire = SessionCurrentProjectionRecordV1Schema.parse({ ...session, metadataLayoutVersion: 0,
+                metadata: JSON.stringify(session.metadata), agentState: JSON.stringify(session.agentState), dataEncryptionKey: null, share: null,
+                effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: session.access!.capabilities },
+                responsibleAccountId: null, responsibleAccount: null });
+            homes.answer(serverId, `/v2/sessions/${session.id}`, { body: { session: wire } });
+            homes.answer(serverId, '/v2/sessions/active', { body: { sessions: [wire], hasNext: false, nextCursor: null } });
+            storage.setState({ isDataReady: true, profileScope: { serverId, accountId }, sessions: { [session.id]: session },
+                sessionListRowsByServerId: { [serverId]: { [session.id]: buildSessionListRenderableFromSession(session) } },
+                ordinarySessionListMembershipByServerId: { [serverId]: [session.id] } });
+        }
+        publish();
+        const address = { serverId, sessionId: session.id };
+        let bindingReady = false;
+        let destinationMounted = false;
+        let landing: ReturnType<typeof usePendingNavigationLanding> = null;
+        const routes: string[] = [];
+        function Destination() {
+            bindingReady = useServerCredentialAccountScopeBindings([serverId]).get(serverId)?.isCurrent() === true;
+            landing = usePendingNavigationLanding(address);
+            return destinationMounted ? <AppSessionTranscriptSourceProvider sessionId={session.id} serverId={serverId}>
+                <PendingNavigationSettledNotice address={address} />
+            </AppSessionTranscriptSourceProvider> : null;
+        }
+        // The app-shell registration outlives the keyed destination's mount.
+        const tree = () => <DestinationInstanceHost tabId="next-settled-shell" ref={{ kind: 'newSession', params: {} }}
+            pathname="/new" focused visible
+            navigation={{ push: href => { routes.push(String(href)); }, replace: () => {}, back: () => {} }}>
+            <AppPaneProvider><KeyboardShortcutProvider handlers={{}}><NextPendingNavigationHost />
+                {destinationMounted ? <DestinationInstanceHost tabId="next-settled"
+                    ref={{ kind: 'session', params: { id: session.id, serverId } }} pathname={`/session/${session.id}`} focused visible
+                    navigation={{ push: href => { routes.push(String(href)); }, replace: () => {}, back: () => {} }}>
+                    <Destination />
+                </DestinationInstanceHost> : <Destination />}
+            </KeyboardShortcutProvider></AppPaneProvider>
+        </DestinationInstanceHost>;
+        const screen = await renderScreen(tree(), { wrapper: AccountBoundary });
+        await waitForHomeGovernance(() => expect(bindingReady).toBe(true));
+        // Account bootstrap may complete while the mounted credential binding resolves.
+        await React.act(async () => publish());
+        const snapshotReads = () => homes.requests.filter(request => new URL(request.path, serverUrl).pathname === `/v2/sessions/${session.id}`).length;
+        const readsBeforeNext = snapshotReads();
+        await React.act(async () => expect(await invokeNextPendingRequest({ excluding: null })).toEqual({ status: 'opened' }));
+        expect(routes).toEqual([`/session/${session.id}?serverId=${encodeURIComponent(serverId)}`]);
+        expect(snapshotReads() - readsBeforeNext).toBe(1);
+        expect(landing).toMatchObject({ requestId: 'question', state: 'pending' });
+        await React.act(async () => {
+            session = { ...session, agentState: AgentStateSchema.parse({ requests: {} }), pendingUserActionRequestCount: 0,
+                viewer: createSessionViewerFixture({ relevance: { relevant: true, reasons: ['owned_by_me'] } }) };
+            publish();
+            homes.answer(serverId, new URL(buildSessionMessagesPath({ sessionId: session.id, scope: 'main' }), serverUrl).pathname, {
+                select: (_input, request) => {
+                    expect(new URL(request.url).searchParams.get('scope')).toBe('main');
+                    return { body: { messages: [], hasMore: false, nextBeforeSeq: null } };
+                },
+            });
+            expect(await sync.ensureSessionVisibleForMessageRoute(session.id, { serverId, forceRefresh: true,
+                awaitMessageHydration: true })).toMatchObject({ kind: 'available' });
+            storage.getState().setSocketStatus('connected');
+            destinationMounted = true;
+        });
+        await screen.update(tree());
+        await waitForHomeGovernance(() => expect(screen.findByTestId('pending-navigation-settled')).not.toBeNull());
+        expect(landing).toMatchObject({ address, requestId: 'question', state: 'settled' });
+        expect(responses).toHaveLength(0);
+    });
     it.each(['question', 'permission', 'action'] as const)(
         'keeps the landing through hydration, offers Next after answering, and focuses the next %s', async (kind) => {
             const serverUrl = 'https://next-focus.test';
@@ -146,7 +235,7 @@ describe('Next focus across workspace navigation updates', () => {
                     </AppSessionTranscriptSourceProvider>
                 </KeyboardShortcutProvider></AppPaneProvider>
             </DestinationInstanceHost>;
-            const screen = await renderScreen(tree(), { createNodeMock: element => {
+            const screen = await renderScreen(tree(), { wrapper: AccountBoundary, createNodeMock: element => {
                 const id = element.props.testID;
                 if (!['ask-user-question.freeform:0', 'permission-footer.allow', 'action-confirmation-approve'].includes(String(id))) return null;
                 return { focus: () => { focusedControl = String(id); focusCount++; } };

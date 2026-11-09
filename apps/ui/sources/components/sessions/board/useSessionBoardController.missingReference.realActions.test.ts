@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { act } from 'react-test-renderer';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions';
-import { ActionsSettingsV1Schema, isApprovalRequiredByActionsSettings } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
+import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { SessionBoardLayoutV1Schema, SessionBoardMutationV1Schema, type SessionBoardLayoutV1 } from '@happier-dev/protocol/sessions/board';
 import { SessionSystemRecordStoredReadResponseSchema } from '@happier-dev/protocol/sessions/system/records/sessionSystemRecordRoutes';
 

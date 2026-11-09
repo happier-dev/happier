@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -7,7 +8,6 @@ import type { SessionCoordinatorRuleCensusV1 } from '@happier-dev/protocol/sessi
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
-import { resolveCoordinatorKeepDefault } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import { describeSessionRoleRefusal } from '@/components/roles/session/sessionRole';
 import { useRoleCatalog } from '@/components/roles/catalog/useRoleCatalog';
@@ -15,6 +15,8 @@ import { useRoleMark } from '@/components/roles/catalog/useRoleMark';
 import { CoordinatorKeepListPreview, CoordinatorKeepRailPreview } from '@/components/settings/coordination/CoordinatorKeepPreviews';
 import { useSessionMachineName } from '@/components/sessions/agents/presentation/useSessionMachineName';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
+import { readSessionRecordingVisibility } from '@/sync/store/sessionRecordingVisibility';
 import { useInboxSessionHandoff } from '@/hooks/inbox/useInboxSessionHandoff';
 import { publishPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -36,7 +38,7 @@ import { leaveProjectToFollowRule, undoFollowRuleProjectEdit } from '@/sync/api/
 import { useSessionFollowRules, type SessionFollowRulesController } from '@/components/sessions/follow/useSessionFollowRules';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { useSession, useSessionDisplayNameProjections, useSetting } from '@/sync/domains/state/storage';
-import { useProjectAccountWorkspaceRefs } from '@/sync/domains/workspaces/projectAccountRows';
+import { readProjectAccountWorkspaceRefs, useProjectAccountRows, type ProjectAccountRowsSnapshot } from '@/sync/domains/workspaces/projectAccountRows';
 import { sessionCoordinatorActions } from '@/sync/ops/sessions/sessionCoordinatorActions';
 import { t } from '@/text';
 import { inferProjectTitleFromPath } from '@/utils/path/browseSegments';
@@ -46,10 +48,12 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { MakeCoordinatorRoleHeld } from './MakeCoordinatorRoleHeld';
 
 import {
+    applyMakeCoordinatorEffectsToDraft,
     buildMakeCoordinatorDraft,
     buildMakeCoordinatorEnableInput,
     describeMakeCoordinatorOverlap,
     readMakeCoordinatorOutcome,
+    reconcileMakeCoordinatorProjectDraft,
     toggleMakeCoordinatorRule,
     type MakeCoordinatorDraft,
     type MakeCoordinatorKeep,
@@ -90,13 +94,21 @@ export function MakeCoordinatorDialog(props: MakeCoordinatorDialogProps) {
         coordinationCoordinatorSuggestHomeRule: useSetting('coordinationCoordinatorSuggestHomeRule'),
     };
     const ownerMetadata = session ? readSessionOwnerMetadataView(session) : null;
-    const workspaceRefs = useProjectAccountWorkspaceRefs(true);
+    const projectCensus = useProjectAccountRows(useShallow((rows: ProjectAccountRowsSnapshot | null) => ({
+        scope: rows?.scope, refs: readProjectAccountWorkspaceRefs({ projectAccountRows: rows }),
+    })));
+    const workspaceRefs = projectCensus.refs;
     const ruleIds = React.useRef({ project: randomUUID(), home: randomUUID() }).current;
     const initialSettings = React.useRef(settings).current;
-    const preparedDraft = React.useMemo(() => buildMakeCoordinatorDraft({ serverId, sessionId, ownerMetadata,
+    const preparedDraft = React.useMemo(() => buildMakeCoordinatorDraft({ serverId, sessionId, ownerMetadata, projectKey: session?.projectKey,
+        workspaceRefsScope: projectCensus.scope,
+        sessionAuthority: { ownerAccountId: session?.ownerAccountId, access: session?.access, accessLevel: session?.accessLevel },
         workspaceRefs, settings: initialSettings, ruleIds, ruleCensus: null }),
-    [serverId, sessionId, ownerMetadata, workspaceRefs, initialSettings, ruleIds]);
-    const [draft, setDraft] = React.useState<MakeCoordinatorDraft>(preparedDraft);
+    [serverId, sessionId, ownerMetadata, session?.projectKey, session?.ownerAccountId, session?.access, session?.accessLevel,
+        projectCensus.scope, workspaceRefs, initialSettings, ruleIds]);
+    const [capturedDraft, setDraft] = React.useState<MakeCoordinatorDraft>(preparedDraft);
+    const rulesChosen = React.useRef(false);
+    const draft = reconcileMakeCoordinatorProjectDraft(capturedDraft, preparedDraft, rulesChosen.current);
     const project = draft.project;
     // A name only from a readable path; never an id or a hash in its place.
     const projectName = project && typeof ownerMetadata?.path === 'string' && ownerMetadata.path.trim()
@@ -107,16 +119,8 @@ export function MakeCoordinatorDialog(props: MakeCoordinatorDialogProps) {
 
     // Capture setup choices for this open. Late Project hydration can supply the
     // initial suggestion; a refresh cannot broaden a chosen Project into Home.
-    const rulesChosen = React.useRef(false);
     React.useEffect(() => {
-        setDraft(current => {
-            if (current.project || !preparedDraft.project) return current;
-            const rules = rulesChosen.current ? preparedDraft.rules.map(rule => ({ ...rule,
-                enabled: current.rules.find(previous => previous.scope === rule.scope)?.enabled ?? false })) : preparedDraft.rules;
-            const homeWide = rules.some(rule => rule.scope === 'home' && rule.enabled);
-            return { ...current, project: preparedDraft.project, rules,
-                keep: current.keepFromSetting ? resolveCoordinatorKeepDefault(current.keepPreference, homeWide ? 'home' : 'project') : current.keep };
-        });
+        setDraft(current => reconcileMakeCoordinatorProjectDraft(current, preparedDraft, rulesChosen.current));
     }, [preparedDraft]);
     const ruleInputs = useSessionFollowRules(serverId, true);
     const census: Census = ruleInputs.snapshot === null ? (ruleInputs.loading ? 'loading' : null)
@@ -126,7 +130,10 @@ export function MakeCoordinatorDialog(props: MakeCoordinatorDialogProps) {
         if (!ruleInputs.snapshot || managedByChosen.current) return;
         const next = ruleInputs.snapshot.status === 'ready'
             ? { serverId, coverage: 'complete' as const, rules: ruleInputs.snapshot.rules } : null;
-        const suggested = buildMakeCoordinatorDraft({ serverId, sessionId, ownerMetadata, workspaceRefs, settings, ruleIds, ruleCensus: next }).managedBySessionId;
+        const suggested = buildMakeCoordinatorDraft({ serverId, sessionId, ownerMetadata, projectKey: session?.projectKey,
+            workspaceRefsScope: projectCensus.scope,
+            sessionAuthority: { ownerAccountId: session?.ownerAccountId, access: session?.access, accessLevel: session?.accessLevel },
+            workspaceRefs, settings, ruleIds, ruleCensus: next }).managedBySessionId;
         setDraft(current => current.managedBySessionId === suggested ? current : { ...current, managedBySessionId: suggested });
         // Setup choices were captured for this open; only its authoritative rule input changes this suggestion.
     }, [ruleInputs.snapshot]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -149,6 +156,7 @@ export function MakeCoordinatorDialog(props: MakeCoordinatorDialogProps) {
         }
         const parsed = SessionCoordinatorEnableResultV1Schema.safeParse(result.result);
         if (!parsed.success) { setFootnote(t('sessionCoordinator.make.failed')); return; }
+        setDraft(current => applyMakeCoordinatorEffectsToDraft(current, parsed.data.effects));
         // A partial result keeps the dialog open: what didn't land is said, and Make coordinator again finishes it.
         const outcome = readMakeCoordinatorOutcome(parsed.data.effects);
         const refusal = outcome.roleRefusalCode
@@ -166,7 +174,10 @@ export function MakeCoordinatorDialog(props: MakeCoordinatorDialogProps) {
         publishPresentationNotice({
             key: `session-coordinator:${serverId}:${sessionId}`,
             severity: 'info',
-            message: t('sessionCoordinator.make.done', { name }),
+            // Coordinator is derived from the Follow relation (Z1): with no rule on it is only set up until it manages a session.
+            message: draft.rules.some((rule) => rule.enabled)
+                ? t('sessionCoordinator.make.done', { name })
+                : t('sessionCoordinator.make.doneNoRule', { name }),
             emphasis: name,
         });
         onClose();
@@ -343,19 +354,22 @@ function ManagedByField(props: Readonly<{
     onChange: (sessionId: string | null) => void;
 }>) {
     const [open, setOpen] = React.useState(false);
+    const isSessionVisible = useSessionRecordingVisibility();
     const loading = props.census === 'loading';
     const rules = props.census === 'loading' ? null : props.census?.rules;
     const candidateIds = React.useMemo(() => {
         const ids = new Set<string>();
         for (const rule of rules ?? []) {
-            if (rule.receiver.kind === 'session' && rule.receiver.sessionId !== props.sessionId && rule.definition.enabled) ids.add(rule.receiver.sessionId);
+            if (rule.receiver.kind === 'session' && rule.receiver.sessionId !== props.sessionId && rule.definition.enabled
+                && isSessionVisible({ sessionId: rule.receiver.sessionId, serverId: props.serverId })) ids.add(rule.receiver.sessionId);
         }
         if (props.value) ids.add(props.value);
         return [...ids];
-    }, [props.sessionId, props.value, rules]);
+    }, [props.sessionId, props.serverId, props.value, rules, isSessionVisible]);
     const addresses = React.useMemo(() => candidateIds.map((sessionId) => ({ sessionId, serverId: props.serverId })), [candidateIds, props.serverId]);
     const names = useSessionDisplayNameProjections(addresses, (source) => (source ? getSessionName(source, props.serverId) : null));
-    const nameOf = (id: string) => names[candidateIds.indexOf(id)] ?? t('sessionCoordinator.make.unknownSession');
+    const nameOf = (id: string) => (isSessionVisible({ sessionId: id, serverId: props.serverId })
+        ? names[candidateIds.indexOf(id)] : null) ?? t('sessionCoordinator.make.unknownSession');
     const items: DropdownMenuItem[] = [
         { id: MANAGED_BY_NONE, title: t('sessionCoordinator.make.managedByNone') },
         ...candidateIds.map((id) => ({ id, title: nameOf(id) })),
@@ -431,6 +445,7 @@ function OverlapNote(props: Readonly<{
     onEdited: (census: SessionCoordinatorRuleCensusV1) => void;
 }>) {
     const { theme } = useUnistyles();
+    const isSessionVisible = useSessionRecordingVisibility();
     const first = props.preview?.status === 'ready'
         ? describeMakeCoordinatorOverlap({ sessionId: props.sessionId, census: props.census, overlaps: props.preview.preview.overlaps })[0]
         : undefined;
@@ -439,7 +454,8 @@ function OverlapNote(props: Readonly<{
     const [otherName] = useSessionDisplayNameProjections(addresses, (source) => (source ? getSessionName(source, props.serverId) : null));
     const [pending, setPending] = React.useState(false);
     if (!first) return null;
-    const other = otherName ?? t('sessionCoordinator.make.unknownSession');
+    const other = (receiverSessionId && isSessionVisible({ sessionId: receiverSessionId, serverId: props.serverId })
+        ? otherName : null) ?? t('sessionCoordinator.make.unknownSession');
     const { census, onEdited } = props;
     const replaceRule = (rule: SessionCoordinatorRuleCensusV1['rules'][number]) =>
         onEdited({ ...census, rules: census.rules.map((candidate) => (candidate.ruleId === rule.ruleId ? rule : candidate)) });
@@ -453,11 +469,13 @@ function OverlapNote(props: Readonly<{
             return;
         }
         replaceRule(result.value.rule);
+        const noticeName = (readSessionRecordingVisibility()({ sessionId: first.receiverSessionId, serverId: props.serverId })
+            ? otherName : null) ?? t('sessionCoordinator.make.unknownSession');
         publishPresentationNotice({
             key,
             severity: 'info',
-            message: t('sessionCoordinator.make.leftNotice', { name: other, project: props.projectLabel }),
-            emphasis: other,
+            message: t('sessionCoordinator.make.leftNotice', { name: noticeName, project: props.projectLabel }),
+            emphasis: noticeName,
             undo: {
                 label: t('bots.undo'),
                 run: () => {

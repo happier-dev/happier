@@ -19,7 +19,8 @@ import {
     resolveActiveWorkflowPhasePosition,
 } from './sessionWorkflowActivityPresentation';
 import type { SessionWorkflowActivityState } from './useSessionWorkflowActivity';
-import type { SessionWorkflowRunHeadlineV1, SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol';
+import type { SessionWorkflowRunHeadlineV1} from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowActivityHeadlineV1';
+import type { SessionWorkflowRunSnapshotV1 } from '@happier-dev/protocol/sessions/work/workflow/sessionWorkflowRunSnapshotV1';
 import type { WorkflowActivityRowViewModel } from './sessionWorkflowActivityTypes';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 

@@ -1,6 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { createActionExecutor, getActionSpec, type ApprovalRequest,
-    ApprovalRequestSchema, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol';
+import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
+import { getActionSpec} from '@happier-dev/protocol/actions/actionSpecs';
+import { type ApprovalRequest,
+    ApprovalRequestSchema} from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { DaemonTerminalEnsureResponseSchema, DaemonTerminalListResponseV1Schema, DaemonTerminalCloseResponseSchema } from '@happier-dev/protocol/daemon/terminal';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -11,7 +14,7 @@ import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { isApprovalExecutionOriginCurrentForAccountContext } from '@/sync/ops/actions/defaultActionExecutor';
-import { requiresExactDaemonApprovalReplay } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { resolveApprovalExecutor } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { createActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { inspectMachineTerminalMemberApproval } from './machineTerminalApproval';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
@@ -32,7 +35,8 @@ import * as processGroupOsBoundary from '@happier-dev/cli-common/process';
 import { join } from 'node:path';
 import Fastify from 'fastify';
 import type { Fastify as AppFastify } from '../../../../../server/sources/app/api/types';
-import { decodeBase64, encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol';
+import { decodeBase64} from '@happier-dev/protocol/crypto/base64';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { ApiClient } from '../../../../../cli/src/api/api';
 import { writeStoredCredentialsForServerId, readStoredCredentialsForServerId } from '../../../../../cli/src/persistence';
 import { createMachineContentCodec } from '../../../../../cli/src/api/machine/machineStoredContent';
@@ -45,6 +49,7 @@ import { createSessionOwnerMetadataV1, projectSessionSharedMetadataV1,
     sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
 import { createWorkspaceState } from '@/components/appShell/workspace/workspaceState';
 import { WorkspaceProvider } from '@/components/appShell/workspace/WorkspaceProvider';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 import type { WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { resolveCompactAppDestinations } from '@/components/appShell/destinations/compactAppDestinationCatalog';
@@ -678,7 +683,7 @@ describe('Machine terminal approval receipt across Home aliases (real SQLite)', 
             const pendingClose = await account.fetchArtifact(closeApproval.artifactId);
             if (!pendingClose || typeof pendingClose.body !== 'string') throw new Error('Pending close approval missing');
             const closeOrigin = ApprovalRequestSchema.parse(JSON.parse(pendingClose.body));
-            expect(requiresExactDaemonApprovalReplay(closeOrigin)).toBe(true);
+            expect(resolveApprovalExecutor(closeOrigin)).toMatchObject({ kind: 'daemon', machineId: machine.id });
             if (closeOrigin.v !== 2) throw new Error('Exact close origin missing');
             expect(closeOrigin.executionOriginV1.externalActionExecutionAuthorization?.requesterAccountContext).toBeUndefined();
             const closeDecision = await executor.execute('approval.request.decide', { artifactId: closeApproval.artifactId, decision: 'approve' },
@@ -737,24 +742,30 @@ describe('Machine terminal approval receipt across Home aliases (real SQLite)', 
                 encryptionMode: requesterMode, metadataLayoutVersion: 1,
                 metadata: projectSessionSharedMetadataV1({ metadata }), ownerMetadataView: metadata })]);
         }
-        const previousLocalSettings = store.getState().localSettings;
         const previousReadiness = store.getState().isDataReady;
-        store.setState({ isDataReady: true, localSettings: { ...previousLocalSettings,
-            workspaceLayoutV1: { ...previousLocalSettings.workspaceLayoutV1, [layoutKey]: serializeWorkspaceLayout(originalState) } } });
-        context.onTestFinished(() => { store.setState({ isDataReady: previousReadiness, localSettings: previousLocalSettings }); });
+        const { workspaceLayoutsState } = await import('@/sync/domains/state/filePaneUiState');
+        const previousLayout = workspaceLayoutsState.read(layoutKey);
+        workspaceLayoutsState.set(layoutKey, serializeWorkspaceLayout(originalState));
+        store.setState({ isDataReady: true });
+        context.onTestFinished(() => {
+            if (previousLayout === undefined) workspaceLayoutsState.remove(layoutKey);
+            else workspaceLayoutsState.set(layoutKey, previousLayout);
+            store.setState({ isDataReady: previousReadiness });
+        });
         let navigation!: WorkspaceNavigationContextValue;
         const scopeId = createSessionPaneScopeId(session.id, homeId, 'original-pane');
         const request = { terminalKey: resolveSessionTerminalIdentity({ sessionId: session.id, scopeId, terminal: member }).terminalKey,
             cwd: database.baseDir, sessionId: session.id };
         publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
-        const wrapper: React.ComponentType<React.PropsWithChildren> = ({ children }) => React.createElement(WorkspaceProvider,
+        const wrapper: React.ComponentType<React.PropsWithChildren> = ({ children }) => React.createElement(InjectedAuthProvider,
+            { credentials: requesterCredentials }, React.createElement(WorkspaceProvider,
             { enabled: true, catalog, children: current => {
                 navigation = current;
                 return React.createElement(AppPaneProvider, null, React.createElement(DestinationInstanceHost,
                     { tabId: 'original-pane', ref: originalState.tabs['original-pane'].target,
                         pathname: navigationBoundary.pathname, focused: true, visible: true,
                         navigation: current.navigationForTab('original-pane') }, children));
-            } });
+            } }));
         const paneHost = await renderHook(() => useMachineTerminalActionAdmission({ terminalKey: request.terminalKey,
             machineId: machine.id, serverId: learned.id, scopeId, memberId: member.id }), { wrapper });
         context.onTestFinished(paneHost.unmount);
@@ -867,16 +878,20 @@ describe('Machine terminal approval receipt across Home aliases (real SQLite)', 
         // The pane/member outlives its view. Both the returning view and its
         // remount recover actual requester custody through the real census;
         // neither carries a cached process id nor asks to approve another open.
-        for (const mount of targetKind === 'paired-terminal' ? [] : ['returning', 'reopened', 'phone-pane-params', 'cold-alias', 'phone-terminal', 'wide-terminal', 'wide-chat', 'phone-remount'] as const) {
+        for (const mount of targetKind === 'paired-terminal' ? [] : ['selected-recipient', 'selected-return', 'returning', 'reopened', 'phone-pane-params', 'cold-alias', 'phone-terminal', 'wide-terminal', 'wide-chat', 'phone-remount'] as const) {
             const href = buildScopedSessionRouteHref({ sessionId: session.id,
                 serverId: mount === 'reopened' ? homeId : browserProfileId });
             let coldHost: typeof paneHost | undefined;
-            if (mount === 'returning') {
+            if (mount.startsWith('selected-')) {
+                // A pane recipient owns a different destination window instance,
+                // while its selected slot retains the source's exact scope/member.
+            } else if (mount === 'returning') {
                 // ApprovalSessionContextCard uses the Expo URL ingress. Its
                 // return omits the original pane's bottom=terminal presentation.
                 await act(async () => { expect(navigation.openHref(`/inbox?item=${encodeURIComponent(`approval:${learned.id}:${artifactId}`)}`)).toBe(true); });
                 // Browser reload/restore uses the actual local layout producer.
-                expect(parseWorkspaceLayout(store.getState().localSettings.workspaceLayoutV1[layoutKey])?.tabs['original-pane']).toBeDefined();
+                const { workspaceLayoutsState } = await import('@/sync/domains/state/filePaneUiState');
+                expect(parseWorkspaceLayout(workspaceLayoutsState.read(layoutKey))?.tabs['original-pane']).toBeDefined();
                 expect(navigation.state.tabs[navigation.state.groups[navigation.state.focusedGroupId].activeTabId].target.kind).toBe('inbox');
                 // ApprovalSessionContextCard imports Expo's router directly.
                 // Deliver its produced bare URL through real provider adoption.
@@ -895,10 +910,9 @@ describe('Machine terminal approval receipt across Home aliases (real SQLite)', 
                 // Full reload: retire the provider, round-trip its actual saved
                 // layout and mount from the alias URL with terminal presentation.
                 await paneHost.unmount();
-                const settings = store.getState().localSettings;
-                store.setState({ localSettings: { ...settings,
-                    workspaceLayoutV1: JSON.parse(JSON.stringify(settings.workspaceLayoutV1)) } });
-                expect(parseWorkspaceLayout(store.getState().localSettings.workspaceLayoutV1[layoutKey])?.tabs['original-pane'])
+                const { workspaceLayoutsState } = await import('@/sync/domains/state/filePaneUiState');
+                workspaceLayoutsState.set(layoutKey, JSON.parse(JSON.stringify(workspaceLayoutsState.read(layoutKey))));
+                expect(parseWorkspaceLayout(workspaceLayoutsState.read(layoutKey))?.tabs['original-pane'])
                     .toMatchObject({ preview: false, target: { params: { serverId: homeId, bottom: 'terminal' } } });
                 expoRouter.push(`${href}&bottom=terminal`);
                 coldHost = await renderHook(() => useMachineTerminalActionAdmission({ terminalKey: request.terminalKey,
@@ -924,15 +938,18 @@ describe('Machine terminal approval receipt across Home aliases (real SQLite)', 
                 .toBe(request.terminalKey);
             const returningRequest = { ...request, terminalKey: resolveSessionTerminalIdentity({ sessionId: session.id,
                 scopeId: returningScope, terminal: member }).terminalKey };
-            const driverWrapper: React.ComponentType<React.PropsWithChildren> = ({ children }) => React.createElement(AppPaneProvider, null,
+            const driverWrapper: React.ComponentType<React.PropsWithChildren> = ({ children }) => React.createElement(InjectedAuthProvider,
+                { credentials: requesterCredentials }, React.createElement(AppPaneProvider, null,
                 React.createElement(DestinationInstanceHost,
-                    { tabId: pane.id, ref: pane.target, pathname: navigationBoundary.pathname, focused: true, visible: true,
-                        navigation: navigation.navigationForTab(pane.id) }, children));
+                    { tabId: mount === 'selected-recipient' ? 'recipient-instance' : pane.id, ref: pane.target, pathname: navigationBoundary.pathname, focused: true, visible: true,
+                        navigation: navigation.navigationForTab(pane.id) }, children)));
             if (targetKind === 'own-session') {
                 // Use the actual renderer controller and request producer, including
                 // its ready/resize lifecycle rather than manually invoking admission.
                 const renderer = await renderHook(() => {
-                    const driverScope = useRegisterSessionPaneDriver(session.id, pane.target.params.serverId);
+                    const driverScope = useRegisterSessionPaneDriver(session.id, pane.target.params.serverId, undefined,
+                        mount.startsWith('selected-') ? { scopeId } : undefined);
+                    expect(driverScope).toBe(scopeId);
                     const identity = resolveSessionTerminalIdentity({ sessionId: session.id, scopeId: driverScope, terminal: member });
                     return useSessionEmbeddedTerminalPaneModel({ sessionId: session.id, scopeId: driverScope,
                         currentDockLocation: mount.startsWith('phone') ? 'sidebar' : 'bottom',
@@ -948,7 +965,8 @@ describe('Machine terminal approval receipt across Home aliases (real SQLite)', 
                 } finally { await renderer.unmount(); }
             }
             const hook = await renderHook(() => {
-                const driverScope = useRegisterSessionPaneDriver(session.id, pane.target.params.serverId);
+                const driverScope = useRegisterSessionPaneDriver(session.id, pane.target.params.serverId, undefined,
+                    mount.startsWith('selected-') ? { scopeId } : undefined);
                 expect.soft(driverScope).toBe(scopeId);
                 const identity = resolveSessionTerminalIdentity({ sessionId: session.id, scopeId: driverScope, terminal: member });
                 return useMachineTerminalActionAdmission({ terminalKey: identity.terminalKey,

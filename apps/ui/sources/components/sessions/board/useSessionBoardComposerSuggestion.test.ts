@@ -2,7 +2,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { renderHook, standardCleanup } from '@/dev/testkit';
-import type { ComposerSnapshotV1 } from '@happier-dev/protocol';
+import type { ComposerSnapshotV1 } from '@happier-dev/protocol/plugins/ui/composer';
 import {
     notifySessionComposerPresentationTargetChanged,
     registerSessionComposerPresentationTarget,

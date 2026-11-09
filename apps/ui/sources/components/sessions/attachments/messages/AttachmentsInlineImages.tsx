@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { SessionAttachmentHandleV1 } from '@happier-dev/protocol';
+import type { SessionAttachmentHandleV1 } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentHandleV1';
 
 import { SessionMediaInlineImages, type SessionMediaInlinePreviewSource } from '@/components/sessions/media/SessionMediaInlineImages';
 import { resolveSessionMediaInlineRenderableImageMimeType } from '@/components/sessions/media/presentation';

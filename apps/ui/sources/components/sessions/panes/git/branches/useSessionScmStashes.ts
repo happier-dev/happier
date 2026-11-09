@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ScmStashEntry } from '@happier-dev/protocol';
+import type { ScmStashEntry } from '@happier-dev/protocol/scm';
 
 import { resolveScmStashEntries } from '@/scm/stash/useScmStashSummaryCount';
 import { sessionScmStashList } from '@/sync/ops';

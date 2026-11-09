@@ -75,6 +75,7 @@ type HookValue = Readonly<{
 let servedHome: Awaited<ReturnType<typeof serveExternalSessionBrowseHome>> | null = null;
 let signedOut = false;
 let firstAttachRequestObserved = false;
+let firstAttachReply = createDeferred<void>();
 let statusRequestIssued = createDeferred<void>();
 let statusRequestSignals: AbortSignal[] = [];
 let attachRequestSignals: AbortSignal[] = [];
@@ -105,7 +106,9 @@ const rpcRequests = installSessionActionRpcBoundary(async (request, { serverUrl,
   if (method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_ATTACH) {
     attachRequestSignals.push(signal);
     firstAttachRequestObserved = true;
-    return machineExternalSessionAttachSpy(request.params, options);
+    const response = await machineExternalSessionAttachSpy(request.params, options);
+    firstAttachReply.resolve();
+    return response;
   }
   if (method === RPC_METHODS.DAEMON_EXTERNAL_SESSION_DETACH)
     return machineExternalSessionDetachSpy(request.params, options);
@@ -175,7 +178,7 @@ async function settleMountedRuntime(enabled: boolean) {
   await flushHookEffects();
 }
 
-async function renderHarness(): Promise<{ getCurrent: () => HookValue; rerender: () => Promise<HookValue>; unmount: () => Promise<void> }> {
+async function renderHarness(options?: { preserveClock?: boolean }): Promise<{ getCurrent: () => HookValue; rerender: () => Promise<HookValue>; unmount: () => Promise<void> }> {
   const { useExternalSessionRuntime } = await import('./useExternalSessionRuntime');
   if (acceptedTailCursorState.current) await publishAcceptedCursor();
   const hook = await renderHook(() => useExternalSessionRuntime({
@@ -192,7 +195,14 @@ async function renderHarness(): Promise<{ getCurrent: () => HookValue; rerender:
     } as any,
   }));
 
-  await settleMountedRuntime(true);
+  if (options?.preserveClock) {
+    // vi.waitFor advances fake timers. These clock-boundary cases instead
+    // await the real RPC boundary without consuming any of the lease.
+    await firstAttachReply.promise;
+    await flushHookEffects();
+  } else {
+    await settleMountedRuntime(true);
+  }
 
   return {
     getCurrent: hook.getCurrent,
@@ -278,6 +288,7 @@ describe('useExternalSessionRuntime', () => {
     previousState = storage.getState();
     signedOut = false;
     firstAttachRequestObserved = false;
+    firstAttachReply = createDeferred<void>();
     statusRequestIssued = createDeferred<void>();
     statusRequestSignals = [];
     attachRequestSignals = [];
@@ -900,6 +911,8 @@ describe('useExternalSessionRuntime', () => {
       remoteSessionId: 'remote-1',
     }), { serverId: 'srv_server-owned' });
 
+    expect(machineExternalSessionAttachSpy.mock.calls[0]?.[0]).not.toHaveProperty('ttlMs');
+
     await harness.unmount();
 
     expect(machineExternalSessionDetachSpy).toHaveBeenCalledWith({
@@ -941,13 +954,15 @@ describe('useExternalSessionRuntime', () => {
         expiresAtMs: Date.now() + 11_000,
       }));
 
-      const harness = await renderHarness();
+      const harness = await renderHarness({ preserveClock: true });
       expect(machineExternalSessionAttachSpy).toHaveBeenCalledTimes(1);
 
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(1_000);
+        await vi.advanceTimersByTimeAsync(5_499);
       });
 
+      expect(machineExternalSessionAttachSpy).toHaveBeenCalledTimes(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
       expect(machineExternalSessionAttachSpy).toHaveBeenCalledTimes(2);
       expect(machineExternalSessionAttachSpy.mock.calls[1]?.[0]).toEqual(expect.objectContaining({
         machineId: 'machine-1',
@@ -1169,7 +1184,7 @@ describe('useExternalSessionRuntime', () => {
     }
   });
 
-  it('retries attach after a transient attach failure while the view remains visible', async () => {
+  it('waits for a natural viewer wake after initial attach fails without a producer expiry', async () => {
     vi.useFakeTimers();
     try {
       machineExternalSessionAttachSpy
@@ -1185,9 +1200,18 @@ describe('useExternalSessionRuntime', () => {
       });
 
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(5_000);
+        await vi.advanceTimersByTimeAsync(60_000);
       });
 
+      expect(machineExternalSessionAttachSpy).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        appState.currentState = 'background';
+        for (const handler of appStateListeners) handler('background');
+      });
+      await act(async () => {
+        appState.currentState = 'active';
+        for (const handler of appStateListeners) handler('active');
+      });
       expect(machineExternalSessionAttachSpy).toHaveBeenCalledTimes(2);
 
       await harness.unmount();
@@ -1202,14 +1226,15 @@ describe('useExternalSessionRuntime', () => {
     }
   });
 
-  it('retries attach after a handled attach error response while the view remains visible', async () => {
+  it('follows the typed retryable disposition rather than classifying attach error text', async () => {
     vi.useFakeTimers();
     try {
+      const expiresAtMs = Date.now() + 16;
       machineExternalSessionAttachSpy
-        .mockResolvedValueOnce({ ok: false, errorCode: 'machine_offline', error: 'temporarily offline' })
-        .mockResolvedValue({ ok: true, leaseId: 'lease-recovered', expiresAtMs: Date.now() + 60_000 });
+        .mockResolvedValueOnce({ ok: true, leaseId: 'lease-recovered', expiresAtMs })
+        .mockResolvedValue({ ok: false, errorCode: 'agent_unavailable', error: 'background_follow_not_supported', retryable: true });
 
-      const harness = await renderHarness();
+      const harness = await renderHarness({ preserveClock: true });
 
       expect(machineExternalSessionAttachSpy).toHaveBeenCalledTimes(1);
 
@@ -1217,11 +1242,14 @@ describe('useExternalSessionRuntime', () => {
         await new Promise<void>((resolve) => queueMicrotask(resolve));
       });
 
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(5_000);
-      });
-
-      expect(machineExternalSessionAttachSpy).toHaveBeenCalledTimes(2);
+      // Each failed renewal consumes half of the producer's remaining lease,
+      // rounding only to the clock's next representable millisecond.
+      for (const [elapsed, calls] of [[7, 1], [1, 2], [4, 3], [2, 4], [1, 5], [1, 5]] as const) {
+        await act(async () => { await vi.advanceTimersByTimeAsync(elapsed); });
+        expect(machineExternalSessionAttachSpy).toHaveBeenCalledTimes(calls);
+      }
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(machineExternalSessionAttachSpy).toHaveBeenCalledTimes(5);
 
       await harness.unmount();
 
@@ -1242,6 +1270,7 @@ describe('useExternalSessionRuntime', () => {
         ok: false,
         errorCode: 'agent_unavailable',
         error: 'background_follow_not_supported',
+        retryable: false,
       });
 
       const harness = await renderHarness();
@@ -1296,10 +1325,11 @@ describe('useExternalSessionRuntime', () => {
     }
   });
 
-  it('keeps retrying a failure a released daemon reports without retryability', async () => {
+  it('retries a renewal a released daemon reports without retryability within its remaining lease', async () => {
     vi.useFakeTimers();
     try {
       machineExternalSessionAttachSpy
+        .mockResolvedValueOnce({ ok: true, leaseId: 'lease-1', expiresAtMs: Date.now() + 16_000 })
         .mockResolvedValueOnce({
           ok: false,
           errorCode: 'agent_unavailable',
@@ -1314,10 +1344,10 @@ describe('useExternalSessionRuntime', () => {
       });
 
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(5_000);
+        await vi.advanceTimersByTimeAsync(12_000);
       });
 
-      expect(machineExternalSessionAttachSpy).toHaveBeenCalledTimes(2);
+      expect(machineExternalSessionAttachSpy).toHaveBeenCalledTimes(3);
 
       await harness.unmount();
     } finally {

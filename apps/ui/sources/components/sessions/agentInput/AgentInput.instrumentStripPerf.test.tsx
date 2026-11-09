@@ -24,7 +24,7 @@ import { installSessionActionFixture, installSessionActionRpcBoundary } from '@/
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installBrowserStorageLockBoundary } from '@/dev/testkit/harness/browserStorageLockBoundary';
 import type { ComposerSuggestionKindId } from '@/components/autocomplete/composerSuggestionKinds';
-import type { SessionContextUsageSnapshotV1 } from '@happier-dev/protocol';
+import type { SessionContextUsageSnapshotV1 } from '@happier-dev/protocol/usage/contextUsage';
 import type { Session } from '@/sync/domains/state/storageTypes';
 
 const renderCounts = vi.hoisted(() => ({ multiTextInput: 0 }));

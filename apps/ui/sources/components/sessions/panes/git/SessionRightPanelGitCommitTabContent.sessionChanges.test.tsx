@@ -8,12 +8,13 @@ vi.mock('socket.io-client', async (importOriginal) =>
 import { createMachineFixture, createSessionFixture, createSessionMessagesFixture, createThemeFixture, createToolCallMessageFixture, renderScreen } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storageStore';
 import { projectChangedFilesAsScmSnapshot, type ScmFileStatus } from '@/scm/scmStatusFiles';
-import { installSessionPaneRuntimeTestHarness } from '../sessionPaneRuntimeTestHarness';
+import { installSessionPaneRuntimeTestHarness, prepareSessionPaneRuntimeForTests } from '../sessionPaneRuntimeTestHarness';
 import type { SessionRightPanelGitCommitTabContentProps } from './SessionRightPanelGitCommitTabContent';
 import type { SessionRightPanelGitCommitTabProps } from './SessionRightPanelGitCommitTab';
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 installSessionGitPaneCommonModuleMocks({ storage: async (original) => original() });
+await prepareSessionPaneRuntimeForTests();
 const runtime = installSessionPaneRuntimeTestHarness();
 
 beforeEach(() => {
@@ -59,7 +60,7 @@ function seedTurn(paths: readonly string[]) {
 function props(overrides: Partial<SessionRightPanelGitCommitTabContentProps> = {}): SessionRightPanelGitCommitTabContentProps {
     return {
         theme: createThemeFixture(), sessionId: 's1', serverId: runtime.serverId, sessionPath: '/tmp/repo',
-        scmSnapshot: snapshot(['src/a.ts']), workspaceTouchedPaths: [],
+        scmSnapshot: snapshot(['src/a.ts']),
         commitSelectionPaths: [], commitSelectionPatches: [], scmCommitStrategy: 'atomic', scmWriteEnabled: true,
         inFlightScmOperation: null, hasGlobalOperationInFlight: false, scmOperationBusy: false,
         scmOperationStatus: null, backendLabel: 'Git', commitActionLabel: 'Commit', hasConflicts: false,

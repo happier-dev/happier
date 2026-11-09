@@ -1,6 +1,5 @@
 import * as React from 'react';
 import type { View } from 'react-native';
-import type { CollectionSpaceIconV1 } from '@happier-dev/protocol/collections/spaces/collectionSpacesV1';
 import { collectionConditionValueLabels } from '@happier-dev/plugin-ui/components';
 
 import { CollectionConditionTokens } from '@/components/ui/lists/collection/CollectionConditionTokens';
@@ -103,16 +102,6 @@ function suggestSpaceName(
   return phrase.trim() || fallback;
 }
 
-function suggestSpaceIcon(
-  filters: SessionListViewFilterController['filters'],
-): CollectionSpaceIconV1 {
-  const projects = filters.projects?.include ?? [];
-  if (projects.length === 1) return { kind: 'project', project: projects[0] };
-  if (filters.attention === 'needs_my_attention')
-    return { kind: 'icon', name: 'attention' };
-  return { kind: 'icon', name: 'list' };
-}
-
 /**
  * The Sessions column's space chrome (lab `clspaces`, `clfilter`): one owner for the strip, the filter
  * editor's open state and anchor, the condition tokens and the save/edit form. Every entry point — the
@@ -151,7 +140,14 @@ export function useSessionListSpaceChrome(
   );
   const closeFilter = React.useCallback(() => setFilterOpen(false), []);
   const storedFilter = React.useMemo(() => toStoredSessionListFilter(controller.filters), [controller.filters]);
-  const suggestedIcon = React.useMemo(() => suggestSpaceIcon(controller.filters), [controller.filters]);
+  const organizationProjections = input.organizationProjectionsByServerId;
+  const suggestedIcon = React.useMemo(() => suggestSessionSpaceIcon(controller.filters, (section) => {
+    const projection = organizationProjections[section.serverId];
+    if (!projection) return null;
+    const held = projectSessionOrganizationSections(section.serverId, projection)
+      .find((candidate) => candidate.address.sectionId === section.sectionId);
+    return held?.display.status === 'available' ? held.display.value.icon : null;
+  }), [controller.filters, organizationProjections]);
   const suggestion = React.useMemo(() => ({
     name: suggestSpaceName(allTokens, t('sessionsList.spacesNew')),
     icon: suggestedIcon,
@@ -163,7 +159,7 @@ export function useSessionListSpaceChrome(
   const editing = useCollectionSpaceEditing({
     entityKind: 'sessionWork',
     testIDPrefix: 'session-list-space',
-    serverId: controller.spaceSettingsScope?.serverId ?? null,
+    scope: controller.spaceSettingsScope,
     spaces: controller.spaces,
     selectedSpace: controller.activeSpace,
     currentFilter: storedFilter,

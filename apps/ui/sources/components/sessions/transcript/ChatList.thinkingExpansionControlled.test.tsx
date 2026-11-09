@@ -61,9 +61,6 @@ vi.mock('@/components/sessions/pending/PendingMessagesTranscriptBlock', () => ({
   PendingMessagesTranscriptBlock: () => React.createElement('PendingMessagesTranscriptBlock'),
 }));
 
-vi.mock('@/components/sessions/actions/SessionActionDraftCard', () => ({
-  SessionActionDraftCard: () => React.createElement('SessionActionDraftCard'),
-}));
 
 vi.mock('@/sync/domains/state/agentStateCapabilities', () => ({
   getPermissionsInUiWhileLocal: () => ({}),

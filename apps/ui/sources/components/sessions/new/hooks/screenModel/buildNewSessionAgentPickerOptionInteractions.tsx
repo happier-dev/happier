@@ -5,15 +5,14 @@ import type { AgentInputChipPickerOption } from '@/components/sessions/agentInpu
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
-import type { Settings } from '@/sync/domains/settings/settings';
-import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
+import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/state/newSessionInteractionSchemas';
 import type { SessionModelPickerExperimentalConfirmationController } from '@/components/sessions/modelPicker/SessionModelPicker';
 import type { NewSessionEngineOptionDetailProps } from '@/components/sessions/new/components/NewSessionEngineOptionDetail';
 
 import type { SessionAgentPickerSelection } from '@/components/sessions/agentPicker/buildSessionAgentPickerDetailContent';
 import { buildSessionAgentPickerDetailContent } from '@/components/sessions/agentPicker/buildSessionAgentPickerDetailContent';
 import type { FavoriteModelTogglePayload } from './newSessionFavoriteModelsPickerOption';
-import { useSettings } from '@/sync/store/hooks';
+import { useAgentUiSettings } from '@/agents/catalog/useAgentUiSettings';
 
 type BuildNewSessionAgentPickerOptionInteractionsParams = Readonly<{
     entry: ResolvedBackendCatalogEntry;
@@ -21,7 +20,6 @@ type BuildNewSessionAgentPickerOptionInteractionsParams = Readonly<{
     selectedMachineId: string | null;
     capabilityServerId: string;
     selectedPath: string | null;
-    readSettings: () => Settings;
     refreshProbe?: OptionPickerProbeState | null;
     favoriteModelSelections?: readonly FavoriteModelSelectionV1[];
     onToggleFavoriteModel?: (entry: ResolvedBackendCatalogEntry, model: FavoriteModelTogglePayload) => void;
@@ -41,11 +39,11 @@ type BuildNewSessionAgentPickerOptionInteractionsParams = Readonly<{
 
 function NewSessionAgentPickerDetailContent(props: Omit<
     Parameters<typeof buildSessionAgentPickerDetailContent>[0], 'settings'
-> & Readonly<{ readSettings: () => Settings }>) {
-    // Only the mounted detail follows arbitrary Agent-owned Account settings.
-    useSettings();
-    const { readSettings, ...detail } = props;
-    return buildSessionAgentPickerDetailContent({ ...detail, settings: readSettings() });
+>) {
+    const detail = props;
+    const settings = useAgentUiSettings({ agentIds: [props.runtimeCarrierAgentId ?? props.agentCatalogEntry.agentId],
+        machineId: props.selectedMachineId, domain: 'runtime' });
+    return buildSessionAgentPickerDetailContent({ ...detail, settings });
 }
 
 export function buildNewSessionAgentPickerOptionInteractions(
@@ -91,8 +89,7 @@ export function buildNewSessionAgentPickerOptionInteractions(
                 selectedMachineId: params.selectedMachineId,
                 capabilityServerId: params.capabilityServerId,
                 cwd: params.selectedPath,
-                readSettings: params.readSettings,
-                refreshProbe: params.refreshProbe,
+                        refreshProbe: params.refreshProbe,
                 selection,
                 favoriteModelSelections: params.favoriteModelSelections ?? [],
                 onToggleFavoriteModel: params.onToggleFavoriteModel

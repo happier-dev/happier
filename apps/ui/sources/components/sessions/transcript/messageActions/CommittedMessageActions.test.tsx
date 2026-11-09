@@ -489,6 +489,18 @@ describe('Committed row and native menu availability', () => {
         expect(bodyRenders).toBe(1);
     });
 
+    it('mounts no workflow availability subscription for a row whose actions are hidden, and opens it when they show', async () => {
+        const off = { transcriptMessageMakeRepeatableActionEnabled: false };
+        const baseline = await renderScreen(element('agent-text', off, false, 'm1', false, 'Useful prompt', false, false, undefined, undefined, undefined, false));
+        const speechSubscriptions = activeFeatureSubscriptions;
+        await baseline.unmount();
+        const screen = await renderScreen(element('agent-text', {}, false, 'm1', false, 'Useful prompt', false, false, undefined, undefined, undefined, false));
+        expect(activeFeatureSubscriptions).toBe(speechSubscriptions);
+        await screen.update(element('agent-text', {}, false, 'm1', false, 'Useful prompt', false, false, undefined, undefined, undefined, true));
+        expect(activeFeatureSubscriptions).toBeGreaterThan(speechSubscriptions);
+        expect(screen.findHostByTestId('transcript-message-repeatable:m1')).not.toBeNull();
+    });
+
     it('subscribes only while Make repeatable is eligible, preserving a view-only recycled body and row/menu parity', async () => {
         const off = { transcriptMessageMakeRepeatableActionEnabled: false };
         const screen = await renderScreen(element('agent-text', off));

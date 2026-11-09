@@ -31,7 +31,9 @@ function scopeState() {
     return {
         right: { isOpen: false, activeTabId: null, tabState: {} },
         details: { isOpen: false, tabs: [], activeTabKey: null, tabState: {} },
-        bottom: { isOpen: true, activeTabId: bottomActiveTabIdMock, tabState: { terminal: terminalWorkspaceMock } },
+        bottom: { isOpen: true, activeTabId: bottomActiveTabIdMock,
+            selectedDestination: bottomActiveTabIdMock ? { kind: 'builtin', id: bottomActiveTabIdMock } : null,
+            tabState: { terminal: terminalWorkspaceMock } },
     };
 }
 vi.mock('@/components/appShell/panes/hooks/useAppPaneScope', () => ({
@@ -132,7 +134,7 @@ describe('SessionBottomPanel', () => {
             activeTabId: 'embedded', showList: true,
         };
         const key = 'session:s1:terminal:vite';
-        publishTerminalSurfaceSummary(key, { title: null, bell: null, status: 'connected', error: null, url: 'http://localhost:5173/' });
+        publishTerminalSurfaceSummary(key, { title: null, bell: null, status: 'connected', error: null, failure: null, url: 'http://localhost:5173/' });
         try {
             const { SessionBottomPanel } = await import('./SessionBottomPanel');
             const screen = await renderScreen(<SessionBottomPanel sessionId="s1" scopeId="session:s1" />);

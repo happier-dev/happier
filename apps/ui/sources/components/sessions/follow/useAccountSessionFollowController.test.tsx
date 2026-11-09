@@ -2,7 +2,7 @@ import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID } from '@happier-dev/protocol/sessions/follow/changes';
 
-import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -113,4 +113,48 @@ it('keeps one personal Follow read across 1,000 unrelated changes while refreshi
     publishHomeAccountChange(home.id);
     await flushHookEffects();
     expect(reads()).toBe(6);
+});
+
+it('finishes a personal Follow write when its Info editor unmounts before the reply', async () => {
+    const home = await network.addHome('https://personal-follow-write-lifetime.test', 'follow-account');
+    enableFollow(home.id);
+    publishAppliedActiveServerRuntimeAvailability(false);
+    setActiveServerId(home.id);
+    storage.getState().activateProfileScope({ serverId: home.id, accountId: home.accountId });
+    publishAppliedActiveServerSnapshot({ serverId: home.id, serverUrl: home.serverUrl, generation: 1 });
+    setServerReachabilityNetworkAllowed(true);
+    const sessionId = 'shown-session';
+    const path = `/v2/sessions/${sessionId}/follow`;
+    const issued = createDeferred<AbortSignal | null | undefined>();
+    const response = createDeferred<void>();
+    let level: 'important' | 'none' = 'important';
+    let writes = 0;
+    network.setHttpResponder(async (input, init) => {
+        if (new URL(String(input)).pathname !== path) return null;
+        if (init?.method === 'PUT') {
+            writes++;
+            issued.resolve(init.signal);
+            await response.promise;
+            init.signal?.throwIfAborted();
+            level = 'none';
+        }
+        return Response.json({ follow: { sessionId, following: true, notificationLevel: level, includeInVoice: false },
+            isSessionOwner: false, capabilities: { manageFollow: true }, voiceInitialSnapshotPending: false });
+    });
+    const hook = await renderHook(() => useAccountSessionFollowController({ serverId: home.id, sessionId }, true));
+    await act(async () => { await waitForTestEvent(hook.getCurrent().controller.subscribe,
+        hook.getCurrent().controller.getSnapshot, state => !state.loading && state.projection !== null); });
+    let saving: Promise<void> | undefined;
+    try {
+        await act(async () => { saving = hook.getCurrent().controller.set({ policy: { preset: 'quiet' } }); });
+        const signal = await Promise.race([issued.promise, saving!.then(() => {
+            throw new Error(`Follow settled before its write: ${JSON.stringify(hook.getCurrent().controller.getSnapshot())}`);
+        })]);
+        await hook.unmount();
+        const abortedOnNavigation = signal?.aborted;
+        response.resolve();
+        await saving;
+        expect({ abortedOnNavigation, level }).toEqual({ abortedOnNavigation: false, level: 'none' });
+        expect(writes).toBe(1);
+    } finally { response.resolve(); await saving; }
 });

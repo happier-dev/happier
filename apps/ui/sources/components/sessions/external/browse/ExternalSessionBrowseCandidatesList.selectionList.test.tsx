@@ -51,6 +51,9 @@ vi.mock('@/text', async () =>
   }),
 );
 
+// Prepare the real component graph during collection, before the first render owns act().
+const { ExternalSessionBrowseCandidatesList } = await import('./ExternalSessionBrowseCandidatesList');
+
 const candidate = {
   remoteSessionId: 'session-1',
   title: 'Existing session',
@@ -170,8 +173,6 @@ describe('ExternalSessionBrowseCandidatesList machine inventory', () => {
   it.each(['loading', 'signedOut'] as const)(
     'shows the inventory %s before daemon capability state',
     async (inventoryStatus) => {
-      const { ExternalSessionBrowseCandidatesList } =
-        await import('./ExternalSessionBrowseCandidatesList');
       const screen = await renderScreen(
         <ExternalSessionBrowseCandidatesList
           {...defaultProps()}
@@ -206,8 +207,6 @@ describe('ExternalSessionBrowseCandidatesList Agent-session deletion affordance'
   ])(
     'shows the destructive row control only when %s',
     async (_label, supported, expected) => {
-      const { ExternalSessionBrowseCandidatesList } =
-        await import('./ExternalSessionBrowseCandidatesList');
       const screen = await renderScreen(
         <ExternalSessionBrowseCandidatesList
           {...defaultProps()}
@@ -222,8 +221,6 @@ describe('ExternalSessionBrowseCandidatesList Agent-session deletion affordance'
   );
 
   it('never offers deletion without a consumer that can perform it', async () => {
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...defaultProps()}
@@ -236,8 +233,6 @@ describe('ExternalSessionBrowseCandidatesList Agent-session deletion affordance'
   });
 
   it('names the destructive control after its own candidate for touch and screen readers', async () => {
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...defaultProps()}
@@ -263,8 +258,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
   });
 
   it('renders decoded snippets and keeps unsearchable rows visible but inert', async () => {
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...defaultProps()}
@@ -311,8 +304,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
   });
 
   it('ends a fully covered conversation search without a marker', async () => {
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...defaultProps()}
@@ -330,8 +321,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   // F9 (r11): Browse closed its rows with a centred line in other words than History; it now sits on the rows' edge.
   it('closes a partial conversation search with History\'s coverage line', async () => {
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...defaultProps()}
@@ -350,9 +339,26 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
     expect(screen.getTextContent()).not.toContain('common.done');
   });
 
+  // ui-r329: a partial search that found nothing says what it searched for, inside the list, not a bare coverage banner.
+  it('says no conversation matched the query when a partial search ends empty', async () => {
+    const screen = await renderScreen(
+      <ExternalSessionBrowseCandidatesList
+        {...defaultProps()}
+        searchTarget="content"
+        contentSearchSupported
+        contentSearchSubmitted
+        contentCoverage="partial"
+        nextCursor={null}
+        searchQuery="flaky e2e"
+        candidates={[]}
+      />,
+    );
+    expect(screen.findByTestId('direct-session-candidates:content-partial-empty')).not.toBeNull();
+    expect(screen.getTextContent()).toContain('externalSessions.browseContentPartialNoMatches');
+    expect(screen.getTextContent()).not.toMatch(/browseContentPartial(?!NoMatches)/);
+  });
+
   it('lets "Search more conversations" alone say a search with rows is unfinished', async () => {
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...defaultProps()}
@@ -368,8 +374,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
   });
 
   it('renders proven link/import status through the candidate projection and leaves unproven native absence neutral', async () => {
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const match = {
       snippet: 'the flaky e2e is the settings sheet',
       sourceItemId: 'message-1',
@@ -427,7 +431,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
   });
 
   it('renders plain Markdown hit titles and snippets with exact display matches', async () => {
-    const { ExternalSessionBrowseCandidatesList } = await import('./ExternalSessionBrowseCandidatesList');
     const candidates = [
       { ...candidate, remoteSessionId: 'title-hit', title: '# 🪴 **silver meadow** _notes_',
         match: { snippet: '🪴 **silver meadow** _notes_', sourceItemId: 'title-message', messageIndex: 0 } },
@@ -453,8 +456,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
   });
 
   it('offers Stop only for a conversation search the user started; a typed phrase still offers Search', async () => {
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const onSearchSubmit = vi.fn();
     const onCancelPreparation = vi.fn();
     const base = {
@@ -493,8 +494,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
   });
 
   it('never declares no matches while content coverage is unsupported or unsearched', async () => {
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...defaultProps()}
@@ -516,8 +515,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('shows incomplete coverage and an explicit continuation for a settled empty content page', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -548,8 +545,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('says when Search more finds nothing new, and reports a failed page as the one message of its state', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const content = { searchQuery: 'body', searchTarget: 'content', contentSearchSupported: true,
       contentSearchSubmitted: true, contentCoverage: 'partial' } as const;
     const screen = await renderScreen(
@@ -586,8 +581,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
       activity: 0,
     };
     const candidates = createInstrumentedCandidates(10_000, reads);
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -648,8 +641,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
         details: { path: '/repo/a' },
       },
     ];
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -687,8 +678,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('retains lazy candidate visuals when linking state updates the mounted row', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList {...props} />,
     );
@@ -724,8 +713,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
       },
     ];
     const { act } = await import('react-test-renderer');
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -783,8 +770,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('keeps loaded candidates mounted when the next page fails and retries inline', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -806,8 +791,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('marks a stopped index build incomplete with a retry instead of an end-of-list marker', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -842,8 +825,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('presents incomplete link and import annotations without disabling candidate actions', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList {...props} annotationsIncomplete />,
     );
@@ -867,8 +848,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('shows only the progress row while indexing, and the status notice only once indexing is done', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -895,8 +874,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('uses automatic end reach without rendering a manual Load More row', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList {...props} />,
     );
@@ -911,8 +888,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('names the incremental-search progressbar without exposing a second unlabeled wrapper', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -936,8 +911,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
   it('says a missing machine is gone before claiming no agent can browse (state precedence)', async () => {
     const props = defaultProps();
     const onChooseMachine = vi.fn();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -966,8 +939,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
   it('shows an inventory read failure without diagnosing the Home or declaring the machine gone', async () => {
     const props = defaultProps();
     const onChooseMachine = vi.fn();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -999,8 +970,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('asks for a machine, and says an unreachable machine is offline, before any agent state', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -1037,8 +1006,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('renders an actionable offline state instead of an empty list', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -1064,8 +1031,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('prefers the current machine-offline reason over a stale candidate Agent failure', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -1083,8 +1048,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('announces an empty-list load failure without adding a second live region', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -1104,8 +1067,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('shows a settled empty listing as the page empty state', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -1130,8 +1091,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('answers a search without matches with one line and a way to clear it', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -1153,8 +1112,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('continues an empty cursor page through SelectionList without a manual action', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -1177,8 +1134,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('allows the same opaque cursor to paginate again after the browse scope changes', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -1203,8 +1158,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('formats section and row paths against the selected machine home directory', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -1225,8 +1178,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('names a candidate with its visible project identity and trailing activity/link state', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -1252,8 +1203,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
   });
 
   it('shows only what tells rows apart: the Agent and machine chosen in the band are not repeated on every row', async () => {
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...defaultProps()}
@@ -1274,8 +1223,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('renders mounted cold-index progress instead of an empty result', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -1309,8 +1256,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('keeps indexing progress and its cancel affordance reachable beside served rows', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -1346,8 +1291,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('renders accessible bounded indeterminate progress when the total is unknown', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -1380,8 +1323,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
 
   it('coalesces indexing announcements while keeping the current progress value queryable', async () => {
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     // The live region is mounted before the index build starts, so the build's
     // arrival is inserted into an existing region and actually spoken.
     const screen = await renderScreen(
@@ -1477,8 +1418,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
   it('announces indexing and incomplete candidate-status changes on iOS', async () => {
     accessibilityPlatform.os = 'ios';
     const props = defaultProps();
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}
@@ -1582,8 +1521,6 @@ describe('ExternalSessionBrowseCandidatesList SelectionList shell', () => {
       details: { path: '/Users/alice/projects/project-b' },
       linkData: { projectId: 'project-b' },
     };
-    const { ExternalSessionBrowseCandidatesList } =
-      await import('./ExternalSessionBrowseCandidatesList');
     const screen = await renderScreen(
       <ExternalSessionBrowseCandidatesList
         {...props}

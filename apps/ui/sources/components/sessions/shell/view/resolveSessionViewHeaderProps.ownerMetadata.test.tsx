@@ -1,20 +1,19 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import type { Session } from '@/sync/domains/state/storageTypes';
-import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
-import { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } from '@happier-dev/protocol/voice/sessionBinding';
-import { SessionHeaderSubagentsButton } from '@/components/sessions/actions/SessionHeaderSubagentsButton';
-import { SessionHeaderTerminalButton } from '@/components/sessions/actions/SessionHeaderTerminalButton';
-import { SessionHeaderBrowserButton } from '@/components/sessions/actions/SessionHeaderBrowserButton';
-import { SessionHeaderComputerButton } from '@/components/sessions/actions/SessionHeaderComputerButton';
+import { renderScreen } from '@/dev/testkit';
 import { SessionHeaderActionMenu } from '@/components/sessions/actions/SessionHeaderActionMenu';
+import { SessionHeaderInfoButton } from '@/components/sessions/actions/SessionHeaderInfoButton';
 import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
 import { SESSION_BOARD_DESTINATION } from '@/components/sessions/board/sessionBoardDestination';
 import { t } from '@/text';
-import { SESSION_HEADER_ACTION_SIZE_PX, resolveSessionHeaderActionTargetPx } from '@/components/sessions/actions/sessionHeaderIconMetrics';
+import { LruMap } from '@/utils/cache/lruMap';
+
+import type { Session } from '@/sync/domains/state/storageTypes';
+import { buildSystemSessionMetadataV1 } from '@happier-dev/protocol/sessions/metadata/systemSessionV1';
+import { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } from '@happier-dev/protocol/voice/sessionBinding';
 
 import { resolveSessionViewHeaderProps } from './resolveSessionViewHeaderProps';
 
@@ -59,8 +58,6 @@ function createPluginHeaderProjection() {
                 available: true,
             },
         },
-
-
         resourcesById: {},
         settingsById: {},
         familiesById: {
@@ -140,8 +137,6 @@ function createManyPluginHeaderProjection(actionCount: number) {
         installedPackagesById: {},
         agentsById: {},
         actionsById,
-
-
         resourcesById: {},
         settingsById: {},
         familiesById: {
@@ -155,7 +150,40 @@ function createManyPluginHeaderProjection(actionCount: number) {
 }
 
 describe('resolveSessionViewHeaderProps owner metadata', () => {
-    it('removes duplicate rail and mobile terminal icons while preserving fallback access and desktop browser', () => {
+    it('leaves pane-bound header elements with their caller rather than process-global retention', () => {
+        const writes = vi.spyOn(LruMap.prototype, 'set');
+        try {
+            for (let pane = 0; pane < 3; pane++) {
+                const session = createSessionFixture({ id: `header-lifetime-${pane}` });
+                const select = vi.fn(() => true);
+                const header = resolveSessionViewHeaderProps({
+                    isDataReady: true, session, sessionId: session.id,
+                    sessionInfoHref: `/session/${session.id}/info`,
+                    sessionRunsHref: `/session/${session.id}/runs`,
+                    sessionAutomationsHref: `/session/${session.id}/automations`,
+                    paneScopeId: `pane-${pane}`, windowWidth: 1400,
+                    sessionAutomationsEnabledCount: 0, sessionExecutionRunsSupported: true,
+                    showAutomations: true, shouldShowSubagentsButton: false, subagentActiveCount: 0,
+                    navigateWithBlurOnWeb: action => action(), handleHeaderExtraItemSelect: select,
+                    router: { push: () => {}, navigate: () => {} },
+                    actionIconColor: '#000', headerTintColor: '#000', statusErrorColor: '#f00',
+                    externalSessionRuntime: null,
+                });
+                findHeaderActionMenu(header).props.onSelectExtraItem('header.openAutomations');
+                expect(select).toHaveBeenCalledWith('header.openAutomations');
+            }
+            const retained = [...new Set(writes.mock.contexts)]
+                .filter((cache): cache is LruMap<unknown, unknown> => cache instanceof LruMap)
+                .flatMap(cache => [...cache.values()])
+                .filter(value => typeof value === 'object' && value !== null
+                    && 'rightElement' in value && React.isValidElement(value.rightElement));
+            expect(retained).toHaveLength(0);
+        } finally {
+            writes.mockRestore();
+        }
+    });
+
+    it('keeps only state on the header: the rail carries destinations, and without a visible rail (i) and ⋯ reach them', () => {
         const session = createSessionFixture({ id: 'header-rail-access' });
         const input = {
             isDataReady: true, session, sessionId: session.id,
@@ -163,8 +191,9 @@ describe('resolveSessionViewHeaderProps owner metadata', () => {
             sessionRunsHref: '/session/header-rail-access/runs',
             sessionAutomationsHref: '/session/header-rail-access/automations',
             paneScopeId: 'header-rail-access', windowWidth: 1400,
-            sessionAutomationsEnabledCount: 0, sessionExecutionRunsSupported: true,
-            showAutomations: false, shouldShowSubagentsButton: true, subagentActiveCount: 1,
+            sessionAutomationsEnabledCount: 2, sessionExecutionRunsSupported: true,
+            showAutomations: true, shouldShowSubagentsButton: true, subagentActiveCount: 1,
+            browserMenuEntryAvailable: true,
             navigateWithBlurOnWeb: (action: () => void) => action(),
             handleHeaderExtraItemSelect: () => false,
             router: { push: () => {}, navigate: () => {} },
@@ -174,23 +203,27 @@ describe('resolveSessionViewHeaderProps owner metadata', () => {
         const types = (value: ReturnType<typeof resolveSessionViewHeaderProps>) => React.Children.toArray(
             (value.rightElement as React.ReactElement<{ children?: React.ReactNode }>).props.children,
         ).filter(React.isValidElement).map((child) => child.type);
-        const fallback = types(resolveSessionViewHeaderProps(input));
-        expect(fallback).toContain(SessionHeaderSubagentsButton);
-        expect(fallback).toContain(SessionHeaderTerminalButton);
-        const rail = types(resolveSessionViewHeaderProps({ ...input, actionRailVisible: true }));
-        expect(rail).not.toContain(SessionHeaderSubagentsButton);
-        expect(rail).not.toContain(SessionHeaderTerminalButton);
-        expect(rail).toContain(SessionHeaderBrowserButton);
-        expect(rail).toContain(SessionHeaderComputerButton);
-        expect(rail.indexOf(SessionHeaderComputerButton)).toBeLessThan(rail.indexOf(SessionHeaderBrowserButton));
-        const mobile = types(resolveSessionViewHeaderProps({ ...input, mobileTerminalTabAvailable: true }));
-        expect(mobile).not.toContain(SessionHeaderTerminalButton);
-        expect(mobile).toContain(SessionHeaderSubagentsButton);
-        expect(types(resolveSessionViewHeaderProps(input))).toContain(SessionHeaderTerminalButton);
-        const boardHeaderAction = { onPress: () => {}, preferDirect: true };
-        expect(findBoardHeaderButton(resolveSessionViewHeaderProps({ ...input, boardHeaderAction }))).toBeDefined();
-        expect(findBoardHeaderButton(resolveSessionViewHeaderProps({ ...input, boardHeaderAction, actionRailVisible: true }))).toBeUndefined();
+        const ids = (value: ReturnType<typeof resolveSessionViewHeaderProps>) => (findHeaderActionMenu(value).props.extraItems ?? [])
+            .map((item: { id: string }) => item.id);
 
+        // A visible rail: no (i), no destination glyphs or menu duplicates; Automations stays reachable in ⋯.
+        const rail = resolveSessionViewHeaderProps({ ...input, actionRailVisible: true });
+        expect(types(rail)).not.toContain(SessionHeaderInfoButton);
+        expect(findHeaderActionMenu(rail).props.destinationsInMenu).toBe(false);
+        expect(ids(rail)).toEqual(['header.openAutomations']);
+
+        // No visible rail (multi-pane off on a desktop, a phone, no adapter): (i) and every destination in ⋯.
+        const noRail = resolveSessionViewHeaderProps({ ...input, actionRailVisible: false });
+        expect(findHeaderActionMenu(noRail).props.beforeMenu.type).toBe(SessionHeaderInfoButton);
+        expect(findHeaderActionMenu(noRail).props.destinationsInMenu).toBe(true);
+        expect(ids(noRail)).toEqual(['header.openSubagents', 'header.openTerminal', 'header.openBrowser', 'header.openAutomations']);
+        // A phone reaches Terminal through its own bottom bar.
+        expect(ids(resolveSessionViewHeaderProps({ ...input, mobileTerminalTabAvailable: true }))).not.toContain('header.openTerminal');
+
+        // Board is always one menu entry, never a glyph.
+        const boardHeaderAction = { onPress: () => {}, preferDirect: true };
+        expect(findBoardHeaderButton(resolveSessionViewHeaderProps({ ...input, boardHeaderAction }))).toBeUndefined();
+        expect(ids(resolveSessionViewHeaderProps({ ...input, boardHeaderAction }))).toContain('header.openBoard');
     });
 
     it('drops a subtitle that only repeats the title (an unnamed session titled after its folder)', () => {
@@ -250,7 +283,7 @@ describe('resolveSessionViewHeaderProps owner metadata', () => {
             .toBe('~/code/app');
     });
 
-    it('keeps a deduplicated workspace conflict discoverable from the session header', () => {
+    it('keeps a deduplicated workspace conflict discoverable from the session header', async () => {
         const session = createSessionFixture({ id: 'workspace-conflict-header' });
         const onOpenWorkspaceSyncConflicts = vi.fn();
         const result = resolveSessionViewHeaderProps({
@@ -288,7 +321,14 @@ describe('resolveSessionViewHeaderProps owner metadata', () => {
             && child.props.onPress === onOpenWorkspaceSyncConflicts);
 
         expect(conflictButtons).toHaveLength(1);
-        expect(conflictButtons[0].props.accessibilityRole).toBe('button');
+        const screen = await renderScreen(<>{conflictButtons[0]}</>);
+        try {
+            expect(screen.findAll(node => typeof node.type === 'string'
+                && node.props.accessibilityRole === 'button'
+                && node.props.accessibilityLabel === t('workspaceSync.attention.conflictedLinks', { count: 1 }))).toHaveLength(1);
+        } finally {
+            await screen.unmount();
+        }
         expect(conflictButtons[0].props.accessibilityLabel).toBe(
             t('workspaceSync.attention.conflictedLinks', { count: 1 }),
         );
@@ -296,7 +336,7 @@ describe('resolveSessionViewHeaderProps owner metadata', () => {
         expect(onOpenWorkspaceSyncConflicts).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps one direct plugin action but moves a large ordered header contribution list into overflow', () => {
+    it('keeps plugin header contributions in their order, in overflow', () => {
         const session = createSessionFixture({ id: 'plugin-header-layout' });
         const input = {
             isDataReady: true,
@@ -352,7 +392,8 @@ describe('resolveSessionViewHeaderProps owner metadata', () => {
 
         expect(wide.props.pluginHeaderActionPlacement).toBe('overflow');
         expect(narrow.props.pluginHeaderActionPlacement).toBe('overflow');
-        expect(oneWide.props.pluginHeaderActionPlacement).toBe('direct');
+        // Plugin header actions keep their scope and invocation but always live in ⋯ (calm-shell `cshead.H1`).
+        expect(oneWide.props.pluginHeaderActionPlacement).toBe('overflow');
         expect(oneNarrow.props.pluginHeaderActionPlacement).toBe('overflow');
         expect(oneWideBesideBoard.props.pluginHeaderActionPlacement).toBe('overflow');
         expect(wide.props.pluginHeaderActions).toEqual(
@@ -381,76 +422,7 @@ describe('resolveSessionViewHeaderProps owner metadata', () => {
         expect(oneWide.props.pluginHeaderActions.map((entry: any) => entry.action.descriptorId)).toEqual(['action-1']);
     });
 
-    it('places Board through the shared optional-action budget', () => {
-        const session = createSessionFixture({ id: 'board-header-layout' });
-        const onPress = () => {};
-        const input = {
-            isDataReady: true,
-            session,
-            sessionId: session.id,
-            sessionInfoHref: '/session/board-header-layout/info',
-            sessionRunsHref: '/session/board-header-layout/runs',
-            sessionAutomationsHref: '/session/board-header-layout/automations',
-            paneScopeId: 'pane-1',
-            sessionAutomationsEnabledCount: 0,
-            sessionExecutionRunsSupported: false,
-            showAutomations: false,
-            shouldShowSubagentsButton: false,
-            subagentActiveCount: 0,
-            navigateWithBlurOnWeb: (action: () => void) => action(),
-            handleHeaderExtraItemSelect: () => false,
-            router: { push: () => {}, navigate: () => {} },
-            actionIconColor: '#000',
-            headerTintColor: '#000',
-            statusErrorColor: '#f00',
-            externalSessionRuntime: null,
-        } as const;
-
-        const emptyWide = resolveSessionViewHeaderProps({
-            ...input,
-            windowWidth: 800,
-            boardHeaderAction: { onPress, preferDirect: false },
-        });
-        const populatedWide = resolveSessionViewHeaderProps({
-            ...input,
-            windowWidth: 800,
-            boardHeaderAction: { onPress, preferDirect: true },
-        });
-        const populatedNarrow = resolveSessionViewHeaderProps({
-            ...input,
-            windowWidth: 390,
-            boardHeaderAction: { onPress, preferDirect: true },
-        });
-
-        expect(findBoardHeaderButton(emptyWide)).toBeUndefined();
-        expect(findHeaderActionMenu(emptyWide).props.extraItems).toEqual(expect.arrayContaining([
-            expect.objectContaining({ id: 'header.openBoard' }),
-        ]));
-        expect(findBoardHeaderButton(populatedWide)?.props).toEqual(expect.objectContaining({
-            onPress,
-            accessibilityRole: 'button',
-            accessibilityLabel: t(SESSION_BOARD_DESTINATION.labelKey),
-        }));
-        const boardButton = findBoardHeaderButton(populatedWide);
-        const boardButtonStyle = boardButton?.props.style({ pressed: false });
-        const expectedTargetSize = resolveSessionHeaderActionTargetPx();
-        expect(boardButtonStyle).toEqual(expect.objectContaining({
-            width: expectedTargetSize,
-            height: expectedTargetSize,
-        }));
-        expect(boardButton?.props.hitSlop).toBe(
-            expectedTargetSize > SESSION_HEADER_ACTION_SIZE_PX ? undefined : 15,
-        );
-        expect(findHeaderActionMenu(populatedWide).props.extraItems ?? []).not.toEqual(expect.arrayContaining([
-            expect.objectContaining({ id: 'header.openBoard' }),
-        ]));
-        expect(findBoardHeaderButton(populatedNarrow)).toBeUndefined();
-        expect(findHeaderActionMenu(populatedNarrow).props.extraItems).toEqual(expect.arrayContaining([
-            expect.objectContaining({ id: 'header.openBoard' }),
-        ]));
-    });
-
-    it('gives Board, Companion, and plugin actions one deterministic optional direct slot', () => {
+    it('puts Board, Companion and plugin actions in the one ⋯, with no direct header slot', () => {
         const session = createSessionFixture({ id: 'shared-optional-header-slot' });
         const result = resolveSessionViewHeaderProps({
             isDataReady: true,
@@ -486,7 +458,10 @@ describe('resolveSessionViewHeaderProps owner metadata', () => {
         });
         const menu = findHeaderActionMenu(result);
 
-        expect(findBoardHeaderButton(result)).toBeDefined();
+        expect(findBoardHeaderButton(result)).toBeUndefined();
+        expect(menu.props.extraItems).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'header.openBoard', title: t(SESSION_BOARD_DESTINATION.labelKey) }),
+        ]));
         expect(menu.props.companionHeaderActionPlacement).toBe('overflow');
         expect(menu.props.pluginHeaderActionPlacement).toBe('overflow');
         expect(menu.props.companionHeaderIntent).toMatchObject({
@@ -494,55 +469,6 @@ describe('resolveSessionViewHeaderProps owner metadata', () => {
             checked: true,
             expanded: true,
         });
-    });
-
-    it('uses the same optional slot for Companion when Board does not claim it', () => {
-        const session = createSessionFixture({ id: 'companion-optional-header-slot' });
-        const result = resolveSessionViewHeaderProps({
-            isDataReady: true,
-            session,
-            sessionId: session.id,
-            sessionInfoHref: '/session/companion-optional-header-slot/info',
-            sessionRunsHref: '/session/companion-optional-header-slot/runs',
-            sessionAutomationsHref: '/session/companion-optional-header-slot/automations',
-            paneScopeId: 'pane-1',
-            windowWidth: 800,
-            sessionAutomationsEnabledCount: 0,
-            sessionExecutionRunsSupported: false,
-            showAutomations: false,
-            shouldShowSubagentsButton: false,
-            subagentActiveCount: 0,
-            navigateWithBlurOnWeb: (action) => action(),
-            handleHeaderExtraItemSelect: () => false,
-            router: { push: () => {}, navigate: () => {} },
-            actionIconColor: '#000',
-            headerTintColor: '#000',
-            statusErrorColor: '#f00',
-            externalSessionRuntime: null,
-            boardHeaderAction: { onPress: () => {}, preferDirect: false },
-            companionHeaderAction: {
-                availability: 'ready',
-                preferenceExists: true,
-                visible: true,
-                itemCount: 2,
-                placement: { kind: 'reserved_rail', edge: 'trailing', widthPx: 280 },
-                isPhone: false,
-            },
-            pluginUiProjection: createManyPluginHeaderProjection(1),
-        });
-        const menu = findHeaderActionMenu(result);
-
-        expect(findBoardHeaderButton(result)).toBeUndefined();
-        expect(menu.props.companionHeaderActionPlacement).toBe('direct');
-        expect(menu.props.pluginHeaderActionPlacement).toBe('overflow');
-        expect(menu.props.companionHeaderIntent).toMatchObject({
-            operation: 'hide',
-            checked: true,
-            expanded: true,
-        });
-        expect(menu.props.extraItems).toEqual(expect.arrayContaining([
-            expect.objectContaining({ id: 'header.openBoard' }),
-        ]));
     });
 
     it('recomputes the Companion header intent when only its placement facts change', () => {

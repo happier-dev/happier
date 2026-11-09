@@ -13,6 +13,7 @@ import { resolveSessionListDragPointer } from './resolveSessionListDragPointer';
 import { treeRowId } from '../drop-resolution/treeRowId';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { isWorkspaceRootTreeRowId } from '../drop-resolution/treeRowId';
+import { buildSessionSectionGroupKey } from '@/sync/domains/session/organization/sections';
 
 const workspaceA: SessionFolderWorkspaceRefV1 = {
     t: 'workspaceScope',
@@ -465,14 +466,23 @@ describe('resolveSessionListDragPointer — folder topology', () => {
         expect(resolved.result.visual.kind).toBe('outline');
     });
 
-    it('resolves a drop below the last row of a project that contains a folder to move-to-root', () => {
+    it('refuses to reparent an Account Section through a Project root-edge drop', () => {
+        const sectionId = treeRowId.folder('server-a', 'folder-a');
+        const items: SessionListIndexItem[] = [projectHeader(), sessionIndexItem('root-a'), {
+            type: 'header', title: 'Section A', headerKind: 'folder', folderId: 'folder-a', folderDepth: 0,
+            groupKey: buildSessionSectionGroupKey({ serverId: 'server-a', sectionId: 'folder-a' }),
+            serverId: 'server-a',
+        }];
         const snapshot = buildSessionListDragSnapshot({
-            items: folderIndexItems(),
-            viewItems: folderViewItems(),
-            sessionDragKey: treeRowId.folder('server-a', 'folder-a'),
+            items,
+            viewItems: items,
+            sessionDragKey: sectionId,
             foldersFeatureEnabled: true,
         });
-        const registry = liveRegistry(folderContentRows());
+        const registry = liveRegistry(snapshot.topology.rows.map((row, index) => ({
+            id: row.rowId, parentId: row.parentRowId, containerId: row.containerId, depth: row.depth, kind: row.kind,
+            bounds: { x: 0, y: row.rowId === sectionId ? 160 : index * FOLDER_ROW_HEIGHT, width: 320, height: FOLDER_ROW_HEIGHT },
+        })));
         const viewport: TreeViewportMetrics = {
             viewportWindowY: 0,
             viewportWindowX: 0,
@@ -480,18 +490,19 @@ describe('resolveSessionListDragPointer — folder topology', () => {
             viewportHeight: 600,
         };
 
-        // Last row (root-a session) occupies content y 80..120. Point below it.
+        // Project member occupies y40..80. Its root-after-last gap is y80..120;
+        // the independent Account Section begins at y160, outside that target.
         const resolved = resolveSessionListDragPointer({
             snapshot,
             registry,
-            pointer: { x: 160, y: 130 },
+            pointer: { x: 160, y: 90 },
             viewport,
         });
 
-        expect(resolved.result.instruction.kind).toBe('move-to-root');
-        if (resolved.result.visual.kind === 'line') {
-            expect(resolved.result.visual.edge).toBe('bottom');
-        }
-        expect(resolved.result.visual.kind).toBe('line');
+        expect(resolved.result).toEqual({
+            instruction: { kind: 'blocked', reason: 'workspace-scope-mismatch', hintTargetId: treeRowId.workspaceRoot('project-a') },
+            visual: { kind: 'none' },
+        });
+        expect(resolved.geometry).toEqual({ kind: 'none' });
     });
 });

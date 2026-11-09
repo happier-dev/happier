@@ -7,7 +7,7 @@ import {
     CurrentSessionPresentationStateV1Schema,
     currentSessionPresentationEntryIdentityV1,
 } from '@happier-dev/protocol/sessions';
-import type { PluginProjectedComposerRegionEntryV1 } from '@happier-dev/protocol';
+import type { PluginProjectedComposerRegionEntryV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { Text } from '@/components/ui/text/Text';
 import { recordSessionPayloadConsumptionTelemetry } from '@/sync/domains/session/sessionPayloadConsumptionTelemetry';

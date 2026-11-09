@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { useSession, useSessionListRenderableWithServerScope } from '@/sync/domains/state/storage';
+import { useSessionListRowSelector, useSessionSelector } from '@/sync/domains/state/storage';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
 import { useSessionMessageViewerScope } from './useSessionMessageViewerScope';
@@ -32,13 +32,16 @@ export function useSessionMessageAuthorshipScope(
     sessionServerId?: string | null,
 ): SessionMessageAuthorshipScope {
     const exactSessionServerId = sessionServerId?.trim() || null;
-    const session = useSession(sessionId, sessionServerId);
-    const scopedSession = useSessionListRenderableWithServerScope(exactSessionServerId, sessionId);
-    const audienceSession = exactSessionServerId
-        ? scopedSession ?? (session && areServerProfileIdentifiersEquivalent(session.serverId, exactSessionServerId) ? session : null)
-        : session;
+    // Subscribe to the fact itself: Session records and list rows change on every turn write.
+    const rowHasOtherNamedCollaborator = useSessionListRowSelector(exactSessionServerId, sessionId,
+        (row) => row ? row.hasOtherNamedCollaborator === true : null);
+    const sessionHasOtherNamedCollaborator = useSessionSelector(sessionId, sessionServerId, (session) => (
+        session !== null
+        && (!exactSessionServerId || areServerProfileIdentifiersEquivalent(session.serverId, exactSessionServerId))
+        && session.hasOtherNamedCollaborator === true
+    ));
     const viewerScope = useSessionMessageViewerScope(sessionId, sessionServerId);
-    const hasOtherNamedCollaborator = audienceSession?.hasOtherNamedCollaborator === true;
+    const hasOtherNamedCollaborator = rowHasOtherNamedCollaborator ?? sessionHasOtherNamedCollaborator;
     return React.useMemo(
         () => ({ viewerScope, hasOtherNamedCollaborator }),
         [hasOtherNamedCollaborator, viewerScope],

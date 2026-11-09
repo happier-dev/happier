@@ -1,5 +1,7 @@
 import * as React from 'react';
-import type { DaemonTerminalListEntryV1, SessionTerminalActionId, SessionTerminalTabV1 } from '@happier-dev/protocol';
+import type { DaemonTerminalListEntryV1} from '@happier-dev/protocol/daemon/terminal';
+import type { SessionTerminalActionId} from '@happier-dev/protocol/actions/sessionTerminalActionFamily';
+import type { SessionTerminalTabV1 } from '@happier-dev/protocol/terminal/workspace';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -93,7 +95,8 @@ function describeTabSubtitle(tab: SessionTerminalTabDescriptor): string | undefi
     if (!member) return undefined;
     if (member.url) return describeTerminalAddress(member.url);
     if (member.place) return member.place;
-    const statusWords = new Set(STATUS_WORDS.map(describeSessionTerminalStatus));
+    const statusWords = new Set(STATUS_WORDS.map(status => describeSessionTerminalStatus(status)));
+    if (member.status && member.detail === describeSessionTerminalStatus(member.status, member.title)) return undefined;
     return member.detail && !statusWords.has(member.detail) ? member.detail : undefined;
 }
 
@@ -133,7 +136,8 @@ export function buildTerminalJumpModel(input: TerminalJumpModelInput, query: str
                     ...(subtitle ? { subtitle } : {}),
                     searchText: tab.members.map((member) => [member.title, member.detail, member.place].filter(Boolean).join(' ')).join(' '),
                     icon: <TerminalMarkIcon mark={tab.mark} />,
-                    rightAccessory: tab.status || showing ? <TerminalJumpStatus status={tab.status} showing={showing} /> : undefined,
+                    rightAccessory: tab.status || showing ? <TerminalJumpStatus status={tab.status} showing={showing}
+                        {...(tab.status === 'connection-lost' ? { title: tab.title } : {})} /> : undefined,
                 };
             }),
         });

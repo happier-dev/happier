@@ -8,7 +8,7 @@ import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeFor
 import { Text } from '@/components/ui/text/Text';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon } from '@/components/ui/icons/Icon';
-import { AGENT_INPUT_CHIP_ROW_HIT_REACH } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
+import { useAgentInputChipRowReach } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE } from '@/components/sessions/agentInput/definitions/agentInputChipIconMetrics';
 
 
@@ -44,6 +44,7 @@ export type ResumeChipProps = {
 
 export function ResumeChip(props: ResumeChipProps) {
     const { theme } = useUnistyles();
+    const railReach = useAgentInputChipRowReach();
     const { anchorRef } = props;
     const setAnchor = React.useCallback((node: unknown) => {
         if (anchorRef) (anchorRef as React.MutableRefObject<View | null>).current = node as View | null;
@@ -62,8 +63,7 @@ export function ResumeChip(props: ResumeChipProps) {
             testID="agent-input-resume-chip"
             accessibilityLabel={label ?? props.labelTitle}
             onPress={props.onPress}
-            hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-            hitReach={AGENT_INPUT_CHIP_ROW_HIT_REACH.lower}
+            hitReach={railReach}
             style={({ pressed, focused }) => [
                 props.pressableStyle(pressed),
                 focusRingStyle({ focused, color: theme.colors.border.focus }),

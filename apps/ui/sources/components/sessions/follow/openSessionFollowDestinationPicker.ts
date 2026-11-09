@@ -1,4 +1,4 @@
-import type { SessionFollowSourceKeyPreparationWaitingReasonV1 } from '@happier-dev/protocol';
+import type { SessionFollowSourceKeyPreparationWaitingReasonV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
 
 import type { FocusReturnRef } from '@/keyboard/focusReturn';
 import { Modal } from '@/modal';

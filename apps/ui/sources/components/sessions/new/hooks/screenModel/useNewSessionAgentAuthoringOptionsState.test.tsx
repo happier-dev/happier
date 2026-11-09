@@ -267,29 +267,32 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
         expect(hook.getCurrent().modelSelection).toBeNull();
     });
 
-    it('preserves a provider-bound draft selection instead of reconstructing it as native', async () => {
+    it.each(['temporary draft', 'persisted draft', 'profile', 'remembered'] as const)(
+        'preserves a Provider model outside native Gemini vocabulary from %s', async (source) => {
+        const agentTarget = { kind: 'agent', identity: { pluginId: 'happier.agent.gemini', localId: 'gemini' } } as const;
         const modelSelection = SessionModelSelectionV1Schema.parse({
             v: 1,
             updatedAt: 123,
             ref: {
-                agentTargetKey: 'agent:happier.agent.claude/claude',
+                agentTargetKey: resolveBackendTargetKeyV2(agentTarget),
                 providerConnectionId: 'pc_01J00000000000000000000000',
-                modelId: 'provider/claude-sonnet',
+                modelId: 'gateway/only',
             },
         });
         const hook = await renderHook(() => useNewSessionAgentAuthoringOptionsState({
-            agentType: 'claude',
-            backendTargetKey: 'agent:happier.agent.claude/claude',
-            hydratedTempAuthoringDraft: null,
-            hydratedPersistedAuthoringDraft: {
-                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
-                modelSelection,
-            },
-            rememberedEngineSelection: null,
+            agentType: 'gemini',
+            backendTargetKey: resolveBackendTargetKeyV2(agentTarget),
+            hydratedTempAuthoringDraft: source === 'temporary draft' ? { agentTarget, modelSelection } : null,
+            hydratedPersistedAuthoringDraft: source === 'persisted draft' ? { agentTarget, modelSelection } : null,
+            implicitProfileModelSelection: source === 'profile' ? modelSelection : null,
+            rememberedEngineSelection: source === 'remembered' ? {
+                v: 1, updatedAt: 123, modelSelection, acpSessionModeId: null, sessionConfigOptionOverrides: null,
+            } : null,
         }));
 
-        expect(hook.getCurrent().modelMode).toBe('provider/claude-sonnet');
+        expect(hook.getCurrent().modelMode).toBe('gateway/only');
         expect(hook.getCurrent().modelSelection).toEqual(modelSelection);
+        expect(hook.getCurrent().modelSelectionForPersistence).toEqual(source === 'remembered' ? undefined : modelSelection);
     });
 
     it('preserves a provider-bound model literally named default instead of treating it as Automatic', async () => {

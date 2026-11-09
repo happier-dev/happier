@@ -66,16 +66,8 @@ vi.mock('@/components/sessions/attachments/useAttachmentsUploadConfig', () => ({
     }),
 }));
 
-vi.mock('@/components/sessions/attachments/uploadAttachmentDraftsToSession', () => ({
-    uploadAttachmentDraftsToSession: uploadAttachmentDraftsToSessionSpy,
-    buildAttachmentMessageMeta: (uploaded: unknown) => ({
-        happier: {
-            kind: 'attachments.v1',
-            payload: {
-                attachments: uploaded,
-            },
-        },
-    }),
+vi.mock('@/sync/domains/transfers/ops/uploadSessionAttachment', () => ({
+    sessionAttachmentsUploadFile: (request: unknown) => uploadAttachmentDraftsToSessionSpy(request),
 }));
 
 vi.mock('@/sync/sync', () => ({
@@ -112,13 +104,15 @@ vi.mock('@/components/sessions/new/components/PathSelectionList', () => ({
 vi.mock('@/components/profiles/ProfilesList', () => ({
     ProfilesList: () => null,
 }));
+const { NewSessionWizard } = await import('./NewSessionWizard');
+
 describe('NewSessionWizard (attachments.uploads)', () => {
     it('wires AgentInput attachments and its semantic Composer document when enabled', async () => {
-        const { NewSessionWizard } = await import('./NewSessionWizard');
         const onSelectionChangePersist = vi.fn();
         const onStructuredInputMentionsChange = vi.fn();
         const composerDocument = {
             ref: { kind: 'newSession', instanceId: 'new-session-composer-scope' },
+            readScope: () => null,
             revision: 1,
             attachments: [{
                 v: 1,
@@ -591,13 +585,8 @@ describe('NewSessionWizard (attachments.uploads)', () => {
         followUpSpawnedSessionWithServerScopeSpy.mockReset();
 
         uploadAttachmentDraftsToSessionSpy.mockResolvedValue({
-            uploaded: [{
-                name: 'notes.txt',
-                path: '.happier/uploads/notes.txt',
-                mimeType: 'text/plain',
-                sizeBytes: 12,
-                sha256: 'abc123',
-            }],
+            success: true, path: '.happier/uploads/notes.txt', sizeBytes: 12, sha256: 'a'.repeat(64),
+            attachmentHandle: { v: 1, sessionId: 'sess_target', id: 'issued-notes' },
         });
 
         const handleCreateSession = vi.fn();
@@ -698,6 +687,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
         await act(async () => {
             await afterCreated({
                 sessionId: 'sess_target',
+                sessionTarget: { serverId: 'server-a', accountId: 'created-account', sessionId: 'sess_target' },
                 effectiveSpawnServerId: 'server-a',
                 launchAttempt: {
                     attachmentMessageLocalId: 'new-session-attachment-local-1',
@@ -713,18 +703,7 @@ describe('NewSessionWizard (attachments.uploads)', () => {
             profileId: 'profile-work',
             messageLocalId: 'new-session-attachment-local-1',
             metaOverrides: {
-                happier: {
-                    kind: 'attachments.v1',
-                    payload: {
-                        attachments: [{
-                            name: 'notes.txt',
-                            path: '.happier/uploads/notes.txt',
-                            mimeType: 'text/plain',
-                            sizeBytes: 12,
-                            sha256: 'abc123',
-                        }],
-                    },
-                },
+                happierStructuredInputV1: { v: 1, sessionAttachments: [{ v: 1, sessionId: 'sess_target', id: 'issued-notes' }] },
             },
         });
         expect(readNewSessionAttachmentDrafts('wizard-follow-up')).toEqual([]);

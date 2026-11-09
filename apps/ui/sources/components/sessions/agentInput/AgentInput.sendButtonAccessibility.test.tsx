@@ -6,6 +6,7 @@ import { VoiceCaptureBusyError } from '@/voice/runtime/input/VoiceCaptureAdmissi
 import { installAgentInputCommonModuleMocks } from './agentInputTestHelpers';
 import type { AutocompleteSuggestion } from '@/components/autocomplete/autocompleteTypes';
 import type { AgentInputAttachmentsRowItem } from './agentInputContracts';
+import type { VoiceDictationFailure } from '@/voice/dictation/VoiceDictationController';
 import { flattenTestStyle } from '@/dev/testkit/harness/popoverHarness';
 
 // Exercise the installed color codec used by the real composer surface.
@@ -15,6 +16,7 @@ type MultiTextInputSelection = { start: number; end: number };
 // Cold imports belong to fixture setup, not the timeout of the first selected interaction test.
 beforeAll(async () => { await import('./AgentInput'); }, 600_000);
 type MultiTextInputState = { text: string; selection: MultiTextInputSelection };
+const localSettingOverrides = vi.hoisted(() => ({} as Record<string, unknown>));
 const multiTextInputHandleMocks = vi.hoisted(() => ({
     blur: vi.fn(),
     focus: vi.fn(),
@@ -23,12 +25,7 @@ const multiTextInputHandleMocks = vi.hoisted(() => ({
 const multiTextInputRenderCount = vi.hoisted(() => ({ value: 0 }));
 const dictationState = vi.hoisted(() => ({
     status: 'idle' as 'idle' | 'starting' | 'listening' | 'transcribing',
-    failure: null as null | Readonly<{
-        id: number;
-        sessionId: string;
-        kind: 'provider_error';
-        reason: 'capture_duration_exceeded';
-    }>,
+    failure: null as VoiceDictationFailure | null,
     toggle: vi.fn(),
     dismissFailure: vi.fn(),
 }));
@@ -50,6 +47,17 @@ const translateOverride = vi.hoisted(() => ({
 vi.mock('@/agents/registry/AgentIcon', () => ({
     AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
 }));
+
+// The person's keep-keyboard choice is a local setting; the rest of the store stays real.
+vi.mock('@/sync/store/hooks', async (importOriginal) => {
+    const original = await importOriginal() as Record<string, unknown> & { useLocalSetting: (key: string, selector?: (value: unknown) => unknown) => unknown };
+    return {
+        ...original,
+        useLocalSetting: (key: string, selector?: (value: unknown) => unknown) => (
+            key in localSettingOverrides ? localSettingOverrides[key] : original.useLocalSetting(key, selector as never)
+        ),
+    };
+});
 
 installAgentInputCommonModuleMocks({
     reactNative: async () => {
@@ -300,7 +308,10 @@ describe('AgentInput (send button accessibility)', () => {
             autocompleteKinds={[]}
             autocompleteSuggestions={async () => []}
         />);
-        expect(screen.findByTestId('session-composer-send')?.props.onLongPress).toBeUndefined();
+        // A running turn's empty composer turns this control into the Stop, which keeps the Stop's id.
+        const control = screen.findByTestId('session-composer-send') ?? screen.findByTestId('agent-input-abort');
+        expect(control).toBeTruthy();
+        expect(control?.props.onLongPress).toBeUndefined();
         expect(screen.findByTestId('agent-input-send-option-server_pending')).toBeNull();
         await screen.unmount();
     });
@@ -339,6 +350,7 @@ describe('AgentInput (send button accessibility)', () => {
 
 
     afterEach(() => {
+        delete localSettingOverrides.composerKeepFocusAfterSend;
         translateOverride.fn = null;
         featureEnabledState.voice = true;
         dictationState.status = 'idle';
@@ -414,18 +426,19 @@ describe('AgentInput (send button accessibility)', () => {
             : <WorkflowWaitBlockEditor {...common} block={wait} onChangeBlock={onWrite} />);
 
         // These are real rendered content nodes, not a mocked AgentInput prop inspection.
-        const textNodes = screen.root.findAll((node) => String(node.type) === 'Text');
-        expect(textNodes.some((node) => node.props.selectable === true && node.children.includes(document.text))).toBe(true);
+        const prompt = screen.findHostByTestId('agent-input-read-only-text');
+        expect(prompt?.props.selectable).toBe(true);
+        // Placed references render inline as chips; the complete authored paragraph still reads through.
+        expect(screen.getTextContent()).toContain(document.text.slice(document.text.indexOf('\n') + 1));
         const card = screen.findByTestId('agent-input-material-surface');
         expect(flattenTestStyle(card?.props.style)).toMatchObject({ width: '100%', alignSelf: 'stretch' });
         expect(flattenTestStyle(card?.props.style).borderWidth).toBeGreaterThan(0);
-        const prompt = textNodes.find((node) => node.children.includes(document.text));
         expect(flattenTestStyle(prompt?.props.style)).toMatchObject({ textAlign: 'left' });
         if (kind === 'agent') {
             expect(screen.findByTestId('agent-input-agent-chip')).not.toBeNull();
         }
-        expect(textNodes.some((node) => node.children.includes('Frozen issue #42'))).toBe(true);
-        expect(textNodes.some((node) => node.children.includes('Attached issue #42'))).toBe(true);
+        expect(screen.getTextContent()).toContain('Frozen issue #42');
+        expect(screen.getTextContent()).toContain('Attached issue #42');
         expect(screen.root.findAll((node) => String(node.type) === 'MultiTextInput')).toHaveLength(0);
         expect(screen.root.findAll((node) => typeof node.props.testID === 'string' && /(?:composer-send|dictation|voice-composer|attachment-remove)/u.test(node.props.testID))).toHaveLength(0);
         const ref = composerCustody.entryFor(step.id).ref;
@@ -461,7 +474,9 @@ describe('AgentInput (send button accessibility)', () => {
             placeholder="Read"
             onSubmit={onSubmit}
             agentInputContext={{ agentType: 'claude', engineLabel: 'Frozen engine', onAgentClick }}
-            extraActionChips={[{ key: 'contribution', render: () => <Text>Contributed context</Text> }]}
+            extraActionChips={[{ key: 'contribution', controlId: 'shortcuts',
+                placement: { id: 'shortcuts:contribution', title: 'Contributed context', defaultPlacement: 'pinned' },
+                render: () => <Text>Contributed context</Text> }]}
         />);
         expect(screen.root.findAll((node) => String(node.type) === 'Text' && node.children.includes('Contributed context'))).not.toHaveLength(0);
         expect(screen.root.findAll((node) => String(node.type) === 'MultiTextInput')).toHaveLength(0);
@@ -470,7 +485,6 @@ describe('AgentInput (send button accessibility)', () => {
         expect(flattenTestStyle(screen.findByTestId('agent-input-material-surface')?.props.style)).toMatchObject({ width: '100%', alignSelf: 'stretch' });
         const engine = screen.findByTestId('agent-input-agent-chip');
         expect(engine?.props.disabled).toBe(true);
-        expect(engine?.props.onPress).toBeUndefined();
         expect(onAgentClick).not.toHaveBeenCalled();
         await screen.unmount();
     });
@@ -545,6 +559,26 @@ describe('AgentInput (send button accessibility)', () => {
 
         const input = screen.root.findByType('MultiTextInput' as any);
         expect(input.props.accessibilityLabel).toBe('Analyze, step 1 of 2');
+
+        await screen.unmount();
+    });
+
+    // F-U5-UI live: the Session composer and the Run form's composer pass no host label, so the web
+    // editor was an unnamed combobox; its visible prompt is the name a reader hears.
+    it('names the text input by its prompt when the host supplies no label', async () => {
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+            value=""
+            placeholder="What should they focus on?"
+            onChangeText={() => {}}
+            onSend={() => {}}
+            autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+
+        const input = screen.root.findByType('MultiTextInput' as any);
+        expect(input.props.accessibilityLabel).toBe('What should they focus on?');
 
         await screen.unmount();
     });
@@ -791,12 +825,7 @@ describe('AgentInput (send button accessibility)', () => {
         await screen.unmount();
     });
 
-    it('names the armed switch on an untouched composer, and leaves the press inert', async () => {
-        // Arming IS the confirmation. The control the reader is about to press
-        // reports which Agent it would continue with from the moment the rail is
-        // used — requiring a keystroke first reinstates a confirm step made of
-        // typing. What an empty composer withholds is the PRESS, not the name: the
-        // same inert send it has always been, now saying what pressing it does.
+    it('submits the armed switch on an untouched composer', async () => {
         const { AgentInput } = await import('./AgentInput');
         const onSend = vi.fn();
 
@@ -815,22 +844,17 @@ describe('AgentInput (send button accessibility)', () => {
         if (!send) throw new Error('session-composer-send not found');
         expect(send.props.accessibilityLabel).toBe('session.agentContinuation.sendLabel');
         expect(send.findAllByType('AgentIcon' as any).map((node) => node.props?.agentId)).toEqual(['codex']);
-        // Inert, exactly as the empty composer's send has always been — and it
-        // still explains why, the way the circular send does.
-        expect(send.props.disabled).toBe(true);
-        expect(send.props.accessibilityState?.disabled).toBe(true);
-        expect(send.props.accessibilityHint).toBe('session.inputPlaceholder');
+        expect(send.props.disabled).toBe(false);
+        expect(send.props.accessibilityState?.disabled).toBe(false);
+        expect(send.props.accessibilityHint).toBeUndefined();
 
         await screen.pressByTestIdAsync('session-composer-send');
-        expect(onSend).not.toHaveBeenCalled();
+        expect(onSend).toHaveBeenCalled();
 
         await screen.unmount();
     });
 
-    it('leaves the empty-composer Stop saying Stop, and stopping when pressed', async () => {
-        // The name follows the arm, but only onto the control the arm would use. A
-        // running turn takes this button for Stop, and "Continue with Codex" on it
-        // would name a switch that press aborts instead of taking.
+    it('submits an armed switch instead of stopping from an empty composer', async () => {
         featureEnabledState.voice = false;
         const { AgentInput } = await import('./AgentInput');
         const onAbort = vi.fn();
@@ -851,13 +875,30 @@ describe('AgentInput (send button accessibility)', () => {
 
         const send = screen.findByTestId('session-composer-send');
         if (!send) throw new Error('session-composer-send not found');
-        expect(send.props.accessibilityLabel).toBe('agentInput.stopCodingTurn');
-        expect(send.findAllByType('AgentIcon' as any).length).toBe(0);
+        expect(send.props.accessibilityLabel).toBe('session.agentContinuation.sendLabel');
+        expect(send.findAllByType('AgentIcon' as any).length).toBe(1);
+        // The disc sends the switch, so the turn's one Stop is the rail chip.
+        expect(screen.findAllHostsByTestId('agent-input-abort')).toHaveLength(1);
 
         await screen.pressByTestIdAsync('session-composer-send');
-        expect(onAbort).toHaveBeenCalledTimes(1);
-        expect(onSend).not.toHaveBeenCalled();
+        expect(onAbort).not.toHaveBeenCalled();
+        expect(onSend).toHaveBeenCalled();
 
+        await screen.unmount();
+    });
+
+    it('submits an armed model change without requiring text', async () => {
+        const { AgentInput } = await import('./AgentInput');
+        const onSend = vi.fn();
+        const screen = await renderScreen(<AgentInput
+            sessionId="session-1" value="" placeholder="Type"
+            onChangeText={() => {}} onSend={onSend}
+            armedRouteContinuation={{ modelLabel: 'Other model' }}
+            autocompleteKinds={[]} autocompleteSuggestions={async () => []}
+        />);
+        expect(screen.findByTestId('session-composer-send')?.props.disabled).toBe(false);
+        await screen.pressByTestIdAsync('session-composer-send');
+        expect(onSend).toHaveBeenCalled();
         await screen.unmount();
     });
 
@@ -1113,9 +1154,9 @@ describe('AgentInput (send button accessibility)', () => {
                     autocompleteSuggestions={async () => []}
                 />);
 
-        const send = screen.findByTestId('session-composer-send');
+        const send = screen.findByTestId('agent-input-abort');
         expect(send).toBeTruthy();
-        if (!send) throw new Error('session-composer-send not found');
+        if (!send) throw new Error('agent-input-abort not found');
 
         // Both icon families now render as a single `Icon` type, so the original
         // pair of family-scoped queries collapsed into one. Asserting the same
@@ -1148,17 +1189,63 @@ describe('AgentInput (send button accessibility)', () => {
                     autocompleteSuggestions={async () => []}
                 />);
 
-        const send = screen.findByTestId('session-composer-send');
+        const send = screen.findByTestId('agent-input-abort');
         expect(send).toBeTruthy();
-        if (!send) throw new Error('session-composer-send not found');
+        if (!send) throw new Error('agent-input-abort not found');
         expect(send.props.accessibilityState?.disabled).toBe(false);
 
-        await screen.pressByTestIdAsync('session-composer-send');
+        await screen.pressByTestIdAsync('agent-input-abort');
 
         expect(onAbort).toHaveBeenCalledTimes(1);
         expect(onSend).not.toHaveBeenCalled();
 
         await screen.unmount();
+    });
+
+    it('offers exactly one Stop while a turn runs: the trailing button when empty, the rail chip once there is text', async () => {
+        // P3 §3.3: empty input keeps the trailing Stop; nonempty input keeps Send (queue) plus the separate
+        // stop chip; never two equivalent Stops at once. The Stop keeps its one test id wherever it sits.
+        featureEnabledState.voice = false;
+        const { AgentInput } = await import('./AgentInput');
+        const render = (value: string, isSendDisabled = false) => renderScreen(<AgentInput
+                    sessionId="session-1"
+                    value={value}
+                    isSendDisabled={isSendDisabled}
+                    placeholder="Type"
+                    onChangeText={() => {}}
+                    onSend={() => {}}
+                    onAbort={() => {}}
+                    showAbortButton={true}
+                    autocompleteKinds={[]}
+                    autocompleteSuggestions={async () => []}
+                />);
+        const stopControls = (screen: Awaited<ReturnType<typeof render>>) => screen.tree.root.findAll((node) =>
+            typeof node.type === 'string' && node.props?.accessibilityLabel === 'agentInput.stopCodingTurn');
+        const iconNames = (screen: Awaited<ReturnType<typeof render>>) =>
+            screen.tree.root.findAllByType('Icon' as any).map((node) => node.props?.name);
+
+        const empty = await render('');
+        expect(stopControls(empty)).toHaveLength(1);
+        expect(empty.findAllHostsByTestId('agent-input-abort')).toHaveLength(1);
+        expect(iconNames(empty)).toContain('stop');
+        expect(iconNames(empty)).not.toContain('octagon-x');
+        await empty.unmount();
+
+        const typed = await render('Queue this next');
+        expect(stopControls(typed)).toHaveLength(1);
+        expect(typed.findAllHostsByTestId('agent-input-abort')).toHaveLength(1);
+        expect(iconNames(typed)).toContain('octagon-x');
+        expect(iconNames(typed)).toContain('arrow-up');
+        expect(typed.findByTestId('session-composer-send')?.props.accessibilityLabel).not.toBe('agentInput.stopCodingTurn');
+        await typed.unmount();
+
+        // A disabled disc (uploading, resuming) cannot stop: the rail keeps the one Stop, still pressable.
+        const locked = await render('', true);
+        expect(stopControls(locked)).toHaveLength(1);
+        expect(iconNames(locked)).toContain('octagon-x');
+        expect(iconNames(locked)).not.toContain('stop');
+        expect(locked.findByTestId('agent-input-abort')?.props.disabled).not.toBe(true);
+        await locked.unmount();
     });
 
     it('sets an accessible label for session creation context (no sessionId)', async () => {
@@ -1517,7 +1604,7 @@ describe('AgentInput (send button accessibility)', () => {
             id: 7,
             sessionId: 'session-1',
             kind: 'provider_error',
-            reason: 'capture_duration_exceeded',
+            reason: 'capture_failed',
         };
 
         const screen = await renderScreen(<AgentInput
@@ -1532,7 +1619,7 @@ describe('AgentInput (send button accessibility)', () => {
 
         expect(modalAlertMock).toHaveBeenCalledWith(
             'common.error',
-            'voiceAssistant.dictationErrors.captureDurationExceeded',
+            'voiceAssistant.dictationErrors.captureFailed',
         );
         expect(dictationState.dismissFailure).toHaveBeenCalledWith(7);
 
@@ -1627,6 +1714,48 @@ describe('AgentInput (send button accessibility)', () => {
         await screen.unmount();
     });
 
+    it('keeps the session composer focused after sending when the person asked for that', async () => {
+        localSettingOverrides.composerKeepFocusAfterSend = true;
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+            sessionId="session-1"
+            value="Hello world"
+            placeholder="Type"
+            onChangeText={() => {}}
+            onSend={() => {}}
+            autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+
+        screen.pressByTestId('session-composer-send');
+
+        expect(multiTextInputHandleMocks.blur).not.toHaveBeenCalled();
+        await screen.unmount();
+    });
+
+    it('offers Send and start another from the new-session send menu, and sends with that choice', async () => {
+        const onSend = vi.fn();
+        const { AgentInput } = await import('./AgentInput');
+
+        const screen = await renderScreen(<AgentInput
+            value="Hello world"
+            placeholder="Type"
+            onChangeText={() => {}}
+            onSend={onSend}
+            newSessionAfterSendMode="open"
+            autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+        />);
+
+        const send = screen.findByTestId('new-session-composer-send');
+        await act(async () => { send?.props.onAccessibilityAction({ nativeEvent: { actionName: 'longpress' } }); });
+        await screen.pressByTestIdAsync('agent-input-send-option-startAnother');
+
+        expect(onSend).toHaveBeenCalledWith(expect.objectContaining({ afterSend: 'startAnother' }));
+        await screen.unmount();
+    });
+
     it('does not leave raw string children under non-Text host views on web', async () => {
         const { AgentInput } = await import('./AgentInput');
 
@@ -1658,7 +1787,7 @@ describe('AgentInput human typing presence', () => {
 
     async function openComposer() {
         const { AgentInput } = await import('./AgentInput');
-        const { SessionHumanPresenceVisibleReplaceV1Schema } = await import('@happier-dev/protocol');
+        const { SessionHumanPresenceVisibleReplaceV1Schema} = await import('@happier-dev/protocol/sessions');
         const { attachSessionHumanPresenceSocket } = await import('@/sync/domains/session/humanPresence/sessionHumanPresenceRuntime');
         const { markSessionSurfaceHidden, markSessionSurfaceVisible } = await import('@/sync/domains/session/sessionSurfaceVisibility');
         const sent: unknown[] = [];

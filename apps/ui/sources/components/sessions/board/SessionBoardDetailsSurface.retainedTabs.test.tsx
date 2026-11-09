@@ -121,11 +121,6 @@ vi.mock('@/utils/ui/promptUnsavedChangesAlert', () => ({
     },
 }));
 
-import {
-    resolveSessionBoardHostVisibility,
-    resolveSessionBoardItemPrimaryMountHost,
-    type SessionBoardDetailsDestination,
-} from './sessionBoardHostVisibility';
 import { SessionBoardContinuityProvider, useMountedSessionBoardContinuity } from './SessionBoardContinuity';
 import { SessionBoardControllerOwner, useMountedSessionBoardController } from './SessionBoardControllerProvider';
 import { SessionBoardDetailsSurface } from './SessionBoardDetailsSurface';
@@ -611,27 +606,6 @@ function DestinationOwner(props: Readonly<{
     actions: SessionBoardActionsPort;
     expandedVisible: boolean;
 }>): React.ReactElement {
-    const visibility = resolveSessionBoardHostVisibility({
-        foreground: true,
-        panes: {
-            detailsOpen: true,
-            detailsShowsBoard: true,
-            detailsExpandedItemIds: props.expandedVisible ? ['item-2'] : [],
-            mainHidden: false,
-            rightOpen: false,
-            rightActiveTabId: null,
-        },
-        companionPlacement: { kind: 'hidden' },
-        mobileSurface: null,
-    });
-    const resolvePrimaryHost = (itemId: string, destination?: SessionBoardDetailsDestination) => (
-        resolveSessionBoardItemPrimaryMountHost({
-            visibility,
-            itemVisibleInCompanion: false,
-            itemId,
-            ...(destination ? { detailsDestination: destination } : {}),
-        })
-    );
     return (
         <SessionBoardControllerOwner
             address={ADDRESS}
@@ -653,7 +627,6 @@ function DestinationOwner(props: Readonly<{
                 paneScopeId="pane-details"
                 host="details"
                 active
-                resolvePrimaryHost={resolvePrimaryHost}
                 pluginRuntime={PLUGIN_RUNTIME}
                 callerHostedHtmlRuntime={HOSTED_HTML_RUNTIME}
             />
@@ -665,7 +638,6 @@ function DestinationOwner(props: Readonly<{
                     host="details"
                     active
                     focusedItemId="item-2"
-                    resolvePrimaryHost={resolvePrimaryHost}
                     pluginRuntime={PLUGIN_RUNTIME}
                     callerHostedHtmlRuntime={HOSTED_HTML_RUNTIME}
                 />
@@ -701,21 +673,15 @@ describe('two visible Details Board destinations', () => {
             .map((node) => node.props as SessionWidgetHostProps);
     }
 
-    it('runs the executable item in exactly one of the two presented destinations', async () => {
+    it('lets both presented destinations consume their own body', async () => {
         const copies = await mountDestinations(true);
-
         expect(copies).toHaveLength(2);
-        const executable = copies.filter((copy) => copy.primaryHost === copy.host);
-        expect(executable).toHaveLength(1);
-        // The destination a person opened FOR the item is the one that runs it.
-        expect(copies.filter((copy) => copy.expanded === true).map((copy) => copy.primaryHost))
-            .toEqual(['details']);
+        expect(copies.every(copy => copy.bodyActive)).toBe(true);
     });
 
-    it('hands the mount back to the Board when the expanded destination is not presented', async () => {
+    it('keeps the Board body consumed when the expanded destination closes', async () => {
         const copies = await mountDestinations(false);
-
         expect(copies).toHaveLength(1);
-        expect(copies[0]?.primaryHost).toBe('details');
+        expect(copies[0]?.bodyActive).toBe(true);
     });
 });

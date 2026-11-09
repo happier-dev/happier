@@ -9,6 +9,7 @@ import type { PersistedSessionMessagePinV1 } from "@happier-dev/session-core/pin
 import { buildSessionMessagePinAtPressTime, type MessagePinAvailability } from './resolveMessagePinAvailability';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
 import { useMessageActionHitArea } from './useMessageActionHitArea';
+import { RowActionDeferredIcon } from '@/components/ui/lists/RowActionRevealSlot';
 
 export function MessagePinButton(props: Readonly<{
     availability: MessagePinAvailability;
@@ -55,11 +56,13 @@ export function MessagePinButton(props: Readonly<{
             ]}
         >
             {hitArea.frame}
-            {pinned ? (
-                <PinSlashIcon size={ICON_SIZE.xs} color={iconColor} />
-            ) : (
-                <PinIcon size={ICON_SIZE.xs} color={iconColor} />
-            )}
+            <RowActionDeferredIcon size={ICON_SIZE.xs}>
+                {pinned ? (
+                    <PinSlashIcon size={ICON_SIZE.xs} color={iconColor} />
+                ) : (
+                    <PinIcon size={ICON_SIZE.xs} color={iconColor} />
+                )}
+            </RowActionDeferredIcon>
         </Pressable>
     );
 }

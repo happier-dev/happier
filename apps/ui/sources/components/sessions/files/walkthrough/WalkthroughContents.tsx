@@ -12,11 +12,14 @@ import { t } from '@/text';
 
 import { WalkthroughStopNumber } from './WalkthroughAtoms';
 import type { WalkthroughOtherChange, WalkthroughStop } from './walkthroughReading';
+import type { WalkthroughReviewedSource } from './walkthroughReviewedProjection';
+import { useWalkthroughReviewedCount, useWalkthroughReviewedStop } from './useWalkthroughReviewed';
 
 export type WalkthroughContentsProps = Readonly<{
     stops: readonly WalkthroughStop[];
     others: readonly WalkthroughOtherChange[];
     reviewedCount: number | null;
+    reviewedSource?: WalkthroughReviewedSource;
     currentStopId: string | null;
     onSelectStop: (stopId: string) => void;
     onSelectOthers?: () => void;
@@ -35,15 +38,15 @@ function otherCue(others: readonly WalkthroughOtherChange[], tagLockfiles: boole
     }).join(' · ');
 }
 
-/** The reading order and the person's marks: the desktop rail and, on phones, the contents sheet. */
-export const WalkthroughContents = React.memo(function WalkthroughContents(props: WalkthroughContentsProps) {
+function WalkthroughContentsRow(props: Readonly<{
+    stop: WalkthroughStop; source?: WalkthroughReviewedSource; sheet: boolean; on: boolean;
+    onSelectStop: WalkthroughContentsProps['onSelectStop']; stopAccessory?: WalkthroughContentsProps['stopAccessory'];
+}>) {
     const { theme } = useUnistyles();
-    const sheet = props.placement === 'sheet';
-    const rows = props.stops.map((stop) => {
-        const on = stop.id === props.currentStopId;
-        return (
-            <HappierPressable
-                key={stop.id}
+    const stop = useWalkthroughReviewedStop(props.source, props.stop);
+    const { sheet, on } = props;
+    return (
+        <HappierPressable
                 testID={`walkthrough-contents-${stop.id}`}
                 accessibilityRole="link"
                 selected={on}
@@ -65,9 +68,23 @@ export const WalkthroughContents = React.memo(function WalkthroughContents(props
                     {stop.fileCue ? <Text style={[styles.cue, sheet ? styles.cueSheet : null]} numberOfLines={1}>{stop.fileCue}</Text> : null}
                 </View>
                 {props.stopAccessory ? <View style={styles.accessory}>{props.stopAccessory(stop.id)}</View> : null}
-            </HappierPressable>
-        );
-    });
+        </HappierPressable>
+    );
+}
+
+function WalkthroughContentsCount(props: Readonly<{ source?: WalkthroughReviewedSource; count: number | null; total: number; sheet: boolean }>) {
+    const count = useWalkthroughReviewedCount(props.source, props.count ?? 0);
+    const caption = props.count === null ? null : t('walkthrough.reviewedOfTotal', { count, total: props.total });
+    return props.sheet ? caption ? <Text style={styles.sheetCount}>{caption}</Text> : null
+        : <ScmComparisonRailCaption title={t('walkthrough.contents')} count={caption} countTestID="walkthrough-contents-count" />;
+}
+
+/** The reading order and the person's marks: the desktop rail and, on phones, the contents sheet. */
+export const WalkthroughContents = React.memo(function WalkthroughContents(props: WalkthroughContentsProps) {
+    const { theme } = useUnistyles();
+    const sheet = props.placement === 'sheet';
+    const rows = props.stops.map(stop => <WalkthroughContentsRow key={stop.id} stop={stop} source={props.reviewedSource}
+        sheet={sheet} on={stop.id === props.currentStopId} onSelectStop={props.onSelectStop} stopAccessory={props.stopAccessory} />);
     const others = props.others.length > 0 ? (
         <>
             {sheet ? <Text style={styles.sheetSub}>{t('walkthrough.otherChanges')}</Text> : <View style={styles.separator} />}
@@ -97,8 +114,7 @@ export const WalkthroughContents = React.memo(function WalkthroughContents(props
             </HappierPressable>
         </>
     ) : null;
-    const total = props.stops.length;
-    const caption = props.reviewedCount === null ? null : t('walkthrough.reviewedOfTotal', { count: props.reviewedCount, total });
+    const count = <WalkthroughContentsCount source={props.reviewedSource} count={props.reviewedCount} total={props.stops.length} sheet={sheet} />;
 
     if (sheet) {
         return (
@@ -106,7 +122,7 @@ export const WalkthroughContents = React.memo(function WalkthroughContents(props
                 <View style={styles.sheetHeader}>
                     <Text accessibilityRole="header" style={styles.sheetTitle}>{t('walkthrough.contents')}</Text>
                     <View style={styles.grow} />
-                    {caption ? <Text style={styles.sheetCount}>{caption}</Text> : null}
+                    {count}
                     {props.onDone ? (
                         <HappierPressable accessibilityRole="button" accessibilityLabel={t('walkthrough.done')} onPress={props.onDone} style={styles.done}>
                             <Text style={styles.doneText}>{t('walkthrough.done')}</Text>
@@ -122,7 +138,7 @@ export const WalkthroughContents = React.memo(function WalkthroughContents(props
     }
     return (
         <View testID="walkthrough-contents-rail" style={styles.rail}>
-            <ScmComparisonRailCaption title={t('walkthrough.contents')} count={caption} countTestID="walkthrough-contents-count" />
+            {count}
             <ScrollView style={styles.railScroll} contentContainerStyle={styles.railRows}>
                 {rows}
                 {others}

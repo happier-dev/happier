@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Animated, Pressable } from 'react-native';
+import { Animated } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { DETAILS_TAB_HEADER_METRICS, DETAILS_TAB_STRIP_METRICS } from '@/components/appShell/panes/details/header/detailsTabHeaderMetrics';
@@ -11,6 +11,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { t } from '@/text';
 
 import { describeTerminalAddress } from '../presentation/describeSessionTerminal';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 /** How long the arrival ring stays before it settles into the ordinary hairline (terminal lab L). */
 const ARRIVAL_RING_MS = 1600;
@@ -54,17 +55,16 @@ export const SessionTerminalLivePill = React.memo(function SessionTerminalLivePi
         >
             <Icon name="globe" size={12} color={theme.colors.text.secondary} />
             <Text style={styles.address} numberOfLines={1}>{address}</Text>
-            <Pressable
+            <HappierPressable
                 testID={props.testID ? `${props.testID}-open` : undefined}
                 accessibilityRole="button"
                 accessibilityLabel={t('terminalWorkspace.livePill.a11y', { address })}
-                hitSlop={{ top: 8, bottom: 8, left: 4, right: 6 }}
                 onPress={() => props.onOpen(props.url)}
                 style={({ pressed }) => [styles.open, pressed ? { opacity: motionTokens.press.opacity } : null]}
             >
                 <Icon name="arrow-square-out" size={10} color={theme.colors.surface.base} />
                 <Text style={styles.openLabel}>{t('terminalWorkspace.livePill.open')}</Text>
-            </Pressable>
+            </HappierPressable>
         </Animated.View>
     );
 });

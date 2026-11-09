@@ -1355,6 +1355,51 @@ describe('multi-Home Session creation composition', () => {
         }
     }
 
+    it('restores and persists an exact Gemini Provider model through the New Session screen', async () => {
+        const coreHttp = await createDraftSurfaceCoreHttpBoundary();
+        sessionHttpBoundary = url => {
+            const path = new URL(url).pathname;
+            return path === '/v1/machines' ? Response.json([]) : coreHttp(path);
+        };
+        accountHttpSettings = { useEnhancedSessionWizard: true, useProfiles: true };
+        ({ homeA, homeAScopeId, homeAToken } = await arrangeFocusedHomeA('gemini-provider-restore', { applyConnectionManager: true }));
+        const scope = { serverId: homeAScopeId, accountId: 'account-a' };
+        const draftId = crypto.randomUUID();
+        const { SessionModelSelectionV1Schema } = await import('@happier-dev/protocol/providers/selection/v1');
+        const selection = SessionModelSelectionV1Schema.parse({ v: 1, updatedAt: 123, ref: {
+            agentTargetKey: 'agent:happier.agent.gemini/gemini',
+            providerConnectionId: 'pc_01J00000000000000000000000', modelId: 'gateway/only',
+        } });
+        const { readNewSessionDraftFromRepository, writeNewSessionDraftToRepository } = await import('@/components/sessions/composer/newSessionDraftRepositoryAdapter');
+        const { flushSessionDraft, resetSessionDraftRepositoryForTests } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+        writeNewSessionDraftToRepository({ scope, draftId, materializationIntent: 'seeded', draft: {
+            input: 'Use this gateway model', selectedMachineId: null, selectedPath: null,
+            selectedProfileId: null, selectedSecretId: null, agentType: 'gemini',
+            agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.gemini', localId: 'gemini' } },
+            modelSelection: selection, permissionMode: 'default', acpSessionModeId: null, updatedAt: 123,
+        } });
+        const { NewSessionScreen } = await import('../NewSessionScreen');
+        const { NewSessionWizard } = await import('../components/NewSessionWizard');
+        routeBoundary.params = { draftId };
+        const element = () => React.createElement(InjectedAuthProvider, { credentials: { token: homeAToken },
+            children: React.createElement(NewSessionScreen, { presentation: 'screen' }) });
+        const screen = await renderScreen(element());
+        try {
+            await vi.waitFor(() => expect(screen.findByType(NewSessionWizard).props.agent.modelSelection).toEqual(selection));
+            expect(screen.findByType(NewSessionWizard).props.agent.modelMode).toBe('gateway/only');
+            await act(async () => { screen.findByType(NewSessionWizard).props.profiles.openProfileEdit({ profileId: 'profile-edit' }); });
+            expect(readNewSessionDraftFromRepository({ scope, draftId })?.modelSelection).toEqual(selection);
+            await flushSessionDraft({ scope, address: { kind: 'newSession', draftId } });
+        } finally { await screen.unmount(); }
+        resetSessionDraftRepositoryForTests();
+        const reopened = await renderScreen(element());
+        try {
+            await vi.waitFor(() => expect(reopened.findByType(NewSessionWizard).props.agent.modelSelection).toEqual(selection));
+            expect(reopened.findByType(NewSessionWizard).props.agent.modelMode).toBe('gateway/only');
+            expect(readNewSessionDraftFromRepository({ scope, draftId })?.modelSelection).toEqual(selection);
+        } finally { await reopened.unmount(); }
+    });
+
     it('changes the authoring model when an existing surface reopens a different Bot draft', async () => {
         const coreHttp = await createDraftSurfaceCoreHttpBoundary();
         sessionHttpBoundary = url => {
@@ -1874,9 +1919,10 @@ describe('multi-Home Session creation composition', () => {
         } finally { await hook.unmount(); }
     });
 
-    async function runTemporaryTeamModelJourney(journey: 'acquisition' | 'switch-agent' | 'remembered-control' | 'launch' | 'reopen' | 'resume' | 'refresh-selection' | 'run-refresh-selection') {
+    async function runTemporaryTeamModelJourney(journey: 'acquisition' | 'switch-agent' | 'remembered-control' | 'launch' | 'reopen' | 'resume' | 'refresh-selection' | 'run-refresh-selection' | 'empty-team-models' | 'incompatible-team-models') {
+        const noSelectableTeamModels = journey === 'empty-team-models' || journey === 'incompatible-team-models';
         const sourceCase = journey !== 'acquisition';
-        const launchCase = journey === 'launch' || journey === 'reopen';
+        const launchCase = journey === 'launch' || journey === 'reopen' || noSelectableTeamModels;
         const retainedTeamSelection = journey === 'reopen' || !sourceCase;
         const resourceRevision = journey === 'resume' ? 0 : 7;
         if (launchCase || journey === 'resume') socketBoundary.nativeSignInStatus = 'signedOut';
@@ -1916,6 +1962,10 @@ describe('multi-Home Session creation composition', () => {
             ...(launchCase ? { selectedPath: '/workspace/project' } : {}),
             text: 'Prepare on the original target Account', authoring: { agentTarget: { kind: 'agent',
                 identity: { pluginId: 'happier.agent.codex', localId: 'codex' } }, profileId: null,
+                ...(noSelectableTeamModels ? { connectedServices: { v: 2 as const, bindingsByServiceId: {
+                    'happier.agent.codex/openai-codex': { source: 'team_resource' as const,
+                        resourceId: 'runner-resource', deliveryMode: 'brokered' as const },
+                } } } : {}),
                 ...(retainedTeamSelection ? { modelSelection: { v: 1, updatedAt: 1, ref: {
                     agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'gpt-5',
                 } } } : {}),
@@ -1956,6 +2006,19 @@ describe('multi-Home Session creation composition', () => {
                     { id: 'gpt-5', name: 'GPT-5' }),
                 sourceRevision: 'runner-source-7', availability: 'available' }], sourcePresentation: { kind: 'provider',
                 provider: { identity: { pluginId: 'happier.provider.openai', localId: 'openai' }, definitionRevision: 1 } } }] });
+        if (noSelectableTeamModels) {
+            if (journey === 'empty-team-models') entitled.resources[0]!.providerModels = [];
+            else {
+                const row = entitled.resources[0]!.providerModels[0]!;
+                row.availability = 'policy_denied';
+                row.deliveryUnavailableReason = 'provider_incompatible_with_agent';
+                row.compatibility = { ...row.compatibility!, result: {
+                    status: 'incompatible', reasons: ['credential_transport_unavailable'],
+                } };
+            }
+            entitled.resources[0]!.connectedServiceSelections = [{ source: 'team_resource',
+                resourceId: 'runner-resource', deliveryMode: 'brokered' }];
+        }
         if (sourceCase) {
             const { createProviderModelProjectionFixture } = await import('@/dev/testkit/harness/providerSettingsHarness');
             socketBoundary.providerProjection = createProviderModelProjectionFixture({
@@ -2057,8 +2120,20 @@ describe('multi-Home Session creation composition', () => {
             await vi.waitFor(() => {
                 const model = hook.getCurrent();
                 if (model.variant !== 'wizard') throw new Error('Expected the production Agent selector');
-                expect(model.wizardProps.agent.agentPickerSelectedOptionId).toBe(entitled.resources[0]!.providerModels[0]!.selection.agentTargetKey);
+                expect(model.wizardProps.agent.agentPickerSelectedOptionId).toBe('agent:happier.agent.codex/codex');
             });
+            if (noSelectableTeamModels) {
+                await vi.waitFor(() => {
+                    const model = hook.getCurrent();
+                    if (model.variant !== 'wizard') throw new Error('Expected the production composer');
+                    expect(model.wizardProps.agent.teamCredentialResourceStatusByKey?.get('runner-team:runner-resource')?.kind).toBe('current');
+                    expect(model.wizardProps.agent.selectedTeamCredentialModel).toBeNull();
+                    expect(model.wizardProps.footer.canCreate).toBe(false);
+                    expect(JSON.stringify(model.wizardProps.footer.connectionStatus)).toContain('settingsProviders.models.empty');
+                });
+                expect(sessionSpawnCalls()).toHaveLength(0);
+                return;
+            }
             if (journey === 'resume') {
                 for (const reason of ['manual', 'server-reachable', 'server-reachable'] as const) {
                     await act(async () => { await sync.resumeSync(reason); });
@@ -2291,6 +2366,14 @@ describe('multi-Home Session creation composition', () => {
 
     it('submits a worker-confirmed Team model from New Session without native Agent sign-in', async () => {
         await runTemporaryTeamModelJourney('launch');
+    });
+
+    it('disables Send with a reason when the selected Team credential has no selectable models', async () => {
+        await runTemporaryTeamModelJourney('empty-team-models');
+    });
+
+    it('disables Send when every Team model is incompatible with the execution Machine', async () => {
+        await runTemporaryTeamModelJourney('incompatible-team-models');
     });
 
     it('keeps the Team catalog selectable after repeated same-Home resume refreshes', async () => {

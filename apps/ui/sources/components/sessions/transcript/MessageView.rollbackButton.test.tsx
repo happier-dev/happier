@@ -25,7 +25,6 @@ installMessageViewCommonModuleMocks({
                 select: (options: any) => options?.[messageViewRollbackTestState.platformOS] ?? options?.default ?? options?.native ?? options?.web,
             },
             Dimensions: { get: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }) },
-            useWindowDimensions: () => ({ width: 1200, height: 800, scale: 1, fontScale: 1 }),
             View: 'View',
             ActivityIndicator: 'ActivityIndicator',
             Pressable: ({ children, ...props }: any) => React.createElement('Pressable', props, children),
@@ -111,7 +110,8 @@ vi.mock('@/components/sessions/transcript/motion/TranscriptMotionContext', () =>
     useTranscriptMotion: () => ({ config: { preset: 'off', animateThinkingEnabled: false } }),
 }));
 
-vi.mock('@/components/sessions/transcript/events/TranscriptEventRow', () => ({
+vi.mock('@/components/sessions/transcript/events/TranscriptEventRow', async (importOriginal) => ({
+    ...await importOriginal<Record<string, unknown>>(),
     TranscriptEventRow: () => null,
 }));
 

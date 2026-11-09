@@ -1,4 +1,7 @@
-import type { ReviewFinding, ReviewFindingsV1, ReviewFindingsV2, ReviewQuestion } from '@happier-dev/protocol';
+import type { ReviewFinding} from '@happier-dev/protocol/reviews/ReviewFinding';
+import type { ReviewFindingsV1} from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
+import type { ReviewFindingsV2} from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
+import type { ReviewQuestion } from '@happier-dev/protocol/reviews/ReviewQuestion';
 import type { Message } from '@happier-dev/session-core/messages';
 import { formatReviewFindingLocation, formatReviewFindingThreadQuote, formatReviewFindingThreadUpdate, reviewSeverityCounts, reviewSeverityLabel, sortReviewFindingsBySeverity } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
 import { resolveReviewFollowUpAvailability } from '@/components/sessions/reviews/findings/reviewFollowUpAvailability';

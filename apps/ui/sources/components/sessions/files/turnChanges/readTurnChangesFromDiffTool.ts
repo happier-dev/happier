@@ -9,6 +9,8 @@ import { deriveFileChangeDiff } from '@/sync/domains/session/changes/derivation/
 export type TurnChangesFromDiffTool = Readonly<{
     turnId: string;
     files: readonly ScmFileStatus[];
+    /** Checkpoint projection publishes one shared repository-relative identity, including provider evidence. */
+    repositoryRelative: boolean;
     firstHunkAnchors: Readonly<Record<string, ReviewCommentAnchor>>;
 }>;
 
@@ -35,5 +37,5 @@ export function readTurnChangesFromDiffTool(tool: Readonly<{ name?: string; inpu
                 oldLine: range.side === 'old' ? range.startLine : null });
         } else anchorsByPath.delete(evidence.filePath);
     }
-    return { turnId: metadata.turnId, files: Array.from(byPath.values()), firstHunkAnchors: Object.fromEntries(anchorsByPath) };
+    return { turnId: metadata.turnId, repositoryRelative: metadata.repositoryCheckpoint !== undefined, files: Array.from(byPath.values()), firstHunkAnchors: Object.fromEntries(anchorsByPath) };
 }

@@ -1,4 +1,5 @@
-import type { ProviderBoundModelRef, SessionSpawnNewInitialInputDispositionV1 } from '@happier-dev/protocol';
+import type { ProviderBoundModelRef} from '@happier-dev/protocol/providers/selection/v1';
+import type { SessionSpawnNewInitialInputDispositionV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
 import type { PermissionMode } from '@/constants/PermissionModes';
 import type { StrictSessionSpawnNewInput } from '@/sync/ops/actions/sessionSpawnNewAction';
@@ -53,6 +54,8 @@ export type EmbeddedSessionNewChatTarget = Readonly<{
         draft: EmbeddedNewSessionDraft,
         attempt: Readonly<{ attemptId: string }>,
     ): Promise<EmbeddedNewSessionCreated>;
+    /** Commits route presentation only after the incumbent post-create follow-up settles. */
+    onPresented(sessionId: string): void;
 }>;
 
 /**

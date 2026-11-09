@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { StyleSheet } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -63,11 +64,9 @@ vi.mock('socket.io-client', async importOriginal =>
 /**
  * The shared widget shell's installed arm across placements.
  *
- * The failure pinned here is invisible until it costs something: a Board card, a
- * compact sidebar card and a Companion card all showing the same item, each
- * starting its own executable plugin frame, Host API binding and Resource
- * subscription just to look busy. The one-primary rule says only the placement
- * the Session shell selected may run; the others are inert references.
+ * Each visible surface renders its own executable body. A repeated transcript
+ * occurrence and a retained hidden surface stay dormant; opening Save never
+ * starts a second preview beside the body already on that surface.
  *
  * Admission, Artifact integrity/adoption and the native host all run for real.
  * Only daemon RPC, generated package assets and browser persistence are external
@@ -453,7 +452,7 @@ function InstalledWidgetHostFixture(props: React.ComponentProps<typeof SessionWi
     const raw = current.pluginUiProjection ? rawProjections.get(current.pluginUiProjection) ?? null : null;
     state.projection = raw;
     React.useLayoutEffect(() => {
-        publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId: state.serverId });
+        publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId: state.serverId }, 'authority');
     }, [raw]);
     return <AppShellPluginUiProjectionValueProvider value={{
         ...current, clientExecutableActivation: { status: 'ready' },
@@ -472,7 +471,7 @@ function SurroundingPane(props: React.PropsWithChildren) {
 
 async function renderPlacement(input: Readonly<{
     host: SessionBoardMountHost;
-    primaryHost: SessionBoardMountHost | null;
+    bodyActive?: boolean;
     density: 'full' | 'compact' | 'preview';
     expanded?: boolean;
     width?: React.ComponentProps<typeof SessionWidgetHost>['width'];
@@ -480,8 +479,8 @@ async function renderPlacement(input: Readonly<{
     onManagePlugin?: () => void;
     onOpenHere?: () => void;
     onResize?: React.ComponentProps<typeof SessionWidgetHost>['onResize'];
-    executableCurrentness?: 'current' | 'stale' | 'offline' | 'unverified';
     screen?: Awaited<ReturnType<typeof renderScreen>>;
+    presented?: boolean;
 }>) {
     const current = { ...runtime(), ...input.runtimeOverrides } as SessionPluginRuntimeState;
     const node = React.createElement(InstalledWidgetHostFixture, {
@@ -489,12 +488,11 @@ async function renderPlacement(input: Readonly<{
         session: state.session ?? undefined,
         item,
         host: input.host,
-        primaryHost: input.primaryHost,
+        bodyActive: input.bodyActive,
         density: input.density,
         expanded: input.expanded,
         width: input.width,
         canEdit: true,
-        executableCurrentness: input.executableCurrentness ?? 'current',
         heightBounds: { min: 96, max: 520 },
         pluginRuntime: current,
         resolveSourceAvailability: createSessionBoardSourceAvailabilityResolver(),
@@ -503,20 +501,20 @@ async function renderPlacement(input: Readonly<{
         ...(input.onResize ? { onResize: input.onResize } : {}),
         testID: 'widget',
     });
-    const screen = input.screen ?? await renderScreen(node);
-    if (input.screen) await screen.update(node);
+    const content = input.presented === undefined ? node : <RetainedPanelSurface isActive={input.presented}>{node}</RetainedPanelSurface>;
+    const screen = input.screen ?? await renderScreen(content);
+    if (input.screen) await screen.update(content);
     state.screen = screen;
     await flushHookEffects();
     const placement = inlineProps(screen);
-    if (state.session && !state.deferredProjection && placement && input.executableCurrentness !== 'stale'
-        && input.executableCurrentness !== 'offline' && input.executableCurrentness !== 'unverified') await awaitAuthorMount(screen);
+    if (state.session && !state.deferredProjection && placement && input.bodyActive !== false) await awaitAuthorMount(screen);
     return screen;
 }
 
-function actionsOf(screen: Awaited<ReturnType<typeof renderScreen>>): ReadonlyArray<Record<string, unknown>> {
+function actionsOf(screen: Awaited<ReturnType<typeof renderScreen>>, testID = 'widget'): ReadonlyArray<Record<string, unknown>> {
     const owners = screen.tree.root.findAll(
         (node) => Array.isArray((node.props as { actions?: unknown }).actions)
-            && (node.props as { overflowTriggerTestID?: string }).overflowTriggerTestID === 'widget-actions',
+            && (node.props as { overflowTriggerTestID?: string }).overflowTriggerTestID === `${testID}-actions`,
         { deep: true },
     );
     return (owners.at(-1)?.props as { actions?: ReadonlyArray<Record<string, unknown>> } | undefined)
@@ -648,24 +646,38 @@ describe('SessionWidgetHost installed surface placements', () => {
         accountConnection = undefined;
     });
 
-    it('retains configured local state and executable lifetime after an acknowledged native height record revision changes', async () => {
+    it('defers hidden bodies, reopens fresh, and retains visible state through presentation-only record revisions', async () => {
         // The unchanged daemon projection is one external lifetime boundary; recreating it would
         // publish a registry invalidation independently of the acknowledged item-height edit.
         const runtimeOverrides = { pluginUiProjection: projection() };
-        const screen = await renderPlacement({ host: 'details', primaryHost: 'details', density: 'full', width: 'medium', runtimeOverrides });
-        const physicalMount = state.mounts[0]?.mountInstanceKey;
+        const placement = { host: 'details', density: 'full', width: 'medium', runtimeOverrides } as const;
+        const screen = await renderPlacement({ ...placement, presented: false });
+        expect(state.artifactReads).toBe(0);
+        expect(state.rawAuthorExecutions).toEqual([]);
+        await renderPlacement({ ...placement, presented: true, screen });
+        expect(state.artifactReads).toBe(1);
+        const initialMount = state.mounts[0]?.mountInstanceKey;
+        const initialState = state.localStates.at(-1);
+        await renderPlacement({ ...placement, presented: false, screen });
+        expect(state.activeMountKeys.size).toBe(0);
+        await renderPlacement({ ...placement, presented: true, screen });
+        expect(state.artifactReads).toBe(1);
+        const physicalMount = state.mounts.at(-1)?.mountInstanceKey;
         const localState = state.localStates.at(-1);
+        expect(physicalMount).not.toBe(initialMount);
+        expect(localState).not.toBe(initialState);
+        const mountedLifetimes = state.mounts.length;
         // The persisted record boundary publishes a new revision after the native item-height upsert;
         // the configured instance itself is unchanged. Native mutation/revision correctness is owner-tested.
         if (item.state.kind !== 'ready') throw new Error('Expected readable native item');
         const instance = item.state.item.source.kind === 'widget' ? item.state.item.source.instance : null;
         item = { ...item, revision: 'rev-2', state: { kind: 'ready', item: { ...item.state.item,
             height: { mode: 'fixed', size: 'tall' } } } };
-        await renderPlacement({ host: 'details', primaryHost: 'details', density: 'full', width: 'medium', screen, runtimeOverrides });
+        await renderPlacement({ ...placement, presented: true, screen });
         expect(state.activeMountKeys).toEqual(new Set([physicalMount]));
 
         expect(state.localStates.at(-1)).toBe(localState);
-        expect(state.mounts).toHaveLength(1);
+        expect(state.mounts).toHaveLength(mountedLifetimes);
         expect(item.state.kind === 'ready' && item.state.item.source.kind === 'widget' ? item.state.item.source.instance : null).toBe(instance);
         expect(state.presentations.at(-1)?.widgetPresentation?.footprint).toMatchObject({ columnSpan: 6, rowSpan: 4 });
         await act(async () => { screen.findByTestId('widget.viewport')!.props.onLayout({ nativeEvent: { layout: { width: 350, height: 520 } } }); });
@@ -675,7 +687,7 @@ describe('SessionWidgetHost installed surface placements', () => {
         item = { ...item, revision: 'rev-3', state: { kind: 'ready', item: { ...item.state.item,
             title: 'Renamed counter', source: { ...item.state.item.source,
                 instance: { ...item.state.item.source.instance, displayName: 'Renamed counter' } } } } };
-        await renderPlacement({ host: 'details', primaryHost: 'details', density: 'full', width: 'medium', screen, runtimeOverrides });
+        await renderPlacement({ ...placement, presented: true, screen });
         expect(screen.getTextContent()).toContain('Renamed counter');
         expect(state.localStates.at(-1)).toBe(localState);
         expect(state.activeMountKeys).toEqual(new Set([physicalMount]));
@@ -684,7 +696,7 @@ describe('SessionWidgetHost installed surface placements', () => {
         item = { ...item, revision: 'rev-4', state: { kind: 'ready', item: { ...item.state.item,
             source: { ...item.state.item.source, instance: { ...item.state.item.source.instance,
                 bindings: { ...item.state.item.source.instance.bindings, view: { kind: 'value', value: 'details' } } } } } } };
-        await renderPlacement({ host: 'details', primaryHost: 'details', density: 'full', width: 'medium', screen, runtimeOverrides });
+        await renderPlacement({ ...placement, presented: true, screen });
         expect(state.mounts.at(-1)?.launchInput).toMatchObject({ view: 'details' });
         expect(state.localStates.at(-1)).not.toBe(localState);
         expect(state.activeMountKeys.has(String(physicalMount))).toBe(false);
@@ -732,7 +744,7 @@ describe('SessionWidgetHost installed surface placements', () => {
     it('titles an unnamed installed widget by its contribution title, never by the local id an Action seeded as the item title', async () => {
         if (item.state.kind !== 'ready') throw new Error('Expected readable native item');
         item = { ...item, state: { kind: 'ready', item: { ...item.state.item, title: SURFACE.localId } } };
-        const screen = await renderPlacement({ host: 'details', primaryHost: 'details', density: 'full', width: 'medium' });
+        const screen = await renderPlacement({ host: 'details', density: 'full', width: 'medium' });
         expect(screen.findByTestId('widget-title')?.props.children).toBe('Review status');
         expect(screen.getTextContent()).not.toContain(SURFACE.localId);
     });
@@ -752,7 +764,7 @@ describe('SessionWidgetHost installed surface placements', () => {
         storage.getState().applySettingsForScope({ serverId: state.serverId, accountId: 'viewer' }, {
             ...storage.getState().settings, actionsSettingsV1: state.requiredApprovalPolicy,
         }, 2);
-        const screen = await renderPlacement({ host: 'details', primaryHost: 'details', density: 'full',
+        const screen = await renderPlacement({ host: 'details', density: 'full',
             width: 'medium', onResize: () => {} });
         await screen.pressByTestIdAsync('widget-actions');
         await screen.pressByTestIdAsync('widget.size.large');
@@ -783,7 +795,7 @@ describe('SessionWidgetHost installed surface placements', () => {
     it('shows no named size selected for an existing custom native rectangle', async () => {
         if (item.state.kind !== 'ready') throw new Error('Expected installed item');
         item = { ...item, state: { kind: 'ready', item: { ...item.state.item, height: { mode: 'fixed', size: 'tall' } } } };
-        const screen = await renderPlacement({ host: 'details', primaryHost: 'details', density: 'full',
+        const screen = await renderPlacement({ host: 'details', density: 'full',
             width: 'compact', onResize: () => {} });
         await screen.pressByTestIdAsync('widget-actions');
         expect(screen.findByTestId('widget.size.medium')?.props.accessibilityState?.checked).toBe(false);
@@ -825,22 +837,20 @@ describe('SessionWidgetHost installed surface placements', () => {
             },
         };
         const current = runtime({ pluginUiProjection });
-        const renderPublicWidget = (executableCurrentness: 'current' | 'stale') => React.createElement(InstalledWidgetHostFixture, {
+        const renderPublicWidget = (renderedItem: SessionBoardItemProjection = publicItem) => React.createElement(InstalledWidgetHostFixture, {
             sessionId: 'session-1',
             session: state.session ?? undefined,
-            item: publicItem,
+            item: renderedItem,
             host: 'details' as const,
-            primaryHost: 'details' as const,
             density: 'full' as const,
             canEdit: true,
-            executableCurrentness,
             heightBounds: { min: 96, max: 520 },
             pluginRuntime: current,
             resolveSourceAvailability: createSessionBoardSourceAvailabilityResolver(),
             testID: 'public-authoring-widget',
         });
 
-        const screen = await renderScreen(renderPublicWidget('current'));
+        const screen = await renderScreen(renderPublicWidget());
         await awaitAuthorMount(screen);
         expect(state.mounts).toHaveLength(1);
         expect(inlineProps(screen)).toMatchObject({
@@ -852,15 +862,15 @@ describe('SessionWidgetHost installed surface placements', () => {
             launchInput: { view: 'summary' },
         });
 
-        await screen.update(renderPublicWidget('stale'));
+        await screen.update(renderPublicWidget({ itemId: publicItem.itemId, state: { kind: 'removed' } }));
         expect(state.activeMountKeys).toEqual(new Set());
     });
 
-    it.each(['compact', 'preview'] as const)('mounts the plugin exactly once in the shell-selected primary placement with %s chrome', async (density) => {
+    it.each(['compact', 'preview'] as const)('mounts the plugin exactly once in a visible surface with %s chrome', async (density) => {
         // The compact sidebar is a real promised host and is the cheapest one to
         // render, so this pins the mount contract without dragging the spacious
         // grid's chrome into every assertion.
-        await renderPlacement({ host: 'sidebar', primaryHost: 'sidebar', density });
+        await renderPlacement({ host: 'sidebar', density });
         expect(state.mounts).toHaveLength(1);
         expect(state.mounts[0]!.launchInput).toEqual({
             session: { serverId: state.serverId, sessionId: 'session-1' }, view: 'summary',
@@ -868,11 +878,47 @@ describe('SessionWidgetHost installed surface placements', () => {
         expect(state.sessionRequests).toEqual([]);
     });
 
+    it('Save keeps the surface’s existing executable alone before, during and after preview', async () => {
+        const screen = await renderPlacement({ host: 'sidebar', density: 'compact' });
+        expect(state.activeMountKeys.size).toBe(1);
+        const save = actionsOf(screen).find(action => action.id === 'saveAsYours');
+        expect(save?.onPress).toBeTypeOf('function');
+        await act(async () => { (save!.onPress as () => void)(); });
+        await flushHookEffects();
+        expect(state.activeMountKeys.size).toBe(1);
+        expect(state.mounts).toHaveLength(1);
+        const { SaveAsWidgetPanel } = await import('@/components/widgets/definitions/SaveAsWidgetPanel');
+        await act(async () => { screen.tree.root.findByType(SaveAsWidgetPanel).props.onCancel(); });
+        expect(state.activeMountKeys.size).toBe(1);
+        expect(state.mounts).toHaveLength(1);
+    });
+
+    it.each(['other-surface', 'repeated'] as const)('Save from an %s occurrence does not duplicate that surface’s body', async reference => {
+        const screen = await renderPlacement({ host: 'sidebar', density: 'compact' });
+        const props = screen.tree.root.findByType(SessionWidgetHost).props;
+        await screen.update(<InstalledWidgetHostFixture {...props}>
+            <SessionWidgetHost {...props} host={reference === 'repeated' ? 'inlineTranscript' : 'details'}
+                bodyActive={reference !== 'repeated'} testID="reference" />
+        </InstalledWidgetHostFixture>);
+        const expectedBodies = reference === 'repeated' ? 1 : 2;
+        await vi.waitFor(async () => { await flushHookEffects(); expect(state.activeMountKeys.size).toBe(expectedBodies); });
+        const physicalLifetimes = new Set(state.rawAuthorExecutions.map(execution => execution.mountInstanceKey));
+        const save = actionsOf(screen, 'reference').find(action => action.id === 'saveAsYours');
+        expect(save?.onPress).toBeTypeOf('function');
+        await act(async () => { (save!.onPress as () => void)(); });
+        await flushHookEffects();
+        expect(state.activeMountKeys.size).toBe(expectedBodies);
+        expect(new Set(state.rawAuthorExecutions.map(execution => execution.mountInstanceKey))).toEqual(physicalLifetimes);
+        const { SaveAsWidgetPanel } = await import('@/components/widgets/definitions/SaveAsWidgetPanel');
+        await act(async () => { screen.tree.root.findByType(SaveAsWidgetPanel).props.onCancel(); });
+        expect(state.activeMountKeys.size).toBe(expectedBodies);
+    });
+
     it('delivers the actual unnamed native Board rectangle and measured viewport without resizing or replacing the executable', async () => {
         if (item.state.kind !== 'ready') throw new Error('Expected installed item');
         item = { ...item, state: { kind: 'ready', item: { ...item.state.item, height: { mode: 'fixed', size: 'tall' } } } };
         const before = JSON.stringify(item);
-        const screen = await renderPlacement({ host: 'details', primaryHost: 'details', density: 'full', width: 'compact' });
+        const screen = await renderPlacement({ host: 'details', density: 'full', width: 'compact' });
         expect(state.presentations.at(-1)?.widgetPresentation?.size).toBeUndefined();
         expect(state.presentations.at(-1)?.widgetPresentation?.footprint).toMatchObject({ columns: 12, columnSpan: 4, rowSpan: 4 });
         const viewport = screen.findByTestId('widget.viewport');
@@ -896,10 +942,8 @@ describe('SessionWidgetHost installed surface placements', () => {
                     : item.state,
             },
             host: 'details' as const,
-            primaryHost: 'details' as const,
             density: 'full' as const,
             canEdit: true,
-            executableCurrentness: 'current' as const,
             heightBounds: { min: 96, max: 520 },
             pluginRuntime: runtime(),
             resolveSourceAvailability: createSessionBoardSourceAvailabilityResolver(),
@@ -930,7 +974,6 @@ describe('SessionWidgetHost installed surface placements', () => {
         const managePlugin = vi.fn();
         const screen = await renderPlacement({
             host: 'details',
-            primaryHost: 'details',
             density: 'full',
             onManagePlugin: managePlugin,
         });
@@ -952,10 +995,8 @@ describe('SessionWidgetHost installed surface placements', () => {
             session: state.session ?? undefined,
             item,
             host: 'companion' as const,
-            primaryHost: 'companion' as const,
             density: 'compact' as const,
             canEdit: true,
-            executableCurrentness: 'current' as const,
             heightBounds: { min: 96, max: 520 },
             pluginRuntime: current,
             resolveSourceAvailability: createSessionBoardSourceAvailabilityResolver(),
@@ -1014,11 +1055,11 @@ describe('SessionWidgetHost installed surface placements', () => {
         expect(item.revision).toBe('rev-1');
     });
 
-    it('keeps a non-primary placement an inert reference, not a duplicate frame', async () => {
-        const screen = await renderPlacement({ host: 'sidebar', primaryHost: 'details', density: 'compact' });
+    it('keeps a repeated transcript occurrence dormant without reporting failure', async () => {
+        const screen = await renderPlacement({ host: 'inlineTranscript', bodyActive: false, density: 'compact' });
         expect(state.mounts).toHaveLength(0);
-        // ...and not a failure either: a healthy widget that simply runs in
-        // another placement must never be reported as unavailable.
+        // The selected occurrence owns the inline body; another occurrence
+        // keeps its chrome and provenance without pretending to be unavailable.
         expect(screen.findAllByTestId('widget-state')).toHaveLength(0);
         expect(screen.findByTestId('widget-provenance')).toBeTruthy();
     });
@@ -1027,7 +1068,7 @@ describe('SessionWidgetHost installed surface placements', () => {
         const open = vi.fn();
         const screen = await renderPlacement({
             host: 'sidebar',
-            primaryHost: 'details',
+            bodyActive: false,
             density: 'compact',
             runtimeOverrides: {
                 pluginUiProjection: projection({ availability: 'disabled' }),
@@ -1042,9 +1083,9 @@ describe('SessionWidgetHost installed surface placements', () => {
         expect(open).not.toHaveBeenCalled();
     });
 
-    it('offers Open for an admitted non-primary reference without mounting the widget body', async () => {
+    it('offers Open for an admitted dormant occurrence without mounting its body', async () => {
         const open = vi.fn();
-        const screen = await renderPlacement({ host: 'sidebar', primaryHost: 'details', density: 'compact', onOpenHere: open });
+        const screen = await renderPlacement({ host: 'inlineTranscript', bodyActive: false, density: 'compact', onOpenHere: open });
 
         await vi.waitFor(async () => {
             await flushHookEffects();
@@ -1065,6 +1106,7 @@ describe('SessionWidgetHost installed surface placements', () => {
         state.projectionsByMachine['machine-2'] = raw;
         const boundSession = createSessionFixture({ id: 'session-2', serverId: state.serverId,
             metadata: { ...createSessionFixture().metadata!, machineId: 'machine-2' } });
+        state.httpSessions[boundSession.id] = boundSession;
         storage.getState().applySessions([boundSession]);
         const boundMachine = createMachineFixture({ id: 'machine-2', activeAt: Date.now() });
         storage.setState(current => ({ machines: { ...current.machines, [boundMachine.id]: boundMachine },
@@ -1076,13 +1118,13 @@ describe('SessionWidgetHost installed surface placements', () => {
                 session: { kind: 'value', value: { serverId: state.serverId, sessionId: boundSession.id } } },
         } } } } };
         const manage = vi.fn();
-        const screen = await renderPlacement({ host: 'sidebar', primaryHost: 'details', density: 'compact',
+        const screen = await renderPlacement({ host: 'inlineTranscript', bodyActive: false, density: 'compact',
             onOpenHere: vi.fn(), onManagePlugin: manage });
 
         await vi.waitFor(async () => {
             await flushHookEffects();
-            expect(screen.tree.root.findAllByType(SurfaceStateCard)
-                .find(node => node.props.testID === 'widget-state')?.props.diagnosticCode).toBe('plugin_disabled');
+            expect(screen.tree.root.findAllByType(SurfaceStateCard).map(node => node.props.diagnosticCode),
+                screen.getTextContent()).toContain('plugin_disabled');
         });
         expect(screen.findByTestId('widget-open-here')).toBeNull();
         await screen.pressByTestIdAsync('widget-manage-plugin');
@@ -1095,10 +1137,10 @@ describe('SessionWidgetHost installed surface placements', () => {
         if (!available) throw new Error('The admitted bound machine requires its producer-shaped projection');
         state.projectionsByMachine['machine-2'] = available;
         const open = vi.fn();
-        await renderPlacement({ host: 'sidebar', primaryHost: 'details', density: 'compact', screen,
+        await renderPlacement({ host: 'inlineTranscript', bodyActive: false, density: 'compact', screen,
             runtimeOverrides: { pluginUiProjection: projection({ availability: 'disabled' }) }, onOpenHere: open });
         await act(async () => {
-            publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-2', serverId: state.serverId });
+            publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-2', serverId: state.serverId }, 'authority');
         });
         await vi.waitFor(async () => {
             await flushHookEffects();
@@ -1110,32 +1152,30 @@ describe('SessionWidgetHost installed surface placements', () => {
         expect(state.rawAuthorExecutions).toHaveLength(0);
     });
 
-    it('unmounts a stale retained item and gives the same record a fresh physical lifetime after reconnect', async () => {
+    it('retires a removed record and gives a restored record a fresh physical lifetime', async () => {
         const current = runtime();
-        const renderWidget = (executableCurrentness: 'current' | 'stale' | 'offline' | 'unverified') => React.createElement(InstalledWidgetHostFixture, {
+        const renderWidget = (renderedItem: SessionBoardItemProjection = item) => React.createElement(InstalledWidgetHostFixture, {
             sessionId: 'session-1',
             session: state.session ?? undefined,
-            item,
+            item: renderedItem,
             host: 'companion' as const,
-            primaryHost: 'companion' as const,
             density: 'compact' as const,
             canEdit: true,
-            executableCurrentness,
             heightBounds: { min: 96, max: 520 },
             pluginRuntime: current,
             resolveSourceAvailability: createSessionBoardSourceAvailabilityResolver(),
             testID: 'widget',
         });
-        const screen = await renderScreen(renderWidget('current'));
+        const screen = await renderScreen(renderWidget());
         await awaitAuthorMount(screen);
         const generationG = state.mounts.at(-1)?.mountInstanceKey;
         expect(state.activeMountKeys).toEqual(new Set([String(generationG)]));
 
-        await screen.update(renderWidget('offline'));
+        await screen.update(renderWidget({ itemId: item.itemId, state: { kind: 'removed' } }));
         expect(state.activeMountKeys.size).toBe(0);
-        expect(screen.findByTestId('widget-executable-offline')).not.toBeNull();
+        expect(screen.tree.root.findAllByType(PluginInlineSurfaceHost)).toHaveLength(0);
 
-        await screen.update(renderWidget('current'));
+        await screen.update(renderWidget());
         await awaitAuthorMount(screen);
         const generationH = state.mounts.at(-1)?.mountInstanceKey;
         expect(generationH).not.toBe(generationG);
@@ -1145,9 +1185,7 @@ describe('SessionWidgetHost installed surface placements', () => {
     it('never mounts retained plugin code when the Board record itself is still current', async () => {
         const screen = await renderPlacement({
             host: 'details',
-            primaryHost: 'details',
             density: 'full',
-            executableCurrentness: 'current',
         });
         expect(state.activeMountKeys.size).toBe(1);
         // Disconnect the real selected runtime; the item's persisted revision remains current.
@@ -1163,10 +1201,8 @@ describe('SessionWidgetHost installed surface placements', () => {
             session: state.session ?? undefined,
             item,
             host: 'details' as const,
-            primaryHost: 'details' as const,
             density: 'full' as const,
             canEdit: true,
-            executableCurrentness: 'current' as const,
             heightBounds: { min: 96, max: 520 },
             pluginRuntime: current,
             resolveSourceAvailability: createSessionBoardSourceAvailabilityResolver(),
@@ -1183,26 +1219,30 @@ describe('SessionWidgetHost installed surface placements', () => {
         expect(state.activeMountKeys).toEqual(new Set([String(state.mounts.at(-1)?.mountInstanceKey)]));
     });
 
-    it('never runs an inline transcript row, because the shell never elects that placement', async () => {
-        // The transcript row passes the shell's answer straight through
-        // (`SessionBoardActionResultReference.tsx:44-48`), and the visibility owner never puts
-        // `inlineTranscript` in `visibleHosts` — so `primaryHost` is whatever pane is really
-        // showing the item, or nothing at all. Both are previews here.
-        await renderPlacement({ host: 'inlineTranscript', primaryHost: null, density: 'preview' });
-        expect(state.mounts).toHaveLength(0);
-        const screen = await renderPlacement({ host: 'inlineTranscript', primaryHost: 'details', density: 'preview' });
-        expect(state.mounts).toHaveLength(0);
-        // A configured widget that cannot be opened here still says where it runs; an empty body
-        // read as a widget that failed to render (live, phone transcript).
+    it('runs the selected inline transcript occurrence and retires it when another occurrence is selected', async () => {
+        const screen = await renderPlacement({ host: 'inlineTranscript', density: 'preview' });
+        expect(state.activeMountKeys.size).toBe(1);
+        await renderPlacement({ host: 'inlineTranscript', bodyActive: false, density: 'preview', screen });
+        expect(state.activeMountKeys.size).toBe(0);
         expect(screen.findHostByTestId('widget-elsewhere')).toBeTruthy();
     });
 
     it('derives plugin presentation from the actual compact or expanded host, not persisted frame chrome', async () => {
-        const screen = await renderPlacement({ host: 'companion', primaryHost: 'companion', density: 'compact' });
+        const screen = await renderPlacement({ host: 'companion', density: 'compact' });
         expect(inlineProps(screen)?.inlineMount).toMatchObject({ presentation: 'content' });
 
-        await renderPlacement({ screen, host: 'focusedDetails', primaryHost: 'focusedDetails', density: 'full', expanded: true });
+        await renderPlacement({ screen, host: 'focusedDetails', density: 'full', expanded: true });
         await vi.waitFor(async () => { await flushHookEffects(); expect(inlineProps(screen)?.inlineMount).toMatchObject({ presentation: 'fill' }); });
+        // Native keeps the frame's fixed footprint rather than adopting an HTML document's height.
+        const viewport = screen.findHostByTestId('widget.viewport')!;
+        const height = StyleSheet.flatten(viewport.props.style).height;
+        expect(typeof height).toBe('number');
+        expect(height).toBeGreaterThan(0);
+        await act(async () => { viewport.props.onLayout({ nativeEvent: { layout: { width: 350, height } } }); });
+        await vi.waitFor(async () => {
+            await flushHookEffects();
+            expect(state.presentations.at(-1)?.widgetPresentation?.geometry).toEqual({ width: 350, height });
+        });
     });
 
     // The mobile Cockpit renders the Board before its Session projection has
@@ -1293,7 +1333,7 @@ describe('SessionWidgetHost installed surface placements', () => {
         let settleProjection: ((value: unknown) => void) | undefined;
         state.deferredProjection = new Promise(resolve => { settleProjection = resolve; });
         try {
-            const screen = await renderPlacement({ host: 'details', primaryHost: 'details', density: 'full' });
+            const screen = await renderPlacement({ host: 'details', density: 'full' });
             expect(state.mounts).toHaveLength(0);
             const cards = screen.tree.root.findAll(
                 (node) => typeof (node.props as { diagnosticCode?: unknown }).diagnosticCode === 'string',
@@ -1313,7 +1353,7 @@ describe('SessionWidgetHost installed surface placements', () => {
             state.projection = PluginProjectionV2Schema.parse({ ...state.projection,
                 familiesById: { pluginUi: { family: 'pluginUi', entriesById: {} } } });
             await act(async () => {
-                publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId: state.serverId });
+                publishMachineContributionRegistryProjectionInvalidation({ machineId: 'machine-1', serverId: state.serverId }, 'authority');
             });
             await vi.waitFor(async () => { await flushHookEffects(); expect(state.activeMountKeys.size).toBe(0); });
             expect(screen.findByTestId('widget-state-diagnostic-widget_type_unavailable')).not.toBeNull();

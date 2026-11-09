@@ -2,6 +2,7 @@ import { Typography } from '@/constants/Typography';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
 
 import { ToolSectionView } from '@/components/tools/shell/presentation/ToolSectionView';
 import { CodeView } from '@/components/ui/media/CodeView';
@@ -76,7 +77,7 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: theme.space.s12,
         borderRadius: 8,
-        backgroundColor: theme.colors.surface.inset,
+        backgroundColor: glassContentFill(theme.colors.surface.inset, theme.colors, { nested: true }),
         gap: theme.space.s10,
     },
     section: {

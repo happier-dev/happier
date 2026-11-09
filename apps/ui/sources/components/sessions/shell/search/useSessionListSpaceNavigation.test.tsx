@@ -27,7 +27,35 @@ afterEach(() => {
     storage.setState(originalState, true);
 });
 
-describe('Session space navigation through Settings Actions', () => {
+describe('Session space navigation', () => {
+    it('selects synchronously without settings Action admission or an Account-settings read', async () => {
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({}) });
+        const { useSessionListViewFilterController } = await import('./useSessionListViewFilterController');
+        const { useSessionListSpaceNavigation } = await import('./useSessionListSpaceNavigation');
+        const { readCollectionSpaceId } = await import('@/sync/domains/session/listing/sessionListSpaces');
+        const { accountSettingsScopeKeySuffix } = await import('@/sync/domains/settings/scope/accountSettingsScope');
+        const { normalizeSessionListFilterV1 } = await import('@happier-dev/protocol/sessions/listFilter/sessionListFilterV1');
+        account.replaceSettings(settingsParse({ ...account.persistedSettings, collectionSpacesV1: { v: 1, spaces: [{
+            entityKind: 'sessionWork', id: 'saved', name: 'Saved', icon: { kind: 'icon', name: 'filter' },
+            includeNeedsYouEverywhere: false, filter: normalizeSessionListFilterV1({}),
+        }] } }));
+        const probe = await renderHook(() => {
+            const controller = useSessionListViewFilterController();
+            return useSessionListSpaceNavigation(controller);
+        });
+        try {
+            const settingsReads = () => account.request.mock.calls.filter(([input, init]) =>
+                String(input).includes('/v2/account/settings') && (init?.method ?? 'GET') === 'GET').length;
+            const before = settingsReads();
+            act(() => {
+                expect(probe.getCurrent().selectSpace('saved')).toBe(true);
+                expect(readCollectionSpaceId(accountSettingsScopeKeySuffix(account.scope), 'sessionWork')).toBe('saved');
+            });
+            expect(settingsReads()).toBe(before);
+            expect(account.settingsWrites).toEqual([]);
+            expect(account.artifacts.list()).toEqual([]);
+        } finally { standardCleanup(); await account.dispose(); }
+    });
     it('suspends saved filtering and navigation through Account enablement declarations, then restores selection', async () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({}) });
         const { normalizeSessionListFilterV1 } = await import('@happier-dev/protocol/sessions/listFilter/sessionListFilterV1');

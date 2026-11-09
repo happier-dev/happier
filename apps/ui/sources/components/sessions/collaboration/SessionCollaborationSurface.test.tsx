@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { createSessionAccessFixture, createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createCollaborationSessionRecord, createSessionCollaborationHttpBoundary } from '@/dev/testkit/harness/sessionCollaborationNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -34,6 +34,7 @@ const credentials = vi.hoisted(() => ({ serverId: '', accountId: 'collaboration-
 const transport = vi.hoisted(() => ({
     requests: [] as Array<Readonly<{ origin: string; path: string; method: string; authorization: string | null }>>,
     publicationReachable: true,
+    featureReadGate: null as Promise<void> | null,
 }));
 const nativeFocus = vi.hoisted(() => ({
     findNodeHandle: vi.fn<(target: unknown) => number | null>(() => null),
@@ -93,6 +94,40 @@ vi.mock('@legendapp/list/react-native', async (importOriginal) => {
     const original = await importOriginal<Record<string, unknown>>();
     const { createCapturingLegendListMock } = await import('@/dev/testkit');
     return createCapturingLegendListMock({ original, renderItems: true, renderItemLimit: 20 }).module;
+});
+
+/**
+ * Render counters for the pane's sections outside the access search field and its result
+ * list. Each wrapper renders the real component unchanged; it only counts how often the
+ * pane re-renders that section, which is the broadcast a keystroke must not reach.
+ */
+const sectionRenders = vi.hoisted(() => ({ counts: new Map<string, number>() }));
+function countSectionRender(name: string): void {
+    sectionRenders.counts.set(name, (sectionRenders.counts.get(name) ?? 0) + 1);
+}
+vi.mock('./SessionPresenceSection', async (importOriginal) => {
+    const original = await importOriginal<typeof import('./SessionPresenceSection')>();
+    const React = await import('react');
+    return { ...original, SessionPresenceSection: (props: Parameters<typeof original.SessionPresenceSection>[0]) => {
+        countSectionRender('presence');
+        return React.createElement(original.SessionPresenceSection, props);
+    } };
+});
+vi.mock('./SessionExternalSharingAvailabilitySection', async (importOriginal) => {
+    const original = await importOriginal<typeof import('./SessionExternalSharingAvailabilitySection')>();
+    const React = await import('react');
+    return { ...original, SessionExternalSharingAvailabilitySection: (props: Parameters<typeof original.SessionExternalSharingAvailabilitySection>[0]) => {
+        countSectionRender('sharingAvailability');
+        return React.createElement(original.SessionExternalSharingAvailabilitySection, props);
+    } };
+});
+vi.mock('@/components/sessions/conversations/SessionConversationsBody', async (importOriginal) => {
+    const original = await importOriginal<typeof import('@/components/sessions/conversations/SessionConversationsBody')>();
+    const React = await import('react');
+    return { ...original, SessionConversationsBody: (props: Parameters<typeof original.SessionConversationsBody>[0]) => {
+        countSectionRender('conversations');
+        return React.createElement(original.SessionConversationsBody, props);
+    } };
 });
 
 /** The persisted credential this Home would hand to the transport, Account subject included. */
@@ -168,6 +203,7 @@ beforeEach(async () => {
     publicationModal.hide.mockReset();
     transport.requests.length = 0;
     transport.publicationReachable = true;
+    transport.featureReadGate = null;
     credentials.unreadable = false;
     route.params = {};
     // This module-level router mock outlives the whole file, and the consumed
@@ -189,6 +225,7 @@ beforeEach(async () => {
             authorization: new Headers(init?.headers).get('Authorization'),
         });
         if (parsed.pathname === '/v1/auth/ping') return new Response('{}');
+        if (parsed.pathname.startsWith('/v1/features') && transport.featureReadGate) await transport.featureReadGate;
         if (parsed.pathname.endsWith('/public-share') && !transport.publicationReachable) return new Response('{}', { status: 503 });
         const authorization = new Headers(init?.headers).get('Authorization');
         const tokenPayload = authorization?.startsWith('Bearer ') ? authorization.slice(7).split('.')[1] : undefined;
@@ -229,6 +266,28 @@ async function publishCollaboration(serverId: string): Promise<void> {
 }
 
 describe('SessionCollaborationSurface', () => {
+    it('presents loading then refusal for a retained deep link whose exact Home denies collaboration', async () => {
+        const active = await upsertServerProfile({ name: 'Pending feature Home', serverUrl: 'https://pending-collaboration.example.test' });
+        credentials.serverId = active.id;
+        const features = homeFor(active.id).features;
+        if (!tryWriteServerEnabledBitInPlace(features, 'sharing.session', false)) throw new Error('Unable to disable sharing.session');
+        if (!tryWriteServerEnabledBitInPlace(features, 'sharing.public', false)) throw new Error('Unable to disable sharing.public');
+        const featureRead = createDeferred<void>();
+        transport.featureReadGate = featureRead.promise;
+        storage.setState({ profileScope: { serverId: active.id, accountId: credentials.accountId } });
+        serveSession(active.id);
+
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <SessionCollaborationSurface target={{ serverId: active.id, sessionId: 'same-id' }} />
+            </AppPaneProvider>,
+        );
+        await vi.waitFor(() => expect(screen.findByTestId('session-collaboration-admission-loading')).not.toBeNull());
+        await act(async () => featureRead.resolve());
+        await vi.waitFor(() => expect(screen.findByTestId('session-collaboration-sharing-off')).not.toBeNull());
+        await screen.unmount();
+    });
+
     it('retains an issued public link across transient snapshot failure without allowing stale mutations', async () => {
         const profile = await upsertServerProfile({ name: 'Snapshot recovery Home', serverUrl: 'https://snapshot-recovery.example.test' });
         credentials.serverId = profile.id;
@@ -253,7 +312,7 @@ describe('SessionCollaborationSurface', () => {
         const invalidate = async (seq: number) => act(async () => {
             storage.setState((state) => ({ sessionListRowsByServerId: {
                 ...state.sessionListRowsByServerId,
-                [profile.id]: { 'same-id': createSessionListRenderableSessionFixture({ id: 'same-id', seq, updatedAt: seq }) },
+                [profile.id]: { 'same-id': createSessionListRenderableSessionFixture({ id: 'same-id', seq, updatedAt: seq, metadataVersion: seq }) },
             } }));
         });
         publishSessionCollaborationIntent({ serverId: profile.id, sessionId: 'same-id' }, 'publicLink');
@@ -1048,6 +1107,47 @@ describe('SessionCollaborationSurface', () => {
         expect(screen.findByTestId('session-access-editor:collaboration')).not.toBeNull();
     });
 
+    it('publishes nothing to the open Share panel when only a message arrives on its Session', async () => {
+        const profile = await upsertServerProfile({ name: 'Collaboration message Home', serverUrl: 'https://collaboration-message.example.test' });
+        await publishCollaboration(profile.id);
+        credentials.serverId = profile.id;
+        serveSession(profile.id);
+        const base = createSessionListRenderableSessionFixture({ id: 'same-id', updatedAt: 10, seq: 10, metadataVersion: 1 });
+        const publishRow = (row: SessionListRenderableSession) => storage.setState((state) => ({
+            sessionListRowsByServerId: { ...state.sessionListRowsByServerId, [profile.id]: { 'same-id': row } },
+        }));
+        publishRow(base);
+        publishSessionCollaborationIntent({ serverId: profile.id, sessionId: 'same-id' }, 'access');
+
+        let commits = 0;
+        const screen = await renderScreen(
+            <React.Profiler id="collaboration" onRender={() => { commits += 1; }}>
+                <AppPaneProvider>
+                    <SessionCollaborationSurface target={{ serverId: profile.id, sessionId: 'same-id' }} />
+                </AppPaneProvider>
+            </React.Profiler>,
+        );
+        await vi.waitFor(() => expect(screen.findByTestId('session-access-editor:collaboration')).not.toBeNull());
+        await vi.waitFor(() => expect(snapshotRequests(profile.id).length).toBeGreaterThan(0));
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+        const requestsBefore = snapshotRequests(profile.id).length;
+        const commitsBefore = commits;
+
+        // Five transcript arrivals advance only the row's message scalars, exactly
+        // as the message projection patch does; no sharing fact changed.
+        for (let seq = 11; seq <= 15; seq += 1) {
+            await act(async () => { publishRow({ ...base, seq, updatedAt: seq, meaningfulActivityAt: seq }); });
+        }
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+        expect({ reads: snapshotRequests(profile.id).length - requestsBefore, commits: commits - commitsBefore })
+            .toEqual({ reads: 0, commits: 0 });
+
+        // A sharing fact (the Session's metadata) still refreshes the open panel.
+        await act(async () => { publishRow({ ...base, seq: 15, updatedAt: 16, metadataVersion: 2 }); });
+        await vi.waitFor(() => expect(snapshotRequests(profile.id).length).toBeGreaterThan(requestsBefore));
+        await screen.unmount();
+    });
+
     it('seeds its own search field with the query the compact editor handed over', async () => {
         const active = await upsertServerProfile({ name: 'Collaboration handoff Home', serverUrl: 'https://collaboration-handoff.example.test' });
         credentials.serverId = active.id;
@@ -1086,6 +1186,48 @@ describe('SessionCollaborationSurface', () => {
         await vi.waitFor(() => expect(
             screen.findByTestId('session-access-editor:collaboration:session-access-search')?.props.value,
         ).toBe(''));
+    });
+
+
+    it('re-renders only the access search field and its result list per typed key', async () => {
+        const active = await upsertServerProfile({ name: 'Collaboration typing Home', serverUrl: 'https://collaboration-typing.example.test' });
+        credentials.serverId = active.id;
+        await publishCollaboration(active.id);
+        const session = createSessionFixture({
+            id: 'same-id', serverId: active.id, currentStorageState: 'hosted', transcriptShareable: true,
+            access: createSessionAccessFixture('owner', { managePublicLink: false }),
+        });
+        storage.setState((state) => ({
+            profileScope: { serverId: active.id, accountId: credentials.accountId },
+            sessions: { ...state.sessions, 'same-id': session },
+            sessionListRowsByServerId: {
+                ...state.sessionListRowsByServerId,
+                [active.id]: { 'same-id': session } as unknown as Record<string, SessionListRenderableSession>,
+            },
+        }));
+        serveSession(active.id, { managePublicLink: false });
+        publishSessionCollaborationIntent({ serverId: active.id, sessionId: 'same-id' }, 'access');
+
+        const screen = await renderScreen(
+            <AppPaneProvider>
+                <SessionCollaborationSurface target={{ serverId: active.id, sessionId: 'same-id' }} />
+            </AppPaneProvider>,
+        );
+        const field = 'session-access-editor:collaboration:session-access-search';
+        await vi.waitFor(() => expect(screen.findByTestId(field)).not.toBeNull());
+        await vi.waitFor(() => expect(screen.findByTestId('session-presence-section')).not.toBeNull());
+        await act(async () => { await new Promise((resolve) => setTimeout(resolve, 50)); });
+        sectionRenders.counts.clear();
+
+        // Three keys, as a person types a name into the open Share panel.
+        for (const value of ['a', 'ad', 'ada']) {
+            await act(async () => { screen.changeTextByTestId(field, value); });
+            expect(screen.findByTestId(field)?.props.value).toBe(value);
+        }
+        // The presence line, the conversations and the sharing-availability line read
+        // nothing a keystroke changes; the pane must not re-render them.
+        expect(Object.fromEntries(sectionRenders.counts)).toEqual({});
+        await screen.unmount();
     });
 
 });

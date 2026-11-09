@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { BotTemplateDraftV1Schema } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -44,7 +45,10 @@ describe('template editor catalog demand', () => {
         network.resetRequests();
         storage.setState(storage.getInitialState(), true);
         const home = await network.addHome('https://template-editor-demand.test', 'author');
-        network.setRpcAckResponder(async () => ({ ok: true, result: { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {} } } }));
+        const catalogResponse = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {},
+            agentsById: { 'acme.review/reviewer': { id: 'acme.review/reviewer', title: 'External reviewer',
+                identity: { pluginId: 'acme.review', localId: 'reviewer' } } } } });
+        network.setRpcAckResponder(async () => ({ ok: true, result: catalogResponse }));
         await upsertAndActivateServer({ serverUrl: home.serverUrl });
         await restoreConnectionToActiveServer({ token: home.token });
         clearDaemonMergedProjectionCacheForTests();
@@ -53,6 +57,7 @@ describe('template editor catalog demand', () => {
         const draft = BotTemplateDraftV1Schema.parse({ v: 1, state: 'draft', sourceSessionRef: { serverId: home.id, sessionId: session.id },
             releaseArtifactId: '32c55218-6b01-40ef-8237-e53dc6de68d3',
             content: { v: 1, identity: { name: 'Review', description: '' }, instructions: { markdown: '' }, memoryRules: [], skills: [],
+                suggestedAgent: { agentId: 'agent:happier.agent.codex/codex' },
                 needs: { software: [], connectedAccounts: [], mcpServers: [] } }, candidates: { memoryRules: [], skills: [] } });
         const buffer = createBotTemplateEditorBuffer({ draft, revision: { headerVersion: 1, bodyVersion: 1 } });
         const save = async () => ({ ok: true as const, revision: { headerVersion: 2, bodyVersion: 2 } });
@@ -62,9 +67,17 @@ describe('template editor catalog demand', () => {
         });
         const reads = () => network.requests.filter(request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
         expect(reads()).toHaveLength(0);
+        expect(screen.getTextContent()).toContain('Codex');
         await screen.pressByTestIdAsync('bot-template-need-add');
         await vi.waitFor(async () => { await act(async () => {}); expect(reads()).toHaveLength(1); });
         await screen.pressByTestIdAsync('bot-template-need-add');
+        await screen.pressByTestIdAsync('bot-template-agent-trigger');
+        await vi.waitFor(async () => { await act(async () => {}); expect(screen.getTextContent()).toContain('External reviewer'); });
+        await screen.pressByTestIdAsync('bot-template-agent-trigger');
+        await act(async () => { buffer.edit(draft => ({ ...draft, content: { ...draft.content,
+            suggestedAgent: { agentId: 'acme.review/reviewer' } } })); });
+        await vi.waitFor(async () => { await act(async () => {}); expect(screen.getTextContent()).toContain('External reviewer'); });
+        expect(reads()).toHaveLength(1);
         await act(async () => { clearDaemonMergedProjectionCacheForTests(); });
         await screen.pressByTestIdAsync('bot-template-agent-trigger');
         await vi.waitFor(async () => { await act(async () => {}); expect(reads()).toHaveLength(2); });

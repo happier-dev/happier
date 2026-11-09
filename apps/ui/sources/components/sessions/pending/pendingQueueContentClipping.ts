@@ -38,7 +38,7 @@
  *
  * PLATFORM CAVEAT, stated rather than papered over: that arithmetic holds on NATIVE. Web
  * additionally paints the in-flow action row under every pending bubble
- * (`paintsPendingMessageActionRow`, 20px), so its pending chrome is 40.625 against the committed
+ * (`paintsPendingMessageActionRow`, 22px), so its pending chrome is 44 against the committed
  * row's 22 and the web crossover still steps DOWN. Web has never shown the symptom — its renderer
  * corrects synchronously — so this is recorded as a known asymmetry to be closed with a MEASURED
  * web capture, not with a second derivation. The committed row's own action row is absolutely
@@ -65,7 +65,8 @@ export const PENDING_QUEUE_SCROLL_PADDING_TOP_PX = 6;
 export const PENDING_QUEUE_MESSAGE_BUBBLE_PADDING_PX = 16;
 /** `userMessageWrapper.paddingBottom` — separates stacked rows. Zero under the last one. */
 export const PENDING_QUEUE_MESSAGE_GAP_PX = 8;
-export const PENDING_MESSAGE_ACTION_ROW_HEIGHT_PX = 20;
+/** The drawn 18 px actions plus the band's 4 px top margin (`PendingMessagesTranscriptBlock` `messageActionContainer`). */
+export const PENDING_MESSAGE_ACTION_ROW_HEIGHT_PX = 22;
 /** Chip box only: the existing text/padding/border estimate, without its ordinary top margin. */
 export const PENDING_MESSAGE_BLOCKED_NOTICE_CHIP_HEIGHT_PX = 25;
 export const PENDING_MESSAGE_BLOCKED_NOTICE_MARGIN_TOP_PX = 8;

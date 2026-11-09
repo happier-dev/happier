@@ -56,10 +56,11 @@ import {
 import { homeDisplayName } from '@/components/settings/home/governance/homeGovernanceLabels';
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { SessionListViewContext } from './search/sessionListViewFilters';
-import { resolveSessionListGroupRowGeometry, SessionListGroup, SessionListGroupMoreRow } from './SessionListGroup';
+import { resolveSessionListGroupRowGeometry, SESSION_LIST_GROUP_ROW_PROPS, SessionListGroup, SessionListGroupMoreRow } from './SessionListGroup';
 import { runWithSessionDraftRepositoryScopedRuntime } from '@/sync/ops/sessionDrafts/runWithSessionDraftRepositoryScopedRuntime';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { deleteNewSessionDraft } from '@/components/sessions/drafts/deleteNewSessionDraft';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 export { buildNewSessionDraftContinueRoute } from '@/components/sessions/drafts/newSessionDraftNavigation';
 
 export { buildNewSessionDraftRowPresentation } from '@/components/sessions/drafts/newSessionDraftPresentation';
@@ -206,11 +207,12 @@ const NewSessionDraftRow = React.memo(function NewSessionDraftRow(props: Readonl
             titleLines={minimal ? 1 : 2}
             subtitleLines={1}
             density={itemDensity}
-            style={{
+            pressableStyle={SESSION_LIST_GROUP_ROW_PROPS.pressableStyle}
+            style={[SESSION_LIST_GROUP_ROW_PROPS.style, {
                 height: densityViewState.rowHeight,
                 minHeight: densityViewState.rowHeight,
                 paddingVertical: 0,
-            }}
+            }]}
             titleStyle={titleTextMetrics}
             subtitleStyle={subtitleTextMetrics}
             leftElement={minimal ? (
@@ -237,25 +239,23 @@ const NewSessionDraftRow = React.memo(function NewSessionDraftRow(props: Readonl
                         deleteShown ? stylesheet.actionSlotShown : stylesheet.actionSlotHidden,
                     ]}
                 >
-                    <Pressable
+                    <HappierPressable
                         testID={`session-draft-delete:new-session:${draftId}`}
                         style={[
                             stylesheet.deleteButton,
                             props.deleteDisabled ? stylesheet.deleteButtonDisabled : null,
                         ]}
                         disabled={props.deleteDisabled}
+                        // Stacked rows share their edges: the 24 drawn control is the target, it reaches into neither row.
+                        hitReach={0}
                         accessibilityRole="button"
                         accessibilityLabel={t('sessionDrafts.delete.action')}
-                        accessibilityState={{ disabled: props.deleteDisabled }}
-                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                        onHoverIn={() => setDeleteHovered(true)}
-                        onHoverOut={() => setDeleteHovered(false)}
+                        onHoverChange={setDeleteHovered}
                         onPressIn={() => setDeletePressed(true)}
                         onPressOut={() => setDeletePressed(false)}
-                        onFocus={() => setDeleteFocused(true)}
-                        onBlur={() => setDeleteFocused(false)}
+                        onFocusChange={setDeleteFocused}
                         onPress={(event) => {
-                            event.stopPropagation();
+                            (event as { stopPropagation?: () => void } | undefined)?.stopPropagation?.();
                             fireAndForget(
                                 props.rowScope
                                     ? props.onDelete(draftId, props.rowScope)
@@ -270,7 +270,7 @@ const NewSessionDraftRow = React.memo(function NewSessionDraftRow(props: Readonl
                             color={deleteGlyphColor}
                             style={stylesheet.deleteIcon}
                         />
-                    </Pressable>
+                    </HappierPressable>
                 </View>
             )}
             rightElementOutsidePressable

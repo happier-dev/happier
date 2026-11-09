@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { buildSessionTerminalNewMenuItems, buildSessionTerminalTabMenuItems } from './sessionTerminalMenus';
+import { buildSessionTerminalNewMenuItems, buildSessionTerminalPaneMenuItems, buildSessionTerminalTabMenuItems } from './sessionTerminalMenus';
 
 describe('terminal script menu', () => {
     it('offers Find only for the actual mounted searchable renderer, including a native xterm fallback', () => {
@@ -17,5 +17,12 @@ describe('terminal script menu', () => {
         }, () => null, () => null);
         expect(items.findIndex((item) => item.id === 'allScripts')).toBeGreaterThan(items.findIndex((item) => item.id === 'script:dev'));
         expect(items.find((item) => item.id === 'allScripts')?.disabled).not.toBe(true);
+    });
+    it('points Hide terminals where the pane goes, as the strip\'s own Hide does', () => {
+        const glyphOf = (hideToward?: 'bottom' | 'end') => buildSessionTerminalPaneMenuItems({ showList: false, canJump: false, canOpenSettings: false,
+            ...(hideToward ? { hideToward } : {}) }, (name) => name as never).find((item) => item.id === 'hide')?.icon;
+        expect(glyphOf()).toBe('caret-down');
+        expect(glyphOf('bottom')).toBe('caret-down');
+        expect(glyphOf('end')).toBe('caret-right');
     });
 });

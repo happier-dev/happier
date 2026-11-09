@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { ProviderConnectionIdSchema, SessionModelSelectionV1Schema } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema} from '@happier-dev/protocol/providers/ids';
+import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/selection/v1';
 
 import type { SessionAuthoringDraft } from './sessionAuthoringDraft';
 import { updateSessionAuthoringDraftModelMode } from './updateSessionAuthoringDraftFields';

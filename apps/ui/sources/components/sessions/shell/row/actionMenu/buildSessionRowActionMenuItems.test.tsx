@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
     SESSION_ACTION_ARCHIVE_ID,
+    SESSION_ACTION_DELETE_ID,
     SESSION_ACTION_SET_ATTENTION_STANDING_ID,
     SESSION_ACTION_MARK_UNREAD_ID,
     SESSION_ACTION_MOVE_TO_FOLDER_ID,
@@ -12,6 +13,7 @@ import {
 } from '@/components/sessions/actions/sessionActionIds';
 import { createSessionActionTarget } from '@/components/sessions/actions/sessionActionContext';
 import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { buildSessionSpaceMembershipMenu } from '@/components/sessions/organization/sessionSpaceMembershipMenu';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 
 import { buildSessionRowMoreMenuItems } from './buildSessionRowActionMenuItems';
@@ -63,6 +65,30 @@ function makeViewOnlySession(overrides?: Partial<SessionListRenderableSession>):
 }
 
 describe('buildSessionRowMoreMenuItems', () => {
+    it('offers Add, explicit source-to-destination Move, and Remove for an opted-in Space catalog', () => {
+        const target = createSessionActionTarget({ session: makeSession(), serverId: 'server_1', currentUserId: 'user_1', isConnected: true });
+        const menu = buildSessionSpaceMembershipMenu([
+            { id: 'a', name: 'Release', membership: { mode: 'manual_only', tags: [] } }, { id: 'b', name: 'Review' },
+        ]);
+        const items = buildSessionRowMoreMenuItems({ target, iconColor: 'test',
+            spaceMembershipMenu: menu,
+        });
+        const add = items.find(item => item.id === 'space-membership:add');
+        expect(add?.submenu?.items.map(item => item.title)).toEqual(['Release', 'Review']);
+        const move = items.find(item => item.id === 'space-membership:move');
+        expect(move?.submenu?.items.map(item => [item.title, item.submenu?.items.map(destination => destination.title)]))
+            .toEqual([['Release', ['Review']], ['Review', ['Release']]]);
+        expect(items.find(item => item.id === 'space-membership:remove')?.submenu?.items.map(item => item.title))
+            .toEqual(['Release', 'Review']);
+        expect(menu.choices.get(add!.submenu!.items[0]!.id)).toEqual({ operation: 'add', spaceId: 'a' });
+        expect(menu.choices.get(move!.submenu!.items[0]!.submenu!.items[0]!.id))
+            .toEqual({ operation: 'move', sourceSpaceId: 'a', spaceId: 'b' });
+        const remove = items.find(item => item.id === 'space-membership:remove')!.submenu!.items;
+        expect(menu.choices.get(remove[1]!.id)).toEqual({ operation: 'remove', spaceId: 'b' });
+        expect(remove[0]!.subtitle).toBeUndefined();
+        expect(remove[1]!.subtitle).toBeTypeOf('string');
+    });
+
     it('gives a Bot in the roster its compact menu: Open, Talk, the rail choice with what it does, Instructions and voice, Make a regular session', () => {
         const target = createSessionActionTarget({
             session: {
@@ -125,14 +151,17 @@ describe('buildSessionRowMoreMenuItems', () => {
             SESSION_ACTION_RENAME_ID,
             SESSION_ACTION_MARK_UNREAD_ID,
             'attention-reminder',
+            SESSION_ACTION_MOVE_TO_FOLDER_ID,
             SESSION_ACTION_PUT_UNDER_ID,
             SESSION_ACTION_STOP_ID,
             SESSION_ACTION_ARCHIVE_ID,
-            SESSION_ACTION_MOVE_TO_FOLDER_ID,
+            SESSION_ACTION_DELETE_ID,
         ]);
-        expect(items.at(-1)).toEqual(expect.objectContaining({
-            id: SESSION_ACTION_MOVE_TO_FOLDER_ID,
-            disabled: false,
+        expect(items.find((item) => item.id === SESSION_ACTION_MOVE_TO_FOLDER_ID)).toEqual(expect.objectContaining({ disabled: false }));
+        const withSections = buildSessionRowMoreMenuItems({ target, iconColor: 'test-icon-color', canMoveToFolder: true,
+            sectionMoveItems: [{ id: 'session.section.move:section:launch', title: 'Launch 0.3', category: 'Sections' }] });
+        expect(withSections.find((item) => item.id === SESSION_ACTION_MOVE_TO_FOLDER_ID)?.submenu).toEqual(expect.objectContaining({
+            items: [expect.objectContaining({ title: 'Launch 0.3' })], showCategoryTitles: true, separateCategories: true,
         }));
     });
 
@@ -181,6 +210,7 @@ describe('buildSessionRowMoreMenuItems', () => {
             SESSION_ACTION_PUT_UNDER_ID,
             SESSION_ACTION_STOP_ID,
             SESSION_ACTION_ARCHIVE_ID,
+            SESSION_ACTION_DELETE_ID,
         ]);
         const reminder = items.find((item) => item.id === 'attention-reminder');
         expect(reminder?.subtitle).toBeUndefined();

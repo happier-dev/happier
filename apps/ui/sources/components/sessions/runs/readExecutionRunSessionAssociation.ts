@@ -1,4 +1,4 @@
-import type { DaemonExecutionRunEntry } from '@happier-dev/protocol';
+import type { DaemonExecutionRunEntry } from '@happier-dev/protocol/daemon/executionRuns';
 
 /**
  * A daemon execution run can exist without a Session association. Keep that

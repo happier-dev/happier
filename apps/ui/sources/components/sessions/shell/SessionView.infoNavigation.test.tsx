@@ -137,10 +137,10 @@ vi.mock('@react-navigation/native', () => ({
     useFocusEffect: () => {},
     useIsFocused: () => true,
 }));
-vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
-    ChatHeaderView: (props: any) => {
+vi.mock('@/components/sessions/shell/view/SessionPaneHeader', () => ({
+    SessionPaneHeader: (props: any) => {
         chatHeaderPropsSpy(props);
-        return React.createElement('ChatHeaderView', props, props.rightElement ?? null);
+        return React.createElement('SessionPaneHeader', props, props.rightElement ?? null);
     },
 }));
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
@@ -381,6 +381,9 @@ describe('SessionView info navigation', () => {
     });
 
     it('opens session info via singular navigate using the explicit route server id for a route-owned session', async () => {
+        // Session details live in the rail's Info tab; the header's (i) appears where no rail is on screen
+        // (multi-pane off on this desktop, calm-shell R2-1).
+        storage.getState().applyLocalSettings({ uiMultiPanePanelsEnabled: false });
 
         const screen = await renderScreen(
             <SessionView id="s1" routeServerId="server-2" />,
@@ -472,6 +475,9 @@ describe('SessionView info navigation', () => {
     });
 
     it('opens session info via singular navigate using the route server id when bare-id cache admission is ambiguous', async () => {
+        // Session details live in the rail's Info tab; the header's (i) appears where no rail is on screen
+        // (multi-pane off on this desktop, calm-shell R2-1).
+        storage.getState().applyLocalSettings({ uiMultiPanePanelsEnabled: false });
         storage.setState({ ordinarySessionListMembershipByServerId: { 'server-other-home': ['s1'] } });
 
         const screen = await renderScreen(
@@ -489,6 +495,9 @@ describe('SessionView info navigation', () => {
     });
 
     it('opens session info via singular navigate using the cached owning server id when the route is missing server scope', async () => {
+        // Session details live in the rail's Info tab; the header's (i) appears where no rail is on screen
+        // (multi-pane off on this desktop, calm-shell R2-1).
+        storage.getState().applyLocalSettings({ uiMultiPanePanelsEnabled: false });
         await account.dispose();
         account = await restoreHome('https://server-cache');
         applySessionHome();

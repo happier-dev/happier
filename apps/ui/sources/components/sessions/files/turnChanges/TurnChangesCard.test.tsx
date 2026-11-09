@@ -61,10 +61,6 @@ vi.mock('@/components/ui/buttons/RoundButton', () => ({
 vi.mock('@/components/ui/navigation/SegmentedTabBar', () => ({
     SegmentedTabBar: (props: Record<string, unknown>) => React.createElement('SegmentedTabBar', props),
 }));
-vi.mock('@/components/ui/interactiveTargetSize', async (importOriginal) => ({
-    ...(await importOriginal<object>()),
-    isTouchPrimaryPointer: () => false,
-}));
 
 const { TurnChangesCard } = await import('./TurnChangesCard');
 const { TranscriptTurnChangesCard } = await import('./TranscriptTurnChangesCard');

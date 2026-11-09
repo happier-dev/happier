@@ -7,7 +7,7 @@ import type { PromptDocArtifactRefV1 } from '@happier-dev/protocol/prompts/libra
 import type { DiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -22,6 +22,7 @@ import { t } from '@/text';
 import { formatMemoryDate, useMemoryFactAttribution } from './useMemoryFactAttribution';
 import { useMemoryDocument } from './useMemoryDocument';
 import { useMemoryFactSource } from './useMemoryFactSource';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 /**
  * One remembered fact on its own (lab K2 `A` detail, `Dp`): the fact as the title, then what makes it
@@ -31,23 +32,63 @@ import { useMemoryFactSource } from './useMemoryFactSource';
  * pushes it.
  */
 export const MemoryFactDetail = React.memo(function MemoryFactDetail(
-  props: Readonly<{
-    testID: string;
-    fact: MemoryFactV1;
-    documentRef: PromptDocArtifactRefV1 | null;
-    serverId: string | null;
-    /** The Account reading the document, so its own approval reads "You". */
-    viewerAccountId: string | null;
-    /** The fact sits in the archive: it is history already and agents never load it. */
-    archived: boolean;
-    onOpenSession?: (
-      ref: Readonly<{ serverId: string; sessionId: string; messageId?: string }>,
-    ) => void;
-    onOpenDiscussion?: (ref: DiscussionMessageRefV1) => void;
+  props: MemoryFactDetailProps & Readonly<{
     /** Present when this reader may change the fact: its edit form opens in the list. */
     onEdit?: () => void;
   }>,
 ) {
+  const decision = props.fact.decision;
+  return (
+    <ItemList testID={props.testID}>
+      <PageHeader
+        title={props.fact.text}
+        actions={props.onEdit ? (
+          <RoundButton
+            testID={`${props.testID}.edit`}
+            display="secondary"
+            title={t('common.edit')}
+            onPress={props.onEdit}
+          />
+        ) : undefined}
+        actionsPlacement="page"
+        meta={[
+          {
+            key: 'kind',
+            icon: decision ? 'check-circle' : 'note',
+            text: decision
+              ? t('memoryContext.memory.decision')
+              : t('memoryContext.memory.note'),
+            testID: `${props.testID}.kind`,
+          },
+        ]}
+      />
+      <MemoryFactDetailSections {...props} onRenew={props.onEdit} />
+    </ItemList>
+  );
+});
+
+type MemoryFactDetailProps = Readonly<{
+  testID: string;
+  fact: MemoryFactV1;
+  documentRef: PromptDocArtifactRefV1 | null;
+  serverId: string | null;
+  /** The Account reading the document, so its own approval reads "You". */
+  viewerAccountId: string | null;
+  /** The fact sits in the archive: it is history already and agents never load it. */
+  archived: boolean;
+  onOpenSession?: (
+    ref: Readonly<{ serverId: string; sessionId: string; messageId?: string }>,
+  ) => void;
+  onOpenDiscussion?: (ref: DiscussionMessageRefV1) => void;
+}>;
+
+/**
+ * What makes a saved fact trustworthy, below whatever titles it: its reason and source, approval,
+ * saved and expiry dates, the line agents load and the facts it replaced. The fact's own page and a
+ * duplicate review's look at the saved fact both draw it. With `onRenew`, its expiry opens the edit
+ * form that changes it.
+ */
+export function MemoryFactDetailSections(props: MemoryFactDetailProps & Readonly<{ onRenew?: () => void }>) {
   const { fact, onOpenSession, onOpenDiscussion } = props;
   const decision = fact.decision;
   const { source, title: sourceName } = useMemoryFactSource(fact);
@@ -102,152 +143,133 @@ export const MemoryFactDetail = React.memo(function MemoryFactDetail(
   const sourceLabel = sourceName || (source?.kind === 'discussion'
     ? t('session.collaboration.discussion.secondOpinion.open') : t('memoryContext.memory.openSource'));
   return (
-    <ItemList testID={props.testID}>
-      <PageHeader
-        title={fact.text}
-        actions={props.onEdit ? (
-          <RoundButton
-            testID={`${props.testID}.edit`}
-            display="secondary"
-            title={t('common.edit')}
-            onPress={props.onEdit}
-          />
-        ) : undefined}
-        actionsPlacement="page"
-        meta={[
-          {
-            key: 'kind',
-            icon: decision ? 'check-circle' : 'note',
-            text: decision
-              ? t('memoryContext.memory.decision')
-              : t('memoryContext.memory.note'),
-            testID: `${props.testID}.kind`,
-          },
-        ]}
-      />
-      <ItemGroup>
-        {decision ? (
-          <Item
-            testID={`${props.testID}.reason`}
-            mode="info"
-            title={t('memoryContext.memory.sheetReasonLabel')}
-            accessoryLayout="adaptive"
-            rightElement={
-              <Text variant="body" style={styles.value}>
-                {decision.reason}
-              </Text>
-            }
-            showChevron={false}
-          />
-        ) : null}
-        {source ? (
-          <Item
-            testID={`${props.testID}.source`}
-            title={
-              decision
-                ? t('memoryContext.memory.detailDecidedIn')
-                : t('memoryContext.memory.detailCameFrom')
-            }
-            detail={sourceLabel}
-            onPress={openSource}
-            mode={openSource ? 'interactive' : 'info'}
-            showChevron={Boolean(openSource)}
-          />
-        ) : null}
-        {decision ? (
-          <Item
-            testID={`${props.testID}.approval`}
-            mode="info"
-            title={t('memoryContext.memory.detailApprovedBy')}
-            detail={attribution.detailApproval ?? undefined}
-            showChevron={false}
-          />
-        ) : null}
+    <>
+    <ItemGroup>
+      {decision ? (
         <Item
-          testID={`${props.testID}.saved`}
+          testID={`${props.testID}.reason`}
           mode="info"
-          title={t('memoryContext.memory.detailSaved')}
-          detail={attribution.savedLabel}
-          showChevron={false}
-        />
-        <Item
-          testID={`${props.testID}.expires`}
-          mode="info"
-          title={t('memoryContext.memory.sheetExpires')}
-          detail={expiry}
-          showChevron={false}
-          showDivider={false}
-        />
-      </ItemGroup>
-      <ItemGroup
-        title={t('memoryContext.memory.whatAgentsSee')}
-        actionLayout="trailing"
-        action={agentLine && agentEntry ? (
-          <Pressable
-            testID={`${props.testID}.exactLine`}
-            accessibilityRole="button"
-            accessibilityState={{ expanded: exactLine }}
-            hitSlop={8}
-            onPress={() => setExactLine((open) => !open)}
-          >
-            <Text style={styles.toggle}>
-              {exactLine ? t('memoryContext.memory.readableLine') : t('memoryContext.memory.exactLine')}
+          title={t('memoryContext.memory.sheetReasonLabel')}
+          accessoryLayout="adaptive"
+          rightElement={
+            <Text variant="body" style={styles.value}>
+              {decision.reason}
             </Text>
-          </Pressable>
-        ) : undefined}
-        description={
-          agentLine
-            ? t('memoryContext.memory.whatAgentsSeeLoaded')
-            : t('memoryContext.memory.whatAgentsSeeNotLoaded')
-        }
-      >
-        {agentLine ? (
-          <View testID={`${props.testID}.agentLine`} style={styles.agentLine}>
-            {exactLine || !agentEntry ? (
-              <Text selectable style={styles.agentLineText}>
-                {agentLine}
-              </Text>
-            ) : (
-              <>
-                <Text selectable variant="body" style={styles.value}>{agentEntry.text}</Text>
-                {agentEntry.facts.length > 0 ? (
-                  <Text style={styles.agentLineMeta}>{agentEntry.facts.join(' · ')}</Text>
-                ) : null}
-              </>
-            )}
-          </View>
-        ) : null}
-      </ItemGroup>
-      {replaced.length > 0 ? (
-        <ItemGroup title={t('memoryContext.memory.historyTitle')}>
-          {replaced.map((entry, index) => (
-            <Item
-              key={entry.id}
-              testID={`${props.testID}.history.${entry.id}`}
-              mode="info"
-              title={entry.text}
-              titleLines={0}
-              titleStyle={styles.replaced}
-              subtitle={[
-                t('memoryContext.memory.historyReplaced', {
-                  date: formatMemoryDate(
-                    (index === 0 ? fact : replaced[index - 1]!).createdAtMs,
-                  ),
-                }),
-                entry.decision?.reason,
-              ]
-                .filter(Boolean)
-                .join(' · ')}
-              subtitleLines={2}
-              showChevron={false}
-              showDivider={index < replaced.length - 1}
-            />
-          ))}
-        </ItemGroup>
+          }
+          showChevron={false}
+        />
       ) : null}
-    </ItemList>
+      {source ? (
+        <Item
+          testID={`${props.testID}.source`}
+          title={
+            decision
+              ? t('memoryContext.memory.detailDecidedIn')
+              : t('memoryContext.memory.detailCameFrom')
+          }
+          detail={sourceLabel}
+          onPress={openSource}
+          mode={openSource ? 'interactive' : 'info'}
+          showChevron={Boolean(openSource)}
+        />
+      ) : null}
+      {decision ? (
+        <Item
+          testID={`${props.testID}.approval`}
+          mode="info"
+          title={t('memoryContext.memory.detailApprovedBy')}
+          detail={attribution.detailApproval ?? undefined}
+          showChevron={false}
+        />
+      ) : null}
+      <Item
+        testID={`${props.testID}.saved`}
+        mode="info"
+        title={t('memoryContext.memory.detailSaved')}
+        detail={attribution.savedLabel}
+        showChevron={false}
+      />
+      <Item
+        testID={`${props.testID}.expires`}
+        mode={props.onRenew ? 'interactive' : 'info'}
+        title={t('memoryContext.memory.sheetExpires')}
+        detail={expiry}
+        // An expiry the reader may change opens the edit form that renews it (lab L9 expired, Renew).
+        onPress={props.onRenew}
+        showChevron={Boolean(props.onRenew)}
+        showDivider={false}
+      />
+    </ItemGroup>
+    <ItemGroup
+      title={t('memoryContext.memory.whatAgentsSee')}
+      // Not loaded, the section is only its sentence: no empty sheet left as a stray hairline.
+      surface={agentLine ? 'sheet' : 'none'}
+      actionLayout="trailing"
+      action={agentLine && agentEntry ? (
+        <HappierPressable
+          testID={`${props.testID}.exactLine`}
+          accessibilityRole="button"
+          expanded={exactLine}
+          onPress={() => setExactLine((open) => !open)}
+        >
+          <Text style={styles.toggle}>
+            {exactLine ? t('memoryContext.memory.readableLine') : t('memoryContext.memory.exactLine')}
+          </Text>
+        </HappierPressable>
+      ) : undefined}
+      description={
+        agentLine
+          ? t('memoryContext.memory.whatAgentsSeeLoaded')
+          : t('memoryContext.memory.whatAgentsSeeNotLoaded')
+      }
+    >
+      {agentLine ? (
+        <View testID={`${props.testID}.agentLine`} style={styles.agentLine}>
+          {exactLine || !agentEntry ? (
+            <Text selectable style={styles.agentLineText}>
+              {agentLine}
+            </Text>
+          ) : (
+            <>
+              <Text selectable variant="body" style={styles.value}>{agentEntry.text}</Text>
+              {agentEntry.facts.length > 0 ? (
+                <Text style={styles.agentLineMeta}>{agentEntry.facts.join(' · ')}</Text>
+              ) : null}
+            </>
+          )}
+        </View>
+      ) : null}
+    </ItemGroup>
+    {replaced.length > 0 ? (
+      <ItemGroup title={t('memoryContext.memory.historyTitle')}>
+        {replaced.map((entry, index) => (
+          <Item
+            key={entry.id}
+            testID={`${props.testID}.history.${entry.id}`}
+            mode="info"
+            title={entry.text}
+            titleLines={0}
+            titleStyle={styles.replaced}
+            subtitle={[
+              t('memoryContext.memory.historyReplaced', {
+                date: formatMemoryDate(
+                  (index === 0 ? fact : replaced[index - 1]!).createdAtMs,
+                ),
+              }),
+              entry.decision?.reason,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+            subtitleLines={2}
+            showChevron={false}
+            showDivider={index < replaced.length - 1}
+          />
+        ))}
+      </ItemGroup>
+    ) : null}
+    </>
   );
-});
+}
 
 /**
  * The index line agents load, read back for people: its words, then the facts it carries in plain

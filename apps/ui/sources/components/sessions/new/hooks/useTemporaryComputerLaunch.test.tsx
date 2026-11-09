@@ -2,7 +2,7 @@ import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import tweetnacl from 'tweetnacl';
-import { AIBackendProfileSchema, type SavedSecret } from '@happier-dev/protocol';
+import { AIBackendProfileSchema, type SavedSecret } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import type { RunnerActivationProgressPhaseV1 } from '@happier-dev/protocol/ephemeralRunner/progress';
 import type { RunnerActivationProjectionV1 } from '@happier-dev/protocol/ephemeralRunner/projection';
 import type { RunnerActivationBindingV1 } from '@happier-dev/protocol/ephemeralRunner/activation';

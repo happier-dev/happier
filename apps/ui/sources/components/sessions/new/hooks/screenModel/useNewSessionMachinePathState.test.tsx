@@ -141,7 +141,7 @@ describe('useNewSessionMachinePathState', () => {
         } finally { await hook.unmount(); }
     });
 
-    it.each(['committed', 'draft'] as const)('keeps the effective managed machine when its folder becomes explicit: %s', async source => {
+    it.each(['committed', 'draft', 'noFolder'] as const)('keeps the effective managed machine when its directory intent becomes explicit: %s', async source => {
         const props: HookParams = { machines: toMachines({ id: 'automatic' }, { id: 'team-a' }, { id: 'team-b' }),
             recentMachinePaths: [], machineIdParam: undefined, pathParam: undefined };
         const defaults = (machineId: string): ManagedSessionDefaultsContext => ({ teamDefaults: {
@@ -151,10 +151,15 @@ describe('useNewSessionMachinePathState', () => {
         try {
             await hook.rerender({ ...props, managedDefaults: defaults('team-a') });
             await act(async () => source === 'committed' ? hook.getCurrent().setSelectedPath('/authored')
-                : hook.getCurrent().setDraftSelectedPath('/authored'));
+                : source === 'draft' ? hook.getCurrent().setDraftSelectedPath('/authored')
+                    : hook.getCurrent().setDirectoryIntent({ kind: 'managed' }));
+            expect(hook.getCurrent().placementForPersistence.executionTarget).toEqual({
+                kind: 'machine', target: { serverId: 'server-a', machineId: 'team-a' },
+            });
             await hook.rerender({ ...props, managedDefaults: defaults('team-b') });
             expect(hook.getCurrent().selectedMachineId).toBe('team-a');
-            expect(hook.getCurrent().getRequestedPath()).toBe('/authored');
+            expect(hook.getCurrent().getRequestedPath()).toBe(source === 'noFolder' ? '' : '/authored');
+            if (source === 'noFolder') expect(hook.getCurrent().directoryIntent).toEqual({ kind: 'managed' });
         } finally { await hook.unmount(); }
     });
 

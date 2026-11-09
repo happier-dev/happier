@@ -1,4 +1,4 @@
-import type { ExternalSessionsAgentId } from '@happier-dev/protocol';
+import type { ExternalSessionsAgentId } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 
 export function getPreferredExternalSessionBrowseProviderId(
     providerIds: readonly ExternalSessionsAgentId[],

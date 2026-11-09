@@ -1,5 +1,7 @@
 import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import * as React from 'react';
+import { Dimensions } from 'react-native';
+import * as Unistyles from 'react-native-unistyles';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -9,16 +11,20 @@ import type {
 
 import type { CallerHostedHtmlRuntime } from '@/components/ui/surfaces/hostedHtml/HostedHtmlSurfaceAdapter';
 import { loadPluginUiHostSupport } from '@/components/plugins/hostApi/loadPluginUiHostSupport';
-import { createSessionFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
 import { createSessionCallerHostedHtmlRequestController } from '@/components/ui/surfaces/hostedHtml/sessionCallerHostedHtmlRequestController';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { darkTheme, lightTheme } from '@/theme';
 import { SessionWidgetHost } from './SessionWidgetHost';
+import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
+import { SESSION_BOARD_SEMANTIC_HEIGHTS } from './sessionBoardItemHeight';
 import type { SessionBoardItemProjection, SessionBoardMountHost } from '@/sync/domains/session/board';
 
 const state = vi.hoisted(() => ({
     frames: [] as Record<string, unknown>[],
     openedExternalUrls: [] as string[],
+    physicalMounts: 0,
 }));
 
 vi.mock('@/utils/url/openExternalUrl', () => ({
@@ -33,8 +39,10 @@ vi.mock('@/utils/url/openExternalUrl', () => ({
 // incumbent bridge above it remain real.
 vi.mock('@/components/browser/frame/BrowserViewFrame.web', () => ({
     BrowserViewFrame: (props: Readonly<{ engine: Record<string, unknown> }>) => {
+        const [count, setCount] = React.useState(0);
+        React.useEffect(() => { state.physicalMounts += 1; }, []);
         state.frames.push(props.engine);
-        return React.createElement('BrowserViewFrame');
+        return React.createElement('BrowserViewFrame', { count, increment: () => setCount(value => value + 1) });
     },
 }));
 
@@ -62,9 +70,9 @@ const item = {
     },
 } satisfies SessionBoardItemProjection;
 
-function runtime(): CallerHostedHtmlRuntime {
+function runtime(sessionId = 'session-1', serverIdentityId = 'server-identity-a'): CallerHostedHtmlRuntime {
     return {
-        serverIdentityId: 'server-identity-a',
+        serverIdentityId,
         accountId: 'account-a',
         accountEncryptionMode: 'plain',
         hostOrigin: 'https://app.example.com',
@@ -73,10 +81,10 @@ function runtime(): CallerHostedHtmlRuntime {
         // reviewed request.
         admittedHostMethods: ['context', 'watchContext', 'executeAction', 'notify', 'readClipboard'],
         createRequestController: publishResourceEvent => createSessionCallerHostedHtmlRequestController({
-            sessionId: 'session-1', serverId: 'home-a', serverIdentityId: 'server-identity-a', accountId: 'account-a',
+            sessionId, serverId: 'home-a', serverIdentityId, accountId: 'account-a',
             executeHostAction: createFrontDoorActionExecute(),
             isAccountCurrent: () => storage.getState().profileScope?.accountId === 'account-a',
-            isSessionCurrent: () => storage.getState().sessions['session-1']?.access?.capabilities.readTranscript === true,
+            isSessionCurrent: () => storage.getState().sessions[sessionId]?.access?.capabilities.readTranscript === true,
             pluginTarget: null, publishResourceEvent, notify: () => {},
         }),
         lifetime: {
@@ -106,25 +114,36 @@ function readFrameBridge(frame: Record<string, unknown>) {
     return { identity: config.identity, bootstrap: config, onMessage };
 }
 
+async function awaitHostedBodies(screen: Awaited<ReturnType<typeof renderScreen>>, count = 1) {
+    await vi.waitFor(async () => {
+        await flushHookEffects();
+        expect(screen.tree.root.findAllByType('BrowserViewFrame'), screen.getTextContent()).toHaveLength(count);
+    });
+}
+
 async function renderPlacement(
     host: SessionBoardMountHost,
-    primaryHost: SessionBoardMountHost | null,
     renderedItem: SessionBoardItemProjection = item,
-    executableCurrentness: 'current' | 'stale' | 'offline' | 'unverified' = 'current',
+    bodyActive = true,
 ) {
-    return await renderScreen(<SessionWidgetHost
+    const screen = await renderScreen(<SessionWidgetHost
         sessionId="session-1"
         item={renderedItem}
         host={host}
-        primaryHost={primaryHost}
+        bodyActive={bodyActive}
         density={host === 'sidebar' ? 'compact' : 'full'}
         canEdit
-        executableCurrentness={executableCurrentness}
         heightBounds={{ min: 96, max: 520 }}
         callerHostedHtmlRuntime={runtime()}
         resolveSourceAvailability={() => ({ kind: 'available' })}
         testID="caller-widget"
     />);
+    if (bodyActive) await vi.waitFor(async () => {
+        await flushHookEffects();
+        expect(screen.tree.root.findAllByType('BrowserViewFrame').length > 0
+            || screen.findByTestId('caller-widget-hosted-html-unavailable') !== null).toBe(true);
+    });
+    return screen;
 }
 
 describe('SessionWidgetHost caller-authored hosted HTML', () => {
@@ -136,15 +155,90 @@ describe('SessionWidgetHost caller-authored hosted HTML', () => {
 
     beforeEach(async () => {
         standardCleanup();
-        await act(async () => { await loadPluginUiHostSupport(); });
+        // The real browser bundle includes its guest bootstrap before a person
+        // opens a visual; load those authored bytes rather than timing Vite's
+        // first generated-module transform inside a mounted-frame assertion.
+        await act(async () => {
+            await loadPluginUiHostSupport();
+            await import('@/components/plugins/hostedWeb/guestBootstrap.generated');
+        });
         state.frames = [];
+        state.physicalMounts = 0;
         state.openedExternalUrls = [];
         storage.setState({ profileScope: { serverId: 'home-a', accountId: 'account-a' } });
         storage.getState().applySessions([createSessionFixture({ id: 'session-1', serverId: 'home-a' })]);
     });
 
+    it('gives an expanded caller frame its semantic room, then follows long intrinsic content without a card cap', async () => {
+        const fixedItem: SessionBoardItemProjection = { ...item, state: { kind: 'ready', item: {
+            ...item.state.item, height: { mode: 'fixed', size: 'regular' },
+        } } };
+        const screen = await renderScreen(<SessionWidgetHost sessionId="session-1" item={fixedItem}
+            host="details" density="full" expanded canEdit
+            heightBounds={{ min: 96, max: 520 }} callerHostedHtmlRuntime={runtime()}
+            resolveSourceAvailability={() => ({ kind: 'available' })} testID="caller-widget" />);
+        await awaitHostedBodies(screen);
+        expect(screen.findByType(WidgetFrame).props.viewportHeight).toBe(SESSION_BOARD_SEMANTIC_HEIGHTS.regular);
+        const frame = readFrameBridge(state.frames.at(-1)!);
+        await act(async () => {
+            await frame.onMessage({ version: 1, identity: frame.identity, sequence: 1, kind: 'ready', payload: { ready: true } });
+            await frame.onMessage({ version: 1, identity: frame.identity, sequence: 2, kind: 'heightChanged', payload: { height: 2400 } });
+            await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        });
+        expect(screen.findByType(WidgetFrame).props.viewportHeight).toBe(2400);
+        expect(state.physicalMounts).toBe(1);
+    });
+
+    it('retains the same interactive body across independent theme and phone-width changes', async () => {
+        const mountedRuntime = runtime();
+        const renderWidget = () => <SessionWidgetHost sessionId="session-1" item={item}
+            host="details" density="full" canEdit
+            heightBounds={{ min: 96, max: 520 }} callerHostedHtmlRuntime={mountedRuntime}
+            resolveSourceAvailability={() => ({ kind: 'available' })} testID="caller-widget" />;
+        const originalTheme = Unistyles.useUnistyles();
+        const theme = vi.spyOn(Unistyles, 'useUnistyles').mockReturnValue({ ...originalTheme, theme: lightTheme });
+        const dimensions = vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 1440, height: 1000, scale: 1, fontScale: 1 });
+        const screen = await renderScreen(renderWidget());
+        await awaitHostedBodies(screen);
+        const frame = () => screen.tree.findByType('BrowserViewFrame');
+        await act(async () => { frame().props.increment(); });
+        const identity = readFrameBridge(state.frames.at(-1)!).identity;
+
+        for (const [width, nextTheme] of [[1440, darkTheme], [390, darkTheme], [390, lightTheme], [1440, lightTheme]] as const) {
+            theme.mockReturnValue({ ...originalTheme, theme: nextTheme });
+            dimensions.mockReturnValue({ width, height: width === 390 ? 844 : 1000, scale: 1, fontScale: 1 });
+            await screen.update(renderWidget());
+            const host = screen.tree.root.findByType(SessionWidgetHost).findAll(node => node.props.onLayout
+                && node.props.collapsable === false)[0]!;
+            await act(async () => { host.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height: 300 } } }); });
+            expect(frame().props.count).toBe(1);
+            expect(state.physicalMounts).toBe(1);
+            expect(readFrameBridge(state.frames.at(-1)!).identity).toEqual(identity);
+        }
+    });
+
+    it('runs independent interactive HTML bodies on simultaneous visible surfaces', async () => {
+        const mountedRuntime = runtime();
+        const screen = await renderScreen(<>
+            <SessionWidgetHost sessionId="session-1" item={item} host="details" density="full" canEdit
+                callerHostedHtmlRuntime={mountedRuntime} resolveSourceAvailability={() => ({ kind: 'available' })} />
+            <SessionWidgetHost sessionId="session-1" item={item} host="companion" density="compact" canEdit
+                callerHostedHtmlRuntime={mountedRuntime} resolveSourceAvailability={() => ({ kind: 'available' })} />
+        </>);
+        await awaitHostedBodies(screen, 2);
+        expect(state.physicalMounts).toBe(2);
+        const frames = screen.tree.root.findAllByType('BrowserViewFrame');
+        expect(frames).toHaveLength(2);
+        const identities = state.frames.map(frame => readFrameBridge(frame).identity);
+        expect(identities[0]).not.toEqual(identities[1]);
+        await act(async () => { frames[0]!.props.increment(); });
+        expect(frames[0]!.props.count).toBe(1);
+        expect(frames[1]!.props.count).toBe(0);
+        expect(state.physicalMounts).toBe(2);
+    });
+
     it('mounts the neutral hosted frame with revision-bound lifecycle and the stored reduced API', async () => {
-        await renderPlacement('details', 'details');
+        await renderPlacement('details');
         expect(state.frames).toHaveLength(1);
         const first = state.frames[0]!;
         expect(first).toMatchObject({
@@ -227,41 +321,45 @@ describe('SessionWidgetHost caller-authored hosted HTML', () => {
 
         standardCleanup();
         state.frames = [];
-        await renderPlacement('sidebar', 'details');
+        await renderPlacement('inlineTranscript', item, false);
         expect(state.frames).toHaveLength(0);
 
-        await renderPlacement('sidebar', 'sidebar');
+        await renderPlacement('sidebar');
         expect(state.frames).toHaveLength(1);
         const secondBridge = readFrameBridge(state.frames[0]!);
         expect(secondBridge.identity).not.toEqual(bridge.identity);
     });
 
-    it('retires the executable bridge while retained Board bytes are stale and remounts a fresh lifetime after reconnect', async () => {
+    it('keeps a ready body through same-surface updates and retires it on removal or source change', async () => {
         const mountedRuntime = runtime();
         const renderWidget = (
-            executableCurrentness: 'current' | 'stale' | 'offline' | 'unverified',
             renderedItem: SessionBoardItemProjection = item,
         ) => (
             <SessionWidgetHost
                 sessionId="session-1"
                 item={renderedItem}
                 host="details"
-                primaryHost="details"
                 density="full"
                 canEdit
-                executableCurrentness={executableCurrentness}
                 heightBounds={{ min: 96, max: 520 }}
                 callerHostedHtmlRuntime={mountedRuntime}
                 resolveSourceAvailability={() => ({ kind: 'available' })}
                 testID="caller-widget"
             />
         );
-        const screen = await renderScreen(renderWidget('current'));
+        const screen = await renderScreen(renderWidget());
+        await awaitHostedBodies(screen);
         expect(state.frames).toHaveLength(1);
         const generationG = readFrameBridge(state.frames[0]!);
 
-        await screen.update(renderWidget('stale'));
-        expect(screen.findByTestId('caller-widget-executable-stale')).not.toBeNull();
+        await act(async () => { screen.tree.findByType('BrowserViewFrame').props.increment(); });
+        await screen.update(renderWidget({ ...item }));
+        expect(readFrameBridge(state.frames.at(-1)!).identity).toEqual(generationG.identity);
+        expect(screen.tree.findByType('BrowserViewFrame').props.count).toBe(1);
+        expect(state.physicalMounts).toBe(1);
+
+        await screen.update(renderWidget({ itemId: item.itemId, state: { kind: 'removed' } }));
+        expect(screen.tree.root.findAllByType('BrowserViewFrame')).toHaveLength(0);
         await expect(generationG.onMessage({
             version: 1,
             identity: generationG.identity,
@@ -274,7 +372,7 @@ describe('SessionWidgetHost caller-authored hosted HTML', () => {
         });
 
         state.frames = [];
-        await screen.update(renderWidget('current'));
+        await screen.update(renderWidget());
         expect(state.frames).toHaveLength(1);
         const generationH = readFrameBridge(state.frames[0]!);
         expect(generationH.identity).not.toEqual(generationG.identity);
@@ -300,7 +398,7 @@ describe('SessionWidgetHost caller-authored hosted HTML', () => {
             },
         } satisfies SessionBoardItemProjection;
         state.frames = [];
-        await screen.update(renderWidget('current', changedCapabilities));
+        await screen.update(renderWidget(changedCapabilities));
         expect(state.frames).toHaveLength(1);
         const generationI = readFrameBridge(state.frames[0]!);
         expect(generationI.identity).not.toEqual(generationH.identity);
@@ -327,10 +425,8 @@ describe('SessionWidgetHost caller-authored hosted HTML', () => {
                 sessionId={sessionId}
                 item={renderedItem}
                 host="details"
-                primaryHost="details"
                 density="full"
                 canEdit
-                executableCurrentness="current"
                 heightBounds={{ min: 96, max: 520 }}
                 callerHostedHtmlRuntime={runtimeOverride}
                 resolveSourceAvailability={() => ({ kind: 'available' })}
@@ -352,7 +448,8 @@ describe('SessionWidgetHost caller-authored hosted HTML', () => {
             payload: { ready: true },
         })).resolves.toMatchObject({ kind: 'error', payload: { code: 'stale_surface' } });
 
-        const nextHomeRuntime = { ...mountedRuntime, serverIdentityId: 'server-identity-b' };
+        storage.getState().applySessions([createSessionFixture({ id: 'session-2', serverId: 'home-a' })]);
+        const nextHomeRuntime = runtime('session-2', 'server-identity-b');
         await screen.update(renderWidget('session-2', nextItem, nextHomeRuntime));
         const third = readFrameBridge(state.frames.at(-1)!);
         expect(third.identity).not.toEqual(second.identity);
@@ -365,7 +462,7 @@ describe('SessionWidgetHost caller-authored hosted HTML', () => {
         })).resolves.toMatchObject({ kind: 'error', payload: { code: 'stale_surface' } });
     });
 
-    it('keeps rejected caller content visible as a typed unavailable state instead of a blank card', async () => {
+    it('renders a valid caller document and returns typed unsupported for an unavailable optional method', async () => {
         if (item.state.kind !== 'ready' || item.state.item.source.kind !== 'hostedHtml') {
             throw new Error('caller-hosted HTML fixture must remain ready');
         }
@@ -386,13 +483,21 @@ describe('SessionWidgetHost caller-authored hosted HTML', () => {
             },
         } satisfies SessionBoardItemProjection;
 
-        const screen = await renderPlacement('details', 'details', unavailableCapability);
+        const screen = await renderPlacement('details', unavailableCapability);
 
-        expect(state.frames).toHaveLength(0);
-        expect(screen.findByTestId('caller-widget-hosted-html-unavailable')).not.toBeNull();
-        expect(screen.findByTestId(
-            'caller-widget-hosted-html-unavailable-diagnostic-capability_request_invalid',
-        )).not.toBeNull();
+        expect(screen.tree.root.findAllByType('BrowserViewFrame')).toHaveLength(1);
+        expect(screen.findByTestId('caller-widget-hosted-html-unavailable')).toBeNull();
+        const frame = readFrameBridge(state.frames.at(-1)!);
+        await act(async () => {
+            await frame.onMessage({ version: 1, identity: frame.identity, sequence: 1, kind: 'ready', payload: { ready: true } });
+            await frame.onMessage({ version: 1, identity: frame.identity, sequence: 2, kind: 'hostApi', payload: {
+                wireVersion: 1, kind: 'negotiate', identity: frame.identity, apiRange: '^1.0.0',
+            } });
+        });
+        await expect(frame.onMessage({ version: 1, identity: frame.identity, sequence: 3, kind: 'hostApi', payload: {
+            wireVersion: 1, kind: 'request', identity: frame.identity, requestId: 'unavailable-resource',
+            method: 'readResource', payload: { resource: { pluginId: 'acme.preview', localId: 'status' } },
+        } })).resolves.toMatchObject({ kind: 'result', payload: { kind: 'error', error: { code: 'unsupported_method' } } });
     });
 
     it('fails closed without a frame or authority bridge when secure mount identity entropy is unavailable, then recovers with a fresh identity', async () => {
@@ -404,10 +509,8 @@ describe('SessionWidgetHost caller-authored hosted HTML', () => {
                 sessionId="session-1"
                 item={renderedItem}
                 host="details"
-                primaryHost="details"
                 density="full"
                 canEdit
-                executableCurrentness="current"
                 heightBounds={{ min: 96, max: 520 }}
                 callerHostedHtmlRuntime={mountedRuntime}
                 resolveSourceAvailability={() => ({ kind: 'available' })}
@@ -448,17 +551,14 @@ describe('SessionWidgetHost caller-authored hosted HTML', () => {
         randomUuidSpy.mockRestore();
     });
 
-    it('retires guest, load, timeout, and unexpected-navigation failures into typed Reload with a fresh mount identity', async () => {
-        vi.useFakeTimers();
-        const screen = await renderPlacement('details', 'details');
+    it('retires guest, load, and unexpected-navigation failures into typed Reload with a fresh mount identity', async () => {
+        const screen = await renderPlacement('details');
         const firstFrame = state.frames.at(-1)!;
         const firstBridge = readFrameBridge(firstFrame);
 
         await act(async () => {
-            (firstFrame.onLoad as (() => void) | undefined)?.();
-        });
-        await act(async () => {
-            await vi.advanceTimersByTimeAsync(30_000);
+            await firstBridge.onMessage({ version: 1, identity: firstBridge.identity, sequence: 1,
+                kind: 'error', payload: { message: 'guest failed' } });
         });
         expect(screen.findByTestId('caller-widget-hosted-html-error')).not.toBeNull();
         expect(screen.findByTestId('caller-widget-hosted-html-error-action')).not.toBeNull();
@@ -503,7 +603,7 @@ describe('SessionWidgetHost caller-authored hosted HTML', () => {
         expect(screen.findByTestId('caller-widget-hosted-html-error')).not.toBeNull();
     });
 
-    it('starts a fresh ready timeout when the exact record source changes after the prior frame was ready', async () => {
+    it('waits for replacement source readiness without an arbitrary deadline and rejects the retired source', async () => {
         vi.useFakeTimers();
         if (item.state.kind !== 'ready' || item.state.item.source.kind !== 'hostedHtml') {
             throw new Error('caller-hosted HTML fixture must remain ready');
@@ -514,10 +614,8 @@ describe('SessionWidgetHost caller-authored hosted HTML', () => {
                 sessionId="session-1"
                 item={renderedItem}
                 host="details"
-                primaryHost="details"
                 density="full"
                 canEdit
-                executableCurrentness="current"
                 heightBounds={{ min: 96, max: 520 }}
                 callerHostedHtmlRuntime={mountedRuntime}
                 resolveSourceAvailability={() => ({ kind: 'available' })}
@@ -564,7 +662,13 @@ describe('SessionWidgetHost caller-authored hosted HTML', () => {
         await act(async () => {
             await vi.advanceTimersByTimeAsync(30_000);
         });
-        expect(screen.findByTestId('caller-widget-hosted-html-error')).not.toBeNull();
+        expect(screen.findByTestId('caller-widget-hosted-html-error')).toBeNull();
+        expect(readFrameBridge(state.frames.at(-1)!).identity).toEqual(replacementBridge.identity);
+        await act(async () => {
+            await replacementBridge.onMessage({ version: 1, identity: replacementBridge.identity, sequence: 1,
+                kind: 'ready', payload: { ready: true } });
+        });
+        expect(screen.findByTestId('caller-widget-hosted-html-error')).toBeNull();
         await expect(firstBridge.onMessage({
             version: 1,
             identity: firstBridge.identity,
@@ -575,7 +679,7 @@ describe('SessionWidgetHost caller-authored hosted HTML', () => {
     });
 
     it('opens trusted external links through the shared frame without adding Host API grants', async () => {
-        await renderPlacement('details', 'details');
+        await renderPlacement('details');
         const frame = state.frames.at(-1)!;
         const bridge = readFrameBridge(frame);
         await expect(bridge.onMessage({

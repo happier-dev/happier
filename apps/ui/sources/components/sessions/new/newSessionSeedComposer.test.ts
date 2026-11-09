@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PluginUiNewSessionSeedV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import { ComposerAttachmentAuthorValueV1Schema, MAX_COMPOSER_ATTACHMENT_LABEL_CODE_POINTS_V1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import {
@@ -42,6 +43,26 @@ describe('readPluginNewSessionSeedV1', () => {
 });
 
 describe('seedAndOpenNewSession', () => {
+    it('retains the configured action on the scoped draft through authoring edits', () => {
+        const actionDefault = { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, configuredActionId: 'fix-check', label: 'Fix check', launchMode: 'start' as const };
+        const outcome = seedAndOpenNewSession({
+            seed: { prompt: 'Fix this check', actionDefault }, scope,
+            isCurrent: () => true, createDraftId: () => draftId, navigateToNewSession: () => undefined,
+        });
+        expect(outcome.kind).toBe('opened');
+        const seeded = readNewSessionDraftFromRepository({ scope, draftId });
+        expect(seeded).toMatchObject({ actionDefault, input: 'Fix this check' });
+        expect(getSessionDraftSnapshot(scope, { kind: 'newSession', draftId })?.localSupplement.newSessionLocalState)
+            .toMatchObject({ actionDefault });
+        if (!seeded) throw new Error('Expected seeded draft');
+        writeNewSessionAuthoringDraftToRepository({ scope, draftId, draft: { ...seeded, selectedProfileId: 'other-profile' } });
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({ actionDefault, selectedProfileId: 'other-profile' });
+        resetSessionDraftRepositoryForTests();
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({
+            actionDefault, selectedProfileId: 'other-profile', input: 'Fix this check',
+        });
+    });
+
     it('keeps placement-only seeds (Machine, branch worktree, Project) off the Account until the person writes', async () => {
         const { configureSessionDraftRepository, flushSessionDraft, listNewSessionDraftProjections } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
         const { createSessionDraftPrivatePayloadV2 } = await import('@happier-dev/protocol/drafts/sessionDraftsV2');
@@ -148,6 +169,25 @@ describe('seedAndOpenNewSession', () => {
         expect(readNewSessionAttachmentDrafts(resolveNewSessionDraftAttachmentFlowId(draftId), scope)).toEqual([]);
     });
 
+    it('seeds the canonical managed-directory intent on the exact Machine without reviving a remembered folder', () => {
+        writeNewSessionAuthoringDraftToRepository({ scope, draftId, draft: {
+            input: '', selectedMachineId: 'machine-a', selectedPath: '/releases/not-an-agent-workspace',
+            agentType: 'claude', permissionMode: 'default', acpSessionModeId: null, updatedAt: 1,
+        } });
+        const result = seedAndOpenNewSession({ seed: { prompt: 'Investigate using read diagnostics',
+            placement: { kind: 'exactTarget', serverId: scope.serverId, machineId: 'machine-a' },
+            directoryIntent: { kind: 'managed' } },
+            pluginId: 'happier.triage', scope, isCurrent: () => true, createDraftId: () => draftId,
+            navigateToNewSession: () => {},
+        });
+        expect(result).toMatchObject({ kind: 'opened', draftId });
+        expect(readNewSessionDraftFromRepository({ scope, draftId })).toMatchObject({
+            directoryKind: 'managed', selectedMachineId: 'machine-a', targetServerId: scope.serverId,
+        });
+        expect(readPluginNewSessionSeedV1({ directoryIntent: { kind: 'managed' },
+            placement: { kind: 'exactTarget', serverId: scope.serverId, machineId: 'machine-a', directory: '/releases' } })).toBeNull();
+        expect(readPluginNewSessionSeedV1({ directoryIntent: { kind: 'managed' }, checkoutIntent: 'createWorktree' })).toBeNull();
+    });
     function harness(overrides: Partial<Parameters<typeof seedAndOpenNewSession>[0]> = {}) {
         const navigate = vi.fn(() => readNewSessionDraftFromRepository({ scope, draftId }));
         const outcome = seedAndOpenNewSession({

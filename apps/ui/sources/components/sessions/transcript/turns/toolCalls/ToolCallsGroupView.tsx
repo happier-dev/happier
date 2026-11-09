@@ -2,6 +2,7 @@ import { useSessionTranscriptSource } from '@/components/sessions/transcript/sou
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
 
 import type { ToolCallMessage } from "@happier-dev/session-core/messages";
 import type { PersistedSessionMessagePinV1 } from "@happier-dev/session-core/pins";
@@ -11,11 +12,11 @@ import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/ap
 import { TranscriptEnterWrapper } from '@/components/sessions/transcript/motion/TranscriptEnterWrapper';
 import { TranscriptCollapsible } from '@/components/sessions/transcript/motion/TranscriptCollapsible';
 import type { TranscriptInteraction } from '@/utils/sessions/deriveTranscriptInteraction';
-import { resolveMessageRouteIdForDisplay } from "@happier-dev/session-core/messages";
 import { useEnsureSidechainsLoaded } from '@/hooks/session/useEnsureSidechainsLoaded';
 import { resolveTranscriptToolCallsCollapsedPreviewCount } from '@/sync/domains/settings/transcriptToolCallsCollapsedPreviewCount';
 import { resolveToolCallsGroupPresentation } from '@/components/sessions/transcript/toolCalls/resolveToolCallsGroupPresentation';
 import {
+    resolveTranscriptToolRouteMessageId,
     useTranscriptSessionCommon,
     type TranscriptForkCommon,
     type TranscriptMessageDisplayCommon,
@@ -87,7 +88,6 @@ export const ToolCallsGroupView = React.memo((props: ToolCallsGroupViewProps) =>
         transcriptSessionCommon.toolChrome.showToolCalls,
     ]);
     const toolRouteCommon = React.useMemo(() => transcriptSessionCommon.toolRoute, [
-        transcriptSessionCommon.toolRoute.messagesById,
         transcriptSessionCommon.toolRoute.reducerState,
     ]);
 
@@ -111,7 +111,7 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
         transcriptToolCallsGroupShowBackground,
     } = props.toolChromeCommon;
     const normalizedChromeMode = toolViewTimelineChromeMode === 'activity_feed' ? 'activity_feed' : 'cards';
-    const { messagesById, reducerState } = props.toolRouteCommon;
+    const { reducerState } = props.toolRouteCommon;
     const expanded = props.expanded === true;
     const count = props.toolMessages.length;
     const createdAt = props.toolMessages[0]?.createdAt ?? Date.now();
@@ -120,7 +120,7 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
     const feedBackgroundStyle = showFeedBackground
         ? {
             borderRadius: theme.borderRadius.xl,
-            backgroundColor: theme.colors.feed?.card?.background ?? theme.colors.surface.elevated,
+            backgroundColor: glassContentFill(theme.colors.feed?.card?.background ?? theme.colors.surface.elevated, theme.colors),
             overflow: 'hidden' as const,
             paddingHorizontal: theme.space.s10,
             paddingVertical: theme.space.s6,
@@ -152,12 +152,8 @@ export const ToolCallsGroupViewWithSessionCommon = React.memo((props: ToolCallsG
     });
 
     const resolveToolRouteMessageId = React.useCallback((message: ToolCallMessage) => {
-        return resolveMessageRouteIdForDisplay({
-            message,
-            messagesById,
-            reducerState,
-        });
-    }, [messagesById, reducerState]);
+        return resolveTranscriptToolRouteMessageId(message, { reducerState });
+    }, [reducerState]);
     const renderToolPinAction = React.useCallback((message: ToolCallMessage, nestedMessageId: string | undefined) => (
         resolveToolRowPinAction({
             sessionId: props.sessionId,
@@ -293,7 +289,7 @@ const styles = StyleSheet.create((theme) => ({
     },
     containerCards: {
         borderRadius: theme.borderRadius.xl,
-        backgroundColor: theme.colors.surface.inset ?? theme.colors.surface.base,
+        backgroundColor: glassContentFill(theme.colors.surface.inset, theme.colors),
         overflow: 'hidden',
     },
     containerFeedHeaderOnly: {

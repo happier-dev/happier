@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { glassContentFill } from '@/components/ui/glass/glassSurfacePaint';
 import type { ToolViewProps } from '../core/_registry';
 import { ToolSectionView } from '../../shell/presentation/ToolSectionView';
 import { CodeView } from '@/components/ui/media/CodeView';
@@ -13,6 +14,7 @@ import { readTranscriptProjectCommandCall } from '@/components/sessions/transcri
 import { ProjectCommandToolBody } from './ProjectCommandToolBody';
 import { readTranscriptMachineResourcesCall } from '@/components/sessions/transcript/references/transcriptMachineResourcesReference';
 import { MachineResourcesToolBody } from './MachineResourcesToolBody';
+import { readSessionSectionMoveFact, SessionSectionMoveResult } from './SessionSectionMoveResult';
 import { type ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { getActionSpec } from '@happier-dev/protocol/actions';
 import { readHappierActionCallId, readHappierActionCallInput } from '@/components/sessions/transcript/references/happierActionToolResult';
@@ -142,7 +144,7 @@ function ActionFailureCode({ failure }: Readonly<{ failure: ToolActionFailurePre
     );
 }
 
-export const MCPToolView = React.memo<ToolViewProps>(({ tool, detailLevel, messageId, serverId }) => {
+export const MCPToolView = React.memo<ToolViewProps>(({ tool, detailLevel, messageId, serverId, sessionId }) => {
     const find = useToolFindState(messageId);
     if (detailLevel === 'title') return null;
 
@@ -152,6 +154,9 @@ export const MCPToolView = React.memo<ToolViewProps>(({ tool, detailLevel, messa
     const machineResourcesCall = projectCommandCall ? null : readTranscriptMachineResourcesCall(tool);
 
     if (detailLevel === 'summary' && !find.active) {
+        // An acknowledged section move reads as what happened, with its Undo on the header (lab `clsections:agent`).
+        const sectionMove = readSessionSectionMoveFact(tool);
+        if (sectionMove) return <SessionSectionMoveResult fact={sectionMove} serverId={serverId} />;
         // The row header already says what the call is (title and line); the body adds only its outcome.
         const outcome = actionFailure
             ? <ActionFailureCode failure={actionFailure} />
@@ -196,7 +201,7 @@ const styles = StyleSheet.create((theme) => ({
     container: {
         padding: theme.space.s12,
         borderRadius: 8,
-        backgroundColor: theme.colors.surface.inset,
+        backgroundColor: glassContentFill(theme.colors.surface.inset, theme.colors, { nested: true }),
         gap: theme.space.s10,
     },
     title: {

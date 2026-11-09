@@ -71,6 +71,17 @@ export function useMemoryDocumentSummary(params: Readonly<{
   readInputs.current = { account, awaitingStatus, custody, stableScope, target, view };
   const custodyCurrent = custody?.isCurrent() === true;
   const [loaded, setLoaded] = React.useState<Readonly<{ key: string; summary: MemoryDocumentSummary }> | null>(null);
+  const countsKey = JSON.stringify([account?.serverId, account?.accountId, target?.serverId, target?.machineId, custody?.key,
+    custody?.scope.serverId, custody?.scope.accountId, view?.ref.kind, view?.ref.serverId,
+    view?.ref.artifactId, scopeKey, params.preparationBasis]);
+  const lastKnownCounts = React.useRef<Readonly<{
+    key: string; isCurrent: () => boolean; summary: Extract<MemoryDocumentSummary, { state: 'ready' }>;
+  }> | null>(null);
+  React.useEffect(() => {
+    if (readable && custody?.isCurrent() && loaded?.key === key && loaded.summary.state === 'ready') {
+      lastKnownCounts.current = { key: countsKey, isCurrent: custody.isCurrent, summary: loaded.summary };
+    }
+  }, [countsKey, custody?.isCurrent, custodyCurrent, key, loaded, readable]);
   // The producer's currentness predicate changes when the admitted lifetime is
   // replaced, even if the same Account and document are admitted again.
   React.useEffect(() => {
@@ -96,5 +107,9 @@ export function useMemoryDocumentSummary(params: Readonly<{
   if (!readable || !account || !custodyCurrent) return UNAVAILABLE;
   if (!inUse) return NOT_IN_USE;
   if (!target) return unavailableMachine;
-  return loaded?.key === key ? loaded.summary : awaitingStatus;
+  const summary = loaded?.key === key ? loaded.summary : awaitingStatus;
+  const pending = summary.state === 'pending' || summary.state === 'unavailable'
+    && (summary.cause?.reason === 'status_pending' || summary.cause?.reason === 'coverage_pending');
+  return pending && lastKnownCounts.current?.key === countsKey && lastKnownCounts.current.isCurrent()
+    ? lastKnownCounts.current.summary : summary;
 }

@@ -30,7 +30,7 @@ import {
 import { buildNewSessionDraftLocalState } from '@/sync/ops/sessionDrafts/newSessionDraftLocalState';
 import { sanitizeNewSessionAutomationDraft } from '@/sync/domains/automations/automationDraft';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { StoredPluginUiNewSessionSeedOriginV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiNewSessionActionDefaultV1Schema, StoredPluginUiNewSessionSeedOriginV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { readSessionInstructionsAuthoringDraft } from '@/sync/domains/state/sessionInstructionsDraft';
 import { ManagedMachineAcquisitionDraftReadSchema, ManagedMachineSelectionDraftReadSchema } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import { getSessionDraftAuthoringFieldValues } from '@/sync/ops/sessionDrafts/sessionDraftDocumentFields';
@@ -112,6 +112,7 @@ export function readNewSessionDraftProjectionFromRepository(input: Readonly<{
     const promptStack = Object.prototype.hasOwnProperty.call(fields, 'promptStack') ? authoring.promptStack : retainedAuthoring.promptStack;
     const instructionsDraft = readSessionInstructionsAuthoringDraft(localState?.instructionsDraft);
     const authoringOrigin = StoredPluginUiNewSessionSeedOriginV1Schema.safeParse(localState?.authoringOrigin);
+    const actionDefault = createStoredReadSchema(PluginUiNewSessionActionDefaultV1Schema).safeParse(localState?.actionDefault);
     const spaceMembership = nullable(SessionSpaceMembershipTargetV1Schema).safeParse(localState?.spaceMembership);
     const managedMachineSelection = nullable(ManagedMachineSelectionDraftReadSchema).safeParse(localState?.managedMachineSelection);
     const managedMachineAcquisition = nullable(ManagedMachineAcquisitionDraftReadSchema).safeParse(localState?.managedMachineAcquisition);
@@ -131,6 +132,7 @@ export function readNewSessionDraftProjectionFromRepository(input: Readonly<{
             ? snapshot.composer.text.value
             : '',
         ...(authoringOrigin.success ? { authoringOrigin: authoringOrigin.data } : {}),
+        ...(actionDefault.success ? { actionDefault: actionDefault.data } : {}),
         ...(spaceMembership.success ? { spaceMembership: spaceMembership.data } : {}),
         ...(attachments.length > 0 ? { composerAttachments: attachments } : {}),
         ...(Array.isArray(localState?.composerAttachmentSeeds) && localState.composerAttachmentSeeds.length > 0
@@ -264,6 +266,8 @@ export function writeNewSessionAuthoringDraftToRepository(input: Readonly<{
         // Pending attachment custody belongs to Composer. Authoring snapshots
         // neither drop waiting requests nor resurrect requests already settled.
         composerAttachmentSeeds: live?.composerAttachmentSeeds,
+        // Action name and launch edits are committed by their leaf control.
+        actionDefault: live?.actionDefault ?? input.draft.actionDefault,
         ...(input.preserveLiveSessionName && live ? {
             sessionName: live.sessionName,
             instructionsDraft: live.instructionsDraft,

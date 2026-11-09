@@ -140,7 +140,8 @@ vi.mock('@/components/sessions/pendingBadge', () => ({
 vi.mock('@/hooks/session/useNavigateToSession', () => ({
     useNavigateToSession: () => navigateSpy,
 }));
-vi.mock('@/utils/platform/responsive', () => ({
+vi.mock('@/utils/platform/responsive', async (importOriginal) => ({
+    ...await importOriginal<Record<string, unknown>>(),
     useIsTablet: () => false,
 }));
 vi.mock('@/hooks/ui/useHappyAction', () => ({

@@ -1,4 +1,5 @@
-import { isScmSelectionReviewed, type ScmReviewedMarksRecord } from '@happier-dev/protocol/scm/reviewedMarks';
+import type { ScmReviewedMarksRecord } from '@happier-dev/protocol/scm/reviewedMarks';
+import { createScmReviewedSelections, type ScmReviewedMarksRecordSource } from '@/sync/domains/scm/diffSummary/reviewedMarks';
 import type { ScmComparison, ScmComparisonFile, ScmChangeOccurrence } from '@happier-dev/protocol/scm/comparison';
 import type { ScmDiffSummaryAnalysisCoverage, ScmDiffSummaryOutputState, ScmDiffSummaryWalkthrough } from '@happier-dev/protocol/scm/diffSummary';
 import type { ScmDiffSummaryResult } from '@happier-dev/protocol/scm/diffSummaryResult';
@@ -7,6 +8,7 @@ import { parsePatch } from 'diff';
 import { isMetadataOccurrence, locateComparisonOccurrences, type LocatedOccurrence } from '@happier-dev/protocol/scm/comparisonOccurrences';
 import { parseUnifiedDiffHunks } from '@happier-dev/protocol/diff/hunks';
 import { compareScmPaths } from '@/scm/scmStatusFiles';
+import type { WalkthroughReviewedSource } from './walkthroughReviewedProjection';
 
 /**
  * The reading projection of one walkthrough over its exact comparison (Walkthrough lab WT1-A, WT2, WT8-F2).
@@ -19,6 +21,7 @@ export type WalkthroughReadingInput = Readonly<{
     walkthrough: Readonly<{ state: ScmDiffSummaryOutputState; value?: ScmDiffSummaryWalkthrough; reason?: string }> | null;
     analysis: ScmDiffSummaryAnalysisCoverage | null;
     reviewed: ScmReviewedMarksRecord | null;
+    reviewedRecordSource?: ScmReviewedMarksRecordSource;
     provenance?: ScmDiffSummaryResult['walkthroughProvenance'];
 }>;
 
@@ -94,6 +97,10 @@ export type WalkthroughExplainNote = Readonly<{
 }>;
 
 export type WalkthroughReading = Readonly<{
+    /** Mounted personal facts have keyed subscriptions independent of captured reading structure. */
+    reviewedSource?: WalkthroughReviewedSource;
+    /** Captured code has an immutable lifetime independent of personal reviewed facts. */
+    code: Readonly<{ stops: readonly Pick<WalkthroughStop, 'id' | 'files'>[]; others: readonly WalkthroughOtherChange[] }>;
     phase: WalkthroughPhase;
     title: string | null;
     titleEdited?: boolean;
@@ -206,17 +213,19 @@ export function buildWalkthroughReadingProgress(input: Readonly<{
     reviewed: WalkthroughReadingInput['reviewed'];
 }>): WalkthroughReadingProgress {
     const value = input.walkthrough?.value ?? null;
-    const stops = (value?.stops ?? []).map((stop) => ({
+    const selections = input.reviewed ? createScmReviewedSelections(input.comparison, value?.stops ?? []) : null;
+    selections?.apply(input.reviewed);
+    const stops = (value?.stops ?? []).map((stop, index) => ({
         id: stop.id,
         title: stop.title,
         changeRefs: stop.changeRefs,
-        reviewed: isScmSelectionReviewed(input.reviewed, input.comparison, stop.changeRefs),
+        reviewed: selections?.isReviewed(index) ?? false,
     }));
     return {
         phase: resolvePhase(input.walkthrough),
         title: value?.title ?? null,
         stops,
-        reviewedCount: stops.filter((stop) => stop.reviewed).length,
+        reviewedCount: selections?.getReviewedCount() ?? 0,
     };
 }
 
@@ -416,6 +425,7 @@ export function buildWalkthroughReading(input: WalkthroughReadingInput): Walkthr
         || compareScmPaths(left.path, right.path));
 
     return {
+        code: { stops, others },
         codeMap,
         phase: progress.phase,
         title: progress.title,
@@ -445,6 +455,7 @@ export function buildWalkthroughReading(input: WalkthroughReadingInput): Walkthr
 
 /** No walkthrough of this comparison exists yet: the view invites one and points at Files. */
 export const EMPTY_WALKTHROUGH_READING: WalkthroughReading = {
+    code: { stops: [], others: [] },
     phase: 'none',
     title: null,
     intro: null,
