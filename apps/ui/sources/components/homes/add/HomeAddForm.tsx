@@ -104,7 +104,7 @@ export function HomeAddForm(props: Readonly<{
         serviceStatus: service.entry.status,
         serviceHostsHome: service.hostsHome,
         canSetUpServerHome: canSetUpServerHomeHere(),
-        initialPath: props.initialPath ?? (props.initialAddress ? 'direct' : 'service'),
+        initialPath: props.initialPath ?? (props.initialAddress ? 'direct' : undefined),
         initialAddress: props.initialAddress,
     });
     const { onClose, onFocusedHome, onShowAllHomes } = props;

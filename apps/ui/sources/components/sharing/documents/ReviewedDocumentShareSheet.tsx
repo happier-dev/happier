@@ -7,8 +7,6 @@ import { ShareSheet } from '../ShareSheet';
 import { presentSharePrincipal, sharePrincipalKey } from '../sharePrincipalPresentation';
 import { useShareViewerProfile } from '../useShareViewerProfile';
 import type { SharePrincipalPresentation, ShareSheetActions, ShareSheetAdapter } from '../shareSheetTypes';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { KeyboardStickyFooter } from '@/components/ui/keyboardAvoidance/KeyboardStickyFooter';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { Modal } from '@/modal';
@@ -25,10 +23,9 @@ export type ReviewedDocumentShareSelection = Readonly<{
 const EMPTY_TEAMS: readonly [] = [];
 const EMPTY_OPERATIONS = {};
 const noop = () => {};
-const styles = StyleSheet.create(theme => ({
+const styles = StyleSheet.create({
     root: { flex: 1, minHeight: 0 },
-    footer: { paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s12, gap: theme.space.s8 },
-}));
+});
 
 /** The existing sheet stages audience intent; the host's reviewed release owns every write. */
 export function ReviewedDocumentShareSheet(props: DocumentShareSheetProps & Readonly<{
@@ -69,7 +66,7 @@ export function ReviewedDocumentShareSheet(props: DocumentShareSheetProps & Read
     };
     const profile = useShareViewerProfile(props.scope);
     const adapter: ShareSheetAdapter = {
-        ...createDocumentShareAdapter({ artifactId: props.artifactId, kind: props.kind, grants: [], loading: false,
+        ...createDocumentShareAdapter({ artifactId: props.artifactId, kind: props.kind, description: props.description, grants: [], loading: false,
             readOnly: false, retryContent: noop }),
         levels: { view: { label: t('botTemplates.canCopy') } },
         showsLevelLock: () => true,
@@ -90,19 +87,17 @@ export function ReviewedDocumentShareSheet(props: DocumentShareSheetProps & Read
         finally { setPending(false); }
     };
     return <View style={styles.root}>
+        {failed ? <AttentionBanner testID="document-share-error" tone="danger" title={t('botTemplates.unavailable')} /> : null}
         <ShareSheet presentation={props.presentation ?? 'full'} onRequestClose={props.onRequestClose}
             testID={props.testID ?? 'document-share-editor'} adapter={adapter} actions={actions}
-            model={{ revision: selected.length, editable, stale: false,
+            primaryAction={{ testID: 'document-share-submit', label: t(shared ? 'botTemplates.shared' : 'common.share'),
+                loading: pending, disabled: !editable || (!selected.length && !signedInLink), onPress: () => { void submit(); } }}
+            model={{ revision: selected.length, draft: true, editable, stale: false,
                 owner: { principal: presentSharePrincipal({ ref: { kind: 'account', accountId: props.scope.accountId },
                     profile, viewerAccountId: props.scope.accountId }) },
                 grants: selected.map(principal => ({ grant: principal.ref, principal,
                     level: { kind: 'locked', value: 'view', reason: { code: 'can_copy', message: t('botTemplates.canCopy') } },
                     removal: { kind: 'allowed' }, operation: { kind: 'idle' } })),
                 directory: { query, sections } }} />
-        <KeyboardStickyFooter style={styles.footer}>
-            {failed ? <AttentionBanner testID="document-share-error" tone="danger" title={t('botTemplates.unavailable')} /> : null}
-            <RoundButton testID="document-share-submit" title={t(shared ? 'botTemplates.shared' : 'common.share')}
-                loading={pending} disabled={!editable || (!selected.length && !signedInLink)} onPress={() => { void submit(); }} />
-        </KeyboardStickyFooter>
     </View>;
 }

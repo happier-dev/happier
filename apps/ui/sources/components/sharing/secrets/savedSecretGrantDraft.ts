@@ -1,4 +1,5 @@
-import type { PrincipalRefV1, SavedSecretCatalogAudienceV1 } from '@happier-dev/protocol';
+import type { PrincipalRefV1} from '@happier-dev/protocol/teams/principal';
+import type { SavedSecretCatalogAudienceV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 
 import { sessionAccessSubjectKey } from '@/components/sessions/access/projectSessionAccessEditorSnapshot';
 

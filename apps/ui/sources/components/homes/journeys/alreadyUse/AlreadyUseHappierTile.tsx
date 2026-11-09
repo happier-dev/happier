@@ -52,8 +52,8 @@ export const AlreadyUseHappierTile = React.memo(function AlreadyUseHappierTile(p
                     testID={`${testID}.sign-in`}
                     size="small"
                     display="secondary"
-                    title={t('homesJourneys.signIn')}
-                    accessibilityLabel={t('homesJourneys.pathServiceTitle', { service: service.name })}
+                    // Says what signing in here does: Capacity's "Sign in" on the same Home is for agents (D1 C5).
+                    title={t('homesJourneys.findHomes')}
                     onPress={() => onOpenPath('service')}
                 />
                 <HappierPressable

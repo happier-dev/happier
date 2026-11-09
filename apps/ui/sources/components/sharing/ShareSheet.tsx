@@ -12,6 +12,7 @@ import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { buildShareSheetSelectionStep, ShareHelp, ShareHandoffIcon, shareSheetStepId } from './buildShareSheetSelectionStep';
 import { useSharePresentationHost, ShareSheetButton } from './sharePresentationHost';
+import { announceShareGrantRemovals } from './shareAnnouncements';
 import type {
     ShareDirectoryKind,
     ShareGrantRowModel,
@@ -67,13 +68,13 @@ export function ShareSheet<TRow extends ShareGrantRowModel>(props: ShareSheetPro
     const revealSuggestions = presentation === 'compact' || addingStarted || model.directory.query.trim().length > 0;
     // Private candidate rows and action closures must not enter the primitive's process-wide default cache.
     const [dynamicSectionCache] = React.useState(createDefaultDynamicSectionCache);
-    // An acknowledged removal deletes the row the selection anchor points at. Selection moves to the
+    // Removing a row deletes the selection anchor. Selection moves to the
     // next remaining grant, then the previous one, then the search field. A republished or failed
     // row is still present, so it is left alone.
-    const acknowledgedGrants = React.useRef(model.grants);
+    const previousGrants = React.useRef(model.grants);
     React.useEffect(() => {
-        const previous = acknowledgedGrants.current;
-        acknowledgedGrants.current = model.grants;
+        const previous = previousGrants.current;
+        previousGrants.current = model.grants;
         if (previous === model.grants || expanded === null) return;
         const removedIndex = previous.findIndex((row) => row.principal.key === expanded);
         if (removedIndex < 0) return;
@@ -82,8 +83,8 @@ export function ShareSheet<TRow extends ShareGrantRowModel>(props: ShareSheetPro
         const next = previous.slice(removedIndex + 1).find((row) => retained.has(row.principal.key));
         const before = previous.slice(0, removedIndex).reverse().find((row) => retained.has(row.principal.key));
         setExpanded(next?.principal.key ?? before?.principal.key ?? null);
-        announceAccessibilityMessage(t('shareSheet.removedAnnouncement', { name: previous[removedIndex]!.principal.displayName }));
-    }, [expanded, model.grants]);
+        if (!model.draft) announceShareGrantRemovals([previous[removedIndex]!.principal], model.grants.map(row => row.grant));
+    }, [expanded, model.draft, model.grants]);
 
     const linkPath = adapter.linkPath;
     const copyLink = linkPath ? {

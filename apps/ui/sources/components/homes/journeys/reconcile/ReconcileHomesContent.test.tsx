@@ -2,6 +2,7 @@ import * as React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
 import { getActiveServerId, upsertServerProfile, type ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { loadEffectiveHomeViewState } from '@/sync/domains/server/selection/homeViewSelectionState';
 import type { IModal } from '@/modal';
@@ -121,17 +122,24 @@ describe('ReconcileHomesContent', () => {
     });
 
     it('uses the found Home: focuses it and hands this computer to its setup for that Home', async () => {
-        const settle = vi.fn();
-        const onClose = vi.fn();
-        const { ReconcileHomesContent } = await import('./ReconcileHomesSheet');
-        const screen = await renderScreen(<ReconcileHomesContent found={[studio]} personal={personal} settle={settle} onClose={onClose} />);
+        const browser = await installBrowserRuntimeForTests({ url: 'https://app.happier.dev/desktop/app-window' });
+        vi.stubGlobal('isTauri', true);
+        try {
+            const settle = vi.fn();
+            const onClose = vi.fn();
+            const { ReconcileHomesContent } = await import('./ReconcileHomesSheet');
+            const screen = await renderScreen(<ReconcileHomesContent found={[studio]} personal={personal} settle={settle} onClose={onClose} />);
 
-        expect(screen.findAllByTestId('reconcile-homes.use').find((node) => node.props.title !== undefined)?.props.title).toBe('homesJourneys.useHome(home=Studio Home)');
-        await screen.pressByTestIdAsync('reconcile-homes.use');
-        expect(settle).toHaveBeenCalledOnce();
-        expect(spies.switchServer).toHaveBeenCalledWith({ serverId: 'studio', scope: 'device' });
-        expect(spies.push).toHaveBeenCalledWith('/settings/machines/add?path=thisComputer');
-        await screen.unmount();
+            expect(screen.findAllByTestId('reconcile-homes.use').find((node) => node.props.title !== undefined)?.props.title).toBe('homesJourneys.useHome(home=Studio Home)');
+            await screen.pressByTestIdAsync('reconcile-homes.use');
+            expect(settle).toHaveBeenCalledOnce();
+            expect(spies.switchServer).toHaveBeenCalledWith({ serverId: 'studio', scope: 'tab' });
+            expect(spies.push).toHaveBeenCalledWith('/settings/machines/add?path=thisComputer');
+            await screen.unmount();
+        } finally {
+            vi.unstubAllGlobals();
+            browser.restore();
+        }
     });
 
     it('never offers to remove the Personal Home while the Home has not said it is empty', async () => {

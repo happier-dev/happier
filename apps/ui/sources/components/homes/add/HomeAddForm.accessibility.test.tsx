@@ -42,6 +42,26 @@ describe('Add Home phone path selection', () => {
         expect(onClose).toHaveBeenCalledOnce();
     });
 
+    it('opens an empty service picker when the default is unsupported, and explains it only after selection', async () => {
+        const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+        const { resolveSelectedAccountServiceEndpoint } = await import('@/sync/domains/server/serverProfiles');
+        const features = createRootLayoutFeaturesResponse({ capabilities: {
+            server: { canonicalServerUrl: resolveSelectedAccountServiceEndpoint().url },
+            serverIdentity: { serverIdentityId: 'srv_unsupported_default' },
+        } });
+        vi.stubGlobal('fetch', vi.fn(async () => Response.json(features)));
+        const { HomeAddForm } = await import('./HomeAddForm');
+        const screen = await renderScreen(<HomeAddForm layout="page" testID="add-home" onClose={() => {}} />);
+
+        // The person has not selected a service: the blank picker is the first screen.
+        await vi.waitFor(() => expect(screen.findByTestId('already-use-happier.service-loading')).toBeNull());
+        expect(screen.findByTestId('already-use-happier.service-unsupported')).toBeNull();
+        expect(screen.findByTestId('already-use-happier.service-address')?.props.value).toBe('');
+
+        await screen.pressByTestIdAsync('add-home.path.service');
+        await vi.waitFor(() => expect(screen.findByTestId('already-use-happier.service-unsupported')).not.toBeNull());
+    });
+
     it('names its choice group through the shared ItemGroup owner', async () => {
         const { HomeAddForm } = await import('./HomeAddForm');
         const screen = await renderScreen(<HomeAddForm layout="page" testID="add-home" onClose={() => {}} />);

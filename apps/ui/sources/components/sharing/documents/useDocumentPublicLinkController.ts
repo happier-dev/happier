@@ -15,7 +15,7 @@ import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 import { SessionAccessApiError } from '@/sync/api/session/sessionAccessApi';
 import { presentSessionAccessFailure } from '@/components/sessions/access/presentSessionAccessFailure';
-import { prepareArtifactPublicNetworkOff, readArtifactPublicNetworkResource, type ArtifactPublicNetworkOpenedV1 } from './artifactPublicNetworkPreparation';
+import { readArtifactPublicNetworkResource, type ArtifactPublicNetworkOpenedV1 } from './artifactPublicNetworkPreparation';
 import { hasSamePublicLinkNetworkPolicy } from '../PublicLinkNetworkConfirmation';
 
 type PublicLinkAction = 'artifact.public_link.create' | 'artifact.public_link.list' | 'artifact.public_link.revoke' | 'artifact.public_link.audit' | 'artifact.get' | 'artifact.update';
@@ -25,9 +25,11 @@ type State = Readonly<{ publication: StoredContentPublicShareV1 | null; loaded: 
 export function useDocumentPublicLinkController(input: Readonly<{
     artifactId: string; scope: ServerAccountScope; enabled: boolean; canManage: boolean;
     kind?: string | null;
+    audience?: 'anonymous' | 'signed_in';
 }>) {
     const { artifactId, scope, enabled, canManage } = input;
-    const scopeKey = JSON.stringify([scope.serverId, scope.accountId, artifactId]);
+    const audience = input.audience ?? 'anonymous';
+    const scopeKey = JSON.stringify([scope.serverId, scope.accountId, artifactId, audience]);
     const router = useDestinationRouter();
     const mounted = React.useRef(true);
     const permitted = React.useRef(canManage);
@@ -61,9 +63,9 @@ export function useDocumentPublicLinkController(input: Readonly<{
     }, [isCurrent]);
 
     const refreshRef = React.useRef<() => Promise<void>>(async () => {});
-    const request = React.useCallback(async (actionId: PublicLinkAction, payload: unknown): Promise<unknown | null> => {
+    const request = React.useCallback(async (actionId: PublicLinkAction, payload: unknown, confirmed = false): Promise<unknown | null> => {
         if (!isCurrent()) throw new HappyError(t('errors.permissionDenied'), false);
-        const result = await execute(actionId, payload, { surface: 'ui', authority: 'present_user',
+        const result = await (confirmed ? execute.confirmed : execute)(actionId, payload, { surface: 'ui', authority: 'present_user',
             serverId: scope.serverId, expectedAccountId: scope.accountId, actionRequestId: randomUUID() });
         if (!isCurrent()) return null;
         if (!result.ok) {
@@ -95,7 +97,7 @@ export function useDocumentPublicLinkController(input: Readonly<{
         setState(previous => ({ ...previous, loading: true, error: false }));
         try {
             const [value, content] = await Promise.all([
-                request('artifact.public_link.list', { artifactId }),
+                request('artifact.public_link.list', { artifactId, ...(audience === 'signed_in' ? { audience } : {}) }),
                 visual ? request('artifact.get', { artifactId }) : Promise.resolve(null),
             ]);
             if (!isCurrent() || reading !== revision.current || value === null) return;
@@ -111,11 +113,11 @@ export function useDocumentPublicLinkController(input: Readonly<{
         } catch {
             if (isCurrent() && reading === revision.current) setState(previous => ({ ...previous, loading: false, error: true }));
         }
-    }, [apply, artifactId, enabled, isCurrent, request, visual, openNetworkResource]);
+    }, [apply, artifactId, audience, enabled, isCurrent, request, visual, openNetworkResource]);
     refreshRef.current = reload;
     React.useEffect(() => { void reload(); }, [reload]);
 
-    const create = React.useCallback(async (options: SessionPublicLinkCreateOptions) => {
+    const create = React.useCallback(async (options: SessionPublicLinkCreateOptions = { isConsentRequired: false }) => {
         ++revision.current;
         if (visual) {
             const content = await request('artifact.get', { artifactId });
@@ -128,42 +130,27 @@ export function useDocumentPublicLinkController(input: Readonly<{
             if (!options.networkOff && (!networkPolicy || !hasSamePublicLinkNetworkPolicy(networkPolicy, resource.policy))) {
                 throw new HappyError(t('approvals.staleFailure'), true, { code: 'approval_stale' });
             }
-            if (options.networkOff && resource.policy.network !== 'none') {
-                const prepared = await prepareArtifactPublicNetworkOff({ opened, resource, request, isCurrent });
-                if (prepared.kind !== 'ready') return null;
-                // A receipt proves our update committed; reread the saved copy before
-                // issuance so another writer cannot turn an off choice into open egress.
-                const currentContent = await request('artifact.get', { artifactId });
-                if (currentContent === null || !isCurrent()) return null;
-                const currentOpened = ArtifactActionOutputSchemasV1['artifact.get'].parse(currentContent).artifact;
-                if (!currentOpened) throw new HappyError(t('session.collaboration.pane.linkLoadFailed'), false);
-                const currentResource = await openNetworkResource(currentOpened);
-                if (!isCurrent()) return null;
-                setNetworkPolicy(currentResource.policy);
-                if (currentResource.policy.network !== 'none') {
-                    throw new HappyError(t('approvals.staleFailure'), true, { code: 'approval_stale' });
-                }
-            }
         }
-        const value = await request('artifact.public_link.create', { artifactId,
+        const value = await request('artifact.public_link.create', audience === 'signed_in' ? { artifactId, audience } : { artifactId,
             ...(options.expiresInDays ? { expiresAt: Date.now() + options.expiresInDays * 24 * 60 * 60 * 1000 } : {}),
-            ...(options.maxUses ? { maxUses: options.maxUses } : {}), isConsentRequired: options.isConsentRequired });
+            ...(options.maxUses ? { maxUses: options.maxUses } : {}), isConsentRequired: options.isConsentRequired,
+            ...(options.networkOff ? { networkOff: true } : {}) }, true);
         if (value === null || !isCurrent()) return null;
         const result = ArtifactActionOutputSchemasV1['artifact.public_link.create'].parse(value);
         // Creation rotates the one-current share; the exact issued callback owns its new bearer.
         publication.current = null;
         apply(result.publicShare);
         return result.publicShare;
-    }, [apply, artifactId, isCurrent, request, visual, openNetworkResource, networkPolicy]);
+    }, [apply, artifactId, audience, isCurrent, request, visual, openNetworkResource, networkPolicy]);
     const remove = React.useCallback(async () => {
         const current = publication.current;
         if (!current) return;
         ++revision.current;
-        const value = await request('artifact.public_link.revoke', { artifactId, shareId: current.id });
+        const value = await request('artifact.public_link.revoke', { artifactId, shareId: current.id, ...(audience === 'signed_in' ? { audience } : {}) });
         if (value === null || !isCurrent()) return;
         ArtifactActionOutputSchemasV1['artifact.public_link.revoke'].parse(value);
         apply(null);
-    }, [apply, artifactId, isCurrent, request]);
+    }, [apply, artifactId, audience, isCurrent, request]);
     const listAccessLog = React.useCallback(async () => {
         const current = publication.current;
         if (!current || !isCurrent()) throw new HappyError(t('errors.permissionDenied'), false);

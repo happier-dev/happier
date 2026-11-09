@@ -15,6 +15,7 @@ installDisconnectedServerSocketBoundary();
 const { t } = await import('@/text');
 const { DestinationInstanceHost } = await import('@/components/appShell/workspace/DestinationInstanceHost');
 const { FriendsManageScreen } = await import('@/app/(app)/friends/manage');
+const { FriendsView } = await import('@/components/navigation/shell/FriendsView');
 const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { buildServerFeaturesResponse } = await import('@/hooks/server/serverFeaturesTestUtils');
@@ -46,16 +47,17 @@ afterEach(async () => {
     credentials = null;
 });
 
-describe('Friends management destination', () => {
-    it.each([true, false])('keeps Add friend reachable once through the real page with phone=%s', async phone => {
+describe('People destination (owner ruling Q6)', () => {
+    it.each([true, false])('keeps Add friend reachable once on the one People page with phone=%s', async phone => {
         const opened: unknown[] = [];
         const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
-            <DestinationInstanceHost tabId="friends" ref={{ kind: 'friendsManage', params: {} }} pathname="/friends/manage"
+            <DestinationInstanceHost tabId="friends" ref={{ kind: 'friends', params: {} }} pathname="/friends"
                 focused visible phone={phone} navigation={{ push: href => { opened.push(href); }, replace: () => {}, back: () => {} }}>
-                <FriendsManageScreen />
+                <FriendsView />
             </DestinationInstanceHost>
         </InjectedAuthProvider>);
         await vi.waitFor(() => {
+            expect(screen.findByTestId('people-page')).not.toBeNull();
             const controls = screen.findAllHostsByTestId('friends-add-friend').filter(node => (node.props.role ?? node.props.accessibilityRole) === 'button');
             expect(controls, screen.getTextContent()).toHaveLength(1);
         });
@@ -65,5 +67,14 @@ describe('Friends management destination', () => {
         await act(async () => { storage.getState().applyProfile({ ...storage.getState().profile, username: null, linkedProviders: [] }); });
         expect(screen.findByTestId('friends-add-friend')).toBeNull();
         expect(screen.findAllByProps({ accessibilityLabel: t('profile.username') }).length).toBeGreaterThan(0);
+        // The identity gate replaces only the friends region; the page itself stays.
+        expect(screen.findByTestId('people-page')).not.toBeNull();
+    });
+
+    it('sends the retired Friends management page to the one People page', async () => {
+        const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}>
+            <FriendsManageScreen />
+        </InjectedAuthProvider>);
+        await vi.waitFor(() => expect(screen.findAllByType('Redirect' as never)[0]?.props.href).toBe('/friends'));
     });
 });

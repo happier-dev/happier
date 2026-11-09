@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
+import type { AddHomeAvailabilityInput } from './addHomeFlowModel';
 
 installTokenStorageWebPlatformMocks();
 
@@ -17,6 +18,33 @@ describe('Add a Home focus at entry', () => {
         if (previousScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
         else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = previousScope;
         vi.resetModules();
+    });
+
+    it('keeps the empty picker through discovery and only preselects a service already known to be ready', async () => {
+        const [{ renderHook }, renderer, { useAddHomeFlow }] = await Promise.all([
+            import('@/dev/testkit'), import('react-test-renderer'), import('./useAddHomeFlow'),
+        ]);
+        const hook = await renderHook(({ serviceStatus }) => useAddHomeFlow({
+            serviceStatus, serviceHostsHome: false, canSetUpServerHome: false,
+        }), { initialProps: { serviceStatus: 'loading' as AddHomeAvailabilityInput['serviceStatus'] } });
+        try {
+            expect(hook.getCurrent().pane.pane).toBe('other_service');
+            await hook.rerender({ serviceStatus: 'ready' });
+            expect(hook.getCurrent().pane.pane).toBe('other_service');
+            await renderer.act(async () => { hook.getCurrent().choosePath('service'); });
+            await hook.rerender({ serviceStatus: 'unsupported' });
+            expect(hook.getCurrent().pane.pane).toBe('service');
+        } finally {
+            await hook.unmount();
+        }
+        const ready = await renderHook(() => useAddHomeFlow({
+            serviceStatus: 'ready', serviceHostsHome: false, canSetUpServerHome: false,
+        }));
+        try {
+            expect(ready.getCurrent().pane.pane).toBe('service');
+        } finally {
+            await ready.unmount();
+        }
     });
 
     it('focuses the first usable Home, but leaves an existing usable Home focused', async () => {

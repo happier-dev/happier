@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { parseHomeTargetInput, type HomeTargetInput } from '@happier-dev/cli-common/homeTarget';
-import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
+import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol/auth/accountDirectory';
 import { verifyTeamInvitationTargetBindingV1 } from '@happier-dev/protocol/teams';
 
 import { resolveHomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';

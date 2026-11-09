@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AccountProfileSchema } from '@happier-dev/protocol';
+import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { getStorage } from '@/sync/domains/state/storage';
 import { t } from '@/text';

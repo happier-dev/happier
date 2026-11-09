@@ -10,11 +10,14 @@ import { createDocumentShareAdapter, type DocumentShareKind } from './documentSh
 import { useDocumentShareController } from './useDocumentShareController';
 import { useDocumentPublicLinkController } from './useDocumentPublicLinkController';
 import { DocumentPublicLinkSection } from './DocumentPublicLinkSection';
+import { DocumentSignedInLinkSection } from './DocumentSignedInLinkSection';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ReviewedDocumentShareSheet, type ReviewedDocumentShareSelection } from './ReviewedDocumentShareSheet';
 
 export type DocumentShareSheetProps = Readonly<{
     artifactId: string;
     kind: DocumentShareKind;
+    description?: string;
     /** A saved-copy handoff stays bound to the Account that acknowledged it. */
     scope?: ServerAccountScope;
     /** The document's in-app route for Copy link. */
@@ -31,15 +34,17 @@ const DEFAULT_TEST_ID = 'document-share-editor';
 function ScopedDocumentShareSheet(props: DocumentShareSheetProps & Readonly<{ scope: ServerAccountScope }>): React.ReactElement {
     const controller = useDocumentShareController({ artifactId: props.artifactId, kind: props.kind, scope: props.scope });
     const publicLinkEnabled = useFeatureEnabled('sharing.public', { scopeKind: 'spawn', serverId: props.scope.serverId });
-    const canManagePublicLink = publicLinkEnabled && getArtifactKindPolicyV1(props.kind).publicLinkAllowed && controller.model.owner !== null
+    const audience = props.kind === 'bot_template.v1' ? 'signed_in' : 'anonymous';
+    const canManagePublicLink = (audience === 'signed_in' || publicLinkEnabled) && getArtifactKindPolicyV1(props.kind, audience).publicLinkAllowed && controller.model.owner !== null
         && controller.model.editable && !controller.loading && !controller.issue && !controller.model.stale;
     const publicLink = useDocumentPublicLinkController({ artifactId: props.artifactId, scope: props.scope,
-        enabled: canManagePublicLink, canManage: canManagePublicLink, kind: props.kind });
+        enabled: canManagePublicLink, canManage: canManagePublicLink, kind: props.kind, audience });
     const publicLinkState = publicLink.error ? t('common.error')
         : !publicLink.loaded ? t('common.loading') : t(publicLink.publication ? 'common.on' : 'common.off');
     const baseAdapter = createDocumentShareAdapter({
         artifactId: props.artifactId,
         kind: props.kind,
+        description: props.description,
         grants: controller.grants,
         privateChoices: controller.privateChoices,
         ...(props.linkPath ? { linkPath: props.linkPath } : {}),
@@ -53,8 +58,18 @@ function ScopedDocumentShareSheet(props: DocumentShareSheetProps & Readonly<{ sc
     const adapter = {
         ...baseAdapter,
         ...(canManagePublicLink ? { publicLink: {
+            ...(audience === 'signed_in' ? { label: t('botTemplates.signedInLink') } : {}),
             stateLabel: publicLinkState,
-            renderContent: (context: Parameters<NonNullable<typeof baseAdapter.sections>>[0]) => <DocumentPublicLinkSection
+            renderContent: (context: Parameters<NonNullable<typeof baseAdapter.sections>>[0]) => audience === 'signed_in'
+                ? publicLink.error ? <SurfaceStateCard kind="error" title={t('session.collaboration.pane.linkLoadFailed')}
+                    action={{ label: t('common.retry'), onPress: publicLink.reload }} />
+                : publicLink.pendingApproval ? <SurfaceStateCard kind="empty" title={t('approvals.title')}
+                    action={{ label: t('common.open'), onPress: publicLink.openPendingApproval }} />
+                : <DocumentSignedInLinkSection value={publicLink.publication !== null} shareUrl={publicLink.shareUrl}
+                    scope={props.scope} idPrefix={context.idPrefix} disabled={!publicLink.loaded || publicLink.loading || publicLink.readOnly}
+                    onChange={async enabled => { if (enabled) await publicLink.create(); else await publicLink.remove(); }}
+                    onReplace={async () => { await publicLink.create(); }} />
+                : <DocumentPublicLinkSection
                     key={`${publicLink.publication?.id ?? 'off'}:${publicLink.publication?.updatedAt ?? ''}`}
                     link={publicLink} idPrefix={context.idPrefix} kind={props.kind} />,
         } } : {}),
@@ -84,7 +99,7 @@ export function DocumentShareSheet(props: DocumentShareSheetProps): React.ReactE
     if (scope) return <ScopedDocumentShareSheet key={`${scope.serverId}:${scope.accountId}:${props.artifactId}`} {...props} scope={scope} />;
     const adapter = createDocumentShareAdapter({
         artifactId: props.artifactId,
-        kind: props.kind, grants: [], loading: false, readOnly: false, retryContent: noop,
+        kind: props.kind, description: props.description, grants: [], loading: false, readOnly: false, retryContent: noop,
         issue: { code: 'not_authenticated', message: t('shareSheet.documents.errors.unavailable'), retryable: false },
     });
     return <ShareSheet model={UNSCOPED_MODEL} actions={UNSCOPED_ACTIONS} adapter={adapter}

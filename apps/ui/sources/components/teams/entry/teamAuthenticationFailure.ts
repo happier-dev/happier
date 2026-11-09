@@ -1,4 +1,4 @@
-import type { TeamEntryUnavailableReasonV1 } from '@happier-dev/protocol';
+import type { TeamEntryUnavailableReasonV1 } from '@happier-dev/protocol/auth/entry';
 
 import { t } from '@/text';
 

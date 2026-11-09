@@ -16,11 +16,13 @@ import {
 } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { AuthEntryProjectionV1Schema } from '@happier-dev/protocol/auth/entry';
 import { resolveServerProfileScopeIdForIdentifier, setActiveServerId, setServerProfileIdentityForUrl } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { createTeamInvitationTargetBindingV1 } from '@happier-dev/protocol/teams';
+import type { WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 
 installTokenStorageWebPlatformMocks();
 // Vitest unwinds afterEach hooks in reverse order, so retain this scope through cleanup.
@@ -129,7 +131,11 @@ it.each(['none', 'retry', 'new_invitation'] as const)('reaches the admitted prof
         focusStorage?.mockRestore();
     }
 });
-vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
+const navigation = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn(), params: {} as Record<string, string> }));
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
+    router: { push: navigation.push, replace: navigation.replace },
+    params: () => navigation.params,
+}).module);
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
@@ -148,9 +154,81 @@ const { disconnectActiveServerConnection, switchConnectionToActiveServer } = awa
 const { AuthProvider } = await import('@/auth/context/AuthContext');
 const { TeamJoinScreen } = await import('./TeamJoinScreen');
 const { TeamAuthEntrySurface } = await import('../entry/TeamAuthEntrySurface');
+const { default: TeamSignInRoute } = await import('@/app/(app)/teams/[teamId]/sign-in');
+const { openAddHome } = await import('@/components/homes/add/openAddHome');
+const { WorkspaceNavigationProvider } = await import('@/components/appShell/workspace/WorkspaceNavigationContext');
+const { createWorkspaceNavigationAdapter } = await import('@/components/appShell/workspace/workspaceNavigationAdapter');
+const { createWorkspaceState, reduceWorkspaceState } = await import('@/components/appShell/workspace/workspaceState');
+const { resolveCompactAppDestinations } = await import('@/components/appShell/destinations/compactAppDestinationCatalog');
+
+it('opens the Home draft through the retained workspace instead of losing its leaf to Settings overview', async () => {
+    const credentials = { token: createAccountTokenForTests('home-add-account', { currentAccount: true }) };
+    await home.addHome({ name: 'Current Home', serverUrl: 'https://home-add.test', accountId: 'home-add-account', credentials });
+    navigation.params = { teamId: 'team-add-home', serverId: 'srv_home_not_saved' };
+    let state = createWorkspaceState({ id: 'settings-tab', target: { kind: 'settings', params: {} }, pinned: false, preview: false });
+    const catalog = resolveCompactAppDestinations({ builtins: { externalSessions: false, inbox: false, workflows: false, friends: false }, pages: [] });
+    const committed: string[] = [];
+    const adapter = createWorkspaceNavigationAdapter({
+        getState: () => state, getCatalog: () => catalog,
+        dispatch: action => { state = reduceWorkspaceState(state, action); },
+        transport: { commit: href => { committed.push(href); } }, createId: () => 'home-draft-tab', onChange: () => {},
+    });
+    const workspace: WorkspaceNavigationContextValue = {
+        active: true, state, catalog, canGoBack: false, canGoForward: false,
+        openHref: adapter.openHref.bind(adapter), activateTab: adapter.activateTab.bind(adapter),
+        closeTab: adapter.closeTab.bind(adapter), closeTabs: adapter.closeTabs.bind(adapter), dispatch: adapter.dispatch.bind(adapter),
+        navigationForTab: () => { throw new Error('Unexpected hosted-tab navigation'); },
+        registerBackStep: () => () => {}, back: () => {}, forward: () => {},
+    };
+    const screen = await renderScreen(<WorkspaceNavigationProvider value={workspace}>
+        <AuthProvider initialCredentials={credentials}><TeamSignInRoute /></AuthProvider>
+    </WorkspaceNavigationProvider>);
+    await screen.pressByTestIdAsync('team-sign-in-add-home-action');
+    expect(state.tabs[state.groups[state.focusedGroupId]!.activeTabId]?.target).toMatchObject({ kind: 'settings', params: { pageId: 'server/add' } });
+    expect(committed.at(-1)).toBe('/settings/server/add');
+});
+
+it.each([
+    { signedIn: false, expected: '/?step=home' },
+    { signedIn: true, expected: '/settings/server/add' },
+])('opens Add a Home from both Team entries in the correct shell (signedIn: $signedIn)', async ({ signedIn, expected }) => {
+    const credentials = signedIn ? { token: createAccountTokenForTests('home-add-account', { currentAccount: true }) } : null;
+    if (credentials) await home.addHome({ name: 'Current Home', serverUrl: 'https://home-add.test', accountId: 'home-add-account', credentials });
+    navigation.params = { teamId: 'team-add-home', serverId: 'srv_home_not_saved' };
+    const screen = await renderScreen(<AuthProvider initialCredentials={credentials}><TeamSignInRoute /></AuthProvider>);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('team-sign-in-add-home')).not.toBeNull());
+    // Both Team entries present the missing Home as the same step: a heading and Add Home as its action.
+    expect(screen.findByTestId('team-sign-in-add-home-title')).not.toBeNull();
+    await screen.pressByTestIdAsync('team-sign-in-add-home-action');
+    expect(navigation.push).toHaveBeenLastCalledWith(expected);
+
+    const token = 'a'.repeat(43);
+    const homeTarget = 'srv_home_not_saved';
+    await screen.update(<AuthProvider initialCredentials={credentials}><TeamJoinScreen token={token} homeTarget={homeTarget}
+        targetBinding={createTeamInvitationTargetBindingV1({ token, homeTarget })} /></AuthProvider>);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('team-join-add-home')).not.toBeNull());
+    expect(screen.findByTestId('team-join-unknown-home-title')).not.toBeNull();
+    await screen.pressByTestIdAsync('team-join-add-home');
+    expect(navigation.push).toHaveBeenLastCalledWith(expected);
+
+    openAddHome(navigation, { replace: true, address: 'https://next-home.test', auto: true, source: 'notification', path: 'direct' });
+    expect(navigation.replace).toHaveBeenLastCalledWith(signedIn
+        ? '/settings/server/add?address=https%3A%2F%2Fnext-home.test&auto=1&source=notification&path=direct'
+        : '/?step=home&server=https%3A%2F%2Fnext-home.test');
+    const inWelcome = vi.fn();
+    openAddHome(navigation, { onWelcomeHomeStep: inWelcome });
+    if (signedIn) {
+        expect(inWelcome).not.toHaveBeenCalled();
+        expect(navigation.push).toHaveBeenLastCalledWith(expected);
+    } else expect(inWelcome).toHaveBeenCalledOnce();
+});
+
 let restoreLocks: () => void;
 let stopCredentialObservation: (() => void) | undefined;
 beforeEach(() => {
+    navigation.params = {};
+    navigation.push.mockClear();
+    navigation.replace.mockClear();
     installHomeGovernanceBoundaries(home);
     vi.stubGlobal('localStorage', browserStorage.backend);
     browserStorage.store.clear();

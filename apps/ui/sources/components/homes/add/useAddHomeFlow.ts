@@ -26,14 +26,17 @@ export type AddHomeConnectedResult = Readonly<{
 
 /** One path, handover, and post-sign-in focus decision for every Add a Home presentation. */
 export function useAddHomeFlow(input: AddHomeAvailabilityInput & Readonly<{
-    initialPath: AddHomePath;
+    initialPath?: AddHomePath;
     initialAddress?: string;
 }>) {
-    const [pane, setPane] = React.useState<AddHomePane>(() => (
-        input.initialPath === 'direct' || input.initialPath === 'other_service'
-            ? { pane: input.initialPath, initialAddress: input.initialAddress }
-            : { pane: input.initialPath }
-    ));
+    const [pane, setPane] = React.useState<AddHomePane>(() => {
+        // Only preselect a verified service. Otherwise start with the existing empty picker;
+        // an explicit path remains the person's choice, including an unsupported service.
+        const initialPath = input.initialPath ?? (input.serviceStatus === 'ready' ? 'service' : 'other_service');
+        return initialPath === 'direct' || initialPath === 'other_service'
+            ? { pane: initialPath, initialAddress: input.initialAddress }
+            : { pane: initialPath };
+    });
     const [completion, setCompletion] = React.useState<AddHomeConnectedResult | null>(null);
     const paths = React.useMemo(() => resolveAddHomePaths(input), [
         input.serviceStatus,

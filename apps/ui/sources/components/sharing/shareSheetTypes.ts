@@ -69,6 +69,8 @@ export type ShareDirectoryModel = Readonly<{ query: string; sections: readonly S
 /** What the sheet renders: who has access now, and who can still be added. */
 export type ShareSheetModel<TRow extends ShareGrantRowModel = ShareGrantRowModel> = Readonly<{
     revision: string | number;
+    /** Local selections await the host's write; removing one does not yet revoke access. */
+    draft?: true;
     /** Whether this viewer may change the roster right now; the adapter decides why not. */
     editable: boolean;
     /** Last-good rows kept while the owner is unreachable; they must not read as current. */

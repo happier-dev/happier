@@ -10,7 +10,7 @@ import type { LayoutChangeEvent, ViewStyle } from 'react-native';
 import type { CustomModalChromeConfig } from '@/modal/types';
 import { act } from 'react-test-renderer';
 import type { ShareSheetModel, ShareSheetActions } from './shareSheetTypes';
-import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol';
+import type { SavedSecretCatalogEntryV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import type { SessionAccessEditorModel, SessionAccessEditorActions } from '@/components/sessions/access/sessionAccessEditorTypes';
 import { installMessageViewCommonModuleMocks } from '@/components/sessions/transcript/messageViewTestHelpers';
 
@@ -169,7 +169,7 @@ const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { serveActionHomes } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
 const { createPlainAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
 const { createWorkBoardArtifactBoundary } = await import('@/dev/testkit/harness/workBoardArtifactBoundary');
-const { ARTIFACT_PLAIN_DATA_KEY_MARKER, createWorkBoardV1, encodePlainArtifactStoredContent } = await import('@happier-dev/protocol');
+const [{ ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent}, { createWorkBoardV1}] = await Promise.all([import('@happier-dev/protocol/storage/artifactStoredContent'), import('@happier-dev/protocol/boards/workBoardV1')]);
 const { buildRoleArtifactHeaderV1 } = await import('@happier-dev/protocol/prompts/roles/roleArtifactV1');
 const { getActiveServerSnapshot, setActiveServer } = await import('@/sync/domains/server/serverRuntime');
 const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
@@ -181,7 +181,7 @@ const { createSessionListRenderableSessionFixture } = await import('@/dev/testki
 const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
 const { getEnabledAgentIds } = await import('@/agents/catalog/enabled');
 const { getProfileSubtitle, getDefaultProfileListStrings } = await import('@/components/profiles/profileListModel');
-const { normalizeSessionListFilterV1 } = await import('@happier-dev/protocol');
+const { normalizeSessionListFilterV1} = await import('@happier-dev/protocol/sessions/listFilter/sessionListFilterV1');
 const { buildSessionListFilterQueryHomes } = await import('@/components/sessions/shell/search/sessionListViewFilters');
 const { fromStoredSessionListFilter } = await import('@/components/sessions/shell/search/storedSessionListFilter');
 const { useDocumentPublicLinkController } = await import('./documents/useDocumentPublicLinkController');

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 
 import type { HomeTargetInput } from '@happier-dev/cli-common/homeTarget';
-import type { TeamInvitationAcceptResultV1 } from '@happier-dev/protocol';
+import type { TeamInvitationAcceptResultV1 } from '@happier-dev/protocol/teams/invitation';
 
 // Imported from their owning testkit modules, never the `@/dev/testkit` barrel:
 // the harness installs its network boundaries with `vi.doMock`, which only

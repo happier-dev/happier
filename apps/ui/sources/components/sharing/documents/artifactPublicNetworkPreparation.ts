@@ -1,7 +1,8 @@
 import { ArtifactActionOutputSchemasV1, ArtifactHeaderMetadataV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ActionApprovalRequestCreatedResultSchema, type ActionApprovalRequestCreatedResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { artifactHtmlBundleFromBodyV1, ARTIFACT_HTML_BUNDLE_MIME_V1, type ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
-import { getArtifactUseTargetV1, readArtifactPublicNetworkPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
-import type { UiSurfaceNetworkPolicyV1 } from '@happier-dev/protocol/plugins/contributions/ui/hostedHtmlCapabilitiesV1';
+import { readArtifactPublicNetworkPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import type { UiSurfaceNetworkPolicyV1, UiSurfaceNetworkRequestV1 } from '@happier-dev/protocol/plugins/contributions/ui/hostedHtmlCapabilitiesV1';
 import { WidgetDefinitionV1Schema, readWidgetDefinitionArtifactV1, buildWidgetDefinitionArtifactHeaderV1 } from '@happier-dev/protocol/widgets';
 
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
@@ -9,7 +10,8 @@ import { captureLazyActionAccountContext, type LazyActionAccountContext } from '
 import { t } from '@/text';
 import { HappyError } from '@/utils/errors/errors';
 
-export type ArtifactPublicNetworkOpenedV1 = NonNullable<ReturnType<typeof ArtifactActionOutputSchemasV1['artifact.get']['parse']>['artifact']>;
+export type ArtifactPublicNetworkOpenedV1 = Pick<NonNullable<ReturnType<typeof ArtifactActionOutputSchemasV1['artifact.get']['parse']>['artifact']>,
+    'artifactId' | 'header' | 'body' | 'revision'>;
 export type ArtifactPublicNetworkResourceV1 = Readonly<{ policy: UiSurfaceNetworkPolicyV1; htmlBundle?: ArtifactHtmlBundleV1 }>;
 type CapturedArtifactReader = Pick<LazyActionAccountContext, 'serverId' | 'accountId' | 'assertCurrent' | 'readArtifactHtmlBundle'>;
 
@@ -50,31 +52,42 @@ export async function readArtifactPublicNetworkResource(input: Readonly<{
     return { policy, ...(htmlBundle ? { htmlBundle } : {}) };
 }
 
-/** No issuance or replay here. Only a committed update permits the caller to continue. */
-export async function prepareArtifactPublicNetworkOff(input: Readonly<{
+type ArtifactNetworkWriteInput = Readonly<{
     opened: ArtifactPublicNetworkOpenedV1; resource: ArtifactPublicNetworkResourceV1;
     request: (actionId: 'artifact.update', payload: unknown) => Promise<unknown | null>;
     isCurrent: () => boolean;
-}>): Promise<Readonly<{ kind: 'ready'; policy: UiSurfaceNetworkPolicyV1 }> | Readonly<{ kind: 'pending' | 'cancelled' }>> {
+}>;
+type ArtifactNetworkWriteResult = Readonly<{ kind: 'ready'; policy: UiSurfaceNetworkPolicyV1 }>
+    | Readonly<{ kind: 'pending'; approvalRequest?: ActionApprovalRequestCreatedResult }>
+    | Readonly<{ kind: 'cancelled' }>;
+
+/** The stored request for a chosen policy: exact sites are the alternative to an explicit value. */
+function artifactNetworkRequest(policy: UiSurfaceNetworkPolicyV1): UiSurfaceNetworkRequestV1 {
+    return policy.network === 'origins' ? { networkOrigins: [...policy.networkOrigins] } : { network: policy.network };
+}
+
+/**
+ * The one writer for the saved document's Network access editor:
+ * the opened revision's HTML bundle or widget definition, rewritten through the ordinary `artifact.update`.
+ */
+export async function writeArtifactNetworkPolicy(input: ArtifactNetworkWriteInput & Readonly<{ policy: UiSurfaceNetworkPolicyV1 }>): Promise<ArtifactNetworkWriteResult> {
     if (!input.isCurrent()) return { kind: 'cancelled' };
     const { opened, resource } = input;
-    if (resource.policy.network === 'none') return { kind: 'ready', policy: resource.policy };
+    const network = artifactNetworkRequest(input.policy);
     let header = opened.header;
     let body: string;
     if (opened.header.kind === 'html') {
         const bundle = resource.htmlBundle;
         if (!bundle) throw new HappyError(t('session.collaboration.pane.linkLoadFailed'), false);
-        const { networkOrigins: _origins, ...capabilities } = bundle.requestedCapabilities ?? {};
-        body = JSON.stringify({ ...bundle, requestedCapabilities: { ...capabilities, network: 'none' } });
+        const { network: _network, networkOrigins: _origins, ...capabilities } = bundle.requestedCapabilities ?? {};
+        body = JSON.stringify({ ...bundle, requestedCapabilities: { ...capabilities, ...network } });
         header = { ...header, mime: ARTIFACT_HTML_BUNDLE_MIME_V1 };
     } else if (opened.header.kind === 'widget-definition.v1') {
         if (typeof opened.body !== 'string') throw new HappyError(t('session.collaboration.pane.linkLoadFailed'), false);
-        // Sharing admission inspects raw stored inputs before projection can drop a private pin.
-        if (!getArtifactUseTargetV1(opened).publicLinkAllowed) throw new HappyError(t('errors.permissionDenied'), false);
         const definition = readWidgetDefinitionArtifactV1(opened);
-        const next = WidgetDefinitionV1Schema.parse({ ...definition, networkOverride: { network: 'none' },
+        const next = WidgetDefinitionV1Schema.parse({ ...definition, networkOverride: network,
             ...(definition.body.kind === 'html' ? { body: { ...definition.body,
-                requestedCapabilities: { ...definition.body.requestedCapabilities, networkOrigins: [], network: 'none' } } } : {}) });
+                requestedCapabilities: (({ network: _network, networkOrigins: _origins, ...rest }) => ({ ...rest, ...network }))(definition.body.requestedCapabilities ?? {}) } } : {}) });
         header = ArtifactHeaderMetadataV1Schema.parse(buildWidgetDefinitionArtifactHeaderV1(next));
         body = JSON.stringify(next);
     } else throw new HappyError(t('session.collaboration.pane.linkLoadFailed'), false);
@@ -82,6 +95,8 @@ export async function prepareArtifactPublicNetworkOff(input: Readonly<{
     const updated = await input.request('artifact.update', { artifactId: opened.artifactId, expectedRevision: opened.revision, header, body });
     if (!input.isCurrent()) return { kind: 'cancelled' };
     if (updated === null) return { kind: 'pending' };
+    const approval = ActionApprovalRequestCreatedResultSchema.safeParse(updated);
+    if (approval.success) return { kind: 'pending', approvalRequest: approval.data };
     ArtifactActionOutputSchemasV1['artifact.update'].parse(updated);
-    return { kind: 'ready', policy: { network: 'none', networkOrigins: [] } };
+    return { kind: 'ready', policy: input.policy };
 }

@@ -1,11 +1,18 @@
-import type { ArtifactAccessGrantRowV1 } from '@happier-dev/protocol';
+import type { ArtifactAccessGrantRowV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import * as React from 'react';
 import { View } from 'react-native';
+import { StyleSheet } from 'react-native-unistyles';
 import { classifyArtifactBrowserKind } from '@/components/artifacts/artifactBrowserModel';
+import { Text } from '@/components/ui/text/Text';
 import type { SelectionListOption } from '@/components/ui/selectionList';
 import { t } from '@/text';
 import type { ShareAccessLevel, ShareLevelPresentation, ShareSheetAdapter, ShareUiError, ShareUiReason } from '../shareSheetTypes';
 import { ShareRowAction } from '../ShareGrantRow';
+import { sharePrincipalKey } from '../sharePrincipalPresentation';
+
+const styles = StyleSheet.create((theme) => ({
+    versionReports: { color: theme.colors.text.secondary },
+}));
 
 /**
  * The header kind of the ordinary Account Artifact being shared (`null` for an untyped document).
@@ -40,6 +47,7 @@ function documentUseHelp(artifactId: string, kind: DocumentShareKind): string {
 
 /** A document or board is read; everything that runs or is used in a session keeps "Can use". */
 function documentViewLabel(artifactId: string, kind: DocumentShareKind): string {
+    if (kind === 'bot_template.v1') return t('botTemplates.canCopy');
     if (kind === 'widget-area-layout.v1') return t('shareSheet.documents.levels.canRead');
     const browserKind = classifyArtifactBrowserKind({ id: artifactId, header: kind === null ? null : { title: null, kind } });
     return browserKind === 'document' || browserKind === 'memory' || browserKind === 'board'
@@ -82,6 +90,7 @@ function documentShareNotes(kind: DocumentShareKind, grants: readonly ArtifactAc
 export function createDocumentShareAdapter(input: Readonly<{
     artifactId: string;
     kind: DocumentShareKind;
+    description?: string;
     grants: readonly ArtifactAccessGrantRowV1[];
     privateChoices?: readonly DocumentPrivateChoice[];
     linkPath?: string;
@@ -92,15 +101,29 @@ export function createDocumentShareAdapter(input: Readonly<{
     readOnly: boolean;
     retryContent(): void;
 }>): ShareSheetAdapter & Readonly<{ levels: Readonly<Record<ShareAccessLevel, ShareLevelPresentation>> }> {
+    const versionReports = input.kind === 'bot_template.v1'
+        ? new Map(input.grants.map(grant => [sharePrincipalKey(grant.principal), grant.acceptedVersions === undefined
+            ? [t('botTemplates.versionReportsUnavailable')]
+            : grant.acceptedVersions.length === 0 ? [t('botTemplates.noVersionReported')]
+                : grant.acceptedVersions.map(report => t('botTemplates.acceptedVersionReport', report))]))
+        : null;
     return {
         namespace: 'document-share',
         title: t('shareSheet.documents.title'),
+        description: input.description,
         levels: {
             view: { label: documentShareAccessLabel(input.artifactId, input.kind, 'view'), help: documentUseHelp(input.artifactId, input.kind) },
             edit: { label: documentShareAccessLabel(input.artifactId, input.kind, 'edit'), help: t('shareSheet.documents.help.editForEveryone') },
             admin: { label: documentShareAccessLabel(input.artifactId, input.kind, 'admin'), help: t('shareSheet.documents.help.adminOwnerShares') },
         },
         notes: documentShareNotes(input.kind, input.grants),
+        ...(versionReports ? {
+            principalTags: (principal, row) => row ? versionReports.get(principal.key) ?? [] : [],
+            renderGrantDetails: (row, context) => <Text variant="meta" style={styles.versionReports}
+                testID={`${context.idPrefix}document-share-version-reports:${row.principal.key}`}>
+                {versionReports.get(row.principal.key)?.join('\n')}
+            </Text>,
+        } satisfies Partial<ShareSheetAdapter> : {}),
         ...(input.linkPath && input.kind !== 'widget-area-layout.v1' ? { linkPath: input.linkPath } : {}),
         ...(input.sendCopy ? { sendCopy: input.sendCopy } : {}),
         sections: (context) => {
@@ -116,7 +139,7 @@ export function createDocumentShareAdapter(input: Readonly<{
                         ...(choice.loading ? { loading: true } : {}),
                         ...(choice.issue ? { subtitle: choice.issue.message }
                             : choice.service && !hasRepairs ? { subtitle: t('shareSheet.documents.privateChoices.authoredInput', { widget: choice.widget }) } : {}),
-                        ...(hasRepairs ? { onSelect: () => context.onExpand(choice.id), expandedContentInset: 'row' as const, expandedContent: () => <View>
+                        ...(hasRepairs ? { onSelect: () => context.onExpand(choice.id), expandedContentInset: 'text' as const, expandedContent: () => <View>
                             {choice.letViewersPick ? <ShareRowAction label={t('shareSheet.documents.privateChoices.letViewersPick')}
                                 testID={`${context.idPrefix}document-share-private-viewer:${choice.id}`}
                                 onPress={choice.letViewersPick} disabled={!context.editable || input.readOnly || choice.loading} /> : null}

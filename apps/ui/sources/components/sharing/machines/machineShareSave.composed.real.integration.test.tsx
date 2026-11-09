@@ -2,7 +2,7 @@ import * as React from 'react';
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { decodeBase64 } from 'privacy-kit';
-import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol';
+import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { renderScreen } from '@/dev/testkit';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { getVitestNodeBuiltin } from '@/dev/vitestNodeBuiltins';
@@ -20,8 +20,8 @@ vi.mock('react-native', async () => {
     return createReactNativeWebMock();
 });
 vi.mock('@legendapp/list/react-native', async () => {
-    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
-    return { LegendList: createCapturingLegendListMock({ renderItems: true }).module.LegendList };
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({ renderItems: true });
 });
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');

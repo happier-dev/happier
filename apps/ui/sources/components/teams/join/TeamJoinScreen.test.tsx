@@ -97,14 +97,14 @@ import {
     setServerProfileIdentityForUrl,
     upsertServerProfile,
 } from '@/sync/domains/server/serverProfiles';
-import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol';
+import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { createTeamInvitationTargetBindingV1 } from '@happier-dev/protocol/teams';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit';
 import { t } from '@/text';
 import { resolveCompactAppDestinations, hrefForDestinationRef } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { createWorkspaceNavigationAdapter } from '@/components/appShell/workspace/workspaceNavigationAdapter';
 import { createWorkspaceState, reduceWorkspaceState } from '@/components/appShell/workspace/workspaceState';
-import { WorkspaceNavigationContext, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { WorkspaceNavigationProvider, type WorkspaceNavigationContextValue } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { WorkspaceProvider } from '@/components/appShell/workspace/WorkspaceProvider';
 import { storage } from '@/sync/domains/state/storage';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
@@ -409,9 +409,12 @@ describe('TeamJoinScreen', () => {
 
     it('exits a cold-start invitation link through the safe back owner when there is no history', async () => {
         const rendered = await renderScreen(<TeamJoinScreen token="not-a-token" />);
-        expect(rendered.findByTestId('team-join-back')).not.toBeNull();
+        // The state reads as a step: its heading names the problem and the shell's
+        // back chevron is the one way out, never a second Back row under it.
+        expect(rendered.findByTestId('team-join-invalid-title')).not.toBeNull();
+        expect(rendered.findByTestId('team-join-back')).toBeNull();
 
-        await rendered.pressByTestIdAsync('team-join-back');
+        await rendered.pressByTestIdAsync('unauth-shell-back-chevron');
 
         expect(routerReplaceSpy).toHaveBeenCalledWith('/');
     });
@@ -424,7 +427,7 @@ describe('TeamJoinScreen', () => {
 
         expect(runtimeFetchMock).not.toHaveBeenCalled();
         expect(rendered.findByTestId('team-join-invalid')).not.toBeNull();
-        expect(rendered.findByTestId('team-join-back')).not.toBeNull();
+        expect(rendered.findByTestId('unauth-shell-back-chevron')).not.toBeNull();
         expect(rendered.findByTestId('team-join-shell')).not.toBeNull();
         expect(rendered.findAll((node) => node.props.role === 'status'
             && node.props['aria-live'] === 'polite'
@@ -682,9 +685,9 @@ describe('TeamJoinScreen', () => {
             navigationForTab: () => { throw new Error('Unexpected tab navigation'); },
             registerBackStep: () => () => {}, back: () => {}, forward: () => {},
         };
-        const rendered = await renderScreen(<WorkspaceNavigationContext.Provider value={workspace}>
+        const rendered = await renderScreen(<WorkspaceNavigationProvider value={workspace}>
             <TeamJoinScreen token={TOKEN} homeTarget="srv_acme_home" />
-        </WorkspaceNavigationContext.Provider>);
+        </WorkspaceNavigationProvider>);
         await waitForTestId(rendered, 'team-auth-entry-action:email_password');
         await rendered.pressByTestIdAsync('team-auth-entry-action:email_password');
         await waitForTestId(rendered, 'team-join-account-authentication-success');

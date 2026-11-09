@@ -99,7 +99,7 @@ export function ReconcileHomesContent(props: Readonly<{
         setBusy(true);
         try {
             settle();
-            const switched = await setActiveServerAndSwitch({ serverId: selected.id, scope: 'device' });
+            const switched = await setActiveServerAndSwitch({ serverId: selected.id, scope: resolveRoutineServerSelectionScope(Platform.OS, isDesktopHost()) });
             onClose();
             if (switched === 'blocked') return;
             // Only once this computer has left it: the empty Personal Home, when chosen, goes.

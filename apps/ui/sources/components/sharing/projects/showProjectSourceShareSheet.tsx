@@ -1,12 +1,11 @@
-import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import * as React from 'react';
 
 import type { ProjectSourcesController } from '@/components/projects/sources/projectSourcesController';
-import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
 
 import { ShareSheet } from '../ShareSheet';
+import { presentShareSheet, type ShareSheetAnchor } from '../presentShareSheet';
 import { createProjectSourceShareAdapter } from './projectSourceShareAdapter';
 import { useProjectSourceShareController } from './useProjectSourceShareController';
 
@@ -23,19 +22,9 @@ function ProjectSourceShareModal(props: ProjectSourceShareModalProps): React.Rea
  * The one share sheet for a Source (Account, Team or group; view grants only), over the page's own
  * Sources controller so every grant goes through the selected Source's acknowledged revision.
  */
-export function showProjectSourceShareSheet(params: Readonly<{ controller: ProjectSourcesController; name: string }>): void {
-    Modal.show({
-        component: ProjectSourceShareModal,
-        props: { controller: params.controller },
-        chrome: {
-            kind: 'card',
-            phonePresentation: 'sheet',
-            testID: 'project-source-share-modal',
-            title: t('shareSheet.documents.shareTitle', { name: params.name }),
-            scrollHost: 'bounded',
-            bodyScroll: 'none',
-            dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide, maxHeightRatio: 0.92, size: 'md' },
-        },
-        closeOnBackdrop: true,
-    });
+export function showProjectSourceShareSheet(params: Readonly<{
+    controller: ProjectSourcesController; name: string; anchor?: ShareSheetAnchor;
+}>): void {
+    presentShareSheet({ component: ProjectSourceShareModal, props: { controller: params.controller }, testID: 'project-source-share-modal',
+        title: t('shareSheet.documents.shareTitle', { name: params.name }), ...(params.anchor ? { anchor: params.anchor } : {}) });
 }

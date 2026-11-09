@@ -1,4 +1,4 @@
-import type { AuthEntryProjectionV1 } from '@happier-dev/protocol';
+import type { AuthEntryProjectionV1 } from '@happier-dev/protocol/auth/entry';
 
 import type { HomeAuthenticationAction } from '@/auth/capabilities/authMethodCapabilities';
 import { projectAuthEntryMethodCapabilities } from '@/auth/capabilities/authMethodCapabilities';

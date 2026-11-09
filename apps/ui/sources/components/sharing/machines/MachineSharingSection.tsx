@@ -1,13 +1,12 @@
-import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 import * as React from 'react';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { View } from 'react-native';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { ShareSheet } from '../ShareSheet';
+import { presentShareSheet, type ShareSheetAnchor } from '../presentShareSheet';
 import type { ShareSheetPresentation } from '../shareSheetTypes';
 import { createMachineShareAdapter } from './machineShareAdapter';
 import { useMachineShareController } from './useMachineShareController';
@@ -15,7 +14,7 @@ import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
 type MachineShareSheetProps = Readonly<{
-    machineId: string; machineName: string; scope: ServerAccountScope; online: boolean | null;
+    machineId: string; machineName: string; scope: ServerAccountScope; online: boolean | null; shared: boolean;
     presentation: ShareSheetPresentation;
     onRequestClose?: () => void;
     testID: string;
@@ -25,7 +24,7 @@ type MachineShareSheetProps = Readonly<{
 function ScopedMachineShareSheet(props: MachineShareSheetProps) {
     const controller = useMachineShareController(props);
     const router = useRouter();
-    const adapter = createMachineShareAdapter({ machineName: props.machineName, online: props.online, controller,
+    const adapter = createMachineShareAdapter({ machineName: props.machineName, online: props.online, controller, shared: props.shared,
         openApproval: artifactId => router.push(`/inbox/approvals/${encodeURIComponent(artifactId)}?serverId=${encodeURIComponent(props.scope.serverId)}`),
     });
     return <ShareSheet model={controller.model} actions={controller.actions} adapter={adapter}
@@ -39,7 +38,7 @@ function MachineShareSheet(props: MachineShareSheetProps) {
 
 /** The machine page's Sharing section; its page (the Sharing sub-page) carries the title and the description. */
 export function MachineSharingSection(props: Readonly<{
-    machineId: string; machineName: string; scope: ServerAccountScope; online: boolean | null;
+    machineId: string; machineName: string; scope: ServerAccountScope; online: boolean | null; shared: boolean;
 }>) {
     // The section's sheet is the share sheet's surface on every width: `full` would draw a second card inside it.
     // Its rows carry their own row inset, so the sheet sits directly in the card (lab m-share A/Ap: field, trust
@@ -52,7 +51,7 @@ export function MachineSharingSection(props: Readonly<{
 }
 
 type MachineShareModalProps = CustomModalInjectedProps & Readonly<{
-    machineId: string; machineName: string; scope: ServerAccountScope; online: boolean | null;
+    machineId: string; machineName: string; scope: ServerAccountScope; online: boolean | null; shared: boolean;
 }>;
 
 function MachineShareModal(props: MachineShareModalProps) {
@@ -66,24 +65,14 @@ function MachineShareModal(props: MachineShareModalProps) {
 
 /** The machine's ⋯ → "Share <machine>": the same sheet at full presentation, with its search and Done (lab m-share S). */
 export function showMachineShareSheet(params: Readonly<{
-    machineId: string; machineName: string; scope: ServerAccountScope; online: boolean | null;
+    machineId: string; machineName: string; scope: ServerAccountScope; online: boolean | null; shared: boolean;
     /** What the machine is, for example "Linux · End-to-end encrypted". */
     subtitle?: string;
+    /** The ⋯ it came from; the sheet hangs from it on wide layouts. */
+    anchor?: ShareSheetAnchor;
 }>): void {
-    const { subtitle, ...sheet } = params;
-    Modal.show({
-        component: MachineShareModal,
-        props: sheet,
-        chrome: {
-            kind: 'card',
-            phonePresentation: 'sheet',
-            testID: 'machine-share-modal',
-            title: t('shareSheet.documents.shareTitle', { name: params.machineName }),
-            ...(subtitle ? { subtitle } : {}),
-            scrollHost: 'bounded',
-            bodyScroll: 'none',
-            dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide, maxHeightRatio: 0.92, size: 'md' },
-        },
-        closeOnBackdrop: true,
-    });
+    const { subtitle, anchor, ...sheet } = params;
+    presentShareSheet({ component: MachineShareModal, props: sheet, testID: 'machine-share-modal',
+        title: t('shareSheet.documents.shareTitle', { name: params.machineName }),
+        ...(subtitle ? { subtitle } : {}), ...(anchor ? { anchor } : {}) });
 }

@@ -13,10 +13,11 @@ import type { HomeTargetInput } from '@happier-dev/cli-common/homeTarget';
 import type {
     AuthEntryActionV1,
     AuthEntryProjectionV1,
+    TeamEntryUnavailableReasonV1} from '@happier-dev/protocol/auth/entry';
+import type {
     TeamInvitationAcceptResultV1,
-    TeamEntryUnavailableReasonV1,
     TeamInvitationPostAuthContinuationV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/teams/invitation';
 
 import { fetchAuthEntry } from '@/auth/entry/authEntryClient';
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';

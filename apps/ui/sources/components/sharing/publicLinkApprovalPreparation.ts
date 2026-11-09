@@ -1,5 +1,5 @@
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { resolveApprovalRequestExecutionInput } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { ArtifactActionOutputSchemasV1, ArtifactPublicLinkCreateInputV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { SessionPublicLinkCreateActionInputV1Schema } from '@happier-dev/protocol/sessions/access/sessionAccessActionsV1';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
@@ -11,7 +11,7 @@ import { HappyError } from '@/utils/errors/errors';
 import { t } from '@/text';
 import { PublicLinkNetworkConfirmation, describePublicLinkNetworkConsequence,
     hasSamePublicLinkNetworkConsequence, hasSamePublicLinkNetworkPolicy } from './PublicLinkNetworkConfirmation';
-import { prepareArtifactPublicNetworkOff, readArtifactPublicNetworkResource,
+import { readArtifactPublicNetworkResource,
     type ArtifactPublicNetworkOpenedV1, type ArtifactPublicNetworkResourceV1 } from './documents/artifactPublicNetworkPreparation';
 
 type Executor = ReturnType<typeof createDefaultActionExecutor>;
@@ -23,17 +23,20 @@ export async function preparePublicLinkApproval(input: Readonly<{
     const { approval, account, executor, isCurrent } = input;
     const scope = { serverId: account.serverId, accountId: account.accountId };
     const context = { surface: 'ui' as const, serverId: scope.serverId, expectedAccountId: scope.accountId };
+    const executionInput = resolveApprovalRequestExecutionInput(approval);
+    if (!executionInput.ok) throw new HappyError(executionInput.error, false, { code: executionInput.errorCode });
     const check = () => { input.signal.throwIfAborted(); account.assertCurrent(); if (!isCurrent()) throw new HappyError(t('errors.permissionDenied'), false); };
     let available = false;
     let label = t('session.collaboration.pane.linkNetworkUnknown');
     let initiallyOff = false;
     let sessionInput: ReturnType<typeof SessionPublicLinkCreateActionInputV1Schema.parse> | null = null;
     let sessionConsequence: SessionPublicVisualNetworkConsequence | null = null;
+    let artifactInput: ReturnType<typeof ArtifactPublicLinkCreateInputV1Schema.parse> | null = null;
     let opened: ArtifactPublicNetworkOpenedV1 | null = null;
     let resource: ArtifactPublicNetworkResourceV1 | null = null;
     check();
     if (approval.actionId === 'session.public_link.create') {
-        sessionInput = SessionPublicLinkCreateActionInputV1Schema.parse(approval.actionArgs);
+        sessionInput = SessionPublicLinkCreateActionInputV1Schema.parse(executionInput.input);
         initiallyOff = sessionInput.networkOff === true;
         const consequence = await createSessionAccessClient({ scope, sessionId: sessionInput.sessionId,
             availability: 'unavailable', isCurrent }).readPublicVisualNetworkConsequence();
@@ -42,8 +45,9 @@ export async function preparePublicLinkApproval(input: Readonly<{
         available = consequence.status === 'ready';
         if (consequence.status === 'ready') label = describePublicLinkNetworkConsequence(consequence);
     } else {
-        const args = ArtifactPublicLinkCreateInputV1Schema.parse(approval.actionArgs);
-        const result = await executor.execute('artifact.get', { artifactId: args.artifactId }, context);
+        artifactInput = ArtifactPublicLinkCreateInputV1Schema.parse(executionInput.input);
+        initiallyOff = artifactInput.networkOff === true;
+        const result = await executor.execute('artifact.get', { artifactId: artifactInput.artifactId }, context);
         check();
         if (!result.ok) throw new HappyError(result.error, false, { code: result.errorCode });
         opened = ArtifactActionOutputSchemasV1['artifact.get'].parse(result.result).artifact;
@@ -95,7 +99,7 @@ export async function preparePublicLinkApproval(input: Readonly<{
         return { kind: 'continue', ...(networkOff && !sessionInput.networkOff
             ? { narrowedInput: { ...sessionInput, networkOff: true } } : {}) };
     }
-    if (!opened || !resource) return { kind: 'handled' };
+    if (!opened || !resource || !artifactInput) return { kind: 'handled' };
     const artifactId = opened.artifactId;
     const readCurrentArtifact = async () => {
         const result = await executor.execute('artifact.get', { artifactId }, context);
@@ -107,28 +111,13 @@ export async function preparePublicLinkApproval(input: Readonly<{
         check();
         return { opened: currentOpened, resource: currentResource };
     };
-    const current = await readCurrentArtifact();
-    if (!networkOff && !hasSamePublicLinkNetworkPolicy(resource.policy, current.resource.policy)) {
-        throw new HappyError(t('approvals.staleFailure'), true, { code: 'approval_stale' });
-    }
-    if (networkOff) {
-        const prepared = await prepareArtifactPublicNetworkOff({ ...current, isCurrent, request: async (actionId, payload) => {
-            check();
-            const result = await executor.execute(actionId, payload, context);
-            check();
-            if (!result.ok) throw new HappyError(result.error, false, { code: result.errorCode });
-            const pending = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
-            if (pending.success) {
-                Modal.alert(t('approvals.title'), t('approvals.status.open'));
-                return null;
-            }
-            return result.result;
-        } });
-        if (prepared.kind !== 'ready') return { kind: 'handled' };
-        if ((await readCurrentArtifact()).resource.policy.network !== 'none') {
+    if (!networkOff) {
+        const current = await readCurrentArtifact();
+        if (!hasSamePublicLinkNetworkPolicy(resource.policy, current.resource.policy)) {
             throw new HappyError(t('approvals.staleFailure'), true, { code: 'approval_stale' });
         }
     }
     check();
-    return { kind: 'continue' };
+    return { kind: 'continue', ...(networkOff && !artifactInput.networkOff
+        ? { narrowedInput: { ...artifactInput, networkOff: true } } : {}) };
 }

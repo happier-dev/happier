@@ -14,7 +14,7 @@ export async function confirmCanonicalHomeUrl(addressChange?: HomeAddressChangeC
     if (addressChange) {
         return Boolean(await Modal.confirm(
             t('errors.homeAddressMismatchTitle'),
-            t('errors.homeAddressMismatchBody', { reached: addressChange.previousUrl, claimed: addressChange.nextUrl }),
+            t('errors.homeAddressMismatchBody', { reached: addressChange.nextUrl, claimed: addressChange.previousUrl }),
             { confirmText: t('common.continue'), cancelText: t('common.cancel') },
         ));
     }
