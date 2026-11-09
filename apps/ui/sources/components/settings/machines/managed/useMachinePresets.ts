@@ -14,7 +14,7 @@ import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { createMachinePresetCollectionClient, type MachinePresetHistoryData, type MachinePresetCollectionResult, type MachinePresetCollectionSettledResult, type MachinePresetCollectionOptions } from './machinePresetCollectionClient';
 import { buildManagedPresetHistory } from './managedPresetHistory';
 import type { createManagedProvisionerClient } from './managedProvisionerClient';
-import { createManagedConfiguratorDraft, refreshManagedConfiguratorOptions, managedConfiguratorFacts, managedConfiguratorOptionsSelectors, type ManagedConfiguratorDraft } from './managedConfiguratorModel';
+import { createManagedConfiguratorDraft, refreshManagedConfiguratorProvisioner, beginManagedConfiguratorRead, settleManagedConfiguratorRead, managedConfiguratorFacts, managedConfiguratorOptionsSelectors, type ManagedConfiguratorDraft } from './managedConfiguratorModel';
 import { useManagedMachineAccountSettings } from './useManagedMachineAccountSettings';
 import type { ManagedProvisionerOptionsInput } from './useManagedProvisionerOptionsInput';
 import { describeManagedNativeFailureDiagnostic } from './managedNativeFailurePresentation';
@@ -28,6 +28,7 @@ export type MachinePresetQueryState<T> = Readonly<{
     approval?: ActionApprovalRegistration;
 }>;
 type ScopedQueryState<T> = MachinePresetQueryState<T> & Readonly<{ homeId: string | null; accountId: string }>;
+type MachinePresetQueryValue = Pick<ManagedMachinePresetV1, 'id' | 'controller'> | Pick<MachinePresetHistoryData, 'preset'>;
 type PresetCollectionRead = {
     binding: ServerCredentialAccountScopeBinding;
     homeId: string;
@@ -49,7 +50,7 @@ export function isMachinePresetAccessLost(code: string): boolean {
 }
 
 /** One scoped read lifetime for preset detail and editing, including approvals and Home invalidation. */
-export function useMachinePresetQuery<T>(input: Readonly<{
+export function useMachinePresetQuery<T extends MachinePresetQueryValue>(input: Readonly<{
     serverId: string; homeId: string | null; presetId?: string; binding: ServerCredentialAccountScopeBinding | null;
     resolution: ServerCredentialAccountScopeResolution;
     read: ((options: MachinePresetCollectionOptions<T>) => Promise<MachinePresetCollectionSettledResult<T>>) | null;
@@ -111,15 +112,21 @@ export function useMachinePresetQuery<T>(input: Readonly<{
         });
         return () => { controller.abort(); retirement.dispose(); if (approvalRead.current?.controller === controller) approvalRead.current = null; };
     }, [presented, binding, read, presetId, queryKey, withdraw, revision, refreshRevision]);
+    const retainedValue: MachinePresetQueryValue | null = state.queryKey === queryKey ? state.value : null;
+    const selectedPreset = retainedValue && ('preset' in retainedValue ? retainedValue.preset : retainedValue);
     React.useEffect(() => presented ? subscribeHomeAccountChange(event => {
         if (event.machineResourcesAffect === false) return;
         if (!presetId || !areServerProfileIdentifiersEquivalent(serverId, event.serverId)) return;
+        // Only this preset's controller contributes live availability; unknown and recovery wakes still refresh.
+        if (selectedPreset && event.source === 'socket' && event.changeKinds?.length
+            && event.changeKinds.every(kind => kind === 'machine') && event.entityIds?.length
+            && (!selectedPreset.controller || !event.entityIds.includes(selectedPreset.controller.machineId))) return;
         // This read has not executed yet: its post-decision result satisfies preceding wakes.
         if (approvalRead.current?.controller === pendingRead.current && approvalRead.current && !approvalRead.current.controller.signal.aborted) return;
         pendingRead.current?.abort();
         callbacks.current.onInvalidated?.();
         refresh();
-    }, { reconnect: 'refresh' }) : undefined, [presented, serverId, presetId]);
+    }, { reconnect: 'refresh' }) : undefined, [presented, serverId, presetId, selectedPreset]);
     const sameScope = resolution.kind === 'bound' && state.queryKey === queryKey;
     return { sameScope, state: sameScope
         ? binding?.isCurrent() ? state : { ...state, loading: !!presetId }
@@ -158,9 +165,11 @@ export function useMachinePresetConfiguration(input: Readonly<{
     const queryKey = stableJsonStringify([binding?.scope, binding?.revision, homeId, preset, provisioner?.occurrenceId]);
     const [state, setState] = React.useState<Readonly<{ queryKey: string; draft: ManagedConfiguratorDraft | null; error: string | null }>>(
         { queryKey: '', draft: null, error: null });
-    const [refreshRevision, refresh] = React.useReducer(value => value + 1, 0);
-    const refreshedAvailability = React.useRef([refreshRevision, input.refreshRevision]);
-    React.useEffect(() => {
+    const readCleanup = React.useRef<(() => void) | null>(null);
+    const refreshedAvailability = React.useRef(input.refreshRevision);
+    const readConfiguration = React.useCallback(() => {
+        readCleanup.current?.();
+        readCleanup.current = null;
         if (!hasManagedMachinePresetCreationV1(preset) || preset.delegatedAcquire || !binding?.isCurrent() || !client || !homeId || !provisioner) return;
         if (preset.launch.schemaVersion !== provisioner.descriptor.schemaVersion) {
             setState({ queryKey, draft: null, error: 'option_unavailable' });
@@ -176,9 +185,16 @@ export function useMachinePresetConfiguration(input: Readonly<{
         const selectors = optionsSchema ? managedConfiguratorOptionsSelectors(initial, optionsSchema) : null;
         const waitingForSchema = optionsInput.kind === 'loading';
         const canReadOptions = optionsInput.kind === 'ready' && selectors !== null;
-        setState(current => ({ queryKey, error: waitingForSchema || canReadOptions ? null : optionsInputError ?? 'option_unavailable',
-            draft: { ...(current.queryKey === queryKey ? current.draft ?? initial : initial),
-                provisioner, choicesSchema: initial.choicesSchema, optionStatus: waitingForSchema || canReadOptions ? 'loading' : 'unavailable' } }));
+        setState(current => {
+            const previous = current.queryKey === queryKey ? current.draft : null;
+            const draft = beginManagedConfiguratorRead(previous
+                ? refreshManagedConfiguratorProvisioner(previous, provisioner, preset.controller) : initial,
+                waitingForSchema || canReadOptions ? 'loading' : 'unavailable');
+            const error = waitingForSchema || canReadOptions ? current.queryKey === queryKey ? current.error : null
+                : optionsInputError ?? 'option_unavailable';
+            return current.queryKey === queryKey && current.draft === draft && current.error === error
+                ? current : { queryKey, draft, error };
+        });
         if (!canReadOptions) return;
         const abort = new AbortController();
         const retirement = binding.onRetire(() => {
@@ -187,9 +203,9 @@ export function useMachinePresetConfiguration(input: Readonly<{
         });
         const actionInput = { homeId, ...(preset.controller ? { controller: preset.controller } : {}), contribution: provisioner.contribution,
             ...(preset.launch.credentials ? { credentials: preset.launch.credentials } : {}) };
-        if (refreshedAvailability.current[0] !== refreshRevision || refreshedAvailability.current[1] !== input.refreshRevision) {
+        if (refreshedAvailability.current !== input.refreshRevision) {
             refreshManagedProvisionerAvailability(binding, actionInput);
-            refreshedAvailability.current = [refreshRevision, input.refreshRevision];
+            refreshedAvailability.current = input.refreshRevision;
         }
         void readManagedConfiguration({ binding, client, nativeInput: actionInput, occurrenceId: provisioner.occurrenceId,
             provisioner: provisioner.descriptor, selectors,
@@ -197,15 +213,20 @@ export function useMachinePresetConfiguration(input: Readonly<{
             if (result.kind === 'retired') return;
             setState(current => {
                 if (current.queryKey !== queryKey || !current.draft) return current;
-                const draft = { ...current.draft, check: result.check };
-                return { queryKey, error: result.failure ? describeManagedNativeFailureDiagnostic(result.failure.code, result.failure.nativeCause)
-                    : result.check?.available ? null : describeManagedNativeFailureDiagnostic(result.check?.code ?? 'provisioner_unavailable', result.check?.nativeCause),
-                    draft: result.options ? refreshManagedConfiguratorOptions(draft, result.options)
-                        : { ...draft, optionStatus: 'unavailable' } };
+                const draft = settleManagedConfiguratorRead(current.draft, result);
+                const error = result.failure ? describeManagedNativeFailureDiagnostic(result.failure.code, result.failure.nativeCause)
+                    : result.check?.available ? null : describeManagedNativeFailureDiagnostic(result.check?.code ?? 'provisioner_unavailable', result.check?.nativeCause);
+                return current.draft === draft && current.error === error ? current : { queryKey, draft, error };
             });
         });
-        return () => { abort.abort(); retirement.dispose(); };
-    }, [binding, client, homeId, preset, provisioner, queryKey, optionsInput.kind, optionsSchema, optionsInputError, onApprovalPending, refreshRevision, input.refreshRevision]);
+        readCleanup.current = () => { abort.abort(); retirement.dispose(); };
+    }, [binding, client, homeId, preset, provisioner, queryKey, optionsInput.kind, optionsSchema, optionsInputError, onApprovalPending, input.refreshRevision]);
+    React.useEffect(() => { readConfiguration(); return () => readCleanup.current?.(); }, [readConfiguration]);
+    const refresh = () => {
+        if (binding && homeId && provisioner) refreshManagedProvisionerAvailability(binding, { homeId,
+            ...(preset?.controller ? { controller: preset.controller } : {}), contribution: provisioner.contribution });
+        readConfiguration();
+    };
     const visibleDraft = binding?.isCurrent() && hasManagedMachinePresetCreationV1(preset) && provisioner && state.queryKey === queryKey ? state.draft : null;
     const facts = React.useMemo(() => visibleDraft && settings.settings
         ? managedConfiguratorFacts({ ...visibleDraft, categoryPreferences: settings.settings.machineRetentionDefaultsV1 }) : null,

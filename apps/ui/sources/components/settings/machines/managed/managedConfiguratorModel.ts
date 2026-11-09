@@ -50,6 +50,21 @@ export type ManagedConfiguratorDraft = Readonly<{
     delegatedFacts?: ManagedConfigurationFactsV1;
 }>;
 export type ManagedConfiguratorDimension = MachineProvisionerDimensionV1;
+/** Revalidation withdraws ready mutation facts, while an existing refusal remains the last answer. */
+export function beginManagedConfiguratorRead(draft: ManagedConfiguratorDraft,
+    status: 'loading' | 'unavailable' = 'loading'): ManagedConfiguratorDraft {
+    return draft.optionStatus === 'current' || status === 'unavailable' && draft.optionStatus !== status
+        ? { ...draft, optionStatus: status } : draft;
+}
+/** Native reads publish changed answers, preserving a repeated refusal's model identity. */
+export function settleManagedConfiguratorRead(draft: ManagedConfiguratorDraft,
+    result: Readonly<{ check?: MachineProvisionerCheckResultV1; options: MachineProvisionerOptionsResultV1 | null }>,
+    selectors?: unknown, missingOptionsStatus: 'loading' | 'unavailable' = 'unavailable'): ManagedConfiguratorDraft {
+    const check = pluginJsonValuesEqual(draft.check, result.check) ? draft.check : result.check;
+    if (result.options) return refreshManagedConfiguratorOptions({ ...draft, check }, result.options, selectors);
+    return draft.check === check && draft.optionStatus === missingOptionsStatus
+        ? draft : { ...draft, check, optionStatus: missingOptionsStatus };
+}
 /** Adopt the current catalog before its check/options read, retaining the person's draft. */
 export function refreshManagedConfiguratorProvisioner(draft: ManagedConfiguratorDraft,
     provisioner: ManagedConfiguratorDraft['provisioner'], controller?: ManagedControllerV1): ManagedConfiguratorDraft {

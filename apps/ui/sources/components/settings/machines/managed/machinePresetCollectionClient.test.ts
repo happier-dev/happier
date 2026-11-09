@@ -13,6 +13,7 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import type { MachinePresetEditDraft } from './machinePresetEditDraft';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { createDeferred } from '@/dev/testkit';
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
@@ -372,6 +373,64 @@ describe('preset collection and history through Actions', () => {
             });
             expect(counts()).toEqual({ list: initial.list + 4, preset: initial.preset + 4, history: initial.history + 6 });
         } finally { await hook.unmount(); }
+    });
+    it('retains a failed preset configuration during Retry and publishes only its changed answer', async () => {
+        const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history-retry.example',
+            serverIdentityId: 'srv_history', accountId: 'owner', currentAccount: true });
+        const { useServerCredentialAccountScopeBinding } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const { useMachinePresetConfiguration } = await import('./useMachinePresets');
+        const { createManagedProvisionerClient } = await import('./managedProvisionerClient');
+        const { MachineProvisionerContributionV1Schema } = await import('@happier-dev/protocol/plugins/contributions/machineProvisioners');
+        const { ExternalActionRequestEnvelopeV1Schema } = await import('@happier-dev/protocol/actions/externalActionApi');
+        const provisioner = { contribution: preset.launch.provider, occurrenceId: 'retry-occurrence',
+            descriptor: MachineProvisionerContributionV1Schema.parse({ id: 'native', title: 'Native', icon: 'server', resourceKind: 'VM', schemaVersion: 1,
+                launchSchema: { type: 'object', properties: {}, additionalProperties: false },
+                resourceSchema: { type: 'object', properties: {}, additionalProperties: false }, platforms: ['linux'], prerequisites: [],
+                billing: { location: 'local', stoppedBilling: 'not-billed' }, retention: { supportedIntents: ['start', 'stop', 'delete'] },
+                actions: { check: 'check', options: 'options', acquire: 'acquire', bootstrap: 'bootstrap', inspect: 'inspect', power: 'power', destroy: 'destroy' } }) };
+        const optionsInput = { kind: 'ready', schema: { type: 'object', properties: {}, additionalProperties: false },
+            action: { pluginId: provisioner.contribution.pluginId, id: 'options', occurrenceId: provisioner.occurrenceId } } as const;
+        let reply = createDeferred<void>();
+        let available = false;
+        for (const actionId of ['machines.provisioners.check', 'machines.provisioners.options'] as const) {
+            harness.answer(serverId, `/v1/actions/${actionId}`, { select: async value => {
+                const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+                await reply.promise;
+                return { body: { v: 1, actionId, requestId: request.requestId, execution: available
+                    ? { ok: true, result: actionId === 'machines.provisioners.check' ? { available: true }
+                        : { base: { launch: {} }, dimensions: { size: [], image: [], location: [], network: [], duration: [] } } }
+                    : { ok: false, errorCode: 'action_failed', error: 'action_failed' } } };
+            } });
+        }
+        let commits = 0;
+        const wrapper = ({ children }: React.PropsWithChildren) => React.createElement(React.Profiler,
+            { id: 'preset-retry', onRender: () => { commits++; } }, children);
+        const onApprovalPending = () => {};
+        const rendered = await renderHook(() => {
+            const { binding, resolution } = useServerCredentialAccountScopeBinding(serverId);
+            const client = React.useMemo(() => binding ? createManagedProvisionerClient(binding.scope, 'srv_history') : null, [binding]);
+            return useMachinePresetConfiguration({ binding, resolution, client, homeId: 'srv_history',
+                preset, provisioner, optionsInput, onApprovalPending });
+        }, { wrapper });
+        try {
+            await act(async () => reply.resolve());
+            await waitForHomeGovernance(() => expect(rendered.getCurrent().error).toBe('action_failed'));
+            await flushHookEffects();
+            reply = createDeferred<void>();
+            commits = 0;
+            await act(async () => rendered.getCurrent().refresh());
+            expect.soft(rendered.getCurrent()).toMatchObject({ error: 'action_failed', loading: false });
+            expect.soft(commits).toBe(1);
+            commits = 0;
+            await act(async () => reply.resolve());
+            await flushHookEffects();
+            expect.soft(commits).toBe(0);
+            available = true;
+            reply = createDeferred<void>();
+            await act(async () => rendered.getCurrent().refresh());
+            await act(async () => reply.resolve());
+            await waitForHomeGovernance(() => expect(rendered.getCurrent().error).toBeNull());
+        } finally { await rendered.unmount(); }
     });
     it('keeps setup-only configuration independent of a retained creation provisioner', async () => {
         const serverId = await harness.addHome({ name: 'History', serverUrl: 'https://history.example',
