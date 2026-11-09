@@ -45,6 +45,14 @@ const machine = {
 } satisfies ManagedMachineV1;
 
 describe('managed creation presentation', () => {
+  it('names the unreachable guest Home in the shared creation failure message', () => {
+    const homeOrigin = 'https://home.example.test:9443';
+    const failure = describeManagedInstallationFailure({ errorCode: 'home_not_guest_reachable',
+      error: 'private installer diagnostic', details: { kind: 'managedGuestHome', homeOrigin } }, undefined);
+    expect(failure).toContain(homeOrigin);
+    expect(failure).toContain(t('managedMachines.creation.homeNotGuestReachable'));
+    expect(failure).not.toContain('private installer diagnostic');
+  });
   it('keeps enrolled bootstrap recovery available after a passive receipt displaces Create', () => {
     const incomplete: ManagedMachineV1 = { ...machine, enrolledMachineId: 'guest', bootstrapInstalled: true,
       observation: { observedAt: 3, availability: 'unavailable', reason: 'bootstrap.incomplete' } };

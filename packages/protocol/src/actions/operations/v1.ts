@@ -1,4 +1,5 @@
 import { lazyDefinition, lazyZodSchema } from '../../lazyZodSchema.js';
+import { HomeApplicationOriginV1Schema } from '../../auth/accountDirectory.js';
 import { DeploymentReceiptSettlementFailureDetailsV1Schema, readDeploymentReceiptFailureCodeV1 } from '../../deployments/deploymentReceiptResultV1.js';
 import { DeploymentExecutionFailureDetailsV1Schema } from '../../deployments/deploymentReceiptEventsV1.js';
 import { z } from 'zod/mini';
@@ -204,10 +205,14 @@ export const ManagedAgentStartFailureDetailsV1Schema = lazyZodSchema(() => z.str
   machineId: z.string().check(z.minLength(1)),
   agentId: z.string().check(z.minLength(1)),
 }));
+/** Selected, credential-free application carrier for guest reachability failures. */
+export const ManagedGuestHomeFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('managedGuestHome'), homeOrigin: HomeApplicationOriginV1Schema,
+}));
 export const ManagedMachineFailureDetailsV1Schema = lazyZodSchema(() => z.union([
   ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema,
   ManagedBootstrapFailureDetailsV1Schema, ManagedServiceFailureDetailsV1Schema, ManagedAgentIsolationFailureDetailsV1Schema,
-  ManagedAgentStartFailureDetailsV1Schema,
+  ManagedAgentStartFailureDetailsV1Schema, ManagedGuestHomeFailureDetailsV1Schema,
 ]));
 export type ManagedMachineFailureDetailsV1 = Readonly<z.infer<typeof ManagedMachineFailureDetailsV1Schema>>;
 /** Pre-native Setup availability facts only; no Account, installation or native content. */
@@ -253,6 +258,8 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
   ? !failure.details.code || failure.details.code === failure.errorCode
   : failure.details.kind === 'managedNative'
   ? true
+  : failure.details.kind === 'managedGuestHome'
+  ? failure.errorCode === 'home_not_guest_reachable'
   : failure.details.kind === 'managedAgentStart'
   ? true
   : failure.details.kind === 'managedBootstrap'

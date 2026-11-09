@@ -264,6 +264,23 @@ describe('managed Machine Action executor', () => {
         failureCause: { phase: 'machines.managed.acquire', errorClass: 'Error', errorCode: null, httpStatus: null } });
   });
 
+  it('retains the unreachable Home address without exposing native enrollment diagnostics', async () => {
+    let details: unknown = { kind: 'managedGuestHome', homeOrigin: 'https://home.example.test:9443' };
+    // The installed controller is an external host boundary of Protocol's executor.
+    const executor = createActionExecutor({ managedMachineAction: async () => {
+      throw Object.assign(new Error('private enrollment diagnostic'), { code: 'home_not_guest_reachable', details });
+    } } as ActionExecutorDeps);
+    const context = { surface: 'cli', authority: 'present_user',
+      presentUserConfirmation: { actionId: 'machines.managed.acquire' } } as const;
+    const result = await executor.execute('machines.managed.acquire', acquireInput, context);
+    expect(result).toMatchObject({ ok: false, errorCode: 'home_not_guest_reachable', details });
+    expect(JSON.stringify(result)).not.toContain('private enrollment diagnostic');
+    details = { kind: 'managedGuestHome', homeOrigin: 'https://home.example.test?token=PRIVATE' };
+    const invalid = await executor.execute('machines.managed.acquire', acquireInput, context);
+    expect(invalid).not.toHaveProperty('details');
+    expect(JSON.stringify(invalid)).not.toContain('PRIVATE');
+  });
+
   it('retains closed bootstrap interpreter facts at public Action settlement without native content', async () => {
     const diagnostic = { kind: 'managedBootstrap', phase: 'check', response: 'missing_result', exitStatus: 127,
       stdoutPresent: false, stderrPresent: true };

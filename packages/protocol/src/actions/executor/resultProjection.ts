@@ -10,7 +10,7 @@ import { SessionOrganizationContentUnavailableError } from '../../sessions/organ
 import { ActionCatalogUnavailableError } from '../actionCatalog.js';
 import { readRecord, hasOwn, isRecord } from '../../inputs/inputRecords.js';
 import { readSshCommandFailure, readRemoteEnrollmentCommandFailure, readHomeAuthorityMismatchFailure } from '../../ssh/commandFailure.js';
-import { ActionOperationFailureV1Schema, ManagedAgentStartFailureDetailsV1Schema, ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema } from '../operations/v1.js';
+import { ActionOperationFailureV1Schema, ManagedAgentStartFailureDetailsV1Schema, ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema, ManagedGuestHomeFailureDetailsV1Schema } from '../operations/v1.js';
 import { SessionListUnavailableQueryV1Schema } from '../../sessions/listing/query.js';
 import { ConnectedServicesDefaultUnavailableDetailsV1Schema } from '../../connect/connectedServiceUxDiagnostics.js';
 import { isActionOutcomeUnknownErrorCodeV1, projectActionExecuteFailure, ActionFailureCauseV1Schema,
@@ -166,6 +166,7 @@ function classifyActionExecutorThrownError(error: unknown): Readonly<{ errorCode
     return { errorCode: code, error: code };
   }
   if (rawCodes[0] && (readRecord(rawDetails).kind === 'managedBootstrap' || readRecord(rawDetails).kind === 'managedService' || readRecord(rawDetails).kind === 'managedAgentIsolation'
+    || ManagedGuestHomeFailureDetailsV1Schema.shape.kind.safeParse(readRecord(rawDetails).kind).success
     || ManagedAgentStartFailureDetailsV1Schema.shape.kind.safeParse(readRecord(rawDetails).kind).success)) {
     const failure = ActionOperationFailureV1Schema.safeParse({ errorCode: rawCodes[0], error: rawCodes[0], details: rawDetails });
     if (failure.success) {

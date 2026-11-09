@@ -30,7 +30,7 @@ export function describeManagedInstallationFailure(
         && progress.phase === 'ssh.auth.wait') return t('managedMachines.creation.enrollmentUnavailable');
     // A refusal outside the typed controller codes reaches the executor's result as `action_failed` with its code as the message.
     const code = error.errorCode === 'action_failed' ? error.error : error.errorCode;
-    return resolveSystemTaskFailureMessage({ code, message: null }) ?? null;
+    return resolveSystemTaskFailureMessage({ code, message: null, details }) ?? null;
 }
 
 /** Setup is observed on the admitted row; Join alone cannot complete this stage. */

@@ -127,7 +127,11 @@ host refuses an unsubmitted allocation before bootstrap credential preparation
 or purchase. Native
 provider availability remains independent so retained-machine operations stay
 usable. A non-loopback endpoint or advertised Iroh route is a possible path,
-not proof of guest connectivity. HTTPS loopback entries do not preempt a
+not proof of guest connectivity. Guest enrollment projects observed network
+failures as `home_not_guest_reachable` with the selected, credential-free Home
+application origin. HTTP responses, TLS failures and Home identity refusals retain
+their own causes. The existing managed creation presentation includes that origin
+with its Home endpoint guidance. HTTPS loopback entries do not preempt a
 non-loopback application endpoint. Existing controllers need refreshed CLI
 code for qualification and refusal; endpoint-order selection also needs the
 updated guest CLI. No SSH tunnel or public ingress is created automatically.

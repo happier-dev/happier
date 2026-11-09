@@ -4260,7 +4260,10 @@ projections (intent, release, UI Artifact links, package assets and hosting
 capability), including explicit null intents for removed or machine-only ids.
 The server delegates each projection to the same exact-read owner; bootstrap
 does not issue one HTTP request per plugin or maintain another freshness cache.
-Individual unreadable projections appear in `failedPluginIds`. The reader follows
+Individual unreadable projections appear in `failedPluginIds`. A caller that consumes
+only intent and release facts sends `omitDeclarations: true`: the CLI execution-selection
+reads get no `currentDeclaration` or `machineDeclarations` (11 KB instead of 8.3 MB for 29
+plugins on a scratch Account), and exact `intent.read` is unchanged. The reader follows
 `nextCursor` before treating the census as complete and sends only the current
 page's known-id window plus one lookahead, using the same server page-size owner.
 A failed or non-advancing
@@ -8419,6 +8422,10 @@ empty first message alongside the attempt prompt and waits for the user; its
 Greeting row explains this through the contribution's `immediateRequiresLiteral`
 presentation fact. Local and model-driven realtime greetings retain their
 reply-language instructions when a literal is unavailable.
+ElevenLabs actual-configuration admission also requires the client-event
+subscriptions authored by provisioning, including `agent_response`. A reused
+Agent missing these subscriptions needs the same update action before credential
+minting; receiving remote audio alone does not establish transcript delivery.
 Attached Agent realtime sessions do
 not receive this standalone policy: their native Agent prompt scope remains the
 authority. In development, each native start prepares the current bound Voice

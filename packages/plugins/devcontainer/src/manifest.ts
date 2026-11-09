@@ -2,7 +2,7 @@ import { Buffer } from 'node:buffer';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginLocalizedStringV2 } from '@happier-dev/plugin-sdk';
-import { defineProtocolLiteral, defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import {
   defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas, MachineProvisionerBootstrapCarrierV1Schema, MachineProvisionerCheckResultV1Schema,
   MachineProvisionerNativeExecResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema,
@@ -57,7 +57,7 @@ function bytes(value: string) {
 }
 export const DEVCONTAINER_MACHINE_PROVISIONER = {
   title: 'Docker container', icon: 'cube', resourceKind: 'devcontainer', schemaVersion: 1,
-  description: 'Create a container from an image using Docker or Podman, or use an advanced Dev Containers configuration.',
+  description: 'A container from any image, using Docker or Podman.',
   enrollmentRole: 'sandbox',
   launchSchema: DevcontainerLaunchSchema.jsonSchema, resourceSchema: DevcontainerResourceSchema.jsonSchema,
   platforms: ['darwin', 'linux', 'win32'],
@@ -82,32 +82,34 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
   },
   machineProvisioners: { [DEVCONTAINER_PROVISIONER_ID]: DEVCONTAINER_MACHINE_PROVISIONER },
   actions: {
-    'runtime-install-docs': { title: 'Install a container runtime', surfaces: ['ui', 'plugin'], dangerLevel: 'safe',
+    'runtime-install-docs': { title: 'Install a container runtime', surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], dangerLevel: 'safe',
       execution: { target: 'client', client: { artifactId: 'runtime-install', exportName: 'activate' }, platforms: ['web', 'ios', 'android'] },
-      inputSchema: defineProtocolObject({ runtime: DevcontainerRuntimeSchema }, { policy: 'closed' }), resultSchema: defineProtocolLiteral(null) },
-    'install-cli': { title: 'Install Dev Containers CLI', scopes: ['machine'], surfaces: ['ui', 'plugin'], execution: { target: 'daemon' }, dangerLevel: 'writesLocal',
+      inputSchema: defineProtocolObject({ runtime: DevcontainerRuntimeSchema }, { policy: 'closed' }),
+      resultSchema: defineProtocolUnion([defineProtocolLiteral(null), defineProtocolObject({ url: defineProtocolString() }, { policy: 'closed' })]) },
+    'install-cli': { title: 'Install Dev Containers CLI', scopes: ['machine'], surfaces: ['ui', 'agent', 'mcp', 'cli', 'plugin'], execution: { target: 'daemon' }, dangerLevel: 'writesLocal',
       confirmation: { title: 'Install Dev Containers CLI on this computer?', confirmLabel: 'Install' },
       inputSchema: DEVCONTAINER_ROLE_SCHEMAS.checkInput, resultSchema: defineProtocolLiteral(null),
       async run(_input, context) { await context.services.managedServices.dependencies.ensure(devcontainerDependencyId, { signal: context.signal }); return null; } },
     options: { ...defaults, title: 'Review Devcontainer effects', dangerLevel: 'safe',
       inputSchema: DevcontainerReviewQuerySchema, resultSchema: MachineProvisionerOptionsResultV1Schema,
       inputHints: { fields: [
-        { path: 'configuration.kind', title: 'Configuration source', widget: 'select', defaultValue: 'image', options: [
-          { value: 'image', label: 'Container image' }, { value: 'file', label: 'Advanced: existing devcontainer.json' }, { value: 'inline', label: 'Advanced: inline devcontainer.json' },
-        ] },
+        // The image is the one thing the form asks; everything else keeps a default and sits under Advanced.
+        { path: 'configuration.image', title: 'Container image', widget: 'text', description: 'Any image this computer can pull, for example ubuntu:24.04.',
+          visibleWhen: { op: 'eq', path: 'configuration.kind', value: 'image' }, requiredWhen: { op: 'eq', path: 'configuration.kind', value: 'image' } },
+        { path: 'configuration.setupScript', title: 'Setup script', widget: 'textarea',
+          description: 'Runs inside the container before it joins.', visibleWhen: { op: 'eq', path: 'configuration.kind', value: 'image' } },
         { path: 'runtime', title: 'Container runtime', widget: 'select', defaultValue: 'docker', options: [
           { value: 'docker', label: 'Docker' }, { value: 'podman', label: 'Podman' },
         ] },
-        { path: 'workspaceFolder', title: 'Workspace folder on the controller', widget: 'text',
-          description: 'Optional for images. Leave empty to use a container-owned volume; setting a folder bind mounts it into the container.',
+        { path: 'workspaceFolder', title: 'Project folder on this computer', widget: 'text',
+          description: 'Leave empty to keep files in the container. A folder here is shared with the container.',
           requiredWhen: { op: 'not', predicate: { op: 'eq', path: 'configuration.kind', value: 'image' } } },
-        { path: 'configPath', title: 'Devcontainer configuration path on the controller', widget: 'text',
+        { path: 'configuration.kind', title: 'Build from', widget: 'select', defaultValue: 'image', options: [
+          { value: 'image', label: 'Container image' }, { value: 'file', label: 'An existing devcontainer.json' }, { value: 'inline', label: 'Devcontainer JSON' },
+        ] },
+        { path: 'configPath', title: 'devcontainer.json path on this computer', widget: 'text',
           visibleWhen: { op: 'or', any: [{ op: 'eq', path: 'configuration.kind', value: 'file' }, { op: 'not', predicate: { op: 'truthy', path: 'configuration.kind' } }] },
           requiredWhen: { op: 'or', any: [{ op: 'eq', path: 'configuration.kind', value: 'file' }, { op: 'not', predicate: { op: 'truthy', path: 'configuration.kind' } }] } },
-        { path: 'configuration.image', title: 'Container image', widget: 'text',
-          visibleWhen: { op: 'eq', path: 'configuration.kind', value: 'image' }, requiredWhen: { op: 'eq', path: 'configuration.kind', value: 'image' } },
-        { path: 'configuration.setupScript', title: 'Setup script', widget: 'textarea',
-          description: 'Optional. Runs inside the container before enrollment.', visibleWhen: { op: 'eq', path: 'configuration.kind', value: 'image' } },
         { path: 'configuration.config', title: 'Devcontainer configuration', description: 'JSON or JSONC. Relative paths resolve from the workspace .devcontainer folder.', widget: 'textarea',
           visibleWhen: { op: 'eq', path: 'configuration.kind', value: 'inline' }, requiredWhen: { op: 'eq', path: 'configuration.kind', value: 'inline' } },
       ] },
@@ -140,7 +142,7 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
     acquire: { ...defaults, title: 'Realize Devcontainer child', dangerLevel: 'writesLocal', inputSchema: DEVCONTAINER_ROLE_SCHEMAS.acquireInput,
       confirmation: { title: 'Create Devcontainer', body: 'Runs the reviewed host and child setup hooks on this controller.', confirmLabel: 'Create' },
       resultSchema: DEVCONTAINER_RECONCILIATION_SCHEMAS.result,
-      async run(input, context) { try { return await (await provider(context, input.launch)).acquire(input.launch, input.managedId ?? ''); }
+      async run(input, context) { try { return await (await provider(context, input.launch)).acquire(input.launch, input.managedId ?? '', input.guestHome); }
         catch (error) { return { kind: 'unknown' as const, recovery: { reference: input.launch.configPath ?? input.managedId ?? '', reason: code(error) } }; } } },
     bootstrap: { ...defaults, title: 'Resolve private child enrollment transport', dangerLevel: 'writesLocal',
       confirmation: { title: 'Prepare Devcontainer enrollment' },
@@ -168,7 +170,7 @@ export const DEVCONTAINER_PLUGIN = definePlugin({
     rebuild: { ...defaults, title: 'Rebuild exact Devcontainer installation', dangerLevel: 'destructive',
       confirmation: { title: 'Rebuild Devcontainer', body: 'Replaces this container and runs the reviewed host and child setup hooks.', confirmLabel: 'Rebuild' },
       inputSchema: DEVCONTAINER_ROLE_SCHEMAS.rebuildInput, resultSchema: DEVCONTAINER_ROLE_SCHEMAS.rebuildResult,
-      async run(input, context) { return (await provider(context, input.resource)).rebuild(input.resource, input.reviewedEffectDigest); } },
+      async run(input, context) { return (await provider(context, input.resource)).rebuild(input.resource, input.reviewedEffectDigest, input.guestHome); } },
     reconcile: { ...defaults, title: 'Observe Devcontainer replacement', dangerLevel: 'safe',
       inputSchema: DEVCONTAINER_RECONCILIATION_SCHEMAS.input, resultSchema: DEVCONTAINER_RECONCILIATION_SCHEMAS.result,
       async run(input, context) {

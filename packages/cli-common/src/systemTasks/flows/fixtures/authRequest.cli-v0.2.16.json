@@ -1,0 +1,22 @@
+{
+  "publicKey": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+  "publicKeyB64Url": "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+  "claimSecret": "redacted-claim-secret",
+  "pairing": {
+    "secretB64Url": "redacted-pairing-secret",
+    "createdAtMs": 10,
+    "expiresAtMs": 20
+  },
+  "pairingRequirement": "compatible",
+  "serverId": "redacted-server",
+  "serverUrl": "https://home.example.test",
+  "publicServerUrl": "https://home.example.test",
+  "webappUrl": "https://app.example.test",
+  "links": {
+    "configureWebUrl": "https://app.example.test/server?redacted",
+    "configureMobileUrl": "happier://server?redacted",
+    "webUrl": "https://app.example.test/terminal?redacted",
+    "mobileUrl": "happier://terminal?redacted"
+  },
+  "stateFile": "/redacted/auth/pending/redacted.json"
+}

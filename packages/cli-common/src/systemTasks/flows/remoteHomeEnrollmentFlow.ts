@@ -9,7 +9,7 @@ import { ManagedEnrollmentCorrelationV1Schema, type ManagedEnrollmentCorrelation
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { formatGuestAuthCarrierFailure, formatRemoteEnrollmentCommandFailure, formatHomeAuthorityMismatchFacts, readGuestCliFailure,
   type GuestCliFailureFacts } from '@happier-dev/protocol/ssh/commandFailure';
-import { projectRemoteHomeEnrollmentFailure } from './remoteHomeEnrollmentFailure.js';
+import { projectRemoteHomeEnrollmentFailure, projectGuestHomeReachabilityFailure } from './remoteHomeEnrollmentFailure.js';
 
 export type RemoteHomeEnrollmentPairingRequest = Readonly<{
   publicKey: string;
@@ -270,6 +270,8 @@ export async function runRemoteHomeEnrollmentFlow(params: Readonly<{
           && response.kind === `auth_${args[1]}` && isRecord(response.error) ? response.error : null;
         const fields = [`exit ${result.status}`];
         const guestFailure = diagnostic ? readGuestCliFailure(response) : null;
+        const unreachable = projectGuestHomeReachabilityFailure(homeTargetInput, guestFailure);
+        if (unreachable) throw unreachable;
         const guestCode = guestFailure?.guestCliCode;
         if (guestCode) fields.push(`code ${guestCode}`);
         if (args[1] === 'wait' && fields.length === 1) {
@@ -350,7 +352,7 @@ export async function runRemoteHomeEnrollmentFlow(params: Readonly<{
   let streamDeadlineTimer: ReturnType<typeof setTimeout> | undefined;
 
   const processFailure = (code: Parameters<typeof projectRemoteHomeEnrollmentFailure>[0]['code'], result?: HappierTextResult) =>
-    projectRemoteHomeEnrollmentFailure({ code, result, startedAtMs: processStartedAtMs, guestFailure,
+    projectRemoteHomeEnrollmentFailure({ code, result, homeTargetInput, startedAtMs: processStartedAtMs, guestFailure,
       requestEventSeen: state.pairingRequest !== null, finalResultEventSeen: state.result !== null,
       signal: params.signal });
   const projectControllerFailure = (error: unknown, result?: HappierTextResult): unknown => {

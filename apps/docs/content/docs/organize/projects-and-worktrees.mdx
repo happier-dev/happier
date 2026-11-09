@@ -20,25 +20,46 @@ Projects and sessions share the same underlying repository tooling, but they sol
 
 ## What a project looks like
 
-On desktop and wider layouts, a project is split into three cooperating surfaces:
+<Callout type="info">
+The Project pages, Sources, Open and dashboards described here are unreleased
+0.3 development behavior. Their integrated validation is still in progress.
+</Callout>
 
-- a **header** with back, worktrees, and terminal actions
-- a **main content area** that stays anchored to the project itself
-- a **right panel** with **Source control** and **Files**
+The Project header identifies the Project and selected checkout. Use its checkout
+selector to choose the machine and branch you want to work in. The main column
+opens Project pages such as **Overview**, **Code**, **Changes** and **Scripts**;
+companion panels keep repository tools available beside the page.
 
-On phone-sized layouts, the same project is shown as route-based screens:
+Phones open those destinations as pages rather than squeezing the desktop
+columns together. The same Project and exact checkout remain selected.
 
-- **Files**
-- **Source control**
-- **Details / overview**
+## Sources and Open
 
-The same project header model is used on both desktop and mobile:
+A Source remembers repository metadata for reuse or sharing. It is separate
+from an accepted checkout and from your private Project. Open a Source's detail
+to inspect its repository, audience, attached dashboards and **Your checkouts**.
+Seeing a Source does not grant Git credentials or Machine access; see
+[Source and document sharing](/accounts/session-sharing#project-sources-and-attached-documents-03-development).
 
-- back button to return to the project list
-- project title
-- current-worktree-aware title when you are not on the main checkout
-- worktrees button
-- terminal button
+**Open** can prepare a folder or repository choice without starting an Agent
+Session. The destination remains qualified to its Home and machine. On phones,
+Open and a standalone Source detail have a Back control in the page header.
+Open returns to Projects when there is no previous route; Source detail falls
+back to Sources. This includes a Source detail that is still loading or has
+become unavailable.
+
+## Overview dashboards
+
+In the 0.3 development flow, Overview has a default dashboard and can hold named
+dashboards. Create, rename, reorder or delete a named dashboard through its
+dashboard controls. The default dashboard cannot be deleted. Selecting a
+dashboard changes the view; it does not change its audience.
+
+Sharing a dashboard uses its document access sheet. Attaching it to a Team
+Source is a separate operation and does not grant access. On an attached shared
+dashboard, Can read permits viewing, Can edit permits editing and renaming, and
+the owner or Admin can manage sharing. The recipient cannot reorder or delete
+it from the owner's dashboard inventory.
 
 ## Project root vs selected worktree
 
@@ -59,14 +80,15 @@ The project overview stays anchored to the base repository, while the selected c
 
 ## Worktrees list behavior
 
-The project overview includes a searchable worktrees list.
+The Project header's checkout selector lists known checkouts and worktrees.
 
 That list includes:
 
 - the project’s main/root checkout
 - visible live Git worktrees for that repository
 
-Use it to move the project’s active checkout context without leaving the project.
+Use a local worktree entry to change the Project's active checkout context.
+Entries on another machine open that exact accepted checkout.
 
 ### What happens when you select one
 
@@ -113,38 +135,48 @@ On desktop, reopening a project restores the same project pane scope instead of 
 On mobile, opening a project from the project list returns to:
 
 1. the last active project screen for that project, if one exists
-2. otherwise **Files**
+2. otherwise **Overview**
 
 The selected worktree is also restored when possible.
 
-## Opening the worktrees overview
-
-The worktrees button in the header is an explicit project view mode.
-
-- If you are already in Files, Source control, or Details, pressing it opens the worktrees overview
-- If details tabs already exist, the overview still opens
-- Opening a new details action from overview exits overview and returns to the detailed surface
-
-In other words, “show me worktrees” is treated as explicit user intent, not as something suppressed just because details already exist.
-
 ## Terminal from a project
 
-The terminal action in the project header always opens a terminal details tab for the current selected checkout.
+The Project menu's **Terminal** command opens the bottom terminal pane for the
+selected checkout.
 
 That means:
 
 - if you switched to a worktree, the terminal starts there
 - if you are on the main checkout, the terminal starts from the project root
-- if you were looking at the worktrees overview, opening the terminal exits overview and opens the details tab
 
 ## Project command definitions
 
 <Callout type="info">
-Project-definition inspection and guarded manifest editing are in development on
-the 0.3 line. The Action contracts and CLI command projections below still await
-integrated package and live validation; the visual Scripts editor is a later
-integration step. This is not a stable or preview availability claim.
+The Scripts page, project-definition inspection and guarded manifest editing
+describe unreleased 0.3 development behavior. Integrated validation is still in
+progress; this is not a stable or preview availability claim.
 </Callout>
+
+Open **Scripts** for the selected checkout's commands and setup. If it has no
+project file, **Create project file** opens the editor and **Set up with an agent**
+prepares an ordinary editable new-session draft. Review it and explicitly send
+when ready; opening the draft does not start the Agent. **Edit project file**
+offers Form and raw editing for an existing definition.
+
+When a setup-authoring Session is associated with this checkout, Scripts shows
+its private Session name and time once they are readable. The line reserves its
+space while that Session loads, including before a project file exists. It
+records the authoring relationship, not proof that setup ran or succeeded.
+On a wide Scripts page, **Changes** returns to the stored authoring context when
+that context is available. Older checkouts without a recorded relationship may
+only discover it after the Session has loaded; historical Sessions are not
+backfilled.
+
+For declared scripts, the Overview **Scripts** widget shows each script's status
+and opens existing output when selected. Run commands from the Scripts page or
+companion list; the widget's script rows have no Run button. Setup has its own
+review and status row. While its review awaits your decision, it says
+**Waiting for your approval**; opening that review does not run setup.
 
 The development Action catalog projects inspection as `happier project inspect`
 and saving as `happier project manifest update`. Both take a qualified checkout:
@@ -163,6 +195,7 @@ the command body:
 ```json
 {
   "version": 1,
+  "toolchain": { "kind": "toolchain", "tool": "mise", "configPath": "mise.toml" },
   "scripts": {
     "build": {
       "source": {
@@ -176,7 +209,7 @@ the command body:
 }
 ```
 
-Scripts and services are separate declarations. Inspection also reports environment
+Scripts and services are separate declarations. Inspection also reports toolchain
 and Devcontainer selections separately. When a file cannot be read or a definition
 needs native evaluation, inspection retains the definitions it did find and reports
 partial coverage with a diagnostic for that file. Finding a definition does not
@@ -187,7 +220,7 @@ offers. Only verified available, unambiguous commands are preselected; other
 offers stay in the inspection results without being preselected. A declared tool
 version is not proof that the version is installed: inspection does not run version
 commands. Unproved versions remain unresolved. Passive plugin offers also remain
-unresolved because inspection does not run their command or environment effects.
+unresolved because inspection does not run their command or toolchain effects.
 
 Unknown JSON keys produce diagnostics while valid known declarations remain usable.
 Structured edits preserve untouched fields and their values, including unknown
@@ -230,7 +263,7 @@ from this finite command queue. A Service without a declared port may have an
 observed HTTP address, but no address is invented when listeners are ambiguous.
 
 In the 0.3 development implementation, an explicitly portable Service can use a
-worker's native command or selected environment. Happier copies current files
+worker's native command or selected toolchain. Happier copies current files
 through Sync before reviewing that destination's native facts and setup. Changed
 copied configuration or an unavailable native adapter prevents launch; it does
 not silently run in the host environment. Integrated package and live validation
@@ -279,6 +312,13 @@ Happier replaces the image's entrypoint and command to keep the child running;
 Dev Container metadata hooks are not run in image mode. The setup script runs
 as the image's default user on creation and rebuild, not on stop and start. The
 named workspace volume is retained on rebuild and container deletion.
+
+Image creation and rebuild pass the selected Home endpoint's hostname and the
+creating computer's resolved addresses to Docker or Podman through `--add-host`.
+This preserves private DNS resolution without changing the container's network
+mode. The container still needs a working route to Home; this does not create
+a VPN or forward the computer's Home connection. Advanced Dev Container
+configuration keeps its reviewed native networking settings.
 
 For advanced configuration, creation reviews host initialization and child
 image, build, Compose, Features, mounts, networking and lifecycle effects before

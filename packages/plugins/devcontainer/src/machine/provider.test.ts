@@ -157,7 +157,8 @@ describe('Devcontainer native roles', () => {
         kind: 'image', image: 'example:latest', setupScript: 'touch /workspace/prepared' } }, { surface: 'plugin' }));
       if (!options.base?.available) throw new Error('Expected selected runtime availability');
       const selectedLaunch = DevcontainerLaunchSchema.parse(options.base.launch);
-      const acquired = DEVCONTAINER_RECONCILIATION_SCHEMAS.result.parse(await kit.invokeAction('acquire', { launch: selectedLaunch, managedId: 'managed-a' }, { surface: 'plugin' }));
+      const guestHome = { origin: 'https://home.example.test:9443', addresses: ['100.64.0.5'] };
+      const acquired = DEVCONTAINER_RECONCILIATION_SCHEMAS.result.parse(await kit.invokeAction('acquire', { launch: selectedLaunch, managedId: 'managed-a', guestHome }, { surface: 'plugin' }));
       if (acquired.kind !== 'bound') throw new Error('Expected actual retained image');
       const retained = acquired.resource.value;
       expect(retained).toMatchObject({ containerId, runtime, storage: { kind: 'child', childPath: '/workspace' }, volumes: [{ name: volume, childPath: '/workspace' }] });
@@ -167,12 +168,12 @@ describe('Devcontainer native roles', () => {
       expect(await kit.invokeAction('power', { resource: retained, intent: 'stop' }, { surface: 'plugin' })).toMatchObject({ kind: 'confirmed' });
       expect(await kit.invokeAction('power', { resource: retained, intent: 'start' }, { surface: 'plugin' })).toMatchObject({ kind: 'confirmed' });
       expect(requests.filter(request => request.args?.at(-1) === 'touch /workspace/prepared')).toHaveLength(1);
-      const rebuilt = await kit.invokeAction('rebuild', { resource: retained, reviewedEffectDigest: selectedLaunch.reviewedEffectDigest }, { surface: 'plugin' });
+      const rebuilt = await kit.invokeAction('rebuild', { resource: retained, reviewedEffectDigest: selectedLaunch.reviewedEffectDigest, guestHome }, { surface: 'plugin' });
       expect(rebuilt).toMatchObject({ kind: 'bound', resource: { value: { containerId: 'b'.repeat(64), volumes: retained.volumes } } });
       expect(requests.filter(request => request.args?.at(-1) === 'touch /workspace/prepared')).toHaveLength(2);
       expect(requests.filter(request => request.args?.[0] === 'run').map(request => request.args)).toEqual([
-        expect.arrayContaining(['--mount', `type=volume,source=${volume},target=/workspace`]),
-        expect.arrayContaining(['--mount', `type=volume,source=${volume},target=/workspace`]),
+        expect.arrayContaining(['--mount', `type=volume,source=${volume},target=/workspace`, '--add-host', 'home.example.test:100.64.0.5']),
+        expect.arrayContaining(['--mount', `type=volume,source=${volume},target=/workspace`, '--add-host', 'home.example.test:100.64.0.5']),
       ]);
       expect(requests.some(request => request.args?.some(arg => arg.startsWith('type=bind')))).toBe(false);
       expect(requests.filter(request => request.args?.includes('chown')).map(request => request.args)).toEqual([

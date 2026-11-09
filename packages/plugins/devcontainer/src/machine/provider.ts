@@ -1,5 +1,5 @@
 import { projectPluginFailureText } from '@happier-dev/plugin-sdk';
-import { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1, type MachineProvisionerNativeCauseV1, type MachineProvisionerGuestHomeV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { isDeepStrictEqual } from 'node:util';
 import { posix, win32 } from 'node:path';
 import type { ExecService, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
@@ -166,7 +166,7 @@ export function createDevcontainerProvider(input: Readonly<{
       '--format', '{{.ID}}'], undefined, false, managedMachineId, launch.workspaceFolder))
       .trim().split(/\r?\n/u).filter(Boolean);
   }
-  async function realize(launch: DevcontainerLaunch, managedMachineId: string, recoveryReference = launch.configPath ?? managedMachineId) {
+  async function realize(launch: DevcontainerLaunch, managedMachineId: string, recoveryReference = launch.configPath ?? managedMachineId, guestHome?: MachineProvisionerGuestHomeV1) {
     let nativeCause: MachineProvisionerNativeCauseV1 | undefined;
     try {
       // Only admitted acquire/rebuild roles reach evaluation of host and child
@@ -179,6 +179,9 @@ export function createDevcontainerProvider(input: Readonly<{
           ...Object.entries(nativeLabels(launch, managedMachineId)).flatMap(([key, value]) => ['--label', `${key}=${value}`]),
           '--mount', mountArgument([launch.workspaceFolder ? 'type=bind' : 'type=volume',
             `source=${launch.workspaceFolder ?? `${devcontainerComposeProjectName(managedMachineId)}-workspace`}`, 'target=/workspace']),
+          // Native hosts entries preserve the declared hostname/TLS identity and
+          // the controller's split DNS without changing the guest's network mode.
+          ...(guestHome?.addresses.flatMap(address => ['--add-host', `${new URL(guestHome.origin).hostname}:${address}`]) ?? []),
           '--workdir', '/workspace', '--entrypoint', 'sh', '--', source.image,
           '-c', "trap 'exit 0' TERM INT; while :; do sleep 2147483647 & wait $!; done"], undefined, false, managedMachineId, launch.workspaceFolder)
         : await run(cli(), ['up', ...managedFlags(launch, managedMachineId)], undefined, false, managedMachineId, launch.workspaceFolder); }
@@ -237,7 +240,7 @@ export function createDevcontainerProvider(input: Readonly<{
         return /^\d+\.\d+\.\d+(?:[-+].*)?$/u.test(version) ? { available: true } : { available: false, code: 'devcontainer_version_unavailable' };
       } catch (error) { return { available: false, code: code(error) }; }
     },
-    async acquire(rawLaunch: DevcontainerLaunch, managedMachineId: string) {
+    async acquire(rawLaunch: DevcontainerLaunch, managedMachineId: string, guestHome?: MachineProvisionerGuestHomeV1) {
       if (!managedMachineId) return { kind: 'rejected' as const, code: 'invalid_request' as const };
       const launch = DevcontainerLaunchSchema.parse(rawLaunch);
       try {
@@ -246,7 +249,7 @@ export function createDevcontainerProvider(input: Readonly<{
         return { kind: 'rejected' as const, code: code(error) === 'request_conflict' ? 'request_conflict' as const
           : code(error) === 'invalid_request' ? 'invalid_request' as const : 'provider_unavailable' as const };
       }
-      const result = await realize(launch, managedMachineId);
+      const result = await realize(launch, managedMachineId, undefined, guestHome);
       if (result.kind === 'unknown' && result.recovery.reason === 'native_setup_failed') return result;
       return result.kind === 'bound' ? result : { kind: 'pending' as const, ...(result.nativeCause ? { nativeCause: result.nativeCause } : {}), nativeOperationRef: {
         contributionRef, schemaVersion: 1, value: { managedMachineId, launch,
@@ -268,7 +271,7 @@ export function createDevcontainerProvider(input: Readonly<{
           : { kind: 'pending' as const, nativeOperationRef: { contributionRef, schemaVersion: 1, value: operation } };
       }
     },
-    async rebuild(raw: DevcontainerResource, reviewedEffectDigest: string) {
+    async rebuild(raw: DevcontainerResource, reviewedEffectDigest: string, guestHome?: MachineProvisionerGuestHomeV1) {
       let issued = false;
       try {
         const { resource } = await exact(raw);
@@ -285,7 +288,7 @@ export function createDevcontainerProvider(input: Readonly<{
         if (!completed(await run(input.docker, ['rm', '--force', resource.containerId], undefined, false, resource.managedMachineId, resource.workspaceFolder))) {
           return { kind: 'unknown' as const, recovery: { reference: resource.containerId, reason: 'native_rebuild_unknown' } };
         }
-        return await realize(replacementLaunch, resource.managedMachineId, resource.containerId);
+        return await realize(replacementLaunch, resource.managedMachineId, resource.containerId, guestHome);
       } catch (error) {
         if (!issued) return { kind: 'refused' as const, code: code(error) };
         return { kind: 'unknown' as const, recovery: { reference: raw.containerId, reason: code(error) } };
