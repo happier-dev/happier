@@ -118,9 +118,18 @@ export function createUiConnectedAccountActionServices(input: Readonly<{
     return {
         async getBinding(purpose, options = {}) {
             try {
-                return await read(purpose, options, async ({ binding }): Promise<ConnectedAccountBindingSummary> => ({ purpose,
-                    account: binding.account, service: binding.account.service,
-                    target: { kind: binding.group ? 'group' : 'account', displayName: binding.displayName } }));
+                return await read(purpose, options, async ({ binding }): Promise<ConnectedAccountBindingSummary> => {
+                    const profile = options.observation ? binding.observation.profiles.find(profile =>
+                        sameQualifiedConnectedAccountRef(profile.ref, binding.account)) : undefined;
+                    return { purpose, account: binding.account, service: binding.account.service,
+                        target: { kind: binding.group ? 'group' : 'account', displayName: binding.displayName },
+                        ...(options.observation ? {
+                            ...(profile ? { credentialRevision: profile.credentialRevision,
+                                configurationRevision: profile.configurationRevision } : {}),
+                            ...(binding.group ? { group: binding.group } : {}),
+                        } : {}),
+                    };
+                });
             } catch (error) {
                 if (error instanceof PluginError && error.code === 'plugin_connected_account_binding_unavailable') return null;
                 throw error;

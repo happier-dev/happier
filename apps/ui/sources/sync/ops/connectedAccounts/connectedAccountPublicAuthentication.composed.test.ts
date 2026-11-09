@@ -647,6 +647,10 @@ it.each([
             .rejects.toMatchObject({ code: 'plugin_connected_account_binding_out_of_scope' });
         expect(credentialReads).toBe(0);
         expect(await capability.services.connectedAccounts.getBinding('provision')).toMatchObject({ account: selected });
+        expect(await capability.services.connectedAccounts.getBinding('provision', { observation: true })).toMatchObject({
+            account: selected, credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: null,
+        });
+        expect(credentialReads).toBe(0);
         const material = await capability.services.connectedAccounts.materialize('provision', materialization, { expectedAccount: selected });
         expect(material).toEqual({ kind: 'httpHeaders', headers: { Authorization: `Bearer ${sentinel}` } });
         const echo = await capability.services.http.request({ url: `${url}/vendor/echo`, redirect: 'error' });
