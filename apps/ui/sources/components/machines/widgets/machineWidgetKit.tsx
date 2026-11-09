@@ -1,3 +1,4 @@
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -12,16 +13,18 @@ import type { MachinePageTabParams } from '@/components/machines/page/machinePag
 import { useMachinesDoor } from '@/components/machines/page/machinesDoor';
 import { ItemLoadStateRows } from '@/components/ui/lists/ItemLoadStateRows';
 import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { useWidgetFrameBodyMeta } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { Typography } from '@/constants/Typography';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { storage } from '@/sync/domains/state/storageStore';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
-import { getMachineDisplayName, isMachineDisplayHydrating } from '@/utils/sessions/machineDisplayNames';
+import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { formatLastSeen } from '@/utils/sessions/sessionUtils';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
@@ -82,7 +85,7 @@ export type MachineWidgetMachineFacts = Readonly<{
   machine: Machine | null;
   name: string;
   online: boolean | null;
-  /** The person only uses this machine (sync proves custody with `isShared === false`). */
+  /** Published Machine access does not grant Manage. */
   recipient: boolean;
   daemonStateVersion: number | null;
   lastSeenAt: number | null;
@@ -114,20 +117,19 @@ export function useMachineWidgetMachine(
     ),
   );
   return React.useMemo(() => {
-    const activeAt = machine?.activeAt;
+    const activeAt = machine ? readMachineActivity(machine).activeAt : null;
     return {
       machine,
       // A widget sentence can use the generic subject while identity loads, never "Loading is offline".
-      name: machine && !isMachineDisplayHydrating(machine)
-        ? getMachineDisplayName(machine, inventory ?? undefined)
-        : t('machines.widgets.body.common.unknownMachine'),
+      name: getSettledMachineDisplayName(machine, inventory ?? undefined)
+        ?? t('machines.widgets.body.common.unknownMachine'),
       online: presence.reachability === 'unknown' ? null : presence.reachability === 'reachable',
-      recipient: machine ? machine.isShared !== false && machine.access?.role !== 'manage' : false,
+      recipient: machine ? !canManageMachine(machine) : false,
       daemonStateVersion: machine?.daemonStateVersion ?? null,
       lastSeenAt:
         typeof activeAt === 'number' && activeAt > 0 ? activeAt : null,
     };
-  }, [language, inventory, machine, presence.reachability]);
+  }, [language, inventory, machine, presence.reachability, presence.lastSeenAt]);
 }
 
 /** Opens the bound machine's page at the tab (and place) that answers what the widget shows. */
@@ -251,10 +253,11 @@ export function MachineWidgetState(
         iconName="wifi-slash"
         // The frame's meta already says "Offline" and its subtitle names the machine, so the body says
         // only what that leaves out: when it was last seen. Never seen: it says who is offline.
-        title={seen ?? t('machines.widgets.body.common.machineOffline', {
+        // "Last seen …" is a sentence, so a detail follows it as the next sentence, never after a " · ".
+        title={seen && props.detail ? `${seen} ${props.detail}` : seen ?? t('machines.widgets.body.common.machineOffline', {
           machine: props.machineName,
         })}
-        reason={props.detail || undefined}
+        reason={seen ? undefined : props.detail || undefined}
       />
     );
   }
@@ -297,15 +300,21 @@ export function MachineWidgetState(
       />
     );
   }
+  // A widget's empty body is part of a page of cards, not a page of its own (lab rw G "Not set up", AC
+  // "Nothing this week", FL "One machine"): the sentence and what it means start on the body's edge, and its
+  // one way forward is a quiet bordered button, so a Home of widgets never reads as a row of filled primaries.
+  // With nothing to do, the sentence itself stays quiet.
   return (
-    <SurfaceStateCard
-      testID={`${props.testID}.empty`}
-      kind="empty"
-      replacesContent
-      title={props.title}
-      {...(props.reason ? { reason: props.reason } : {})}
-      {...(props.action ? { action: props.action } : {})}
-    />
+    <View testID={`${props.testID}.empty`} style={styles.empty}>
+      <Text accessibilityRole="header" style={props.action ? styles.emptyTitle : styles.emptyTitleQuiet}>{props.title}</Text>
+      {props.reason ? <Text style={styles.emptyReason}>{props.reason}</Text> : null}
+      {props.action ? (
+        <View style={styles.emptyActions}>
+          <RoundButton size="small" display="secondary" title={props.action.label} testID={`${props.testID}.empty.action`}
+            onPress={props.action.onPress} />
+        </View>
+      ) : null}
+    </View>
   );
 }
 
@@ -337,6 +346,11 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.variant('meta'),
     color: theme.colors.text.tertiary,
   },
+  empty: { gap: theme.space.s4, minWidth: 0 },
+  emptyTitle: { ...Typography.variant('label', 'semiBold'), color: theme.colors.text.primary },
+  emptyTitleQuiet: { ...Typography.variant('label', 'medium'), color: theme.colors.text.secondary },
+  emptyReason: { ...Typography.variant('meta'), color: theme.colors.text.secondary },
+  emptyActions: { flexDirection: 'row', marginTop: theme.space.s8 },
   offlineMeta: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, flexShrink: 1, minWidth: 0 },
   column: {
     flexGrow: 1,

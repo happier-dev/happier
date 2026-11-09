@@ -1,21 +1,20 @@
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 import * as React from 'react';
 import { MachineServiceWatchMutationResultV1Schema, type MachineServiceRowV1 } from '@happier-dev/protocol/actions/specs/machine/services';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { showMachineTerminalSheet } from '@/components/machines/terminal/MachineTerminalSheet';
-import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useServerScopedMachine } from '@/sync/store/hooks';
 
 type UnwatchOutcome = Readonly<{ kind: 'unwatched' | 'conflict' }> | Readonly<{ kind: 'failed'; code: string }>;
-const canManage = (machine: Machine | null): boolean => machine !== null
-  && (machine.isShared === false || machine.access?.role === 'manage');
+
 
 /** Bound Service entries consume the Machine's admitted role; the Actions still own authorization. */
 export function useMachineServiceActions(input: Readonly<{
   serverId: string; machineId: string; machineName: string; service: MachineServiceRowV1;
   environmentId: string | null; offline: boolean;
 }>) {
-  const manage = useServerScopedMachine(input.serverId, input.machineId, canManage);
+  const manage = useServerScopedMachine(input.serverId, input.machineId, canManageMachine);
   const execution = useMountedActionExecution(input.serverId);
   const { service } = input;
   const key = JSON.stringify([input.serverId, input.machineId, service.serviceId, service.generation,

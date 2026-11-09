@@ -22,6 +22,17 @@ export function resolveManagedFiniteWakeControllerV1(machine: Pick<ManagedMachin
     : { kind: 'unavailable', reason: 'no_controller' };
 }
 
+/** Desired intent is history; only an unsettled submitted effect proves a native power transition. */
+export function resolveManagedMachinePendingPowerIntentV1(machine: Pick<ManagedMachineV1, 'observation' | 'submittedNativeEffect'>):
+  'start' | 'resume' | 'stop' | 'suspend' | null {
+  const intent = machine.submittedNativeEffect?.intent;
+  const power = machine.observation?.power;
+  if (intent === 'start' || intent === 'resume') return power !== 'running' ? intent : null;
+  if (intent === 'stop') return power !== 'stopped' ? intent : null;
+  if (intent === 'suspend') return power !== 'suspended' ? intent : null;
+  return null;
+}
+
 /** One runtime decision for demand, Pending activation and retained-power presentation.
  * Presence and native observation remain independent inputs; this grants no dispatch authority.
  */
@@ -43,13 +54,12 @@ export function resolveManagedMachineRuntimeV1(machine: ManagedMachineV1, enroll
   const nativeTarget = available && machine.archivedAt === undefined && machine.enrolledMachineId === enrolledMachineId
     && machine.allocation === 'bound' && Boolean(machine.resource) && observation?.availability === 'present';
   const retainedTarget = nativeTarget && machine.desired !== 'delete' && !machine.cleanup && machine.submittedNativeEffect?.intent !== 'delete';
-  const starting = retainedTarget && observation?.power !== 'running'
-    && (machine.submittedNativeEffect?.intent === 'start' || machine.submittedNativeEffect?.intent === 'resume');
+  const pendingPower = resolveManagedMachinePendingPowerIntentV1(machine);
+  const starting = retainedTarget && (pendingPower === 'start' || pendingPower === 'resume');
   const retainedWake = retainedTarget && observation?.storage === 'retained'
     && isMachineRetainedWakeEligibleV1(machine.retention, machine.reviewedFacts?.retentionCapabilities);
   const wakeState = starting ? 'starting' : retainedWake && parked ? 'asleep' : null;
-  const stopping = retainedTarget && (machine.submittedNativeEffect?.intent === 'stop' && observation?.power !== 'stopped'
-    || machine.submittedNativeEffect?.intent === 'suspend' && observation?.power !== 'suspended');
+  const stopping = retainedTarget && (pendingPower === 'stop' || pendingPower === 'suspend');
   // Current native lifecycle is presentation, independent of whether automatic wake is enabled or eligible.
   const state = stopping ? 'stopping' : starting ? 'starting'
     : nativeTarget && parked ? 'asleep' : null;

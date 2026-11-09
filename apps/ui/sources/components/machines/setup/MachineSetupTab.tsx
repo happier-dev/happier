@@ -1,4 +1,6 @@
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 import * as React from 'react';
+import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { machineSetupSourceOriginKeyV1, type MachineSetupSourceEntryV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { View } from 'react-native';
@@ -20,7 +22,12 @@ import {
 } from '@/components/settings/machines/managed/MachineSetupPlanReview';
 import { describeMachineSetup } from '@/components/settings/machines/managed/MachineSetupSection';
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
+import { machineSetupPresetSource, readMachineSetupPresetChoices, type MachineSetupPresetChoice } from '@/components/settings/machines/managed/machineSetupPresetChoices';
 import { machineSetupSourceName } from '@/components/machines/setup/machineSetupSourceName';
+import { showMachineSavePreset } from '@/components/machines/setup/MachineSavePresetModal';
+import { machinePresetCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
+import { machineSetupItemReadRow } from '@/components/settings/machines/managed/MachineSetupSection';
+import { machineSetupItemPresentation } from '@/components/settings/machines/managed/machineSetupItems';
 import { buildStoreListingRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { useSoftwareOptions } from '@/components/store/catalog/storeSoftware';
 import { ManagedSectionCount } from '@/components/settings/machines/managed/ManagedSectionCount';
@@ -40,11 +47,11 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
-import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useServerScopedMachine } from '@/sync/store/hooks';
 import { t } from '@/text';
 
 import {
+  readMachineSetupApps,
   readMachineSetupRecipes,
   useMachineSetup,
   type MachineSetupRecipeRow,
@@ -54,6 +61,7 @@ import { describeMachineSetupReason } from './machineSetupReasonText';
 
 type SetupParams = Extract<MachinePageTabParams, { id: 'setup' }>;
 const SETUP_PARAMS = Object.freeze({ id: 'setup' }) as SetupParams;
+const NO_PRESETS: readonly ManagedMachinePresetV1[] = Object.freeze([]);
 const TOOLS_PARAMS = Object.freeze({
   id: 'setup',
   page: 'tools',
@@ -67,8 +75,7 @@ export function parseMachineSetupParams(
 }
 
 /** Owners and Manage members change setup; Use members read it (MR6). */
-const selectCanManage = (machine: Machine | null) =>
-  machine?.isShared !== true || machine.access?.role === 'manage';
+const selectCanManage = canManageMachine;
 
 /**
  * Machine → Setup (P-M1, lab `machine/setup/over`): what this Machine is set up with — its preset, its recipes, its
@@ -119,6 +126,8 @@ function MachineSetupRoot(
     props.machineId,
     selectCanManage,
   );
+  const saveScope = useServerCredentialAccountScopeBinding(props.serverId).binding?.scope ?? null;
+  const homeId = getServerProfileById(props.serverId)?.serverIdentityId ?? null;
   const editable = canManage && props.online !== false;
   const projection = useAppShellPluginUiDeclarationProjection();
   const localize = usePluginLocalizedTextResolver({ projection });
@@ -126,10 +135,8 @@ function MachineSetupRoot(
   const presets = useMachinePresets(serverIds);
   const presetList = React.useMemo(
     () =>
-      (presets.presetsByServerId[props.serverId] ?? []).filter(
-        (preset) => preset.setup && preset.archivedAt === undefined,
-      ),
-    [presets.presetsByServerId, props.serverId],
+      readMachineSetupPresetChoices(presets.presetsByServerId[props.serverId] ?? [], projection, localize),
+    [presets.presetsByServerId, props.serverId, projection, localize],
   );
   const recipes = React.useMemo(
     () => readMachineSetupRecipes(setup.plan, setup.observation),
@@ -153,6 +160,9 @@ function MachineSetupRoot(
   const nothingSetUp =
     setup.plan !== null && attached.length === 0 && recipes.length === 0;
   const firstLoad = setup.plan === null && setup.failure?.during !== 'check';
+  const apps = readMachineSetupApps(setup.plan?.sources ?? NO_SOURCES);
+  const capturable = setup.plan?.sources.some((source) => describeMachineSetup(source.setup).length > 0) === true;
+  const presetCatalog = presets.presetsByServerId[props.serverId] ?? NO_PRESETS;
 
   const freshness = (
     <SurfaceFreshnessLine
@@ -228,7 +238,7 @@ function MachineSetupRoot(
                   const sourceKey = machineSetupSourceOriginKeyV1(source);
                   const latest =
                     source.kind === 'accountPreset'
-                      ? (presetList.find((entry) => entry.id === source.presetId) ?? null)
+                      ? (presetList.find((entry): entry is ManagedMachinePresetV1 => !('kind' in entry) && entry.id === source.presetId) ?? null)
                       : null;
                   return (
                     <AttachedPresetRow
@@ -360,6 +370,51 @@ function MachineSetupRoot(
               </ItemGroup>
             );
           })}
+          {apps.length > 0 ? (
+            <ItemGroup
+              title={t('machinePresets.setup.tab.recipesApps')}
+              titleAccessory={<ManagedSectionCount count={apps.length} />}
+              testID="machine-setup-recipes-apps"
+            >
+              {apps.map((app) => {
+                const read = machineSetupItemReadRow(app.item, machineSetupItemPresentation(app.item, null));
+                return (
+                  <Item
+                    key={app.key}
+                    {...read}
+                    subtitle={joinHappierFacts(
+                      app.source.kind === 'direct' ? null : t('machinePresets.setup.tab.fromPreset', { preset: nameOf(app.source) }),
+                      read.subtitle,
+                    )}
+                    subtitleLines={0}
+                    mode="info"
+                    showChevron={false}
+                  />
+                );
+              })}
+            </ItemGroup>
+          ) : null}
+          {capturable && saveScope && homeId ? (
+            <ItemGroup testID="machine-setup-save">
+              <Item
+                testID="machine-setup-save-preset"
+                icon={<Icon name="stack" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
+                title={t('machinePresets.setup.tab.saveAsPreset')}
+                subtitle={t('machinePresets.setup.tab.saveAsPresetHelp')}
+                onPress={() => {
+                  showMachineSavePreset({
+                    serverId: props.serverId,
+                    homeId,
+                    scope: saveScope,
+                    machineName: machine,
+                    sources: setup.plan!.sources,
+                    presets: presetCatalog,
+                    onSaved: (presetId) => router.push(machinePresetCollectionHref({ serverId: props.serverId, presetId }) as never),
+                  });
+                }}
+              />
+            </ItemGroup>
+          ) : null}
         </>
       )}
       <ItemGroup
@@ -707,8 +762,8 @@ type AttachedSource = Exclude<MachineSetupSourceEntryV1, { kind: 'direct' }>;
 const NO_SOURCES: readonly AttachedSource[] = Object.freeze([]);
 const isAttachedSource = (source: MachineSetupSourceEntryV1): source is AttachedSource => source.kind !== 'direct';
 /** The origin key an Account preset has once attached, from the source owner rather than a local format. */
-const presetOriginKey = (preset: ManagedMachinePresetV1) =>
-  machineSetupSourceOriginKeyV1({ kind: 'accountPreset', presetId: preset.id, presetRevision: preset.revision, setup: preset.setup ?? {} });
+const presetOriginKey = (preset: MachineSetupPresetChoice) =>
+  machineSetupSourceOriginKeyV1(machineSetupPresetSource(preset));
 
 /** One attached preset (q/machine): what it is and how current, Apply again when its preset moved on, Stop using. */
 function AttachedPresetRow(
@@ -796,9 +851,9 @@ function AttachedPresetRow(
 /** Attach a preset (q/attach): setup presets this Machine doesn't use yet; choosing one reviews it in place. */
 function AttachPresetMenu(
   props: Readonly<{
-    presets: readonly ManagedMachinePresetV1[];
+    presets: readonly MachineSetupPresetChoice[];
     disabled: boolean;
-    onChoose: (preset: ManagedMachinePresetV1) => void;
+    onChoose: (preset: MachineSetupPresetChoice) => void;
   }>,
 ) {
   const [open, setOpen] = React.useState(false);
@@ -941,7 +996,7 @@ function ToolsRow(
 }
 
 /** A preset's one line: what it sets up, in the receipt's own words. */
-function describePreset(preset: ManagedMachinePresetV1): string {
+function describePreset(preset: MachineSetupPresetChoice): string {
     return describeMachineSetup(preset.setup).map(fact => t('machinePresets.setup.fact', { label: fact.label, value: fact.value })).join(' · ');
 }
 

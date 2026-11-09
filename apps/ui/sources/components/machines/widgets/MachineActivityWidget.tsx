@@ -1,3 +1,4 @@
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -10,6 +11,7 @@ import { useGuardWayBack } from '@/components/machines/guard/activity/useGuardWa
 import { Text } from '@/components/ui/text/Text';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { Typography } from '@/constants/Typography';
+import { useMachineActivity } from '@/hooks/machine/useMachineActivity';
 import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { isMachineGuardOn, useMachinesGuardActivity } from '@/sync/domains/machines/guard/useMachineGuardView';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
@@ -53,7 +55,6 @@ type MachineActivityReading = Readonly<{
   guardOn: boolean | null;
   name: string;
   recipient: boolean;
-  lastSeenAt: number | null;
   retry: () => void;
 }>;
 type ActivityReceipt = Readonly<{
@@ -83,7 +84,7 @@ export function MachineActivityWidget(props: MachineWidgetBodyProps) {
       const fact = facts[index];
       if (!fact) return;
       byMachine[activity.machineId] = { status: activity.status, entries: activity.list?.entries ?? null, offline: activity.offline,
-        guardOn: fact.guardOn, name: fact.name, recipient: fact.recipient, lastSeenAt: fact.lastSeenAt, retry: activity.retry };
+        guardOn: fact.guardOn, name: fact.name, recipient: fact.recipient, retry: activity.retry };
     });
     return byMachine;
   }, [activities, facts]);
@@ -135,7 +136,7 @@ function useActivityMachineIds(
   return React.useMemo(() => JSON.parse(signature) as string[], [signature]);
 }
 
-/** Each machine's name, custody, last seen and whether any automatic rule is on, from the machine list owner. */
+/** Each machine's name, custody and whether any automatic rule is on, from the machine list owner. */
 function useActivityMachineFacts(serverId: string, machineIds: readonly string[]) {
   const signature = storage(
     React.useCallback(
@@ -145,11 +146,9 @@ function useActivityMachineFacts(serverId: string, machineIds: readonly string[]
             const machine = resolveServerScopedMachine(state, serverId, machineId);
             const policy = readSyncedMachineResourcesPolicy(machine);
             const guard = policy.status === 'ready' ? (policy.policy.guard ?? null) : null;
-            const activeAt = machine?.activeAt;
             return {
               name: machine ? getMachineDisplayName(machine) : machineId,
-              recipient: machine ? machine.isShared !== false : false,
-              lastSeenAt: typeof activeAt === 'number' && activeAt > 0 ? activeAt : null,
+              recipient: machine ? !canManageMachine(machine) : false,
               guardOn: guard ? isMachineGuardOn(guard) : null,
             };
           }),
@@ -158,9 +157,19 @@ function useActivityMachineFacts(serverId: string, machineIds: readonly string[]
     ),
   );
   return React.useMemo(
-    () => JSON.parse(signature) as readonly Readonly<{ name: string; recipient: boolean; lastSeenAt: number | null; guardOn: boolean | null }>[],
+    () => JSON.parse(signature) as readonly Readonly<{ name: string; recipient: boolean; guardOn: boolean | null }>[],
     [signature],
   );
+}
+
+function OfflineActivityState(props: Readonly<{ serverId: string; machineId: string; machineName: string; testID: string }>) {
+  const machine = storage(React.useCallback(
+    (state: ReturnType<typeof storage.getState>) => resolveServerScopedMachine(state, props.serverId, props.machineId),
+    [props.serverId, props.machineId],
+  ));
+  const activity = useMachineActivity(machine);
+  return <MachineWidgetState kind="offline" machineName={props.machineName}
+    lastSeenAt={activity?.activeAt ?? null} testID={props.testID} />;
 }
 
 function startOfDay(at: number): number {
@@ -226,10 +235,10 @@ function ActivityContent(
   if (answered.length === 0) {
     if (single?.offline)
       return (
-        <MachineWidgetState
-          kind="offline"
+        <OfflineActivityState
+          serverId={props.serverId}
+          machineId={props.target?.machineId ?? props.machineIds[0]!}
           machineName={single.name}
-          lastSeenAt={single.lastSeenAt}
           testID={props.testID}
         />
       );

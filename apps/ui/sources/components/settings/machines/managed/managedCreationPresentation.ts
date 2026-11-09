@@ -5,7 +5,7 @@ import { t } from '@/text';
 import { describeManagedLifecycleState, type ManagedLifecycleState } from './managedLifecyclePresentation';
 import type { ActionOperationProjection } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { resolveMachineWakeNativeIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
+import { resolveMachineWakeNativeIntentV1, resolveManagedMachinePendingPowerIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { resolveSystemTaskFailureMessage } from '@/components/systemTasks/resolveSystemTaskFailureMessage';
 import { isManagedMachineBootstrapIncomplete, isManagedMachineRetentionWaitOperation, managedMachineOperationMatchesResource, readManagedInstallationPromptSnapshot } from '@/sync/domains/actionOperations/managedMachineOperation';
 import { isManagedMachineResourceAbsent } from './managedMachineResource';
@@ -92,11 +92,9 @@ export function managedCreationState(machine: ManagedMachineV1, context: Managed
     }
     if (machine.submittedNativeEffect?.intent === 'delete') return { kind: 'cleanupPending',
         cost: resolveManagedConfigurationCost({ ...machine.reviewedFacts, provider: context.provider ?? null }) };
-    if (machine.submittedNativeEffect?.intent === 'stop' && machine.observation?.power !== 'stopped') return { kind: 'stopPending' };
-    // Desired intent can outlive a completed operation; only a submitted native effect proves a transition.
-    const pendingIntent = machine.submittedNativeEffect?.intent;
-    if ((pendingIntent === 'start' || pendingIntent === 'resume') && machine.observation?.power !== 'running'
-        || pendingIntent === 'suspend' && machine.observation?.power !== 'suspended') {
+    const pendingIntent = resolveManagedMachinePendingPowerIntentV1(machine);
+    if (pendingIntent === 'stop') return { kind: 'stopPending' };
+    if (pendingIntent) {
         return { kind: 'powerPending', provider: context.provider ?? t('common.machine'), state: t(`managedMachines.actions.${pendingIntent}`) };
     }
     if (machine.observation?.power === 'stopped') return machine.observation.storage === 'retained'
@@ -143,8 +141,8 @@ export function isManagedCreationStateRowVisible(machine: Pick<ManagedMachineV1,
 /**
  * The power actions a created machine's receipt offers: the one its observed power allows, never Start beside Stop.
  * Power that is unknown, unreported or not yet observed offers none; the state row's Check now reads it first, and
- * settlement stays the power owner's (POWER-UNKNOWN). A Start that has not reached native power yet, submitted or
- * retained, is withdrawn by Stop alone. Running offers its parking verbs (Stop, or Suspend where declared).
+ * settlement stays the power owner's (POWER-UNKNOWN). A submitted wake that has not reached native power yet
+ * is withdrawn by Stop alone. Running offers its parking verbs (Stop, or Suspend where declared).
  */
 export function managedReceiptPowerIntents(machine: Pick<ManagedMachineV1, 'observation' | 'desired' | 'enrolledMachineId' | 'submittedNativeEffect'>,
     supportedIntents: RetentionCapabilitiesV1['supportedIntents'],
@@ -157,8 +155,8 @@ export function managedReceiptPowerIntents(machine: Pick<ManagedMachineV1, 'obse
     const declared = supportedIntents.filter((intent): intent is 'start' | 'stop' | 'suspend' | 'resume' =>
         intent === 'start' || intent === 'stop' || intent === 'suspend' || intent === 'resume');
     if (power === 'running') return declared.filter(intent => intent === 'stop' || intent === 'suspend');
-    const wakePending = machine.submittedNativeEffect?.intent === 'start' || machine.submittedNativeEffect?.intent === 'resume'
-        || machine.desired === 'start' && power === 'stopped' || machine.desired === 'resume' && power === 'suspended';
+    const pendingIntent = resolveManagedMachinePendingPowerIntentV1(machine);
+    const wakePending = pendingIntent === 'start' || pendingIntent === 'resume';
     if (wakePending) return declared.filter(intent => intent === 'stop');
     const wake = resolveMachineWakeNativeIntentV1(power, supportedIntents);
     return wake ? [wake] : [];

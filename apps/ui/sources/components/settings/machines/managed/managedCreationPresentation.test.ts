@@ -168,12 +168,21 @@ describe('managed creation presentation', () => {
     // Observed stopped at rest: Start alone.
     expect(managedReceiptPowerIntents({ ...machine, desired: 'stop', observation: at('stopped') }, intents)).toEqual(['start']);
     expect(managedReceiptPowerIntents({ ...machine, enrolledMachineId: 'guest', desired: 'stop', observation: at('stopped') }, intents)).toEqual(['start']);
-    // A retained or submitted Start that has not reached native power yet: Stop alone retracts it.
-    expect(managedReceiptPowerIntents({ ...machine, enrolledMachineId: 'guest', observation: at('stopped') }, intents)).toEqual(['stop']);
+    // Completed desired intent is history; only a submitted effect is pending (MACH-AUDIT-SPLIT F1).
+    expect(managedReceiptPowerIntents({ ...machine, enrolledMachineId: 'guest', observation: at('stopped') }, intents)).toEqual(['start']);
     expect(managedReceiptPowerIntents({ ...machine, observation: at('stopped'),
       submittedNativeEffect: { intentRevision: 1, requestId: 'wake', intent: 'start' } }, intents)).toEqual(['stop']);
     // Observed running: Stop alone.
     expect(managedReceiptPowerIntents({ ...machine, observation: at('running') }, intents)).toEqual(['stop']);
+  });
+  it('offers Resume after a completed wake is followed by provider-side Suspend', () => {
+    const parked = { ...machine, desired: 'resume' as const, enrolledMachineId: 'guest',
+      observation: ProviderObservationV1Schema.parse({ availability: 'present', observedAt: 2, power: 'suspended', storage: 'retained' }) };
+    expect(managedCreationState(parked).kind).not.toBe('powerPending');
+    expect(managedReceiptPowerIntents(parked, ['resume', 'suspend'])).toEqual(['resume']);
+    const submitted = { ...parked, submittedNativeEffect: { intentRevision: 2, requestId: 'resume', intent: 'resume' as const } };
+    expect(managedCreationState(submitted).kind).toBe('powerPending');
+    expect(managedReceiptPowerIntents(submitted, ['resume', 'suspend'])).toEqual([]);
   });
   it('reads a submitted creation whose acquire still runs as creating, not as a resource that may already exist', () => {
     const submitted: ManagedMachineV1 = {

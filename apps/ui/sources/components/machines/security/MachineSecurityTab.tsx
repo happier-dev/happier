@@ -1,3 +1,4 @@
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 import * as React from 'react';
 import { View } from 'react-native';
 
@@ -47,7 +48,7 @@ export function MachineSecurityTab(props: MachinePageTabBodyProps) {
   if (!machine) return null;
   const machineName = target.machineSentenceName;
   const needsManage =
-    machine.isShared === true && machine.access?.role !== 'manage';
+    !canManageMachine(machine);
   if (page === 'network') {
     return (
       <MachineSecurityNetworkPage
@@ -222,7 +223,7 @@ function MachineSecuritySharingPage(props: PushedPageProps) {
             shared={machine.isShared === true}
           />
           {/* Who else works here is read by the machine for its owner and managers only (D8). */}
-          {!machine.isShared || machine.access?.role === 'manage' ? (
+          {canManageMachine(machine) ? (
             <MachineWorkSummaryReader
               machineId={machine.id}
               machineName={props.machineName}

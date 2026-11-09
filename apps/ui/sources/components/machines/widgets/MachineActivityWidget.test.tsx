@@ -6,6 +6,7 @@ import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
 import type { MachineGuardActivityRowV1 } from '@happier-dev/protocol/machines/guard/activityV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { WidgetSizeV1 } from '@happier-dev/protocol/widgets';
+import { MachineResourcesPolicyV1Schema } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
 
 import { renderScreen } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -158,12 +159,35 @@ afterEach(async () => {
 });
 
 describe('MachineActivityWidget', () => {
-  it('resumes a stopped session through the receipt’s own Undo and then shows what happened', async () => {
+  it.each(['manage', 'use'] as const)('offers all-off Set up only for shared Manage (%s)', async (role) => {
+    const shared = machine('m1', 'leeroy-mbp');
+    const { screen } = await mount({
+      bound: true,
+      machines: [{ ...shared, isShared: true, access: { ...shared.access!, role },
+        metadata: { ...shared.metadata!, resourcesPolicyV1: MachineResourcesPolicyV1Schema.parse({ v: 1 }) } }],
+      rpc: (method) => method === RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST ? list([]) : undefined,
+    });
+    await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('activity-widget.notSetUp.empty')).not.toBeNull()); });
+    expect(screen.findByTestId('activity-widget.notSetUp.empty.action') !== null).toBe(role === 'manage');
+  });
+
+  it('keeps shared Use activity visible without Undo controls', async () => {
+    const shared = machine('m1', 'leeroy-mbp');
+    const { screen } = await mount({
+      bound: true,
+      machines: [{ ...shared, isShared: true, access: { ...shared.access!, role: 'use' } }],
+      rpc: (method) => method === RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST ? list([entry({})]) : undefined,
+    });
+    await act(async () => { await vi.waitFor(() => expect(screen.findByTestId('machine-activity-e1')).not.toBeNull()); });
+    expect(screen.findByTestId('machine-activity-e1-resume')).toBeNull();
+  });
+
+  it.each([false, true])('resumes a stopped session for a manager (shared: %s) and then shows what happened', async (isShared) => {
     const undone: unknown[] = [];
     let entries = [entry({})];
     const { screen } = await mount({
       bound: true,
-      machines: [machine('m1', 'leeroy-mbp')],
+      machines: [{ ...machine('m1', 'leeroy-mbp'), isShared }],
       rpc: (method, payload) => {
         if (method === RPC_METHODS.MACHINES_GUARD_ACTIVITY_LIST)
           return list(entries);

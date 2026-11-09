@@ -1,3 +1,4 @@
+import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 import { readMachineResourcesPolicyV1SnapshotFromMetadata, type MachineResourcesPolicyGetResultV1 } from '@happier-dev/protocol/machines/resources/machineResourcesPolicyV1';
 import { MachinePublishedResourceSummaryV1Schema } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -21,6 +22,6 @@ export function readMachineResourcesPolicyReadOnlyReason(machine: Machine | null
     const state: unknown = machine.daemonState;
     const resources = typeof state === 'object' && state !== null && 'resources' in state ? state.resources : null;
     if (!MachinePublishedResourceSummaryV1Schema.safeParse(resources).success) return 'older_happier';
-    if (machine.isShared !== false && machine.access?.role !== 'manage') return 'not_custodian';
+    if (!canManageMachine(machine)) return 'not_custodian';
     return null;
 }
