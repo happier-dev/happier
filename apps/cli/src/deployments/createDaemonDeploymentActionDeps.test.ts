@@ -31,6 +31,8 @@ import { readEnvironmentSecretLaunchAdmissionForHost } from './secrets/readEnvir
 import { prepareEnvironmentSecretBindings } from './secrets/environmentSecretBindingService';
 import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
+import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
 import { DeploymentTargetLinkProviderContentV1Schema, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { DeploymentTargetLogsResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -1059,6 +1061,10 @@ describe('installed deployment storage and target composition', () => {
             assertTargetAccountMaterializable: async () => { throw new Error('Invocation must not enumerate Accounts'); },
         });
         const runtime = await runWithServerHttpBaseUrl(sdkHomeUrl, () => createAuthoredAdmittedPluginRuntimeFixture({
+            // Observe only the physically admitted fixture plugin, independent of bundled dependencies.
+            ...(scenario === 'background receipt observe' ? { resolveContributes: async (happyHomeDir: string) => createResolvedContributionRegistry(
+                projectLoadedPluginContributes({ loadResult: await loadInstalledPlugins({ happyHomeDir }),
+                    provenance: 'external' })) } : {}),
             // SCM materialization consumes the real daemon-applied registry owner.
             ...(scenario === 'upload source' ? { controller: pluginReloadController } : {}),
             runtimeOptions: { resolveCurrentMachineId: () => 'machine-a', connectedAccounts,
@@ -1778,6 +1784,10 @@ describe('installed deployment storage and target composition', () => {
                 row.targetLink = ownServer.targetLink;
                 row.content = ownServer.content;
                 put(row.targetLink.contentArtifactId, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, row.content);
+                const receiptDocument = documents.get(receipt.contentArtifactId);
+                if (!receiptDocument) throw new Error('Settled receipt document missing');
+                receiptDocument.body = encodePlainArtifactStoredContent({
+                    body: JSON.stringify(createDeploymentReceiptDetailV1().content) });
                 expect(await executor.execute('deployments.receipts.observe', input, observationContext))
                     .toMatchObject({ ok: false, errorCode: 'unsupported_action', details: {
                         reason: 'target_not_supported', targetKind: 'ownServer', requiredFact: 'providerDeploymentObservation',

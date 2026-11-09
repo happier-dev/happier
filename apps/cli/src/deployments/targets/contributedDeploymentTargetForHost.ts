@@ -28,6 +28,7 @@ import { readDeploymentSourceIntentForHost } from '../readDeploymentSourceIntent
 import { readDeploymentTargetV1 } from './deploymentTargetCatalog';
 import { admitDeploymentTargetRoleForHost } from './admitDeploymentTargetRoleForHost';
 import { projectDeploymentFailure as failure, projectDeploymentReceiptFailure } from '../deploymentFailure';
+import { readDeploymentObservationTargetFailure } from '../readObservationForHost';
 import { resolveScmHostingRefForHost, type ExecuteScmSourceReadAction } from '@/scm/hostingProviders/resolveRefForHost';
 import { DeploymentLogsReadSuccessV1Schema, type DeploymentLogsReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { DeploymentTargetLogsResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
@@ -261,6 +262,8 @@ export function createContributedDeploymentTargetForHost(host: Host) {
             const receipt = await host.readReceipt({ environmentId: request.input.environmentId,
                 deploymentId: request.input.deploymentId, context: request.context });
             const row = environment.targetLinks.find(item => item.targetLink.id === receipt.deployment.targetLinkId);
+            const targetFailure = row && readDeploymentObservationTargetFailure(row.targetLink.targetKind);
+            if (targetFailure) return targetFailure;
             if (row?.targetLink.source.kind !== 'plugin') return failure('unsupported_action');
             const content = DeploymentPlatformContentV1Schema.parse(receipt.content);
             const identity = readInstallationIdentityIfExistsSync();

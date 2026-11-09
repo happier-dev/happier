@@ -1,11 +1,9 @@
 import { expect, it } from 'vitest';
-import { createDeploymentEnvironmentHeaderV1, createDeploymentTargetLinkHeaderV1,
+import { createDeploymentEnvironmentHeaderV1, createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1,
     createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1,
     DeploymentPlatformContentV1Schema, type DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';
 import { readDeploymentObservationForHost } from './readObservationForHost';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 function fixture() {
     const environment = createDeploymentEnvironmentHeaderV1();
@@ -59,12 +57,15 @@ it('projects the recorded principal and exact receipt identity through real priv
 
 it.each([false, true])('identifies unsupported own-server observations and the working receipt read (receipt=%s)', async withReceipt => {
     const h = fixture();
-    Object.assign(h.targetLink, createDeploymentTargetLinkHeaderV1({ id: h.targetLink.id,
-        environmentId: h.environment.id }));
-    h.documents.delete(h.targetLink.contentArtifactId);
+    const ownServer = createDeploymentEnvironmentDetailV1().targetLinks[0];
+    Object.assign(h.targetLink, ownServer.targetLink, { id: h.targetLink.id, environmentId: h.environment.id });
+    // QA #101 has readable native content, but no provider observation principal.
+    h.documents.set(h.targetLink.contentArtifactId, { artifactId: h.targetLink.contentArtifactId,
+        revision: { headerVersion: h.targetLink.contentHeaderVersion, bodyVersion: h.targetLink.contentBodyVersion },
+        header: { kind: DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, title: 'Own server' }, body: JSON.stringify(ownServer.content) });
     const result = await readDeploymentObservationForHost({ ...h.input,
         ...(withReceipt ? { deploymentId: h.detail.deployment.id } : {}) }, {}, h.host);
-    expect(settleActionOutput('deployments.observation.get', ActionExecuteFailureSchema.parse(result))).toMatchObject({ ok: false,
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: false, error: 'unsupported_action',
         errorCode: 'unsupported_action', details: { reason: 'target_not_supported', targetKind: 'ownServer',
             requiredFact: 'providerDeploymentObservation', supportedAction: 'deployments.receipts.get',
             remedy: expect.stringMatching(/\S/) } });
