@@ -6,6 +6,8 @@ import { basename, join, relative } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 import { sessionFileNameMatchesSessionId } from '@happier-dev/plugin-sdk/sessions/file-stores';
+import type { AgentConnectedAccountLaunchContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { GROK_CONNECTED_ACCOUNT_LAUNCH } from '../../../../../../packages/plugins/grok/src/agent/connectedAccount';
 import { verifyResumeReachableCodex } from '../../../../../../packages/plugins/codex/src/agent/auth/services/runtime/control/verifyResumeReachable';
 import { antigravityConnectedAccountLaunch } from '../../../../../../packages/plugins/antigravity/src/agent/connectedServices/continuity';
 import { FX_STATE_SHARING, verifyFxResumeReachable } from '../../../../../../packages/plugins/fx/src/agent/auth/connectedAccount';
@@ -33,6 +35,62 @@ const descriptor = {
 } as const;
 
 describe('verifyDeclaredResumeFileReachability', () => {
+  it('resolves Grok fixed native history filenames and requires the selected session summary', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-resume-grok-'));
+    const id = 'fake-native-grok';
+    const directory = join(root, 'sessions', 'workspace', id);
+    const history = join(directory, 'chat_history.jsonl');
+    const summary = join(directory, 'summary.json');
+    const launch: AgentConnectedAccountLaunchContributionV1 = GROK_CONNECTED_ACCOUNT_LAUNCH;
+    try {
+      await mkdir(directory, { recursive: true });
+      await writeFile(history, 'fake native history');
+      await writeFile(summary, '{}');
+      const verifyResumeReachable = launch.continuity?.verifyResumeReachable;
+      if (!verifyResumeReachable) throw new Error('Grok resume hook unavailable');
+      const verify = () => verifyDeclaredResumeFileReachability({
+        targetMaterializedRoot: root, stateSharingDescriptor: { ...descriptor, ...launch.stateSharingDescriptor },
+        vendorResumeId: id, verifyResumeReachable,
+      });
+      await expect(verify()).resolves.toEqual({ ok: true, resolvedPath: history, requiredPaths: [history, summary, directory] });
+      await rm(summary);
+      await expect(verify()).resolves.toEqual({ ok: false, reason: 'grok_session_state_not_found' });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it.each([false, true])('correlates fixed filenames by declared-root-relative path (hinted=%s)', async hinted => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-resume-relative-path-'));
+    const id = 'selected-native-session';
+    const selectedSession = join(root, 'sessions', 'workspace', id);
+    const selectedState = join(selectedSession, 'state.json');
+    const otherSession = join(root, 'sessions', 'workspace', 'another-session');
+    try {
+      await mkdir(selectedSession, { recursive: true });
+      await mkdir(otherSession);
+      await writeFile(selectedState, '{}');
+      await writeFile(join(otherSession, 'state.json'), '{}');
+      const verify = () => verifyDeclaredResumeFileReachability({
+        targetMaterializedRoot: root, stateSharingDescriptor: descriptor,
+        vendorResumeId: id,
+        ...(hinted ? { candidatePersistedSessionFile: selectedState } : {}),
+        verifyResumeReachable: async input => {
+          const found = await input.sessionFiles.findDeclaredCandidate({
+            includeNativeSessionId: false,
+            matchesCandidate: candidate => candidate.fileName === 'state.json'
+              && candidate.stateEntryPath === 'sessions'
+              && candidate.relativePath === `workspace/${input.vendorResumeId}/state.json`,
+          });
+          return found.found ? { ok: true } : { ok: false, reason: 'native_state_not_found' };
+        },
+      });
+      await expect(verify()).resolves.toEqual({ ok: true, resolvedPath: selectedState });
+      await rm(selectedState);
+      await expect(verify()).resolves.toEqual({ ok: false, reason: 'native_state_not_found' });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('resolves Antigravity trajectory filenames without reading database bodies and still requires companion state', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-resume-agy-names-'));
     const id = 'native-conversation';

@@ -285,6 +285,8 @@ export type AgentConnectedAccountResumeFileCandidateV1 = Readonly<{
   nativeSessionId: string | null;
   /** Declared state-entry name, not an absolute path or native filesystem capability. */
   stateEntryPath?: string;
+  /** POSIX path within the declared state-entry root, for native layout correlation. */
+  relativePath?: string;
 }>;
 
 export type AgentConnectedAccountResumeFileLookupV1 = Readonly<{

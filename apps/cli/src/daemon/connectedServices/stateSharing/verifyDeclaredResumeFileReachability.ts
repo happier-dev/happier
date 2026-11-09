@@ -1,5 +1,5 @@
 import { readFile, readdir, realpath, stat } from 'node:fs/promises';
-import { basename, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import type {
   AgentConnectedAccountResumeFileCandidateV1,
@@ -28,11 +28,12 @@ function isWithinRoot(root: string, candidate: string): boolean {
   return pathFromRoot === '' || (!pathFromRoot.startsWith('..') && !isAbsolute(pathFromRoot));
 }
 
-async function readCandidate(path: string, stateEntryPath: string, includeNativeSessionId: boolean): Promise<AgentConnectedAccountResumeFileCandidateV1> {
+async function readCandidate(path: string, root: string, stateEntryPath: string, includeNativeSessionId: boolean): Promise<AgentConnectedAccountResumeFileCandidateV1> {
   const fileName = basename(path);
   return Object.freeze({
     fileName,
     stateEntryPath,
+    relativePath: relative(root, path).split(sep).join('/'),
     nativeSessionId: includeNativeSessionId
       ? await readSessionIdFromFileHead(path) ?? parseSessionIdFromFileName(fileName)
       : null,
@@ -59,7 +60,7 @@ async function findDeclaredCandidateInRoot(input: Readonly<{
         continue;
       }
       if (!entry.isFile()) continue;
-      const candidate = await readCandidate(canonicalPath, input.stateEntryPath, input.includeNativeSessionId);
+      const candidate = await readCandidate(canonicalPath, input.root, input.stateEntryPath, input.includeNativeSessionId);
       if (input.matchesCandidate(candidate)) {
         return canonicalPath;
       }
@@ -72,7 +73,7 @@ async function findDeclaredCandidateInRoot(input: Readonly<{
 /**
  * Resolves resume evidence beneath the Agent's already-declared state-sharing
  * entries. The host owns roots, traversal, file reads, and the resolved path;
- * the Agent receives only bounded filename/session-id facts for correlation.
+ * the Agent receives only relative-layout/filename/session-id facts for correlation.
  */
 export async function verifyDeclaredResumeFileReachability(input: Readonly<{
   targetMaterializedRoot: string;
@@ -132,7 +133,7 @@ export async function verifyDeclaredResumeFileReachability(input: Readonly<{
         if (!declaredRoot) continue;
         if (hintedPath && isWithinRoot(declaredRoot, hintedPath)) {
           const hintedStat = await stat(hintedPath).catch(() => null);
-          if (hintedStat?.isFile() && request.matchesCandidate(await readCandidate(hintedPath, entry.path, includeNativeSessionId))) {
+          if (hintedStat?.isFile() && request.matchesCandidate(await readCandidate(hintedPath, declaredRoot, entry.path, includeNativeSessionId))) {
             matchedPath = hintedPath;
             return Object.freeze({ found: true });
           }
