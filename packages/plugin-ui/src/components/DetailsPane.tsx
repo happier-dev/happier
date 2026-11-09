@@ -12,7 +12,7 @@ import {
 } from '../presentationHost/context.js';
 import { HappierPageHeader, HappierPageHeadingBindingContext } from '../presentation/layout/PageHeader.js';
 import type { HappierStyleProp } from '../presentation/portableTypes.js';
-import { IconButton } from './Button.js';
+import { Button, IconButton } from './Button.js';
 import { Icon } from './Icon.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 import { usePluginUiSurfaceBridge } from './surfaceBridge.js';
@@ -237,6 +237,8 @@ export function usePushedDetailPageInternal(
 export type DetailPageProps = Readonly<Pick<DetailsPaneProps, 'title' | 'subtitle' | 'leading' | 'subtitleLeading' | 'actions' | 'testID'> & {
   /** The way back from this page: the list or page the item belongs to. */
   onBack: () => void;
+  /** The name of the page `onBack` returns to ("PRs & Issues"): the way back reads as it. */
+  backLabel?: string;
   /**
    * Below this measured width the detail is the page: the width at which this item's own list page stops splitting
    * (its list and detail minima together), so the item reads the same opened from its list or from its address.
@@ -269,6 +271,7 @@ export function DetailPage(props: DetailPageProps): ReactElement {
       {...(props.subtitleLeading === undefined ? {} : { subtitleLeading: props.subtitleLeading })}
       {...(props.actions === undefined ? {} : { actions: props.actions })}
       onClose={props.onBack}
+      {...(props.backLabel === undefined ? {} : { backLabel: props.backLabel })}
       placement={placement}
       {...(props.testID === undefined ? {} : { testID: props.testID })}
     />
@@ -295,7 +298,11 @@ export function DetailPage(props: DetailPageProps): ReactElement {
 export type PushedDetailHeaderPlacementInternal = 'band' | 'story' | 'backOnly';
 
 export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title' | 'subtitle' | 'leading' | 'subtitleLeading' | 'actions' | 'onClose' | 'testID'>
-  & { placement?: PushedDetailHeaderPlacementInternal }>): ReactElement {
+  & {
+    placement?: PushedDetailHeaderPlacementInternal;
+    /** The page the way back returns to, by name ("‹ PRs & Issues"); without it the way back is the Back glyph. */
+    backLabel?: string;
+  }>): ReactElement {
   const placement = props.placement ?? 'band';
   const headingRef = useCollectionDetailHeadingBindingInternal();
   const translate = usePluginTranslation();
@@ -317,17 +324,20 @@ export function PushedDetailHeader(props: Readonly<Pick<DetailsPaneProps, 'title
   }, [publishTitle, props.title]);
   const latestClose = useRef(props.onClose);
   latestClose.current = props.onClose;
+  const backLabel = props.backLabel;
   useEffect(() => {
     if (publishBack === undefined) return undefined;
-    publishBack(() => { latestClose.current(); });
+    publishBack(() => { latestClose.current(); }, backLabel);
     return () => publishBack(null);
-  }, [publishBack]);
-  const back = (style?: HappierStyleProp) => <View style={style}><IconButton
+  }, [backLabel, publishBack]);
+  const backTestID = props.testID === undefined ? {} : { testID: `${props.testID}:back` };
+  const back = (style?: HappierStyleProp) => <View style={style}>{backLabel === undefined ? <IconButton
     icon={<Icon name="back" tone="secondary" />}
     accessibilityLabel={translate('happier.plugin-ui.detailsPane.back', 'Back')}
     onPress={props.onClose}
-    {...(props.testID === undefined ? {} : { testID: `${props.testID}:back` })}
-  /></View>;
+    {...backTestID}
+  /> : <Button variant="plain" size="small" singleLine icon={<Icon name="back" tone="secondary" />} title={backLabel}
+    onPress={props.onClose} {...backTestID} />}</View>;
   const backInBand = hostBack || publishBack !== undefined;
   if (props.title === undefined || placement === 'backOnly') {
     if (backInBand) return <View />;

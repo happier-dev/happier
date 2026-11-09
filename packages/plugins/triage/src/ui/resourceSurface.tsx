@@ -12,6 +12,7 @@ import { renderTriageDetailHeaderV1, TriageDetailRegion } from './detail/region.
 import { projectTriageDetailHeaderV1 } from './detail/header.js';
 import { readTriageSourceDescriptorV1 } from './detail/sourceSurface.js';
 import { useTriagePaneMinimumWidthsV1 } from './shell/usePaneMinimumWidths.js';
+import { TRIAGE_DISPLAY_NAME } from '../displayName.js';
 import { useTriageActions } from './actions/useTriageActions.js';
 import { useTriagePinnedEntries } from './marks/useTriagePinnedEntries.js';
 import { indexTriagePinsByEntry, projectTriageWindowRow } from './marks/pinnedRows.js';
@@ -162,6 +163,7 @@ function TriageResourceDetail({ resource }: Readonly<{ resource: PluginUiResourc
   return <DetailPage title={band.title} leading={band.leading} actions={band.actions}
     {...(band.subtitle === undefined ? {} : { subtitle: band.subtitle, subtitleLeading: band.subtitleLeading })}
     pushedBelowWidthPx={paneMinimumWidths.minListWidth + paneMinimumWidths.minDetailWidth}
+    backLabel={TRIAGE_DISPLAY_NAME}
     onBack={() => { void host.openSurface(TRIAGE_APP_PAGE_DESTINATION_V1); }}>
     {({ pushed, headerHosted }) => <TriageDetailRegion exactRead={exactRead} sourcePanelActions={sourcePanel.actions} row={row} completePostMutation={completePostMutation}
       pushed={pushed} headerHosted={headerHosted}

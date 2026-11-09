@@ -1761,6 +1761,7 @@ function CollectionOwnedDetailHeader(props: Readonly<{
   testID?: string;
   children?: ReactNode;
   placement?: PushedDetailHeaderPlacementInternal;
+  backLabel?: string;
 }>): ReactElement {
   const subscribed = props.useHeader?.(props.itemKey);
   const header = subscribed ?? (props.itemKey === null ? undefined : props.readHeader?.(props.itemKey));
@@ -1769,7 +1770,8 @@ function CollectionOwnedDetailHeader(props: Readonly<{
       {props.children}
     </DetailsPane>
     : <PushedDetailHeader {...header} onClose={props.onClose} testID={props.testID}
-      {...(props.placement === undefined ? {} : { placement: props.placement })} />;
+      {...(props.placement === undefined ? {} : { placement: props.placement })}
+      {...(props.backLabel === undefined ? {} : { backLabel: props.backLabel })} />;
 }
 
 function CollectionPeek<Item>(props: Readonly<{ item: Item; itemKey: string }>): ReactElement {
@@ -2811,6 +2813,8 @@ export function Collection<Item>(props: CollectionProps<Item>): ReactElement {
       <CollectionOwnedDetailHeader
         mode="pushed" itemKey={openKey} readHeader={props.detailHeader} useHeader={props.useDetailHeader}
         onClose={close} placement={placement}
+        // The way back reads as this page's name, the page it returns to (lab merged-detail-pr phone "‹ PRs & Issues").
+        {...(props.title === undefined ? {} : { backLabel: props.title })}
         {...(props.detailTestID === undefined ? {} : { testID: props.detailTestID })}
       />
     </CollectionDetailHeadingFocusContext.Provider>

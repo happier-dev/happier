@@ -375,6 +375,32 @@ describe('DetailPage (an item that is its own page)', () => {
     view.unmount();
   });
 
+  it('reads its way back as the page it returns to, in the page and in a navigation band', async () => {
+    const labelled = (onBack: () => void) => (
+      <DetailPage title="Move cart totals to server-side rounding" backLabel="PRs & Issues" onBack={onBack} pushedBelowWidthPx={720} testID="entry-page">
+        {(context) => <Story {...context} />}
+      </DetailPage>
+    );
+    const onBack = vi.fn();
+    const inPage = mountWithPane(labelled(onBack), null);
+    await flush();
+    measure(inPage, 390);
+    const back = inPage.container.querySelector<HTMLElement>('[data-testid="entry-page:back"]');
+    expect(back?.textContent).toContain('PRs & Issues');
+    act(() => { back!.querySelector<HTMLElement>('[role="button"]')?.click() ?? back!.click(); });
+    expect(onBack).toHaveBeenCalledTimes(1);
+    inPage.unmount();
+
+    const published: Array<Readonly<{ press: (() => void) | null; label: string | undefined }>> = [];
+    const banded = mountWithPane(labelled(vi.fn()), null, { host: { pageChrome: {
+      showsTitle: true, publishBack: (press: (() => void) | null, label?: string) => { published.push({ press, label }); },
+    } as never } });
+    await flush();
+    measure(banded, 390);
+    expect(published.find((entry) => entry.press !== null)?.label).toBe('PRs & Issues');
+    banded.unmount();
+  });
+
   it('is the plain page where its list page would split: the detail draws its own header', async () => {
     const view = mountWithPane(page(vi.fn()), null);
     await flush();
