@@ -301,7 +301,7 @@ describe('Machine setup current-copy plan entry', () => {
     });
     expect(catalogReads).toBe(0);
   });
-  it('returns canonical ordered script bodies and siblings through the public effects Plan without native work', async () => {
+  it('returns canonical scripts and an explicit empty removal review through the public effects Plan without native work', async () => {
     const sources = [{ kind: 'direct', setup: { scripts: [
       { body: 'echo first\r\n', affects: 'none', check: { executable: 'fixture-check', args: ['first'], unsatisfiedExitCodes: [1] } },
       { body: '' }, { body: 'echo second\n', affects: 'none' },
@@ -313,9 +313,10 @@ describe('Machine setup current-copy plan entry', () => {
       }) }, runNative: async () => { throw new Error('Plan must not execute script checks or bodies'); },
       acquirePluginRuntimeRegistryLease: async () => { throw new Error('Script-only Plan has no recipe demand'); },
     }) });
-    expect(await executor.execute('machines.setup.plan', { homeId: 'home', machineId: 'guest', mode: 'effects', sources },
+    expect(await executor.execute('machines.setup.plan', { homeId: 'home', machineId: 'guest', mode: 'effects', sources, removeItemKeys: [] },
       { surface: 'cli', authority: 'present_user' })).toMatchObject({ ok: true, result: {
-      sources, recipePlans: [], review: { administratorRequired: false, downtime: 'unknown' },
+      sources, recipePlans: [], removeItemKeys: [], removalOffers: [], removalPlans: [],
+      review: { administratorRequired: false, downtime: 'unknown' },
     } });
   });
   it.each(['abort', 'authority'] as const)('settles admitted native review when %s retires during the public host roster read', async reason => {

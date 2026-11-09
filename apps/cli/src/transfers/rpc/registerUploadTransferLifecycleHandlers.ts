@@ -1,4 +1,4 @@
-import type { RpcHandlerInvoker, RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { RpcHandlerContext, RpcHandlerInvoker, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { configuration } from '@/configuration';
 import { createTransferRecipientKeyPair } from '@happier-dev/transfers/node';
 import { logger } from '@/ui/logger';
@@ -45,7 +45,7 @@ export function registerUploadTransferLifecycleHandlers<TInitResponse, TFinalize
     finalize: string;
     abort: string;
   }>;
-  resolveInit: (data: unknown) => Promise<ResolvedUploadInit<TInitResponse, TFinalizeResult>> | ResolvedUploadInit<TInitResponse, TFinalizeResult>;
+  resolveInit: (data: unknown, context?: RpcHandlerContext) => Promise<ResolvedUploadInit<TInitResponse, TFinalizeResult>> | ResolvedUploadInit<TInitResponse, TFinalizeResult>;
   buildInitSuccessResponse: (input: Readonly<{
     session: UploadSessionHandle;
   }>) => TInitResponse;
@@ -68,9 +68,9 @@ export function registerUploadTransferLifecycleHandlers<TInitResponse, TFinalize
     chunkSizeBytes: configuration.filesTransferChunkBytes,
   });
 
-  const init = async (data: unknown): Promise<TInitResponse> => {
+  const init = async (data: unknown, context?: RpcHandlerContext): Promise<TInitResponse> => {
     params.store.cleanupExpiredBestEffort();
-    const resolved = await params.resolveInit(data);
+    const resolved = await params.resolveInit(data, context);
     if (resolved.kind === 'rejected') {
       return resolved.response;
     }

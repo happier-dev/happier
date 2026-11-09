@@ -13,7 +13,8 @@ const machine: ManagedMachineV1 = { id: correlation.managedId, homeId: correlati
   controller: correlation.controller, launch: { provider: resource.contributionRef, schemaVersion: 1, name: 'Child',
     choices: { workspaceFolder: resource.value.workspaceFolder, configPath: resource.value.configPath } },
   allocation: 'bound', resource, creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 2,
-  retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+  retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+  enrollmentIdentity: { kind: 'existingUser', role: 'adopted' } };
 const target = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: correlation.homeId,
   canonicalServerUrl: 'https://child-home.example.test', revision: 1,
   endpoints: [{ kind: 'https', url: 'https://child-home.example.test' }] }, authority: 'trusted_enrollment' });

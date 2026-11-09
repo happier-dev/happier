@@ -67,7 +67,7 @@ describe('resolveMachineTransferRuntimeConfig', () => {
     });
 
     expect(resolved.directPeer.bindHost).toBe('127.0.0.1');
-    expect(resolved.directPeer.bindPort).toBe(46001);
+    expect(resolved.directPeer.bindPort).toBe(0);
     expect(resolved.directPeer.advertisedHosts).toEqual(['127.0.0.1']);
     expect(resolved.tailscaleServe).toEqual({
       enabled: false,

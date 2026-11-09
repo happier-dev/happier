@@ -1,4 +1,5 @@
 import { open, mkdtemp, rm } from 'node:fs/promises';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -19,6 +20,12 @@ import { encodeDirectPeerTransferPathKey } from './directPeerTransport/protocol'
 import { createFileTransferPayloadSource, resolveTransferPayloadManifestHash } from './transferPayloadSource';
 import { readJsonResponseWithBodyLimit } from './directPeerTransport/requestTransfer';
 import { resolveDirectPeerTransferOpenBodyMaxBytes } from './transferRuntimeConfig';
+
+function readTransferFailureCode(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  if ('errorCode' in error && typeof error.errorCode === 'string') return error.errorCode;
+  return 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+}
 
 const FinalizeSchema = z.union([
   z.strictObject({ success: z.literal(true), finalized: z.strictObject({ success: z.literal(true), path: z.string(), sizeBytes: z.number(), result: z.optional(z.unknown()) }), sha256: z.string() }),
@@ -49,9 +56,12 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
       let preparedAbortEndpoint: string | undefined;
       let abortConfirmed = false;
       let acceptedImport = input.preparedAdmission !== undefined;
-      const failure = (error: string, errorCode?: string): FilesystemUploadOutput =>
+      const failure = (error: string, errorCode?: string, confirmedReceiverFailure = false): FilesystemUploadOutput =>
         acceptedImport && !abortConfirmed
-          ? { success: false, status: 'unknown', error, errorCode: 'indeterminate' }
+          // Retained custody does not erase a confirmed receiver refusal. Only
+          // a missing cause is indeterminate; staging may still need recovery.
+          ? { success: false, status: 'unknown', error,
+              errorCode: confirmedReceiverFailure ? errorCode ?? 'indeterminate' : 'indeterminate' }
           : { success: false, status: input.signal?.aborted ? 'cancelled' : 'failed', error, ...(errorCode ? { errorCode } : {}) };
       try {
         file = await open(input.sourcePath, 'r');
@@ -86,7 +96,7 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
         });
         if (!result.success) return result.errorCode === 'indeterminate'
           ? { success: false, status: 'unknown', error: result.error ?? 'Upload failed', errorCode: 'indeterminate' }
-          : failure(result.error ?? 'Upload failed', result.errorCode);
+          : failure(result.error ?? 'Upload failed', result.errorCode, true);
         if (!('finalized' in result)) throw new Error('Prepared upload finalize result is unavailable');
         return { success: true, status: 'completed', transferId: receipt.prepared.uploadId, sourceId,
           path: result.finalized.path, sizeBytes: result.finalized.sizeBytes, sha256: result.sha256 };
@@ -94,8 +104,9 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
         if (preparedUploadId && preparedAbortEndpoint) {
           try { abortConfirmed = ChunkSchema.parse(await postJson(preparedAbortEndpoint)).success; } catch { /* The admitted owner retains unconfirmed custody. */ }
         }
+        if (error instanceof CredentialRequestRedirectError) throw error;
         return failure(error instanceof Error ? error.message : 'Upload failed',
-          error && typeof error === 'object' && 'errorCode' in error && typeof error.errorCode === 'string' ? error.errorCode : undefined);
+          readTransferFailureCode(error));
       } finally { try { await file?.close(); } finally { await tunnel?.close(); } }
     },
     async download(input: Readonly<{ targetMachineId: string; serverId?: string; rootPath: string; path: string;
@@ -137,8 +148,10 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
             ...(input.signal?.aborted ? { errorCode: 'cancelled' } : {}),
           }, undefined, 'POST', candidate.authorizationToken).catch(() => undefined);
         }
+        if (error instanceof CredentialRequestRedirectError) throw error;
         return { success: false, status: destinationClosed ? 'unknown' : input.signal?.aborted ? 'cancelled' : 'failed',
-          error: error instanceof Error ? error.message : 'Download failed', ...(destinationClosed ? { errorCode: 'indeterminate' } : {}) };
+          error: error instanceof Error ? error.message : 'Download failed',
+          ...(destinationClosed ? { errorCode: 'indeterminate' } : { errorCode: readTransferFailureCode(error) }) };
       } finally { await tunnel?.close(); }
     },
     async copy(input: (Omit<FilesystemPreparedCopyInput, 'kind'> | Omit<FilesystemTargetCopyInput, 'kind'>) & Readonly<{ signal?: AbortSignal;
@@ -167,9 +180,10 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
             overwrite: input.overwrite, recursive: input.recursive },
           ...(input.preparedAdmission ? { preparedAdmission: input.preparedAdmission } : {}), ...(input.signal ? { signal: input.signal } : {}) });
       } catch (error) {
+        if (error instanceof CredentialRequestRedirectError) throw error;
         return { success: false, status: input.preparedAdmission ? 'unknown' : input.signal?.aborted ? 'cancelled' : 'failed',
           error: error instanceof Error ? error.message : 'Copy source is unavailable',
-          ...(input.preparedAdmission ? { errorCode: 'indeterminate' } : {}) };
+          ...(input.preparedAdmission ? { errorCode: 'indeterminate' } : { errorCode: readTransferFailureCode(error) }) };
       } finally { await rm(temporaryDirectory, { recursive: true, force: true }); }
     },
   };
@@ -249,7 +263,9 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
       if (observed.operation.state === 'succeeded') return FilesystemCopyOutputSchema.parse(observed.operation.result);
       return { success: false, status: observed.operation.state === 'cancelled' ? 'cancelled' : 'failed', error: observed.operation.error?.error ?? 'Copy failed', errorCode: observed.operation.error?.errorCode ?? 'cancelled' };
     } catch (error) {
-      return { success: false, status: retainImports ? 'unknown' : input.signal?.aborted ? 'cancelled' : 'failed', error: error instanceof Error ? error.message : 'Entry copy failed', ...(retainImports ? { errorCode: 'indeterminate' } : {}) };
+      if (error instanceof CredentialRequestRedirectError) throw error;
+      return { success: false, status: retainImports ? 'unknown' : input.signal?.aborted ? 'cancelled' : 'failed', error: error instanceof Error ? error.message : 'Entry copy failed',
+        ...(retainImports ? { errorCode: 'indeterminate' } : { errorCode: readTransferFailureCode(error) }) };
     } finally {
       try {
         if (sourceReceipt && !sourceClosed && sourceTunnel) {
@@ -282,8 +298,11 @@ async function uploadPreparedFile(input: Readonly<{ file: Awaited<ReturnType<typ
     prepareChunk: async ({ uploadId, index, bytes }) => ({ index, ...createEncryptedTransferChunkEnvelope({ transferId: uploadId, sequence: index, payload: Buffer.from(bytes), recipientPublicKeyBase64: input.prepared.recipientPublicKeyBase64 }) }),
     sendChunk: async (chunk, signal) => ChunkSchema.parse(await postJson(appendEndpoint(input.endpoint, `chunks/${chunk.index}`), { payloadBase64: chunk.payloadBase64, encryptedDataKeyEnvelopeBase64: chunk.encryptedDataKeyEnvelopeBase64 }, signal ?? undefined, 'PUT')),
     finalize: async (_, signal) => {
-      try { return FinalizeSchema.parse(await postJson(appendEndpoint(input.endpoint, 'finalize'), undefined, signal ?? undefined)); }
-      catch { return { success: false as const, error: 'Upload finalize outcome could not be confirmed', errorCode: 'indeterminate', keepSession: true }; }
+      try { return FinalizeSchema.parse(await postJson(appendEndpoint(input.endpoint, 'finalize'), undefined, signal ?? undefined, 'POST', undefined, true)); }
+      catch (error) {
+        if (error instanceof CredentialRequestRedirectError) throw error;
+        return { success: false as const, error: 'Upload finalize outcome could not be confirmed', errorCode: 'indeterminate', keepSession: true };
+      }
     }, retainUploadAfterFinalize: response => !response.success && response.keepSession === true, abort: input.abort });
 }
 
@@ -299,14 +318,21 @@ function carrierUrl(endpoint: string, port: number): string {
 function appendEndpoint(endpoint: string, suffix: string): string {
   const url = new URL(endpoint); url.pathname = `${url.pathname}/${suffix}`; return url.toString();
 }
-async function postJson(url: string, body?: unknown, signal?: AbortSignal, method = 'POST', token?: string): Promise<unknown> {
-  const response = await fetch(url, { method, redirect: 'error', headers: {
+async function postJson(url: string, body?: unknown, signal?: AbortSignal, method = 'POST', token?: string, acceptFinalizeRefusal = false): Promise<unknown> {
+  const response = await fetchWithCredentialRedirectRefusal(url, { method, headers: {
     ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(token ? { authorization: `Bearer ${token}` } : {}) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }), ...(signal ? { signal } : {}) });
-  if (!response.ok) throw new Error(`Prepared transfer HTTP request failed (${response.status})`);
+  const preCommitRefusal = acceptFinalizeRefusal && (response.status === 400 || response.status === 404 || response.status === 409);
+  if (!response.ok && !preCommitRefusal) throw new Error(`Prepared transfer HTTP request failed (${response.status})`);
   const contentType = response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
   if (contentType !== 'application/json') throw new Error('Prepared transfer response is not JSON');
-  return await readJsonResponseWithBodyLimit({ response, maxBodyBytes: resolveDirectPeerTransferOpenBodyMaxBytes(),
+  const decoded = await readJsonResponseWithBodyLimit({ response, maxBodyBytes: resolveDirectPeerTransferOpenBodyMaxBytes(),
     onInvalidJson: () => new Error('Prepared transfer response is invalid JSON'),
     onOverLimit: () => new Error('Prepared transfer response exceeds the canonical metadata budget') });
+  if (preCommitRefusal) {
+    const failure = FinalizeSchema.parse(decoded);
+    if (failure.success) throw new Error('Prepared transfer refusal returned a successful result');
+    return { ...failure, error: 'Failed to finalize upload' };
+  }
+  return decoded;
 }

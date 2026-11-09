@@ -1,4 +1,3 @@
-import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { configuration } from '@/configuration';
 import type { ApiMachineClient } from '@/api/apiMachine';
@@ -17,8 +16,7 @@ import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
-import { getFirstPartyComponentCatalogEntry, resolveFirstPartyInstallLayout,
-  resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
+import { resolveMachineEffectCli } from '../adminAccess/machineEffectCli';
 import type { DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachineAdminAccess';
 import { inspectMachineReachability, executeMachineReachabilityTransition } from './machineReachabilityHost';
 import { projectMachineReachabilityObservation, readMachineReachabilityMetadata } from './readMachineReachability';
@@ -124,9 +122,6 @@ export async function executeDaemonMachineReachabilityAction(options: MetadataRo
       let admittedAdminPolicy: Promise<MachineAdminAccessV1> | undefined;
       const custody = createProjectNativeInvocationCustody({ signal });
       try {
-      const channel = resolveManagedCliReleaseChannelSync().ringId;
-      const layout = resolveFirstPartyInstallLayout({ componentId: 'happier-cli', channel });
-      const component = getFirstPartyComponentCatalogEntry('happier-cli');
       const deps = { target, port, context, runtimeRegistry: lease.registry, isCurrent,
         readDaemonProof: () => observeOwnDaemonReachability({ client, signal }),
         happyHomeDir: configuration.happyHomeDir, agentIsolation: options.agentIsolation,
@@ -143,7 +138,7 @@ export async function executeDaemonMachineReachabilityAction(options: MetadataRo
         settleNative: () => custody.release(),
         ...(runtime ? { runtime } : {}), ...(ingress.machineAdmission ? { machineAdmission: ingress.machineAdmission } : {}),
         installationPublicKey: decodeBase64(identity.publicKey, 'base64url'), installationIdentityFile: configuration.installationIdentityFile,
-        elevation: { installationId: target.installationId, installedCli: join(layout.currentPath, component.binaryRelativePath),
+        elevation: { installationId: target.installationId, ...resolveMachineEffectCli(),
           readPolicy: () => admittedAdminPolicy ??= (async () => {
             const policy = await getMachineAdminAccessV1(port);
             if (policy.status !== 'ready') throw Object.assign(new Error('machine_admin_access_policy_unavailable'), { code: 'machine_admin_access_policy_unavailable' });

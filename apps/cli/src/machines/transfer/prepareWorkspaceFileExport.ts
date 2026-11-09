@@ -1,25 +1,86 @@
-import type { NativeFilesystemPayloadSource } from '@/rpc/handlers/fileSystem/filesystemEffectChannel';
-import type { PreparedFilesystemReadFile } from './preparedFilesystemTransferScope';
-import type { WorkspaceSyncEntryExpectationV1 } from '@happier-dev/protocol';
-import { filesystemPathComparisonKey } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
-import { open } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
-import { MUTAGEN_ENGINE_CONTENT_HASH_ALGORITHM } from '@happier-dev/cli-common/firstPartyRuntime';
-import { writeFileHandleFully } from '@happier-dev/transfers/node';
 import { randomUUID } from 'node:crypto';
-import { rm } from 'node:fs/promises';
+import { open, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import type { FileDownloadDestinationV1, FileDownloadResultV1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import type { WorkspaceSyncEntryExpectationV1 } from '@happier-dev/protocol';
+import { writeFileHandleFully } from '@happier-dev/transfers/node';
+import { FileDownloadDestinationV1Schema } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { readPortablePathSegmentViolation } from '@happier-dev/protocol/filesystem/portablePathSegment';
 import { basename, dirname, relative, resolve } from 'node:path';
 import { createHappierTempDir, removeHappierTempDirAsync } from '@happier-dev/cli-common/tempDirs';
+import { MUTAGEN_ENGINE_CONTENT_HASH_ALGORITHM } from '@happier-dev/cli-common/firstPartyRuntime';
 import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
 import { observeWorkspaceSyncEntryAtRoot } from '@/workspaces/sync/workspaceSyncFileRead';
 import { captureWorkspaceSyncEntryAtRoot } from '@/workspaces/sync/workspaceSyncConflicts';
 import { createWorkspaceSyncEntryExport } from '@/workspaces/sync/workspaceSyncEntryTransfer';
 
-import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
+import { filesystemPathComparisonKey, type FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { resolveWorkspaceFileDownloadSource } from '@/transfers/targets/resolveWorkspaceFileDownloadSource';
 import { createFileTransferPayloadSource, resolveTransferPayloadManifestHash, resolveTransferPayloadSizeBytes } from './transferPayloadSource';
 import type { DirectTransferServerLifecycle } from './directTransferServerLifecycle';
-import type { PreparedFilesystemTransferScope } from './preparedFilesystemTransferScope';
+import type { PreparedFilesystemReadFile, PreparedFilesystemTransferScope } from './preparedFilesystemTransferScope';
+import type { NativeFilesystemPayloadSource } from '@/rpc/handlers/fileSystem/filesystemEffectChannel';
+
+/** The existing publication record owns these acquired bytes until ACK, refusal, retirement or expiry. */
+export async function prepareAcquiredFileDownload(params: Readonly<{
+  lifecycle: Pick<DirectTransferServerLifecycle, 'publishTransferWhenReady' | 'clearPublishedTransfer'>;
+  input: Readonly<{ name: string; bytes: Uint8Array; destination: FileDownloadDestinationV1 }>;
+  sourceId: string; operationId: string; requesterAccountId: string; retirementSignal: AbortSignal; signal?: AbortSignal;
+  assertCurrentAuthority: () => Promise<void>;
+  onDispose?: () => Promise<void>;
+}>): Promise<FileDownloadResultV1> {
+  const transferId = `file-download:${randomUUID()}`;
+  let directory: string | undefined;
+  let disposed = false;
+  const scope: PreparedFilesystemTransferScope = { kind: 'acquired', sourceId: params.sourceId,
+    requesterAccountId: params.requesterAccountId, destinationId: params.input.destination.destinationId };
+  const retire = () => { params.lifecycle.clearPublishedTransfer(transferId, scope); };
+  const dispose = async () => {
+    if (disposed) return;
+    disposed = true;
+    params.retirementSignal.removeEventListener('abort', retire);
+    try { if (directory) await removeHappierTempDirAsync(directory); }
+    finally { await params.onDispose?.(); }
+  };
+  const assertCurrent = async () => {
+    try {
+      params.retirementSignal.throwIfAborted();
+      await params.assertCurrentAuthority();
+      params.retirementSignal.throwIfAborted();
+    } catch (error) { retire(); throw error; }
+  };
+  try {
+    FileDownloadDestinationV1Schema.parse(params.input.destination);
+    if (!params.input.name || readPortablePathSegmentViolation(params.input.name) !== null || !(params.input.bytes instanceof Uint8Array)) {
+      throw new Error('Invalid acquired file');
+    }
+    params.signal?.throwIfAborted();
+    await assertCurrent();
+    // Snapshot before source-file I/O so the published manifest and bytes agree.
+    const bytes = params.input.bytes.slice();
+    const manifestHash = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+    directory = createHappierTempDir({ purpose: 'file-download-source' });
+    const filePath = resolve(directory, 'payload');
+    await writeFile(filePath, bytes, { flag: 'wx', mode: 0o600 });
+    params.signal?.throwIfAborted();
+    await assertCurrent();
+    const payloadSource = { ...createFileTransferPayloadSource({ filePath, name: params.input.name,
+      sizeBytes: bytes.byteLength, manifestHash, dispose }), assertCurrentAuthority: assertCurrent };
+    const published = await params.lifecycle.publishTransferWhenReady({ transferId, payloadSource, filesystemScope: scope });
+    params.signal?.throwIfAborted();
+    params.retirementSignal.addEventListener('abort', retire, { once: true });
+    if (params.retirementSignal.aborted) { retire(); throw params.retirementSignal.reason; }
+    return { success: true, status: 'accepted', operationId: params.operationId, destinationId: params.input.destination.destinationId,
+      prepared: { transferId, name: params.input.name, sizeBytes: bytes.byteLength, manifestHash,
+        expiresAt: published.expiresAt, endpointCandidates: [...published.endpointCandidates] } };
+  } catch (error) {
+    retire();
+    await dispose();
+    return { success: false, status: params.signal?.aborted || params.retirementSignal.aborted ? 'cancelled' : 'failed',
+      errorCode: params.signal?.aborted || params.retirementSignal.aborted ? 'cancelled' : 'file_download_unavailable',
+      error: error instanceof Error ? error.message : 'File download unavailable' };
+  }
+}
 
 /** One source/ZIP preparation owner for raw prepared exports and filesystem Actions. */
 export async function prepareWorkspaceFileExport(params: Readonly<{
@@ -59,22 +120,51 @@ export async function prepareWorkspaceFileExport(params: Readonly<{
   }
 }
 
-/** Publish the existing captured entry manifest and its authorized on-demand blobs. */
-export async function prepareWorkspaceEntryExport(params: Parameters<typeof createWorkspaceEntryExportSource>[0] & Readonly<{
-  lifecycle: Pick<DirectTransferServerLifecycle, 'publishTransferWhenReady'>;
-  filesystemScope: PreparedFilesystemTransferScope;
-  nativeExport?: () => ReturnType<typeof createWorkspaceEntryExportSource>;
-}>) {
-  const exported = await (params.nativeExport?.() ?? createWorkspaceEntryExportSource(params));
+/** Use the exact acquired descriptor once, then retain the incumbent private snapshot. */
+async function captureAdmittedReadFile(input: Readonly<{
+  readFile: PreparedFilesystemReadFile;
+  rootPath: string;
+  path: string;
+  captureDirectory: string;
+  assertCurrentAuthority: () => Promise<void>;
+}>): Promise<Readonly<{ materialPath: string; expectation: WorkspaceSyncEntryExpectationV1 }>> {
+  const source = input.readFile;
+  const refuse = (): never => { throw Object.assign(new Error('The acquired file no longer matches its admitted bytes'), {
+    code: 'filesystem_transfer_custody_required',
+  }); };
   try {
-    const published = await params.lifecycle.publishTransferWhenReady({ transferId: params.operationId,
-      payloadSource: exported.payloadSource, onDemandScope: exported.onDemandScope, filesystemScope: params.filesystemScope });
-    return { prepared: { transferId: published.transferId, endpointCandidates: published.endpointCandidates,
-      expiresAt: published.expiresAt, name: exported.name, sizeBytes: exported.sizeBytes, manifestHash: exported.manifestHash },
-      entryTree: exported.entryTree };
-  } catch (error) { await exported.payloadSource.dispose?.(); throw error; }
+    if (filesystemPathComparisonKey(source.rootPath) !== filesystemPathComparisonKey(input.rootPath)
+      || filesystemPathComparisonKey(source.path) !== filesystemPathComparisonKey(input.path)) return refuse();
+    await input.assertCurrentAuthority();
+    const before = await source.handle.stat();
+    if (!before.isFile() || before.size !== source.sizeBytes) return refuse();
+    const materialPath = resolve(input.captureDirectory, 'entry');
+    const destination = await open(materialPath, 'wx', 0o600);
+    const sha256 = createHash('sha256');
+    const digest = createHash(MUTAGEN_ENGINE_CONTENT_HASH_ALGORITHM);
+    let size = 0;
+    try {
+      const buffer = Buffer.allocUnsafe(64 * 1024);
+      while (size < source.sizeBytes) {
+        const { bytesRead } = await source.handle.read(buffer, 0, Math.min(buffer.length, source.sizeBytes - size), size);
+        if (bytesRead === 0) return refuse();
+        const bytes = buffer.subarray(0, bytesRead);
+        sha256.update(bytes);
+        digest.update(bytes);
+        await writeFileHandleFully({ fileHandle: destination, buffer: bytes, position: size });
+        size += bytesRead;
+      }
+      await destination.chmod(before.mode & 0o777);
+    } finally { await destination.close(); }
+    const after = await source.handle.stat();
+    if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size
+      || before.mtimeMs !== after.mtimeMs || before.mode !== after.mode || sha256.digest('hex') !== source.sha256) return refuse();
+    await input.assertCurrentAuthority();
+    return { materialPath, expectation: { kind: 'file', digest: digest.digest('hex'), executable: (before.mode & 0o111) !== 0, size } };
+  } finally { await source.handle.close(); }
 }
 
+/** Capture entry bytes at their native owner before the host publishes them. */
 export async function createWorkspaceEntryExportSource(params: Readonly<{
   rootPath: string; path: string; operationId: string;
   accessPolicy: FilesystemAccessPolicy;
@@ -123,45 +213,18 @@ export async function createWorkspaceEntryExportSource(params: Readonly<{
   }
 }
 
-async function captureAdmittedReadFile(input: Readonly<{
-  readFile: PreparedFilesystemReadFile;
-  rootPath: string;
-  path: string;
-  captureDirectory: string;
-  assertCurrentAuthority: () => Promise<void>;
-}>): Promise<Readonly<{ materialPath: string; expectation: WorkspaceSyncEntryExpectationV1 }>> {
-  const source = input.readFile;
-  const refuse = (): never => { throw Object.assign(new Error('The acquired file no longer matches its admitted bytes'), {
-    code: 'filesystem_transfer_custody_required',
-  }); };
+/** Publish the same captured entry through the incumbent mounted lifecycle. */
+export async function prepareWorkspaceEntryExport(params: Parameters<typeof createWorkspaceEntryExportSource>[0] & Readonly<{
+  lifecycle: Pick<DirectTransferServerLifecycle, 'publishTransferWhenReady'>;
+  filesystemScope: PreparedFilesystemTransferScope;
+  nativeExport?: () => ReturnType<typeof createWorkspaceEntryExportSource>;
+}>) {
+  const exported = await (params.nativeExport?.() ?? createWorkspaceEntryExportSource(params));
   try {
-    if (filesystemPathComparisonKey(source.rootPath) !== filesystemPathComparisonKey(input.rootPath)
-      || filesystemPathComparisonKey(source.path) !== filesystemPathComparisonKey(input.path)) return refuse();
-    await input.assertCurrentAuthority();
-    const before = await source.handle.stat();
-    if (!before.isFile() || before.size !== source.sizeBytes) return refuse();
-    const materialPath = resolve(input.captureDirectory, 'entry');
-    const destination = await open(materialPath, 'wx', 0o600);
-    const sha256 = createHash('sha256');
-    const digest = createHash(MUTAGEN_ENGINE_CONTENT_HASH_ALGORITHM);
-    let size = 0;
-    try {
-      const buffer = Buffer.allocUnsafe(64 * 1024);
-      while (size < source.sizeBytes) {
-        const { bytesRead } = await source.handle.read(buffer, 0, Math.min(buffer.length, source.sizeBytes - size), size);
-        if (bytesRead === 0) return refuse();
-        const bytes = buffer.subarray(0, bytesRead);
-        sha256.update(bytes);
-        digest.update(bytes);
-        await writeFileHandleFully({ fileHandle: destination, buffer: bytes, position: size });
-        size += bytesRead;
-      }
-      await destination.chmod(before.mode & 0o777);
-    } finally { await destination.close(); }
-    const after = await source.handle.stat();
-    if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size
-      || before.mtimeMs !== after.mtimeMs || before.mode !== after.mode || sha256.digest('hex') !== source.sha256) return refuse();
-    await input.assertCurrentAuthority();
-    return { materialPath, expectation: { kind: 'file', digest: digest.digest('hex'), executable: (before.mode & 0o111) !== 0, size } };
-  } finally { await source.handle.close(); }
+    const published = await params.lifecycle.publishTransferWhenReady({ transferId: params.operationId,
+      payloadSource: exported.payloadSource, onDemandScope: exported.onDemandScope, filesystemScope: params.filesystemScope });
+    return { prepared: { transferId: published.transferId, endpointCandidates: published.endpointCandidates,
+      expiresAt: published.expiresAt, name: exported.name, sizeBytes: exported.sizeBytes, manifestHash: exported.manifestHash },
+      entryTree: exported.entryTree };
+  } catch (error) { await exported.payloadSource.dispose?.(); throw error; }
 }

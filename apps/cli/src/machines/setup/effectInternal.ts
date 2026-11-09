@@ -74,8 +74,8 @@ export async function runMachineSetupEffectInternal(args: readonly string[], io:
             ? result : { ...result, completedStepIds: [...result.completedStepIds] } });
         return result.status === 'applied' || result.status === 'checked' ? 0 : 1;
     };
-    const refused = (status: machineSetup.MachineSetupApplyResultV1['status'], reason: string) =>
-        finish({ status, reason, completedStepIds: [], daemonRestartRequired: false });
+    const refused = (status: machineSetup.MachineSetupApplyResultV1['status'], reason: string, requiredFact?: string) =>
+        finish({ status, reason, ...(requiredFact ? { requiredFact } : {}), completedStepIds: [], daemonRestartRequired: false });
     let mutationStarted = false;
     let administratorEstablishment: machineSetup.MachineSetupAdministratorEstablishmentV1 | undefined;
     let connectorSession: import('./effectInternalSecretGrant').MachineConnectorSecretGrantSession | undefined;
@@ -193,7 +193,9 @@ export async function runMachineSetupEffectInternal(args: readonly string[], io:
                 const observation = await backend.observe(machineSetup.createMachineFirewallTransitionObservationStepV1(request.firewallIntent));
                 const native = machineSetup.readMachineFirewallTransitionFactsV1(observation);
                 const materialized = machineSetup.materializeMachineFirewallTransitionV1(request.firewallIntent, native);
-                if (materialized.status === 'review_required') return refused('plan_changed', materialized.reason);
+                if (materialized.status === 'review_required') return refused(
+                    materialized.reason === 'required_fact_unavailable' ? 'unavailable' : 'plan_changed',
+                    materialized.reason, materialized.requiredFact);
                 for (const step of materialized.steps) {
                     plans.push({ plan: await machineSetup.checkMachineSetupEffectPlan({ basis: request.basis, steps: [step], backend }) });
                 }

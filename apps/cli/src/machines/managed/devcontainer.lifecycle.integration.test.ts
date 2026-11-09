@@ -1,4 +1,3 @@
-import { createPluginInvocationServiceBinding } from '@/plugins/runtime/invocation/services/factory';
 import axios from 'axios';
 import tweetnacl from 'tweetnacl';
 import { mkdir, writeFile } from 'node:fs/promises';
@@ -12,7 +11,7 @@ import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-
 import { defineMachineProvisionerSchemas, MachineProvisionerBootstrapCarrierV1Schema,
   MachineProvisionerCheckResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema,
   MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema,
-  MachineProvisionerOptionsResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+  MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
@@ -32,8 +31,7 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { buildTargetActionInvocationRegistry } from '@/plugins/runtime/invocation/buildTargetActionRegistry';
 import { createTargetActionHostBindingResolver, createTargetActionHostPolicyResolver } from '@/plugins/runtime/hostAccess/resolve';
 import { deriveContributionRegistrationRightsForManifest } from '@/plugins/runtime/api/registrationRightsHost';
-import { addExecServiceBinding, createLoggerAvailablePluginInvocationServiceBinding,
-  createPluginInvocationServicesFactory, createUnavailablePluginServicesFactory } from '@/plugins/runtime/invocation/services/factory';
+import { createPluginInvocationServiceBinding, createPluginInvocationServicesFactory, createUnavailablePluginServicesFactory } from '@/plugins/runtime/invocation/services/factory';
 import { createUnavailableManagedServices } from '@/plugins/runtime/invocation/services/managedServicesAdapter';
 import { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createManagedServiceProcessSupervisorHost } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
@@ -313,9 +311,16 @@ describe('public-author Devcontainer lifecycle composition', () => {
         homeId, controller, contribution, selectors: { workspaceFolder: root, configPath },
       }, f.options));
       expect(reviewed.base).toMatchObject({ available: true, effectReview: { kind: 'devcontainer' } });
+      const descriptor = DEVCONTAINER_PLUGIN.manifest.contributes.machineProvisioners?.[0];
+      if (!descriptor) throw new Error('Missing Devcontainer provisioner');
+      const selected = projectMachineProvisionerSelectionV1({ options: reviewed, selection: {}, launchSchema: descriptor.launchSchema });
+      expect(selected.kind).toBe('ready');
+      if (selected.kind !== 'ready') throw new Error('Reviewed Devcontainer launch was not executable');
+      expect(selected.launch).toEqual(reviewed.base?.launch);
+      expect(selected.effectReview).toEqual(reviewed.base?.effectReview);
       expect(nativeRequests.some(request => request.args?.[0] === 'up')).toBe(false);
-      const launch = { provider: contribution, schemaVersion: 1, name: 'First-party child', choices: reviewed.base!.launch };
-      const failedEnrollment = driver.execute('machines.managed.acquire', { selection: { kind: 'one-off', homeId, launch,
+      const launch = { provider: contribution, schemaVersion: 1, name: 'First-party child', choices: selected.launch };
+      const failedEnrollment = driver.execute('machines.managed.acquire', { enrollmentIdentity: { kind: 'existingUser', role: 'adopted' }, selection: { kind: 'one-off', homeId, launch,
         controller, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } }, f.options);
       await expect(failedEnrollment).rejects.toBeInstanceOf(SystemTaskExecutionError);
       await expect(failedEnrollment).rejects.toMatchObject({ code: 'system_task_failed' });

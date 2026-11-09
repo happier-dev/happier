@@ -77,7 +77,7 @@ describe('createDirectTransferServerLifecycle', () => {
           waitForImportTransferSettlement: manager.waitForImportTransferSettlement };
       } });
     registerMachineDirectTransferImportRpcHandlers({ rpcHandlerManager, admissionDrain,
-      prepareImportSession: lifecycle.prepareImportSession, abortImportSession: lifecycle.abortImportSession });
+      prepareImportSession: (input, scope) => lifecycle.prepareImportSession(input, scope), abortImportSession: lifecycle.abortImportSession });
     registerMachineDirectTransferExportRpcHandlers({ rpcHandlerManager, admissionDrain,
       prepareExportSession: async request => {
         if (request.t !== 'workspace_file_download_v1') throw new Error('Expected file source');

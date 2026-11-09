@@ -32,7 +32,7 @@ import type { MachineSetupEffectError, MachineSetupNativeCommand, MachineSetupNa
 import { runMachineSetupEffectInternal } from '@/machines/setup/effectInternal';
 import { MachineEffectInternalRequestSchema, MachineEffectInternalRecordSchema } from '@/machines/setup/effectInternalProtocol';
 import type { MachineElevationSpawn } from '@/machines/adminAccess/runElevatedEffect';
-import { resolveInstalledMachineEffectCli } from '@/machines/adminAccess/runElevatedEffect';
+import { resolveMachineEffectCli } from '@/machines/adminAccess/machineEffectCli';
 import { observeMachineAdminAccess, type MachineAdminAccessNativeDependencies } from '@/machines/adminAccess/observeMachineAdminAccess';
 import { buildManagedSudoersSteps, MANAGED_SUDOERS_PATH } from '@/machines/adminAccess/managedSudoers';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
@@ -1680,7 +1680,7 @@ export async function createGenericDefaultFactoryJourney(fixture: Awaited<Return
     await writeStoredCredentialsForServerId('generic-home', fixture.accountRuntime.credentials);
     // Positive host journeys supply the real managed executable prerequisite;
     // the sudo/child-process adapter below remains the genuine OS boundary.
-    const managedCli = resolveInstalledMachineEffectCli();
+    const { installedCli: managedCli } = resolveMachineEffectCli();
     await mkdir(dirname(managedCli), { recursive: true });
     await writeFile(managedCli, 'managed executable OS fixture', { mode: 0o755 });
     const daemonCredentials = await readStoredCredentialsForServerId('generic-home');
@@ -2345,3 +2345,5 @@ export function parseCompletedReachabilityConfigure(result: Awaited<ReturnType<t
   if (!result.ok) throw new Error(result.errorCode);
   return MachineReachabilityConfigureResultV1Schema.parse(result.result);
 }
+
+

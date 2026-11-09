@@ -2,7 +2,8 @@ import type { ApiMachineClient } from '@/api/apiMachine';
 import type { DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachineAdminAccess';
 import { createMachineAdminAccessObserver, type MachineAdminAccessNativeDependencies } from '@/machines/adminAccess/observeMachineAdminAccess';
 import { createMachineAdminAccessHost } from './machineAdminAccessHost';
-import { resolveInstalledMachineEffectCli, type MachineElevationSpawn } from './runElevatedEffect';
+import type { MachineElevationSpawn } from './runElevatedEffect';
+import { resolveMachineEffectCli } from './machineEffectCli';
 import { getMachineAdminAccessV1 } from '@happier-dev/protocol';
 
 /** Compose the unprivileged native reader with its incumbent daemon-state writer. */
@@ -24,7 +25,7 @@ export function createDaemonMachineAdminAccessRoutes(input: Readonly<{
     },
   });
   return { observer, target: input.target, reconcile: async ({ port, inspect, installationId, emit, prompt, ...transition }) => {
-    const host = createMachineAdminAccessHost({ installationId, installedCli: resolveInstalledMachineEffectCli(),
+    const host = createMachineAdminAccessHost({ installationId, ...resolveMachineEffectCli(),
       readPolicy: async () => {
         const current = await getMachineAdminAccessV1(port);
         if (current.status !== 'ready') throw new Error('machine_admin_access_policy_unavailable');

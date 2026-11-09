@@ -1,3 +1,4 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { networkInterfaces } from 'node:os';
 import * as fsPromises from 'node:fs/promises';
@@ -38,6 +39,7 @@ import {
 import { IN_MEMORY_TRANSFER_SIZE_LIMIT_ERROR, resolveInMemoryTransferMaxBytes } from './inMemoryTransferSizeLimit';
 import { clampTransferChunkBytes } from '@happier-dev/transfers/node';
 import {
+  DirectPeerTransferResponseSchema,
   decodeDirectPeerTransferPathKey,
   DIRECT_PEER_AUTH_TOKEN_HARD_MAX_CHARS,
   DIRECT_PEER_RECIPIENT_PUBLIC_KEY_BASE64_HARD_MAX_CHARS,
@@ -65,7 +67,7 @@ import type { ComposerMediaStageUploadTargetDeps } from '@/transfers/targets/res
 import type { TransferUploadInitAttachmentDeps } from '@/transfers/targets/resolveTransferUploadInitTarget';
 import type { WorkspaceFinalizeFileOperationsFactory } from '@/transfers/targets/resolveWorkspaceFileUploadTarget';
 import { TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE } from '@happier-dev/transfers/node';
-import { assertPreparedFilesystemTransferScope, type PreparedFilesystemTransferScope } from './preparedFilesystemTransferScope';
+import { assertPreparedFilesystemTransferScope, readFilesystemTransferErrorCode, type PreparedFilesystemTransferScope } from './preparedFilesystemTransferScope';
 
 // Direct-peer transfers are used for session handoff and finite workspace transfers, which can take
 // significantly longer than 30s on large repos/slow disks/VMs (host <-> Lima). Keep the default
@@ -220,7 +222,16 @@ type StoredOnDemandScope = Readonly<{
   resolvePayloadSourceOnOpen: DirectPeerOnDemandTransferScope['resolvePayloadSourceOnOpen'];
   maxResolvedTransfers: number;
   resolvedTransferIds: Set<string>;
+  filesystemScope?: PreparedFilesystemTransferScope;
 }>;
+
+function retainFilesystemSourceAuthority(source: TransferPayloadSource, scope?: PreparedFilesystemTransferScope): TransferPayloadSource {
+  if (!scope?.assertCurrentAuthority) return source;
+  return { ...source, assertCurrentAuthority: async () => {
+    await scope.assertCurrentAuthority?.();
+    await source.assertCurrentAuthority?.();
+  } };
+}
 
 export function createDirectPeerTransferRegistry(params: Readonly<{
   advertisedPort: number;
@@ -390,7 +401,7 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
       transferToken,
       transferTokenDigest: hashTransferToken(transferToken),
       expiresAt,
-      payloadSource,
+      payloadSource: retainFilesystemSourceAuthority(payloadSource, input.filesystemScope),
       ...(input.filesystemScope ? { filesystemScope: input.filesystemScope } : {}),
       ...(filesystemSettlement ? { filesystemSettlement: { result: filesystemSettlement, settle: settleFilesystemExport } } : {}),
     });
@@ -402,6 +413,7 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
         resolvePayloadSourceOnOpen: input.onDemandScope.resolvePayloadSourceOnOpen,
         maxResolvedTransfers: input.onDemandScope.maxResolvedTransfers ?? 10_000,
         resolvedTransferIds: new Set<string>(),
+        ...(input.filesystemScope ? { filesystemScope: input.filesystemScope } : {}),
       });
     }
 
@@ -472,10 +484,13 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
     }
 
     const resolution = (async (): Promise<TransferPayloadSource | null> => {
-      const payloadSource = await scope.resolvePayloadSourceOnOpen({
+      await scope.filesystemScope?.assertCurrentAuthority?.();
+      const payloadSource = retainFilesystemSourceAuthority(await scope.resolvePayloadSourceOnOpen({
         transferId: input.transferId,
         requestBody: input.requestBody,
-      });
+      }), scope.filesystemScope);
+      try { await payloadSource.assertCurrentAuthority?.(); }
+      catch (error) { disposePayloadSourceBestEffort(payloadSource); throw error; }
       const currentScope = onDemandScopesByToken.get(input.transferToken);
       if (currentScope !== scope || scope.expiresAt <= now()) {
         disposePayloadSourceBestEffort(payloadSource);
@@ -503,6 +518,7 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
         transferTokenDigest: hashTransferToken(input.transferToken),
         expiresAt: scope.expiresAt,
         payloadSource,
+        ...(scope.filesystemScope ? { filesystemScope: scope.filesystemScope } : {}),
       });
       scope.resolvedTransferIds.add(input.transferId);
       emitPublishedTransfersChanged();
@@ -599,6 +615,9 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
         || stored.filesystemScope.destinationId !== input.outcome.destinationId
         || !readPublishedTransfer(input)) return { success: false, error: 'Prepared filesystem export is unavailable' };
       if (input.outcome.success) {
+        try { await stored.payloadSource.assertCurrentAuthority?.(); }
+        catch (error) { return { success: false, error: 'Prepared filesystem export is unavailable',
+          errorCode: readFilesystemTransferErrorCode(error) }; }
         const [sizeBytes, manifestHash] = await Promise.all([
           resolveTransferPayloadSizeBytes(stored.payloadSource),
           resolveTransferPayloadManifestHash(stored.payloadSource),
@@ -635,47 +654,45 @@ export function createDirectPeerTransferRegistry(params: Readonly<{
   };
 }
 
-const DirectPeerTransferResponseSchema = z.strictObject({
-    transferId: z.string().check(z.minLength(1)),
-    manifestHash: z.string().check(z.minLength(1)),
-    totalChunks: z.number().check(z.int(), z.positive()),
-    sizeBytes: z.optional(z.number().check(z.int(), z.nonnegative())),
-    name: z.optional(z.string().check(z.minLength(1))),
-  });
 
-const DirectTransferImportOpenResponseSchema = z.strictObject({
+const DirectPeerTransferFailureSchema = lazyZodSchema(() => z.strictObject({
+  ok: z.literal(false), error: z.string(), errorCode: z.optional(z.string()),
+}));
+
+const DirectTransferImportOpenResponseSchema = lazyZodSchema(() => z.strictObject({
     uploadId: z.string().check(z.minLength(1)),
     destDisplayPath: z.string().check(z.minLength(1)),
     expectedSizeBytes: z.number().check(z.int(), z.nonnegative()),
     chunkSizeBytes: z.number().check(z.int(), z.positive()),
     recipientPublicKeyBase64: z.string().check(z.minLength(1)),
     expiresAt: z.number().check(z.int(), z.positive()),
-  });
+  }));
 
-const DirectTransferImportChunkRequestSchema = z.strictObject({
+const DirectTransferImportChunkRequestSchema = lazyZodSchema(() => z.strictObject({
     contentBase64: z.optional(z.string().check(z.minLength(1))),
     payloadBase64: z.optional(z.string().check(z.minLength(1))),
     encryptedDataKeyEnvelopeBase64: z.optional(z.string().check(z.minLength(1))),
-  });
+  }));
 
-const DirectTransferImportChunkResponseSchema = z.union([z.strictObject({
+const DirectTransferImportChunkResponseSchema = lazyZodSchema(() => z.union([z.strictObject({
     success: z.literal(true),
-  }), z.strictObject({ success: z.literal(false), error: z.string() })]);
+  }), z.strictObject({ success: z.literal(false), error: z.string(), errorCode: z.optional(z.string()) })]));
 
-const DirectTransferImportFinalizeOrdinaryFailureResponseSchema = z.strictObject({
+const DirectTransferImportFinalizeOrdinaryFailureResponseSchema = lazyZodSchema(() => z.strictObject({
     success: z.literal(false),
     error: z.string(),
+    errorCode: z.optional(z.string()),
     keepSession: z.optional(z.boolean()),
-  });
+  }));
 
-const DirectTransferImportFinalizeRecoveryFailureResponseSchema = z.strictObject({
+const DirectTransferImportFinalizeRecoveryFailureResponseSchema = lazyZodSchema(() => z.strictObject({
     success: z.literal(false),
     error: z.string(),
     errorCode: z.literal(TRANSFER_FINALIZE_RECOVERY_REQUIRED_ERROR_CODE),
     keepSession: z.literal(true),
-  });
+  }));
 
-const DirectTransferImportFinalizeResponseSchema = z.union([z.union([z.strictObject({
+const DirectTransferImportFinalizeResponseSchema = lazyZodSchema(() => z.union([z.union([z.strictObject({
     success: z.literal(true),
     finalized: z.strictObject({
       success: z.literal(true),
@@ -684,9 +701,9 @@ const DirectTransferImportFinalizeResponseSchema = z.union([z.union([z.strictObj
       result: z.optional(z.unknown()),
     }),
     sha256: z.string().check(z.minLength(1)),
-  }), DirectTransferImportFinalizeOrdinaryFailureResponseSchema]), DirectTransferImportFinalizeRecoveryFailureResponseSchema]);
+  }), DirectTransferImportFinalizeOrdinaryFailureResponseSchema]), DirectTransferImportFinalizeRecoveryFailureResponseSchema]));
 
-const DirectTransferImportAbortResponseSchema = z.union([z.strictObject({ success: z.literal(true) }), z.strictObject({ success: z.literal(false), error: z.string() })]);
+const DirectTransferImportAbortResponseSchema = lazyZodSchema(() => z.union([z.strictObject({ success: z.literal(true) }), z.strictObject({ success: z.literal(false), error: z.string() })]));
 
 function isDirectTransferRoutePath(url: string | undefined): boolean {
   const normalizedUrl = String(url ?? '').trim();
@@ -857,6 +874,7 @@ export function createDirectPeerTransferApp(params: Readonly<{
     }
 
     const handle = await cacheFileHandle(input.cacheKey, input.payloadSource.filePath);
+    await input.payloadSource.assertCurrentAuthority?.();
     const chunkBuffer = Buffer.allocUnsafe(input.length);
     const { bytesRead } = await handle.read(chunkBuffer, 0, input.length, input.offset);
     return chunkBuffer.subarray(0, bytesRead);
@@ -940,8 +958,8 @@ export function createDirectPeerTransferApp(params: Readonly<{
       body: DirectTransferImportChunkRequestSchema,
       response: {
         200: DirectTransferImportChunkResponseSchema,
-        400: z.strictObject({ success: z.literal(false), error: z.string() }),
-        404: z.strictObject({ success: z.literal(false), error: z.string() }),
+        400: DirectTransferImportChunkResponseSchema,
+        404: DirectTransferImportChunkResponseSchema,
       },
     },
   }, async (request, reply) => {
@@ -1026,10 +1044,10 @@ export function createDirectPeerTransferApp(params: Readonly<{
       body: z.optional(z.unknown()),
       response: {
         200: DirectPeerTransferResponseSchema,
-        400: z.strictObject({ ok: z.literal(false), error: z.string() }),
-        401: z.strictObject({ ok: z.literal(false), error: z.string() }),
-        503: z.strictObject({ ok: z.literal(false), error: z.string() }),
-        404: z.strictObject({ ok: z.literal(false), error: z.string() }),
+        400: DirectPeerTransferFailureSchema,
+        401: DirectPeerTransferFailureSchema,
+        503: DirectPeerTransferFailureSchema,
+        404: DirectPeerTransferFailureSchema,
       },
     },
   }, async (request, reply) => {
@@ -1074,13 +1092,18 @@ export function createDirectPeerTransferApp(params: Readonly<{
           return { ok: false as const, error: error.message };
         }
         reply.code(400);
-        return { ok: false as const, error: 'Invalid direct peer transfer request' };
+        return { ok: false as const, error: 'Invalid direct peer transfer request',
+          ...(error && typeof error === 'object' && ('errorCode' in error || 'code' in error)
+            ? { errorCode: readFilesystemTransferErrorCode(error) } : {}) };
       }
     }
     if (!payloadSource) {
       reply.code(401);
       return { ok: false as const, error: 'Direct peer transfer not available' };
     }
+    try { await payloadSource.assertCurrentAuthority?.(); }
+    catch (error) { reply.code(401); return { ok: false as const, error: 'Direct peer transfer not available',
+      errorCode: readFilesystemTransferErrorCode(error) }; }
     const cacheKey = readOpenCacheKeyFromDigest(transferId, transferTokenDigest);
     const sizeBytes = await cachePromise(
       openSizeBytesCache,
@@ -1111,7 +1134,7 @@ export function createDirectPeerTransferApp(params: Readonly<{
           manifestHash: z.string().check(z.regex(/^sha256:[a-f0-9]{64}$/i)) }),
         z.strictObject({ destinationId: z.string().check(z.minLength(1)), success: z.literal(false), error: z.string(), errorCode: z.optional(z.string()) }),
       ]),
-      response: { 200: DirectTransferImportAbortResponseSchema, 400: z.strictObject({ success: z.literal(false), error: z.string() }) },
+      response: { 200: DirectTransferImportAbortResponseSchema, 400: z.strictObject({ success: z.literal(false), error: z.string(), errorCode: z.optional(z.string()) }) },
     },
   }, async (request, reply) => {
     const transferId = decodeDirectPeerTransferPathKey(request.params.transferId);
@@ -1139,9 +1162,9 @@ export function createDirectPeerTransferApp(params: Readonly<{
       }),
       response: {
         200: TransferChunkEnvelopeSchema,
-        400: z.strictObject({ ok: z.literal(false), error: z.string() }),
-        401: z.strictObject({ ok: z.literal(false), error: z.string() }),
-        404: z.strictObject({ ok: z.literal(false), error: z.string() }),
+        400: DirectPeerTransferFailureSchema,
+        401: DirectPeerTransferFailureSchema,
+        404: DirectPeerTransferFailureSchema,
       },
     },
   }, async (request, reply) => {
@@ -1177,6 +1200,9 @@ export function createDirectPeerTransferApp(params: Readonly<{
       reply.code(401);
       return { ok: false as const, error: 'Direct peer transfer not available' };
     }
+    try { await payloadSource.assertCurrentAuthority?.(); }
+    catch (error) { reply.code(401); return { ok: false as const, error: 'Direct peer transfer not available',
+      errorCode: readFilesystemTransferErrorCode(error) }; }
     const chunkBytes = readDirectPeerChunkBytes();
     const cacheKey = readOpenCacheKeyFromDigest(transferId, transferTokenDigest);
     const sizeBytes = await cachePromise(
@@ -1210,7 +1236,13 @@ export function createDirectPeerTransferApp(params: Readonly<{
         payloadBase64: encryptedChunk.payloadBase64,
         encryptedDataKeyEnvelopeBase64: encryptedChunk.encryptedDataKeyEnvelopeBase64,
       };
-    } catch {
+    } catch (error) {
+      if (error && typeof error === 'object' && ('errorCode' in error || 'code' in error)
+        && readFilesystemTransferErrorCode(error) === 'filesystem_identity_custody_unavailable') {
+        reply.code(401);
+        return { ok: false as const, error: 'Direct peer transfer not available',
+          errorCode: readFilesystemTransferErrorCode(error) };
+      }
       reply.code(400);
       return { ok: false as const, error: 'Invalid direct peer transfer request' };
     }
@@ -1279,7 +1311,7 @@ export async function startDirectPeerTransferServer(params: Readonly<{
   // bindHost is local listener configuration. Clamp it independently from any advertised remote
   // candidates so a direct caller cannot restore plaintext nonloopback exposure.
   const address = await app.listen({
-    port: typeof params.bindPort === 'number' && params.bindPort > 0 ? Math.floor(params.bindPort) : readDirectPeerBindPort(),
+    port: typeof params.bindPort === 'number' && params.bindPort >= 0 ? Math.floor(params.bindPort) : readDirectPeerBindPort(),
     host: resolveDirectPeerTransferBindHost(params.bindHost),
   });
   const port = Number.parseInt(String(address).split(':').pop() ?? '', 10);

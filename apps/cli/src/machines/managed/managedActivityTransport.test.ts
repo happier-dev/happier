@@ -10,6 +10,7 @@ import { createManagedGuestActivityTransport } from './managedActivityTransport'
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import type { ManagedMachineExecutionOptions } from './acquire';
 import { ManagedMachineControllerError } from './controllerErrors';
+import { ApiMachineClient, type ManagedMachinePolicyInvalidation } from '@/api/apiMachine';
 
 const machine = ManagedMachineV1Schema.parse({
     id: 'managed', homeId: 'srv_home', custodianAccountId: 'owner',
@@ -58,7 +59,8 @@ async function withPendingConnection(run: (endpoint: string, connecting: Promise
 }
 
 async function withConnectedTransport(run: (bridge: ReturnType<typeof createManagedGuestActivityTransport>, socket: Socket, reads: () => number) => Promise<void>,
-    options: ManagedMachineExecutionOptions = { requestId: 'retention' }, current = machine, signingKey?: Uint8Array) {
+    options: ManagedMachineExecutionOptions = { requestId: 'retention' }, current = machine, signingKey?: Uint8Array,
+    subscribeManagedMachineChanges?: ApiMachineClient['onManagedMachinePolicyInvalidated']) {
     let httpReads = 0;
     const http = createServer((_request, response) => { httpReads++; response.writeHead(403); response.end(); });
     const server = new Server(http, { path: '/v1/updates/' });
@@ -69,9 +71,10 @@ async function withConnectedTransport(run: (bridge: ReturnType<typeof createMana
     let bridge: ReturnType<typeof createManagedGuestActivityTransport> | undefined;
     try {
         bridge = createManagedGuestActivityTransport({ token: 'owner-token',
-        serverUrl: `http://127.0.0.1:${address.port}`,
-        credentials: { token: 'owner-token', encryption: null },
-        ...(signingKey ? { externalActionMachineRequestPrivateKey: signingKey } : {}) }, options, current);
+            serverUrl: `http://127.0.0.1:${address.port}`,
+            credentials: { token: 'owner-token', encryption: null },
+            ...(subscribeManagedMachineChanges ? { subscribeManagedMachineChanges } : {}),
+            ...(signingKey ? { externalActionMachineRequestPrivateKey: signingKey } : {}) }, options, current);
         await run(bridge, await connected, () => httpReads);
     } finally {
         await bridge?.dispose?.();
@@ -190,21 +193,54 @@ describe('managed activity transport lifetime', () => {
             ]);
         });
     });
-    it('classifies 60 unrelated Account wakes as currentness and the target Machine wake as activity', async () => {
-        await withConnectedTransport(async (bridge, socket) => {
-            // Connection itself invalidates the prior observation.
-            await expect(bridge.waitForChange()).resolves.toBe('activity');
-            for (let seq = 1; seq <= 60; seq++) {
-                const changed = bridge.waitForChange();
-                socket.emit('update', { id: `account-${seq}`, seq, createdAt: seq,
-                    body: { t: 'account-change' } });
-                await expect(changed).resolves.toBe('currentness');
-            }
-            const changed = bridge.waitForChange();
-            socket.emit('update', { id: 'target-machine', seq: 61, createdAt: 61,
-                body: { t: 'update-machine', machineId: machine.enrolledMachineId } });
-            await expect(changed).resolves.toBe('activity');
-        });
+    it('uses classified changes without waking a held guest for unrelated Account traffic', async () => {
+        const apiMachine = new ApiMachineClient('owner-token', { id: 'controller', encryptionMode: 'plain',
+            metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
+        const feed = apiMachine as unknown as {
+            notifyManagedMachinePolicyInvalidated(signal: undefined, change?: ManagedMachinePolicyInvalidation): Promise<void>;
+        };
+        try {
+            await withConnectedTransport(async (bridge, socket) => {
+                socket.on(SOCKET_RPC_EVENTS.CALL, (_request: unknown, reply: (result: unknown) => void) => {
+                    reply({ ok: true, result: { kind: 'idle', since: 100 } });
+                });
+                await expect(bridge.waitForChange()).resolves.toBe('activity');
+                let wakes = 0;
+                const cancellation = new AbortController();
+                const waiting = (async () => {
+                    try {
+                        for (;;) { await bridge.waitForChange(cancellation.signal); wakes++; }
+                    } catch (error) {
+                        if (!cancellation.signal.aborted) throw error;
+                    }
+                })();
+                try {
+                    for (let seq = 1; seq <= 60; seq++) {
+                        socket.emit('update', { id: `account-${seq}`, seq, createdAt: seq,
+                            body: { t: 'account-change' } });
+                        // The reply follows the update on the same socket, so it
+                        // proves each update was consumed before counting wakes.
+                        await bridge.confirmIdle(machine);
+                    }
+                    await feed.notifyManagedMachinePolicyInvalidated(undefined, { kind: 'managed', managedIds: ['unrelated'] });
+                    await feed.notifyManagedMachinePolicyInvalidated(undefined, { kind: 'machines', machineIds: ['unrelated'] });
+                    expect(wakes).toBe(0);
+                    await feed.notifyManagedMachinePolicyInvalidated(undefined, { kind: 'managed', managedIds: [machine.id] });
+                    await new Promise<void>(resolve => setImmediate(resolve));
+                    expect(wakes).toBe(1);
+                    await feed.notifyManagedMachinePolicyInvalidated(undefined, { kind: 'currentness' });
+                    await new Promise<void>(resolve => setImmediate(resolve));
+                    expect(wakes).toBe(1);
+                    socket.emit('update', { id: 'target-machine', seq: 61, createdAt: 61,
+                        body: { t: 'update-machine', machineId: machine.enrolledMachineId } });
+                    await bridge.confirmIdle(machine);
+                    expect(wakes).toBe(2);
+                    await feed.notifyManagedMachinePolicyInvalidated(undefined);
+                    await new Promise<void>(resolve => setImmediate(resolve));
+                    expect(wakes).toBe(2);
+                } finally { cancellation.abort(); await waiting; }
+            }, { requestId: 'retention' }, machine, undefined, listener => apiMachine.onManagedMachinePolicyInvalidated(listener));
+        } finally { await apiMachine.shutdown(); }
     });
     it.each([false, true])('disposes before readiness without an unhandled rejection (waiting reader=%s)', async waitingReader => {
         await withPendingConnection(async (serverUrl, connecting) => {

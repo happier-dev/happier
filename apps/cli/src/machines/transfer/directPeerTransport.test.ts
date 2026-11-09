@@ -5,9 +5,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createDirectPeerTransferApp, createDirectPeerTransferRegistry, startDirectPeerTransferServer } from './directPeerTransport';
+import { createDirectPeerTransferApp, createDirectPeerTransferRegistry, requestDirectPeerTransferToFile, startDirectPeerTransferServer } from './directPeerTransport';
 import { createDirectTransferServerLifecycle } from './directTransferServerLifecycle';
 import { createDirectTransferImportSessionManager } from './directTransferImportSession';
+import { resolveMachineTransferRuntimeConfig } from './transferRuntimeConfig';
 import { createBufferTransferPayloadSource, createFileTransferPayloadSource } from './transferPayloadSource';
 
 const fileOpenBoundary = vi.hoisted(() => ({ observe: vi.fn() }));
@@ -55,6 +56,38 @@ async function reserveFreeTcpPort(): Promise<number> {
 }
 
 describe('direct peer machine transfer', () => {
+  it.each(['default', 'explicit-zero'] as const)('keeps two daemon publications independently reachable with %s port allocation', async mode => {
+    // Exercise real OS listeners and the daemon's config → lifecycle → advertised endpoint path.
+    if (mode === 'explicit-zero') process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT = '0';
+    else delete process.env.HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_BIND_PORT;
+    const { bindPort } = resolveMachineTransferRuntimeConfig().directPeer;
+    const lifecycles = [0, 1].map(() => createDirectTransferServerLifecycle({ bindPort, listenerClasses: ['loopback_http'] }));
+    const directory = await mkdtemp(join(tmpdir(), 'happier-daemon-port-isolation-'));
+    try {
+      const published = [];
+      for (const [index, lifecycle] of lifecycles.entries()) {
+        published.push(await lifecycle.publishTransferWhenReady({ transferId: `daemon-${index}`,
+          payloadSource: createBufferTransferPayloadSource(Buffer.from(`payload-${index}`)) }));
+      }
+      const ports = lifecycles.map(lifecycle => lifecycle.getState().port!);
+      expect(ports.every(port => port > 0)).toBe(true);
+      expect(new Set(ports).size).toBe(2);
+      for (const [index, publication] of published.entries()) {
+        const endpoint = publication.endpointCandidates.find(candidate => candidate.kind === 'http');
+        expect(endpoint).toBeDefined();
+        expect(new URL(endpoint!.url).port).toBe(String(ports[index]));
+        const destinationPath = join(directory, `payload-${index}`);
+        await requestDirectPeerTransferToFile({ transferId: publication.transferId,
+          endpointCandidates: publication.endpointCandidates, destinationPath });
+        expect(await readFile(destinationPath)).toEqual(Buffer.from(`payload-${index}`));
+        expect(lifecycles[index]!.getState().publishedTransferCount).toBe(1);
+      }
+    } finally {
+      await Promise.all(lifecycles.map(lifecycle => lifecycle.stop()));
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each(['complete', 'clear', 'expiry', 'stop'] as const)('closes every cached publication handle before captured files are disposed on %s', async (ending) => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-export-handle-custody-'));
     const sourcePath = join(directory, 'manifest.bin');

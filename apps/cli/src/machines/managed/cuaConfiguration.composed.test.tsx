@@ -1,7 +1,7 @@
 import '../../../../ui/sources/dev/vitestSetup';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFailed, vi } from 'vitest';
 import { Dimensions } from 'react-native';
 import { installApprovalCommonModuleMocks } from '../../../../ui/sources/components/approvals/approvalsTestHelpers';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, loadScopedHomeActionExecutorForTests, waitForHomeGovernance } from '../../../../ui/sources/dev/testkit/harness/homeGovernanceHarness';
@@ -35,6 +35,7 @@ installHomeGovernanceBoundaries(home);
 const { resetScopedHomeActionExecutorsForTests } = await loadScopedHomeActionExecutorForTests();
 const { clearDaemonMergedProjectionCacheForTests } = await import('../../../../ui/sources/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const { resetMachineProjectionReadsForTests } = await import('../../../../ui/sources/sync/ops/machineContributionRegistryProjection');
+const { ManagedMachineConfigurationView } = await import('../../../../ui/sources/components/settings/machines/managed/ManagedMachineConfigurationView');
 let restoreViewport: (() => void) | undefined;
 beforeEach(async () => {
     await home.reset(); resetScopedHomeActionExecutorsForTests(); clearDaemonMergedProjectionCacheForTests(); resetMachineProjectionReadsForTests();
@@ -72,14 +73,18 @@ function nativeOptions(id: string, query: unknown) {
 
 describe('fresh Cua declarations through the mounted shared configurator', () => {
     it.each<{ id: string; fields: string[][]; savedCloud?: 'modal' | 'aws' | 'gcp' }>([
-        { id: 'local-sandbox', fields: [['runtimeId', 'qemu'], ['imageId', imageId], ['size.cpu', '4'], ['size.memoryBytes', String(size.memoryBytes)], ['size.diskBytes', String(size.diskBytes)]] },
-        { id: 'local-space', fields: [['runtimeId', 'qemu'], ['imageId', imageId], ['size.cpu', '4'], ['size.memoryBytes', String(size.memoryBytes)], ['size.diskBytes', String(size.diskBytes)]] },
+        { id: 'local-sandbox', fields: [['size.cpu', '4'], ['size.memoryBytes', String(size.memoryBytes / 1024 ** 3)]] },
+        { id: 'local-space', fields: [['size.cpu', '4'], ['size.memoryBytes', String(size.memoryBytes / 1024 ** 3)], ['size.diskBytes', String(size.diskBytes / 1024 ** 3)]] },
         { id: 'byoc', fields: [['cloud', 'aws']] },
         { id: 'byoc', fields: [['cloud', 'modal']] },
         { id: 'byoc', fields: [], savedCloud: 'modal' },
         { id: 'byoc', fields: [], savedCloud: 'aws' },
         { id: 'byoc', fields: [], savedCloud: 'gcp' },
     ])('produces a strict complete $id launch ($savedCloud) with Create and Save enabled', async ({ id, fields, savedCloud }) => {
+        let phase = 'discovering declared fields';
+        let editedFields: Readonly<Record<string, unknown>> = {};
+        onTestFailed(() => console.error('Cua configuration failed', { id, savedCloud, phase,
+            optionRequests: home.requestsFor('/v1/actions/machines.provisioners.options').length, editedFields }));
         const descriptor = CUA_PLUGIN.manifest.contributes.machineProvisioners?.find(value => value.id === id);
         if (!descriptor) throw new Error('Missing actual Cua descriptor');
         const declaration = CUA_PLUGIN.manifest.contributes.actions?.find(value => value.id === descriptor.actions.options);
@@ -113,35 +118,42 @@ describe('fresh Cua declarations through the mounted shared configurator', () =>
             const savedLaunch = selected.launch;
             const saved = ManagedMachinePresetV1Schema.parse({ id: 'saved-byoc', homeId: `srv_${id}`, revision: 1, name: 'Saved BYOC',
                 owner: { kind: 'account', accountId: 'owner' }, controller,
-                recipe: { provider: contribution, schemaVersion: descriptor.schemaVersion, name: 'Saved BYOC', choices: savedLaunch },
+                launch: { provider: contribution, schemaVersion: descriptor.schemaVersion, name: 'Saved BYOC', choices: savedLaunch },
                 retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true });
             home.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
         }
-        let native: ReturnType<typeof MachineProvisionerOptionsResultV1Schema.parse> | undefined;
+        let options: ReturnType<typeof MachineProvisionerOptionsResultV1Schema.parse> | undefined;
         home.answer(serverId, '/v1/actions/machines.provisioners.options', { async select(value) {
             const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
             const input = request.input as { selectors: unknown };
             const validate = await compilePluginJsonSchema(declaration.inputSchema);
-            const result = validate(input.selectors) ? MachineProvisionerOptionsResultV1Schema.parse(await nativeOptions(id, input.selectors)) : { dimensions: { size: [], image: [], location: [], network: [], duration: [] } };
-            native = result;
+            const result = validate(input.selectors) ? MachineProvisionerOptionsResultV1Schema.parse(await nativeOptions(id, input.selectors))
+                : { dimensions: { size: [], image: [], location: [], network: [], duration: [] } };
+            options = result;
             return { body: { v: 1, actionId: 'machines.provisioners.options', requestId: request.requestId, execution: { ok: true, result } } };
         } });
-        const { ManagedMachineConfigurationView } = await import('../../../../ui/sources/components/settings/machines/managed/ManagedMachineConfigurationView');
+        phase = 'mounting shared configurator';
         const screen = await renderScreen(<ManagedMachineConfigurationView serverId={serverId} provisioner={buildQualifiedPluginContributionKey(contribution)} initialController={controller}
             presetId={savedCloud ? 'saved-byoc' : undefined} />);
         if (fields.length) await waitForHomeGovernance(() => expect(screen.findByTestId(`managed-config.field:${fields[0][0]}`)).not.toBeNull());
-        for (const [path, value] of fields) await act(async () => screen.changeTextByTestId(`managed-config.field:${path}`, value));
-        await waitForHomeGovernance(() => expect(native?.base).toBeDefined());
-        const options = native;
+        phase = 'editing declared fields';
+        for (const [path, value] of fields) {
+            await act(async () => screen.changeTextByTestId(`managed-config.field:${path}`, value));
+            await waitForHomeGovernance(() => expect(screen.findByTestId(`managed-config.field:${path}`)?.props.value).toBe(value));
+        }
+        editedFields = Object.fromEntries(fields.map(([path]) => [path, screen.findByTestId(`managed-config.field:${path}`)?.props.value]));
+        phase = 'waiting for edited native options';
+        await waitForHomeGovernance(() => expect(options?.base?.launch).toBeDefined());
+        if (id !== 'byoc') await waitForHomeGovernance(() => expect(options?.dimensions.size[0]?.nativeFacts?.size?.cpuCores).toBe(size.cpu));
         if (!options) throw new Error('Native options must produce a complete launch');
         const selection = Object.fromEntries(Object.entries(options.dimensions).flatMap(([dimension, entries]) =>
             entries[0] ? [[dimension, entries[0].id]] : []));
         const selected = projectMachineProvisionerSelectionV1({ options, selection, launchSchema: descriptor.launchSchema });
-        expect(selected.kind).toBe('ready');
-        if (selected.kind !== 'ready') throw new Error('Native options must produce a complete launch');
+        if (selected.kind !== 'ready') throw new Error('Native option selection must produce a complete launch');
         const validateLaunch = await compilePluginJsonSchema(descriptor.launchSchema);
         expect(validateLaunch(selected.launch)).toBe(true);
         for (const dimension of savedCloud ? [] : ['size', 'image', 'location'] as const) {
+            phase = `selecting ${dimension}`;
             const option = options.dimensions[dimension][0];
             if (!option) continue;
             const section = dimension === 'size' ? 'sizes' : dimension === 'image' ? 'images' : 'locations';
@@ -149,6 +161,14 @@ describe('fresh Cua declarations through the mounted shared configurator', () =>
             const control = screen.tree.findAll(node => node.props.testID === `managed-config.${section}` && typeof node.props.onChange === 'function')[0];
             await act(async () => control.props.onChange(option.id));
         }
+        if (!savedCloud && options.dimensions.duration[0]) {
+            phase = 'selecting native duration';
+            const { ManagedMachineKeepControl } = await import('../../../../ui/sources/components/settings/machines/managed/ManagedMachineKeepControl');
+            await waitForHomeGovernance(() => expect(screen.tree.findAllByType(ManagedMachineKeepControl)[0]?.props.nativeDuration).toBeDefined());
+            const keep = screen.tree.findAllByType(ManagedMachineKeepControl)[0];
+            await act(async () => keep.props.nativeDuration.onChange(options!.dimensions.duration[0]!.id));
+        }
+        phase = 'waiting for executable creation';
         await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
         expect(screen.findByTestId('managed-config.save-preset')?.props.disabled).toBe(false);
         if (savedCloud) {

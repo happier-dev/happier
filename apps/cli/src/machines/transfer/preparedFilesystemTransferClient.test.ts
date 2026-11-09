@@ -24,6 +24,15 @@ vi.mock('node:child_process', async importOriginal => {
 });
 
 describe('headless prepared filesystem client', () => {
+  it.each(['machine_carrier_unavailable', 'action_forbidden'] as const)('preserves the exact %s refusal before entry copy admission', async errorCode => {
+    const client = createPreparedFilesystemTransferClient({
+      openMachineTunnel: async () => { throw new Error('No carrier may open after source refusal'); },
+      executeAction: async () => ({ ok: false, errorCode, error: errorCode }),
+    });
+    await expect(client.copy({ source: { serverId: 'home', machineId: 'holder', rootPath: '/deployments', path: 'image.tar' },
+      destination: { serverId: 'home', machineId: 'receiver', rootPath: '/deployments', path: 'image.tar' },
+      overwrite: false, recursive: false })).resolves.toMatchObject({ success: false, status: 'failed', errorCode });
+  });
   it('retains the original operation identity through native entry capture and binary export', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-native-entry-export-'));
     const sourcePath = join(directory, 'source.bin');

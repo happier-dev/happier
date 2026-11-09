@@ -143,7 +143,7 @@ export async function prepareMachineSetupPlanV1(params: Readonly<{
     }
   }
   let removals: Awaited<ReturnType<typeof prepareMachineSetupRemovalsV1>> | undefined;
-  if (change?.detached.length) {
+  if (change && (change.detached.length || input.removeItemKeys !== undefined)) {
     try {
       removals = await prepareMachineSetupRemovalsV1({ machineId: input.machineId,
         desiredRevision: current.policy.revision, detached: change.detached, recipes: recipes ?? [], exclusions,

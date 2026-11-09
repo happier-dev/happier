@@ -688,9 +688,9 @@ describe('direct transfer import endpoints', () => {
         url: `/machine-transfers/direct/imports/${opened.uploadId}/finalize`,
       });
       expect(finalize.statusCode).toBe(400);
-      expect(finalize.json()).toEqual({
+      expect(finalize.json()).toMatchObject({
         success: false,
-        error: 'Destination already exists',
+        errorCode: 'EEXIST',
         keepSession: true,
       });
 

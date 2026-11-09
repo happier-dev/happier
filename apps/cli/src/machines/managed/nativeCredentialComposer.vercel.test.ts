@@ -33,7 +33,7 @@ const redacted = (policy: Policy) => policy.mode === 'allow-all' ? { mode: 'allo
 
 async function fixture() {
   const manifest = normalizePluginManifestV2(PLUGIN_MANIFEST);
-  const authored = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: PLUGIN });
+  const authored = await createPluginTestkit({ manifest, module: PLUGIN });
   const handlerEvents: unknown[] = [];
   const invocationSnapshots: string[] = [];
   const handlers = new Map(manifest.contributes.actions.map(action => {
@@ -158,7 +158,7 @@ describe('source-composed authored Vercel native credential delivery', () => {
     const f = await fixture();
     const driver = createManagedMachineAcquisitionDriver({ ...f.driverInput,
       prepareTeamCredentialNativeSource: f.input.prepareSource });
-    const machine = { ...f.input.machine, retention: { kind: 'deadline' as const, at: 0, effect: 'stop' as const, interrupts: true as const } };
+    const machine = { ...f.input.machine, retention: { kind: 'deadline' as const, at: 0, effect: 'stop' as const } };
     const failures: unknown[] = [];
     let computeStarted = false;
     const runtime = createDaemonManagedMachinePolicyRuntime({

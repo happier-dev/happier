@@ -1,5 +1,5 @@
-import axios from 'axios';
-import { ManagedGetOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import axios from '@/api/client/credentialAxios';
+import { ManagedGetOutputV1Schema, ManagedListOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import type { StoredCredentials } from '@/persistence';
@@ -25,4 +25,14 @@ export async function readManagedMachine(input: Readonly<{
   );
   if (http && !await http.isCurrent()) throw Object.assign(new Error('Managed Machine requester authority is unavailable'), { code: 'workspace_sync_child_unavailable' });
   return ManagedGetOutputV1Schema.parse(response.data);
+}
+
+/** Current controller-owned rows; this Account read confers no child Machine access. */
+export async function readManagedMachines(input: Readonly<{
+  credentials: StoredCredentials; serverHttpBaseUrl: string; homeId: string; enrolledMachineId?: string; signal?: AbortSignal;
+}>): Promise<readonly ManagedMachineV1[]> {
+  const response = await axios.post<unknown>(`${input.serverHttpBaseUrl.replace(/\/+$/, '')}${managedMachineActionEndpointPathV1('machines.managed.list')}`,
+    { homeId: input.homeId, ...(input.enrolledMachineId ? { enrolledMachineId: input.enrolledMachineId } : {}) }, { headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
+      Authorization: `Bearer ${input.credentials.token}` }, ...(input.signal ? { signal: input.signal } : {}) });
+  return ManagedListOutputV1Schema.parse(response.data).machines;
 }

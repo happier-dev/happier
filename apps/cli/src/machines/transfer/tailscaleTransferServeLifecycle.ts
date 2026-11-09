@@ -6,6 +6,7 @@ import {
 
 import type { DaemonTransferListenerState } from '@/api/types';
 import type { DirectTransferServerLifecycleState } from './directTransferServerLifecycle';
+import { tailscaleCommandFailureDiagnostic } from '@/integrations/tailscale/tailscaleCommand';
 
 type TailscaleTransferServeLifecycleDeps = Readonly<{
   runTailscaleServeEnable?: (params: Readonly<{
@@ -101,9 +102,11 @@ export function createTailscaleTransferServeLifecycle(params: TailscaleTransferS
       return true;
     } catch (error) {
       params.warn?.('[DAEMON RUN] Failed to disable transfer-specific Tailscale Serve mapping', error);
+      const diagnostic = tailscaleCommandFailureDiagnostic(error);
       publishListenerState({
         ...lastPublishedState,
         active: false,
+        ...(diagnostic ? { diagnostic } : {}),
       });
       return false;
     }
@@ -165,11 +168,13 @@ export function createTailscaleTransferServeLifecycle(params: TailscaleTransferS
     } catch (error) {
       appliedUpstreamUrl = null;
       appliedHttpsBaseUrl = null;
+      const diagnostic = tailscaleCommandFailureDiagnostic(error);
       publishListenerState({
         enabled: true,
         configured: false,
         active: false,
         available: !isTailscaleUnavailableError(error),
+        ...(diagnostic ? { diagnostic } : {}),
       });
       params.warn?.('[DAEMON RUN] Failed to enable transfer-specific Tailscale Serve mapping', error);
     }

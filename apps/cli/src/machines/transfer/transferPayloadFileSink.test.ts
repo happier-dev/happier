@@ -78,11 +78,28 @@ vi.mock('node:fs/promises', async () => {
   };
 });
 
-import { createTransferPayloadFileSink } from './transferPayloadFileSink';
+import { createTransferPayloadFileSink, writeTransferPayloadSourceToFile } from './transferPayloadFileSink';
 import { CrossDeviceMoveSourceCleanupError } from '@/utils/fs/moveFileWithCrossDeviceFallback';
 
 describe('transferPayloadFileSink', () => {
   const tempDirs: string[] = [];
+
+  it('commits native callback bytes only after their admitted hash is verified', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-native-payload-sink-'));
+    tempDirs.push(root);
+    const destinationPath = join(root, 'payload.bin');
+    const bytes = Buffer.from([255, 0, 128, 1]);
+    const manifestHash = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+    await expect(writeTransferPayloadSourceToFile({ destinationPath, source: { kind: 'native',
+      sizeBytes: bytes.length, manifestHash, readChunk: async ({ offset, length }) => bytes.subarray(offset, offset + length),
+    } })).resolves.toMatchObject({ destinationPath, sizeBytes: bytes.length, manifestHash });
+    expect(await readFile(destinationPath)).toEqual(bytes);
+    await expect(writeTransferPayloadSourceToFile({ destinationPath, source: { kind: 'native',
+      sizeBytes: bytes.length, manifestHash, readChunk: async () => Buffer.alloc(bytes.length),
+    } })).rejects.toThrow();
+    expect(await readFile(destinationPath)).toEqual(bytes);
+    expect(await readdir(root)).toEqual(['payload.bin']);
+  });
 
   afterEach(async () => {
     failFirstRenameWith = null;

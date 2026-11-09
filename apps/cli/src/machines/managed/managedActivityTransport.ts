@@ -10,7 +10,7 @@ import { ManagedMachineControllerError } from './controllerErrors';
 import type { ManagedMachineAcquisitionDriverInput, ManagedMachineExecutionOptions } from './acquire';
 import type { ManagedGuestActivityTransport } from './managedIntentReconciler';
 
-/** The Account socket invalidates observations; only the exact guest RPC decides activity. */
+/** Only this retained row and the exact guest can invalidate its activity observation. */
 export function createManagedGuestActivityTransport(input: Pick<ManagedMachineAcquisitionDriverInput, 'token' | 'serverUrl' | 'credentials' | 'externalActionMachineRequestPrivateKey' | 'subscribeManagedMachineChanges'>, options: ManagedMachineExecutionOptions, machine: ManagedMachineV1): ManagedGuestActivityTransport {
     // Home derives the guest scope from the current admitted retained row;
     // the admitted Machine signs that exact destination with the original root.

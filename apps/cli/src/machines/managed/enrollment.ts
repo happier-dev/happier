@@ -56,7 +56,7 @@ export async function runManagedMachineEnrollment(input: Readonly<{
   const runPreparedTask = async (kind: InteractiveSystemTaskKind) => {
     const { getLiveSystemTasksRunnerAdapter } = await import('@/capabilities/systemTasks/liveSystemTasksRunner');
     const owner = getLiveSystemTasksRunnerAdapter();
-    let controllerFailure: ManagedMachineControllerError | undefined;
+    let taskFailure: ManagedMachineControllerError | SystemTaskExecutionError | undefined;
     const task = await owner.startAdmitted({ run: async (ctx) => {
       try {
         return await kind.run({ ...ctx, emit: (event) => {
@@ -72,8 +72,10 @@ export async function runManagedMachineEnrollment(input: Readonly<{
           } : {}) }); } finally { input.onPrompt?.(null); }
         } });
       } catch (error) {
+        if (error instanceof ManagedMachineControllerError || error instanceof SystemTaskExecutionError) {
+          taskFailure = error;
+        }
         if (error instanceof ManagedMachineControllerError) {
-          controllerFailure = error;
           throw new SystemTaskExecutionError(error.code, error.code);
         }
         throw error;
@@ -88,8 +90,8 @@ export async function runManagedMachineEnrollment(input: Readonly<{
       const result = await owner.wait(task);
       if (!result.ok) {
         // The task keeps its existing public error contract; its invoking
-        // operation retains the original typed controller observation.
-        if (controllerFailure && result.error?.code === controllerFailure.code) throw controllerFailure;
+        // operation retains the original typed failure and its private cause.
+        if (taskFailure && result.error?.code === taskFailure.code) throw taskFailure;
         throw new SystemTaskExecutionError(result.error?.code ?? 'system_task_failed', result.error?.message ?? 'Managed guest setup failed.');
       }
       const data = result.data;

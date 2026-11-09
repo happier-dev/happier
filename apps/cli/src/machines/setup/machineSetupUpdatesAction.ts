@@ -16,7 +16,7 @@ import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAda
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
 import { createProjectNativeInvocationCustody, type ProjectSetupOperationContext } from '@/workspaces/projectSetup/projectSetupExecution';
 import { logger } from '@/ui/logger';
-import { resolveInstalledMachineEffectCli } from '../adminAccess/runElevatedEffect';
+import { resolveMachineEffectCli } from '../adminAccess/machineEffectCli';
 import { applyMachineSetupUpdates } from './applyMachineSetup';
 import { machineSetupTargetUnavailable, type MachineSetupInstallation } from './machineSetupHomeRequest';
 
@@ -101,7 +101,7 @@ export function createMachineSetupUpdatesAction(params: Readonly<{
           plan: planned.plan, requesterAccountId, userHomeDirectory: homedir(), operation, signal: cancellationSignal,
           terminalSessions, environmentIo: io, settleNative: () => custody.release(), isCurrent: isActive,
           elevation: { ...administrator, installationId: params.installation.installationId,
-            installedCli: resolveInstalledMachineEffectCli(), verifyCurrent: isActive },
+            ...resolveMachineEffectCli(), verifyCurrent: isActive },
         });
       } catch (error) {
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'

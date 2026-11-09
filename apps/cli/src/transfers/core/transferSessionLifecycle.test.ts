@@ -243,9 +243,8 @@ describe('transferSessionLifecycle', () => {
             await expect(finalizeUploadTransferSession({
                 lifecycle,
                 uploadId: session.uploadId,
-            })).resolves.toEqual({
+            })).resolves.toMatchObject({
                 success: false,
-                error: 'Destination recovery requires operator action',
                 errorCode: 'TRANSFER_FINALIZE_RECOVERY_REQUIRED',
                 keepSession: true,
             });

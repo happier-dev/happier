@@ -68,9 +68,9 @@ export async function finalizeWorkspaceFileUpload(input: Readonly<{
 
   if (destStats) {
     if (destStats.isDirectory()) {
-      return { success: false, error: 'Cannot overwrite a directory with a file', keepSession: true };
+      return { success: false, error: 'Cannot overwrite a directory with a file', errorCode: 'EISDIR', keepSession: true };
     }
-    return { success: false, error: 'Destination already exists', keepSession: true };
+    return { success: false, error: 'Destination already exists', errorCode: 'EEXIST', keepSession: true };
   }
 
   const copyFileOperation = input.fileOperations?.copyFile ?? copyFile;
@@ -80,7 +80,7 @@ export async function finalizeWorkspaceFileUpload(input: Readonly<{
   } catch (error) {
     const code = typeof error === 'object' && error !== null && 'code' in error ? (error as { code?: unknown }).code : null;
     if (code === 'EEXIST') {
-      return { success: false, error: 'Destination already exists', keepSession: true };
+      return { success: false, error: 'Destination already exists', errorCode: 'EEXIST', keepSession: true };
     }
     throw error;
   }
