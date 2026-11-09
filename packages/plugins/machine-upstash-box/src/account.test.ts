@@ -15,6 +15,32 @@ function boundary(status = 200) {
   return { context, staged, calls };
 }
 describe('UpstashBox Account token authentication', () => {
+  it('preserves the cause of a failed Connect without staging an unverified key', async () => {
+    const complete = connectedAccountRuntime.authentication!.modes.token!;
+    if (complete.kind !== 'manual') throw new Error('Expected token authentication');
+    const outcomes = [];
+    for (const status of [401, 503, 200]) {
+      const b = boundary(status);
+      b.context.services.http.request = async request => ({ status, finalUrl: request.url, headers: {},
+        body: new TextEncoder().encode('{}') });
+      const result = await complete.complete({ fields: { token: 'not-a-real-key' } },
+        b.context as unknown as ConnectedAccountAuthenticationContext);
+      outcomes.push(result);
+      expect(b.staged).toEqual([]);
+    }
+    expect(outcomes).toMatchObject([
+      { status: 'rejected', diagnostic: { code: 'upstash_box_invalid_token' } },
+      { status: 'unavailable', diagnostic: { code: 'upstash_box_unavailable' } },
+      { status: 'unavailable', diagnostic: { code: 'upstash_box_invalid_response' } },
+    ]);
+    const network = boundary();
+    network.context.services.http.request = async () => { throw new Error('private-network-detail'); };
+    expect(await complete.complete({ fields: { token: 'not-a-real-key' } },
+      network.context as unknown as ConnectedAccountAuthenticationContext)).toMatchObject({
+      status: 'unavailable', diagnostic: { code: 'upstash_box_unavailable' },
+    });
+    expect(network.staged).toEqual([]);
+  });
   it('verifies before staging the token and distinguishes credentials from vendor outages', async () => {
     const b = boundary();
     const complete = connectedAccountRuntime.authentication!.modes.token!;
