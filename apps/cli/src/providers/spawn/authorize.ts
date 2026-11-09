@@ -9,7 +9,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
-import { materializeLeasedAgentProviderBinding, readLeasedAgentProviderBindingAdapter } from '@/plugins/runtime/providerBindings/adapter';
+import { materializeLeasedAgentProviderBinding, readLeasedAgentProviderBindingAdapter, readLeasedAgentProviderNativeHome } from '@/plugins/runtime/providerBindings/adapter';
 import type { ActiveAccountSettingsSnapshot, ActiveAccountSettingsKeys } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { ProviderRuntimeStateStore } from '../runtimeState';
 import { evaluateProviderModelLoadPreflight } from '../modelManagement/load';
@@ -19,6 +19,7 @@ import type { ProviderRuntimeCatalogSelectionObservation, ProviderRuntimeModelPr
 import {
   composeProviderBindingMaterialization,
   type ComposedProviderBindingMaterialization,
+  type ProviderBindingNativeHomeContext,
 } from './compose';
 import type { ProviderCredentialPlaintextResultForSpawn } from './credentials';
 import { createProviderRedactionLease, type ProviderRedactionLease } from './redaction';
@@ -30,7 +31,7 @@ import {
   resolveProviderSpawnAuthorization,
   resolveProviderSpawnSelection,
   resolveProviderSpawnDefinitiveRejection,
-  selectProviderSpawnClaudeHelperModels,
+  selectProviderSpawnRoleModels,
   type ResolveProviderSpawnAuthorizationInput,
 } from './resolve';
 import {
@@ -194,6 +195,7 @@ type ProviderSpawnAuthorizationAttemptInput<TAuthorization extends ProviderSpawn
   isRetainedPolicyCurrent?: () => boolean;
   subscribeCurrentness?: (listener: () => void) => () => void;
   createRedactionLease?: typeof createProviderRedactionLease;
+  nativeHome?: ProviderBindingNativeHomeContext;
 }>;
 
 export function createProviderSpawnAuthorizationAttempt(
@@ -291,6 +293,7 @@ export function createProviderSpawnAuthorizationAttempt<
         materialization: rawMaterialization,
         materializationBaseDir: input.materializationBaseDir,
         sessionId: input.scope?.kind === 'session' ? input.scope.sessionId : input.sessionId,
+        nativeHome: input.nativeHome,
       });
       redactionLease.add(composed.additionalRedactionValues);
       return {
@@ -715,9 +718,9 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
     if (connectionResolution.status === 'resolved'
       && connectionResolution.record.deployment.kind === 'managedLocal') {
       try {
-        additionalModelIds = Object.values(selectProviderSpawnClaudeHelperModels({
+        additionalModelIds = Object.values(selectProviderSpawnRoleModels({
           adapter: readLeasedAgentProviderBindingAdapter({ lease: input.lease, agentId: input.agentId })?.adapter,
-          configuredModels: connectionResolution.record.connection.claudeHelperModels,
+          configuredModels: connectionResolution.record.connection.roleModels,
         }) ?? {});
       } catch {
         return { ok: false, error: createProviderErrorV1('provider_incompatible_with_agent', {
@@ -883,6 +886,7 @@ export async function createRuntimeProviderSpawnAuthorizationAttempt(input: Read
     ok: true,
     attempt: createProviderSpawnAuthorizationAttempt({
       initial: initial.authorization,
+      nativeHome: readLeasedAgentProviderNativeHome({ lease: input.lease, agentId: input.agentId }),
       signal: admissionLifetime.signal,
       resolveCredential: () => {
         const snapshot = admittedSnapshot;

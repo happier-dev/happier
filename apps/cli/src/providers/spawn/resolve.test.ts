@@ -74,6 +74,7 @@ import {
   resolveProviderProbeAuthorization,
   resolveProviderSpawnDefinitiveRejection,
   resolveProviderSpawnAuthorization,
+  selectProviderSpawnRoleModels,
 } from './resolve';
 import { collectProviderConnectionDnsEvidence } from '../registry/dnsEvidence';
 import { createRuntimeProviderProbeAuthorizationPort } from './probePort';
@@ -82,6 +83,24 @@ import * as spawnResolution from './resolve';
 import * as runtimeCatalog from './runtimeCatalog';
 
 const connectionId = ProviderConnectionIdSchema.parse('pc_gateway');
+
+describe('declared Provider model roles', () => {
+  it('selects only the selected adapter roles, including roles outside the built-in vocabulary', () => {
+    const unrelatedModels = Object.fromEntries(Array.from({ length: 200 }, (_, index) => [`unrelated-${index}`, 'unrelated-model']));
+    Object.defineProperty(unrelatedModels, 'unrelated-secret-role', {
+      enumerable: true,
+      get() { throw new Error('Unselected roles must not be read during admission'); },
+    });
+    expect(selectProviderSpawnRoleModels({
+      adapter: { modelRoles: [{ id: 'reviewer', title: 'Reviewer' }] },
+      configuredModels: Object.assign(unrelatedModels, { reviewer: 'review-model' }),
+    })).toEqual({ reviewer: 'review-model' });
+    expect(selectProviderSpawnRoleModels({
+      adapter: { modelRoles: [{ id: 'reviewer', title: 'Reviewer' }] },
+      configuredModels: {},
+    })).toEqual({});
+  });
+});
 const contributionKey = 'acme.gateway/gateway';
 const canonicalContributionKey = contributionKey;
 const key = new Uint8Array(32).fill(5);
@@ -231,7 +250,7 @@ const managedContribution: ResolvedProviderContribution = {
         purpose: 'upstream',
         materialization: {
           kind: 'httpHeaders',
-          origin: 'https://api.example.test',
+          origins: ['https://api.example.test'],
           headerNames: ['authorization'],
         },
       }],
@@ -407,7 +426,7 @@ function lease(
     registry.providersByContributionKey,
   supportsNoAuth = false,
   retainedGenerationCurrent: () => boolean = () => true,
-  supportsClaudeHelperModels = false,
+  consumesRoleModels = false,
   credentialSupport?: AgentProviderRequirementsV1['credentialSupport'],
   acceptsProtocols?: AgentProviderRequirementsV1['acceptsProtocols'],
 ): PluginRuntimeRegistryLease {
@@ -432,7 +451,7 @@ function lease(
       generation: 'fixture-generation',
       providerBinding: {
         v: 1, adapterVersion: 3, prepare,
-        ...(supportsClaudeHelperModels ? { supportsClaudeHelperModels: true } : {}),
+        ...(consumesRoleModels ? { modelRoles: ['fast', 'default', 'strongest', 'reviewer'].map(id => ({ id, title: id })) } : {}),
         materialize: vi.fn(async ({ credential }: AgentProviderBindingMaterializeInput) => ({ v: 1, kind: 'engineConfig',
           env: [{ name: 'PROVIDER_KEY', value: credential.kind === 'apiKey' ? credential.value : '', source: 'provider' }], engineConfig: {} })),
       },
@@ -1548,6 +1567,7 @@ describe('provider spawn authorization resolver', () => {
             endpointTemplateId: 'responses',
             path: '/models',
             parser: 'lmstudio-native-models',
+            reportsModelLoadState: true,
           }],
         },
         modelLoad: {
@@ -1774,14 +1794,16 @@ describe('provider spawn authorization resolver', () => {
   });
 
   it.each([
-    { claudeHelperModels: { fast: 'model-a', default: 'model-a' }, accepted: true, consumesHelpers: true },
-    { claudeHelperModels: {}, accepted: true, consumesHelpers: true },
-    { claudeHelperModels: { fast: 'probe-helper' }, accepted: true, consumesHelpers: true },
-    { claudeHelperModels: { fast: 'missing-helper' }, accepted: false, consumesHelpers: true },
-    { claudeHelperModels: { fast: 'missing-helper' }, accepted: true, consumesHelpers: false },
-  ])('admits managed helper models with the existing model catalog: %j', ({ claudeHelperModels, accepted, consumesHelpers }) => {
+    { roleModels: { fast: 'model-a', default: 'model-a' }, accepted: true, consumesHelpers: true },
+    { roleModels: { reviewer: 'model-a' }, accepted: true, consumesHelpers: true },
+    { roleModels: { reviewer: 'missing-helper' }, accepted: false, consumesHelpers: true },
+    { roleModels: {}, accepted: true, consumesHelpers: true },
+    { roleModels: { fast: 'probe-helper' }, accepted: true, consumesHelpers: true },
+    { roleModels: { fast: 'missing-helper' }, accepted: false, consumesHelpers: true },
+    { roleModels: { fast: 'missing-helper' }, accepted: true, consumesHelpers: false },
+  ])('admits managed helper models with the existing model catalog: %j', ({ roleModels, accepted, consumesHelpers }) => {
     const settings = managedGrantedSettings();
-    settings.connections[0] = { ...settings.connections[0]!, claudeHelperModels };
+    settings.connections[0] = { ...settings.connections[0]!, roleModels };
     const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: {
         v: 1,
@@ -1855,7 +1877,7 @@ describe('provider spawn authorization resolver', () => {
           },
         },
         binding: {
-          ...(consumesHelpers ? { claudeHelperModels } : {}),
+          ...(consumesHelpers ? { roleModels } : {}),
           selection: {
             connectionId,
             model: expect.objectContaining({ id: 'model-a', name: 'Model A' }),
@@ -1901,7 +1923,7 @@ describe('provider spawn authorization resolver', () => {
         },
       },
     });
-    if (result.ok && !consumesHelpers) expect(result.authorization.binding.claudeHelperModels).toBeUndefined();
+    if (result.ok && !consumesHelpers) expect(result.authorization.binding.roleModels).toBeUndefined();
     expect(JSON.stringify(result)).not.toContain('127.0.0.1');
     expect(JSON.stringify(result)).not.toContain('localhost');
   });
@@ -1923,7 +1945,7 @@ describe('provider spawn authorization resolver', () => {
       providersByContributionKey: new Map([[canonicalContributionKey, sharedContribution]]),
     };
     const settings = managedGrantedSettings(sharedRegistry, 'machine-hub');
-    settings.connections[0] = { ...settings.connections[0]!, claudeHelperModels: { fast: 'helper-model' } };
+    settings.connections[0] = { ...settings.connections[0]!, roleModels: { fast: 'helper-model' } };
     const resolution = resolveProviderConnectionForMachine({
       connectionId, machineId: 'machine-a', providerSettings: settings,
       registry: sharedRegistry, dnsEvidenceByEndpointUrl: new Map(),
@@ -1985,7 +2007,7 @@ describe('provider spawn authorization resolver', () => {
         binding: { selection: { model: { id: 'model-a' } } },
       } } });
       if (result.ok) {
-        expect(result.attempt.authorization.binding.claudeHelperModels).toBeUndefined();
+        expect(result.attempt.authorization.binding.roleModels).toBeUndefined();
         result.attempt.cleanupOnFailure();
       }
     }
@@ -3366,7 +3388,7 @@ describe('provider model-load authorization resolver', () => {
     catalog: {
       source: 'probe',
       manualModelPolicy: 'allowed',
-      probes: [{ endpointTemplateId: 'openai', path: '/api/v1/models', parser: 'lmstudio-native-models' }],
+      probes: [{ endpointTemplateId: 'openai', path: '/api/v1/models', parser: 'lmstudio-native-models', reportsModelLoadState: true }],
     },
     modelLoad: {
       endpointTemplateId: 'openai',

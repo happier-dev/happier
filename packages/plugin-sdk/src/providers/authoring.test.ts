@@ -122,12 +122,12 @@ describe('Provider authoring through the public manifest SDK', () => {
         upstream: { kind: 'group', service: { pluginId: 'acme.auth', localId: 'subscription' }, groupId: 'acme-pool' },
       } },
       gatewayPlacement: { kind: 'machine', machineId: 'acme-hub' },
-      claudeHelperModels: { fast: 'acme-fast', default: 'acme-main', strongest: 'acme-strong' },
+      roleModels: { fast: 'acme-fast', default: 'acme-main', strongest: 'acme-strong' },
     } satisfies ProviderConnectionMutationRequest;
     expect(await execute(parseProviderActionRequestV1('providers.connections.update', update), {}))
-      .toMatchObject({ ok: true, result: { connection: { gatewayPlacement: update.gatewayPlacement, claudeHelperModels: update.claudeHelperModels } } });
+      .toMatchObject({ ok: true, result: { connection: { gatewayPlacement: update.gatewayPlacement, roleModels: update.roleModels } } });
     expect(catalog.connections[0]).toMatchObject({ source: { contributionKey: 'acme.gateway/gateway' },
-      purposeBindingDefaults: update.deployment.purposeBindingDefaults, gatewayPlacement: update.gatewayPlacement, claudeHelperModels: update.claudeHelperModels });
+      purposeBindingDefaults: update.deployment.purposeBindingDefaults, gatewayPlacement: update.gatewayPlacement, roleModels: update.roleModels });
     expect(resolveProviderModelPickerVisibility({ connectionId: 'pc_acme', kind: provider.kind }).shown).toBe(false);
     expect(resolveProviderModelPickerVisibility({ connectionId: 'pc_acme', kind: provider.kind,
       modelPickerVisibilityByConnectionId: { pc_acme: true } }).shown).toBe(true);
@@ -213,7 +213,7 @@ describe('Provider authoring through the public manifest SDK', () => {
           purpose: 'provider.inference',
           materialization: {
             kind: 'httpHeaders',
-            origin: 'https://api.openai.com',
+            origins: ['https://api.openai.com'],
             headerNames: ['authorization'],
           },
         }],
@@ -235,7 +235,7 @@ describe('Provider authoring through the public manifest SDK', () => {
           purpose: 'provider.inference',
           materialization: {
             kind: 'httpHeaders',
-            origin: 'https://api.openai.com',
+            origins: ['https://api.openai.com'],
             headerNames: ['authorization'],
           },
         }],

@@ -86,7 +86,11 @@ describe('activate', () => {
             providerBinding: {
                 v: 1,
                 adapterVersion: CLAUDE_PROVIDER_BINDING_ADAPTER_V1.adapterVersion,
-                supportsClaudeHelperModels: true,
+                modelRoles: expect.arrayContaining([
+                    { id: 'fast', title: expect.any(String) },
+                    { id: 'default', title: expect.any(String) },
+                    { id: 'strongest', title: expect.any(String) },
+                ]),
                 prepare: expect.any(Function),
                 materialize: expect.any(Function),
             },
@@ -263,7 +267,7 @@ describe('activate', () => {
                     purpose: 'model_upstream',
                     materialization: {
                         kind: 'httpHeaders',
-                        origin: 'https://api.anthropic.com',
+                        origins: ['https://api.anthropic.com'],
                         headerNames: ['authorization'],
                     },
                 }],

@@ -6,6 +6,7 @@ import type {
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createHash } from 'node:crypto';
 import { normalizeProviderCredentialHeaderName } from '@happier-dev/plugin-sdk/providers';
+import { CLAUDE_PROVIDER_MODEL_ROLES } from './modelRoles.js';
 
 type ProviderBindingMaterialization = Awaited<ReturnType<AgentProviderBindingAdapter['materialize']>>;
 type ProviderBindingEnvOverlay = Extract<ProviderBindingMaterialization, { kind: 'spawnEnv' }>['env'];
@@ -50,7 +51,7 @@ export function isClaudeProviderOwnedEnvName(name: string): boolean {
 
 function resolveHelperModelPins(
   modelId: string,
-  models: NonNullable<AgentProviderBindingMaterializeInput['binding']['claudeHelperModels']>,
+  models: NonNullable<AgentProviderBindingMaterializeInput['binding']['roleModels']>,
 ) {
   return {
     fast: models.fast ?? modelId,
@@ -61,7 +62,7 @@ function resolveHelperModelPins(
 
 function helperModelBindingKey(
   modelId: string,
-  models: NonNullable<AgentProviderBindingMaterializeInput['binding']['claudeHelperModels']>,
+  models: NonNullable<AgentProviderBindingMaterializeInput['binding']['roleModels']>,
 ): string {
   // The existing binding key participates in host live/restart policy. Pin changes
   // need a new Claude process; model-only changes with identical pins remain live.
@@ -69,14 +70,14 @@ function helperModelBindingKey(
 }
 
 function prepareClaudeProviderBindingV1(input?: AgentProviderBindingPrepareInput): AgentProviderBindingPrepared {
-  if (input?.claudeHelperModels !== undefined && !input.model) {
+  if (input?.roleModels !== undefined && !input.model) {
     throw new Error('Claude helper model preparation requires the selected model');
   }
   return {
     v: 1,
     materialization: 'spawnEnv',
-    ...(input?.claudeHelperModels !== undefined && input.model ? {
-      adapterBindingKey: helperModelBindingKey(input.model.id, input.claudeHelperModels),
+    ...(input?.roleModels !== undefined && input.model ? {
+      adapterBindingKey: helperModelBindingKey(input.model.id, input.roleModels),
     } : {}),
   };
 }
@@ -152,7 +153,7 @@ function buildOwnedEnvironment(input: Readonly<{
   customHeaders: string | null;
   apiKey: string | null;
   authToken: string | null;
-  helperModels: AgentProviderBindingMaterializeInput['binding']['claudeHelperModels'];
+  helperModels: AgentProviderBindingMaterializeInput['binding']['roleModels'];
   sessionModelId: string;
 }>): ProviderBindingEnvOverlay {
   const pins = input.helperModels === undefined
@@ -192,9 +193,9 @@ function renderCustomHeaders(headers: Readonly<Record<string, string>>): string 
 async function materializeClaudeProviderBindingV1(
   input: AgentProviderBindingMaterializeInput,
 ): Promise<ProviderBindingMaterialization> {
-  const expectedKey = input.binding.claudeHelperModels === undefined
+  const expectedKey = input.binding.roleModels === undefined
     ? undefined
-    : helperModelBindingKey(input.binding.selection.model.id, input.binding.claudeHelperModels);
+    : helperModelBindingKey(input.binding.selection.model.id, input.binding.roleModels);
   if (input.prepared.materialization !== 'spawnEnv'
     || input.prepared.adapterBindingKey !== expectedKey) {
     throw new Error('Claude provider binding preparation is invalid');
@@ -211,7 +212,7 @@ async function materializeClaudeProviderBindingV1(
       customHeaders: renderCustomHeaders(credential.headers),
       apiKey: credential.apiKey,
       authToken: credential.authToken,
-      helperModels: input.binding.claudeHelperModels,
+      helperModels: input.binding.roleModels,
       sessionModelId: input.binding.selection.model.id,
     }),
     ...(credential.redactionValues.length ? { additionalRedactionValues: credential.redactionValues } : {}),
@@ -221,7 +222,7 @@ async function materializeClaudeProviderBindingV1(
 export const CLAUDE_PROVIDER_BINDING_ADAPTER_V1 = Object.freeze({
   v: 1,
   adapterVersion: CLAUDE_PROVIDER_BINDING_ADAPTER_VERSION_V1,
-  supportsClaudeHelperModels: true,
+  modelRoles: CLAUDE_PROVIDER_MODEL_ROLES,
   prepare: prepareClaudeProviderBindingV1,
   materialize: materializeClaudeProviderBindingV1,
 } satisfies AgentProviderBindingAdapter);

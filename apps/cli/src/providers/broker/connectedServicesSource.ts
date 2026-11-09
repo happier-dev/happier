@@ -15,7 +15,7 @@ import { acquireBrokerSourceOperation } from './brokerSourceOperationAcquisition
 import { readConnectedAccountBrokerModelCatalog, type ReadConnectedAccountBrokerModelProjection } from './connectedAccountModelCatalog';
 import { observeCurrentConnectedServiceMaterializationPhase as observeMaterializationPhase } from '@/daemon/connectedServices/materialize/materializationPhase';
 import {
-  isCLIProxyAPIBrokerApplication,
+  isCpxBrokerApplication,
   sameTeamCredentialBrokerSource,
   teamCredentialBrokerResourceAcceptsMachine,
 } from './teamCredentialBrokerSourceOwner';
@@ -48,7 +48,7 @@ async function resolveConnectedServicesBrokerSelection(
     ? request.source.target.account.service
     : request.source.target.service;
   const family = await withRegistry((registry) => (
-    isCLIProxyAPIBrokerApplication(registry, request.application)
+    isCpxBrokerApplication(registry, request.application)
       ? resolveManagedProviderBrokerPurpose({ registry, application: request.application, service })
       : null
   ));

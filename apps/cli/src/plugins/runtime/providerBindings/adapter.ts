@@ -6,7 +6,7 @@ import { ProviderCredentialTransportV1Schema } from '@happier-dev/protocol/provi
 import { ProviderWireProtocolSchema } from '@happier-dev/protocol/providers/capabilities/v1';
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema } from '@happier-dev/protocol/providers/ids';
 import { ProviderEndpointUrlSyntaxSchema } from '@happier-dev/protocol/providers/endpoint-url';
-import { ProviderClaudeHelperModelsV1Schema } from '@happier-dev/protocol/providers/connections/v1';
+import { ProviderRoleModelsV1Schema } from '@happier-dev/protocol/providers/connections/v1';
 import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
 import type { AgentProviderBindingMaterializationV1, AgentProviderRequirementsV1 } from '@happier-dev/protocol';
 import type {
@@ -15,11 +15,23 @@ import type {
     AgentProviderBindingPrepared,
     AgentProviderBindingResolvedFacts,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { ConnectedServiceStateSharingDescriptor } from '@/agent/catalog/types';
 
 import { isAgentRuntimeGenerationCurrent } from '../lifecycle/contributions/agentGenerationCurrentness';
 import type { PluginRuntimeRegistryLease } from '../reload/controller';
 
 const MaterializationKindSchema = z.enum(['spawnEnv', 'engineConfig', 'configFile']);
+
+/** Read native layout from the same admitted registration as the binding adapter. */
+export function readLeasedAgentProviderNativeHome(params: Readonly<{
+    lease: PluginRuntimeRegistryLease;
+    agentId: string;
+}>): Readonly<{ descriptor: ConnectedServiceStateSharingDescriptor }> | undefined {
+    const descriptor = params.lease.registry.agentRuntimesByAgentId.get(params.agentId)?.connectedAccountLaunch?.stateSharingDescriptor;
+    return descriptor?.nativeHome
+        ? { descriptor: { ...descriptor, providerId: params.agentId } }
+        : undefined;
+}
 
 const ProviderBindingKeySchema = z.string().check(z.trim(), z.minLength(1), z.maxLength(512));
 
@@ -27,7 +39,7 @@ const PrepareInputBaseSchema = z.strictObject({
     v: z.literal(1),
     agentTargetKey: ProviderAgentTargetKeySchema,
     model: z.optional(ProviderModelDescriptorV1Schema),
-    claudeHelperModels: z.optional(ProviderClaudeHelperModelsV1Schema),
+    roleModels: z.optional(ProviderRoleModelsV1Schema),
     reservedBindingCandidate: z.optional(z.strictObject({
         contributionKey: ProviderContributionKeySchema,
         endpointTemplateId: ProviderLocalIdSchema,
@@ -68,7 +80,7 @@ const ResolvedFactsSchema = z.strictObject({
         publicHeaders: z.record(z.string(), z.string()),
     }),
     runtimeCredentialTransport: z.nullable(ProviderCredentialTransportV1Schema),
-    claudeHelperModels: z.optional(ProviderClaudeHelperModelsV1Schema),
+    roleModels: z.optional(ProviderRoleModelsV1Schema),
     compatibilityFingerprint: z.string().check(z.minLength(1), z.maxLength(512)),
 });
 

@@ -27,7 +27,7 @@ import {
 import { resolveRuntimeProviderCredential } from '@/providers/spawn/runtimeCredential';
 import type { TeamCredentialBrokerSourceOpenInput } from './teamCredentialBrokerSourceOwner';
 import {
-  isCLIProxyAPIBrokerApplication,
+  isCpxBrokerApplication,
   providerConnectionBrokerSourceMember,
   sameTeamCredentialBrokerSource,
   teamCredentialBrokerResourceAcceptsMachine,
@@ -591,7 +591,7 @@ export function createProviderConnectionBrokerSourceOpen(input: Readonly<{
     if (request.brokerMachineId !== input.machineId || request.signal.aborted) return null;
 
     const capture = await input.withRegistry(async (registry) => {
-      if (!isCLIProxyAPIBrokerApplication(registry, request.application)) return null;
+      if (!isCpxBrokerApplication(registry, request.application)) return null;
       const resource = await input.readResource(request.resourceId, request.signal);
       if (!teamCredentialBrokerResourceAcceptsMachine(resource, request.brokerMachineId)
         || !sameTeamCredentialBrokerSource(resource.source, request.source)) return null;

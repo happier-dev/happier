@@ -11,6 +11,26 @@ This distinction is a product and architecture invariant:
 
 See [Agents catalog](./agents-catalog.md) for executable-agent ownership.
 
+In 0.3 development source, Provider plugins own vendor catalog decoding through
+their declared `catalogParsers` and `commandParsers`. A contributed parser takes
+precedence for its declared id; the host retains generic OpenAI and Anthropic
+wire codecs for custom connections. Model-name interpretation and explicit
+`reportsModelLoadState` facts belong to the Provider declaration and its parser.
+
+### Cursor and Copilot native account sources (0.3 development)
+
+The Cursor plugin owns its manual user/service key and declares native
+`CURSOR_API_KEY` delivery through the shared account launch owner. The GitHub
+plugin owns Copilot device/manual authentication and the existing GitHub token
+record; Copilot consumes that record through its native purpose and
+`COPILOT_GITHUB_TOKEN`. GitHub's public OAuth client comes from the existing
+mode-scoped configuration owner; an absent client makes device login unavailable.
+No entitlement probe participates in admission. Token-kind compatibility is
+decided by GitHub's materializer, while native acceptance determines usability.
+SCM identity and Copilot refusal remain separate outcomes. Copilot's ChatGPT and
+Provider choices retain their own explicit routes. Neither source adds a gateway
+family, secret store, native credential-file writer or background quota probe.
+
 ### Connected Account sign-in placement (0.3 development)
 
 Portable authentication shares one plugin exchange and one authentication-attempt
@@ -101,6 +121,15 @@ refresh sentinel. Only Happier can refresh the account. FX requires restart and
 rematerialization after expiry; writing a new file does not prove live adoption.
 ACP, detached and terminal launches use the same preparation owner.
 
+In 0.3 development, FX Provider bindings also use a private
+`HOME/.fx/settings.json` to select an `openai-chat-completions` endpoint and model.
+Bearer credentials use a child-only environment key; credential-free endpoints
+remain credential-free. Native settings and shared session state follow
+`FX_STATE_SHARING`, and custom routing headers are unsupported. The characterized
+native contract is upstream source `481104f`; loaded native verification remains
+required. The exact Vercel contribution, template and URL retain FX's native
+Vercel gateway route.
+
 Devin retains its vendor-managed login. Its documented
 [authentication](https://docs.devin.ai/cli/enterprise/devin-auth) uses a Devin
 account and vendor credential file; the current public contract supplies no
@@ -184,8 +213,8 @@ manual catalog and unknown capability facts keep consent experimental. The
 bills third-party inference through Unified Billing; it does not promise the
 native endpoints' stored-BYOK behavior. These
 families have distinct endpoint/auth/model contracts, so an ordinary address
-override cannot switch between them. FX's Vercel restriction and Gemini's
-protocol requirement remain. Copilot's current native controls cannot preserve
+override cannot switch between them. FX cannot preserve these custom routing
+headers, and Gemini's protocol requirement remains. Copilot's current native controls cannot preserve
 the required custom routing/privacy/billing headers; its Responses candidate
 is not offered.
 
@@ -972,6 +1001,18 @@ Pi, Oh My Pi, Kimi, CodeBuddy, Grok, FX or an arbitrary Custom ACP definition. S
 [Agent catalog](agents-catalog.md#additional-provider-bindings-03-development)
 and the published Agent pages for each native constraint.
 
+The 0.3 development Grok plugin contributes a separate xAI Connected Account
+service with device login, a paid API key, and explicit import of one resolved
+native auth file. Subscription and paid API selections retain different upstream
+bases; a subscription failure does not select a paid key. The service owns the
+mode and base facts supplied to request-auth consumers. Native delivery projects
+an access-only scoped record into the host-owned selected home, removes competing
+auth overrides from copied configuration, and leaves the original native home
+unchanged. The daemon retains refresh custody. Actual Grok CLI login, turn and
+resume acceptance remains a release check against the characterized native
+version. Weekly credit percentages and monthly/on-demand billing amounts remain
+separate observations; an undeclared amount denomination stays unknown.
+
 The 0.3 development ChatGPT Connected Account routes are separate from generic
 Provider connections. Copilot CLI, Droid and CodeBuddy declare an optional
 qualified `happier.agent.codex/openai-codex` purpose. Their normal Session and
@@ -1097,6 +1138,15 @@ command-produced credential transport to custom model Providers. See
 [machine-native GitHub credentials](plugin-platform.md#machine-native-github-credentials-03-development).
 
 Version 1 supports unauthenticated and API-key credentials. Raw secrets remain in Saved Secrets and are resolved by the daemon only after all non-secret checks pass. Plugins receive credential descriptors/materialization inputs, not unrestricted access to the secret store.
+
+In 0.3 development, `configFile` materialization can request `nativeHome: true`.
+The host captures the same leased Agent registration's
+`connectedAccountLaunch.stateSharingDescriptor`, applies its existing native-state
+copy/link rules, and projects the private root into the child environment. A file's
+`merge: 'jsonObject'` applies a shallow top-level overlay during the canonical copy
+transform, leaving the source native file unchanged. The existing binding cleanup
+and retained-run ownership govern that private root. This matching SDK, Protocol
+and CLI contract requires the development participants to reload together.
 
 An unauthenticated Provider remains credential-free through managed-runtime authorization and Agent
 materialization: the host carries an explicit no-credential result and never synthesizes a bearer.
@@ -1389,6 +1439,15 @@ bindings before the strict model projection publishes them. A shared model can
 carry several slots. Missing facts remain unclassified, including manual rows;
 model names and downstream protocols never supply vendor identity. These are
 grouping facts, not account entitlement or credential-selection authority.
+
+In unreleased 0.3 development, a managed connected-account purpose may declare
+`catalogObservation` with an exact qualified `provider` or `agent` contribution
+reference. A Provider source uses the shared account-aware catalog observation
+owner and the purpose's declared request-auth use; a native Agent source uses
+that Agent's existing model capability. Browsing a service needs no Agent when
+it declares a Provider source. Provider-source current-only reads use metadata and cached
+observations without credential acquisition. A successful observed empty catalog
+stays empty; only an absent dynamic observation uses the purpose's static models.
 
 Pool gateway choices and vendor-slot writes use the captured Account catalog
 without selecting a machine. Each gateway needs its own admitted declaration;
@@ -1741,13 +1800,17 @@ identity; the source compares that identity and reads the issued scope exactly.
 A cache path or token digest is not proof of Account identity. The signed target
 source continues to read its own credential-bound Account catalog.
 
-Managed connections can also store `claudeHelperModels` with optional `fast`,
-`default`, and `strongest` model ids. Claude's Provider adapter maps these into
-the Session's scoped Haiku/Sonnet/Opus model-pin environment; omitted pins use
-the actual selected Session model. Explicit full-id native Agent definitions
-retain Claude's own precedence. External/custom connections reject these
-managed configuration fields. Edits affect future materialization, not a
-silent rebinding of running Sessions. See [Claude configuration precedence](agents-catalog.md).
+In 0.3 development source, managed connections store additional model selections
+in `roleModels`, keyed by the selected Agent adapter's declared `modelRoles`.
+The portable Agent Provider requirements project those same plugin-owned roles
+to editors. Launch admission resolves and checks only the selected adapter's
+roles alongside its main model, before acquiring credential material.
+Claude declares `fast`, `default`, and `strongest` and maps them into the
+Session's scoped Haiku/Sonnet/Opus model-pin environment; omitted pins use the
+actual selected Session model. Explicit full-id native Agent definitions retain
+Claude's own precedence. External/custom connections reject these managed
+configuration fields. Edits affect future materialization, not a silent rebinding
+of running Sessions. See [Claude configuration precedence](agents-catalog.md).
 
 Managed subscription-backed routing is experimental and explicit. Upstream policy or enforcement can change and may make the route stop working. Happier surfaces an upstream policy or authentication rejection as an ordinary failure and does not conceal it, manufacture entitlement, or silently fall back to another credential.
 
@@ -1937,6 +2000,37 @@ and refresh owner: SDK entries contain registration sentinels, skip Claude profi
 lookup, and treat upstream 401s as request-scoped failures so a later daemon lease
 is usable. The SDK key-value store is disabled; no SDK credential store is enabled.
 The catalog is compatibility evidence, not Account entitlement.
+
+The managed-family owner is the plugin's dependency-free
+`src/provider/managedContract.ts`. Its rows generate Go executor descriptors,
+registration seeds and static catalogs in the same pass; Provider contributions
+and launch snapshots consume the matching TypeScript projection. Run
+`pnpm --dir packages/plugins/cliproxyapi run catalog:generate` after changing a
+row or the SDK pin. The generated families are ChatGPT/Codex,
+Claude, Muse/Meta and Gemini API keys. Meta uses an existing inference key with
+its API-version header at the final HTTPS transport boundary; the child never mints a key.
+The development Muse service owns device sign-in, explicit selected-Machine
+native import and manual key credentials in the existing qualified account
+lifecycle. Device sign-in mints once at connection; launch, status and quota
+reads do not acquire credentials. Its runtime chooses applicable purpose leaves:
+device/import supplies the complete native file, while manual keys supply the
+environment key. Only a returned native file activates the selected native home.
+The existing native-home owner prepares the private XDG overlay and removes it
+through local account cleanup. Initial normalized mint usage is transient until
+successful settlement delivers it to the existing usage writer; absent safe
+refresh sources remain unavailable. Contributor variants are model ids chosen
+through the existing picker, with no account observation or setting. This
+integration is unreleased; see [Muse accounts](../apps/docs/content/docs/accounts/connected-services.mdx#muse-accounts-in-03-development)
+for user-facing behavior and the single terms notice.
+Each row declares its allowed origins and credential-header stripping names.
+The final transport checks each outbound host against that origin list and
+replaces sentinel headers with the daemon's request-local material.
+
+Gemini uses the SDK's API-key executor with `x-goog-api-key` at
+`https://generativelanguage.googleapis.com`, including upstream token counting.
+Chat Completions, Responses and Messages share that family row; the child reads
+no native Gemini credentials and performs no OAuth acquisition. Service-account,
+Vertex and native Interactions remain outside this managed family.
 
 The pinned CLIProxyAPI serving registry is also a route constraint. Managed
 custody passes the admitted projection's exact ids, purpose and source revision

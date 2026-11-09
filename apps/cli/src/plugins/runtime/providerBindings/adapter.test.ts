@@ -123,14 +123,14 @@ it('materializes admitted Claude helper pins through the real adapter and closed
             ...binding,
             endpoint: { ...binding.endpoint, protocol: 'anthropic' },
             runtimeCredentialTransport: null,
-            claudeHelperModels: { fast: 'gateway-fast', default: 'gateway-default', strongest: 'gateway-strongest' },
+            roleModels: { fast: 'gateway-fast', default: 'gateway-default', strongest: 'gateway-strongest' },
         },
         prepared: CLAUDE_PROVIDER_BINDING_ADAPTER_V1.prepare({
             v: 1,
             agentTargetKey: binding.agentTargetKey,
             connectionId: binding.selection.connectionId,
             model: binding.selection.model,
-            claudeHelperModels: { fast: 'gateway-fast', default: 'gateway-default', strongest: 'gateway-strongest' },
+            roleModels: { fast: 'gateway-fast', default: 'gateway-default', strongest: 'gateway-strongest' },
         }),
         credential: { kind: 'none' },
     });

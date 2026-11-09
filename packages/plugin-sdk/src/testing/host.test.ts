@@ -92,7 +92,7 @@ it.each(['daemon', 'account'] as const)('refuses native credential material in a
 
 it('lets an authored Account Action materialize its selected purpose through supplied host services', async () => {
   const selectedAccount = { service: { pluginId: 'acme.cloud', localId: 'account' }, accountId: 'selected-account' };
-  const request = { kind: 'httpHeaders' as const, origin: 'https://cloud.example.test', headerNames: ['authorization'] };
+  const request = { kind: 'httpHeaders' as const, origins: ['https://cloud.example.test'], headerNames: ['authorization'] };
   const nativeCapabilities = ['exec', 'fs', 'managedServices', 'sessions'];
   function unavailable(): never {
     throw new PluginError({ code: 'plugin_test_service_unavailable' });
@@ -2533,7 +2533,7 @@ describe('createPluginTestkit', () => {
   it('captures class, prototype, and accessor-backed Agent provider bindings', async () => {
     class StructuralProviderBinding {
       readonly owner = 'structural-provider-binding';
-      supportsClaudeHelperModels: true | undefined = true;
+      modelRoles = [{ id: 'reviewer', title: 'Reviewer' }] as const;
       supportsModelSettings: true | undefined = true;
 
       get v() {
@@ -2580,7 +2580,7 @@ describe('createPluginTestkit', () => {
     const registered = testkit.registration('agents', 'assistant');
     const captured = registered?.providerBinding;
     expect(captured).toMatchObject({ v: 1, adapterVersion: 1,
-      supportsClaudeHelperModels: true, supportsModelSettings: true });
+      modelRoles: [{ id: 'reviewer', title: 'Reviewer' }], supportsModelSettings: true });
     expect(captured).toBe(providerBinding);
     expect(Reflect.apply(captured!.prepare, captured, [])).toMatchObject({
       owner: 'structural-provider-binding',

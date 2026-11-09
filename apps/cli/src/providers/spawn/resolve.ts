@@ -59,20 +59,23 @@ import { readProviderModelNameCatalog } from '../registry/contributions';
 import { readProviderReasoningEffortOption, projectProviderModelReasoningForAgent } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import type { AcpConfigOptionOverridesV1 } from '@happier-dev/protocol/sessions/metadata/overrides';
 
-export function selectProviderSpawnClaudeHelperModels(input: Readonly<{
-  adapter?: Pick<AgentProviderBindingAdapter, 'supportsClaudeHelperModels'>;
-  configuredModels?: AgentProviderBindingResolvedFacts['claudeHelperModels'];
-}>): AgentProviderBindingResolvedFacts['claudeHelperModels'] {
-  return input.adapter?.supportsClaudeHelperModels === true
-    ? input.configuredModels ?? {}
-    : undefined;
+export function selectProviderSpawnRoleModels(input: Readonly<{
+  adapter?: Pick<AgentProviderBindingAdapter, 'modelRoles'>;
+  configuredModels?: AgentProviderBindingResolvedFacts['roleModels'];
+}>): AgentProviderBindingResolvedFacts['roleModels'] {
+  const roles = input.adapter?.modelRoles;
+  if (!roles?.length) return undefined;
+  return Object.fromEntries(roles.flatMap(({ id }) => {
+    const modelId = input.configuredModels && readOwnRecordValue(input.configuredModels, id);
+    return modelId === undefined ? [] : [[id, modelId]];
+  }));
 }
 
 export type ManagedProviderBindingAuthorizationFacts = Readonly<{
   v: 1;
   agentTargetKey: string;
   selection: AgentProviderBindingResolvedFacts['selection'];
-  claudeHelperModels?: AgentProviderBindingResolvedFacts['claudeHelperModels'];
+  roleModels?: AgentProviderBindingResolvedFacts['roleModels'];
   modelSettings?: AgentProviderBindingResolvedFacts['modelSettings'];
   contributionKey: string;
   endpoint: Readonly<{
@@ -1113,11 +1116,11 @@ export function resolveProviderSpawnAuthorization(
       return { ok: false, error: createProviderErrorV1('provider_connection_invalid', errorContext) };
     }
     const runtimeCredentialTransport = selectedCredentialTransport;
-    const claudeHelperModels = selectProviderSpawnClaudeHelperModels({
+    const roleModels = selectProviderSpawnRoleModels({
       adapter: adapter.adapter,
-      configuredModels: record.connection.claudeHelperModels,
+      configuredModels: record.connection.roleModels,
     });
-    for (const modelId of Object.values(claudeHelperModels ?? {})) {
+    for (const modelId of Object.values(roleModels ?? {})) {
       const runtimeProbe = modelId === model.id
         ? input.runtimeModelDescriptor
         : input.runtimeAdditionalModelDescriptors?.find((candidate) => candidate.id === modelId);
@@ -1157,7 +1160,7 @@ export function resolveProviderSpawnAuthorization(
           agentTargetKey: input.agentTargetKey,
           connectionId,
           model,
-          ...(claudeHelperModels !== undefined ? { claudeHelperModels } : {}),
+          ...(roleModels !== undefined ? { roleModels } : {}),
         },
       });
     } catch {
@@ -1194,7 +1197,7 @@ export function resolveProviderSpawnAuthorization(
       agentTargetKey: input.agentTargetKey,
       selection: { connectionId, model: projectProviderModelReasoningForAgent(model, adapter.support) },
       ...(modelSettings ? { modelSettings } : {}),
-      ...(claudeHelperModels !== undefined ? { claudeHelperModels } : {}),
+      ...(roleModels !== undefined ? { roleModels } : {}),
       contributionKey: contributionSource.contributionKey,
       endpoint: {
         endpointTemplateId: endpointTemplate.id,

@@ -81,21 +81,38 @@ function applyOverlay(
 }
 
 function managedMaterializeInput(
-  claudeHelperModels: NonNullable<AgentProviderBindingMaterializeInput['binding']['claudeHelperModels']>,
+  roleModels: NonNullable<AgentProviderBindingMaterializeInput['binding']['roleModels']>,
 ): AgentProviderBindingMaterializeInput {
   const input = materializeInput();
   return {
     ...input,
-    binding: { ...input.binding, claudeHelperModels },
+    binding: { ...input.binding, roleModels },
     prepared: CLAUDE_PROVIDER_BINDING_ADAPTER_V1.prepare({
       ...prepareInput(),
       model: input.binding.selection.model,
-      claudeHelperModels,
+      roleModels,
     }),
   };
 }
 
 describe('Claude provider-binding adapter V1', () => {
+  it('maps declared role-model selections to the native helper variables', async () => {
+    const input = materializeInput();
+    const roleModels = { fast: 'quick-model', default: 'balanced-model', strongest: 'deep-model' };
+    const output = await CLAUDE_PROVIDER_BINDING_ADAPTER_V1.materialize({
+      ...input,
+      binding: { ...input.binding, roleModels },
+      prepared: CLAUDE_PROVIDER_BINDING_ADAPTER_V1.prepare({
+        ...prepareInput(), model: input.binding.selection.model, roleModels,
+      }),
+    });
+    expect(applyOverlay({}, output.env)).toMatchObject({
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'quick-model',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'balanced-model',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'deep-model',
+    });
+  });
+
   it('refuses a custom-only materialization without native startup authentication', async () => {
     const transport = { ...apiKeyTransport, destination: { kind: 'httpHeader' as const, name: 'x-private-gateway', format: 'raw' as const } };
     const base = materializeInput();
@@ -211,9 +228,9 @@ describe('Claude provider-binding adapter V1', () => {
   });
 
   it('changes the existing binding key only when resolved helper pins change', () => {
-    const prepare = (modelId: string, claudeHelperModels: NonNullable<AgentProviderBindingMaterializeInput['binding']['claudeHelperModels']>) => (
+    const prepare = (modelId: string, roleModels: NonNullable<AgentProviderBindingMaterializeInput['binding']['roleModels']>) => (
       CLAUDE_PROVIDER_BINDING_ADAPTER_V1.prepare({
-        ...prepareInput(), model: { id: modelId, name: modelId }, claudeHelperModels,
+        ...prepareInput(), model: { id: modelId, name: modelId }, roleModels,
       })
     );
     expect(prepare('model-a', {}).adapterBindingKey).toBeDefined();
@@ -228,6 +245,7 @@ describe('Claude provider-binding adapter V1', () => {
     expect(CLAUDE_PROVIDER_BINDING_ADAPTER_V1.adapterVersion).toBe(4);
     expect(support).toEqual({
       acceptsProtocols: ['anthropic'],
+      modelRoles: CLAUDE_PROVIDER_BINDING_ADAPTER_V1.modelRoles,
       required: { streaming: true, toolRoundTrips: true },
       credentialSupport: {
         supportsNoAuth: true,

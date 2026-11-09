@@ -15,7 +15,7 @@ import { createBrokerProviderRegistry } from './providerBroker.testkit';
 
 import {
   createTeamCredentialBrokerSourceOwner,
-  isCLIProxyAPIBrokerApplication,
+  isCpxBrokerApplication,
   teamCredentialBrokerPlacementAcceptsMachine,
 } from './teamCredentialBrokerSourceOwner';
 import { createConnectedServicesBrokerSourceOpen } from './connectedServicesSource';
@@ -588,14 +588,14 @@ describe('Team credential broker source owner', () => {
       protocol: 'openai-chat',
     });
     expect(projected).not.toBeNull();
-    expect(isCLIProxyAPIBrokerApplication(registry, projected!)).toBe(true);
-    expect(isCLIProxyAPIBrokerApplication({ providersByContributionKey: new Map() }, projected!)).toBe(false);
-    expect(isCLIProxyAPIBrokerApplication(registry, { ...projected!, endpointTemplateId: 'cliproxyapi-anthropic' })).toBe(false);
-    expect(isCLIProxyAPIBrokerApplication(registry, {
+    expect(isCpxBrokerApplication(registry, projected!)).toBe(true);
+    expect(isCpxBrokerApplication({ providersByContributionKey: new Map() }, projected!)).toBe(false);
+    expect(isCpxBrokerApplication(registry, { ...projected!, endpointTemplateId: 'cliproxyapi-anthropic' })).toBe(false);
+    expect(isCpxBrokerApplication(registry, {
       ...projected!,
       implementationIdentity: { pluginId: 'happier.provider.other', localId: 'other' },
     })).toBe(false);
-    expect(isCLIProxyAPIBrokerApplication(registry, {
+    expect(isCpxBrokerApplication(registry, {
       ...projected!,
       protocol: 'not-a-managed-protocol',
     })).toBe(false);

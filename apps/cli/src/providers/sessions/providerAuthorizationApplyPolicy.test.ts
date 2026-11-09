@@ -52,7 +52,7 @@ it.each([
       agentTargetKey: result.binding.agentTargetKey,
       connectionId: result.binding.selection.connectionId!,
       model: result.binding.selection.model,
-      claudeHelperModels: pins,
+      roleModels: pins,
     });
     return {
       ...result,
@@ -217,7 +217,7 @@ function managedAuthorization(
                 purpose,
                 materialization: {
                   kind: 'httpHeaders' as const,
-                  origin: 'https://api.example.test',
+                  origins: ['https://api.example.test'],
                   headerNames: ['authorization'],
                 },
               })),
@@ -421,7 +421,7 @@ function withChangedManagedRequestAuthOrigin(
             ...first,
             materialization: {
               ...first.materialization,
-              origin: 'https://changed.example.test',
+              origins: ['https://changed.example.test'],
             },
           }, ...rest],
         },

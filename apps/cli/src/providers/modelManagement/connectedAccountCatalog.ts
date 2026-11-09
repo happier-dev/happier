@@ -8,7 +8,7 @@ import type { DaemonProviderModelProjectionGroupV1, DaemonProviderModelProjectio
 import type { ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { preserveConnectedAccountSourceHealthFailure } from '@/daemon/connectedServices/purposeBindings/sourceHealth';
 import { projectManagedProviderBrokerApplication } from '@/providers/broker/applicationProjection';
-import { isCLIProxyAPIBrokerApplication } from '@/providers/broker/teamCredentialBrokerSourceOwner';
+import { isCpxBrokerApplication } from '@/providers/broker/teamCredentialBrokerSourceOwner';
 import type { ProviderContributionRegistryView } from '@/providers/registry';
 import { hasProviderExperimentalConfirmation } from '@/providers/catalog/compatibility';
 import { resolveProviderManagedRuntimeDeclarationV1 } from '@happier-dev/protocol/providers/contributions';
@@ -57,10 +57,12 @@ export async function readConnectedAccountCatalogSources(input: Readonly<{
       selectionByPurpose.set(family.purpose, selection);
     }
     if (!selection) continue;
-    sources.push({ provider, endpoint, family, selection });
+    sources.push({ provider, endpoint, family, selection, requestAuthUses: runtime.requestAuthUses });
   }
   return sources;
 }
+
+export type ConnectedAccountCatalogSource = Awaited<ReturnType<typeof readConnectedAccountCatalogSources>>[number];
 
 /** A projection of the exact source's native observation or unverified declarations. The
  * connection-shaped wire envelope is read-only: its identity never creates a
@@ -92,18 +94,19 @@ export async function readConnectedAccountModelCatalog(input: Omit<ConnectedAcco
   const target = input.request.connectedAccountTarget;
   if (!target) throw new TypeError('Connected Account catalog requires an exact target');
   const signal = input.signal ?? new AbortController().signal;
-  if (input.request.application && !isCLIProxyAPIBrokerApplication(input.registry, input.request.application)) {
+  if (input.request.application && !isCpxBrokerApplication(input.registry, input.request.application)) {
     return { groups: [], error: createProviderErrorV1('provider_incompatible_with_agent'), isCurrent: async () => !signal.aborted };
   }
   const groups: ConnectedAccountSourceGroup[] = [];
   const selections = new Set<Awaited<ReturnType<ResolveManagedProviderPurposeBindingIntentSelection>>>();
   const observations = new Map<NonNullable<Awaited<ReturnType<ResolveManagedProviderPurposeBindingIntentSelection>>>,
     ReturnType<typeof observedConnectedAccountDescriptors>>();
-  for (const { provider, endpoint, family, selection } of await readConnectedAccountCatalogSources({
+  for (const source of await readConnectedAccountCatalogSources({
     registry: input.registry, target, resolveSelection: input.resolveSelection, signal,
     protocols: input.request.application ? [input.request.application.protocol] : undefined,
     endpointTemplateId: input.request.application?.endpointTemplateId,
   })) {
+      const { provider, endpoint, family, selection } = source;
       const protocol = endpoint.protocol;
       const application = projectManagedProviderBrokerApplication({
         registry: input.registry,
@@ -113,11 +116,11 @@ export async function readConnectedAccountModelCatalog(input: Omit<ConnectedAcco
         endpointTemplateId: endpoint.id,
       });
       if (!application || (input.request.application && !pluginJsonValuesEqual(application, input.request.application))) continue;
-      if (!input.request.application && !isCLIProxyAPIBrokerApplication(input.registry, application)) continue;
+      if (!input.request.application && !isCpxBrokerApplication(input.registry, application)) continue;
       selections.add(selection);
       if (!observations.has(selection)) {
         const observation = input.observeModels && !input.request.includeDirectMaterialization
-          ? await input.observeModels({ account: selection.resolved.account,
+          ? await input.observeModels({ account: selection.resolved.account, machineId: input.request.machineId, source,
               currentOnly: input.request.refreshPolicy === 'current_only',
               refresh: input.request.forceRefresh === true, signal }) : null;
         if (signal.aborted || !await selection.isCurrent(signal)) continue;

@@ -1,5 +1,23 @@
 # Plugin platform and SDK ownership
 
+## Connected Account request headers (unreleased 0.3)
+
+`lookupConnectedAccountRequestAuth({ purpose })` returns `RequestAuthHeadersV1`:
+the complete `headers` map, scalar `facts`, optional real `expiresAt`, and
+`credentialContext` for the existing failure and recovery association. A purpose
+can require Basic authorization or API-key headers without a Bearer token.
+
+Service runtimes return `httpHeaders` material with optional `facts` and
+`expiresAt`. The daemon's plugin adapter validates the result once, supplies an
+empty facts map when omitted, and preserves it through the existing request-auth
+cache and SDK transport. Only plugin adapters interpret fact keys; the host and
+SDK carry strings, finite numbers and booleans. Facts are request-local data.
+
+The consuming purpose declares `origins` and `headerNames`. The managed gateway
+uses that origin list at its existing final outbound destination boundary; no
+selected origin travels with the material. Native adapters that require a
+Bearer token extract it from the returned header map at their own codec boundary.
+
 ## Input options Resource queries (unreleased 0.3)
 
 `action.options.resolve` remains the options discovery owner. Its partial
@@ -868,6 +886,14 @@ result field or an instruction to undo an existing redaction.
 
 ## Shared secret save and registered reads (0.3 development source)
 
+Connected Account service-configuration saves return the record committed by
+the catalog writer. When saving also promotes new Saved Secrets, the promotion
+owner returns the final shared references and acknowledged catalog revision.
+The daemon publishes those facts locally without rereading storage after its
+own write. A retired local Account or failed local publication cannot turn an
+acknowledged commit into a failed save; a missing write acknowledgement retains
+the existing outcome-unknown result and never authorizes replay.
+
 `secrets.usedBy({ ref })` is an Account-placed metadata read for managed Saved
 Secret references, using the existing `secrets.list` read policy. Both hosts
 reuse their existing selected-secret Used-by callback and the Protocol
@@ -1103,6 +1129,13 @@ ruling, independently of npm SemVer. The codec output and its nested MCP identit
 are closed known-field projections; diagnostic admission retains its existing
 strict schema and informational transcript messages keep their existing reader
 contract. See the [author example](../apps/docs/content/docs/plugins/agent-runtimes/acp.mdx#native-update-metadata).
+
+The existing `AgentAcpToolNameResolver` also accepts a `{ toolName, input }`
+projection when a native wrapper needs both fields decoded. The same plugin
+codec supplies updates and permissions, including the awaitable runtime bridge;
+ordinary string-returning resolvers remain supported. Shared normalization
+receives the admitted runtime's qualified `ToolNormalizationSourceV3`, as
+described in [tool normalization](tool-normalization.md).
 
 The 0.3 development `backupDestinations` family is a cold descriptor with a
 recursively closed nonsecret configuration schema, canonical credential roles,
@@ -1722,9 +1755,22 @@ applies to bundled and external plugins in 0.3 development source.
 
 On the browser HTTP host, the surface Action dispatcher prefers an own connected
 Machine for finite Account Actions through the existing Account `action.invoke` relay.
+An invocation about a subject with its own Machine carries that subject's Machine
+in the existing `externalActionTarget`; an Environment uses its controller Machine.
+The placement owner preserves this target. Subject-less invocations retain the
+first reachable own Machine, with no preference list or retry on another Machine.
+An Account Action that uses the invoking UI declares `execution.invokingUi: true`;
+`accountActionPlacement.ts` keeps that invocation on the invoking host so its UI
+capability reaches the handler. Headless hosts still run the same Account Action
+without UI. Client-only Actions already declare `execution.target: 'client'` and
+need no additional field. This optional Account execution declaration is an
+unreleased 0.3 author-contract extension: matching Protocol, SDK, plugin and UI
+readers reload together; older strict development readers reject it. Omission
+retains the existing relay behavior. No wire epoch or persisted format changes.
 The receiving daemon runs the Account plugin runtime and resolves selected
 Connected Account credentials through the incumbent purpose owner. Native mobile
-and desktop HTTP hosts retain direct Account execution. Placement applies to every
+and desktop HTTP hosts retain direct Account execution when no subject Machine is
+addressed. Placement applies to every
 provider, without a provider list, retry or fallback after relay selection. A browser
 without an eligible own Machine retains local execution. Account
 read observers retain their local dependency subscriptions; their finite Action
@@ -1739,6 +1785,11 @@ target consumes that consent while retaining the Plugin caller and its automatio
 authority; placement does not ask the person again. This does not confer host
 authority or consent to another Action or changed input. Native execution and
 mounted daemon Actions retain their existing confirmation paths.
+
+Raw host repair controls retain their already-confirmed target occurrence through
+the same Account carrier. The canonical `action.invoke` operand carries optional
+`expectedContributorOccurrenceId` to the target's existing occurrence admission;
+settled consent cannot approve a replacement target selected after the prompt.
 
 The UI admits Account Action and Resource descriptors without acquiring or
 evaluating their executable artifact. The first invocation, Resource read or
@@ -2417,7 +2468,11 @@ SavedSecret read uses that Resource's encryption mode, not the Home Account's.
 These ports neither select an executor nor add native process/filesystem authority.
 Account Actions also expose portable `connectedAccounts.getBinding`, `materialize`,
 `listAccounts`, and `materializeListedAccount` through the shared purpose and
-established-runtime owners. Listing exposes only the selected direct Account or
+established-runtime owners. In unreleased 0.3, `getBinding(purpose, { observation: true })`
+also projects the selected credential/configuration revisions and recorded Pool
+identity when available, without selecting a member or acquiring credentials.
+Omitting the observation option preserves the ordinary binding read's cost.
+Listing exposes only the selected direct Account or
 enabled members of its selected Pool, with host-normalized configured endpoints;
 listed materialization refuses a different target or configured origin at
 credential acquisition. Finite listing and materialization retain their admitted
@@ -2426,6 +2481,13 @@ reading the same inventory again. They do not perform fresh metadata or
 authorization reads after the effect. Local cancellation and the established
 materializer's lifecycle remain. Account
 Actions have no watch port: the live binding-store watch producer is daemon-owned.
+The unreleased 0.3 daemon event carries `authorityChanged`: initial delivery and
+presentation-only updates are `false`, while the canonical purpose owner marks
+authority changes `true`. The host and runner bridge preserve that discriminator
+and coalesce pending authority changes without replacing them with presentation
+updates. Consumers refresh presentation without retiring runtime work; changed
+authority applies at the next acquisition/admission, and admitted finite work
+retains its snapshot until completion or explicit cancellation/disposal.
 Acquired credentials and Saved Secrets register with the same invocation
 redaction lease; Account dispatch projects successful results and failure
 diagnostics through the shared Action projector before returning them.
@@ -5377,9 +5439,7 @@ authority while backfilling that selector. Each outward wake selects only
 finalizing candidates; healthy rows have no due key and their bodies stay
 unopened by delete finalization. The finalizer still rereads current lifecycle
 and execution placement before cleanup, and resumes retained work after a
-conflict or restart through the existing outward wake. A successful dependent
-cleanup page continues that runner immediately, including when only ingress or
-checkpoint rows changed and no structural binding notification will follow.
+conflict or restart through the existing outward wake.
 
 In unreleased 0.3 source, Channels `channel-deliveries` V6 adds the
 `by-terminal-updated-at` index through an identity V5→V6 migration. Retention
@@ -6313,7 +6373,7 @@ fields and array entries survive composition, while later scalar values win.
   host repair controls use the same Manage-only `action.invoke` entry.
 - Actions own request/response and effects; Resources own reads and invalidation; Events carry facts. Keep their different cancellation and lifecycle semantics. [Actions](actions.md) owns invocation surfaces, placement and confirmation rules.
 - The [runtime core](runtime-core.md) owns Session/turn admission and transcript/lifecycle state. [Providers](providers.md) owns model sources, connections and materialization. SDK projections do not transfer those domains to plugins.
-- In 0.3 development, Agent Provider-binding environment declarations distinguish required `authIsolation.ownedEnvKeys` from `optionalOwnedEnvKeys`. Materialization must cover every required key exactly once and may emit only a declared optional subset, without duplicates or overlap. This lets managed-only native configuration leave external bindings unchanged. The existing adapter's optional `supportsClaudeHelperModels: true` declares the Claude alias consumer; other Agents neither admit nor materialize those pins.
+- In 0.3 development, Agent Provider-binding environment declarations distinguish required `authIsolation.ownedEnvKeys` from `optionalOwnedEnvKeys`. Materialization must cover every required key exactly once and may emit only a declared optional subset, without duplicates or overlap. This lets managed-only native configuration leave external bindings unchanged. The adapter's optional `modelRoles` consumes connection-owned `roleModels`; the plugin's portable Provider requirements project the same declared roles to editors. Only the selected adapter's declared roles are admitted and materialized.
 - Trusted daemon and native plugin code is executable code. Managed services provide portable APIs, resource custody, cancellation and diagnostics; they are not a malicious-code sandbox. Per-plugin network targets, filesystem scopes, Exec environment keys and system-tool argument lists do not restrict trusted code. Account and Team authorization, credential-origin handling, secret redaction and OS permission boundaries still apply.
 - Capability declarations, runtime registration and lifecycle must exist in the applicable realm. A daemon declaration does not establish browser or native support. Registry publication and a loaded invocation are separate evidence, not substitute availability authorities.
 
@@ -8271,6 +8331,17 @@ not require a first-party Classic container or namespace import.
 
 ### Standalone Voice attempt policy (0.3 development)
 
+Realtime `provider_error` events keep their closed host category and may carry
+an optional content-free `providerCode` for diagnostics. Provider messages and
+payloads never cross this field. `terminal` ends the current Happier attempt
+through its existing lifecycle and recovery policy; it does not assert that the
+provider closed its socket. Grok request errors use this path so a rejected
+answer stops capture, preserves the admitted transcript and offers Retry instead
+of continuing to show Connected. The controller keeps the provider code as the
+failure reason. This is an additive same-realm 0.3 development contract: earlier
+events without the optional code still use their category, and matching SDK,
+plugin and host source load together. It adds no persisted or wire format.
+
 Voice contribution declarations may carry an optional `mark`, projected identically
 for installed and bundled providers. `VoiceServiceMarkSchema` and `VoiceServiceMark`
 are public at `@happier-dev/plugin-sdk/voice`: `connected_service` names a known
@@ -9062,6 +9133,19 @@ integration are verified separately.
 
 ### Connected Account refresh and quota identity (0.3 development)
 
+Authentication completion may return a secret-free `completionObservation` of
+type `ConnectedAccountCompletionObservation`: `ProviderAccountUsageSnapshotV1`
+with `recordId`, `recordKey`, `accountSubject` and `staleAfterMs` supplied by the
+host. The observation stays in the current process through successful credential
+settlement. The daemon quota owner attaches the settled qualified Account and
+credential/configuration revisions, resolves usage identity, and applies its
+existing freshness cadence before using the existing usage writer and
+`recordSnapshot` store. It performs no additional provider quota request and
+stores no observation in credential KV, configuration or durable attempts.
+Existing writer/store deduplication suppresses unchanged samples; publication
+failure leaves the settled connection successful. A completion without an
+observation retains the existing unloaded-source initialization behavior.
+
 Static Connected Account credentials receive one scheduled health observation
 when their credential or configuration changes. Health-status publication and
 idle scheduler wakes do not request another observation, including after a
@@ -9096,6 +9180,23 @@ secret files. Missing files and credential-store directories have no entry; othe
 materialization paths omit this input. The snapshot stays machine-local and grants
 no arbitrary-path reads. The host retains home serialization, binding/currentness
 checks and protected writes; bundled and external runtimes use the same callback.
+An Agent can declare `nativeHome.materializedRootOverlay.privateEntries` when its
+selected Account needs a private root such as `XDG_CONFIG_HOME`. The host keeps
+those top-level entries private and links every other existing top-level source
+entry through the SDK filesystem owner (Windows directory junctions and file
+symbolic links; POSIX symbolic links). Plain native/default launches keep their original home. New
+top-level entries created in the selected root stay private; this recoverable
+difference is accepted rather than adding directory watchers. Revocation removes
+the selected Account's materialized homes after already-admitted runtimes release
+them, preserving unrelated Accounts and the original native root.
+
+Purposes declare all credential uses, while the Connected Account runtime returns
+only leaves applicable to its credential mode. Empty environment or file results
+make that use inapplicable. The generic materializer requires usable credentials
+for each selected purpose across its uses; another purpose's credentials cannot
+satisfy it. A native home is prepared only when native file leaves are returned
+or the admitted Provider/member launch explicitly requires that home.
+
 Claude reconciles user, email and organization into that home's `.claude.json`,
 invalidates account caches, and preserves workspace approvals, project trust and
 unrelated private preferences. Unreadable or malformed retained config refuses
@@ -9295,6 +9396,12 @@ when their completion actually verifies authentication. Methods importing an
 existing login declare `credentialOrigin: 'native_import'`. An older or unmarked
 manual declaration leaves the original sign-in unknown. Neither reconciliation
 nor credential refresh turns its observation time into a new sign-in.
+
+Manual modes may declare `apiKey: true` as a presentation fact. The public catalog
+preserves it, and Credentials, account details and quota summaries consume the
+selected mode's declaration. Stored `kind: 'token'`, direct-save eligibility and
+missing usage do not identify an API-key mode. An absent declaration remains
+unknown; subscription status and plan labels come from observed usage.
 
 Manual methods may separately declare `accountDirectSave: true` when their form
 field ids/values already are the canonical credential payload, or
@@ -10552,6 +10659,26 @@ owns the contributor workflow; this section describes current source, not
 released availability or loaded-runtime certification.
 
 ## Generated ownership
+
+In 0.3 development source, Agent UI descriptors own their mark through
+`assets.svgIcon`. A packaged `{ path: 'assets/agent-mark.svg' }` preserves the
+complete SVG, including masks and filters; `{{text.primary}}`,
+`{{accent.orange}}` and other color paths resolve against `theme.colors`.
+The existing structured `{ viewBox, paths }` declaration remains supported.
+The CLI bundled publisher emits both forms into the standalone
+`generatedAgentLogoSvgXml.ts` map consumed by Agent icons and the README strip.
+Hosts do not select vendor-specific assets or parse generated UI source to
+discover marks.
+
+Connected Account descriptors own setup presentation in `ui.setup`:
+`order` sorts the setup catalog, `firstRun` selects its initial offers, and
+`catalogDescription` uses the existing localized-string contract. `ui.shortName`
+supplies compact brand copy. Bundled services with a distinct service mark name
+their same-plugin packaged SVG Resource in `ui.iconResourceId`; the same
+publisher emits the qualified service mark map. Released scalar service ids
+reach that map only through the existing generated legacy identity adapter.
+These fields carry presentation and grant no authentication or execution
+authority.
 
 The canonical Workflow schema types both authored input and parsed output as
 `WorkflowDefinitionV1`, including inline Workflow and Session trigger inputs

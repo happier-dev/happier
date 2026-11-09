@@ -68,7 +68,7 @@ export function sameTeamCredentialBrokerSource(
  * owns that identity, so the generic broker hosts compare against its own
  * projection instead of repeating a Provider id.
  */
-export function isCLIProxyAPIBrokerApplication(
+export function isCpxBrokerApplication(
   registry: ProviderContributionRegistryView,
   application: ProviderBrokerSourceApplicationBindingV1,
 ): boolean {

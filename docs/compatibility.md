@@ -1,5 +1,64 @@
 # Compatibility and version skew
 
+## Native provider failure evidence (unreleased 0.3)
+
+Agent plugins normalize native provider errors before reporting structured
+category, quota scope and optional status/code facts through request-auth.
+Pi owns its characterized terminal formats and native retry behavior; Protocol
+and SDK no longer interpret Pi versions or signature identities. The private
+transport accepts only `evidenceSource: { kind: 'structured' }`.
+Matching Pi, SDK, Protocol and daemon source reload together. These request-auth
+and classifier modules are absent from the inspected `../0.2` frontier
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75`, including scoped local changes;
+no persisted format, wire epoch or predecessor adapter changes.
+
+## Tool provenance V3 (unreleased 0.3)
+
+The V2 tool envelope now carries current metadata V3 with `native | acp`
+protocol and a closed qualified Agent contribution identity. Current writers
+and SDK normalization callbacks use the admitted runtime source; the enclosing
+ACP transport does not change native provenance. Loose metadata adjuncts remain
+open. The existing metadata owner accepts V3 and released V2, including `_happy`.
+Its explicit legacy result preserves the old unqualified provider without
+fabricating a plugin identity. The exact V2 codecs keep their closed protocol
+vocabulary; V3 does not widen those released contracts.
+
+The inspected `../0.2` frontier at
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75`, including scoped staged and unstaged
+changes, has that V2 metadata contract. No transcript rewrite is needed. Debug
+tool trace writers also advance their JSONL format to V2 for qualified source
+facts; the one trace reader retains the predecessor's V1 records. Current SDK,
+host and plugin source reload together. See [tool normalization](tool-normalization.md).
+
+## Retained Agent compatibility (0.3 development source)
+
+Released Agent flavors, Connected Service mappings and exact-v0.2.1 credential
+recipes remain scoped to their documented ingress callers. The exact-v0.2.1
+materialization owner supplies the historical projection-only decision; generic
+spawn consumes that result instead of selecting a service recipe itself.
+
+Current configured ACP inventory, installation and launch share the qualified
+Agent target and selected definition from `buildConfiguredAcpAgentSelectionV1`.
+The existing Account namespace and configured definition remain intact. Historical
+selection readers translate old shapes at ingress; they do not select current
+runtime identity. No stored-record rewrite or new compatibility epoch is added.
+
+## Provider model roles and stored pool policy (unreleased 0.3)
+
+The current Provider connection contract uses `roleModels` and plugin-declared
+`modelRoles` in place of its never-shipped vendor-specific helper fields. Matching
+Protocol, SDK, plugin and UI consumers reload together; no development-record
+alias or conversion is provided.
+
+The released predecessor's pool policy remains a frozen V1 stored-data codec.
+`parseConnectedServiceAuthGroupPolicy` translates its optional
+`claudeCodeAutoContinueAtUsageLimit` into current V2
+`nativeUsageLimitContinuation`, preserving absence, false and true. Current
+qualified reads, creates and patches use V2. A deliberate update writes V2 to the
+existing record; there is no backfill or dual write. The predecessor auth-group
+route remains unavailable (404). The format basis is the scoped-clean
+`../0.2` schema at `7b37d65ca75e58560f8f3ca850958ac5407d2e75`.
+
 ## Account Action confirmation continuity (unreleased 0.3)
 
 The existing closed private Account invocation confirmation also carries settled
@@ -9,9 +68,12 @@ target source and declaration, Account, Home, request and Machine before its tar
 gate consumes the confirmation.
 Host confirmation and reviewed-parent admission keep their existing restrictions.
 
-The private record shape, public Action input and persisted approval formats do
-not change. Earlier development readers reject the Plugin confirmation, so UI,
-Protocol and daemon reload together under the unpublished 0.3 direct cut.
+The private record shape and persisted approval formats do not change. The closed
+`action.invoke` input gains optional `expectedContributorOccurrenceId`; raw host
+repair relays retain that existing target-selection constraint through the
+generic Action path. Earlier development readers reject the Plugin confirmation
+and the new optional operand, so UI, Protocol and daemon reload together under the
+unpublished 0.3 direct cut.
 The inspected `../0.2` frontier at
 `7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no private requester-invocation
 carrier at this source seam, including scoped staged and unstaged changes.
@@ -1946,16 +2008,27 @@ top-level V4 addition while their strict legacy service rows stay unchanged.
 This does not introduce a promise to interoperate with stale, independently
 bundled development V4 readers or a new client update floor.
 
-The development V4 `GET /v4/connect/qualified/accounts` also accepts an explicit
-`services` array through the existing structured-query codec. It is mutually
-exclusive with `service`; the multi-service response is closed `{ services,
-accounts }`, while single-service requests retain closed `{ service, accounts }`.
-Service references and profile envelopes remain closed. Empty service sets read
-no Accounts; an unknown selector never becomes an unrestricted Account read.
+The development V4 `GET /v4/connect/qualified/accounts` also accepts explicit
+`services` or exact `accounts` reference arrays through the existing
+structured-query codec. These selectors are mutually exclusive with each other
+and with `service`; exact-reference requests return closed `{ accounts }`,
+multi-service requests retain closed `{ services, accounts }`, and single-service
+requests retain closed `{ service, accounts }`. Qualified references and profile
+envelopes remain closed. Exact references are resolved only within the
+authenticated Account, without reading unrelated profiles or credentials. Empty
+selector sets read no Accounts; an unknown selector never becomes an unrestricted
+Account read.
 This filter requires the matching development server and has no fallback to
 per-service fan-out or an older unfiltered operation. The inspected 0.2.16
 stable/preview and moving predecessor have no qualified V4 route. No persisted
 format, SDK activation ABI or released single-service contract changes.
+
+The private runner Connected Accounts watch event also gains the required
+`authorityChanged` boolean in unreleased 0.3. Its strict envelope and the SDK
+projection change together; the daemon and runner consume the same refined
+event. The inspected moving 0.2 predecessor (7b37d65ca75e58560f8f3ca850958ac5407d2e75)
+has none of these runner bridge files. This is a development direct cut, with
+no persisted shape, compatibility adapter or new protocol epoch.
 
 ## Discussion list outcomes (0.3 development)
 
@@ -7474,6 +7547,19 @@ The inspected `../0.2` frontier at
 `respondRpcParamsV1.ts` nor `runtime/session/scopedServices.ts` module, including
 scoped local changes. This does not establish old-host support for native-choice
 answers: their opaque selection must reach a current application owner.
+
+Unreleased 0.3 connected-service diagnostics replace the three live Claude
+native-auth codes with `connected_service_credential_scope_missing`,
+`connected_service_native_auth_materialization_failed` and
+`connected_service_credential_mode_unsupported`. The existing diagnostic ingress
+translates the corresponding 0.2 codes to these service-neutral results before
+spawn recovery or UI presentation. Current writers use the generic vocabulary;
+reconnect actions, diagnostic privacy and service identity are unchanged. The
+closed diagnostic envelope retains its V1 version. Matching development
+Protocol, SDK projections, daemon and UI reload together; old readers do not
+consume new codes. The inspected `../0.2` frontier
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75` still declares all three old codes,
+including no scoped local changes, so their read compatibility remains.
 
 Unreleased 0.3 startup diagnostics add `model_selection_required` to the existing
 closed `SessionRuntimeFailureCauseV1.failureReason` vocabulary. Pi's refusal of
