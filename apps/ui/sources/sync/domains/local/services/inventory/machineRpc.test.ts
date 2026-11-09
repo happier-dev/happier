@@ -23,6 +23,15 @@ describe('local service inventory machine RPC client', () => {
         machineRpcWithServerScopeMock.mockReset();
     });
 
+    it.each(['response', 'exception'] as const)('retains an admitted unavailable inventory scope from a typed %s', async kind => {
+        if (kind === 'response') machineRpcWithServerScopeMock.mockResolvedValue({ error: 'Scope unavailable',
+            errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
+        else machineRpcWithServerScopeMock.mockRejectedValue(new RpcError('Scope unavailable', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE));
+        const { fetchLocalServiceInventorySnapshotViaMachineRpc } = await import('./machineRpc');
+        await expect(fetchLocalServiceInventorySnapshotViaMachineRpc({ machineId: 'machine_1' }))
+            .resolves.toEqual({ ok: false, reason: 'unavailable', reasonCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
+    });
+
     it('preserves the typed RPC refusal so Refresh can explain the actual cause', async () => {
         machineRpcWithServerScopeMock.mockRejectedValue(new RpcError('private transport detail', RPC_ERROR_CODES.FORBIDDEN));
         const { fetchLocalServiceInventorySnapshotViaMachineRpc } = await import('./machineRpc');

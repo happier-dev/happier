@@ -1,5 +1,6 @@
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
+import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 type LocalServiceCredentialScope = Readonly<{
     accountId?: string;
@@ -10,8 +11,8 @@ type LocalServiceCredentialScope = Readonly<{
 /** Finite metadata reads retain admitted Account custody and local cancellation. */
 export async function assertLocalServiceReadCustody(
     input: LocalServiceCredentialScope,
-    /** Host-only launcher read; credential-bearing callers retain custodian scope. */
-    requesterManagedServices?: true,
+    /** Read-only scope; credential-bearing callers retain the strict default. */
+    readScope?: 'requester_managed_services' | 'machine_inventory',
 ): Promise<string | undefined> {
     const context = input.context;
     // Local calls use the daemon's own credentials. Transport authority is host-private.
@@ -21,11 +22,16 @@ export async function assertLocalServiceReadCustody(
         && context.workspaceSyncSourceExecution?.originalActionEnvelope
         ? readRequesterAccountActionContext(context.callerInputAuthorization) : null;
     const privateMove = requester?.authorization.binding.accountId === admission?.actorAccountId && await requester?.isCurrent();
-    const requesterOnly = requesterManagedServices === true && admission
+    const requesterOnly = readScope === 'requester_managed_services' && admission
         && admission.actorAccountId !== input.accountId && !privateMove;
-    if (!input.accountId || !admission || admission.actorAccountId !== input.accountId && !privateMove && !requesterOnly
-        || admission.machineId !== input.machineId || context.signal.aborted
+    if (!input.accountId || !admission || admission.machineId !== input.machineId || context.signal.aborted
         || !context.verifyMachineAdmissionCurrent) {
+        throw new Error('requester_credentials_unavailable');
+    }
+    if (admission.actorAccountId !== input.accountId && !privateMove && !requesterOnly) {
+        if (readScope === 'machine_inventory') {
+            throw new RpcError('requester_credentials_unavailable', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
+        }
         throw new Error('requester_credentials_unavailable');
     }
     return requesterOnly ? admission.actorAccountId : undefined;

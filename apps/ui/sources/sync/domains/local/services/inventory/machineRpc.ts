@@ -59,6 +59,9 @@ export async function fetchLocalServiceInventorySnapshotViaMachineRpc(
         if (isRpcMethodNotFoundResult(raw)) {
             return { ok: false, reason: 'unavailable', reasonCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
         }
+        if (raw && typeof raw === 'object' && 'errorCode' in raw && raw.errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) {
+            return { ok: false, reason: 'unavailable', reasonCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE };
+        }
         const parsed = input.refresh
             ? DaemonLocalServiceInventoryRefreshResponseV1Schema.safeParse(raw)
             : DaemonLocalServiceInventorySnapshotResponseV1Schema.safeParse(raw);
@@ -69,7 +72,8 @@ export async function fetchLocalServiceInventorySnapshotViaMachineRpc(
     } catch (error) {
         const reasonCode = readRpcErrorCode(error)
             ?? (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined);
-        return { ok: false, reason: 'request_failed', ...(reasonCode ? { reasonCode } : {}) };
+        return { ok: false, reason: reasonCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE ? 'unavailable' : 'request_failed',
+            ...(reasonCode ? { reasonCode } : {}) };
     }
 }
 

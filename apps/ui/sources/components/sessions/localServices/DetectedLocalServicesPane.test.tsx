@@ -38,6 +38,9 @@ import { LocalServiceLaunchTargetV1Schema } from '@happier-dev/protocol/local/se
 import type { ReactTestInstance } from 'react-test-renderer';
 import { act } from 'react-test-renderer';
 import { commitPreferredLanguage, getPreferredLanguage } from '@/text/preferredLanguage';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { getLocalServiceInventoryState, resetLocalServiceInventoryStoreForTests,
+    subscribeLocalServiceInventoryStore } from '@/sync/domains/local/services/inventory/sharedStore';
 
 function collectText(node: ReactTestInstance): string {
     return node.children.map((child) => typeof child === 'string' ? child : collectText(child)).join(' ');
@@ -418,6 +421,33 @@ describe('DetectedLocalServicesPane', () => {
         expect(onRefresh).not.toHaveBeenCalled();
         await pressTestInstanceAsync(screen.findByTestId('local-services-pane-empty-secondary-action'), 'check again');
         expect(onRefresh).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+        { reason: 'unavailable' as const, reasonCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, empty: true },
+        { reason: 'request_failed' as const, reasonCode: RPC_ERROR_CODES.FORBIDDEN, empty: false },
+        { reason: 'request_failed' as const, reasonCode: 'ECONNRESET', empty: false },
+    ])('composes settled empty requester Services with inventory $reasonCode without hiding genuine failures', async ({ reason, reasonCode, empty }) => {
+        const key = { machineId: 'machine-a', serverId: 'home-a', accountId: 'guest', credentialKey: 'guest-key' };
+        // The inventory snapshot client is the daemon transport boundary; its store and pane remain real.
+        const release = subscribeLocalServiceInventoryStore(key, () => {}, {
+            snapshotClient: async () => ({ ok: false, reason, reasonCode }),
+            watchClient: async () => new Promise(() => {}),
+        });
+        try {
+            await vi.waitFor(() => expect(getLocalServiceInventoryState(key).refreshState).toMatch(/error|unavailable/));
+            const onRefresh = vi.fn();
+            const screen = await renderScreen(<DetectedLocalServicesPane
+                inventoryState={getLocalServiceInventoryState(key)} launcherState={launcherStateWith([])}
+                machine={MACBOOK_ONLINE} onRefresh={onRefresh} testID="scope-read" />);
+            expect(screen.findAllByTestId('scope-read-error-card')).toHaveLength(empty ? 0 : 1);
+            expect(screen.findAllByTestId('scope-read-empty-card')).toHaveLength(empty ? 1 : 0);
+            if (!empty) {
+                await pressTestInstanceAsync(screen.findByTestId('scope-read-error-action'), 'retry failed read');
+                expect(onRefresh).toHaveBeenCalledTimes(1);
+            }
+            expect(getLocalServiceInventoryState(key).generatedAt).toBeNull();
+        } finally { release(); resetLocalServiceInventoryStoreForTests(); }
     });
 
     it('says the machine is offline instead of an empty or failed scan when it cannot be reached', async () => {

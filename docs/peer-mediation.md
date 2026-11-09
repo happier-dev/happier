@@ -1198,6 +1198,15 @@ preserves this diagnostic across native scans and clears it on successful declar
 refresh. It is distinct from listener-scan failure; the current UI still renders its
 generic scan-attention copy and does not display those cause facts.
 
+Broad inventory and requester-owned launcher reads have different scopes. An admitted
+guest receives `RPC_METHOD_NOT_AVAILABLE` for broad inventory, while the existing
+launcher snapshot and projected watch disclose only that requester's managed bindings.
+The UI preserves that unavailable inventory result and parks no broad watch for it.
+After the last own Service ends, a healthy settled empty launcher shows empty Services;
+it does not turn the expected scope refusal into a failed scan. Check again reads that
+launcher projection. Project native binding recovery also refreshes its qualified
+launcher keys directly. Genuine scan, transport and custody failures keep their Retry.
+
 #### Native private-preview access (0.3 development)
 
 This development implementation is not yet verified as a complete native preview flow.

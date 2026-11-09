@@ -1,6 +1,7 @@
 import { createSharedSubscriptionStore } from '@/sync/runtime/subscriptions/sharedSubscriptionStore';
 import { LocalServiceMachineSummaryV1Schema, type LocalServiceMachineSummaryV1 } from '@happier-dev/protocol/local/services/inventory/v1';
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE } from '@happier-dev/protocol/rpcErrors';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery';
 import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -141,7 +142,9 @@ const store = createSharedSubscriptionStore<
                     store.invalidate(input);
                     return current;
                 }
-                return applyLocalServiceInventoryRefreshFailed(current, input.machineId);
+                return applyLocalServiceInventoryRefreshFailed(current, input.machineId,
+                    result.reason === 'unavailable' && result.reasonCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
+                        ? 'unavailable' : 'error');
             }
             const next = applyLocalServiceInventorySnapshot(current, result.snapshot);
             // A retained Browser may outlive hidden inventory demand. Its next
@@ -163,6 +166,7 @@ const store = createSharedSubscriptionStore<
     },
     defaultWatchClient,
     watchAfterRefresh: true,
+    shouldWatch: state => state.refreshState !== 'unavailable',
     // One cancellation-owned observation spans every snapshot answer/re-arm gap.
     observeWatch: async ({ input, watchClient, signal }) => {
         await watchClient({

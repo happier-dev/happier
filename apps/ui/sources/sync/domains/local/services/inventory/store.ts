@@ -45,7 +45,7 @@ export type LocalServiceInventoryState = Readonly<{
     summary: LocalServiceMachineSummaryV1 | null;
     machineId: string | null;
     generatedAt: number | null;
-    refreshState: 'idle' | 'refreshing' | 'error';
+    refreshState: 'idle' | 'refreshing' | 'error' | 'unavailable';
     rowIds: readonly string[];
     rowsById: ReadonlyMap<string, LocalServiceInventoryRow>;
     diagnostics: readonly unknown[];
@@ -154,25 +154,27 @@ export function applyLocalServiceInventoryRefreshStarted(
 export function applyLocalServiceInventoryRefreshFailed(
     state: LocalServiceInventoryState,
     machineId: string,
+    failure: 'error' | 'unavailable' = 'error',
 ): LocalServiceInventoryState {
     if (state.machineId !== null && state.machineId !== machineId) {
         return {
             summary: null,
             machineId,
             generatedAt: null,
-            refreshState: 'error',
+            refreshState: failure,
             rowIds: [],
             rowsById: new Map(),
             diagnostics: [],
         };
     }
 
-    if (state.machineId === machineId && state.refreshState === 'error' && state.summary?.state === 'error') return state;
+    const summaryState = failure === 'unavailable' ? 'unknown' : 'error';
+    if (state.machineId === machineId && state.refreshState === failure && state.summary?.state === summaryState) return state;
     return applyLocalServiceInventorySummary(carryMachineSummarySource(state, {
         ...state,
         machineId,
-        refreshState: 'error',
-    }), { v: 1, state: 'error' });
+        refreshState: failure,
+    }), { v: 1, state: summaryState });
 }
 
 export function applyLocalServiceInventorySnapshot(

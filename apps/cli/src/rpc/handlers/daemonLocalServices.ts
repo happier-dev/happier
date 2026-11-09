@@ -81,11 +81,11 @@ export function registerDaemonLocalServicesMachineRpcHandlers(
 ): void {
     const assertRequesterRead = (context?: RpcHandlerContext) => assertLocalServiceReadCustody({
         accountId: options.accountId, machineId: options.machineId ?? '', context,
-    });
+    }, 'machine_inventory');
     const readLauncherCustody = async (context?: RpcHandlerContext, requesterOnly?: true) => {
         const accountId = await assertLocalServiceReadCustody({
             accountId: options.accountId, machineId: options.machineId ?? '', context,
-        }, requesterOnly);
+        }, requesterOnly ? 'requester_managed_services' : undefined);
         if (accountId && !options.serverId) throw new Error('requester_credentials_unavailable');
         return accountId && options.serverId ? { accountId, serverId: options.serverId } : undefined;
     };

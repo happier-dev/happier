@@ -7,7 +7,7 @@ import { readCurrentProjectAccountRows } from '@/sync/store/domains/projectAccou
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getLocalServiceLauncherState, readLocalServiceLauncherStore, subscribeLocalServiceLauncherStore,
-    type LocalServiceLauncherStoreKeyInput } from '@/sync/domains/local/services/launch/sharedStore';
+    invalidateLocalServiceLauncherStore, type LocalServiceLauncherStoreKeyInput } from '@/sync/domains/local/services/launch/sharedStore';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { readUiWorkspaceSyncChildMachineFacts } from '@/sync/ops/workspaceSyncChildMachineFacts';
 import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery';
@@ -84,10 +84,16 @@ export function useLocalServiceLiveFeeds(input: LocalServiceLiveFeedsInput): Loc
     const refresh = React.useMemo(() => inventorySupplied || !liveInventory.refresh || !input.machineId || !input.serverId
         ? undefined : async () => {
             if (!bindings.binding?.isCurrent()) return;
+            if (inventoryState.refreshState === 'unavailable') {
+                liveLauncher.refresh?.();
+                await bindings.refresh(true);
+                return;
+            }
             const refreshed = await refreshLocalServiceMachine({ machineId: input.machineId!, serverId: input.serverId!, sessionId: input.sessionId,
                 accountId: bindings.binding.accountId, isCurrent: bindings.binding.isCurrent });
-            await bindings.refresh(input.machineId!, refreshed);
-        }, [inventorySupplied, liveInventory.refresh, input.machineId, input.serverId, input.sessionId, bindings.binding, bindings.refresh]);
+            await bindings.refresh(refreshed);
+        }, [inventorySupplied, inventoryState.refreshState, liveInventory.refresh, liveLauncher.refresh,
+            input.machineId, input.serverId, input.sessionId, bindings.binding, bindings.refresh]);
     return React.useMemo(() => ({
         inventoryState,
         launcherState,
@@ -246,16 +252,17 @@ function useProjectServiceBindings(input: LocalServiceLiveFeedsInput, sourceStat
         rowIdsByTargetId: projection.rowIdsByTargetId,
         ...(projection.pending && sourceState.refreshStatus !== 'error' ? { refreshStatus: 'refreshing' as const } : {}),
     }, [projection, sourceState]);
-    const refresh = React.useCallback(async (sourceMachineId: string, sourceRefreshed: boolean) => {
-        const refreshed = new Map<string, boolean>([[sourceMachineId, sourceRefreshed]]);
+    const refresh = React.useCallback(async (sourceRefreshed: boolean) => {
+        let refreshed = sourceRefreshed;
         for (const { key } of subscriptions.values()) {
             if (!key.serverId || !binding?.isCurrent()) return;
-            if (!refreshed.has(key.machineId)) refreshed.set(key.machineId,
-                await refreshLocalServiceMachine({ ...key, serverId: key.serverId, accountId: binding.accountId, isCurrent: binding.isCurrent }));
+            invalidateLocalServiceLauncherStore(key);
+            const state = await readLocalServiceLauncherStore(key);
+            refreshed = refreshed || state.refreshStatus !== 'error';
         }
-        // A successful explicit scan can be unchanged. Retry also renews the Project
-        // census, whose earlier failure may have prevented any native subscription.
-        if (binding?.isCurrent() && [...refreshed.values()].some(Boolean)) observeAgain();
+        // Retry renews the existing native bindings and Project census even when
+        // the source scan is unchanged or unavailable to this requester.
+        if (binding?.isCurrent() && refreshed) observeAgain();
     }, [binding, subscriptions]);
     return { state, refresh, binding };
 }

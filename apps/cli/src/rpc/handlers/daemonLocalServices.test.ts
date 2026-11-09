@@ -219,6 +219,11 @@ describe('daemon local services machine rpc handlers', () => {
             expect(await rpc.handleRequest(request)).toMatchObject(visible);
             expect.soft(admissionRequests).toBe(1);
             expect(statusRequests).toBe(kind === 'public' ? 1 : 0);
+            const guest = await rpc.handleRequest({ ...request, machineAdmission: { ...request.machineAdmission,
+                actorAccountId: 'foreign-account', role: 'use' } });
+            expect(guest).toHaveProperty('error');
+            expect(guest).not.toHaveProperty('errorCode', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
+            expect(statusRequests).toBe(kind === 'public' ? 1 : 0);
             admissionRequests = 0;
             withdrawDuringRead = true;
             expect.soft(await rpc.handleRequest(request)).toMatchObject(visible);
@@ -316,7 +321,9 @@ describe('daemon local services machine rpc handlers', () => {
             expect(await rpc.invokeLocal(method, params)).toMatchObject(visible);
             expect(await rpc.handleRequest({ method: request.method, params })).toMatchObject(visible);
             expect(await rpc.handleRequest({ ...request, machineAdmission: { ...machineAdmission,
-                actorAccountId: 'foreign-account', role: 'use' } })).toMatchObject({ error: 'requester_credentials_unavailable' });
+                actorAccountId: 'foreign-account', role: 'use' } })).toMatchObject({
+                    error: 'requester_credentials_unavailable', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+                });
             if (method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) {
                 verificationRequests = 0;
                 const pending = rpc.handleRequest({ ...request, params: { machineId: workspace.machineId, sinceGeneratedAt: now } });

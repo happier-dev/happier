@@ -731,12 +731,14 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
         );
     }
 
-    if (viewModel.status === 'empty' && launcherState.refreshStatus !== 'error' && !hasLauncherTargets) {
+    if ((viewModel.status === 'empty' || viewModel.status === 'unavailable'
+        && launcherState.updatedAt !== null && launcherState.refreshStatus === 'idle')
+        && launcherState.refreshStatus !== 'error' && !hasLauncherTargets) {
         // Pane-states E: an empty pane that invites — what shows up here and why it is worth it.
         return withFooter(emptyCard);
     }
 
-    if ((viewModel.status === 'error' || launcherState.refreshStatus === 'error') && !hasLauncherTargets) {
+    if ((viewModel.status === 'error' || viewModel.status === 'unavailable' || launcherState.refreshStatus === 'error') && !hasLauncherTargets) {
         const diagnosticCopy = firstInventoryDiagnosticCopy(viewModel.diagnostics, props.machine?.homeDir);
         // G16: a failed first read used to be terminal. The card's own primary-action slot is the
         // retry, so the failure recovers through the same invalidation the refresh control uses.
