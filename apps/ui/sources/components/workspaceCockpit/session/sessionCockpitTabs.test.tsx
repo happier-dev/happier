@@ -158,4 +158,34 @@ describe('session cockpit tabs', () => {
     expect(fileSceneMounts).toBe(1);
     await screen.unmount();
   });
+
+  it('withdraws the Chat scene\'s presentation before freezing it when another scene takes over', async () => {
+    // Live READY161 (390): the PR glance sheet opened from Chat's composer stayed over the opened detail, because
+    // Chat froze in the same render that blurred it and its withdrawal never committed (TL-C phone glance).
+    const { useLayoutPresentationActive } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+    const presented: boolean[] = [];
+    function ChatReader() {
+      presented.push(useLayoutPresentationActive());
+      return <View testID="chat-reader" />;
+    }
+    const navigation = createNavigationContainerRef<{ chat: undefined; tabs: undefined }>();
+    await renderScreen(
+      <BaseNavigationContainer ref={navigation}>
+        <Tabs.Navigator
+          initialRouteName="chat"
+          screenOptions={{ headerShown: false, lazy: true, freezeOnBlur: true }}
+          tabBar={() => null}
+          raisedScene={{ routeName: 'chat', raised: false, Frame: RaisedFrame }}
+        >
+          <Tabs.Screen name="chat">{() => <ChatReader />}</Tabs.Screen>
+          <Tabs.Screen name="tabs">{() => <FileScene />}</Tabs.Screen>
+        </Tabs.Navigator>
+      </BaseNavigationContainer>,
+    );
+    expect(presented.at(-1)).toBe(true);
+    await act(async () => {
+      navigation.navigate('tabs');
+    });
+    expect(presented.at(-1)).toBe(false);
+  });
 });

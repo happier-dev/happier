@@ -1,6 +1,5 @@
 import * as React from 'react';
 import { StyleSheet, View } from 'react-native';
-import { Freeze } from 'react-freeze';
 import {
     BottomTabView,
     type BottomTabNavigationEventMap,
@@ -20,6 +19,8 @@ import {
     type TabRouterOptions,
     type TypedNavigator,
 } from '@react-navigation/native';
+
+import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 
 /**
  * A scene the cockpit hosts beside the tab view rather than inside it, so the scene can rise over the focused one
@@ -75,7 +76,11 @@ function SessionCockpitTabsNavigator({
                         pointerEvents={visible ? 'box-none' : 'none'}
                     >
                         <Frame raised={raised}>
-                            <Freeze freeze={!visible && hosted.options.freezeOnBlur === true}>{hosted.render()}</Freeze>
+                            {/* Withdraws the scene's presentation before freezing it, so what the scene presented (a
+                                sheet portaled out of it) leaves with it instead of staying over the next scene. */}
+                            <RetainedPanelSurface isActive={visible} suspendWhenHidden={hosted.options.freezeOnBlur === true}>
+                                {hosted.render()}
+                            </RetainedPanelSurface>
                         </Frame>
                     </View>
                 ) : null}
