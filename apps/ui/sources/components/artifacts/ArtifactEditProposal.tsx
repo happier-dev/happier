@@ -381,7 +381,7 @@ function ArtifactEditProposalCard(props: ArtifactEditProposalProps): React.React
       const acceptedCurrency = revisionCurrency(currentRevision, disposition.acceptedRevision);
       const undoStale = undo?.state === 'conflict' || (acceptedCurrency === 'movedOn' && undo === null);
       if (undoStale) lines.push({
-        testID: `${testID}.undoConflict`, mark: 'warning', tone: 'warning',
+        testID: `${testID}.undoConflict`, mark: 'reason', tone: 'neutral',
         text: t('artifacts.browser.proposal.undoConflict'),
         action: { label: t('artifacts.browser.proposal.openHistory'), onPress: () => openHistory(), testID: `${testID}.undoConflict.open` },
       });

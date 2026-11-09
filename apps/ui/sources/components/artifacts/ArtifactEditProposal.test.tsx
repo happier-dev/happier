@@ -597,6 +597,10 @@ describe('ArtifactEditProposal', () => {
     expect(screen.findByTestId('proposal.accepted')).not.toBeNull();
     expect(screen.findByTestId('proposal.undo')).toBeNull();
     expect(screen.findByTestId('proposal.undoConflict')).not.toBeNull();
+    const presenter = screen.findAllByProps({ testID: 'proposal' }).find(node => node.props.decision);
+    expect(presenter?.props.decision.lines).toEqual(expect.arrayContaining([
+      expect.objectContaining({ testID: 'proposal.undoConflict', tone: 'neutral' }),
+    ]));
   });
 
   it('still offers Undo on an accepted receipt whose Doc is at the accepted revision', async () => {
