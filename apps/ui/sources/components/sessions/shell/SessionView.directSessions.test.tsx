@@ -269,6 +269,7 @@ const getSessionRunnerRuntimeStatusSpy = vi.hoisted(() =>
   vi.fn<(_request: unknown) => Promise<unknown>>(async () => null),
 );
 const actionExecuteSpy = vi.hoisted(() => vi.fn<(...input: unknown[]) => void>());
+const actionExecutions = vi.hoisted(() => [] as Array<{ actionId: string; result: Promise<unknown> }>);
 const modalAlertSpy = vi.hoisted(() => vi.fn());
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => true));
 const chatListPropsSpy = vi.hoisted(() => vi.fn());
@@ -639,12 +640,22 @@ vi.mock('@/sync/ops/actions/defaultActionExecutor', async (importOriginal) => {
         // Observe public Action requests without replacing admission or execution.
         execute: (...input: Parameters<typeof executor.execute>) => {
           actionExecuteSpy(...input);
-          return executor.execute(...input);
+          const result = executor.execute(...input);
+          actionExecutions.push({ actionId: input[0], result });
+          return result;
         },
       };
     },
   };
 });
+vi.mock('@/components/ui/popover', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/components/ui/popover')>(),
+  // Replace native/browser portal layout only; Goal content, confirmation and mutation lifetime stay real.
+  Popover: (props: { open: boolean; children?: React.ReactNode | ((layout: { maxHeight: number }) => React.ReactNode) }) =>
+    React.createElement('Popover', null, props.open ? (
+      typeof props.children === 'function' ? props.children({ maxHeight: 360 }) : props.children
+    ) : null),
+}));
 vi.mock('@/components/sessions/agentInput', () => {
   return {
     AgentInput: (props: any) => React.createElement(
@@ -943,7 +954,6 @@ installDisconnectedServerSocketBoundary((socket: Socket, serverUrl) => {
         } });
         result = { ok: true };
       } else if (method === SESSION_RPC_METHODS.SESSION_GOAL_CLEAR) {
-        if (pendingGoalReceipt) return await pendingGoalReceipt.promise;
         if (goalRpcFailure) return { ok: true, result: goalRpcFailure };
         const current = storage.getState().sessions[rpc.method.slice(0, separator)];
         if (!current?.metadata) return { ok: false, error: 'session_not_found', errorCode: 'session_not_found' };
@@ -965,6 +975,7 @@ installDisconnectedServerSocketBoundary((socket: Socket, serverUrl) => {
           ...storage.getState().sessions,
           [nextSession.id]: nextSession,
         } });
+        if (pendingGoalReceipt) return await pendingGoalReceipt.promise;
         result = { ok: true };
       } else if (method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST) {
         result = ExecutionRunListResponseSchema.parse({ runs: [] });
@@ -2235,6 +2246,7 @@ describe('SessionView (direct sessions)', () => {
     modalConfirmSpy.mockReset();
     modalConfirmSpy.mockResolvedValue(true);
     actionExecuteSpy.mockReset();
+    actionExecutions.length = 0;
     modelTransitionReply = undefined;
     modelUnarmReply = undefined;
     providerBindingStatusReply = undefined;
@@ -5133,9 +5145,59 @@ describe('SessionView (direct sessions)', () => {
     );
   });
 
+  it.each(['panel', 'view'] as const)('finishes confirmed Clear from the mounted Goal chip after %s dismissal', async (dismissal) => {
+    featureEnabledState['agents.goals'] = true;
+    storageState.sessions.s1 = { ...storageState.sessions.s1,
+      access: createSessionAccessFixture('owner'), accessLevel: 'owner',
+      agentState: { capabilities: { sessionGoalSetSupported: true, sessionGoalClearSupported: true } } };
+    storageState.machines['machine-1'] = { metadata: { daemonSessionGoalControlsSupported: true } };
+    const screen = await renderSessionViewAndSettle();
+    const readGoalChip = () => (findAgentInput(screen).props.extraActionChips as readonly AgentInputExtraActionChip[])
+      .find(candidate => candidate.controlId === 'goal');
+    const initialRenderContent = readGoalChip()?.collapsedContentPopover?.renderContent;
+    if (typeof initialRenderContent !== 'function') throw new Error('Expected canonical goal content');
+    const initialContent = initialRenderContent({ requestClose: () => {}, maxHeight: 420 });
+    if (!React.isValidElement<{ onSetGoal: (request: { objective: string }) => Promise<unknown> }>(initialContent)) {
+      throw new Error('Expected goal Action writer');
+    }
+    await act(async () => {
+      await expect(initialContent.props.onSetGoal({ objective: 'Finish the accepted Clear' })).resolves.toEqual({ ok: true });
+    });
+    await vi.waitFor(async () => {
+      await settleDirectSessionView();
+      expect(readGoalChip()?.collapsedContentPopover?.label).toBe('Finish the accepted Clear');
+    });
+    const renderContent = readGoalChip()?.collapsedContentPopover?.renderContent;
+    if (typeof renderContent !== 'function') throw new Error('Expected active goal content');
+    const goalScreen = await renderScreen(renderContent({ requestClose: () => {}, maxHeight: 420 }));
+    pendingGoalReceipt = createDeferred<unknown>();
+    const receipt = pendingGoalReceipt;
+    let clearExecution: typeof actionExecutions[number] | undefined;
+    try {
+      act(() => goalScreen.pressByTestId('session-goal-actions-overflow'));
+      await act(async () => { goalScreen.pressByTestId('session-goal-clear-button'); });
+      await vi.waitFor(() => expect(externalRpcRequests).toContainEqual(expect.objectContaining({
+        method: SESSION_RPC_METHODS.SESSION_GOAL_CLEAR,
+      })));
+      expect(readSessionOwnerMetadataView(storage.getState().sessions.s1)?.sessionWorkStateV1)
+        .toMatchObject({ primaryItemId: null, items: [] });
+      clearExecution = actionExecutions.find(execution => execution.actionId === 'session.goal.clear');
+      expect(clearExecution).toBeDefined();
+      await act(async () => {
+        if (dismissal === 'panel') goalScreen.unmount();
+        else screen.unmount();
+      });
+      receipt.resolve({ ok: true, result: { ok: true } });
+      await expect(clearExecution?.result).resolves.toMatchObject({ ok: true, result: { ok: true } });
+    } finally {
+      receipt.resolve({ ok: true, result: { ok: true } });
+      await clearExecution?.result.catch(() => {});
+    }
+  });
+
   it.each((['set', 'clear'] as const).flatMap(operation =>
     (['unmount', 'editor', 'account'] as const).map(retirement => ({ operation, retirement }))))(
-    'retires a pending Goal $operation acknowledgement on $retirement retirement', async ({ operation, retirement }) => {
+    'settles a pending Goal $operation acknowledgement after $retirement retirement', async ({ operation, retirement }) => {
     featureEnabledState['agents.goals'] = true;
     storageState.sessions.s1 = { ...storageState.sessions.s1,
       access: createSessionAccessFixture('owner'), accessLevel: 'owner',
@@ -5156,7 +5218,8 @@ describe('SessionView (direct sessions)', () => {
     let settled = false;
     const editor = new AbortController();
     const pending = (operation === 'set' ? content.props.onSetGoal({ objective: 'Retire the caller' }, editor.signal) : content.props.onClearGoal(editor.signal))
-      .then(() => { settled = true; }, () => { settled = true; });
+      .then(result => ({ status: 'fulfilled' as const, result }), error => ({ status: 'rejected' as const, error }))
+      .then(outcome => { settled = true; return outcome; });
     try {
       await vi.waitFor(() => expect(externalRpcRequests).toContainEqual(expect.objectContaining({
         method: operation === 'set' ? SESSION_RPC_METHODS.SESSION_GOAL_SET : SESSION_RPC_METHODS.SESSION_GOAL_CLEAR,
@@ -5165,11 +5228,16 @@ describe('SessionView (direct sessions)', () => {
         if (retirement === 'unmount') screen.unmount();
         else if (retirement === 'editor') editor.abort();
         else {
-          const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
-          await disconnectActiveServerConnection();
+          const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+          await TokenStorage.removeCredentialsForServerUrl('https://server-route-1', { serverId: accountConnection!.serverId });
         }
       });
-      await vi.waitFor(() => expect(settled, 'Retirement must release the caller-owned acknowledgement wait').toBe(true));
+      if (operation === 'clear' && retirement !== 'account') {
+        receipt.resolve({ ok: true, result: { ok: true } });
+        await expect(pending).resolves.toEqual({ status: 'fulfilled', result: { ok: true } });
+      } else {
+        await vi.waitFor(() => expect(settled, 'Retirement must release the caller-owned acknowledgement wait').toBe(true));
+      }
     } finally {
       receipt.resolve({ ok: true, result: { ok: true } });
       await pending;

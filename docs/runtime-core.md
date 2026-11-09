@@ -3356,6 +3356,10 @@ capability or second continuation loop.
 `session.goal.clear` owns clearing the Goal and removing its Session-scoped
 Keep going triggers through the existing trigger owner. UI and agent callers
 consume that same Action result; the Goal control has no separate removal step.
+After confirmation, the UI lets this finite Action finish independently of
+Goal-panel or Session-view dismissal. Native Goal removal can retire that panel
+before trigger removal completes; presentation cancellation must not interrupt
+the compound mutation. Account authority remains owned by the Action front door.
 Other Session Habits remain attached. Native Goal adapters continue to own only
 the native Goal mutation. A prerequisite-read or native-clear refusal retains
 the attachment; a detach refusal is returned after the Goal clear, and an

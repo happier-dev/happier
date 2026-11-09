@@ -1777,27 +1777,24 @@ export function useSessionComposerController({
         [actionExecutor, sessionAccountLifetime, sessionAccountScope, sessionViewCaller, sessionId],
     );
     const clearSessionGoalForView = React.useCallback(
-        async (signal?: AbortSignal): Promise<SessionWorkStateOperationResult> => {
+        async (): Promise<SessionWorkStateOperationResult> => {
             if (!sessionAccountScope || !sessionAccountLifetime?.isCurrent()) {
                 return {
                     ok: false as const,
                     error: 'Session Account authority is unavailable',
                 };
             }
-            const cancellation = mergeAbortSignals([sessionViewCaller.signal, signal]);
-            try {
-                const result = await actionExecutor.execute('session.goal.clear', { sessionId }, {
-                    surface: 'ui',
-                    defaultSessionId: sessionId,
-                    serverId: sessionAccountScope.serverId,
-                    signal: cancellation.signal,
-                });
-                return readGoalOperationResult(result.ok ? result.result : result);
-            } finally {
-                cancellation.dispose();
-            }
+            // Native Goal removal can retire the editor before this compound
+            // Action detaches Keep going. Presentation must not cancel it;
+            // the Action owns Account lifetime and the complete mutation.
+            const result = await actionExecutor.execute('session.goal.clear', { sessionId }, {
+                surface: 'ui',
+                defaultSessionId: sessionId,
+                serverId: sessionAccountScope.serverId,
+            });
+            return readGoalOperationResult(result.ok ? result.result : result);
         },
-        [actionExecutor, sessionAccountLifetime, sessionAccountScope, sessionViewCaller, sessionId],
+        [actionExecutor, sessionAccountLifetime, sessionAccountScope, sessionId],
     );
     // UIW1 live workflow activity and the managed Workflow Runs whose provenance is this Session
     // (`originSessionId` is the canonical Run-list filter; the Session does not own these Runs and they
