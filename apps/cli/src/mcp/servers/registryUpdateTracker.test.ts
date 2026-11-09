@@ -39,13 +39,14 @@ function initialCatalog() {
 async function withAccount(run: (fixture: {
   tracker: ReturnType<typeof createMcpRegistryUpdateTracker>;
   checker: ReturnType<typeof createCliRegistryUpdateCheck>;
-  catalog(): McpServerCatalogV1; revision(): number; writes(): number;
+  catalog(): McpServerCatalogV1; revision(): number; writes(): number; reads(): number;
   replace(catalog: McpServerCatalogV1): void;
   onWrite(callback: () => void): void;
 }) => Promise<void>) {
   let catalog = initialCatalog();
   let revision = 1;
   let writes = 0;
+  let reads = 0;
   let race: (() => void) | undefined;
   const errors: unknown[] = [];
   // Only the Home HTTP/persistent-row boundary is substituted. The captured
@@ -57,6 +58,7 @@ async function withAccount(run: (fixture: {
         response.end(JSON.stringify({ mode: 'plain', version: 1, settingsVersion: 7, updatedAt: 1,
           signingKeyFingerprint: null, contentKeyFingerprint: null }));
       } else if (request.url === '/v1/account/entity-rows/mcp' && request.method === 'GET') {
+        reads++;
         response.end(JSON.stringify({ status: 'present', revision, content: { t: 'plain', v: catalog } }));
       } else if (request.url === '/v1/account/entity-rows/mcp' && request.method === 'POST') {
         const chunks: Buffer[] = [];
@@ -101,7 +103,7 @@ async function withAccount(run: (fixture: {
       const store = createCliMcpServerStore({ credentials, hasPendingCleanup: () => true });
       const tracker = createMcpRegistryUpdateTracker({ store });
       await run({ tracker, checker: createCliRegistryUpdateCheck({ credentials }),
-        catalog: () => catalog, revision: () => revision, writes: () => writes,
+        catalog: () => catalog, revision: () => revision, writes: () => writes, reads: () => reads,
         replace: value => { catalog = McpServerCatalogV1Schema.parse(value); revision++; },
         onWrite: callback => { race = callback; } });
     });
@@ -112,6 +114,37 @@ async function withAccount(run: (fixture: {
 }
 
 describe('MCP registry update tracker', () => {
+  it('records a changed observation batch with one catalog CAS and one publication, and publishes no equal batch', async () => {
+    await withAccount(async fixture => {
+      const first = fixture.catalog().servers[0]!;
+      fixture.replace({ ...fixture.catalog(), servers: [first, { ...first, id: 'second', name: 'second' },
+        { ...first, id: 'third', name: 'third' }, fixture.catalog().servers[1]!] });
+      const upstream = RegistryUpstreamV1Schema.parse({ state: 'update_available', latest: { kind: 'version', version: 'v2' } });
+      const changes = ['registered', 'second', 'third'].map(key => ({ key, upstream }));
+      let publications = 0;
+      const release = subscribeActiveAccountSettingsKeys({ facets: ['mcpServerCatalog'] }, () => { publications++; });
+      try {
+        await fixture.tracker.record(changes);
+        expect(fixture.writes()).toBe(1);
+        expect(fixture.reads()).toBe(2); // admission plus the existing post-write publication owner
+        expect(publications).toBe(1);
+        expect(fixture.catalog().servers.slice(0, 3).map(entry => entry.origin)).toEqual(changes.map(() => ({
+          ...first.origin, upstream, upstreamObservedAt: expect.any(Number),
+        })));
+        const settled = fixture.catalog();
+        await fixture.tracker.record(changes);
+        expect(fixture.writes()).toBe(1);
+        expect(fixture.reads()).toBe(3);
+        expect(publications).toBe(1);
+        expect(fixture.catalog()).toBe(settled);
+        await fixture.tracker.record([{ key: 'second', upstream: { state: 'removed_from_source' } }]);
+        expect(fixture.writes()).toBe(2);
+        expect(publications).toBe(2);
+        expect(fixture.catalog().servers[1]!.origin).toMatchObject({ upstream: { state: 'removed_from_source' } });
+        expect(fixture.catalog().servers[3]).toEqual(settled.servers[3]);
+      } finally { release(); }
+    });
+  });
   it('returns an empty check for an authoritative empty Account catalog without registry fetches or writes', async () => {
     vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => { throw new Error('Unexpected registry fetch'); }));
     await withAccount(async fixture => {

@@ -8,10 +8,14 @@ import type { QualifiedConnectedAccountEstablishedRuntimeOwner } from '@/daemon/
 import { scopeConnectedAccountPurposeBindingLease, type ConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import type { ConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { ensurePrivateConnectedServiceMaterializedRoot } from '@/daemon/connectedServices/materialize/privateMaterializedRoot';
-import { readMcpServersSettingsFromAccountSettings } from '../servers/readMcpServersSettingsFromAccountSettings';
+import { McpServerCatalogUnavailableError, readMcpServersSettingsFromAccountSettings } from '../servers/readMcpServersSettingsFromAccountSettings';
 import { createCliMcpServerStoreForOperation } from '@/settings/mcp/mcpServerStore';
+import { prepareActiveMcpServerCatalog } from '@/settings/mcp/hydrateMcpServerCatalog';
+import { getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import type { StoredCredentials } from '@/persistence';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
-import { runWithRequesterSessionCurrentnessCheckpoint } from "@/daemon/sessionEncryption/requesterCurrentness";
+
 import { logger } from '@/ui/logger';
 import { readWebLatencyTracePoint, timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import { MCP_REQUEST_AUTH_PURPOSE, readMcpRequestAuthFailureCode, type McpRequestAuthCapability, type McpRequestAuthPort } from './mcpRequestAuth';
@@ -22,6 +26,8 @@ export type McpRequestAuthIssuanceContext = Readonly<{
   materializationBaseDir: string;
   readAccountSettingsSnapshot(): ActiveAccountSettingsSnapshot | null;
   operationContext?: SavedSecretOperationContextV1;
+  /** Ordinary daemon Account admission uses the active catalog's existing owner. */
+  catalogCredentials?: StoredCredentials;
   establishedOwner: Pick<QualifiedConnectedAccountEstablishedRuntimeOwner, 'readMaterialSnapshot'>;
   activatePurposeBindings: ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
   registry: ConnectedAccountRequestAuthSubjectRegistry;
@@ -38,6 +44,8 @@ export async function issueMcpRequestAuthCapability(
   context: McpRequestAuthIssuanceContext,
   signal: AbortSignal,
 ): Promise<McpRequestAuthCapability> {
+  const catalogLifetime = getActiveAccountSettingsSnapshotLifetimeToken();
+  const catalogScope = context.catalogCredentials ? resolveAccountSettingsScopeKey(context.catalogCredentials) : undefined;
   const startedAt = performance.now();
   const observe = async <T>(phase: 'catalog_admission' | 'initial_admission' | 'capability_staging' | 'authority_commit', work: () => Promise<T>): Promise<T> => {
     const phaseStartedAt = performance.now();
@@ -85,25 +93,31 @@ export async function issueMcpRequestAuthCapability(
     }
     // Nested catalog/credential readers share the opening proof. Re-measure
     // requester authority after those reads, before it can authorize an effect.
-    await runWithRequesterSessionCurrentnessCheckpoint(() => context.assertCurrent(requestSignal));
+    await (() => context.assertCurrent(requestSignal))();
     if (!context.isCurrent() || requestSignal.aborted) throw new Error('mcp_request_auth_not_active');
   };
   const validateCurrent = async (requestSignal: AbortSignal): Promise<boolean> => {
     try {
-      await runWithRequesterSessionCurrentnessCheckpoint(() => assertAdmitted(requestSignal));
+      await (() => assertAdmitted(requestSignal))();
       return true;
     } catch { return false; }
   };
   try {
-    await observe('initial_admission', () => runWithRequesterSessionCurrentnessCheckpoint(async () => {
+    await observe('initial_admission', () => (async () => {
       await context.assertCurrent(signal);
       // Demand the requester's catalog through its incumbent owner. Its nested
       // readers prove this checkpoint's same requester, not separate authority.
       const operationContext = context.operationContext;
       if (operationContext) await observe('catalog_admission', () =>
         createCliMcpServerStoreForOperation({ operationContext, signal }).readCatalogForOperation());
+      else if (context.catalogCredentials && catalogScope) {
+        const credentials = context.catalogCredentials;
+        const catalog = await observe('catalog_admission', () => prepareActiveMcpServerCatalog({ credentials, scopeKey: catalogScope,
+          lifetimeToken: catalogLifetime, signal, maintainSource: false }));
+        if (catalog.status === 'unavailable') throw new McpServerCatalogUnavailableError(catalog.reason);
+      }
       await assertAdmitted(signal);
-    }, { readOnly: true }));
+    })());
   } catch (error) {
     throw new Error(readMcpRequestAuthFailureCode(error));
   }

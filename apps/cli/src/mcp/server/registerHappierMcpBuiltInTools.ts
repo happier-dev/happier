@@ -1,22 +1,19 @@
 import { randomUUID } from 'node:crypto';
+import { readSessionMcpToolCallId, SESSION_MCP_ACTION_REQUEST_ID_META_KEY } from '../runtime/sessionMcpToolsBridge';
 import type { RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { CallToolResultSchema, type CallToolResult, type ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { createHappierToolInventory, type HappierToolInventory, type BuiltInHappierToolsSurface } from '@/agent/tools/happierTools/listBuiltInHappierTools';
 import { dispatchBuiltInHappierTool } from '@/agent/tools/happierTools/dispatchBuiltInHappierTool';
-import { createPluginJsonSchemaZodObjectAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
-import { zodSchemaToJsonSchemaObject, type JsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
-import { projectActionOutputJsonSchema } from '@happier-dev/protocol/actions/actionCatalog';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionId, ActionsSettingsV1, ApprovalRequestOriginV1, BrowserScreenshotMediaReferenceV1 } from '@happier-dev/protocol';
+import { ExternalActionRequestIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { BrowserScreenshotMediaReferenceV1Schema } from '@happier-dev/protocol/browser/context/v1';
 import { SessionImageMediaReferenceV1Schema } from '@happier-dev/protocol/sessions/media/imageReferenceV1';
-import type { HappierBuiltInToolDefinition } from '@/agent/tools/happierTools/types';
+import type { HappierBuiltInToolDefinition, HappierBuiltInToolDispatchResult } from '@/agent/tools/happierTools/types';
 import { z } from 'zod/mini';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
-import { projectSessionBoundActionToolInputSchema } from '@/agent/tools/happierTools/actionToolContext';
 import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
-import { projectMcpToolInputJsonSchema, rewriteMcpJsonSchemaReferences } from './projectMcpToolInputJsonSchema';
+import { toMcpToolInputSchema, toMcpToolObjectSchema } from './toolSchemas';
 import {
     BrowserMediaUnavailableError,
     browserMediaToStructuredImageInput,
@@ -26,10 +23,6 @@ import {
 } from '@/session/attachments/resolveTrustedSessionAttachmentLocalImagePaths';
 
 const MCP_TOOL_PROGRESS_KEEPALIVE_INTERVAL_MS = 15_000;
-const ACTION_APPROVAL_REQUEST_CREATED_RESULT_JSON_SCHEMA = zodSchemaToJsonSchemaObject(
-    ActionApprovalRequestCreatedResultSchema,
-    { target: 'draft-7' },
-);
 
 type McpToolRegistrationMetadata = Pick<RegisteredTool, 'title' | 'description' | 'annotations' | '_meta'> & Readonly<{
     inputSchema: z.ZodMiniType;
@@ -118,79 +111,6 @@ function buildSessionAgentApprovalOrigin(params: Readonly<{
     };
 }
 
-function toMcpToolInputSchema(params: Readonly<{
-    actionId: string | null | undefined;
-    inputSchema: unknown;
-    sessionId: string;
-    sessionMachineId?: string | null;
-    sessionRootPath?: string | null;
-    contextualDefaults: HappierBuiltInToolDefinition['contextualDefaults'];
-}>): z.ZodMiniType {
-    const contextualInputSchema = params.actionId
-        ? projectSessionBoundActionToolInputSchema({
-            actionId: params.actionId,
-            inputSchema: params.inputSchema,
-            context: {
-                defaultSessionId: params.sessionId,
-                defaultSessionMachineId: params.sessionMachineId,
-                defaultSessionRootPath: params.sessionRootPath,
-            },
-            // Plugin defaults travel with the admitted tool; first-party
-            // defaults still resolve through the canonical Action owner.
-            contextualDefaults: params.contextualDefaults,
-        })
-        : params.inputSchema;
-    return toMcpToolObjectSchema(contextualInputSchema, 'inputSchema');
-}
-
-function toMcpToolObjectSchema(schema: unknown, field: 'inputSchema'): z.ZodMiniType;
-function toMcpToolObjectSchema(schema: unknown, field: 'outputSchema'): z.ZodMiniType | undefined;
-function toMcpToolObjectSchema(schema: unknown, field: 'inputSchema' | 'outputSchema'): z.ZodMiniType | undefined {
-    if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
-        throw new Error(`Plugin tool ${field} must be a JSON Schema object`);
-    }
-    if (field === 'outputSchema') {
-        const completed = schema instanceof z.core.$ZodType
-            ? schema
-            : createPluginJsonSchemaZodObjectAdapter(schema);
-        const completedJsonSchema = projectActionOutputJsonSchema(completed, { target: 'draft-7' });
-        if (completedJsonSchema === undefined) return undefined;
-        const completedMcpJsonSchema = nestMcpOutputJsonSchema(completedJsonSchema);
-        // Approval creation is an execution outcome, not a completed Action
-        // output. Every approval-capable tool shares the protocol envelope.
-        const output = z.union([completed, ActionApprovalRequestCreatedResultSchema]);
-        const adapter = z.looseObject({}).check(z.superRefine((value, ctx) => {
-            if (!output.safeParse(value).success) {
-                ctx.addIssue({ code: 'custom', message: 'Value does not match the Action outputSchema' });
-            }
-        }));
-        adapter._zod.processJSONSchema = (_ctx, json) => {
-            Object.assign(json, {
-                type: 'object',
-                anyOf: [completedMcpJsonSchema, ACTION_APPROVAL_REQUEST_CREATED_RESULT_JSON_SCHEMA],
-            });
-        };
-        return adapter;
-    }
-    // Advertise the canonical schema without parsing or normalizing the input
-    // in the MCP SDK. Tool dispatch enforces declared Tool contracts; Action
-    // execution owns its parsing and normalization. Both use the content-free
-    // issue projection. A validating presentation
-    // wrapper would refuse before that owner can return field repair details.
-    const parser = schema instanceof z.core.$ZodType
-        ? schema
-        : createPluginJsonSchemaZodObjectAdapter(schema);
-    const jsonSchema = projectMcpToolInputJsonSchema(zodSchemaToJsonSchemaObject(parser, { target: 'draft-7', reused: 'ref' }));
-    const adapter = z.looseObject({});
-    adapter._zod.processJSONSchema = (_ctx, json) => { Object.assign(json, jsonSchema); json.type = 'object'; };
-    return adapter;
-}
-
-/** Document-local references still belong to the completed output after nesting it in anyOf. */
-function nestMcpOutputJsonSchema(schema: JsonSchemaObject): JsonSchemaObject {
-    return rewriteMcpJsonSchemaReferences(schema, ref => ref.startsWith('#') ? `#/anyOf/0${ref.slice(1)}` : ref);
-}
-
 function buildPluginToolMcpMeta(tool: HappierBuiltInToolDefinition): Record<string, unknown> | undefined {
     if (!tool.toolId || !tool.actionId || !tool.safety) return undefined;
     return {
@@ -219,6 +139,17 @@ function resolveMcpToolAnnotations(tool: HappierBuiltInToolDefinition): ToolAnno
 function stringifyMcpToolTextPayload(value: unknown): string {
     const text = JSON.stringify(value);
     return typeof text === 'string' ? text : 'null';
+}
+
+export function formatHappierMcpToolFailure(result: Extract<HappierBuiltInToolDispatchResult, { ok: false }>): CallToolResult {
+    return {
+        content: [{ type: 'text', text: JSON.stringify({
+            errorCode: result.errorCode,
+            error: result.error,
+            ...(result.details === undefined ? {} : { details: result.details }),
+        }) }],
+        isError: true,
+    };
 }
 
 function readBrowserResultMedia(value: unknown): readonly BrowserScreenshotMediaReferenceV1[] {
@@ -303,6 +234,7 @@ export function registerHappierMcpBuiltInTools(
         sessionMachineId?: string | null;
         mcpToolCallIdMetaKey?: string;
         surface: BuiltInHappierToolsSurface;
+        happierToolsEnabled?: boolean;
         actionsSettings?: ActionsSettingsV1 | null;
         getActionsSettings?: (() => ActionsSettingsV1 | null) | null;
         pluginToolCatalog?: readonly ProjectedPluginToolCatalogEntry[];
@@ -317,12 +249,13 @@ export function registerHappierMcpBuiltInTools(
     const isActionEnabled = params.deps.isActionEnabled ?? (() => true);
     const readActionsSettings = () => params.getActionsSettings?.() ?? params.actionsSettings ?? null;
     const actionsSettings = readActionsSettings();
-    const inventory = params.toolInventory ?? prepareHappierMcpToolInventory({
+    const inventory = params.happierToolsEnabled !== false && params.toolInventory ? params.toolInventory : prepareHappierMcpToolInventory({
         sessionId: params.sessionId,
         sessionMachineId: params.sessionMachineId,
         sessionRootPath: params.workingDirectory,
         inventory: createHappierToolInventory({
             surface: params.surface,
+            happierToolsEnabled: params.happierToolsEnabled,
             isActionEnabled,
             actionsSettings,
             pluginToolCatalog: params.pluginToolCatalog,
@@ -340,7 +273,7 @@ export function registerHappierMcpBuiltInTools(
                 try {
                     const sessionId = params.resolveSessionId ? params.resolveSessionId(args) : params.sessionId;
                     const metadata = (extra as { _meta?: Record<string, unknown> } | undefined)?._meta;
-                    const nativeId = params.mcpToolCallIdMetaKey ? metadata?.[params.mcpToolCallIdMetaKey] : undefined;
+                    const nativeId = readSessionMcpToolCallId(metadata, params.mcpToolCallIdMetaKey);
                     const approvalOrigin = buildSessionAgentApprovalOrigin({
                         surface: params.surface,
                         sessionId,
@@ -351,7 +284,14 @@ export function registerHappierMcpBuiltInTools(
                     // JSON-RPC ids correlate a connection and can restart at zero,
                     // including when a new client reaches this same live server.
                     // Keep them in approval provenance, never operation identity.
-                    const actionRequestId = randomUUID();
+                    const requestedActionRequestId = metadata?.[SESSION_MCP_ACTION_REQUEST_ID_META_KEY];
+                    const parsedActionRequestId = requestedActionRequestId === undefined
+                        ? null : ExternalActionRequestIdV1Schema.safeParse(requestedActionRequestId);
+                    if (parsedActionRequestId && !parsedActionRequestId.success) {
+                        return formatHappierMcpToolFailure({ ok: false, errorCode: 'invalid_parameters',
+                            error: 'Invalid Action request id.' });
+                    }
+                    const actionRequestId = parsedActionRequestId?.success ? parsedActionRequestId.data : randomUUID();
                     const currentActionsSettings = readActionsSettings();
                     const result = await dispatchBuiltInHappierTool({
                         toolName: tool.name,
@@ -414,17 +354,7 @@ export function registerHappierMcpBuiltInTools(
                         };
                     }
 
-                    return {
-                        content: [{
-                            type: 'text' as const,
-                            text: JSON.stringify({
-                                errorCode: result.errorCode,
-                                error: result.error,
-                                ...(result.details === undefined ? {} : { details: result.details }),
-                            }),
-                        }],
-                        isError: true as const,
-                    };
+                    return formatHappierMcpToolFailure(result);
                 } catch (error) {
                     const errorText = error instanceof Error ? error.message : String(error);
                     let payload = '{"errorCode":"tool_failed","error":"tool_failed"}';

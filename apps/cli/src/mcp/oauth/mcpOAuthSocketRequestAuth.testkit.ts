@@ -44,7 +44,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { DaemonMcpServersTestResponseSchema } from '@happier-dev/protocol/mcp/servers/daemonRpcV1';
 import { McpServerToolsSnapshotV1Schema } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
-import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { beginActiveMcpServerCatalogRefresh, getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createCliMcpServerStore } from '@/settings/mcp/mcpServerStore';
 import { refreshActiveMcpServerCatalog } from '@/settings/mcp/hydrateMcpServerCatalog';
 import { publishServerHttpRuntimeOrigin } from '@/api/client/serverHttpBaseUrl';
@@ -56,7 +56,7 @@ import { resolveQualifiedConnectedAccountAtomicV4Negotiation,
   resolveQualifiedConnectedAccountRemovalReviewNegotiation,
   resolveQualifiedConnectedAccountPeerClass,
   resolveQualifiedConnectedAccountPeerOperationTransport } from '@/api/client/qualifiedConnectedAccountApi';
-import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
+import { fetchServerFeaturesSnapshot, readServerIdentityIdFromFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { createConnectedAccountDaemonRuntime } from '@/daemon/connectedServices/ConnectedAccountDaemonRuntime';
 import { createQualifiedConnectedAccountDaemonPersistence, createAccountSettingsConnectedAccountSecrets } from '@/daemon/connectedServices/qualifiedConnectedAccountDaemonPersistence';
 import { createQualifiedConnectedAccountAttemptTransactionAdapters } from '@/daemon/connectedServices/qualifiedConnectedAccountAttemptTransactionAdapters';
@@ -140,6 +140,7 @@ export async function exerciseMcpOAuthSocketRequestAuth(options?: Readonly<{ tes
   cleanup.push(async () => unpublish());
   const featuresSnapshot = await fetchServerFeaturesSnapshot({ serverUrl: homeUrl, token });
   expect(featuresSnapshot.status).toBe('ready');
+  expect(readServerIdentityIdFromFeaturesSnapshot(featuresSnapshot)).toEqual(expect.any(String));
   expect(resolveQualifiedConnectedAccountAtomicV4Negotiation(featuresSnapshot)).toBe('advertised');
 
   const tls = await createEphemeralTlsServerFixture();
@@ -283,6 +284,7 @@ export async function exerciseMcpOAuthSocketRequestAuth(options?: Readonly<{ tes
   const rpc = new RpcHandlerManager({ scopePrefix: machine.id, localMachineId: machine.id, ...machineContent,
     authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: machine.id,
       resolveCustodianAccountId: async () => homeAccount.id, resolveInstallationId: () => installationId,
+      resolveHomeServerIdentityId: async () => readServerIdentityIdFromFeaturesSnapshot(featuresSnapshot) ?? null,
       verifyMachineAdmission: input => verifyMachineRpcAdmissionCurrent({ ...input, privateKey: keys.secretKey,
         daemonToken: token, serverHttpBaseUrl: homeUrl }) }) });
   // Exercise the real registered handler with its runtime temporarily unbound.
@@ -309,6 +311,8 @@ export async function exerciseMcpOAuthSocketRequestAuth(options?: Readonly<{ tes
       reconcileConnectedServicesProjection: async () => {}, isShuttingDown: () => false,
       mcpServers: {
         readCredentials: async () => credentials,
+        hostHomeServerIdentityId: readServerIdentityIdFromFeaturesSnapshot(featuresSnapshot) ?? undefined,
+        serverHttpBaseUrl: homeUrl,
         env: { ...process.env, NODE_EXTRA_CA_CERTS: tls.caCertificatePath, NODE_OPTIONS: '--conditions=happier-source' },
         issueRequestAuth: async (input, operationContext, context) => {
           if (!testAuthBound || !testIssuer) throw new Error('mcp_request_auth_not_active');
@@ -432,7 +436,8 @@ export async function exerciseMcpOAuthSocketRequestAuth(options?: Readonly<{ tes
 
   const purposes = createDaemonConnectedAccountPurposeBindingRuntime({ establishedRuntimeOwner: established, reloadController: controller,
     resolveQualifiedConnectedAccountV4Support: () => resolveQualifiedConnectedAccountAtomicV4Negotiation(featuresSnapshot), allowNativeAccountCredentials: false,
-    qualifiedApi: { listAccounts: (service, signal) => listQualifiedConnectedAccountsV4({ token, service, signal }),
+    qualifiedApi: { listAccountsForServices: (services, signal) => listQualifiedConnectedAccountsV4({ token, services, signal }),
+      listAccounts: (service, signal) => listQualifiedConnectedAccountsV4({ token, service, signal }),
       listGroups: (service, signal) => listQualifiedConnectedAccountGroupsV4({ token, service, signal }),
       readGroup: (group, signal) => readQualifiedConnectedAccountGroupV4({ token, group, signal }) } });
   let active = true;
@@ -469,6 +474,18 @@ export async function exerciseMcpOAuthSocketRequestAuth(options?: Readonly<{ tes
     registry: subjects, getHttpPort: () => brokerAddress.port, isCurrent: () => active });
   if (options?.testPipeline) {
     if (!store) throw new Error('MCP catalog store unavailable');
+    beginActiveMcpServerCatalogRefresh({ scopeKey: resolveAccountSettingsScopeKey(credentials),
+      lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken() });
+    expect(getActiveAccountSettingsSnapshot()?.mcpServerCatalog?.status).toBe('loading');
+    // Withdraw catalog readiness before demand. The real issuer must join the
+    // encrypted row owner before using the HTTP request-auth broker.
+    const admitted = await testIssuer({ serverId: 'server-one', resource, materializationId: 'cold-daemon-admission' }, null);
+    try {
+      const client = await createConnectedAccountRequestAuthClient({ capabilityFile: admitted.capabilityFile });
+      expect(await client.lookupConnectedAccountRequestAuth({ purpose: MCP_REQUEST_AUTH_PURPOSE }))
+        .toMatchObject({ accessToken: 'access-1' });
+    } finally { await admitted.cleanup(); }
+    await expect(stat(admitted.capabilityFile)).rejects.toMatchObject({ code: 'ENOENT' });
     const testInput = { t: 'byId', machineId: machine.id, serverId: 'server-one', directory: harness.baseDir };
     expect(DaemonMcpServersTestResponseSchema.parse(await call(RPC_METHODS.DAEMON_MCP_SERVERS_TEST, testInput, false)))
       .toMatchObject({ ok: false, errorCode: 'materialization_failed' });

@@ -32,7 +32,7 @@ beforeEach(async () => {
     wait: { toolExposureModes: { mcp: 'direct' } },
   } }));
   reloadConfiguration();
-  // Account plugin execution refuses a caller whose stored credential is not current.
+  // The command admits these credentials before constructing the MCP host.
   await writeStoredCredentialsForServerId(configuration.activeServerId, credentials);
 });
 afterEach(async () => {

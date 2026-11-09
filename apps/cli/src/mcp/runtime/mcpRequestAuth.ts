@@ -1,5 +1,6 @@
 import { z } from 'zod/mini';
 import { CONNECTED_ACCOUNT_REQUEST_AUTH_MATERIALIZATION_ID_MAX_LENGTH } from '@happier-dev/protocol/connect/connected-account-request-auth';
+import { QualifiedConnectedAccountMaterialError } from '@/daemon/connectedServices/qualifiedConnectedAccountMaterialError';
 
 // Opaque host-native purpose address, not an executable plugin declaration,
 // source-custody identity, or HostAccess grant. The purpose owner admits its host
@@ -32,6 +33,9 @@ export type McpRequestAuthFailureCode = z.infer<typeof McpRequestAuthFailureCode
 
 /** Private refusal codes may cross diagnostics; arbitrary exception text may not. */
 export function readMcpRequestAuthFailureCode(error: unknown): McpRequestAuthFailureCode {
+  if (error instanceof QualifiedConnectedAccountMaterialError && error.code === 'credential_snapshot_unavailable') {
+    return 'mcp_sign_in_required';
+  }
   const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
   const parsed = McpRequestAuthFailureCodeSchema.safeParse(code ?? (error instanceof Error ? error.message : undefined));
   return parsed.success ? parsed.data : 'mcp_request_auth_unavailable';

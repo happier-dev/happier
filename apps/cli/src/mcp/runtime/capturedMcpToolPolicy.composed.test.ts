@@ -105,7 +105,7 @@ it('captured Account socket and reconnect row changes update Session and Run pol
       getMetadataSnapshot: session.getMetadataSnapshot, setSessionSocket() {}, rpcHandlerManager: { onSocketConnect() {}, onSocketDisconnect() {} },
       handleUserScopedUpdate() { updates++; }, installSessionSocketEventHandlers() {}, classifyTransportErrorToProbeResult: undefined, onStateChange() {},
       shouldKeepUserSocketConnected: () => true, kickUserSocketConnect() {}, syncChangesOnConnect: async () => {}, shouldSyncSessionSnapshotOnConnect: () => false,
-      syncSessionSnapshotFromServer: async () => {}, flushQueuedSessionMessagesOnReconnect: async () => {}, flushDurableSessionMutationsOnReconnect: async () => {}, markConnected: () => 'connect',
+      syncSessionSnapshotFromServer: async () => {}, flushDurableSessionMutationsOnReconnect: async () => {}, markConnected: () => 'connect',
       onSessionFollowInvalidated() { followWakes++; }, onAccountCatalogInvalidated() { lastRefresh = resolver.refreshDemandedMcpCatalog(); return lastRefresh; },
     });
     if (!socket.connected) await once(socket, 'connect');

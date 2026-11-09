@@ -1,5 +1,6 @@
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import { randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 import { parseConnectedAccountRequestAuthCapabilityDocument } from '@happier-dev/agents/request-auth';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { readProtectedLocalStateFile } from '@/utils/fs/protectedLocalState';
@@ -22,9 +23,7 @@ import { readProtectedLocalStateFile } from '@/utils/fs/protectedLocalState';
  * including in non-strict mode, so callers cannot silently drop the server.
  */
 
-import { tmpdir } from 'node:os';
-import { join, resolve as resolvePath } from 'node:path';
-import { realpathSync } from 'node:fs';
+import { absolutePathFromWorkingDirectory } from '@happier-dev/cli-common/path';
 
 import type { McpServerConfig } from '@/agent';
 import type { AgentLaunchSelectedMaterial } from '@/daemon/agentIsolation/agentLaunchFrame';
@@ -46,7 +45,6 @@ import type { McpRequestAuthCapability, McpRequestAuthFailureCode } from '@/mcp/
 import { canonicalMcpOAuthResourceUrlV1 } from '@happier-dev/protocol/mcp/oauth/mcpOAuthResourceV1';
 import { createProviderRedactionLease, type ProviderStreamingSanitizer } from '@/providers/spawn/redaction';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
-import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 
 export function listSelectedMcpSharedSecretReferences(
   serversByName: McpServerMaterializationV1['serversByName'],
@@ -96,22 +94,6 @@ async function resolveDefaultStdioLauncherCommand(): Promise<Readonly<{ command:
     distEntrypointSegments: ['mcp', 'launchers', 'stdioMcpServerLauncher.mjs'],
     sourceEntrypointSegments: ['mcp', 'launchers', 'stdioMcpServerLauncher.ts'],
   });
-}
-
-function resolveNeutralLaunchCwd(processEnv: ProcessEnvInput): string {
-  const home = typeof processEnv.HOME === 'string' && processEnv.HOME.length > 0 ? processEnv.HOME : null;
-  const userProfile =
-    typeof processEnv.USERPROFILE === 'string' && processEnv.USERPROFILE.length > 0 ? processEnv.USERPROFILE : null;
-  const homeDrive = typeof processEnv.HOMEDRIVE === 'string' ? processEnv.HOMEDRIVE : '';
-  const homePath = typeof processEnv.HOMEPATH === 'string' ? processEnv.HOMEPATH : '';
-
-  const raw = home ?? userProfile ?? (homeDrive && homePath ? `${homeDrive}${homePath}` : tmpdir());
-  const resolved = resolvePath(raw);
-  try {
-    return realpathSync(resolved);
-  } catch {
-    return resolved;
-  }
 }
 
 type PrivateConfigMaterialization = Readonly<{
@@ -188,28 +170,25 @@ async function materializeStdioServer(params: Readonly<{
 
   let command = params.server.stdio.command;
   let args = params.server.stdio.args;
-  let launchEnv = params.resolvedEnv;
+  const launchEnv = params.resolvedEnv;
   const configuredCwd = params.server.stdio.cwd;
   let cwd = configuredCwd?.t === 'session' ? params.directory
-    : configuredCwd?.t === 'path' ? resolvePath(params.directory, expandHomeDirPath(configuredCwd.path, params.processEnv))
+    : configuredCwd?.t === 'path' ? absolutePathFromWorkingDirectory(expandHomeDirPath(configuredCwd.path, params.processEnv), params.directory)
       : undefined;
   if (isPackageRunnerCommand(params.server.stdio.command)) {
+    cwd ??= params.directory;
     const normalizedInvocation = await normalizePackageRunnerInvocation({
       command: params.server.stdio.command,
       args: params.server.stdio.args,
       processEnv: params.processEnv,
       launchEnv: params.resolvedEnv,
+      cwd,
     });
     if (!normalizedInvocation) {
-      return {
-        ok: false,
-        detail: 'managed runtime unavailable for package-runner command',
-      };
+      return { ok: false, detail: `Configured MCP command ${command} was not found or is not executable. Install it on this machine or update the server command and PATH.` };
     }
     command = normalizedInvocation.command;
     args = normalizedInvocation.args;
-    launchEnv = buildScopedProcessEnv({ baseEnv: params.resolvedEnv, explicitEnv: normalizedInvocation.env });
-    cwd ??= normalizedInvocation.cwdPolicy === 'workspace' ? params.directory : resolveNeutralLaunchCwd(params.processEnv);
   } else if (Object.keys(params.resolvedEnv).length === 0 && cwd === undefined && !params.agentLaunchMaterials) {
     return { ok: true, config: { command, args } };
   }

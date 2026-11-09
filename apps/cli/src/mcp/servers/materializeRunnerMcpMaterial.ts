@@ -21,11 +21,12 @@ export async function materializeRunnerMcpMaterial(input: Readonly<{
     config: server.config,
   }]));
   const result = await materializeMcpServerConfigRecord({
-    resolved: { directory: input.directory, strictMode: material.strictMode, serversByName },
+    // Reviewed material is an exact required set, even when its source Account
+    // permits optional servers. Let the canonical materializer own refusal.
+    resolved: { directory: input.directory, strictMode: true, serversByName },
     processEnv: input.processEnv,
     tmpDir: input.tmpDir,
-    strictMode: material.strictMode,
+    strictMode: true,
   });
-  if (result.warnings.length > 0) throw new Error('runner_mcp_materialization_incomplete');
   return result.mcpServers;
 }

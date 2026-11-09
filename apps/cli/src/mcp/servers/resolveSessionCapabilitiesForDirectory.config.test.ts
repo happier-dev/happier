@@ -7,13 +7,19 @@ import { describe, expect, it } from 'vitest';
 import { McpServersSettingsV1Schema, type McpServersSettingsV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import { projectMcpServerMaterializationV1 } from '@happier-dev/protocol/reach/resolveSessionCapabilitiesV1';
 
-import { resolveSessionCapabilitiesForDirectory } from './resolveSessionCapabilitiesForDirectory';
+import { hasExplicitlyEmptyManagedMcpSelection, resolveSessionCapabilitiesForDirectory } from './resolveSessionCapabilitiesForDirectory';
 
 function resolveMcpMaterializationForDirectory(input: { settings: McpServersSettingsV1; machineId: string; directory: string; machinePlatform?: 'win32' | 'posix' }) {
   return projectMcpServerMaterializationV1(resolveSessionCapabilitiesForDirectory(input), input.directory);
 }
 
 describe('resolveSessionCapabilitiesForDirectory configuration projection', () => {
+  it('keeps explicitly empty managed selection independent of built-in tool delivery', () => {
+    expect(hasExplicitlyEmptyManagedMcpSelection({ mcpSelectionV1: {
+      managedServersEnabled: false, happierToolsEnabled: false,
+    } })).toBe(true);
+  });
+
   it.each([
     { workspaceRoot: 'C:\\work\\repo', directory: 'C:\\Work/Repo\\nested' },
     { workspaceRoot: '\\\\host\\share\\repo', directory: '\\\\HOST\\Share/repo\\nested' },

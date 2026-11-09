@@ -136,6 +136,7 @@ describe('MCP passive watch over the real observation owner', () => {
   it.each(['unsubscribe', 'disconnect'] as const)('observes FIN workflow baseline/change; %s releases its feed', async (cleanup) => {
     const listeners = new Set<() => void>();
     let run = WorkflowRunSummaryV1Schema.parse({ sourceArtifactId: null, ownerAccountId: 'account', visibleTeamId: null,
+      failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
       id: '11111111-1111-4111-8111-111111111111', origin: { kind: 'direct' }, state: 'running', attentionRequired: false,
       revision: 0, machineId: 'machine', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
       availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true,
@@ -164,7 +165,7 @@ describe('MCP passive watch over the real observation owner', () => {
       f.client.setNotificationHandler(ResourceUpdatedNotificationSchema, n => { notifications.push(n.params.uri); });
       await f.client.subscribeResource({ uri });
       await expect.poll(() => listeners.size).toBe(1);
-      run = { ...run, revision: 1, attentionRequired: true };
+      run = { ...run, revision: 1, attentionRequired: true, invocationAttentionRequired: true };
       for (const change of [...listeners]) change();
       await expect.poll(() => notifications).toEqual([uri]);
       const current = await f.client.readResource({ uri });

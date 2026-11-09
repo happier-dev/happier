@@ -4,8 +4,9 @@ import { once } from 'node:events';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
-import { ACTION_IDS, getActionSpec, normalizeActionsSettingsV1, SignedRootActionIdSchema, UiActionDispatchRequestV1Schema, V2SessionByIdResponseSchema } from '@happier-dev/protocol';
+import { ACTION_IDS, getActionSpec, normalizeActionsSettingsV1, RPC_METHODS, SignedRootActionIdSchema, UiActionDispatchRequestV1Schema, V2SessionByIdResponseSchema, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { REGISTRY_ACTION_IDS_V1 } from '@happier-dev/protocol/registries';
 import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { UsageCoachDismissInputSchema, UsageCoachPreferenceResultSchema } from '@happier-dev/protocol/usage/coach/coachActions';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -14,26 +15,224 @@ import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActio
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createClientActionReverseDispatcher } from '@/session/actions/clientActionReverseDispatch';
 import { configuration } from '@/configuration';
-import { adoptServerProfileHomeConnectionDescriptor, getServerProfile } from '@/server/serverProfiles';
 import { writeStoredCredentialsForServerId } from '@/persistence';
+import { adoptServerProfileHomeConnectionDescriptor, getServerProfile } from '@/server/serverProfiles';
 import { createExternalMcpServer } from './createExternalMcpServer';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
+import { StoredPromptLibraryRecordV1Schema, PromptLibraryCatalogKeyV1Schema, PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
+import { setActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
+  createDeploymentCandidatePublicationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { ed25519 } from '@noble/curves/ed25519';
 
 const credentials = { token: 'mcp-test-token', encryption: null, credentialProvenance: 'stored_session' } as const;
 const workspace = { ok: true, tabs: [], groups: [], splits: [], rootNodeId: 'main', focusedGroupId: 'main', maximizedGroupId: null };
 
 describe('standalone MCP client Action admission', () => {
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
 
-  it('keeps every MCP client Action in the existing signed Account admission vocabulary', () => {
-    const ids = ACTION_IDS.filter(id => getActionSpec(id).executionPlacement === 'client' && getActionSpec(id).surfaces.mcp);
+  it.each([{ denied: false }, { denied: true }])('delivers compact Deploy to the Environment controller before originating Ask (denied=$denied)', async ({ denied }) => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'deployment-owner', tokenEpoch: 1,
+      provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+    const credentials = { token, encryption: null, credentialProvenance: 'stored_session' } as const;
+    const controller = { id: 'native-controller', kind: 'persistent', active: true, installationId: 'native-installation',
+      installationPublicKey: Buffer.from(ed25519.getPublicKey(new Uint8Array(32).fill(19))).toString('base64'),
+      revokedAt: null, replacedByMachineId: null, storageMode: 'plain',
+      access: { custodian: { accountId: 'deployment-owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
+    const environment = createDeploymentEnvironmentHeaderV1({ id: 'staging', serverId: configuration.activeServerId, controllerMachineId: controller.id });
+    const deliveries: ReturnType<typeof ExternalActionExecutionAuthorizationRequestV1Schema.parse>[] = [];
+    const writes: string[] = [];
+    // Home HTTP is the boundary; MCP, original Account dispatch, controller
+    // selection, envelope binding and installation-sealed requester custody stay real.
+    const home = createServer(async (request, response) => {
+      response.setHeader('content-type', 'application/json');
+      const path = new URL(request.url ?? '/', 'http://localhost').pathname;
+      if (request.method !== 'GET') writes.push(path);
+      if (path === '/v1/account/encryption/currentness') response.end(JSON.stringify({ mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
+      else if (path === '/v1/account/encryption') response.end(JSON.stringify({ mode: 'plain', updatedAt: 1 }));
+      else if (path === '/v1/machines') response.end(JSON.stringify([controller]));
+      else if (path === `/v1/machines/${controller.id}`) response.end(JSON.stringify({ machine: controller }));
+      else if (path === '/v1/deployments/environments/staging') response.end(JSON.stringify(denied
+        ? { ok: false, error: 'deployment_access_denied' } : { ok: true, environment, targetLinks: [] }));
+      else if (path.startsWith('/v1/actions/deployments.deploy')) {
+        const chunks: Buffer[] = []; for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        const carrier = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+        const requestId = carrier.envelope.requestId!;
+        if (path.endsWith('/execution-authorization')) response.end(JSON.stringify(ExternalActionExecutionAuthorizationV1Schema.parse({
+          v: 1, token: 'native-home-proof', binding: { accountId: 'deployment-owner', authentication: { kind: 'account', tokenEpoch: 1 },
+            accountEncryptionMode: 'plain', serverIdentityId: 'srv_relay', custodianAccountId: 'deployment-owner',
+            machineId: controller.id, installationId: controller.installationId, actionId: 'deployments.deploy', requestId,
+            target: carrier.envelope.target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(carrier.envelope),
+            deploymentCandidatePublication: createDeploymentCandidatePublicationV1({ accountId: 'deployment-owner',
+              serverIdentityId: 'srv_relay', actionId: 'deployments.deploy', requestId,
+              requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(carrier.envelope), environmentId: environment.id,
+              source: { id: environment.projectSourceId, revision: 1 } }),
+          },
+        })));
+        else { deliveries.push(carrier); response.end(JSON.stringify({ v: 1, actionId: 'deployments.deploy', requestId,
+          execution: { ok: true, result: { kind: 'approval_request_created', artifactId: 'native-review', actionId: 'deployments.deploy' } } })); }
+      } else { request.resume(); response.statusCode = 404; response.end(JSON.stringify({ error: 'unexpected_route' })); }
+    });
+    home.listen(0, '127.0.0.1'); await once(home, 'listening');
+    const address = home.address(); if (!address || typeof address === 'string') throw new Error('Missing Home address');
+    const serverHttpBaseUrl = `http://127.0.0.1:${address.port}`;
+    const { mcp } = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => createExternalMcpServer({ credentials,
+      machineId: 'ambient-invoker', daemonControlTarget: null,
+      serverFeaturesSnapshot: { status: 'ready', features: FeaturesResponseSchema.parse({ features: { deployments: { enabled: true } },
+        capabilities: { serverIdentity: { serverIdentityId: 'srv_relay' } } }) } }));
+    const client = new Client({ name: 'standalone-deploy-review', version: '1' });
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await mcp.connect(serverTransport); await client.connect(clientTransport);
+      const input = { serverId: configuration.activeServerId, environmentId: 'staging', targetLinkId: 'runtime-link', requestKey: 'compact-deploy' };
+      const result = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute',
+        arguments: { actionId: 'deployments.deploy', input } }));
+      if (denied) {
+        expect(result.isError, JSON.stringify(result)).toBe(true);
+        const content = result.content.find(item => item.type === 'text');
+        expect(content?.type === 'text' ? JSON.parse(content.text) : null).toMatchObject({ errorCode: 'deployment_access_denied' });
+        expect(deliveries).toEqual([]);
+        expect(writes).toEqual([]);
+        return;
+      }
+      expect(deliveries, JSON.stringify({ result, writes })).toHaveLength(1);
+      expect(deliveries[0]?.envelope).toMatchObject({ input, target: { kind: 'machine', machineId: controller.id } });
+      expect(deliveries[0]?.executionAuthorization?.requesterAccountContext).toBeDefined();
+      expect(writes).toEqual(['/v1/actions/deployments.deploy/execution-authorization', '/v1/actions/deployments.deploy']);
+      const content = result.content.find(item => item.type === 'text');
+      expect(result.isError).not.toBe(true);
+      expect(content?.type === 'text' ? JSON.parse(content.text) : null).toMatchObject({ kind: 'approval_request_created', artifactId: 'native-review' });
+    } finally {
+      await client.close(); await mcp.close(); home.closeAllConnections();
+      await new Promise<void>(resolve => home.close(() => resolve()));
+    }
+  });
+
+  it('requests default Ask for standalone Saved Secret Reveal without a Session or secret disclosure', async () => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'reveal-owner', tokenEpoch: 1,
+      provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+    const credentials = { token, encryption: null, credentialProvenance: 'stored_session' } as const;
+    const requests: string[] = [];
+    const approvals: ReturnType<typeof ApprovalRequestV2Schema.parse>[] = [];
+    const displays: unknown[] = [];
+    // Only Home HTTP, approval persistence and the connected app RPC are boundaries.
+    // MCP, daemon control, the Action executor and default Ask policy stay real.
+    const home = createServer((request, response) => {
+      request.resume(); requests.push(request.url ?? '');
+      response.setHeader('content-type', 'application/json');
+      if (request.url === '/v1/account/encryption/currentness') response.end(JSON.stringify({
+        mode: 'plain', version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null,
+      }));
+      else if (request.url === '/v1/account/encryption') response.end(JSON.stringify({ mode: 'plain', updatedAt: 1 }));
+      else { response.statusCode = 404; response.end(JSON.stringify({ error: 'unexpected_route' })); }
+    });
+    home.listen(0, '127.0.0.1'); await once(home, 'listening');
+    const homeAddress = home.address();
+    if (!homeAddress || typeof homeAddress === 'string') throw new Error('Missing Home address');
+    const serverHttpBaseUrl = `http://127.0.0.1:${homeAddress.port}`;
+    await writeStoredCredentialsForServerId(configuration.activeServerId, credentials);
+    const clientActionExecute = createClientActionReverseDispatcher(() => ({
+      hasConnectedClientRpcHandler: () => true,
+      callConnectedClientRpc: async (_method, raw, options) => {
+        displays.push(UiActionDispatchRequestV1Schema.parse(raw)); options.onIssued();
+        return { ok: true, result: { v: 1, execution: { ok: true,
+          result: { status: 'hidden', historyEntryId: 'reveal-history' } } } };
+      },
+    }));
+    const { executor } = createCliActionExecutorHarness({ token, credentials, sessionId: '',
+      mode: 'plain', ctx: null, serverId: configuration.activeServerId, serverHttpBaseUrl,
+    }, { clientActionExecute, approvalsCreate: async ({ request }) => {
+      approvals.push(ApprovalRequestV2Schema.parse(request)); return { artifactId: 'reveal-approval' };
+    } });
+    const app = createDaemonControlApp({
+      getChildren: () => [], machineId: 'mcp-reveal-machine', controlToken: 'private-reveal-control',
+      stopSession: async () => ({ status: 'not_found' }),
+      spawnSession: async () => ({ type: 'success', sessionId: 'unused' }),
+      requestShutdown: () => {}, onHappySessionWebhook: () => {},
+      externalActionApi: { currentServerId: configuration.activeServerId, executor,
+        verifyPat: async () => { throw new Error('Reveal must not use PAT admission'); },
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: serverHttpBaseUrl }),
+      },
+    });
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing daemon address');
+    const { mcp } = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => createExternalMcpServer({
+      credentials, machineId: 'mcp-reveal-machine',
+      daemonControlTarget: { pid: process.pid, httpPort: address.port, controlToken: 'private-reveal-control' },
+    }));
+    const client = new Client({ name: 'standalone-reveal-ask', version: '1' });
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await mcp.connect(serverTransport); await client.connect(clientTransport);
+      const input = { ref: 'happier:shared-secret:v1:owned-secret', expectedRevision: 3 };
+      const result = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute',
+        arguments: { actionId: 'secrets.shared.reveal', input } }));
+      expect(result.isError, JSON.stringify(result)).not.toBe(true);
+      const text = result.content.find(item => item.type === 'text');
+      if (!text || text.type !== 'text') throw new Error('Missing MCP result');
+      expect(JSON.parse(text.text)).toMatchObject({ kind: 'approval_request_created', artifactId: 'reveal-approval' });
+      expect(approvals).toHaveLength(1);
+      expect(approvals[0]).toMatchObject({ actionId: 'secrets.shared.reveal', actionArgs: input,
+        status: 'open', approval: { flow: 'deferred', result: 'optional' }, requestedSurface: 'mcp' });
+      expect(approvals[0]?.executionOriginV1.caller).toEqual({ kind: 'host' });
+      expect(displays).toEqual([]);
+      expect(requests.some(path => path.includes('/sessions/') || path.includes('/saved-secrets/'))).toBe(false);
+      expect(JSON.stringify({ result, approvals })).not.toContain('"value"');
+    } finally {
+      await client.close(); await mcp.close(); await app.close();
+      home.closeAllConnections(); await new Promise<void>(resolve => home.close(() => resolve()));
+    }
+  });
+
+  it('keeps every relayed MCP client or registry Action in the existing signed Account admission vocabulary', () => {
+    const ids = ACTION_IDS.filter(id => getActionSpec(id).surfaces.mcp && (
+      getActionSpec(id).executionPlacement === 'client' || REGISTRY_ACTION_IDS_V1.some(registryId => registryId === id)
+    ));
     expect(ids.length).toBeGreaterThan(0);
     expect(ids.filter(id => !SignedRootActionIdSchema.safeParse(id).success)).toEqual([]);
   });
 
-  it.each([true, false])('delivers through the exact daemon and preserves MCP authority (connected=%s)', async connected => {
+  it.each([...[true, false].flatMap(connected => [
+    { connected, family: 'existing clients' },
+    { connected, family: 'prompt picker, history and pins' },
+  ]), { connected: true, family: 'packaged app registries' }])('delivers $family through the exact daemon and preserves MCP authority (connected=$connected)', async ({ connected, family }) => {
     const admitted: unknown[] = [];
     const daemonAdmissions: unknown[] = [];
     const homeSessionLookups: string[] = [];
+    const authored = definePlugin({ id: 'com.acme.registry-parity', version: '1.0.0', displayName: 'Apps', registrySources: {
+      apps: { title: 'Apps', format: 'happier-catalog', kinds: ['app'], packageContent: { path: 'resources/apps.json' } },
+    } });
+    const appTemplate = { schemaVersion: 1, title: 'Database', compose: { document: 'services:\n  db:\n    image: postgres:17\n', profiles: [], services: ['db'] },
+      variables: [], generatedSecrets: [], domains: [], volumes: [] };
+    const runtime = family === 'packaged app registries' ? await createAuthoredAdmittedPluginRuntimeFixture({
+      plugins: [{ manifest: authored.manifest, files: { 'resources/apps.json': JSON.stringify({ schemaVersion: 1, apps: [{ itemId: 'database', app: appTemplate }] }) } }],
+      coldStart: true,
+    }) : null;
+    // Persisted catalog rows and physical plugin files are the boundaries;
+    // registry admission, pinning, normalization and dispatch stay real.
+    let registryRecord = StoredPromptLibraryRecordV1Schema.parse({ key: 'registry-sources', value: { v: 2, sources: [], disabledSourceIds: [] } });
+    let registryRevision = 1;
+    const registryCatalog = { status: 'ready' as const, rows: [{ revision: 1, record: registryRecord }], tombstones: [], diagnostics: [] };
+    const registry = runtime ? createCliRegistryHostV1({ pluginRuntime: runtime.controller, port: {
+      serverId: 'mcp-home', assertCurrent() {},
+      async readCatalog() { return { catalog: registryCatalog }; },
+      async writeRecord(request) {
+        expect(request.expectedRevision).toBe(registryRevision);
+        registryRecord = StoredPromptLibraryRecordV1Schema.parse(request.record);
+        registryRevision += 1;
+        registryCatalog.rows = [{ record: registryRecord, revision: registryRevision }];
+        return { status: 'updated' as const, revision: registryRevision, cursor: registryRevision };
+      },
+    } }) : null;
     const coachQuery = normalizeUsageQuery({ session: 'mcp-session-active' });
     const coachInput = { query: coachQuery, evidenceKey: 'relay-coach-evidence', dismissed: true };
     const coachResult = UsageCoachPreferenceResultSchema.parse({
@@ -42,7 +241,8 @@ describe('standalone MCP client Action admission', () => {
     // This is the persisted Account declaration parsed by the real settings
     // owner, not an approval token or an executor admission override.
     const accountSettings = accountSettingsParse({ actionsSettingsV1: {
-      v: 1, actions: {}, approvalWaivedSurfaces: { 'usage.coach.dismiss': ['mcp'] },
+      v: 1, actions: {}, approvalWaivedSurfaces: { 'usage.coach.dismiss': ['mcp'],
+        'ui.prompts.picker.apply': ['mcp'], 'workspace.tabs.open': ['mcp'], 'registries.sources.update': ['mcp'] },
     } });
     const waivedSettings = normalizeActionsSettingsV1(accountSettings.actionsSettingsV1);
     let reviewedSettings = normalizeActionsSettingsV1({});
@@ -62,6 +262,7 @@ describe('standalone MCP client Action admission', () => {
     const dashboardResult = getActionSpec('widgets.area.layout.select').outputSchema!.parse({
       ...dashboardInput,
     });
+    const workspaceOpened = getActionSpec('workspace.tabs.open').outputSchema!.parse({ ok: true });
     // The Home HTTP service is a network boundary. Session parsing, Account
     // mode and daemon locality resolution use their real canonical owners.
     const home = createServer((request, response) => {
@@ -71,6 +272,12 @@ describe('standalone MCP client Action admission', () => {
       if (path === '/v1/account/encryption/currentness') {
         response.end(JSON.stringify({ mode: 'plain', version: 1, updatedAt: 1,
           signingKeyFingerprint: null, contentKeyFingerprint: null }));
+      } else if (path === '/v1/account/encryption') {
+        response.end(JSON.stringify({ mode: 'plain', updatedAt: 1 }));
+      } else if (registry && path === '/v1/account/entity-rows/prompt-library') {
+        response.end(JSON.stringify(PromptLibraryRowsListResponseV1Schema.parse({ status: 'listed', rows:
+          PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: key === 'registry-sources' ? registryRevision : 1,
+            content: key === 'registry-sources' ? { t: 'plain', v: registryRecord } : null })) })));
       } else if (path.startsWith('/v2/sessions/')) {
         homeSessionLookups.push(path);
         response.end(JSON.stringify(V2SessionByIdResponseSchema.parse({ session: {
@@ -90,13 +297,24 @@ describe('standalone MCP client Action admission', () => {
       createIfMissing: true, observation: 'exact', descriptor: { v: 1, homeServerIdentityId: portableHomeId,
         canonicalServerUrl: `http://127.0.0.1:${homeAddress.port}`, revision: (previousProfile?.homeConnectionDescriptor?.revision ?? 0) + 1,
         endpoints: [{ kind: 'https', url: `http://127.0.0.1:${homeAddress.port}` }] } });
+    if (registry) setActiveAccountSettingsSnapshot({ source: 'network',
+      scopeKey: runWithServerHttpBaseUrl(`http://127.0.0.1:${homeAddress.port}`, () => resolveAccountSettingsScopeKey(credentials)),
+      settings: accountSettings, rawSettings: {}, settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], promptLibraryCatalog: registryCatalog });
     // The connected-client RPC is the network boundary. Admission, placement,
     // reverse dispatch, daemon HTTP and MCP SDK execution remain real.
     const clientActionExecute = createClientActionReverseDispatcher(() => ({
       hasConnectedClientRpcHandler: () => clientAvailable,
-      callConnectedClientRpc: async (_method, raw, options) => {
+      callConnectedClientRpc: async (method, raw, options) => {
         if (!clientAvailable) return { ok: false, errorCode: 'RPC_CLIENT_NOT_AVAILABLE' };
         const request = UiActionDispatchRequestV1Schema.parse(raw);
+        // The App is on Usage, so its Session-specific room is not mounted.
+        if ((request.actionId === 'widgets.area.layout.select' || request.actionId === 'workspace.tabs.open')
+          && method !== RPC_METHODS.UI_ACTION_EXECUTE) {
+          return { ok: false, errorCode: 'RPC_CLIENT_NOT_AVAILABLE' };
+        }
+        if (request.actionId === 'workspace.tabs.open') {
+          expect(options.answeringClient).toEqual({ clientId: 'usage-app', requireSingle: true });
+        }
         admitted.push(request);
         options.onIssued();
         const result = request.actionId === 'widgets.item.inputs.get' ? {
@@ -104,7 +322,13 @@ describe('standalone MCP client Action admission', () => {
           bindings: {},
         }
           : request.actionId === 'widgets.area.layout.select' ? dashboardResult
+          : request.actionId === 'workspace.tabs.open' ? workspaceOpened
           : request.actionId === 'ui.find' ? { status: 'idle' }
+          : request.actionId === 'ui.prompts.picker.select' ? { status: 'selected', composerRef: { kind: 'session', sessionId: 'mcp-session-active' } }
+          : request.actionId === 'ui.prompts.picker.apply' ? { status: 'applied', composerRef: { kind: 'session', sessionId: 'mcp-session-active' } }
+          : request.actionId === 'ui.prompts.history' ? { status: 'ready', composerRef: { kind: 'session', sessionId: 'mcp-session-active' },
+            entries: [], coverage: 'loaded', hasMore: true, isLoading: false, error: false, progress: { pagesLoaded: 0, sessionsSearched: 0, totalSessions: 1 } }
+          : request.actionId === 'session.messages.pins' ? { status: 'ready', sessionId: 'mcp-session-active', pins: [] }
           : request.actionId === 'session.pending.next' ? { status: 'none' }
           : request.actionId === 'usage.coach.dismiss' ? coachResult
           : request.actionId === 'session.target.primary.set' ? { ok: true, status: 'ok',
@@ -120,7 +344,7 @@ describe('standalone MCP client Action admission', () => {
       // A reviewed runtime with no Account approval carrier fails closed for
       // danger Actions, without reaching an external service in this test.
       actionsSettingsProvider: { getActionsSettings: () => reviewedSettings },
-    }, { clientActionExecute });
+    }, { clientActionExecute, ...(registry ? { registryActionExecute: async (request: Parameters<NonNullable<ActionExecutorDeps['registryActionExecute']>>[0]) => registry.execute(request.actionId, request.input) } : {}) });
     const app = createDaemonControlApp({
       getChildren: () => [], machineId: 'mcp-machine', controlToken: 'private-mcp-control',
       stopSession: async () => ({ status: 'not_found' }),
@@ -146,6 +370,58 @@ describe('standalone MCP client Action admission', () => {
     await mcp.connect(serverTransport);
     await client.connect(clientTransport);
     try {
+      if (registry) {
+        // Acquisition timestamps are clock facts, not registry-content parity.
+        vi.spyOn(Date, 'now').mockReturnValue(1_800_000_000_000);
+        const sourceId = `${authored.manifest.id}/apps`;
+        const cliSources = await registry.execute('registries.sources.list', { kind: 'app' });
+        expect(cliSources).toMatchObject({ sources: expect.arrayContaining([expect.objectContaining({ id: sourceId })]) });
+        const invoke = async (actionId: string, input: unknown) => {
+          const response = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: { actionId, input } }));
+          const text = response.content.find(entry => entry.type === 'text');
+          if (!text || text.type !== 'text') throw new Error('Missing registry result');
+          return JSON.parse(text.text) as unknown;
+        };
+        expect(await invoke('registries.sources.list', { kind: 'app' })).toEqual(cliSources);
+        const browse = { kind: 'app', sourceIds: [sourceId] };
+        expect(await invoke('registries.items.list', browse)).toEqual(await registry.execute('registries.items.list', browse));
+        const selection = { kind: 'app', sourceId, itemId: 'database', version: '1.0.0' };
+        const cliRead = await registry.execute('registries.items.read', selection);
+        expect(cliRead).toMatchObject({ item: { payload: { kind: 'app', state: 'ready', app: appTemplate } } });
+        expect(await invoke('registries.items.read', selection)).toEqual(cliRead);
+        reviewedSettings = waivedSettings;
+        expect(await invoke('registries.sources.update', { sourceId, enabled: false }))
+          .toMatchObject({ source: { id: sourceId, enabled: false } });
+        expect(registryRecord).toMatchObject({ key: 'registry-sources', value: { disabledSourceIds: [sourceId] } });
+        const disabledSources = await registry.execute('registries.sources.list', { kind: 'app' });
+        expect(disabledSources).toMatchObject({ sources: expect.arrayContaining([expect.objectContaining({ id: sourceId, enabled: false })]) });
+        expect(await invoke('registries.sources.list', { kind: 'app' })).toEqual(disabledSources);
+        expect(await invoke('registries.sources.update', { sourceId, enabled: true }))
+          .toMatchObject({ source: { id: sourceId, enabled: true } });
+        expect(await invoke('registries.items.read', selection)).toEqual(cliRead);
+        expect(daemonAdmissions).toEqual(['registries.sources.list', 'registries.items.list', 'registries.items.read',
+          'registries.sources.update', 'registries.sources.list', 'registries.sources.update', 'registries.items.read']
+          .map(actionId => expect.objectContaining({ actionId, surface: 'mcp', target: { kind: 'machine', machineId: 'mcp-machine' } })));
+        return;
+      }
+      if (family === 'prompt picker, history and pins') {
+        reviewedSettings = waivedSettings;
+        // Keep this family's deciding MCP journey independent of other client
+        // families while reusing the same real daemon/admission harness.
+        for (const [actionId, input, status] of [
+          ['ui.prompts.picker.select', { selection: { kind: 'doc', artifactId: 'prompt' } }, 'selected'],
+          ['ui.prompts.picker.apply', { mode: 'insert' }, 'applied'],
+          ['ui.prompts.history', { op: 'read' }, 'ready'],
+          ['session.messages.pins', { op: 'read', sessionId: 'mcp-session-active' }, 'ready'],
+        ] as const) {
+          const response = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: { actionId, input } }));
+          const text = response.content.find(entry => entry.type === 'text');
+          if (!text || text.type !== 'text') throw new Error('Missing prompt/pin MCP result');
+          expect(JSON.parse(text.text)).toMatchObject(connected ? { status } : { status: 'unavailable', reason: 'noClient' });
+          if (connected) expect(admitted.at(-1)).toMatchObject({ actionId, context: { surface: 'mcp', authority: 'account_automation' } });
+        }
+        return;
+      }
       for (const [actionId, input, connectedResult, absentResult] of [
         ['ui.find', { op: 'read' }, { status: 'idle' }, { status: 'unavailable', reason: 'noClient' }],
         ['session.pending.next', {}, { status: 'none' }, { status: 'unavailable', reason: 'noClient' }],
@@ -182,7 +458,8 @@ describe('standalone MCP client Action admission', () => {
       if (!approvalText || approvalText.type !== 'text') throw new Error('Missing approval refusal');
       expect(JSON.parse(approvalText.text)).toMatchObject({ errorCode: 'approvals_not_supported' });
       expect(daemonAdmissions).toContainEqual(expect.objectContaining({ actionId: 'session.draft.delete', surface: 'mcp' }));
-      expect(admitted).toHaveLength(connected ? 4 : 0);
+      // A refused draft deletion never reaches the mounted effect owner.
+      expect(admitted.filter(raw => UiActionDispatchRequestV1Schema.parse(raw).actionId === 'session.draft.delete')).toEqual([]);
 
       const dismissCoach = async () => {
         const response = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: { actionId: 'usage.coach.dismiss', input: coachInput } }));
@@ -195,6 +472,20 @@ describe('standalone MCP client Action admission', () => {
       const noWaiverResult = await dismissCoach();
       const coachAdmissionsBeforeWaiver = admitted.filter(raw => UiActionDispatchRequestV1Schema.parse(raw).actionId === 'usage.coach.dismiss');
       reviewedSettings = waivedSettings;
+      // REPLAY-C: an exact client on Usage can answer workspace controls even
+      // though the invoking Agent's Session room is no longer mounted.
+      const opened = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: {
+        actionId: 'workspace.tabs.open', input: { href: '/settings/notifications', mode: 'newTab',
+          reuseExisting: false, clientId: 'usage-app' },
+      } }));
+      const openedText = opened.content.find(entry => entry.type === 'text');
+      if (!openedText || openedText.type !== 'text') throw new Error('Missing workspace tab result');
+      expect(JSON.parse(openedText.text)).toEqual(connected ? workspaceOpened : {
+        errorCode: 'client_not_available', error: 'The selected clientId is not eligible or is disconnected',
+      });
+      if (connected) expect(admitted.at(-1)).toMatchObject({ actionId: 'workspace.tabs.open', context: {
+        surface: 'mcp', defaultSessionId: 'mcp-session-active',
+      } });
       const homeLookupsBeforeCoach = homeSessionLookups.length;
       const dismissed = await dismissCoach();
       // The canonical Coach owner falls back to a headless usage query after
@@ -251,18 +542,22 @@ describe('standalone MCP client Action admission', () => {
       }
     } finally {
       await client.close(); await mcp.close(); await app.close();
+      await runtime?.dispose();
       home.closeAllConnections();
       await new Promise<void>(resolve => home.close(() => resolve()));
     }
   });
 
-  it('preserves daemon_unavailable when the captured Home has no daemon', async () => {
+  it.each([
+    { actionId: 'ui.find', input: { op: 'read' } },
+    { actionId: 'registries.sources.list', input: { kind: 'app' } },
+  ])('preserves daemon_unavailable for $actionId when the captured Home has no daemon', async ({ actionId, input }) => {
     const { mcp } = createExternalMcpServer({ credentials, daemonControlTarget: null });
     const client = new Client({ name: 'absent-daemon-test', version: '1' });
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     await mcp.connect(serverTransport); await client.connect(clientTransport);
     try {
-      const response = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: { actionId: 'ui.find', input: { op: 'read' } } }));
+      const response = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: { actionId, input } }));
       const text = response.content.find(entry => entry.type === 'text');
       if (!text || text.type !== 'text') throw new Error('Missing MCP text result');
       expect(JSON.parse(text.text)).toEqual({ errorCode: 'daemon_unavailable', error: 'daemon_unavailable' });
@@ -270,7 +565,10 @@ describe('standalone MCP client Action admission', () => {
     } finally { await client.close(); await mcp.close(); }
   });
 
-  it('preserves daemon_unavailable when the captured daemon request fails', async () => {
+  it.each([
+    { actionId: 'ui.find', input: { op: 'read' } },
+    { actionId: 'registries.sources.list', input: { kind: 'app' } },
+  ])('preserves daemon_unavailable for $actionId when the captured daemon request fails', async ({ actionId, input }) => {
     const requests: string[] = [];
     const daemon = createServer((request, response) => {
       request.resume();
@@ -291,7 +589,7 @@ describe('standalone MCP client Action admission', () => {
     const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
     await mcp.connect(serverTransport); await client.connect(clientTransport);
     try {
-      const response = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: { actionId: 'ui.find', input: { op: 'read' } } }));
+      const response = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute', arguments: { actionId, input } }));
       const text = response.content.find(entry => entry.type === 'text');
       if (!text || text.type !== 'text') throw new Error('Missing MCP text result');
       expect(JSON.parse(text.text)).toEqual({ errorCode: 'daemon_unavailable', error: 'daemon_unavailable' });

@@ -36,6 +36,7 @@ describe('resolveNodeBackedMcpServerCommand', () => {
   const originalExecPath = process.execPath;
 
   beforeEach(() => {
+    vi.stubEnv('HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', '');
     vi.mocked(existsSync).mockReset();
     vi.mocked(existsSync).mockReturnValue(false);
     requireJavaScriptRuntimeExecutableMock.mockReset();
@@ -43,6 +44,7 @@ describe('resolveNodeBackedMcpServerCommand', () => {
   });
 
   afterEach(() => {
+    vi.unstubAllEnvs();
     process.argv = [...originalArgv];
     Object.defineProperty(process, 'execPath', {
       value: originalExecPath,
@@ -165,6 +167,26 @@ describe('resolveNodeBackedMcpServerCommand', () => {
         TSX_TSCONFIG_PATH: '/repo/tsconfig.json',
       },
     });
+  });
+
+  it.each([undefined, false])('honors the source-launch environment unless the caller explicitly chooses packaged (%s)', async preferSourceEntrypoint => {
+    vi.stubEnv('HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', ' y ');
+    vi.mocked(existsSync).mockImplementation(pathLike => ['/repo/package-dist/mcp/launchers/stdioMcpServerLauncher.mjs',
+      '/repo/src/mcp/launchers/stdioMcpServerLauncher.ts'].includes(String(pathLike)));
+    const invocation = await resolveNodeBackedMcpServerCommand({
+      distEntrypointSegments: ['mcp', 'launchers', 'stdioMcpServerLauncher.mjs'],
+      sourceEntrypointSegments: ['mcp', 'launchers', 'stdioMcpServerLauncher.ts'],
+      preferSourceEntrypoint,
+    });
+    if (preferSourceEntrypoint === false) {
+      expect(invocation.args).toContain('/repo/package-dist/mcp/launchers/stdioMcpServerLauncher.mjs');
+      expect(invocation.args).not.toContain('--conditions=happier-source');
+    } else {
+      expect(invocation.args).toEqual(expect.arrayContaining([
+        '--conditions=happier-source', expect.stringMatching(/registerSourceRuntime\.mjs$/),
+        '/repo/src/mcp/launchers/stdioMcpServerLauncher.ts',
+      ]));
+    }
   });
 
   it('uses the ensured JavaScript runtime when the current process cannot directly execute JS entrypoints', async () => {

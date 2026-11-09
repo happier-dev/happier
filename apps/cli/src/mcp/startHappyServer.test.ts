@@ -1,4 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { once } from 'node:events';
+import { createConnection } from 'node:net';
+import { existsSync } from 'node:fs';
+import { stat } from 'node:fs/promises';
+import { dirname } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { accountSettingsParse, ActionsSettingsV1Schema, FeaturesResponseSchema } from '@happier-dev/protocol';
@@ -7,8 +12,37 @@ import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/act
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
+import { renderSessionInputContextPromptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
+import { normalizeInteractionTransientQuestionsV1 } from '@happier-dev/protocol/plugins/interactions/transientV1';
+import { SessionFollowUpdateEnvelopeV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowUpdateEnvelopeV1';
+import Ajv from 'ajv';
+import { z } from 'zod/mini';
+import { request } from 'node:http';
+import * as childProcess from 'node:child_process';
+import { assignInjectedServerKeys, buildCodexAppServerConfigOverrides } from '../../../../packages/plugins/codex/src/agent/runtime/appServer/config/overrides';
 
 const daemonCatalogBoundary = vi.hoisted(() => ({ read: vi.fn() }));
+const socketRemovalBoundary = vi.hoisted(() => ({ path: '', failNext: false }));
+
+// Filesystem removal is the system boundary. The real MCP listener, bearer
+// retirement and cleanup retry owner remain in this test's path.
+vi.mock('node:fs/promises', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:fs/promises')>();
+    return { ...actual, rm: async (...args: Parameters<typeof actual.rm>) => {
+        if (String(args[0]) === socketRemovalBoundary.path && socketRemovalBoundary.failNext) {
+            socketRemovalBoundary.failNext = false;
+            throw Object.assign(new Error('fixture socket removal unavailable'), { code: 'EACCES' });
+        }
+        return actual.rm(...args);
+    } };
+});
+
+// Native child-process calls are the OS boundary. Keep their genuine behavior
+// unless this test explicitly supplies synthetic ACL command output.
+vi.mock('node:child_process', async importOriginal => {
+    const actual = await importOriginal<typeof import('node:child_process')>();
+    return { ...actual, execFile: vi.fn(actual.execFile) };
+});
 
 // The daemon control transport is outside the Session process; MCP/HTTP owners
 // and catalog admission below it remain real.
@@ -23,8 +57,395 @@ vi.mock('@/daemon/controlClient', async (importOriginal) => ({
 import { registerHappierSessionAgentToolRpc, startHappyServer } from '@/mcp/startHappyServer';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createMutableApiSessionClientFixture } from '@/testkit/backends/sessionFixtures';
+import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { connectSessionMcpClient, readSessionMcpContextFromEnvironment, SESSION_MCP_CONTEXT_FILE_ENV } from './runtime/sessionMcpLocalTransport';
+import { McpError, ResourceUpdatedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
+import { waitForExecutionRun } from '@/session/services/executionRuns';
+import { ExecutionRunWaitConditionSchema, waitForExecutionRunTerminal } from '@happier-dev/protocol/execution/runs/waitForTerminal';
+import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import type { ActionExecutorDeps } from '@happier-dev/protocol';
+
+function sendLocalSessionRequest(socketPath: string, authorization?: string, body = '{', method = 'POST') {
+    return new Promise<{ status: number; body: string }>((resolve, reject) => {
+        const req = request({ socketPath, path: '/mcp', method, headers: {
+            'content-type': 'application/json', accept: 'application/json, text/event-stream', ...(authorization ? { authorization } : {}),
+        } }, response => {
+            let responseBody = '';
+            response.setEncoding('utf8');
+            response.on('data', chunk => { responseBody += chunk; });
+            response.on('end', () => resolve({ status: response.statusCode!, body: responseBody }));
+        });
+        req.on('error', reject);
+        req.end(method === 'POST' ? body : undefined);
+    });
+}
+
+async function settleMcpTest(failures: unknown[], cleanups: readonly Readonly<{
+    phase: string; run(): void | Promise<void>;
+}>[]): Promise<void> {
+    for (const cleanup of cleanups) {
+        try { await cleanup.run(); }
+        catch (cause) { failures.push(new Error(`MCP test cleanup phase: ${cleanup.phase}`, { cause })); }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, 'MCP test request and cleanup failures');
+}
 
 describe('startHappyServer notification stream', () => {
+    it.skipIf(process.platform === 'win32')('keeps failed socket retirement retryable until its actual directory is removed', async () => {
+        daemonCatalogBoundary.read.mockReset();
+        daemonCatalogBoundary.read.mockResolvedValue({ kind: 'available', plugins: [], tools: [] });
+        const session = createMutableApiSessionClientFixture({ sessionId: 'socket-cleanup-retry' });
+        const server = await startHappyServer(session, { localTransport: { agentUid: process.getuid!() } });
+        if (!server.localContext) throw new Error('missing_local_context');
+        const context = server.localContext;
+        socketRemovalBoundary.path = dirname(context.socketPath);
+        socketRemovalBoundary.failNext = true;
+        try {
+            const initialized = await sendLocalSessionRequest(context.socketPath, `Bearer ${context.bearerToken}`,
+                JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
+                    protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'retirement-client', version: '1' },
+                } }));
+            expect(initialized.status).toBe(200);
+            await expect(server.stop()).rejects.toMatchObject({ code: 'EACCES' });
+            expect(server.localContext).toBeUndefined();
+            await expect(stat(socketRemovalBoundary.path)).resolves.toBeDefined();
+            await expect(sendLocalSessionRequest(context.socketPath, `Bearer ${context.bearerToken}`))
+                .rejects.toBeDefined();
+            await expect(server.stop()).resolves.toBeUndefined();
+            await expect(stat(socketRemovalBoundary.path)).rejects.toMatchObject({ code: 'ENOENT' });
+        } finally {
+            socketRemovalBoundary.failNext = false;
+            await server.stop().catch(() => undefined);
+            const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
+            await actual.rm(socketRemovalBoundary.path, { recursive: true, force: true });
+            socketRemovalBoundary.path = '';
+            await session.close();
+        }
+    });
+    it('keeps the existing non-isolated Windows loopback MCP path without Unix context', async () => {
+        daemonCatalogBoundary.read.mockReset();
+        daemonCatalogBoundary.read.mockResolvedValue({ kind: 'available', plugins: [], tools: [] });
+        const session = createMutableApiSessionClientFixture({ sessionId: 'non-isolated-windows-path' });
+        const server = await startHappyServer(session);
+        const client = new Client({ name: 'windows-native-control', version: '1' });
+        const transport = new StreamableHTTPClientTransport(new URL(server.url));
+        try {
+            expect(new URL(server.url).hostname).toBe('127.0.0.1');
+            expect(server.localContext).toBeUndefined();
+            expect(server.contextFilePath).toBeUndefined();
+            await client.connect(transport);
+            expect(transport.sessionId).toBeUndefined();
+            expect((await client.listTools()).tools.map(tool => tool.name)).toContain('action_spec_get');
+            expect((await client.listResources()).resources.length).toBeGreaterThan(0);
+        } finally { await client.close(); await server.stop(); await session.close(); }
+    });
+
+    it.skipIf(process.platform === 'win32')('keeps headerless reinitializing request/response clients working', async () => {
+        daemonCatalogBoundary.read.mockReset();
+        daemonCatalogBoundary.read.mockResolvedValue({ kind: 'available', plugins: [], tools: [] });
+        const session = createMutableApiSessionClientFixture({ sessionId: 'stateless-local' });
+        const server = await startHappyServer(session, { localTransport: { agentUid: process.getuid!() } });
+        try {
+            if (!server.localContext) throw new Error('missing_local_context');
+            const context = server.localContext;
+            const send = (body: unknown) => sendLocalSessionRequest(context.socketPath, `Bearer ${context.bearerToken}`, JSON.stringify(body));
+            for (const id of [1, 2]) {
+                const initialized = await send({ jsonrpc: '2.0', id, method: 'initialize', params: {
+                    protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'headerless-client', version: '1' },
+                } });
+                expect(initialized.status).toBe(200);
+                expect(initialized.body).toContain('protocolVersion');
+                const tools = await send({ jsonrpc: '2.0', id: id + 10, method: 'tools/list', params: {} });
+                expect(tools.status).toBe(200);
+                expect(tools.body).toContain('action_spec_get');
+            }
+        } finally { await server.stop(); await session.close(); }
+    });
+
+    it.skipIf(process.platform === 'win32')('keeps authenticated watch feeds for the MCP notification session, not the subscribe response', async () => {
+        daemonCatalogBoundary.read.mockReset();
+        daemonCatalogBoundary.read.mockResolvedValue({ kind: 'available', plugins: [], tools: [] });
+        const session = createMutableApiSessionClientFixture({ sessionId: 'watch-session', metadata: createTestMetadata(),
+            serverBinding: { serverId: 'home', serverUrl: 'http://watch-fixture.invalid' } });
+        const listeners = new Set<() => void>();
+        let reads = 0;
+        let snapshot = ExecutionRunGetResponseSchema.parse({ run: { runId: 'run', callId: 'call', sidechainId: 'call',
+            intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read_only',
+            retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response', startedAtMs: 1, status: 'running' } });
+        const unused = async () => { throw new Error('watch_must_not_mutate_runs'); };
+        // Only daemon RPC/storage and its change feed are substituted. Both
+        // native wait owners, Action admission, MCP and Unix HTTP run for real.
+        const wait = async (raw: unknown, options?: Parameters<NonNullable<ActionExecutorDeps['executionRunWait']>>[2]) => {
+            const request = z.parse(z.object({ runId: z.string(), condition: z.optional(ExecutionRunWaitConditionSchema) }), raw);
+            return await waitForExecutionRun({ credentials: { token: 'watch-test-only', encryption: null },
+                machineId: 'machine', runId: request.runId, condition: request.condition, timeoutMs: null,
+                signal: options?.signal, onSnapshot: options?.onSnapshot,
+                invokeWait: async (raw, signal) => {
+                    const input = z.parse(z.object({ condition: ExecutionRunWaitConditionSchema, after: z.optional(ExecutionRunGetResponseSchema) }), raw);
+                    return await waitForExecutionRunTerminal({ runId: request.runId, condition: input.condition, after: input.after,
+                        timeoutMs: null, signal, readRun: async () => { reads++; return { ok: true, data: snapshot }; },
+                        waitForTerminal: unused,
+                        waitForChange: (_runId, signal) => new Promise<void>((resolve, reject) => {
+                            const finish = () => { listeners.delete(change); signal?.removeEventListener('abort', abort); };
+                            const change = () => { finish(); resolve(); };
+                            const abort = () => { finish(); reject(signal?.reason); };
+                            listeners.add(change); signal?.addEventListener('abort', abort, { once: true });
+                            if (signal?.aborted) abort();
+                        }),
+                    });
+                },
+            });
+        };
+        const client = Object.assign(session, {
+            getWorkDepth: () => 0,
+            getActiveTurnPermissionWitness: () => ({ turnId: 'watch-turn', workDepth: 0,
+                causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } } as const),
+            executionRuns: { start: unused, list: unused, get: unused, send: unused, stop: unused, action: unused, wait },
+        });
+        const server = await startHappyServer(client, { localTransport: { agentUid: process.getuid!() },
+            sessionCredentials: { token: 'watch-test-only', encryption: null }, accountSettings: accountSettingsParse({}) });
+        let connection: Awaited<ReturnType<typeof connectSessionMcpClient>> | undefined;
+        try {
+            if (!server.localContext) throw new Error('missing_local_context');
+            connection = await connectSessionMcpClient(server.localContext);
+            const notifications: string[] = [];
+            connection.client.setNotificationHandler(ResourceUpdatedNotificationSchema, n => { notifications.push(n.params.uri); });
+            const input = { target: { kind: 'execution_run', serverId: 'home', machineId: 'machine', sessionId: session.sessionId, runId: 'run' }, condition: { kind: 'needs_attention' } };
+            const uri = 'happier://watch/' + Buffer.from(JSON.stringify(input)).toString('base64url');
+            expect(reads).toBe(0);
+            const subscribe = JSON.stringify({ jsonrpc: '2.0', id: 9, method: 'resources/subscribe', params: { uri } });
+            expect((await sendLocalSessionRequest(server.localContext.socketPath, undefined, subscribe)).status).toBe(401);
+            expect((await sendLocalSessionRequest(server.localContext.socketPath, 'Bearer wrong', subscribe)).status).toBe(401);
+            expect(reads).toBe(0);
+            await connection.client.readResource({ uri }).catch((error: unknown) => {
+                if (error instanceof McpError) throw new Error(`watch baseline refused: ${JSON.stringify(error.data)}`, { cause: error });
+                throw error;
+            });
+            expect(listeners.size).toBe(0);
+            const admittedReads = reads;
+            for (const target of [
+                { ...input.target, serverId: 'other-home' },
+                { ...input.target, sessionId: 'other-session' },
+            ]) {
+                const otherUri = 'happier://watch/' + Buffer.from(JSON.stringify({ ...input, target })).toString('base64url');
+                await expect(connection.client.readResource({ uri: otherUri })).rejects.toMatchObject({
+                    data: { disposition: 'unsupported_condition' },
+                });
+            }
+            expect(reads).toBe(admittedReads);
+            await connection.client.subscribeResource({ uri });
+            await expect.poll(() => listeners.size).toBe(1);
+            snapshot = { ...snapshot, run: { ...snapshot.run, attention: { kind: 'permission_required', requestIds: ['permission'] } } };
+            for (const change of [...listeners]) change();
+            await expect.poll(() => notifications).toEqual([uri]);
+            const fresh = await connection.client.readResource({ uri });
+            expect(fresh.contents[0]).toMatchObject({ text: expect.stringContaining('permission_required') });
+            await connection.client.unsubscribeResource({ uri });
+            await expect.poll(() => listeners.size).toBe(0);
+            const idleReads = reads;
+            for (const change of [...listeners]) change();
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(reads).toBe(idleReads);
+            expect(notifications).toEqual([uri]);
+            await connection.client.subscribeResource({ uri });
+            await expect.poll(() => listeners.size).toBe(1);
+            await connection.close();
+            await expect.poll(() => listeners.size).toBe(0);
+        } finally { await connection?.close(); await server.stop(); await session.close(); }
+    });
+
+    it.skipIf(process.platform === 'win32')('serves the real SDK over its transient context file without a TCP listener', async () => {
+        daemonCatalogBoundary.read.mockReset();
+        daemonCatalogBoundary.read.mockResolvedValue({ kind: 'available', plugins: [], tools: [] });
+        const session = createMutableApiSessionClientFixture({ sessionId: 'sdk-local-session' });
+        const server = await startHappyServer(session, { localTransport: { agentUid: process.getuid!() } });
+        let connection: Awaited<ReturnType<typeof connectSessionMcpClient>> | undefined;
+        try {
+            expect(server.contextFilePath).toEqual(expect.any(String));
+            const context = await readSessionMcpContextFromEnvironment({
+                [SESSION_MCP_CONTEXT_FILE_ENV]: server.contextFilePath,
+            });
+            expect(context).toEqual(server.localContext);
+            expect((await stat(server.contextFilePath!)).mode & 0o777).toBe(0o600);
+            connection = await connectSessionMcpClient(context);
+            expect((await connection.client.listTools()).tools.map(tool => tool.name)).toContain('action_spec_get');
+            expect((await connection.client.listResources()).resources.length).toBeGreaterThan(0);
+        } finally {
+            await connection?.close();
+            await server.stop();
+            await session.close();
+        }
+        expect(existsSync(server.contextFilePath!)).toBe(false);
+        expect(server.localContext).toBeUndefined();
+        await expect(readSessionMcpContextFromEnvironment({
+            [SESSION_MCP_CONTEXT_FILE_ENV]: server.contextFilePath,
+        })).rejects.toMatchObject({ code: 'mcp_socket_access_unavailable' });
+    });
+
+    it.skipIf(process.platform !== 'linux')('separates Session bindings and retires old endpoint and bearer on recreation', async () => {
+        daemonCatalogBoundary.read.mockReset();
+        daemonCatalogBoundary.read.mockResolvedValue({ kind: 'available', plugins: [], tools: [] });
+        const sessionA = createMutableApiSessionClientFixture({ sessionId: 'binding-a' });
+        const sessionB = createMutableApiSessionClientFixture({ sessionId: 'binding-b' });
+        const servers: Awaited<ReturnType<typeof startHappyServer>>[] = [];
+        try {
+            const open = async (session: typeof sessionA) => {
+                const server = await startHappyServer(session, { localTransport: { agentUid: process.getuid!() } });
+                servers.push(server);
+                expect(server.localContext).toBeDefined();
+                if (!server.localContext) throw new Error('Missing Session context');
+                return { server, context: server.localContext };
+            };
+            const a = await open(sessionA);
+            const b = await open(sessionB);
+            expect(a.context.bearerToken).not.toBe(b.context.bearerToken);
+            const catalogReads = daemonCatalogBoundary.read.mock.calls.length;
+            for (const method of ['POST', 'GET', 'DELETE']) {
+                expect((await sendLocalSessionRequest(b.context.socketPath, `Bearer ${a.context.bearerToken}`, '{', method)).status).toBe(401);
+            }
+            expect(daemonCatalogBoundary.read.mock.calls).toHaveLength(catalogReads);
+            expect((await sendLocalSessionRequest(a.context.socketPath, `Bearer ${a.context.bearerToken}`)).status).toBe(400);
+            const acceptedSocket = createConnection(a.context.socketPath);
+            onTestFinished(() => { acceptedSocket.destroy(); });
+            await once(acceptedSocket, 'connect');
+            const acceptedClosed = once(acceptedSocket, 'close');
+            await a.server.stop();
+            await acceptedClosed;
+            await expect(sendLocalSessionRequest(a.context.socketPath, `Bearer ${a.context.bearerToken}`)).rejects.toThrow();
+            const replacement = await open(sessionA);
+            expect(replacement.context.bearerToken).not.toBe(a.context.bearerToken);
+            expect((await sendLocalSessionRequest(replacement.context.socketPath, `Bearer ${a.context.bearerToken}`)).status).toBe(401);
+            expect((await sendLocalSessionRequest(replacement.context.socketPath, `Bearer ${replacement.context.bearerToken}`)).status).toBe(400);
+        } finally {
+            await Promise.all(servers.map(server => server.stop()));
+            await sessionA.close();
+            await sessionB.close();
+        }
+    });
+
+    it.skipIf(process.platform !== 'linux')('owns a private Session Unix socket and removes its directory on stop', async () => {
+        daemonCatalogBoundary.read.mockReset();
+        daemonCatalogBoundary.read.mockResolvedValue({ kind: 'available', plugins: [], tools: [] });
+        const session = createMutableApiSessionClientFixture({ sessionId: 'socket-lifetime' });
+        const server = await startHappyServer(session, { localTransport: { agentUid: process.getuid!() } });
+        try {
+            const connection: unknown = Reflect.get(server, 'localContext');
+            expect(connection).toMatchObject({ socketPath: expect.any(String) });
+            const { socketPath } = z.parse(z.object({ socketPath: z.string() }), connection);
+            expect((await stat(socketPath)).isSocket()).toBe(true);
+            expect((await stat(dirname(socketPath))).mode & 0o777).toBe(0o700);
+            expect((await stat(socketPath)).mode & 0o777).toBe(0o600);
+            await server.stop();
+            expect(existsSync(dirname(socketPath))).toBe(false);
+        } finally {
+            await server.stop();
+            await session.close();
+        }
+    });
+
+    it.skipIf(process.platform !== 'linux')('rejects unauthenticated malformed requests and authenticates isolated Unix requests before parsing or catalog work', async () => {
+        daemonCatalogBoundary.read.mockReset();
+        daemonCatalogBoundary.read.mockResolvedValue({ kind: 'available', plugins: [], tools: [] });
+        // Native ACL commands are the OS boundary. The real Unix HTTP socket,
+        // request admission, SDK, tool inventory and Action executor remain real.
+        const acl = vi.mocked(childProcess.execFile).mockImplementation((...args: unknown[]) => {
+            if (args[0] !== 'setfacl') throw new Error('Unexpected native ACL command');
+            const callback = args.at(-1);
+            if (typeof callback !== 'function') throw new Error('Missing ACL command callback');
+            callback(null, '', '');
+            return {} as childProcess.ChildProcess;
+        });
+        const session = createMutableApiSessionClientFixture({ sessionId: 'isolated-session' });
+        let server: Awaited<ReturnType<typeof startHappyServer>> | undefined;
+        try {
+            server = await startHappyServer(session, { localTransport: { agentUid: 12345 } });
+            const context = server.localContext;
+            expect(context).toBeDefined();
+            if (!context) throw new Error('Missing isolated Session context');
+            const catalogReads = daemonCatalogBoundary.read.mock.calls.length;
+            const aclCommands = acl.mock.calls.length;
+            for (const method of ['POST', 'GET', 'DELETE']) {
+                const missing = await sendLocalSessionRequest(context.socketPath, undefined, '{', method);
+                expect(missing.status).toBe(401);
+                expect(missing.body).not.toContain('isolated-session');
+                expect((await sendLocalSessionRequest(context.socketPath, 'Bearer wrong', '{', method)).status).toBe(401);
+            }
+            expect(daemonCatalogBoundary.read.mock.calls).toHaveLength(catalogReads);
+            expect(acl.mock.calls).toHaveLength(aclCommands);
+            expect((await sendLocalSessionRequest(context.socketPath, `Bearer ${context.bearerToken}`)).status).toBe(400);
+            await server.stop();
+            await expect(sendLocalSessionRequest(context.socketPath, `Bearer ${context.bearerToken}`)).rejects.toThrow();
+        } finally {
+            await server?.stop();
+            acl.mockRestore();
+            await session.close();
+        }
+    });
+
+    it('offers manager answers and pass-up through the actual Codex MCP tool surface', async () => {
+        daemonCatalogBoundary.read.mockReset();
+        daemonCatalogBoundary.read.mockResolvedValue({ kind: 'available', plugins: [], tools: [] });
+        const session = Object.assign(createMutableApiSessionClientFixture({ sessionId: 'manager', metadata: createTestMetadata() }), {
+            getWorkDepth: () => 0,
+            getActiveTurnPermissionWitness: () => ({ turnId: 'manager-turn', workDepth: 0,
+                causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } } as const),
+        });
+        const server = await startHappyServer(session, {
+            sessionCredentials: { token: 'manager-question-fixture', encryption: null }, accountSettings: accountSettingsParse({}),
+        });
+        const client = new Client({ name: 'codex-manager-surface', version: '1' });
+        try {
+            const config = buildCodexAppServerConfigOverrides({ happier: { command: 'fixture-mcp-transport', args: [server.url] } });
+            expect(config).toContain('mcp_servers.happier.enabled=true');
+            const transportArgs: unknown = JSON.parse(config.find(entry => entry.startsWith('mcp_servers.happier.args='))!.split('=').slice(1).join('='));
+            const [url] = z.parse(z.array(z.string()), transportArgs);
+            await client.connect(new StreamableHTTPClientTransport(new URL(url)));
+            const tools = (await client.listTools()).tools;
+            // The native default is discoverable-only. Neither a dotted Action id
+            // nor its absent dedicated Tool is a callable Codex tool name.
+            expect(tools.map(tool => tool.name)).not.toContain('session_user_action_answer');
+            const form = normalizeInteractionTransientQuestionsV1({ kind: 'questions', questions: [
+                { id: 'sum', type: 'text', prompt: 'What is 17 + 25?', required: true },
+            ] });
+            const update = SessionFollowUpdateEnvelopeV1Schema.parse({
+                v: 1, kind: 'session_follow_update', edge: { sourceSessionId: 'worker', destinationSessionId: 'manager' },
+                reason: 'source_changed', deliveryIntent: 'context_only',
+                observed: { transcriptSeq: 0, readyEventSeq: 0, agentStateVersion: 1, turn: null },
+                awareness: { v: 1, sessionId: 'worker', lifecycle: 'ready', runtime: 'idle', freshness: 'live',
+                    operational: { primary: 'ready', reasons: ['ready'] }, encryption: 'ready', availability: 'complete' },
+                recentMessages: [], truncated: false, questionOffers: [{ requestId: 'worker-question',
+                    currentHandler: { kind: 'session', sessionId: 'manager' }, questions: form.questions }],
+            });
+            const prompt = renderSessionInputContextPromptV1({ sessionFollowUpdates: [update], transformedUserText: '' });
+            const candidates = prompt.split('\n').flatMap(line => {
+                try { const value: unknown = JSON.parse(line); return value && typeof value === 'object' && 'tool' in value ? [value] : []; }
+                catch { return []; }
+            });
+            expect(candidates, 'the offer must name a callable transport with its actual routing arguments').toHaveLength(1);
+            const invocation = z.parse(z.strictObject({ tool: z.string(), arguments: z.strictObject({
+                actionId: z.literal('session.user_action.answer'), input: z.strictObject({ sessionId: z.string(), requestId: z.string() }),
+            }) }), candidates[0]);
+            const key = assignInjectedServerKeys(['happier']).get('happier');
+            const nativeNames = tools.map(tool => `mcp__${key}__${tool.name}`);
+            expect(nativeNames).toContain(`mcp__${key}__${invocation.tool}`);
+            const tool = tools.find(tool => tool.name === invocation.tool)!;
+            const validate = new Ajv({ strict: false }).compile(tool.inputSchema);
+            expect(validate(invocation.arguments)).toBe(true);
+            expect(invocation.arguments.input).toEqual({ sessionId: 'worker', requestId: 'worker-question' });
+            const discovery = await client.callTool({ name: 'action_spec_get', arguments: { id: invocation.arguments.actionId } });
+            expect(discovery).toMatchObject({ isError: false, structuredContent: { actionSpec: { id: invocation.arguments.actionId } } });
+            for (const response of [{ answers: [{ question: form.questions[0].id, values: ['42'] }] }, { disposition: 'pass_up' }]) {
+                const args = { ...invocation.arguments, input: { ...invocation.arguments.input, ...response } };
+                expect(validate(args)).toBe(true);
+                expect(getActionSpec(args.actionId).inputSchema.safeParse(args.input).success).toBe(true);
+            }
+        } finally {
+            await client.close();
+            await server.stop();
+        }
+    });
+
     it('advertises the canonical Discussion reply through Session MCP without bypassing exposure policy', async () => {
         daemonCatalogBoundary.read.mockReset();
         daemonCatalogBoundary.read.mockResolvedValue({ kind: 'available', plugins: [], tools: [] });
@@ -35,7 +456,7 @@ describe('startHappyServer notification stream', () => {
         }) };
         expect(resolveCliFeatureDecision({ featureId: 'sessions.conversations', env: process.env,
             serverSnapshot: features }).state).toBe('enabled');
-        const session = Object.assign(createMutableApiSessionClientFixture({ sessionId: 'discussion-reply-mcp-session', overrides: {
+        const session = Object.assign(createMutableApiSessionClientFixture({ sessionId: 'discussion-reply-mcp-session', metadata: createTestMetadata(), overrides: {
             getServerFeaturesSnapshot: () => features,
         } }), {
             getWorkDepth: () => 0,
@@ -47,27 +468,43 @@ describe('startHappyServer notification stream', () => {
             getAccountSettings: () => settings,
         });
         const client = new Client({ name: 'discussion-receiver', version: '1' });
+        const failures: unknown[] = [];
+        let phase = 'connect';
         try {
-            await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
-            const names = async () => (await client.listTools()).tools.map(tool => tool.name);
-            expect(await names()).toContain('discussion_reply');
+            // Inventory changes are observed across separate HTTP requests.
+            // Do not let the global fetch pool's idle socket lifetime decide
+            // this catalog test while rebuilding its large tool schemas.
+            await client.connect(new StreamableHTTPClientTransport(new URL(server.url), {
+                requestInit: { headers: { connection: 'close' } },
+            }));
+            const names = async (nextPhase: string) => {
+                phase = nextPhase;
+                return (await client.listTools()).tools.map(tool => tool.name);
+            };
+            expect(await names('default inventory')).toContain('discussion_reply');
             settings = { ...settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
                 'discussion.reply': { toolExposureModes: { agent: 'discoverable_only' } },
             } }) };
-            expect(await names()).not.toContain('discussion_reply');
-            expect(await names()).toContain('action_execute');
+            expect(await names('discoverable-only inventory')).not.toContain('discussion_reply');
+            expect(await names('Action executor inventory')).toContain('action_execute');
+            phase = 'discover Action spec';
             const discovered = await client.callTool({ name: 'action_spec_get', arguments: { id: 'discussion.reply' } });
             expect(discovered).toMatchObject({ isError: false, structuredContent: { actionSpec: { id: 'discussion.reply' } } });
             settings = { ...settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
                 'discussion.reply': { enabled: false },
             } }) };
-            expect(await names()).not.toContain('discussion_reply');
+            expect(await names('disabled Action inventory')).not.toContain('discussion_reply');
             settings = accountSettingsParse({});
             features = { status: 'ready', features: FeaturesResponseSchema.parse({ features: {}, capabilities: {} }) };
-            expect(await names()).not.toContain('discussion_reply');
+            expect(await names('disabled feature inventory')).not.toContain('discussion_reply');
+        } catch (cause) {
+            failures.push(new Error(`MCP Discussion test request phase: ${phase}`, { cause }));
         } finally {
-            await client.close();
-            server.stop();
+            await settleMcpTest(failures, [
+                { phase: 'client close', run: () => client.close() },
+                { phase: 'server stop', run: () => server.stop() },
+                { phase: 'Session close', run: () => session.close() },
+            ]);
         }
     });
 
@@ -80,7 +517,7 @@ describe('startHappyServer notification stream', () => {
         let lifetime = new AbortController();
         let nativeOpened = false;
         let turn = new AbortController();
-        const session = Object.assign(createMutableApiSessionClientFixture({ sessionId: 'reconnecting-mcp-session' }), {
+        const session = Object.assign(createMutableApiSessionClientFixture({ sessionId: 'reconnecting-mcp-session', metadata: createTestMetadata() }), {
             getRuntimeLifetimeSignal: () => nativeOpened ? lifetime.signal : null,
             getHostTurnAbortSignal: () => turn.signal,
             getWorkDepth: () => 0,
@@ -93,27 +530,45 @@ describe('startHappyServer notification stream', () => {
         nativeOpened = true;
         const original = new Client({ name: 'original-native-session', version: '1' });
         const resumed = new Client({ name: 'resumed-native-session', version: '1' });
+        const failures: unknown[] = [];
+        let phase = 'original connect';
         try {
             await original.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+            phase = 'original inventory';
             expect((await original.listTools()).tools.map(tool => tool.name)).toContain('action_execute');
+            phase = 'original close';
             await original.close();
             (retirement === 'turn' ? turn : lifetime).abort();
 
             // Native session resume discovers tools before the next host turn is admitted.
+            phase = 'resumed connect';
             await resumed.connect(new StreamableHTTPClientTransport(new URL(server.url)));
+            phase = 'resumed inventory';
             expect((await resumed.listTools()).tools.map(tool => tool.name)).toContain('action_execute');
             expect(await server.readToolNames()).toContain('action_execute');
+            phase = 'cancelled tool call';
             await expect(resumed.callTool({ name: 'action_spec_get', arguments: { id: 'browser.view.open' } })).rejects.toThrow();
 
             turn = new AbortController();
             lifetime = new AbortController();
+            phase = 'replacement tool call';
             const result = await resumed.callTool({ name: 'action_spec_get', arguments: { id: 'browser.view.open' } });
             expect(result).toMatchObject({ isError: false, structuredContent: { actionSpec: { id: 'browser.view.open' } } });
-            server.stop();
+            phase = 'resumed close';
+            await resumed.close();
+            phase = 'server stop';
+            await server.stop();
+            phase = 'retired inventory refusal';
             await expect(server.readToolNames()).rejects.toThrow();
+        } catch (cause) {
+            failures.push(new Error(`MCP ${retirement} retirement test request phase: ${phase}`, { cause }));
         } finally {
-            await Promise.all([original.close(), resumed.close()]);
-            server.stop();
+            await settleMcpTest(failures, [
+                { phase: 'original client close', run: () => original.close() },
+                { phase: 'resumed client close', run: () => resumed.close() },
+                { phase: 'server stop', run: () => server.stop() },
+                { phase: 'Session close', run: () => session.close() },
+            ]);
         }
     });
 
@@ -137,7 +592,7 @@ describe('startHappyServer notification stream', () => {
                 options?.signal?.addEventListener('abort', () => reject(options.signal?.reason), { once: true });
             });
         });
-        const session = Object.assign(createMutableApiSessionClientFixture({ sessionId: 'shared-catalog-session' }), {
+        const session = Object.assign(createMutableApiSessionClientFixture({ sessionId: 'shared-catalog-session', metadata: createTestMetadata() }), {
             getRuntimeLifetimeSignal: () => lifetime.signal,
             getHostTurnAbortSignal: () => host.signal,
             getWorkDepth: () => 0,
@@ -207,7 +662,7 @@ describe('startHappyServer notification stream', () => {
             expect(response.status).toBe(503);
             expect(await response.json()).toMatchObject({ ok: false, errorCode: 'cancelled' });
         } finally {
-            release(); await pending; server.stop();
+            release(); await pending; await server.stop();
         }
     });
 
@@ -236,9 +691,15 @@ describe('startHappyServer notification stream', () => {
             requiredDirectActionIds: [boardLayoutAction],
         });
         const client = new Client({ name: 'inventory-refresh-test', version: '1.0.0' });
+        const failures: unknown[] = [];
+        let phase = 'connect';
         try {
             await client.connect(new StreamableHTTPClientTransport(new URL(server.url)));
-            const names = async () => (await client.listTools()).tools.map(tool => tool.name);
+            let inventoryRead = 0;
+            const names = async () => {
+                phase = `inventory read ${++inventoryRead}`;
+                return (await client.listTools()).tools.map(tool => tool.name);
+            };
             expect(await names()).toContain('change_title');
             expect(await names()).toContain(boardLayoutTool);
             vi.stubEnv('HAPPIER_BUILD_FEATURES_DENY', 'sessions.board');
@@ -264,10 +725,15 @@ describe('startHappyServer notification stream', () => {
             expect(await names()).toContain('replacement_read');
             tools = [];
             expect(await names()).not.toContain('replacement_read');
+        } catch (cause) {
+            failures.push(new Error(`MCP inventory refresh test request phase: ${phase}`, { cause }));
         } finally {
             vi.unstubAllEnvs();
-            await client.close();
-            server.stop();
+            await settleMcpTest(failures, [
+                { phase: 'client close', run: () => client.close() },
+                { phase: 'server stop', run: () => server.stop() },
+                { phase: 'Session close', run: () => session.close() },
+            ]);
         }
     });
     it('keeps notifications available during catalog loss while tool requests fail closed', async () => {
@@ -303,7 +769,7 @@ describe('startHappyServer notification stream', () => {
             });
         } finally {
             notificationStream.abort();
-            server.stop();
+            await server.stop();
         }
     });
 });

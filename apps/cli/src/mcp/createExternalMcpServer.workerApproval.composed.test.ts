@@ -9,9 +9,11 @@ import { ApprovalRequestV2Schema, decodePlainArtifactStoredContent, FeaturesResp
   RPC_METHODS, SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
-import { WorkspaceSyncSeedExportPrepareV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { WorkspaceSyncSeedExportPrepareV1Schema, WorkspaceSyncTargetConflictRecoverResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { ExternalActionDaemonDispatchRequestSchema } from '@happier-dev/protocol/actions/externalActionApi';
 import type { RpcRequest } from '@/api/rpc/types';
+import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { DirectRouteGrantRequestV2Schema, SignedDirectRouteGrantV2Schema,
   type DirectRouteGrantRequestV2 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantV2';
@@ -69,7 +71,7 @@ beforeEach(async () => { native.reset(); vi.restoreAllMocks(); vi.unstubAllGloba
   await db.machineAccountGrant.deleteMany(); await db.machine.deleteMany(); await db.account.deleteMany();
 });
 
-it.skipIf(process.platform !== 'linux').each(['create', 'retire', 'retire-owner', 'terminate'] as const)('approves standalone MCP worker %s with original requester custody', async cleanup => {
+it.skipIf(process.platform !== 'linux').each(['create', 'recover', 'retire', 'retire-owner', 'terminate'] as const)('approves standalone MCP worker %s with original requester custody', async cleanup => {
   const rawTargetAdmissions: unknown[] = [];
   const machineTransports: unknown[] = [];
   const homeResponses: Array<Readonly<{ path: string; status: number; code?: string }>> = [];
@@ -86,7 +88,8 @@ it.skipIf(process.platform !== 'linux').each(['create', 'retire', 'retire-owner'
   let nativeTarget: Awaited<ReturnType<typeof maybeStartPeerMediationLoopback>> = null;
   const machineReceivers = new Map<string, (packet: RpcRequest) => Promise<unknown>>();
   const targetCustodian = 'target-custodian';
-  const sourceCustodian = cleanup === 'create' || cleanup === 'retire-owner' ? 'member-a' : 'source-custodian';
+  const createOnly = cleanup === 'create' || cleanup === 'recover';
+  const sourceCustodian = createOnly || cleanup === 'retire-owner' ? 'member-a' : 'source-custodian';
   const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo,
     sourceCustodianAccountId: sourceCustodian, targetCustodianAccountId: targetCustodian,
     remoteTarget: true, workerCleanCopy: true, remoteSeed: true, originalActionHomeHttp: true,
@@ -365,7 +368,38 @@ it.skipIf(process.platform !== 'linux').each(['create', 'retire', 'retire-owner'
     expect(setup.targetAccountRowRequests).toHaveLength(targetReadsBefore + targetInstalledGraphReads);
     expect(setup.targetRpcDiagnostics).toContainEqual({ message: 'Target receiver input', data: expect.objectContaining({
       method: `target-parent:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE}`, targetRootMatches: true }) });
-    if (cleanup !== 'create') {
+    if (cleanup === 'recover') {
+      const retained = setup.fixture.parent.handoffAdapter.listPrivateExecutions?.().find(value => value.relationshipId);
+      if (!retained?.relationshipId) throw new Error('The admitted relationship was not retained');
+      const response = await callExactMachineRpc({ credentials: setup.credentials,
+        serverUrl: setup.installed.serverHttpBaseUrl, machineId: setup.targetRef.machineId,
+        method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_RECOVER,
+        request: { relationshipId: retained.relationshipId, targetMachineId: setup.targetRef.machineId,
+          targetWorkspaceRefId: setup.targetRef.id }, timeoutMs: null });
+      expect(WorkspaceSyncTargetConflictRecoverResultV1Schema.parse(readMachineActionRpcResult(response)))
+        .toEqual({ status: 'settled' });
+      const refused = await callExactMachineRpc({ credentials: setup.credentials,
+        serverUrl: setup.installed.serverHttpBaseUrl, machineId: setup.targetRef.machineId,
+        method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_RECOVER,
+        request: { relationshipId: retained.relationshipId, targetMachineId: setup.targetRef.machineId,
+          targetWorkspaceRefId: 'unadmitted-workspace' }, timeoutMs: null });
+      expect(() => readMachineActionRpcResult(refused)).toThrowError(expect.objectContaining({
+        rpcErrorCode: 'agent_isolation_unavailable', effectAttempted: false }));
+      if (!setup.targetRpc) throw new Error('The receiving RPC boundary is unavailable');
+      // Home authentication is the network boundary; another actor cannot
+      // continue the same native loan even with Manage on this Machine.
+      const foreign = await setup.targetRpc.handleRequest({
+        method: `${setup.targetRef.machineId}:${RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_CONFLICT_RECOVER}`,
+        params: { relationshipId: retained.relationshipId, targetMachineId: setup.targetRef.machineId,
+          targetWorkspaceRefId: setup.targetRef.id }, callerAuthority: 'present_user',
+        machineAdmission: SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: 'foreign-requester',
+          custodianAccountId: targetCustodian, machineId: setup.targetRef.machineId,
+          installationId: setup.targetInstallation.installationId, role: 'manage', encryptionMode: 'plain' }),
+      }, undefined, 'authenticated_home_socket');
+      expect(() => readMachineActionRpcResult(foreign)).toThrowError(expect.objectContaining({
+        rpcErrorCode: 'agent_isolation_unavailable', effectAttempted: false }));
+    }
+    if (!createOnly) {
       const custody = setup.fixture.parent.handoffAdapter.listPrivateExecutions?.()[0]?.execution.accountRowsCustody;
       if (!custody) throw new Error('Requester relationship custody is unavailable');
       const snapshot = await readProjectAccountRows({ credentials: setup.credentials,

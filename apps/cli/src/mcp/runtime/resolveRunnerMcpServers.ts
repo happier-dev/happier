@@ -1,10 +1,13 @@
-import type { SessionMcpLocalContext, SessionMcpLocalTransportOptions } from './sessionMcpLocalTransport';
-import { SESSION_MCP_CONTEXT_FILE_ENV } from './sessionMcpLocalTransport';
-import type { AdmittedMcpStdioRuntime, PrepareMcpStdioTransport } from './supervisedStdioTransport';
-import { join } from 'node:path';
-import { SESSION_MCP_CONTEXT_RELATIVE_PATH } from '@/daemon/agentIsolation/agentLaunchMaterials';
-import type { AgentLaunchSelectedMaterial } from '@/daemon/agentIsolation/agentLaunchFrame';
 import type { McpServerConfig } from '@/agent';
+import type { AgentLaunchSelectedMaterial } from '@/daemon/agentIsolation/agentLaunchFrame';
+import { SESSION_MCP_CONTEXT_RELATIVE_PATH } from '@/daemon/agentIsolation/agentLaunchMaterials';
+import { join } from 'node:path';
+import type { AdmittedMcpStdioRuntime, PrepareMcpStdioTransport } from './supervisedStdioTransport';
+import { SESSION_MCP_CONTEXT_FILE_ENV } from './sessionMcpLocalTransport';
+import type { SessionMcpCustomToolsBridge } from './sessionMcpToolsBridge';
+import { listResolvedCustomHappierTools } from '@/agent/tools/happierTools/customMcp/listResolvedCustomHappierTools';
+import { callResolvedCustomHappierTool } from '@/agent/tools/happierTools/customMcp/callResolvedCustomHappierTool';
+import type { SessionMcpLocalContext, SessionMcpLocalTransportOptions } from './sessionMcpLocalTransport';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import { createHappierMcpBridge } from '@/agent/runtime/createHappierMcpBridge';
 import type { ExecutionRunOccurrenceWitnessV1 } from '@/agent/runtime/bridges/executionRun/runOccurrenceWitness';
@@ -28,7 +31,7 @@ import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime
 import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { McpServerCatalogUnavailableError, readMcpServersSettingsFromAccountSettings, readMcpServersSettingsForStartup } from '../servers/readMcpServersSettingsFromAccountSettings';
-import { resolveSessionCapabilitiesForDirectory } from '../servers/resolveSessionCapabilitiesForDirectory';
+import { hasExplicitlyEmptyManagedMcpSelection, resolveSessionCapabilitiesForDirectory } from '../servers/resolveSessionCapabilitiesForDirectory';
 import {
   deriveSettingsSecretsReadKeysForCredentials,
 } from '@/settings/secrets/settingsSecretsKey';
@@ -36,7 +39,6 @@ import { listSelectedMcpSharedSecretReferences, materializeMcpServerConfigRecord
 import { mergeWithBuiltInHappierMcpServer } from '../servers/mergeWithBuiltInHappierMcpServer';
 import {
   createSavedSecretMaterializerV1,
-  createSavedSecretMaterializerFromSnapshotV1,
   SavedSecretResolutionError,
   type SavedSecretCatalogResourceInputV1,
 } from '@/settings/secrets/savedSecretCatalog';
@@ -51,11 +53,12 @@ import { getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifet
 import type { HappyMcpSessionClient } from '../startHappyServer';
 import { SessionAttestedContextV1Schema } from '@happier-dev/protocol/sessions/creation/sessionAttestedContextV1';
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
-import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
+import type { AccountExecutionRuntimeRegistryLease as PluginRuntimeRegistryLease } from '@/plugins/runtime/accountExecutionRuntime';
 import { randomUUID } from 'node:crypto';
 import { createHappierMcpToolNamingResolver } from './projectMcpToolNames';
 import { readMcpRequestAuthFailureCode, readMcpRequestAuthDiagnosticCode, readMcpRequestAuthFailureDiagnostic, type McpRequestAuthCapability, type McpRequestAuthFailureCode } from './mcpRequestAuth';
 import { canonicalMcpOAuthResourceUrlV1 } from '@happier-dev/protocol/mcp/oauth/mcpOAuthResourceV1';
+import { assertMcpStdioExecutionSupported, readMcpExecutionSource, type McpExecutionSource } from './mcpExecutionSource';
 
 /**
  * The exact Session-owned Run whose authority this MCP profile serves.
@@ -200,7 +203,15 @@ type RunnerMcpServersParams = Readonly<{
   resolvedMcpServers?: Record<string, McpServerConfig>;
   /** Extension-delivered Happier tools already have their own bridge. */
   includeHappierMcpServer?: boolean;
+  /** Admitted Agent identity/socket root supplied by the Machine launch owner. */
   localTransport?: SessionMcpLocalTransportOptions;
+  /** Actual held Machine policy, never a caller-selected execution identity. */
+  isolationEnabled?: boolean;
+  /** Explicit private composition fact; never derived from Session metadata. */
+  localWorkflow?: boolean;
+  /** Existing Session-open authority, held privately by its composition owner. */
+  readExecutionSource?: (signal?: AbortSignal) => Promise<McpExecutionSource>;
+  /** Same admitted Session native/material owner, bound before catalog reads. */
   admittedStdio?: AdmittedMcpStdioRuntime;
   /**
    * Binds this resolution to one Session-owned Execution Run occurrence.
@@ -240,19 +251,22 @@ type RunnerMcpServersResult<Bridge extends { stop: () => void | Promise<void> }>
   /** Captured launch resolution; later Account hydration cannot replace its baseline. */
   reach?: RunnerMcpRuleObservation & Readonly<{ selectedServerIds: readonly string[] }>;
 }>;
-type HappierMcpBridgeHandle = {
+type HappierMcpServerHandle = {
+  supportedSessionReadActions?: readonly SessionRunPromptReadActionIdV1[];
+  stop: () => Promise<void>;
+};
+type HappierMcpBridgeHandle = HappierMcpServerHandle & {
   url: string;
   localContext?: SessionMcpLocalContext;
   contextFilePath?: string;
   supportedSessionReadActions: readonly SessionRunPromptReadActionIdV1[];
   readToolNames: (signal?: AbortSignal) => Promise<readonly string[]>;
-  stop: () => Promise<void>;
 };
 
 export function resolveRunnerMcpServers(params: RunnerMcpServersParams & { includeHappierMcpServer?: true }): Promise<RunnerMcpServersResult<HappierMcpBridgeHandle>>;
-export function resolveRunnerMcpServers(params: RunnerMcpServersParams & { includeHappierMcpServer: false }): Promise<RunnerMcpServersResult<{ stop: () => Promise<void> }>>;
-export function resolveRunnerMcpServers(params: RunnerMcpServersParams): Promise<RunnerMcpServersResult<{ stop: () => Promise<void> }>>;
-export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): Promise<RunnerMcpServersResult<{ stop: () => Promise<void> }>> {
+export function resolveRunnerMcpServers(params: RunnerMcpServersParams & { includeHappierMcpServer: false }): Promise<RunnerMcpServersResult<HappierMcpServerHandle>>;
+export function resolveRunnerMcpServers(params: RunnerMcpServersParams): Promise<RunnerMcpServersResult<HappierMcpServerHandle>>;
+export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): Promise<RunnerMcpServersResult<HappierMcpServerHandle>> {
   const pluginAttachments: Readonly<{ dispose(): void | Promise<void> }>[] = [];
   const disposePluginAttachments = async () => {
     await Promise.all(pluginAttachments.splice(0).map(async attachment => {
@@ -276,8 +290,26 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
   const accountCredentials = Object.hasOwn(params, 'accountCredentials')
     ? params.accountCredentials ?? null
     : params.credentials;
+  const hasResolvedExtras = Object.keys(params.resolvedMcpServers ?? {}).length > 0;
+  const managedMcpExplicitlyEmpty = !hasResolvedExtras && hasExplicitlyEmptyManagedMcpSelection(params.sessionMetadata);
+  // Restricted Session authority omits Account catalog credentials, not its
+  // already-bound requester identity. The reviewed standalone endpoint has no
+  // daemon requester custody and supplies only its own sealed host config.
+  const needsRequesterSource = !managedMcpExplicitlyEmpty && (accountCredentials !== null
+    || hasResolvedExtras && params.credentials.requesterSessionCredentialScope !== undefined);
+  const sourceSignal = params.executionRun?.signal ?? params.session.getRuntimeLifetimeSignal?.() ?? undefined;
+  let executionSource = needsRequesterSource ? params.readExecutionSource
+    ? await params.readExecutionSource(sourceSignal) : await readMcpExecutionSource({ credentials: params.credentials,
+    localWorkflow: params.localWorkflow,
+    ...(accountCredentials ? { catalogCredentials: accountCredentials } : {}), sessionId: params.session.sessionId, machineId: params.machineId,
+    serverHttpBaseUrl: params.session.getServerBinding().serverUrl,
+    signal: sourceSignal }) : null;
+  if (executionSource && hasResolvedExtras && !params.admittedStdio) {
+    executionSource = await assertMcpStdioExecutionSupported(executionSource, params.isolationEnabled,
+      params.executionRun?.signal ?? params.session.getRuntimeLifetimeSignal?.() ?? undefined);
+  }
   let operationContext = accountCredentials ? params.operationContext : undefined;
-  const initialAccountSnapshot = params.accountSettingsSnapshot;
+  const initialAccountSnapshot = managedMcpExplicitlyEmpty ? null : params.accountSettingsSnapshot;
   if (accountCredentials && !operationContext && initialAccountSnapshot
     && initialAccountSnapshot === getActiveAccountSettingsSnapshot()) {
     // Ordinary Home callers use this same admitted Account owner. Capture its
@@ -306,7 +338,7 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
   const scopedSession: HappyMcpSessionClient = run
     ? createRunScopedMcpSessionView(params.session, run)
     : params.session;
-  const accountSnapshot = params.accountSettingsSnapshot ?? null;
+  const accountSnapshot = initialAccountSnapshot ?? null;
   const accountScopeKey = accountCredentials ? operationContext
     ? runWithServerHttpBaseUrl(operationContext.serverHttpBaseUrl, () => resolveAccountSettingsScopeKeyForToken(accountCredentials.token))
     : resolveAccountSettingsScopeKeyForToken(accountCredentials.token) : null;
@@ -316,20 +348,31 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
   }
   const publishCapabilityNotice = async (items: SessionCapabilityNoticeV1['items']) => {
     const notice = SessionCapabilityNoticeV1Schema.parse({ v: 1, items });
-    // This optional diagnostic has no delivery-dependent caller. Await journal
-    // admission; its stable identity is retried and deduplicated by Home, so
-    // native preparation need not await the delivery acknowledgement.
-    await params.session.enqueueSessionEventCommitted({
-      type: 'message',
-      message: notice.items.map(item => `${item.name} couldn't start · ${item.detail ?? item.code}`).join('\n'),
-      [SESSION_CAPABILITY_NOTICE_SIDECAR_KEY]: notice,
-    }, undefined, { awaitDelivery: false });
+    const previous = SessionCapabilityNoticeV1Schema.safeParse(
+      (params.session.getMetadataSnapshot?.() ?? params.sessionMetadata)?.mcpCapabilityNoticeV1,
+    );
+    const facts = (value: SessionCapabilityNoticeV1) => JSON.stringify(value.items.map(item =>
+      JSON.stringify([item.kind, item.itemId ?? null, item.name, item.code, item.detail ?? null])).sort());
+    if (previous.success ? facts(previous.data) === facts(notice) : items.length === 0) return;
+    if (items.length > 0) {
+      // A changed set is a new transcript entry, including a return to an old
+      // failure. The existing journal owns retries of this particular entry.
+      const admitted = await params.session.enqueueSessionEventCommitted({
+        type: 'message',
+        message: notice.items.map(item => `${item.name} couldn't start · ${item.detail ?? item.code}`).join('\n'),
+        [SESSION_CAPABILITY_NOTICE_SIDECAR_KEY]: notice,
+      }, `capability-notice:${randomUUID()}`, { awaitDelivery: false });
+      if (!admitted.persisted) return;
+    }
     if (operationContext && !await operationContext.isCurrent()) {
       throw new McpServerCatalogUnavailableError('scope-retired');
     }
+    // Retain only the last observed failure set in the Session's existing
+    // private metadata. An empty set records recovery without inventing copy.
+    await params.session.updateMetadata(metadata => ({ ...metadata, mcpCapabilityNoticeV1: notice }));
   };
   let mcpSettings: ReturnType<typeof readMcpServersSettingsFromAccountSettings> | null = null;
-  if (accountCredentials) {
+  if (accountCredentials && !managedMcpExplicitlyEmpty) {
     const startup = readMcpServersSettingsForStartup({ snapshot: accountSnapshot, settings: accountSettings });
     if (startup.status === 'ready') mcpSettings = startup.settings;
     else await publishCapabilityNotice([{ kind: 'mcp_server', name: 'MCP servers', code: startup.error.code, detail: startup.error.reason }]);
@@ -352,11 +395,8 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
     }
   }
   recordStartupPhase('plugin_projection');
-  const detected = params.detectedMcpServers ?? daemonPluginPreparation?.detectedServers ?? (pluginRegistry?.discoverMcpServersForDetection && params.agentId
-    ? (await detectProviderMcpServers({ directory: params.directory, providers: [params.agentId], env,
-      runtimeRegistry: pluginRegistry })).servers : []);
+  const detected = params.detectedMcpServers ?? [];
   const nativeServerNames = readLoadedMcpNativeServerNames({ servers: detected, agentId: params.agentId });
-  recordStartupPhase('native_discovery');
   let resolvedSelection: Awaited<ReturnType<typeof resolveSessionCapabilitiesForDirectory>> | null = null;
   if (mcpSettings && accountCredentials) {
     const initialSettings = mcpSettings;
@@ -376,6 +416,10 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
       mcpPluginItems, nativeServerNames,
     }));
     resolvedSelection = initialSelection;
+    if (!params.admittedStdio && Object.values(initialSelection.selectedServersByName).some(server => server.enabled)) {
+      executionSource = await assertMcpStdioExecutionSupported(executionSource!, params.isolationEnabled,
+        run?.signal ?? params.session.getRuntimeLifetimeSignal?.() ?? undefined);
+    }
     recordStartupPhase('capability_selection');
     const sharedReferences = listSelectedMcpSharedSecretReferences(initialSelection.selectedServersByName);
     if (sharedReferences.length > 0) {
@@ -420,12 +464,99 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
       recordStartupPhase('capability_reselection');
     }
   }
+  if (resolvedSelection && Object.values(resolvedSelection.selectedServersByName).some(server => server.enabled)) {
+    if (!params.admittedStdio) executionSource = await assertMcpStdioExecutionSupported(executionSource!, params.isolationEnabled,
+      run?.signal ?? params.session.getRuntimeLifetimeSignal?.() ?? undefined);
+    // Native config reads happen in the plugin host's filesystem, not under an
+    // Agent UID. Only an admitted selected profile can request name collision
+    // discovery; an empty profile needs no native host configuration.
+    const discoverySignal = run?.signal ?? params.session.getRuntimeLifetimeSignal?.() ?? undefined;
+    const nativeServers = params.detectedMcpServers ?? (daemonPluginPreparation
+      ? await daemonPluginPreparation.discoverNativeServers()
+      : pluginRegistry?.discoverMcpServersForDetection && params.agentId
+        ? (await detectProviderMcpServers({ directory: params.directory, providers: [params.agentId], env,
+          sessionId: params.session.sessionId, signal: discoverySignal, runtimeRegistry: pluginRegistry })).servers : []);
+    discoverySignal?.throwIfAborted();
+    const nativeNames = readLoadedMcpNativeServerNames({ servers: nativeServers, agentId: params.agentId });
+    if (nativeNames.length > 0) {
+      const serverBinding = params.session.getServerBinding();
+      const selection = readSessionCapabilitySelectionFromMetadataV1(params.sessionMetadata ?? null).mcp;
+      resolvedSelection = await runWithServerHttpBaseUrl(serverBinding.serverUrl, () => resolveSessionCapabilitiesForDirectory({
+        settings: mcpSettings!, machineId: params.machineId, directory: params.directory,
+        selection: selection ? { mcp: selection } : {}, agentId: params.agentId, agentAcceptsUserMcp: params.agentAcceptsUserMcp,
+        projectKey: resolvedSelection!.projectKey, mcpPluginItems, nativeServerNames: nativeNames,
+      }));
+    }
+    recordStartupPhase('native_discovery');
+  }
   if (operationContext && !await operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
   recordStartupPhase('account_currentness');
   const emptyMcpServers: Record<string, McpServerConfig> = {};
+  const customProfileLifetime = new AbortController();
+  const customProfileOperations = new Set<Promise<unknown>>();
+  // The same resolver already owns profile-only composition (no native Happier
+  // advertisement and no local transport). Explicit CLI demand uses that owner
+  // per operation; unopened shell delivery never materializes third-party tools.
+  const withSelectedCustomProfile = async <Result>(signal: AbortSignal | undefined,
+    operation: (profile: RunnerMcpServersResult<{ stop: () => Promise<void> }>, signal?: AbortSignal) => Promise<Result>,
+  ): Promise<Result> => {
+    const pending = (async () => {
+    const lifetime = scopedSession.getRuntimeLifetimeSignal?.();
+    const signals = [signal, lifetime, customProfileLifetime.signal].filter((value): value is AbortSignal => value != null);
+    const combined = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
+    combined?.throwIfAborted();
+    const profile = await resolveRunnerMcpServers({ ...params, includeHappierMcpServer: false,
+      ...(operationContext ? { operationContext } : {}),
+      localTransport: undefined, agentAcceptsUserMcp: true });
+    try {
+      combined?.throwIfAborted();
+      if (operationContext && !await operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
+      const result = await operation(profile, combined);
+      if (operationContext && !await operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
+      return result;
+    } finally { await profile.happierMcpServer.stop(); }
+    })();
+    customProfileOperations.add(pending);
+    try { return await pending; }
+    finally { customProfileOperations.delete(pending); }
+  };
+  const sessionToolsBridge: SessionMcpCustomToolsBridge = {
+    list: signal => withSelectedCustomProfile(signal, (profile, currentSignal) => listResolvedCustomHappierTools({
+      mcpServers: profile.mcpServers, signal: currentSignal,
+      prepareTransport: profile.prepareTransport,
+    })),
+    call: (input, signal) => withSelectedCustomProfile(signal, async (profile, currentSignal) => {
+      if (!Object.hasOwn(profile.mcpServers, input.source)) {
+        return { ok: false as const, errorCode: 'server_not_found', error: 'Unknown MCP server source.' };
+      }
+      if (!params.mcpPermissionHandler) return { ok: false as const, errorCode: 'approval_required', error: 'Tool approval is required.' };
+      const witness = scopedSession.getActiveTurnAdmissionWitness?.();
+      const mode = String(scopedSession.getPermissionMode?.() ?? 'default');
+      const decision = await params.mcpPermissionHandler.handleToolCall(input.toolCallId ?? randomUUID(),
+        `mcp__${input.source}__${input.toolName}`, input.args, {
+          ...(currentSignal ? { signal: currentSignal } : {}),
+          ...(witness ? { turnId: witness.turnId, causalPermissionAuthority: witness.causalPermissionAuthority ?? null } : {}),
+          callerPermissionMode: mode,
+          mcpToolPolicy: { permissionMode: mode, readContext: () => ({
+            mcpServerIdentities: profile.mcpServerIdentities ?? {},
+            catalog: operationContext?.readSnapshot()?.mcpServerCatalog ?? accountSnapshot?.mcpServerCatalog ?? null,
+          }) },
+        });
+      if (decision.decision === 'denied' || decision.decision === 'abort') {
+        return { ok: false as const, errorCode: decision.decision === 'abort' ? 'cancelled' : 'permission_denied', error: 'Tool execution was not approved.' };
+      }
+      return await callResolvedCustomHappierTool({ ...input, mcpServers: profile.mcpServers,
+        prepareTransport: profile.prepareTransport,
+        signal: currentSignal, operationContext: { isCurrent: async () => !currentSignal?.aborted
+          && (!operationContext || await operationContext.isCurrent()) },
+      });
+    }),
+  };
   const builtIn = params.includeHappierMcpServer === false && !params.localTransport
     ? { happierMcpServer: { stop: async () => undefined, localContext: undefined, contextFilePath: undefined }, mcpServers: emptyMcpServers }
     : await createHappierMcpBridge(scopedSession, {
+    sessionToolsBridge,
+    sessionMetadata: params.sessionMetadata ?? params.session.getMetadataSnapshot?.(),
     ...(params.localTransport ? { localTransport: params.localTransport } : {}),
     mcpToolCallIdMetaKey: params.mcpToolCallIdMetaKey,
     commandMode: params.commandMode,
@@ -443,7 +574,17 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
       : {}),
     requiredDirectActionIds: run ? SESSION_RUN_PROMPT_READ_ACTION_IDS_V1 : undefined,
   });
-  const ownedBridge = builtIn.happierMcpServer;
+  const ownedBridge = {
+    ...builtIn.happierMcpServer,
+    get localContext() { return builtIn.happierMcpServer.localContext; },
+    stop: async () => {
+      customProfileLifetime.abort();
+      await builtIn.happierMcpServer.stop();
+      // Request cleanup owns its materialization until the finally above has
+      // settled. Retirement cannot return with an external profile still live.
+      await Promise.allSettled([...customProfileOperations]);
+    },
+  };
   const nativeContextFile = params.admittedStdio && builtIn.happierMcpServer.localContext
     ? join(params.admittedStdio.target.runtimeHome, SESSION_MCP_CONTEXT_RELATIVE_PATH) : undefined;
   const nativeBuiltInServers = nativeContextFile && builtIn.mcpServers.happier ? {
@@ -486,12 +627,11 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
   }
 
   const settingsSecretsReadKeys = deriveSettingsSecretsReadKeysForCredentials(accountCredentials);
-  const invocationSnapshot = operationContext?.readSnapshot();
+  const invocationSnapshot = operationContext ? operationContext.readSnapshot() : accountSnapshot;
   if (operationContext && !invocationSnapshot) {
     await ownedBridge.stop();
     throw new McpServerCatalogUnavailableError('scope-retired');
   }
-  const sourceSignal = params.executionRun?.signal ?? params.session.getRuntimeLifetimeSignal?.() ?? undefined;
   const savedSecretMaterializer = invocationSnapshot
     ? await acquireSavedSecretMaterializerForOperation({ snapshot: invocationSnapshot,
       references: listSelectedMcpSharedSecretReferences(resolvedSelection.selectedServersByName), operationContext, signal: sourceSignal, secretSources: pluginRegistry?.secretSources })
@@ -630,20 +770,18 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
   const warningsByName = new Map(materialized.warnings
     .filter(warning => !Object.hasOwn(merged, warning.serverName))
     .map(warning => [warning.serverName, warning]));
-  if (warningsByName.size > 0) {
-    try {
-      await publishCapabilityNotice([...warningsByName.values()].map(warning => ({
-        kind: 'mcp_server', name: warning.serverName,
-        itemId: resolvedSelection.itemsByName[warning.serverName]?.serverId,
-        code: warning.code, detail: warning.detail,
-      })));
-    } catch (error) {
-      disposePluginAttachments();
-      materialized.cleanup();
-      retireRequestAuth();
-      builtIn.happierMcpServer.stop();
-      throw error;
-    }
+  try {
+    await publishCapabilityNotice([...warningsByName.values()].map(warning => ({
+      kind: 'mcp_server', name: warning.serverName,
+      itemId: resolvedSelection.itemsByName[warning.serverName]?.serverId,
+      code: warning.code, detail: warning.detail,
+    })));
+  } catch (error) {
+    await disposePluginAttachments();
+    materialized.cleanup();
+    await retireRequestAuth();
+    await ownedBridge.stop();
+    throw error;
   }
   recordStartupPhase('capability_notice');
 

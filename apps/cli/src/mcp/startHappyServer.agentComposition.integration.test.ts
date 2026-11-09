@@ -134,7 +134,7 @@ vi.mock('@/session/transport/http/sessionSystemRecordsHttp', async (importOrigin
 import { startHappyServer, type HappyMcpSessionClient } from '@/mcp/startHappyServer';
 
 const COMPANION_PLUGIN_ID = 'examples.public-sdk-review-assistant';
-const COMPANION_TOOL_ID = 'review-summary-tool';
+const COMPANION_TOOL_ID = 'review-summary';
 const COMPANION_TOOL_NAME = 'review_summary';
 const COMPANION_ACTION_SETTINGS_ID = `${COMPANION_PLUGIN_ID}/actions/review-summary` as const;
 const UNMANAGED_TOOL_NAME = 'always_visible';

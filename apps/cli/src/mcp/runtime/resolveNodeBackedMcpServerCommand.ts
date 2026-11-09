@@ -7,6 +7,11 @@ import { resolvePackagedRuntimeEntrypoint } from '@/packagedRuntime/resolvePacka
 import { isBun } from '@/utils/runtime';
 import { resolveCliSourceRuntimeFlags, resolveCliTsxTsconfigPath, resolveTsxImportHookPath } from '@/utils/spawnHappyCLI';
 
+function isTruthyEnvFlag(raw: string | undefined): boolean {
+  const normalized = (raw ?? '').trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'y';
+}
+
 export type ResolvedNodeBackedMcpServerCommand = Readonly<{
   command: string;
   args: string[];
@@ -26,7 +31,8 @@ export async function resolveNodeBackedMcpServerCommand(params: Readonly<{
   const sourceEntrypoint = join(projectPath(), 'src', ...params.sourceEntrypointSegments);
   const tsxHookPath = resolveTsxImportHookPath();
   const packagedEntrypoint = resolvePackagedRuntimeEntrypoint(join(...params.distEntrypointSegments));
-  const shouldPreferSourceEntrypoint = params.preferSourceEntrypoint === true;
+  const shouldPreferSourceEntrypoint = params.preferSourceEntrypoint
+    ?? isTruthyEnvFlag(process.env.HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT);
 
   if (shouldPreferSourceEntrypoint && existsSync(sourceEntrypoint) && typeof tsxHookPath === 'string' && tsxHookPath.length > 0) {
     return {

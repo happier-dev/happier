@@ -147,9 +147,15 @@ it.each(['account_depth', 'account_agent', 'account_ceiling', 'policy_read_unava
   const metadata = createTestMetadata({ machineId: 'machine', path: h.cwd });
   const parent = createMutableApiSessionClientFixture({ sessionId: h.sessionId, metadata });
   const readRoleSources = createRoleSourceReader({});
+  let selectionAvailable = true;
+  const nativeTurnId = 'source-turn';
+  const readAppliedChildSelection = () => selectionAvailable ? { status: 'applied' as const,
+    backendTarget: { kind: 'backend' as const, backendId: h.retainedAgent.agentId },
+    modelId: 'fixture-model', connectedServices: null } : { status: 'unavailable' as const };
   const roles = createSessionRoleContext({ readMetadata: () => metadata, readRoleSources,
     readOrganization: async () => ({ manager: null, origin: null }),
     readAccountRoleOverrides: () => ({ status: 'ready', overrides: {} }),
+    readAppliedChildSelection,
   });
   const causalAuthority = () => ({ kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: permission });
   const host: HappyMcpSessionClient = {
@@ -159,9 +165,9 @@ it.each(['account_depth', 'account_agent', 'account_ceiling', 'policy_read_unava
     getBackendTarget: () => ({ kind: 'backend', backendId: h.retainedAgent.agentId }),
     getCurrentSessionLocation: () => ({ machineId: 'machine', path: h.cwd }),
     getSessionRoleContext: () => roles, readRoleSources, getPermissionMode: () => permission,
-    getWorkDepth: () => 0, getHostTurnWorkDepth: id => id === 'source-turn' ? turnDepth : undefined,
-    getActiveTurnPermissionWitness: () => ({ turnId: 'source-turn', causalPermissionAuthority: causalAuthority() }),
-    getActiveTurnAdmissionWitness: () => ({ turnId: 'source-turn', inputId: 'source-input', userMessageSeq: 1, userMessageSeqs: [1],
+    getWorkDepth: () => 0, getHostTurnWorkDepth: id => id === nativeTurnId ? turnDepth : undefined,
+    getActiveTurnPermissionWitness: () => ({ turnId: nativeTurnId, causalPermissionAuthority: causalAuthority() }),
+    getActiveTurnAdmissionWitness: () => ({ turnId: nativeTurnId, inputId: 'source-input', userMessageSeq: 1, userMessageSeqs: [1],
       agentStartCaller: { kind: 'session', sessionId: h.sessionId, starterDepth: 0, turnDepth },
       callerPermissionMode: permission, causalPermissionAuthority: causalAuthority() }),
   };
@@ -174,8 +180,8 @@ it.each(['account_depth', 'account_agent', 'account_ceiling', 'policy_read_unava
     resolveAccountSettings: () => ({}), resolveRunReportPolicy: async () => ({ preset: 'important' }),
     sessionInteractionHost: { session: parent, machineId: 'machine',
       permissionHandler: new ProviderEnforcedPermissionHandler(parent, { logPrefix: '[Run dispatch fixture]' }),
-      readAppliedChildSelection: () => ({ status: 'applied', backendTarget: host.getBackendTarget!()!,
-        modelId: 'fixture-model', connectedServices: null }),
+      readAppliedChildSelection,
+      readCurrentTurnId: () => nativeTurnId,
     }, onManagerCreated: created => { manager = created; },
   });
   let failNextPolicyRead = false;
@@ -307,6 +313,9 @@ it.each(['account_depth', 'account_agent', 'account_ceiling', 'policy_read_unava
       expect(manager?.listPublicForRequest({}, h.sessionId)).toHaveLength(1);
     };
     if (scenario === 'ordinary_run_authority') {
+      selectionAvailable = false;
+      await refuse(request, 'target_unavailable');
+      selectionAvailable = true;
       await refuse({ ...request, sessionId: 'foreign-session' }, 'unsupported_action');
       await refuse({ ...request, roleId: 'missing-role' }, 'role_target_unavailable');
       turnDepth = 4;

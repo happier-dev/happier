@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as fs from 'node:fs/promises';
+import { join } from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -8,11 +10,13 @@ import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { registerAccountHomeHttp } from '@/session/actions/widgetApproval.testkit';
 import { registerAuthoredAccountActionRelease } from '@/plugins/runtime/accountPluginActions.testkit';
 import { withTempDir } from '@/testkit/fs/tempDir';
-import { reloadConfiguration } from '@/configuration';
-import { writeStoredCredentialsForServerId } from '@/persistence';
+import { configuration, reloadConfiguration } from '@/configuration';
+import { bindRequesterSessionCredentialScope, writeStoredCredentialsForServerId } from '@/persistence';
+import { adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import type { HappyMcpSessionClient } from './startHappyServer';
 import type { ProjectedPluginToolCatalogEntry } from '@/plugins/runtime/toolCatalog';
 import { resolveRunnerMcpServers } from './runtime/resolveRunnerMcpServers';
+import { connectSessionMcpClient } from './runtime/sessionMcpLocalTransport';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { accountSettingsParse } from '@happier-dev/protocol';
@@ -56,12 +60,20 @@ describe('createHappierMcpServer plugin tools', () => {
       process.env = { ...originalEnv, HAPPIER_HOME_DIR: homeDir, HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1' };
       reloadConfiguration();
       const app = fastify();
-      const endpoint = 'http://requester-discovery.test';
-      const features = registerAccountHomeHttp(app, { accountId: 'requester-owner', serverId: 'requester-home' });
+      const endpoint = 'https://requester-discovery.test';
+      const homeServerIdentityId = 'srv_requester-home';
+      const features = registerAccountHomeHttp(app, { accountId: 'requester-owner', serverId: homeServerIdentityId });
       const { pluginId } = await registerAuthoredAccountActionRelease(app, 'requester-owner');
       await app.ready();
       const restore = installAxiosFastifyAdapter({ app, origin: endpoint });
-      const credentials = { token: 'requester-custody', encryption: null, credentialProvenance: 'stored_session' as const };
+      await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: 'requester-home',
+        createIfMissing: true, observation: 'exact', descriptor: { v: 1, homeServerIdentityId,
+          canonicalServerUrl: endpoint, revision: 1, endpoints: [{ kind: 'https', url: endpoint }] } });
+      const credentials = bindRequesterSessionCredentialScope({ token: 'requester-custody', encryption: null,
+        credentialProvenance: 'stored_session' as const }, { serverId: 'requester-home', serverHttpBaseUrl: endpoint,
+        requesterSession: { sessionId: 'requester-session', homeServerIdentityId, attribution: {
+          serverId: 'requester-home', accountId: 'requester-owner', machineId: 'requester-machine', installationId: 'requester-installation',
+        } } });
       let current = true;
       const snapshot = { source: 'network' as const, settings: accountSettingsParse({}), rawSettings: {},
         settingsVersion: 0, loadedAtMs: 1, settingsSecretsReadKeys: [],
@@ -74,25 +86,34 @@ describe('createHappierMcpServer plugin tools', () => {
         getServerBinding: () => ({ serverId: 'requester-home', serverUrl: endpoint }),
         getServerFeaturesSnapshot: () => ({ status: 'ready' as const, provenance: 'authenticated' as const, features }),
         enqueueSessionEventCommitted: async () => ({ persisted: true as const, delivered: true as const }) };
-      const client = new Client({ name: 'requester-discovery', version: '1' });
+      let closeClient: () => Promise<void> = async () => {};
       let bridge: Awaited<ReturnType<typeof resolveRunnerMcpServers>> | undefined;
       try {
         // No profile credential exists: the admitted requester context owns currentness.
         // A standalone caller requires a stored sign-in. The requester bridge
         // below must use its admitted custody and still refuse later retirement.
-        const storedProfileRuntime = createHappierMcpServer(session, {
-          credentials, accountSettings: snapshot.settings, pluginToolCatalog: [],
+        const retiredCustodyRuntime = createHappierMcpServer(session, {
+          credentials, accountSettings: snapshot.settings, pluginToolCatalog: [], isCredentialCurrent: () => false,
         });
         try {
-          expect(await storedProfileRuntime.executeTool({
+          expect(await retiredCustodyRuntime.executeTool({
             toolName: 'action_spec_search', args: { query: 'Echo personal' },
           })).toMatchObject({ ok: false, errorCode: 'plugin_action_generation_retired' });
-        } finally { await storedProfileRuntime.mcp.close(); }
+        } finally { await retiredCustodyRuntime.mcp.close(); }
         bridge = await resolveRunnerMcpServers({ session, credentials, accountCredentials: credentials,
           accountSettings: snapshot.settings, accountSettingsSnapshot: snapshot, operationContext,
           machineId: 'requester-machine', directory: homeDir, env: {}, tmpDir: null });
         if (!('url' in bridge.happierMcpServer)) throw new Error('Expected native MCP bridge');
-        await client.connect(new StreamableHTTPClientTransport(new URL(String(bridge.happierMcpServer.url))));
+        let client: Client;
+        if ('localContext' in bridge.happierMcpServer && bridge.happierMcpServer.localContext) {
+          const connected = await connectSessionMcpClient(bridge.happierMcpServer.localContext);
+          client = connected.client;
+          closeClient = connected.close;
+        } else {
+          client = new Client({ name: 'requester-discovery', version: '1' });
+          closeClient = () => client.close();
+          await client.connect(new StreamableHTTPClientTransport(new URL(String(bridge.happierMcpServer.url))));
+        }
         const search = CallToolResultSchema.parse(await client.callTool({ name: 'action_spec_search', arguments: { query: 'Echo personal' } }));
         expect(search.isError, JSON.stringify(search)).toBe(false);
         expect(search.structuredContent).toMatchObject({ actionSpecs: expect.arrayContaining([
@@ -119,7 +140,7 @@ describe('createHappierMcpServer plugin tools', () => {
           text: expect.stringContaining('plugin_action_generation_retired') })]));
         expect(await rpcSearch()).toMatchObject({ ok: false, errorCode: 'plugin_action_generation_retired' });
       } finally {
-        await client.close(); bridge?.happierMcpServer.stop(); restore(); await app.close();
+        await closeClient(); bridge?.happierMcpServer.stop(); restore(); await app.close();
         process.env = originalEnv; reloadConfiguration();
       }
     });
@@ -133,31 +154,49 @@ describe('createHappierMcpServer plugin tools', () => {
       const app = fastify();
       const endpoint = 'http://session-account.test';
       const accountId = 'session-account-owner';
+      const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+      let observeAccountRequests = false;
+      app.addHook('preHandler', async request => {
+        if (observeAccountRequests && (request.url.startsWith('/v1/artifacts')
+          || request.url.startsWith('/v1/account/') || request.url.startsWith('/v2/account/'))) {
+          expect(request.headers.authorization === `Bearer ${token}`).toBe(true);
+        }
+      });
       const features = registerAccountHomeHttp(app, { accountId, serverId: 'session-account' });
       const { pluginId } = await registerAuthoredAccountActionRelease(app, accountId);
       await app.ready();
       const restore = installAxiosFastifyAdapter({ app, origin: endpoint });
       vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(features));
-      const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
+      const credentials = { token,
         encryption: null, credentialProvenance: 'stored_session' as const };
       await writeStoredCredentialsForServerId('session-account', credentials);
+      observeAccountRequests = true;
+      const fileReads = vi.spyOn(fs, 'readFile');
+      const accessKeyReads = () => fileReads.mock.calls.filter(([path]) => String(path) === join(configuration.serversDir, 'session-account', 'access.key'));
+      const lifetime = new AbortController();
       const { mcp, executeTool } = createHappierMcpServer({ ...sessionClient('session-account-agent'),
         getServerBinding: () => ({ serverId: 'session-account', serverUrl: endpoint }),
         getServerFeaturesSnapshot: () => ({ status: 'ready', provenance: 'authenticated', features }),
-      }, { credentials, pluginToolCatalog: [] });
+      }, { credentials, pluginToolCatalog: [], toolExecutionSignal: lifetime.signal });
       boundary.daemonPost.mockClear();
       try {
         const result = await executeTool({ toolName: 'action_execute', args: {
           actionId: 'action.invoke', input: { action: { pluginId, localId: 'echo' }, input: { key: 'agent' } },
         } });
         expect(result).toMatchObject({ ok: true, result: { key: 'agent', surface: 'agent' } });
+        expect(accessKeyReads()).toHaveLength(0);
         await writeStoredCredentialsForServerId('session-account', { ...credentials, token: 'replacement-account' });
-        const retired = await executeTool({ toolName: 'action_execute', args: {
-          actionId: 'action.invoke', input: { action: { pluginId, localId: 'echo' }, input: { key: 'retired' } },
+        const captured = await executeTool({ toolName: 'action_execute', args: {
+          actionId: 'action.invoke', input: { action: { pluginId, localId: 'echo' }, input: { key: 'captured' } },
         } });
-        expect(retired).toMatchObject({ ok: false, errorCode: 'plugin_action_generation_retired' });
+        expect(captured).toMatchObject({ ok: true, result: { key: 'captured', surface: 'agent' } });
+        expect(accessKeyReads()).toHaveLength(0);
+        lifetime.abort();
+        expect(await executeTool({ toolName: 'action_execute', args: {
+          actionId: 'action.invoke', input: { action: { pluginId, localId: 'echo' }, input: { key: 'cancelled' } },
+        } })).toMatchObject({ ok: false, errorCode: 'cancelled' });
         expect(boundary.daemonPost).not.toHaveBeenCalled();
-      } finally { restore(); await mcp.close(); await app.close(); process.env = originalEnv; reloadConfiguration(); }
+      } finally { lifetime.abort(); fileReads.mockRestore(); restore(); await mcp.close(); await app.close(); process.env = originalEnv; reloadConfiguration(); }
     });
   });
 
@@ -167,6 +206,7 @@ describe('createHappierMcpServer plugin tools', () => {
       name: 'acme_review_start', title: 'Review', description: 'Start a plugin-defined review workflow',
       inputSchema: { type: 'object', properties: { scope: { type: 'string' } }, required: ['scope'], additionalProperties: false },
       outputSchema: { type: 'object', properties: { completed: { type: 'boolean' } }, required: ['completed'], additionalProperties: false },
+      toolExposure: { agent: 'direct' },
       surfaces: ['agent', 'mcp', 'cli'],
     } satisfies ProjectedPluginToolCatalogEntry;
     const { mcp } = createHappierMcpServer(sessionClient('sess_agent_plugin_tool_1'), { pluginToolCatalog: [entry] });
@@ -197,14 +237,17 @@ describe('createHappierMcpServer plugin tools', () => {
     const catalog = [{
       toolId: 'acme.composition/selected-tool', actionId: 'acme.composition/actions/selected-action',
       name: 'acme_composition_selected', title: 'Selected', description: 'The selected composition tool.',
+      toolExposure: { agent: 'direct' },
       inputSchema: { type: 'object', additionalProperties: false }, safety: 'safe', surfaces: ['agent'],
     }, {
       toolId: 'acme.composition/unselected-tool', actionId: 'acme.composition/actions/unselected-action',
       name: 'acme_composition_unselected', title: 'Unselected', description: 'The unselected composition tool.',
+      toolExposure: { agent: 'direct' },
       inputSchema: { type: 'object', additionalProperties: false }, safety: 'safe', surfaces: ['agent'],
     }, {
       toolId: 'acme.unmanaged/always-visible-tool', actionId: 'acme.unmanaged/actions/always-visible-action',
       name: 'acme_unmanaged_visible', title: 'Unmanaged', description: 'A tool without composition ownership.',
+      toolExposure: { agent: 'direct' },
       inputSchema: { type: 'object', additionalProperties: false }, safety: 'safe', surfaces: ['agent'],
     }] as const satisfies readonly ProjectedPluginToolCatalogEntry[];
     for (const selected of [true, false]) {

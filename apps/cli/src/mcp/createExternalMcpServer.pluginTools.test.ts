@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { ACTION_IDS } from '@happier-dev/protocol/actions/actionIds';
 import { PUBLIC_ACTION_INPUT_SCHEMAS, PUBLIC_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/actionSpecs';
@@ -31,7 +32,12 @@ describe('createExternalMcpServer plugin tools', () => {
   };
   let homeDir: string;
   let app: ReturnType<typeof fastify>;
+  let declaredActionInputSchema: ProjectedPluginToolCatalogEntry['inputSchema'];
+  let admittedInputs: unknown[];
   beforeEach(async () => {
+    declaredActionInputSchema = { type: 'object', properties: { scope: { type: 'string' } },
+      required: ['scope'], additionalProperties: false };
+    admittedInputs = [];
     homeDir = await createTempDir('happier-mcp-machine-tools-');
     app = fastify();
     registerAccountHomeHttp(app, { accountId: 'machine-tool-owner', serverId: 'machine-tools-home' });
@@ -50,15 +56,23 @@ describe('createExternalMcpServer plugin tools', () => {
     boundary.daemonPost.mockImplementation(async (_path, request) => {
       // This Home has no Account availability endpoint. The daemon transport
       // must therefore supply typed Machine placement before receiving effects.
-      const result = request.actionId === 'action.spec.get'
-        ? PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.get'].parse({ actionSpec: {
+      if (request.actionId === 'action.spec.get') {
+        const result = PUBLIC_ACTION_OUTPUT_SCHEMAS['action.spec.get'].parse({ actionSpec: {
           id: PUBLIC_ACTION_INPUT_SCHEMAS['action.spec.get'].parse(request.input).id,
           title: 'Machine plugin Action', description: null, safety: 'safe', executionPlacement: 'machine',
           placements: [], slash: null, bindings: null, examples: null, surfaces: { mcp: true },
-          inputHints: null, inputSchema: { type: 'object' },
-        } })
-        : { completed: true };
-      return { matched: true, result: { ok: true, result } };
+          inputHints: null, inputSchema: declaredActionInputSchema,
+        } });
+        return { matched: true, result: { ok: true, result } };
+      }
+      // Mirror final daemon Action admission at this HTTP boundary. The
+      // presentation bridge deliberately owns no independent Tool validator.
+      if (!compilePluginJsonSchema(declaredActionInputSchema)(request.input)) {
+        return { matched: true, result: { ok: false,
+          errorCode: 'plugin_action_input_schema_invalid', error: 'plugin_action_input_schema_invalid' } };
+      }
+      admittedInputs.push(request.input);
+      return { matched: true, result: { ok: true, result: { completed: true } } };
     });
   });
   afterEach(async () => {
@@ -78,11 +92,13 @@ describe('createExternalMcpServer plugin tools', () => {
     } : combinator === 'rootReferences' ? { oneOf: [branches[0], {
       ...branches[1], properties: { ...branches[1]!.properties, label: { $ref: '#/oneOf/0/properties/text' } },
     }] } : combinator === 'allOf' ? { allOf: [{ oneOf: branches }] } : { [combinator]: branches };
+    declaredActionInputSchema = inputSchema;
     const { mcp } = createExternalMcpServer({
       credentials,
       pluginToolCatalog: [{
         toolId: 'acme.union/union-tool', actionId: 'acme.union/actions/read', name: 'acme_union_read',
         title: 'Read variant', description: 'Read either variant', inputSchema, surfaces: ['mcp'],
+        toolExposure: { mcp: 'direct' },
       }],
     });
     const client = new Client({ name: 'union-client', version: '1' });
@@ -107,14 +123,20 @@ describe('createExternalMcpServer plugin tools', () => {
         }), expect.objectContaining({ mutation: true, signal: expect.any(AbortSignal) }));
       }
       boundary.daemonPost.mockClear();
-      // Projection omits cross-field correlations; the original validator must still reject them.
+      // Projection omits cross-field correlations; final Action admission must still reject them.
       for (const input of [{ kind: 'text', count: 2 }, { kind: 'count', count: 2, text: 'extra' }, { kind: 'unknown' }]) {
-        expect(await client.callTool({ name: advertised.name, arguments: input })).toMatchObject({ isError: true });
+        const refusal = CallToolResultSchema.parse(await client.callTool({ name: advertised.name, arguments: input }));
+        expect(refusal).toMatchObject({ isError: true });
+        const content = refusal.content.find(item => item.type === 'text');
+        if (content?.type !== 'text') throw new Error('Expected typed Action refusal');
+        expect(JSON.parse(content.text)).toMatchObject({ errorCode: 'plugin_action_input_schema_invalid' });
       }
       expect(await client.callTool({ name: 'acme_union_missing', arguments: { kind: 'text', text: 'wrong route' } })).toMatchObject({ isError: true });
-      // A refused input reads the Action descriptor only to redact declared secrets
-      // from its repair facts; no refused call may reach the Action itself.
-      expect(boundary.daemonPost.mock.calls.map(([, request]) => request.actionId)).toEqual(Array(3).fill('action.spec.get'));
+      // Each call still reads its canonical placement descriptor. Invalid
+      // requests reach daemon admission, but never produce a handler effect.
+      expect(boundary.daemonPost.mock.calls.filter(([, request]) => request.actionId === 'action.spec.get')
+        .map(([, request]) => request.actionId)).toEqual(Array(3).fill('action.spec.get'));
+      expect(admittedInputs).toHaveLength(2);
     } finally { await client.close(); await mcp.close(); }
   });
 
@@ -125,16 +147,10 @@ describe('createExternalMcpServer plugin tools', () => {
         toolId: 'acme.review.plugin/review-tool',
         actionId: 'acme.review.plugin/actions/review-start',
         name: 'acme_review_start',
+        toolExposure: { mcp: 'direct' },
         title: 'Acme Review Start',
         description: 'Start a plugin-defined review workflow',
-        inputSchema: {
-          type: 'object',
-          properties: {
-            scope: { type: 'string' },
-          },
-          required: ['scope'],
-          additionalProperties: false,
-        },
+        inputSchema: declaredActionInputSchema,
         outputSchema: {
           type: 'object',
           properties: { completed: { type: 'boolean' } }, required: ['completed'], additionalProperties: false,

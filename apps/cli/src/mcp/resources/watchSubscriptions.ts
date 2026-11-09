@@ -12,12 +12,36 @@ export type McpWatchOptions = Readonly<{
   execute: ReturnType<typeof createActionToolExecutorBridge>['executeActionByToolName'];
   defaultSessionId: string;
   isEnabled?: () => boolean;
+  /** HTTP notifications outlive an individual request server. */
+  session?: McpWatchSession;
 }>;
 
 export const MCP_WATCH_TOOL_NAME = 'watch';
 
 const PREFIX = 'happier://watch/';
 type Snapshot = Readonly<{ target: WaitActionInputV1['target']; condition: WaitActionInputV1['condition']; snapshot: unknown }>;
+type Observation = Readonly<{ controller: AbortController; baseline: Promise<Snapshot>; done: Promise<void> }>;
+
+/** One passive feed set per MCP notification session; never a second wait owner. */
+export function createMcpWatchSession(initialNotify?: (uri: string) => Promise<void>) {
+  const controller = new AbortController();
+  const subscriptions = new Map<string, Observation>();
+  let notify = initialNotify;
+  return {
+    signal: controller.signal,
+    subscriptions,
+    attachNotificationStream(send: (uri: string) => Promise<void>) { notify = send; },
+    async notify(uri: string) { if (!controller.signal.aborted) await notify?.(uri); },
+    async close() {
+      controller.abort();
+      const observations = [...subscriptions.values()];
+      subscriptions.clear();
+      for (const observation of observations) observation.controller.abort();
+      await Promise.all(observations.map(observation => observation.done.catch(() => undefined)));
+    },
+  };
+}
+export type McpWatchSession = ReturnType<typeof createMcpWatchSession>;
 
 function resourceUri(input: WaitActionInputV1): string {
   return PREFIX + Buffer.from(JSON.stringify(input)).toString('base64url');
@@ -37,19 +61,19 @@ function resourceInput(uri: string): WaitActionInputV1 {
 /** Connection-local MCP projection of the same passive Action sink as CLI watch. */
 export function registerMcpWatchSubscriptions(options: McpWatchOptions): void {
   const { server, execute } = options;
-  const subscriptions = new Map<string, ReturnType<typeof observe>>();
+  const session = options.session ?? createMcpWatchSession(async uri => { await server.server.sendResourceUpdated({ uri }); });
+  const { subscriptions } = session;
   const connection = new AbortController();
   const previousClose = server.server.onclose;
   server.server.onclose = () => {
     connection.abort();
-    for (const observation of subscriptions.values()) observation.controller.abort();
-    subscriptions.clear();
+    if (!options.session) void session.close();
     previousClose?.();
   };
 
   function observe(input: WaitActionInputV1, onChange?: () => Promise<void>) {
     const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, connection.signal]);
+    const signal = AbortSignal.any([controller.signal, onChange ? session.signal : connection.signal]);
     let resolve!: (value: Snapshot) => void;
     let reject!: (error: unknown) => void;
     let initial = true;
@@ -125,7 +149,7 @@ export function registerMcpWatchSubscriptions(options: McpWatchOptions): void {
     const existing = subscriptions.get(uri);
     if (existing) { await existing.baseline; return {}; }
     const observation = observe(input, async () => {
-      if (!observation.controller.signal.aborted) await server.server.sendResourceUpdated({ uri });
+      if (!observation.controller.signal.aborted) await session.notify(uri);
     });
     subscriptions.set(uri, observation);
     const abort = () => observation.controller.abort();

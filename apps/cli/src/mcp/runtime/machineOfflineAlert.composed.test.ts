@@ -279,7 +279,6 @@ it.each([false, true])('routes delayed Agent approval through its Account owner;
     stopSession: async () => ({ status: 'not_found' }), spawnSession: async () => ({ type: 'success', sessionId }),
     requestShutdown() {}, onHappySessionWebhook() {}, controlToken: 'A'.repeat(43),
     externalActionApi: { currentServerId: serverId, currentAccountId: 'alert-account',
-      terminalPolicyScope: { token: credentials.token, serverHttpBaseUrl: serverUrl },
       verifyPat: async () => { throw new Error('Private CLI ingress must not use PAT verification'); },
       resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: serverUrl }),
       executor: { execute: async (...args) => {
@@ -426,7 +425,7 @@ it.each([false, true])('routes delayed Agent approval through its Account owner;
     if (!completedTitleText || completedTitleText.type !== 'text') throw new Error('Missing title result');
     expect(JSON.parse(completedTitleText.text)).toMatchObject({ success: true });
     expect(completedTitle.isError).not.toBe(true);
-    const titleReadback = await fetchSessionById({ token: credentials.token, serverUrl, sessionId });
+    const titleReadback = await fetchSessionById({ reason: 'session-control', token: credentials.token, serverUrl, sessionId });
     expect(titleReadback?.metadataLayoutVersion).toBe(1);
     expect(JSON.parse(String(titleReadback?.metadata))).toMatchObject({ summary: { text: 'Delayed title' } });
     // A fresh invocation with the ended witness still refuses at admission.
@@ -438,7 +437,7 @@ it.each([false, true])('routes delayed Agent approval through its Account owner;
 
     const secondTitle = CallToolResultSchema.parse(await client.callTool({ name: 'change_title', arguments: { title: 'Current tuple title' } }));
     expect(secondTitle.isError).not.toBe(true);
-    expect(JSON.parse(String((await fetchSessionById({ token: credentials.token, serverUrl, sessionId }))?.metadata)))
+    expect(JSON.parse(String((await fetchSessionById({ reason: 'session-control', token: credentials.token, serverUrl, sessionId }))?.metadata)))
       .toMatchObject({ summary: { text: 'Current tuple title' } });
     metadataPrivacyRefused = true;
     const privacyTitle = CallToolResultSchema.parse(await client.callTool({ name: 'change_title', arguments: { title: 'Refused title' } }));

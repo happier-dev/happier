@@ -17,7 +17,12 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import {
+  CallToolRequestSchema, ListToolsRequestSchema,
+  ListResourcesRequestSchema, ReadResourceRequestSchema, ListResourceTemplatesRequestSchema,
+  SubscribeRequestSchema, UnsubscribeRequestSchema,
+  ResourceUpdatedNotificationSchema, ResourceListChangedNotificationSchema,
+} from '@modelcontextprotocol/sdk/types.js';
 import { forwardHappierBridgeTool } from './registerHappierBridgeTools';
 import { registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
 import { callMcpToolWithResolvedTimeout } from '@/mcp/mcpToolCallRequestOptions';
@@ -69,6 +74,10 @@ async function main() {
     const pending = (async () => {
       if (sessionLocal) {
         const connection = await connectSessionMcpClient(await readSessionMcpContextFromEnvironment(), upstreamLifetime.signal);
+        connection.client.setNotificationHandler(ResourceUpdatedNotificationSchema,
+          async notification => await server.server.sendResourceUpdated(notification.params));
+        connection.client.setNotificationHandler(ResourceListChangedNotificationSchema,
+          async () => await server.server.sendResourceListChanged());
         httpClient = connection.client;
         closeHttpClient = connection.close;
         return connection.client;
@@ -142,9 +151,26 @@ async function main() {
       },
     );
   });
-  registerHappierMcpResources(server as any, {
-    isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: 'agent' }),
-  });
+  if (sessionLocal) {
+    // The Session owns its catalog and subscriptions. A local projection would
+    // disclose resources without authenticating and could drift from its policy.
+    server.server.registerCapabilities({ resources: { subscribe: true, listChanged: true } });
+    server.server.setRequestHandler(ListResourcesRequestSchema, async (request, extra) =>
+      await (await ensureHttpClient()).listResources(request.params, { signal: extra.signal }));
+    server.server.setRequestHandler(ReadResourceRequestSchema, async (request, extra) =>
+      await (await ensureHttpClient()).readResource(request.params, { signal: extra.signal }));
+    server.server.setRequestHandler(ListResourceTemplatesRequestSchema, async (request, extra) =>
+      await (await ensureHttpClient()).listResourceTemplates(request.params, { signal: extra.signal }));
+    server.server.setRequestHandler(SubscribeRequestSchema, async (request, extra) =>
+      await (await ensureHttpClient()).subscribeResource(request.params, { signal: extra.signal }));
+    server.server.setRequestHandler(UnsubscribeRequestSchema, async (request, extra) =>
+      await (await ensureHttpClient()).unsubscribeResource(request.params, { signal: extra.signal }));
+  } else {
+    // Legacy external/Windows URL bridges retain their existing local catalog.
+    registerHappierMcpResources(server, {
+      isActionEnabled: (id) => isActionEnabledByEnv(id, { surface: 'agent' }),
+    });
+  }
 
   const requestedSignal = await runMcpStdioBridgeLifecycle({
     stdin: process.stdin,

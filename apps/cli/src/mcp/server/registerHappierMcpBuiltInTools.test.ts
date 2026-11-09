@@ -26,8 +26,102 @@ import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/creat
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { projectMcpToolInputJsonSchema } from './projectMcpToolInputJsonSchema';
 import { createExternalMcpServer } from '@/mcp/createExternalMcpServer';
+import { createBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
+import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 
 describe('registerHappierMcpBuiltInTools', () => {
+  it('delivers the typed native MCP result after a separate person approves its pending Ask', async () => {
+    const coordinator = createBlockingApprovalCoordinator();
+    const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: {
+      'links.openExternal': { approvalRequiredSurfaces: ['agent'] },
+    } });
+    let stored: ApprovalRequest | null = null;
+    const opened: string[] = [];
+    // Artifact persistence and the OS URL opener are system boundaries. The
+    // request, decision, live waiter, tool bridge and MCP framing remain real.
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'native-ask' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => {
+        if (!stored) throw new Error('Missing approval');
+        const next = ApprovalRequestV2Schema.parse(request);
+        const transition = decideApprovalRequestTransition(stored, next);
+        if (!transition.ok) return transition;
+        stored = next;
+        coordinator.notifyApprovalUpdated({ artifactId: 'native-ask', request: next });
+        return { ok: true };
+      },
+      approvalsWaitForDecision: async args => {
+        const decision = await coordinator.waitForDecision({ ...args, readRequest: async () => stored,
+          subscribeChanges: listener => coordinator.subscribeApprovalChanges(listener) });
+        return { ...decision, request: ApprovalRequestV2Schema.parse(decision.request) };
+      },
+      approvalsResolveBlockingDecision: args => coordinator.resolveBlockingDecision(args),
+      isApprovalExecutionOriginCurrent: async () => true,
+      externalUrlOpen: async ({ url }) => { opened.push(url); return { status: 'opened' }; },
+    });
+    const bridge = createActionToolExecutorBridge({ surface: 'agent',
+      executor: { execute: (actionId, input, context) => executor.execute(actionId, input, { ...context,
+        serverId: 'home', runtimeAccountId: 'account', defaultSessionMachineId: 'machine', actionsSettings: settings }) } });
+    const catalog = createHappierToolInventory({ surface: 'agent', actionsSettings: settings });
+    const inventory = prepareHappierMcpToolInventory({ sessionId: 'caller', inventory: {
+      ...catalog, tools: catalog.tools.filter(tool => tool.name === 'action_execute'),
+    } });
+    const server = new McpServer({ name: 'native-ask', version: '1' });
+    registerHappierMcpBuiltInTools(server, { sessionId: 'caller', surface: 'agent', actionsSettings: settings, toolInventory: inventory,
+      deps: { ...bridge, changeTitle: async () => ({ success: true }),
+        resolveActionOptions: args => bridge.resolveActionOptions(args, 'caller') } });
+    const client = new Client({ name: 'native-ask-caller', version: '1' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const result = client.callTool({ name: 'action_execute', arguments: {
+        actionId: 'links.openExternal', input: { url: 'https://example.test/approved' },
+      } });
+      await vi.waitFor(() => expect(coordinator.getLiveWaiterCount('native-ask')).toBe(1));
+      expect(opened).toEqual([]);
+      expect(await executor.execute('approval.request.decide', { artifactId: 'native-ask', decision: 'approve' }, {
+        surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      })).toMatchObject({ ok: true });
+      expect(await result).toMatchObject({ isError: false, content: [{ type: 'text', text: JSON.stringify({ status: 'opened' }) }] });
+      expect(opened).toEqual(['https://example.test/approved']);
+      expect(stored).toMatchObject({ status: 'executed', execution: { ok: true } });
+    } finally { coordinator.dispose(); await client.close(); await server.close(); }
+  });
+  it('publishes built-in operands while omitted arguments reach canonical Action repair', async () => {
+    const spec = getActionSpec('workflow.run.get');
+    const server = new McpServer({ name: 'built-in-schema-test', version: '1' });
+    const bridge = createActionToolExecutorBridge({ surface: 'mcp',
+      executor: createActionExecutor(createUnavailableActionTransportDeps()) });
+    registerHappierMcpBuiltInTools(server, { sessionId: '', surface: 'mcp',
+      toolInventory: prepareHappierMcpToolInventory({ sessionId: '', inventory: {
+        tools: [{ name: 'workflow_run_get', title: spec.title, description: spec.description ?? spec.title,
+          actionId: spec.id, inputSchema: spec.inputSchema }],
+        actionToolNameToId: new Map([['workflow_run_get', spec.id]]),
+      } }),
+      deps: { ...bridge, changeTitle: async () => ({ success: true }),
+        resolveActionOptions: args => bridge.resolveActionOptions(args, '') },
+    });
+    const client = new Client({ name: 'built-in-schema-client', version: '1' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const advertised = (await client.listTools()).tools[0]!;
+      expect(advertised.inputSchema).toMatchObject({
+        properties: { runId: { type: 'string' } }, required: ['runId'],
+      });
+      const result = await client.callTool({ name: advertised.name });
+      expect(result.isError).toBe(true);
+      const content = result.content;
+      if (!Array.isArray(content) || content[0]?.type !== 'text') throw new Error('Expected structured Action repair');
+      expect(JSON.parse(content[0].text)).toMatchObject({ errorCode: 'invalid_parameters',
+        details: { issues: expect.any(Array) } });
+    } finally { await client.close(); await server.close(); }
+  });
+
   it('does not reproject registered tool schemas after the first tools/list request', async () => {
     const tool = { name: 'schema_projection_cost', title: 'Schema projection cost', description: 'Fixture',
       inputSchema: z.object({}), outputSchema: z.object({ ok: z.boolean() }) };
@@ -318,9 +412,8 @@ describe('registerHappierMcpBuiltInTools', () => {
     const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{
       manifest: createPluginManifestV2Fixture({ id: pluginId, contributes: {
         actions: [{ id: 'read', title: 'Read label', scopes: ['global'], surfaces: ['mcp'],
-          execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema }],
-        tools: [{ id: 'read-tool', name: 'qa_inventory_read', title: 'Read label',
-          action: 'read', surfaces: ['mcp'], inputSchema, outputSchema: inputSchema }],
+          execution: { target: 'daemon' }, dangerLevel: 'safe', inputSchema, resultSchema: inputSchema,
+          tool: { name: 'qa_inventory_read' }, toolExposure: { mcp: 'direct' } }],
       } }),
       files: { 'daemon.mjs': 'export function activate(api) { api.actions.register("read", async input => input); }' },
     }] });
@@ -513,6 +606,7 @@ describe('registerHappierMcpBuiltInTools', () => {
         toolId: 'acme.review.plugin/review-tool',
         actionId: 'acme.review.plugin/actions/review-start',
         name: 'acme_review_start',
+        toolExposure: { mcp: 'direct' },
         title: 'Acme Review Start',
         description: 'Start a plugin-defined review workflow',
         inputSchema: {
@@ -561,6 +655,9 @@ describe('registerHappierMcpBuiltInTools', () => {
       _meta?: unknown;
     } | undefined;
     expect(meta?.inputSchema?.safeParse({ scope: 'diff' }).success).toBe(true);
+    for (const input of [undefined, null, [], 42, 'non-object']) {
+      expect(meta?.inputSchema?.safeParse(input)).toMatchObject({ success: true, data: input });
+    }
     expect(meta?.inputSchema ? z.toJSONSchema(meta.inputSchema, { target: 'draft-7' }) : null).toMatchObject({
       type: 'object',
       properties: {

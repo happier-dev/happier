@@ -1,4 +1,6 @@
+import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { spawn } from 'node:child_process';
+import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 import { observeProcessLaunch } from '@/processes/launchNotification';
 import { readFile } from 'node:fs/promises';
 
@@ -11,12 +13,12 @@ import type { StdioMcpServerStartupFailure } from './stdioMcpServerStartupFailur
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 
 
-const StdioMcpServerLauncherConfigSchema = z.object({
+const StdioMcpServerLauncherConfigSchema = lazyZodSchema(() => z.object({
   command: z.string().check(z.minLength(1)),
   args: z._default(z.optional(z.array(z.string())), []),
   env: z._default(z.optional(z.record(z.string(), z.string())), {}),
   cwd: z.optional(z.string().check(z.minLength(1))),
-});
+}));
 
 type StdioMcpServerLauncherConfig = z.infer<typeof StdioMcpServerLauncherConfigSchema>;
 
@@ -50,11 +52,17 @@ export async function runStdioMcpServerLauncher(): Promise<void> {
     process.exit(2);
   }
 
-  const child = spawn(config.command, config.args, {
+  const env = withHostProcessOwnerEnvironment(buildScopedProcessEnv({ baseEnv: process.env, explicitEnv: config.env }));
+  const invocation = process.platform === 'win32'
+    ? resolveWindowsCommandInvocation({ command: config.command, args: config.args, env })
+    : { command: config.command, args: config.args };
+  const child = spawn(invocation.command, invocation.args, {
     cwd: config.cwd,
-    env: withHostProcessOwnerEnvironment(buildScopedProcessEnv({ baseEnv: process.env, explicitEnv: config.env })),
+    env,
     stdio: ['pipe', 'pipe', 'pipe'],
     shell: false,
+    windowsHide: true,
+    ...('windowsVerbatimArguments' in invocation ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments } : {}),
   });
   observeProcessLaunch(child);
 
@@ -102,9 +110,10 @@ export async function runStdioMcpServerLauncher(): Promise<void> {
     }
   };
 
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-    process.on(signal, () => forwardSignal(signal));
-  }
+  const forwardSigint = () => forwardSignal('SIGINT');
+  const forwardSigterm = () => forwardSignal('SIGTERM');
+  process.on('SIGINT', forwardSigint);
+  process.on('SIGTERM', forwardSigterm);
 
   child.on('error', (err) => {
     writeStderr(`[happier-mcp-stdio-launcher] Failed to start child: ${err instanceof Error ? err.message : String(err)}`);
@@ -151,6 +160,10 @@ export async function runStdioMcpServerLauncher(): Promise<void> {
     child.on('close', (code, signal) => {
       if (startupFailure) return;
       if (signal) {
+        // Re-emitting the child's signal must retain native exit semantics,
+        // not re-enter this launcher's forwarding handlers on a dead child.
+        process.off('SIGINT', forwardSigint);
+        process.off('SIGTERM', forwardSigterm);
         try {
           process.kill(process.pid, signal);
         } catch {

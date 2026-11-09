@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { createSessionAccountActionExecutor } from './createSessionAccountActionExecutor';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
+import { MANAGED_MACHINE_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { configuration } from '@/configuration';
 import { NATIVE_AGENT_SESSION_EFFECT_OUTCOME_UNKNOWN_CODE } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
 import { hashProcessCommand } from '@/daemon/sessionRegistry';
@@ -9,17 +10,104 @@ import { hashPrivateBearer } from '@/daemon/privateBearerFile';
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import { createAgentRuntimeDaemonServiceAuthorityPath, publishAgentRuntimeDaemonServiceAuthority,
   removeAgentRuntimeDaemonServiceAuthorityIfOwned } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
+import { createSessionDaemonAuthorityFixture } from './sessionDaemonAuthority.testkit';
+import * as processIdentity from '@/daemon/processIdentity';
 
-const processIdentity = vi.hoisted(() => vi.fn());
 // OS process inspection is the boundary; the real command-identity parser is retained.
-vi.mock('@/daemon/processIdentity', () => ({ readProcessIdentityByPid: processIdentity }));
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 const createRestrictedExecutor = () => createCliActionExecutor({
   token: '', sessionId: 'caller-session', mode: 'plain', ctx: null,
 });
 
 describe('Session MCP Account routing', () => {
+  it('preserves the daemon requester refusal at the Session MCP Action sink without retrying', async () => {
+    const failure = { ok: false as const, error: {
+      code: 'native_agent_privileged_effect_authority_unavailable', message: 'Runner authority unavailable',
+      cause: { code: 'requester_scope_unavailable', stage: 'runner_authority' as const },
+    } };
+    const daemon = await createSessionDaemonAuthorityFixture({ sessionId: 'caller-session',
+      actionServiceFailure: failure,
+      execute: async () => { throw new Error('The refused service cannot execute an Action'); },
+    });
+    const executor = createSessionAccountActionExecutor({ base: createRestrictedExecutor(), client: {
+      sessionId: 'caller-session', getServerBinding: () => ({ serverId: 'home', serverUrl: 'https://home.test' }),
+      rpcHandlerManager: { invokeLocal: async () => null, registerHandler() {} }, updateMetadata() {},
+      getActiveTurnAdmissionWitness: () => ({ turnId: 'host-turn', inputId: 'host-input', userMessageSeq: 1, userMessageSeqs: [1],
+        agentStartCaller: { kind: 'session', sessionId: 'caller-session', starterDepth: 0, turnDepth: 0 } }),
+    } });
+    try {
+      expect(await executor.execute('session.spawn_new', {
+        creationKey: 'requester-refusal', executionTarget: { serverId: 'home', machineId: 'shared-machine' },
+        directory: { kind: 'path', path: '/workspace' },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+      }, { surface: 'mcp' })).toEqual({ ok: false, errorCode: failure.error.code,
+        error: failure.error.message, details: failure.error.cause });
+      expect(daemon.actionRequestCount).toBe(1);
+    } finally { await daemon.close(); }
+  });
+
+  it.each([
+    { actionId: 'machines.setup.adminAccess.set', input: { serverId: 'home', machineId: 'target-machine',
+      expectedMetadataVersion: 1, expectedAdminAccess: { version: 1, mode: 'none' }, adminAccess: { version: 1, mode: 'preauthorized' }, comparison: 'field' },
+      outcome: { status: 'applied', policy: { version: 1, mode: 'preauthorized' }, metadataVersion: 2 } },
+    { actionId: 'machines.setup.adminAccess.inspect', input: { serverId: 'home', machineId: 'target-machine' },
+      outcome: { status: 'unavailable' } },
+  ] as const)('forwards $actionId through credentialed daemon authority from a restricted runner', async action => {
+    const daemon = await createSessionDaemonAuthorityFixture({ sessionId: 'caller-session', execute: async operation => {
+      expect(operation).toMatchObject({ actionId: action.actionId, input: action.input, surface: 'mcp', requestId: 'admin-operation' });
+      return { ok: true, result: action.outcome };
+    } });
+    const executor = createSessionAccountActionExecutor({ base: createRestrictedExecutor(), client: {
+      sessionId: 'caller-session', getServerBinding: () => ({ serverId: 'home', serverUrl: 'https://home.test' }),
+      rpcHandlerManager: { invokeLocal: async () => null, registerHandler() {} }, updateMetadata() {},
+      getActiveTurnAdmissionWitness: () => ({ turnId: 'host-turn', inputId: 'host-input', userMessageSeq: 1, userMessageSeqs: [1],
+        agentStartCaller: { kind: 'session', sessionId: 'caller-session', starterDepth: 0, turnDepth: 0 } }),
+    } });
+    try {
+      expect(await executor.execute(action.actionId, action.input, { surface: 'mcp', actionRequestId: 'admin-operation' }))
+        .toEqual({ ok: true, result: action.outcome });
+    } finally { await daemon.close(); }
+  });
+
+  it('settles a daemon-bound Action as cancelled when its exact host native admission ends', async () => {
+    const executor = createSessionAccountActionExecutor({ base: createRestrictedExecutor(), client: {
+      sessionId: 'caller-session', getServerBinding: () => ({ serverId: 'home', serverUrl: 'https://home.test' }),
+      rpcHandlerManager: { invokeLocal: async () => null, registerHandler() {} }, updateMetadata() {},
+      getActiveTurnAdmissionWitness: () => ({ turnId: 'speech-turn', inputId: 'person-start', userMessageSeq: null, userMessageSeqs: [],
+        nativeRealtimeAdmission: { admissionId: 'person-start', occurrenceId: 'provider-occurrence', attemptId: 'live-attempt' },
+        signal: AbortSignal.abort(), agentStartCaller: { kind: 'session', sessionId: 'caller-session', starterDepth: 0, turnDepth: 0 } }),
+    } });
+    expect(await executor.execute('notifications.notify_me', { message: 'After End' }, { surface: 'agent' }))
+      .toMatchObject({ ok: false, errorCode: 'cancelled' });
+  });
+
+  it('cancels an in-flight daemon HTTP Action when its exact host native admission ends', async () => {
+    const lifetime = new AbortController();
+    let release!: () => void;
+    let didDispatch!: () => void;
+    const pendingEffect = new Promise<void>(resolve => { release = resolve; });
+    const dispatched = new Promise<void>(resolve => { didDispatch = resolve; });
+    const daemon = await createSessionDaemonAuthorityFixture({ sessionId: 'caller-session', execute: async () => {
+      didDispatch();
+      await pendingEffect;
+      return { ok: true, result: { attemptedChannels: 1, deliveredChannels: 1 } };
+    } });
+    const executor = createSessionAccountActionExecutor({ base: createRestrictedExecutor(), client: {
+      sessionId: 'caller-session', getServerBinding: () => ({ serverId: 'home', serverUrl: 'https://home.test' }),
+      rpcHandlerManager: { invokeLocal: async () => null, registerHandler() {} }, updateMetadata() {},
+      getActiveTurnAdmissionWitness: () => ({ turnId: 'speech-turn', inputId: 'person-start', userMessageSeq: null, userMessageSeqs: [],
+        nativeRealtimeAdmission: { admissionId: 'person-start', occurrenceId: 'provider-occurrence', attemptId: 'live-attempt' },
+        signal: lifetime.signal, agentStartCaller: { kind: 'session', sessionId: 'caller-session', starterDepth: 0, turnDepth: 0 } }),
+    } });
+    try {
+      const pending = executor.execute('notifications.notify_me', { message: 'During native input' }, { surface: 'agent' });
+      await dispatched;
+      lifetime.abort();
+      expect(await pending).toMatchObject({ ok: false, errorCode: 'cancelled' });
+    } finally { release(); await daemon.close(); }
+  });
+
   it('does not turn an implicit Session workspace into Machine-wide saved inventory authority', async () => {
     const executor = createSessionAccountActionExecutor({ base: createRestrictedExecutor(), client: {
       sessionId: 'caller-session', getServerBinding: () => ({ serverId: 'home', serverUrl: 'https://home.test' }),
@@ -45,12 +133,20 @@ describe('Session MCP Account routing', () => {
 
   it.each([
     ...listActionSpecs().filter(spec => spec.executionPlacement === 'machine'
-      && (spec.id.startsWith('projects.') || spec.id.startsWith('action.operations.'))).map(spec => ({
+      && (spec.id.startsWith('projects.') || spec.id.startsWith('action.operations.')
+        || spec.id.startsWith('localServices.')
+        || MANAGED_MACHINE_ACTION_IDS_V1.some(id => id === spec.id))).map(spec => ({
         actionId: spec.id, input: JSON.parse(spec.examples?.mcp?.argsExample ?? spec.examples?.voice?.argsExample ?? '{}'), uncertain: false,
       })),
     { actionId: 'notifications.notify_me' as const, input: { message: 'Notify' }, uncertain: false },
     { actionId: 'notifications.notify_me' as const, input: { message: 'Notify' }, uncertain: true },
+    { actionId: 'connectedServices.authentication.beginConnect' as const,
+      input: { service: { pluginId: 'acme.portable-auth', localId: 'example' }, modeId: 'manual' }, uncertain: false },
+    { actionId: 'connectedServices.authentication.submitManual' as const,
+      input: { attemptId: 'attempt-1', fields: { token: 'fixture-token' } }, uncertain: false },
     { actionId: 'session.list' as const, input: {}, uncertain: false },
+    { actionId: 'machines.resources.policy.set' as const, input: { machineId: 'shared-machine', expectedRevision: 1,
+      patch: { processes: { allProcessesVisible: true } } }, uncertain: false },
     { actionId: 'agents.backends.list' as const, input: { includeDisabled: false }, uncertain: false },
     { actionId: 'agents.models.list' as const, input: { backendTargetKey: 'agent:acme.discovery/assistant', machineId: 'shared-machine' }, uncertain: false },
     { actionId: 'agents.config_options.list' as const, input: { backendTargetKey: 'agent:acme.discovery/assistant', machineId: 'shared-machine', modelId: 'small' }, uncertain: false },
@@ -95,7 +191,7 @@ describe('Session MCP Account routing', () => {
     const command = 'node /runtime/.runner-snapshots/session-account/dist/index.mjs';
     const runner = { pid: process.pid, processStartTimeMs: 23_346,
       processCommandHash: hashProcessCommand(command), snapshotIdentity: 'snapshot:session-account' };
-    processIdentity.mockResolvedValue({ pid: process.pid, processStartTimeMs: runner.processStartTimeMs, command });
+    vi.spyOn(processIdentity, 'readProcessIdentityByPid').mockResolvedValue({ pid: process.pid, processStartTimeMs: runner.processStartTimeMs, command });
     const path = await createAgentRuntimeDaemonServiceAuthorityPath(configuration);
     const authority = { happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
       path, sessionId: 'caller-session', runner,
@@ -124,10 +220,9 @@ describe('Session MCP Account routing', () => {
     });
     try {
       const executor = createSessionAccountActionExecutor({ base: createRestrictedExecutor(),
-        // Native runners can hold Account credentials while their Machine input
-        // transport remains bound to their own Session. Cross-Session Actions
-        // must still enter the daemon's credentialed executor.
-        hasAccountAuthority: actionId === 'session.message.send', client: {
+        // Account credentials alone select neither a local Account effect owner
+        // nor another Session's input transport. Both retain daemon admission.
+        hasAccountAuthority: actionId === 'session.message.send' || actionId === 'notifications.notify_me', client: {
         sessionId: 'caller-session', getServerBinding: () => ({ serverId: 'home', serverUrl: 'https://home.test' }),
         ...(actionId === 'session.message.send' ? { getMachineAdmissionTransport: () => async () => {
           throw new Error('Cross-Session input cannot use the bound runner transport');

@@ -30,6 +30,7 @@ function resolveMcpMaterialization(settings: McpServersSettingsV1, context: { ma
 }
 
 import { projectPath } from '@/projectPath';
+import { resolveNativeAgentLaunchEnvironment } from '@/agent/runtime/launchEnvironment';
 import { resolveNodeBackedMcpServerCommand } from '@/mcp/runtime/resolveNodeBackedMcpServerCommand';
 import { readRetainedMcpServerCatalogSourceV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
 import { resolvePackagedRuntimeEntrypoint } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
@@ -134,7 +135,7 @@ describe('materializeMcpServerConfigRecord', () => {
     } finally { out.cleanup(); }
     expect(out.sanitizeDiagnosticText('saved-template-private-atom')).toBe('saved-template-private-atom');
   });
-  it('starts the remote bridge with private startup-sensitive TLS environment', async () => {
+  it.each(['server', 'native'] as const)('starts the remote bridge with startup-sensitive TLS environment from the %s', async (source) => {
     const root = await mkdtemp(join(tmpdir(), 'happier-mcp-remote-ca-'));
     const tls = await createEphemeralTlsServerFixture();
     const https = createServer({ key: await readFile(tls.privateKeyPath), cert: await readFile(tls.leafCertificatePath) });
@@ -151,7 +152,7 @@ describe('materializeMcpServerConfigRecord', () => {
     if (!address || typeof address === 'string') throw new Error('TLS fixture address unavailable');
     const settings = McpServersSettingsV1Schema.parse({ v: 1, strictMode: true, servers: [{
       id: 'remote', name: 'remote', transport: 'http', remote: { url: `https://127.0.0.1:${address.port}`, headers: {} },
-      env: { NODE_EXTRA_CA_CERTS: { t: 'literal', v: tls.caCertificatePath } }, createdAt: 0, updatedAt: 0,
+      env: source === 'server' ? { NODE_EXTRA_CA_CERTS: { t: 'literal', v: tls.caCertificatePath } } : {}, createdAt: 0, updatedAt: 0,
     }], bindings: [{ id: 'on', serverId: 'remote', enabled: true, target: { t: 'allMachines' }, createdAt: 0, updatedAt: 0 }] });
     // OS executable resolution is the boundary; both bridge and launcher execute current source.
     const invocation = async (entry: 'bridge' | 'launcher') => {
@@ -168,11 +169,16 @@ describe('materializeMcpServerConfigRecord', () => {
       deps: { resolveRemoteBridgeCommand: () => invocation('bridge'), resolveStdioLauncherCommand: () => invocation('launcher') },
     });
     const config = result.mcpServers.remote!;
+    // The native launch producer supplies the environment Codex receives; its
+    // pinned MCP transport forwards additional CA roots to its stdio children.
+    const nativeEnv = source === 'native' ? resolveNativeAgentLaunchEnvironment({
+      processEnv: { ...process.env, NODE_EXTRA_CA_CERTS: tls.caCertificatePath },
+    }).values : process.env;
     const env: Record<string, string> = {};
-    for (const [key, value] of Object.entries({ ...process.env, ...config.env })) {
+    for (const [key, value] of Object.entries({ ...nativeEnv, ...config.env })) {
       if (typeof value === 'string') env[key] = value;
     }
-    delete env.NODE_EXTRA_CA_CERTS;
+    if (source === 'server') delete env.NODE_EXTRA_CA_CERTS;
     const transport = new StdioClientTransport({ command: config.command, args: config.args, env, stderr: 'pipe' });
     let stderr = '';
     transport.stderr?.on('data', chunk => { stderr += String(chunk); });
@@ -181,6 +187,8 @@ describe('materializeMcpServerConfigRecord', () => {
       expect(JSON.stringify(config)).not.toContain(tls.caCertificatePath);
       try { await client.connect(transport); }
       catch (error) { throw new Error(`Private TLS bridge failed; child stderr: ${stderr}`, { cause: error }); }
+      expect((await client.listTools()).tools.map(tool => tool.name)).toEqual(['ready']);
+      expect((await client.callTool({ name: 'ready', arguments: {} })).content).toEqual([{ type: 'text', text: 'ready' }]);
     } finally {
       await client.close(); await transport.close(); result.cleanup();
       await new Promise<void>(resolve => https.close(() => resolve()));
@@ -687,10 +695,10 @@ describe('materializeMcpServerConfigRecord', () => {
     }
   });
 
-  it('normalizes package-runner stdio servers through managed pnpm with a neutral launch cwd', async () => {
+  it('preserves the requested package runner, arguments, resolved env and session cwd', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-mcp-stdio-launcher-test-'));
     try {
-      const fakePnpmPath = join(dir, 'pnpm');
+      const fakePnpmPath = join(dir, 'npx');
       await writeFile(fakePnpmPath, '#!/bin/sh\nexit 0\n', 'utf8');
       await chmod(fakePnpmPath, 0o755);
       const settings = McpServersSettingsV1Schema.parse({
@@ -713,7 +721,7 @@ describe('materializeMcpServerConfigRecord', () => {
       const resolved = resolveMcpMaterialization(settings, { machineId: 'm1', directory: '/repo' });
       const out = await materializeMcpServerConfigRecord({
         resolved,
-        processEnv: { HOME: '/safe-home', TOKEN: 'sk-test', HAPPIER_PNPM_BIN: fakePnpmPath },
+        processEnv: { HOME: '/safe-home', TOKEN: 'sk-test', PATH: dir },
         tmpDir: dir,
       });
 
@@ -749,8 +757,8 @@ describe('materializeMcpServerConfigRecord', () => {
       const configPath = String(cfg.env?.HAPPIER_MCP_STDIO_LAUNCHER_CONFIG_FILE ?? '');
       const raw = await readFile(configPath, 'utf8');
       expect(raw).toContain(`"command":"${fakePnpmPath}"`);
-      expect(raw).toContain('"args":["dlx","@modelcontextprotocol/server-sequential-thinking"]');
-      expect(raw).toContain('"cwd":"/safe-home"');
+      expect(raw).toContain('"args":["-y","@modelcontextprotocol/server-sequential-thinking"]');
+      expect(raw).toContain('"cwd":"/repo"');
       expect(raw).toContain('"API_KEY":"sk-test"');
       expect(raw).not.toContain('happier-mcp-stdio-launcher.mjs');
       out.cleanup();
@@ -786,7 +794,7 @@ describe('materializeMcpServerConfigRecord', () => {
       const resolved = resolveMcpMaterialization(settings, { machineId: 'm1', directory: '/repo/worktree' });
       const out = await materializeMcpServerConfigRecord({
         resolved,
-        processEnv: { HOME: '/safe-home', HAPPIER_PNPM_BIN: fakePnpmPath },
+        processEnv: { HOME: '/safe-home', PATH: dir },
         tmpDir: dir,
       });
 
@@ -800,7 +808,7 @@ describe('materializeMcpServerConfigRecord', () => {
     }
   });
 
-  it('skips package-runner stdio servers when managed pnpm is unavailable in non-strict mode', async () => {
+  it('skips package-runner stdio servers when the configured executable is unavailable in non-strict mode', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-mcp-package-runner-unavailable-'));
     const originalFetch = globalThis.fetch;
     const settings = McpServersSettingsV1Schema.parse({
@@ -828,7 +836,7 @@ describe('materializeMcpServerConfigRecord', () => {
 
       const out = await materializeMcpServerConfigRecord({
         resolved,
-        processEnv: { PATH: '', HAPPIER_HOME_DIR: join(dir, 'home'), HAPPIER_MANAGED_PNPM_BOOTSTRAP: '0' },
+        processEnv: { PATH: '', HAPPIER_HOME_DIR: join(dir, 'home') },
         tmpDir: null,
         strictMode: false,
       });
@@ -844,7 +852,7 @@ describe('materializeMcpServerConfigRecord', () => {
     }
   });
 
-  it('fails closed for package-runner stdio servers when managed pnpm is unavailable in strict mode', async () => {
+  it('fails closed for package-runner stdio servers when the configured executable is unavailable in strict mode', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'happier-mcp-package-runner-unavailable-strict-'));
     const originalFetch = globalThis.fetch;
     const settings = McpServersSettingsV1Schema.parse({
@@ -874,7 +882,7 @@ describe('materializeMcpServerConfigRecord', () => {
       await expect(
         materializeMcpServerConfigRecord({
           resolved,
-          processEnv: { PATH: '', HAPPIER_HOME_DIR: join(dir, 'home'), HAPPIER_MANAGED_PNPM_BOOTSTRAP: '0' },
+          processEnv: { PATH: '', HAPPIER_HOME_DIR: join(dir, 'home') },
           tmpDir: null,
           strictMode: true,
         }),

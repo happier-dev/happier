@@ -85,9 +85,10 @@ function readDirectory(input: string | null): string | null {
   return typeof input === 'string' && input.trim().length > 0 ? input.trim() : null;
 }
 
-function toDetectionInput(directory: string | null): PluginMcpDiscoveryRequest {
+function toDetectionInput(directory: string | null, sessionId?: string): PluginMcpDiscoveryRequest {
   return Object.freeze({
     ...(directory ? { directory } : {}),
+    ...(sessionId ? { sessionId } : {}),
   });
 }
 
@@ -310,6 +311,8 @@ export async function detectProviderMcpServers(params: Readonly<{
   providers: unknown;
   env?: ProcessEnvInput;
   runtimeRegistry?: ResolvedExecutablePluginRuntimeRegistry;
+  /** Host-held Session correlation; never an assertion of filesystem authority. */
+  sessionId?: string;
   signal?: AbortSignal;
   assertCurrent?: () => Promise<void>;
 }>): Promise<DetectProviderMcpServersResult> {
@@ -318,7 +321,7 @@ export async function detectProviderMcpServers(params: Readonly<{
   const directory = readDirectory(params.directory);
   params.signal?.throwIfAborted();
   await params.assertCurrent?.();
-  const detectionInput = toDetectionInput(directory);
+  const detectionInput = toDetectionInput(directory, params.sessionId);
   const discoveryTimeoutMs = resolveDiscoveryTimeoutMs(params.env);
   const servers: DetectedMcpServerV1[] = [];
   const warnings: DaemonMcpServersDetectWarningV1[] = [...providersFilter.warnings];

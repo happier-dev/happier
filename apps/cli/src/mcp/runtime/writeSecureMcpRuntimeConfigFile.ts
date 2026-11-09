@@ -32,12 +32,14 @@ export async function writeSecureMcpRuntimeConfigFile(params: Readonly<{
   prefix: string;
   tmpDir: string | null;
   payload: unknown;
+  assertCurrent?: () => Promise<void>;
 }>, deps: Readonly<{
   protectedLocalStateOptions?: ProtectedLocalStateOptions;
 }> = {}): Promise<string> {
   const protectedLocalStateOptions = deps.protectedLocalStateOptions ?? {};
   const json = JSON.stringify(params.payload);
   const ownsBaseDir = params.tmpDir === null;
+  await params.assertCurrent?.();
   const baseDir = params.tmpDir === null
     ? await createProtectedLocalStateDirectory(join(tmpdir(), `${params.prefix}-`), protectedLocalStateOptions)
     : params.tmpDir;
@@ -59,9 +61,14 @@ export async function writeSecureMcpRuntimeConfigFile(params: Readonly<{
       const tempPath = join(baseDir, `${params.prefix}.${id}.${randomUUID()}.tmp`);
 
       try {
+        // Directory preparation and a collision retry may await OS work. The
+        // original admission must still hold before private bytes are created.
+        await params.assertCurrent?.();
         await createProtectedLocalStateFileExclusive(tempPath, json, protectedLocalStateOptions);
+        await params.assertCurrent?.();
         await rename(tempPath, finalPath);
         await readProtectedLocalStateFile(finalPath, protectedLocalStateOptions);
+        await params.assertCurrent?.();
         return finalPath;
       } catch (err) {
         await rm(tempPath, { force: true }).catch(() => {});

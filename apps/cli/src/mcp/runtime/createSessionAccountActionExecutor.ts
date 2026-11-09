@@ -19,6 +19,7 @@ import { requiresExplicitScmMachineTarget } from '@happier-dev/protocol/actions/
 import { readContributedActionExecutionPlacement } from '@/session/actions/readContributedActionExecutionPlacement';
 import { readActionSessionTargetField } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import { normalizeSessionTargetV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
+import type { CurrentProcessPluginActionExecutionAttempt } from '@/session/actions/createDaemonPluginActionExecutor';
 
 type ActionExecutor = Readonly<{
   execute(actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<ActionExecuteResult>;
@@ -34,15 +35,27 @@ const BOUND_SESSION_RPC_READS: ReadonlySet<ActionId> = new Set([
   'session.vendor_plugin_catalog.list', 'session.skill_catalog.list',
 ]);
 
+// The Session MCP composition supplies these ports from its bound runtime.
+// Memory retains the Session corpus, Runs retain the live host, and contributed
+// Actions retain their catalog owner (Account placement is resolved below).
+const BOUND_HOST_MACHINE_ACTIONS: ReadonlySet<ActionId> = new Set([
+  ...ACTION_ID_FAMILIES_V1.memory,
+  ...ACTION_ID_FAMILIES_V1.execution_run_control,
+  'action.invoke',
+]);
+
 /** Account credentials stay in the daemon; identity comes from its existing Session capability. */
 export function createSessionAccountActionExecutor(params: Readonly<{
   base: ActionExecutor;
   client: HappyMcpSessionClient;
-  /** Credentialed hosts already have the shared exact-Machine Action adapter. */
+  /** Local Account ports do not replace the Session's daemon admission. */
   hasAccountAuthority?: boolean;
+  executeInCurrentProcess?(actionId: ActionId, input: unknown, context?: ActionExecutorContext): Promise<CurrentProcessPluginActionExecutionAttempt>;
 }>): ActionExecutor {
   const execute = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext,
     routingDescriptorRead = false): Promise<ActionExecuteResult> => {
+      const local = await params.executeInCurrentProcess?.(actionId, input, context);
+      if (local?.matched) return local.result;
       // These reads describe the bound host's admitted catalog, not Account data.
       // Keep its live Session policy (including memory choice) at the existing
       // executor rather than replacing it with the daemon's Account catalog.
@@ -112,10 +125,11 @@ export function createSessionAccountActionExecutor(params: Readonly<{
         && (actionId === 'action.options.resolve' || actionId === 'agents.backends.list'
           || actionId === 'agents.models.list' || actionId === 'agents.config_options.list'
           || actionId === 'agents.session_modes.list');
-      // Project work and its retained operations/output use the credentialed
-      // exact-Machine owner. A restricted runner has only Session transport.
-      const projectMachineAction = !params.hasAccountAuthority && executionPlacement === 'machine'
-        && (actionId.startsWith('projects.') || ACTION_ID_FAMILIES_V1.operation_output.some(id => id === actionId));
+      // Machine placement requires the daemon's credentialed exact-target owner.
+      // Account credentials in the Session host do not supply an admitted
+      // Machine role. Use its existing daemon issuer for canonical placement.
+      const machineAction = executionPlacement === 'machine'
+        && !BOUND_HOST_MACHINE_ACTIONS.has(actionId);
       // Origin-required RPCs use the existing source-daemon custody channel,
       // including cross-Session question answers. Own questions stay with the
       // bound request store and its same canonical host-witness origin.
@@ -123,7 +137,7 @@ export function createSessionAccountActionExecutor(params: Readonly<{
         && !(actionId === 'session.needs_you.raise' && requestedSessionId === params.client.sessionId);
       if (!builtIn.success || (executionPlacement !== 'account'
         && executionPlacement !== 'client'
-        && !sessionRead && !persistedRead && !sessionLifecycle && !nativeInventoryRead && !projectMachineAction && !sessionOriginRpc && !needsSessionTargetTransport
+        && !sessionRead && !persistedRead && !sessionLifecycle && !nativeInventoryRead && !machineAction && !sessionOriginRpc && !needsSessionTargetTransport
         && builtIn.data !== 'session.spawn_new'
         // Admission inspects the executing Machine's workspace and plugin
         // runtime before sealing Account storage; a Session runner has neither.
@@ -153,12 +167,12 @@ export function createSessionAccountActionExecutor(params: Readonly<{
         return { ok: true, result: { target: request.data.target, condition: request.data.condition,
           disposition: 'unsupported_condition' } };
       }
-      const lifetime = params.client.getRuntimeLifetimeSignal?.();
-      const signal = context?.signal && lifetime
-        ? AbortSignal.any([context.signal, lifetime]) : context?.signal ?? lifetime ?? undefined;
+      const hostWitness = params.client.getActiveTurnAdmissionWitness?.();
+      const signals = [context?.signal, params.client.getRuntimeLifetimeSignal?.(), hostWitness?.signal]
+        .filter((signal): signal is AbortSignal => signal != null);
+      const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
       if (signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
       if (!path) return unavailable();
-      const hostWitness = params.client.getActiveTurnAdmissionWitness?.();
       if (!hostWitness) return unavailable();
       const binding = params.client.getSessionActionConfirmationBinding?.();
       const executionRun = binding?.run;
@@ -206,7 +220,10 @@ export function createSessionAccountActionExecutor(params: Readonly<{
         });
         if (response.ok) return response.result.kind === 'action.execution' && response.result.requestId === requestId
           ? response.result.outcome : uncertain();
-        return response.error.code === NATIVE_AGENT_SESSION_EFFECT_OUTCOME_UNKNOWN_CODE ? uncertain() : unavailable();
+        return response.error.code === NATIVE_AGENT_SESSION_EFFECT_OUTCOME_UNKNOWN_CODE ? uncertain() : {
+          ok: false, errorCode: response.error.code, error: response.error.message,
+          ...(response.error.cause ? { details: response.error.cause } : {}),
+        };
       } catch (error) {
         if (signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
         if (isCurrentRunnerAgentRuntimeDaemonServiceAuthorityTransition(error)) return uncertain();

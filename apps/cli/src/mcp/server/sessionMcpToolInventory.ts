@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { isSessionHappierToolsEnabled } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
 import type { ActionId } from '@happier-dev/protocol';
 import { readSessionMemoryEnabledV1 } from '@happier-dev/protocol/sessions/context/sessionContextV1';
 import { createHappierToolInventory } from '@/agent/tools/happierTools/listBuiltInHappierTools';
@@ -18,6 +19,7 @@ import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/contro
 /** Retain the bridge's admitted inventory until its actual policy/catalog inputs change. */
 export function createSessionMcpToolInventory(params: Readonly<{
     client: HappyMcpSessionClient;
+    happierToolsEnabled?: boolean;
     actionSettingsProvider: RuntimeActionSettingsProvider;
     hasAuthenticatedRuntime: boolean;
     authorityScope?: 'account' | 'session';
@@ -70,6 +72,7 @@ export function createSessionMcpToolInventory(params: Readonly<{
     };
     const readPluginToolCatalog = async (signal?: AbortSignal): Promise<readonly ProjectedPluginToolCatalogEntry[]> => {
         signal?.throwIfAborted();
+        if (!(params.happierToolsEnabled ?? isSessionHappierToolsEnabled(params.client.getMetadataSnapshot?.()))) return [];
         if (params.pluginRuntimeRegistryLease) {
             return projectOccurrenceBoundExecutablePluginToolCatalog(params.pluginRuntimeRegistryLease.registry);
         }
@@ -115,6 +118,7 @@ export function createSessionMcpToolInventory(params: Readonly<{
             actionsSettings: params.actionSettingsProvider.getActionsSettings(),
             serverFeatures: params.client.getServerFeaturesSnapshot?.(),
             sessionMemoryEnabled: readSessionMemoryEnabledV1(params.client.getMetadataSnapshot?.()),
+            happierToolsEnabled: params.happierToolsEnabled ?? isSessionHappierToolsEnabled(params.client.getMetadataSnapshot?.()),
             sessionMachineId: location?.machineId ?? null,
             sessionRootPath: location?.path ?? null,
             buildPolicy: readCliFeatureBuildPolicyInputs(process.env),
@@ -145,6 +149,7 @@ export function createSessionMcpToolInventory(params: Readonly<{
                 sessionRootPath: inputs.sessionRootPath,
                 inventory: createHappierToolInventory({
                     surface: 'agent', isActionEnabled, actionsSettings: inputs.actionsSettings,
+                    happierToolsEnabled: inputs.happierToolsEnabled,
                     pluginToolCatalog, requiredDirectActionIds: params.requiredDirectActionIds,
                 }),
             });

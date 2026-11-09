@@ -7,7 +7,7 @@ import type { ResolvedSessionMcpServer } from '../runtimeTypes';
  * native tool policy remain with the runner's existing resolution owners. */
 export type PluginMcpPreparation = Readonly<{
   items: readonly McpPluginItemV1[];
-  detectedServers: readonly DetectedMcpServerV1[];
+  discoverNativeServers(): Promise<readonly DetectedMcpServerV1[]>;
   materialize(servers: readonly ResolvedSessionMcpServer[]): Promise<readonly ResolvedSessionMcpServer[]>;
   dispose(): Promise<void>;
 }>;

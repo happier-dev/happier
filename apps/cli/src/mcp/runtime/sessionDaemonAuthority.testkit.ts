@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { join } from 'node:path';
 import { vi } from 'vitest';
 import type { ActionExecuteResult } from '@happier-dev/protocol';
 import type { RequesterAgentStartPolicyV1 } from '@/daemon/sessionEncryption/requesterAgentStartPolicy';
@@ -6,6 +7,7 @@ import type { TrackedSession } from '@/daemon/types';
 import { configuration } from '@/configuration';
 import * as processIdentity from '@/daemon/processIdentity';
 import { hashProcessCommand } from '@/daemon/sessionRegistry';
+import { resolveSessionRunnerEntrypointIdentityFromProcessCommand } from '@/daemon/sessionRunnerRuntime/resolveRunnerEntrypointIdentity';
 import { hashPrivateBearer } from '@/daemon/privateBearerFile';
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import {
@@ -18,6 +20,7 @@ import {
   AgentRuntimeDaemonServiceRequestV1Schema,
   AgentRuntimeDaemonServiceResponseV1Schema,
   type AgentRuntimeDaemonServiceRequestV1,
+  type AgentRuntimeDaemonServiceResponseV1,
 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 
 type ActionOperation = Extract<AgentRuntimeDaemonServiceRequestV1['operation'], { kind: 'action.execute' }>;
@@ -26,19 +29,28 @@ type ActionOperation = Extract<AgentRuntimeDaemonServiceRequestV1['operation'], 
 export async function createSessionDaemonAuthorityFixture(input: Readonly<{
   sessionId: string;
   retainedAgent?: ReturnType<typeof createAgentSessionRunnerFactoryBinding>;
+  /** Source runners must retain the same publication as their Agent binding. */
+  runnerRuntimeRoot?: string;
   execute(operation: ActionOperation): Promise<ActionExecuteResult>;
+  /** A typed refusal from the remote daemon service before Action execution. */
+  actionServiceFailure?: Extract<AgentRuntimeDaemonServiceResponseV1, { ok: false }>;
   /** Explicit policy at the remote daemon boundary; absent never means defaults. */
   agentStartPolicy?: RequesterAgentStartPolicyV1;
   dispatchService?: (request: AgentRuntimeDaemonServiceRequestV1) => Promise<unknown>;
 }>) {
-  const command = 'node /runtime/.runner-snapshots/mcp-authority/dist/index.mjs';
+  const command = input.runnerRuntimeRoot
+    ? `node ${JSON.stringify(join(input.runnerRuntimeRoot, 'dist/index.mjs'))}`
+    : 'node /runtime/.runner-snapshots/mcp-authority/dist/index.mjs';
+  const entrypoint = resolveSessionRunnerEntrypointIdentityFromProcessCommand(command);
+  if (entrypoint.status !== 'known') throw new Error('Missing fixture runner entrypoint identity');
   const runner = { pid: process.pid, processStartTimeMs: 23_346,
-    processCommandHash: hashProcessCommand(command), snapshotIdentity: 'snapshot:mcp-authority' };
+    processCommandHash: hashProcessCommand(command), snapshotIdentity: entrypoint.comparableId };
   const identity = vi.spyOn(processIdentity, 'readProcessIdentityByPid').mockResolvedValue({
     pid: runner.pid, processStartTimeMs: runner.processStartTimeMs, command,
   });
   const capability = 'A'.repeat(43);
   const errors: unknown[] = [];
+  let actionRequestCount = 0;
   const server = createServer(async (request, response) => {
     try {
       // Match the control router: local-service discovery may inspect unrelated
@@ -68,6 +80,12 @@ export async function createSessionDaemonAuthorityFixture(input: Readonly<{
         response.end(JSON.stringify(result));
         return;
       }
+      actionRequestCount += 1;
+      if (input.actionServiceFailure) {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify(AgentRuntimeDaemonServiceResponseV1Schema.parse(input.actionServiceFailure)));
+        return;
+      }
       const outcome = await input.execute(parsed.operation);
       response.setHeader('Content-Type', 'application/json');
       response.end(JSON.stringify({ ok: true, result: { kind: 'action.execution', requestId: parsed.operation.requestId, outcome } }));
@@ -91,6 +109,8 @@ export async function createSessionDaemonAuthorityFixture(input: Readonly<{
   await publishAgentRuntimeDaemonServiceAuthority({ ...authority, httpPort: address.port, capability });
   process.env.HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE = path;
   return {
+    runner,
+    get actionRequestCount() { return actionRequestCount; },
     /** The same daemon-owned record consumed by approval Session-currentness. */
     trackedSession: {
       startedBy: 'daemon', pid: runner.pid, happySessionId: input.sessionId,

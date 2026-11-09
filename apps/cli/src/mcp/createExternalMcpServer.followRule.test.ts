@@ -9,12 +9,12 @@ import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/lis
 import { configuration } from '@/configuration';
 import { readStoredCredentialsForServerId, removeStoredCredentialsForServerId, writeStoredCredentialsForServerId } from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { createAccountEncryptionCurrentnessFixture, createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createSessionNotificationContextFixture, createCompactSessionListQueryResponseFixture, createSessionReadBatchResponseFixture } from '@/testkit/backends/sessionFixtures';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createExternalMcpServer } from './createExternalMcpServer';
 
 describe('external MCP rule Account custody composition', () => {
-  it.each(['get', 'preview', 'retired-preview', 'denied-project-preview'] as const)('executes rule %s through real MCP, Action, HTTP, listing and Account owners', async operation => {
+  it.each(['get', 'preview', 'captured-preview', 'denied-project-preview'] as const)('executes rule %s through real MCP, Action, HTTP, listing and Account owners', async operation => {
     const serverId = configuration.activeServerId;
     const previous = await readStoredCredentialsForServerId(serverId);
     const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'rule-owner' })).toString('base64url')}.signature`,
@@ -32,20 +32,29 @@ describe('external MCP rule Account custody composition', () => {
       return reply.code(403).send({ error: 'credential_scope_denied' });
     });
     let sourcePages = 0;
+    const sourceRows = [
+      { ...createSessionNotificationContextFixture('workspace-only'), ownerAccountId: 'rule-owner',
+        origin: { kind: 'none' as const }, encryptionMode: 'plain' as const, metadata: JSON.stringify({ workspaceId: 'unavailable-ref' }) },
+      { ...createSessionNotificationContextFixture('matching'), ownerAccountId: 'rule-owner', origin: { kind: 'none' as const },
+        encryptionMode: 'plain' as const, projectKey: 'payments', metadata: JSON.stringify({}) },
+      { ...createSessionNotificationContextFixture('locked'), ownerAccountId: 'rule-owner', origin: { kind: 'none' as const }, metadata: 'unreadable-ciphertext' },
+    ];
+    app.post('/v2/sessions/read-batch', async request => createSessionReadBatchResponseFixture({ request: request.body, sessions: sourceRows }));
     app.post('/v2/sessions/query', async request => {
+      expect(request.headers.authorization).toBe(`Bearer ${credentials.token}`);
       sourcePages++;
-      if (operation === 'retired-preview') await removeStoredCredentialsForServerId(serverId);
-      if (operation === 'denied-project-preview') return {
-        sessions: [{ ...createSessionNotificationContextFixture('workspace-only'), ownerAccountId: 'rule-owner',
-          origin: { kind: 'none' }, encryptionMode: 'plain', metadata: JSON.stringify({ workspaceId: 'unavailable-ref' }) }],
+      if (operation === 'captured-preview' && sourcePages === 1) {
+        await writeStoredCredentialsForServerId(serverId, { ...credentials,
+          token: `header.${Buffer.from(JSON.stringify({ sub: 'replacement-owner' })).toString('base64url')}.signature` });
+      }
+      if (operation === 'denied-project-preview') return createCompactSessionListQueryResponseFixture({
+        sessions: [sourceRows[0]!],
         nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
-      };
+      });
       const continuing = Object.hasOwn(request.body as object, 'cursor');
-      return { sessions: continuing
-        ? [{ ...createSessionNotificationContextFixture('matching'), ownerAccountId: 'rule-owner', origin: { kind: 'none' }, encryptionMode: 'plain', projectKey: 'payments', metadata: JSON.stringify({}) }]
-        : [{ ...createSessionNotificationContextFixture('locked'), ownerAccountId: 'rule-owner', origin: { kind: 'none' }, metadata: 'unreadable-ciphertext' }],
+      return createCompactSessionListQueryResponseFixture({ sessions: [sourceRows[continuing ? 1 : 2]!],
         nextCursor: continuing ? null : encodeV2SessionListCursorV1('locked'), hasNext: !continuing,
-        attentionNextCursor: null, attentionHasNext: false };
+        attentionNextCursor: null, attentionHasNext: false });
     });
     let privateReads = 0;
     app.get('/v2/account/session-follow-rules/:ruleId', async request => {
@@ -70,11 +79,6 @@ describe('external MCP rule Account custody composition', () => {
       }) } } }));
       const content = result.content.find(item => item.type === 'text');
       if (!content || content.type !== 'text') throw new Error('Missing Action result');
-      if (operation === 'retired-preview') {
-        expect(result.isError).toBe(true);
-        expect(JSON.parse(content.text)).toMatchObject({ errorCode: 'action_account_scope_changed' });
-        return;
-      }
       expect(result.isError).toBe(false);
       if (operation === 'get') {
         expect(SessionFollowActionOutputSchemasV1['follow.get'].parse(JSON.parse(content.text)))

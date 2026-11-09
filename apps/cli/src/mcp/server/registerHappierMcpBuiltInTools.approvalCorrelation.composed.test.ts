@@ -32,6 +32,13 @@ describe('MCP approval origin to stored transcript review', () => {
     { label: 'external contribution', definition: { ...CODEX_AGENT, id: 'external', capabilities: {
       ...CODEX_AGENT.capabilities, tools: { delivery: 'native_mcp' as const, mcpToolCallIdMetaKey: 'acme.example/nativeCall' },
     } }, meta: { 'acme.example/nativeCall': 'exec-owned-call', callId: 'foreign-field' }, correlated: true },
+    { label: 'host native extension bridge', definition: { ...CODEX_AGENT, capabilities: {
+      ...CODEX_AGENT.capabilities, tools: { delivery: 'native_extension' as const },
+    } }, meta: { 'happier/tool-call-id': 'exec-owned-call' }, correlated: true },
+    { label: 'Session bridge with configured native key', definition: CODEX_AGENT,
+      meta: { 'happier/tool-call-id': 'exec-owned-call' }, correlated: true },
+    { label: 'native key before Session bridge fallback', definition: CODEX_AGENT,
+      meta: { callId: 'exec-owned-call', 'happier/tool-call-id': 'foreign-field' }, correlated: true },
   ])('keeps the $label pending and declined review at its native call', async ({ definition, meta, correlated }) => {
     const admitted = PluginAgentContributionV2Schema.parse(definition);
     const entry = createManifestAgentCatalogEntry({ agentId: admitted.id, pluginId: 'fixture.agent', definition: admitted,

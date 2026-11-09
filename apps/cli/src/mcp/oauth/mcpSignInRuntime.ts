@@ -1,4 +1,5 @@
 import { z } from 'zod/mini';
+import { CredentialRequestRedirectError, fetchWithCredentialRedirectRefusal } from '@happier-dev/cli-common/homeTarget';
 import type { AuthorizationServerMetadata, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import type { FetchLike } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { canonicalMcpOAuthResourceUrlV1 } from '@happier-dev/protocol/mcp/oauth/mcpOAuthResourceV1';
@@ -139,7 +140,7 @@ export function createMcpSignInRuntime(): HostConnectedAccountRuntime {
             requireHttpsEndpoint(url);
             // Prevent a 307/308 from forwarding authorization codes, verifiers,
             // refresh tokens or DCR secrets to another endpoint.
-            const response = await fetch(url, { ...init, signal, redirect: 'error' });
+            const response = await fetchWithCredentialRedirectRefusal(url, { ...init, signal });
             lastStatus = response.status;
             if (readMetadata && response.ok && (!init?.method || init.method === 'GET')) {
                 const raw: unknown = await response.clone().json().catch(() => null);
@@ -254,6 +255,7 @@ export function createMcpSignInRuntime(): HostConnectedAccountRuntime {
                     return { status: 'awaitingOAuthRedirect', authorizationUrl: authorization.href, issuer,
                         issuerResponseParameterRequired: flags.issRequired };
                 } catch (cause) {
+                    if (cause instanceof CredentialRequestRedirectError) throw cause;
                     context.signal.throwIfAborted();
                     return { status: 'rejected', diagnostic: diagnostic(cause instanceof McpOAuthEndpointRequiresHttpsError
                         ? 'mcp_oauth_endpoints_require_https' : await isInvalidClientError(cause) ? 'invalid_client' : 'mcp_oauth_discovery_failed') };
@@ -275,6 +277,7 @@ export function createMcpSignInRuntime(): HostConnectedAccountRuntime {
                     await context.attemptCredentials.delete(completionKey);
                     return { status: 'connected', accountId: sealed.serverId, displayName: sealed.serverId, scopes };
                 } catch (cause) {
+                    if (cause instanceof CredentialRequestRedirectError) throw cause;
                     context.signal.throwIfAborted();
                     return await isInvalidClientError(cause)
                         ? { status: 'rejected', diagnostic: diagnostic('invalid_client') }
@@ -298,6 +301,7 @@ export function createMcpSignInRuntime(): HostConnectedAccountRuntime {
                 const scopes = await saveTokens(context.stagedCredentials, tokens, Date.now(), previousScopes ? z.array(z.string()).parse(JSON.parse(previousScopes)) : []);
                 return { status: 'connected', scopes };
             } catch (cause) {
+                if (cause instanceof CredentialRequestRedirectError) throw cause;
                 context.signal.throwIfAborted();
                 if (cause instanceof McpOAuthEndpointRequiresHttpsError) return { status: 'reconnectRequired', diagnostic: diagnostic('mcp_oauth_endpoints_require_https') };
                 const result = failure(context.signal, network.status(), 'mcp_oauth_refresh_failed');
@@ -321,6 +325,7 @@ export function createMcpSignInRuntime(): HostConnectedAccountRuntime {
                 await response.body?.cancel();
                 return response.ok ? { status: 'remoteRevoked' } : { status: 'outcomeUnknown', diagnostic: diagnostic('mcp_oauth_revoke_failed') };
             } catch (cause) {
+                if (cause instanceof CredentialRequestRedirectError) throw cause;
                 context.signal.throwIfAborted();
                 return { status: 'outcomeUnknown', diagnostic: diagnostic(cause instanceof McpOAuthEndpointRequiresHttpsError
                     ? 'mcp_oauth_endpoints_require_https' : 'mcp_oauth_revoke_failed') };

@@ -611,7 +611,7 @@ export function createHappierMcpServer(
   const executeInCurrentProcess: NonNullable<Parameters<typeof createDaemonPluginActionExecutor>[0]['executeInCurrentProcess']> =
     async (actionId, input, context) => credentials
       ? await executeAccountPluginAction({
-          host: { ...cryptoContext, token: credentials.token, credentials, sessionId: client.sessionId,
+          host: { ...cryptoContext, credentials,
             serverId, serverHttpBaseUrl, isCredentialCurrent },
           deps: harness.deps, actionId, input, ...(context ? { context } : {}),
           ...(scopedPluginRuntimeRegistryLease?.accountRuntime

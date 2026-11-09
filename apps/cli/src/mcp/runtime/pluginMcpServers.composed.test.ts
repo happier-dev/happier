@@ -51,7 +51,7 @@ describe('plugin MCP registration → rules → launch → public service', () =
     const contributes = createResolvedContributionRegistry(await resolvePluginContributes({ happyHomeDir }));
     const registry = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir, contributes });
     const lease = createEphemeralPluginRuntimeRegistryLease(registry);
-    const credentials = { token: 'p7c-account', encryption: null };
+    const credentials = { token: 'p7c-account', encryption: null, credentialProvenance: 'stored_session' as const };
     const settings = accountSettingsParse({});
     const catalog = applyMcpServerCatalogMutationV1(McpServerCatalogV1Schema.parse({ v: 1, servers: [{
       id: 'catalog-tools', name: 'tools', transport: 'stdio', stdio: { command: 'echo', args: [] }, env: {}, createdAt: 1, updatedAt: 1,
@@ -64,7 +64,7 @@ describe('plugin MCP registration → rules → launch → public service', () =
     const input = { session: { sessionId: 'fixture-session', getServerBinding: () => ({ serverId: 'fixture-home', serverUrl: 'https://fixture.test' }),
       rpcHandlerManager: new RpcHandlerManager({ scopePrefix: 'fixture-session', encryptionMode: 'plain' }), updateMetadata() {},
       enqueueSessionEventCommitted: async () => ({ persisted: true, delivered: true }), getRuntimeLifetimeSignal: () => controller.signal },
-      credentials, accountSettings: settings, accountSettingsSnapshot: { source: 'network' as const, settings, settingsVersion: 1,
+      credentials, localWorkflow: true, accountSettings: settings, accountSettingsSnapshot: { source: 'network' as const, settings, settingsVersion: 1,
         loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token),
         mcpServerCatalog: { status: 'ready' as const, authority: 'active' as const, catalog: off, revision: 1, diagnostics: [] } },
       machineId: 'fixture-machine', directory: root, agentId: 'claude', agentAcceptsUserMcp: true,
@@ -76,7 +76,7 @@ describe('plugin MCP registration → rules → launch → public service', () =
         source: { kind: 'user', path: '/native/config' },
       })),
     };
-    let stop: (() => void) | undefined;
+    let stop: (() => void | Promise<void>) | undefined;
     try {
       const projection = PluginProjectionV2Schema.parse(buildPluginProjectionV2({ registry: registry.contributes, generation: 1 }));
       expect(readMcpPluginItemMetadataFromProjectionV1(projection)).toEqual([expect.objectContaining({ id: serverId,
@@ -86,7 +86,7 @@ describe('plugin MCP registration → rules → launch → public service', () =
         mcpPluginItems: await registry.projectMcpServerItems!(off) });
       expect(preview.managed.find(item => item.serverId === serverId)).toMatchObject({ name: 'tools_3', selected: false });
       const unselected = await resolveRunnerMcpServers(input);
-      expect(Object.keys(unselected.mcpServers)).toEqual(['tools_2']); unselected.happierMcpServer.stop();
+      expect(Object.keys(unselected.mcpServers)).toEqual(['tools_2']); await unselected.happierMcpServer.stop();
       vi.stubEnv('HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT', '1');
       const selected = resolveRunnerMcpServers({ ...input, sessionMetadata: { mcpSelectionV1: { v: 1, managedServersEnabled: true,
         forceIncludeServerIds: [serverId], forceExcludeServerIds: [] } } });
@@ -115,7 +115,7 @@ describe('plugin MCP registration → rules → launch → public service', () =
           scope: { executionRunId: 'fixture-detached', directory: root } })]);
       } finally { await Promise.all(attachments.map(attachment => attachment.dispose())); }
     } finally {
-      stop?.(); controller.abort(); vi.unstubAllEnvs(); await lease.release(); await registry.dispose();
+      await stop?.(); controller.abort(); vi.unstubAllEnvs(); await lease.release(); await registry.dispose();
       await rm(root, { recursive: true, force: true });
     }
   });
