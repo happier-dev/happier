@@ -108,7 +108,7 @@ describe("ephemeral Runner activation recovery after publication loss", () => {
         }
     });
 
-    it("keeps an observed activation inspectable, cancelable, and its exact artifact recoverable while current publication is unavailable", async () => {
+    it.each(["publication_unavailable", "feature_opt_out"] as const)("keeps an observed activation inspectable and cancelable during %s", async recovery => {
         const account = await db.account.create({
             data: { encryptionMode: "plain", publicKey: `runner-publication-loss-${randomUUID()}` },
         });
@@ -152,10 +152,11 @@ describe("ephemeral Runner activation recovery after publication loss", () => {
         const typed = app.withTypeProvider<ZodTypeProvider>();
         enableAuthentication(typed);
         enableErrorHandlers(typed);
-        registerEphemeralRunnerRoutes(typed, {
+        const homeEnv = {
             ...process.env,
             HAPPIER_FEATURE_SESSIONS_EPHEMERAL_RUNNER__ENABLED: "1",
-        });
+        };
+        registerEphemeralRunnerRoutes(typed, homeEnv);
         await app.ready();
 
         const headers = { authorization: `Bearer ${token}` };
@@ -204,6 +205,20 @@ describe("ephemeral Runner activation recovery after publication loss", () => {
                 artifacts: [{ identity: { version: "0.3.0", sha256: "a".repeat(64) } }],
             });
 
+            if (recovery === "feature_opt_out") {
+                expect((await app.inject({ method: "GET", url: activationUrl, headers })).statusCode).toBe(200);
+                // The same registered Home now refuses new work; the activation was already admitted.
+                homeEnv.HAPPIER_FEATURE_SESSIONS_EPHEMERAL_RUNNER__ENABLED = "0";
+                const create = await app.inject({ method: "POST", url: "/v1/ephemeral-runners/activations", headers,
+                    payload: { v: 1, activationId: randomUUID(), draftId,
+                        homeServerIdentityId: "srv_runner_publication_loss",
+                        activationSigningPublicKey: encodeBase64(new Uint8Array(32).fill(1), "base64url"),
+                        activationExpiresAt: null, workspace: { kind: "choose_on_endpoint" },
+                        authoringCommitment: encodeBase64(new Uint8Array(32).fill(2), "base64url"),
+                        artifact: { product: "happier-runner", version: "0.3.0", target: "linux-x64", sha256: "a".repeat(64) },
+                        endpointFactsRecipient: { mode: "plain", creatorAccountId: account.id } } });
+                expect(create.statusCode).toBe(404);
+            }
             await expect(app.inject({ method: "GET", url: activationUrl, headers }))
                 .resolves.toMatchObject({ statusCode: 200 });
             await expect(app.inject({
@@ -212,6 +227,14 @@ describe("ephemeral Runner activation recovery after publication loss", () => {
                 headers,
             })).resolves.toMatchObject({ statusCode: 200 });
 
+            if (recovery === "feature_opt_out") {
+                const other = await db.account.create({ data: { encryptionMode: "plain", publicKey: `runner-other-${randomUUID()}` } });
+                const otherToken = await auth.createToken(other.id, undefined, { kind: "account", authority: "present_user" });
+                for (const method of ["GET", "DELETE"] as const) {
+                    expect((await app.inject({ method, url: activationUrl, headers: { authorization: `Bearer ${otherToken}` } })).statusCode).toBe(404);
+                    expect((await app.inject({ method, url: activationUrl })).statusCode).toBe(401);
+                }
+            }
             const canceled = await app.inject({ method: "DELETE", url: activationUrl, headers });
             expect(canceled.statusCode).toBe(200);
             expect(canceled.json()).toMatchObject({

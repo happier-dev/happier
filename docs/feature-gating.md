@@ -110,6 +110,13 @@ delete/unlink and teardown remain reachable. Signed
 continuations use their existing admitted execution authority rather than
 re-evaluating the feature decision.
 
+In 0.3 development, Runner activation creation consumes the runtime
+`sessions.ephemeralRunner` decision, including its `sessions`, `machines` and
+`sessions.drafts` dependencies. Reading or cancelling an existing activation
+continues through the captured Account transport after the Home disables the
+feature or one of its dependencies. The Home gates new activation creation;
+existing activation operations retain authentication and activation ownership.
+
 ### Rich Markdown editor preference migration (0.3 development)
 
 Rich Markdown editing is standard and enabled by default. Account Settings v9

@@ -58,9 +58,10 @@ import { log } from '@/utils/logging/log';
 // this family, so a new literal here is a compile error until it is added there.
 const ErrorSchema = RunnerServerErrorV1Schema;
 
-/** Creator operations share one feature gate and the activation transaction owner. */
+/** Feature policy admits new activations; existing activations retain their authenticated lifecycle. */
 export function registerEphemeralRunnerRoutes(rawApp: Fastify, env: NodeJS.ProcessEnv = process.env): void {
-    const app = createServerFeatureGatedRouteApp(rawApp, 'sessions.ephemeralRunner', env);
+    const app = rawApp;
+    const creationApp = createServerFeatureGatedRouteApp(rawApp, 'sessions.ephemeralRunner', env);
     // The Home's existing public release channel is the only Runner publication
     // ring decision. Resolve it once at composition so listing and the exact
     // activation admission cannot silently read different release rings.
@@ -104,7 +105,7 @@ export function registerEphemeralRunnerRoutes(rawApp: Fastify, env: NodeJS.Proce
         const recipient = await readRunnerCreatorRecipient(request.userId);
         return recipient ? reply.send(recipient) : reply.code(503).send({ error: 'runner_creator_currentness_unavailable' });
     });
-    app.post('/v1/ephemeral-runners/activations', {
+    creationApp.post('/v1/ephemeral-runners/activations', {
         preHandler: [app.authenticate, requirePresentUser],
         // Reuse the catalog's interactive proof-creation budget; no route-local limiter.
         config: { rateLimit: resolveApiHotEndpointRateLimit(env, 'auth.pairing.start') },
