@@ -29,9 +29,12 @@ import type {
 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type {
     ConnectedServiceCredentialRecordV1,
+    ConnectedServiceCredentialRevisionV1,
 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connect/accountSubscription';
 export type { ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connect/accountSubscription';
+export type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
+export type { ConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts';
 export { resolveConnectedServiceQuotaMeterLabel } from '@happier-dev/protocol/connect/connectedServiceQuotaMeterLabel';
 export type {
     PluginConnectedAccountAuthenticationModeV2,
@@ -114,7 +117,10 @@ export type {
 export type {
     ConnectedAccountAuthFailureRequestV1,
     ConnectedAccountQuotaFailureRequestV1,
-    OAuthBearerLeaseV1,
+    RequestAuthHeadersV1,
+    RequestAuthFactsV1,
+    RequestAuthHeaderMapV1,
+    RequestAuthCredentialContextV1,
     RequestAuthFailureOutcomeV1,
     ConnectedAccountRequestAuthMaterializationV1 as ConnectedAccountRequestAuthMaterialization,
     ConnectedAccountRequestAuthUseV1 as ConnectedAccountRequestAuthUse,
@@ -340,7 +346,11 @@ export type ConnectedAccountMaterializationOptions = Readonly<{
     /** An observed account reference is only a currentness precondition. */
     expectedAccount?: ConnectedAccountRef;
 }>;
-export type ConnectedAccountBindingEvent = Readonly<{ kind: 'resync' }>;
+export type ConnectedAccountBindingEvent = Readonly<{
+    kind: 'resync';
+    /** False for initial delivery or presentation-only changes; true when the selected authority changes. */
+    authorityChanged: boolean;
+}>;
 export type ConnectedAccountBindingSummary = Readonly<{
     purpose: string;
     service: PluginContributionRef;
@@ -350,6 +360,11 @@ export type ConnectedAccountBindingSummary = Readonly<{
         kind: 'account' | 'group';
         displayName: string;
     }>;
+    /** Nonsecret metadata included only when observation is requested. */
+    credentialRevision?: ConnectedServiceCredentialRevisionV1 | null;
+    configurationRevision?: string | null;
+    /** Recorded selected Pool identity; observing never selects or rotates a member. */
+    group?: Readonly<{ groupId: string; generation: number }>;
 }>;
 /** Host-owned connection state of one listed Connected Account. */
 export type ConnectedAccountListedState =
@@ -414,6 +429,12 @@ export const classifyProviderLimitEvidence: (
 
 /** Runtime contract for one admitted connected-account implementation. */
 export interface ConnectedAccountRuntime {
+    /** Optional daemon-only native login; no saved Account is implied or imported. */
+    materializeNative?(
+        request: ConnectedAccountMaterializationRequest,
+        context: Omit<PluginInvocationContext, 'operation'> & Readonly<{ service: PluginContributionRef }>,
+        options?: Readonly<{ signal?: AbortSignal }>,
+    ): Promise<ConnectedAccountMaterialization>;
     /** Optional effectful capability; hosts never emulate it for older plugins. */
     readonly recoveryCredits?: Readonly<{
         read(
@@ -505,7 +526,7 @@ export interface ConnectedAccountRuntime {
 export interface ConnectedAccountsService {
     getBinding(
         purpose: string,
-        options?: Readonly<{ signal?: AbortSignal }>,
+        options?: Readonly<{ signal?: AbortSignal; observation?: true }>,
     ): Promise<ConnectedAccountBindingSummary | null>;
     requestSelection(
         request: Readonly<{ purpose: string; reason: string }>,

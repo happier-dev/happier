@@ -1,138 +1,15 @@
 import { GITHUB_TOKEN_CREDENTIAL_KEY as TOKEN_CREDENTIAL_KEY, materializeGithubCredential } from './credentialMaterialization.js';
 import type {
-  ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,
   ConnectedAccountHealthResult as PluginConnectedAccountHealthResult,
-  ConnectedAccountManualCompletion as PluginConnectedAccountManualCompletion,
   ConnectedAccountRuntime as PluginConnectedAccountRuntime,
 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { resolveGhNativeToken } from '@happier-dev/plugin-sdk/exec';
-import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
-import { createGithubRequestHeaders } from '../observations/githubRequestHeaders.js';
-import { getGithubAccountRequestOwnerV1 } from '../observations/githubApiClient.js';
-import { GITHUB_API_ORIGIN } from '../observations/githubProviderContracts.js';
+import { refreshGithubCopilotCredential } from './copilot.js';
+import { confirmGithubIdentity, diagnostic, githubPortableAuthentication } from './authentication.js';
 
-const GITHUB_IDENTITY_URL = 'https://api.github.com/user';
-
-function diagnostic(code: string, message: string) {
-  return { code, severity: 'error' as const, message };
-}
-
-function parseScopes(headers: Readonly<Record<string, string>>): readonly string[] {
-  const value = readTriageResponseHeaderV1(headers, 'x-oauth-scopes');
-  if (!value) return [];
-  return [...new Set(value.split(',').map((scope) => scope.trim()).filter(Boolean))];
-}
-
-type ConfirmedGithubIdentity = Readonly<{
-  status: 'confirmed';
-  providerAccountId: string;
-  displayName: string;
-  email?: string;
-  scopes: readonly string[];
-}>;
-type GithubIdentityFailure =
-  | Readonly<{
-      status: 'rejected';
-      diagnostic: ReturnType<typeof diagnostic>;
-    }>
-  | Readonly<{
-      status: 'unavailable';
-      diagnostic: ReturnType<typeof diagnostic>;
-    }>;
-type GithubConnectedAccountReadContext = Parameters<
-  PluginConnectedAccountRuntime['status']
->[0];
-
-function parseConfirmedIdentity(
-  body: Uint8Array,
-  headers: Readonly<Record<string, string>>,
-): ConfirmedGithubIdentity | null {
-  try {
-    const value = JSON.parse(new TextDecoder().decode(body)) as Record<string, unknown>;
-    const providerAccountId = typeof value.id === 'number'
-      && Number.isSafeInteger(value.id)
-      && value.id > 0
-      ? String(value.id)
-      : typeof value.id === 'string' && /^[1-9][0-9]*$/.test(value.id.trim())
-        ? value.id.trim()
-        : '';
-    const displayName = typeof value.login === 'string' ? value.login.trim() : '';
-    const email = typeof value.email === 'string' ? value.email.trim() : '';
-    if (!providerAccountId || !displayName) return null;
-    return {
-      status: 'confirmed',
-      providerAccountId,
-      displayName,
-      ...(email ? { email } : {}),
-      scopes: parseScopes(headers),
-    };
-  } catch {
-    return null;
-  }
-}
-
-async function confirmGithubIdentity(
-  token: string,
-  context: Pick<PluginConnectedAccountAuthenticationContext, 'services' | 'signal'>
-    & Partial<Pick<GithubConnectedAccountReadContext, 'account'>>,
-  options?: Readonly<{ signal?: AbortSignal }>,
-): Promise<ConfirmedGithubIdentity | GithubIdentityFailure> {
-  const signal = options?.signal ?? context.signal;
-  try {
-    const account = context.account;
-    const owner = getGithubAccountRequestOwnerV1({
-      accountScope: account ? JSON.stringify([account.service.pluginId, account.service.localId, account.accountId]) : 'authentication',
-      credentialScope: `Bearer ${token}`,
-      executionOrigin: GITHUB_API_ORIGIN,
-      fallbackLifetime: githubConnectedAccountRuntimeDefinition,
-    });
-    const response = await owner.request({
-      url: GITHUB_IDENTITY_URL,
-      method: 'GET',
-      headers: createGithubRequestHeaders({ authorization: `Bearer ${token}` }),
-      redirect: 'error',
-    }, { signal, transport: (request, requestSignal) => context.services.http.request({
-      ...request,
-      redirect: request.redirect ?? 'error',
-    }, { signal: requestSignal }) });
-    if (response.status === 401) {
-      return {
-        status: 'rejected',
-        diagnostic: diagnostic(
-          'github_pat_rejected',
-          'GitHub rejected the personal access token.',
-        ),
-      };
-    }
-    if (response.status !== 200) {
-      return {
-        status: 'unavailable',
-        diagnostic: diagnostic(
-          'github_identity_unavailable',
-          'GitHub account identity could not be confirmed.',
-        ),
-      };
-    }
-    const identity = parseConfirmedIdentity(response.body, response.headers);
-    return identity ?? {
-      status: 'unavailable',
-      diagnostic: diagnostic(
-        'github_identity_invalid',
-        'GitHub returned an invalid account identity response.',
-      ),
-    };
-  } catch (error) {
-    if (signal.aborted) throw error;
-    return {
-      status: 'unavailable',
-      diagnostic: diagnostic(
-        'github_identity_unavailable',
-        'GitHub account identity could not be confirmed.',
-      ),
-    };
-  }
-}
+type GithubConnectedAccountReadContext = Parameters<PluginConnectedAccountRuntime['status']>[0];
 
 async function readHealth(
   context: GithubConnectedAccountReadContext,
@@ -170,8 +47,13 @@ async function readHealth(
       ),
     };
   }
+  const credentialKind = await context.credentials.get('credentialKind', options);
+  const storedExpiry = await context.credentials.get('expiresAtMs', options);
+  const expiresAt = storedExpiry ? Number(storedExpiry) : undefined;
   return {
     status: 'connected',
+    credentialKind: credentialKind === 'oauth' ? 'oauth' : 'token',
+    ...(expiresAt !== undefined && Number.isFinite(expiresAt) ? { expiresAt } : {}),
     providerIdentity: {
       accountId: identity.providerAccountId,
       ...(identity.email ? { email: identity.email } : {}),
@@ -185,38 +67,7 @@ async function readHealth(
 const githubConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
   authentication: {
     modes: {
-      'fine-grained-pat': {
-        kind: 'manual',
-        async complete(
-          input: PluginConnectedAccountManualCompletion,
-          context: PluginConnectedAccountAuthenticationContext,
-          options,
-        ) {
-          const token = input.fields.token?.trim() ?? '';
-          if (!token) {
-            return {
-              status: 'rejected',
-              diagnostic: diagnostic(
-                'github_pat_invalid',
-                'GitHub requires a fine-grained personal access token.',
-              ),
-            };
-          }
-          const identity = await confirmGithubIdentity(token, context, options);
-          if (identity.status !== 'confirmed') return identity;
-          await context.attemptCredentials.set(TOKEN_CREDENTIAL_KEY, token, options);
-          return {
-            status: 'connected',
-            accountId: identity.providerAccountId,
-            providerIdentity: {
-              accountId: identity.providerAccountId,
-              ...(identity.email ? { email: identity.email } : {}),
-            },
-            displayName: identity.displayName,
-            scopes: identity.scopes,
-          };
-        },
-      },
+      ...githubPortableAuthentication.modes,
       'native-import': {
         kind: 'manual',
         async complete(input, context, options) {
@@ -238,6 +89,7 @@ const githubConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
           await context.attemptCredentials.set(TOKEN_CREDENTIAL_KEY, native.token, options);
           return {
             status: 'connected',
+            credentialKind: 'token',
             providerIdentity: {
               accountId: identity.providerAccountId,
               ...(identity.email ? { email: identity.email } : {}),
@@ -250,7 +102,7 @@ const githubConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
     },
   },
   async refresh(context, options) {
-    return readHealth(context, options);
+    return await refreshGithubCopilotCredential(context, options) ?? readHealth(context, options);
   },
   async revoke() {
     return { status: 'remoteUnsupported' };
@@ -259,6 +111,29 @@ const githubConnectedAccountRuntimeDefinition: PluginConnectedAccountRuntime = {
     return readHealth(context, options);
   },
   materialize: materializeGithubCredential,
+  async materializeNative(request, context, options) {
+    if (request.kind !== 'httpHeaders') throw new PluginError({
+      code: 'plugin_connected_account_binding_out_of_scope',
+      message: 'Native GitHub credentials require an authorized HTTPS header request',
+    });
+    if (!request.headerNames.includes('authorization')) return { kind: 'httpHeaders', headers: {} };
+    const hostnames = new Set(request.origins.map(origin => {
+      const hostname = new URL(origin).host;
+      return hostname === 'api.github.com' ? 'github.com' : hostname;
+    }));
+    if (hostnames.size !== 1) throw new PluginError({ code: 'plugin_connected_account_binding_out_of_scope' });
+    const [hostname] = hostnames;
+    const native = await resolveGhNativeToken({
+      hostname,
+      signal: options?.signal ?? context.signal,
+    });
+    if (!native.ok) throw new PluginError({
+      code: 'plugin_connected_account_native_unavailable',
+      message: 'Sign in with gh CLI',
+      remediation: { kind: 'openUrl', url: 'https://cli.github.com/manual/gh_auth_login' },
+    });
+    return { kind: 'httpHeaders', headers: { Authorization: `Bearer ${native.token}` } };
+  },
 };
 
 export const githubConnectedAccountRuntime = Object.freeze(

@@ -123,9 +123,10 @@ function createEstablishedInvoker(
     registeredRuntime: PluginConnectedAccountRuntime,
     isCurrent: () => boolean = () => true,
     declaresRecoveryCredits = registeredRuntime.recoveryCredits !== undefined,
+    registry?: ReturnType<typeof createConnectedAccountContributionRegistry>,
 ) {
     return createConnectedAccountHostRuntimeInvoker({
-        resolveRuntime: async () => Object.freeze({
+        resolveRuntime: registry ? registry.resolve : async () => Object.freeze({
             ref: service,
             ...runtimeIdentity,
             descriptor: { ...descriptor, ...(declaresRecoveryCredits ? { recoveryCredits: { supported: true as const } } : {}) },
@@ -183,6 +184,52 @@ function invokeEstablished(
 }
 
 describe('connected-account runtime invoker', () => {
+    it('invokes contributed native materialization without fabricating a saved account', async () => {
+        const registeredRuntime: PluginConnectedAccountRuntime = {
+            ...runtime(() => {}),
+            async materializeNative(request, context) {
+                expect(context).not.toHaveProperty('account');
+                expect(context).not.toHaveProperty('credentials');
+                expect(context.service).toEqual(service);
+                expect(context.plugin.id).toBe(service.pluginId);
+                expect(context.signal.aborted).toBe(false);
+                return { kind: 'environment', env: { NATIVE_SOURCE: `${context.service.localId}:${request.kind}` } };
+            },
+        };
+        const createRegistry = (activateOnDemand = async () => {}, nativeRuntime = registeredRuntime) => {
+            let activated = false;
+            return createConnectedAccountContributionRegistry({
+                descriptors: [{ provenance: 'external', source: { kind: 'path' },
+                    pluginId: service.pluginId, definition: { ...descriptor, authentication: {
+                        ...descriptor.authentication, native: { systemTool: 'acme-login' },
+                    } } }],
+                activateOnDemand: async () => { await activateOnDemand(); activated = true; },
+                readRegistrations: () => activated ? [{ pluginId: service.pluginId, localId: service.localId,
+                    occurrenceId: runtimeIdentity.occurrenceId, runtime: nativeRuntime }] : [],
+                readPluginOccurrenceId: () => runtimeIdentity.occurrenceId,
+                readPluginSourceCustody: () => runtimeIdentity.sourceCustody,
+                isPluginOccurrenceCurrent: () => true,
+            });
+        };
+        const registry = createRegistry();
+        const invoker = createEstablishedInvoker(registeredRuntime, undefined, undefined, registry);
+        await expect(invoker.invokeNative({ service, request: { kind: 'environment', keys: ['NATIVE_SOURCE'] },
+            signal: new AbortController().signal })).resolves.toEqual({ kind: 'environment', env: { NATIVE_SOURCE: 'work:environment' } });
+        const withoutNative = runtime(() => {});
+        const missingRegistry = createRegistry(undefined, withoutNative);
+        await expect(createEstablishedInvoker(withoutNative, undefined, undefined, missingRegistry).invokeNative({ service,
+            request: { kind: 'environment', keys: ['NATIVE_SOURCE'] }, signal: new AbortController().signal,
+        })).rejects.toMatchObject({ code: 'plugin_connected_account_native_unavailable' });
+        missingRegistry.dispose();
+        registry.dispose();
+        const cancelled = new AbortController();
+        const cancelledRegistry = createRegistry(async () => { cancelled.abort(); });
+        await expect(createEstablishedInvoker(registeredRuntime, undefined, undefined, cancelledRegistry).invokeNative({
+            service, request: { kind: 'environment', keys: ['NATIVE_SOURCE'] }, signal: cancelled.signal,
+        })).rejects.toMatchObject({ name: 'AbortError' });
+        cancelledRegistry.dispose();
+    });
+
     it('lets an external runtime reconcile retained native-file state through the admitted callback', async () => {
         const invoker = createEstablishedInvoker({
             ...runtime(() => {}),
@@ -334,7 +381,7 @@ describe('connected-account runtime invoker', () => {
         });
         await expect(invokeEstablished(invoker, {
             kind: 'materialize', request: {
-                kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'],
+                kind: 'httpHeaders', origins: ['https://api.example.test'], headerNames: ['authorization'],
             },
         })).resolves.toEqual({ kind: 'httpHeaders', headers });
     });
@@ -359,7 +406,7 @@ describe('connected-account runtime invoker', () => {
         });
         const result = invokeEstablished(invoker, {
             kind: 'materialize', request: {
-                kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'],
+                kind: 'httpHeaders', origins: ['https://api.example.test'], headerNames: ['authorization'],
             },
         }, isCurrent, cancellation.signal);
         if (outcome === 'retiredDuringCopy') {

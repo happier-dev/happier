@@ -14,6 +14,41 @@ import { join } from 'node:path';
 const encodeJson = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 
 describe('GitHub CLI login import', () => {
+  it.each([
+    { origin: 'https://api.github.com', hostname: 'github.com' },
+    { origin: 'https://github.example.test', hostname: 'github.example.test' },
+  ])('materializes the current native login for $hostname without importing an account', async ({ origin, hostname }) => {
+    const home = await mkdtemp(join(tmpdir(), 'github-native-'));
+    const command = vi.spyOn(processBoundary, 'execFileWithDeadline').mockImplementation(async (_bin, args) => {
+      expect(args).toEqual(['auth', 'token', '--hostname', hostname]);
+      return { stdout: 'fixture-native-token\n', stderr: '' };
+    });
+    try {
+      const bin = join(home, process.platform === 'win32' ? 'gh.exe' : 'gh');
+      await writeFile(bin, 'fixture');
+      await chmod(bin, 0o755);
+      vi.stubEnv('PATH', home);
+      vi.stubEnv('HAPPIER_HOME_DIR', home);
+      vi.stubEnv('HAPPIER_FIRST_PARTY_INSTALL_HOME', home);
+      const signal = new AbortController().signal;
+      // OS lookup/process is the boundary; native authentication has no saved-account context.
+      const context = { signal, service: { pluginId: PLUGIN_MANIFEST.id, localId: 'github-account' } } as Parameters<NonNullable<PluginConnectedAccountRuntime['materializeNative']>>[1];
+      await expect(githubConnectedAccountRuntime.materializeNative!(
+        { kind: 'httpHeaders', origins: [origin], headerNames: ['authorization'] }, context,
+      )).resolves.toEqual({ kind: 'httpHeaders', headers: { Authorization: 'Bearer fixture-native-token' } });
+      expect(command).toHaveBeenCalledOnce();
+      command.mockClear();
+      await expect(githubConnectedAccountRuntime.materializeNative!(
+        { kind: 'httpHeaders', origins: [origin], headerNames: ['x-request-id'] }, context,
+      )).resolves.toEqual({ kind: 'httpHeaders', headers: {} });
+      expect(command).not.toHaveBeenCalled();
+    } finally {
+      command.mockRestore();
+      vi.unstubAllEnvs();
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it.each(['connected', 'signed-out', 'absent', 'cancelled'] as const)(
     'imports through the existing attempt credential store: %s', async (scenario) => {
       const mode = githubConnectedAccountRuntime.authentication.modes['native-import'];
@@ -58,7 +93,7 @@ describe('GitHub CLI login import', () => {
         if (scenario === 'cancelled') {
           await expect(result).rejects.toMatchObject({ name: 'AbortError' });
         } else if (scenario === 'connected') {
-          await expect(result).resolves.toEqual({ status: 'connected',
+          await expect(result).resolves.toEqual({ status: 'connected', credentialKind: 'token',
             providerIdentity: { accountId: '12345' }, displayName: 'octocat', scopes: [] });
           expect(values).toEqual(new Map([['token', 'fixture-native-token']]));
           expect(requests).toEqual(['https://api.github.com/user']);
@@ -91,7 +126,7 @@ describe('GitHub Connected Account mode contract', () => {
       : { 'retry-after': '120' };
     const request = vi.fn(async () => ({ status: 403, headers, body: encodeJson({ message: 'API rate limit exceeded' }) }));
     // HTTP and credential storage are external boundaries; internal rate ownership stays real.
-    const context = { account, signal: new AbortController().signal, credentials: { get: async () => 'fixture-rate-token' },
+    const context = { account, signal: new AbortController().signal, credentials: { get: async (key: string) => key === 'token' ? 'fixture-rate-token' : null },
       services: { http: { request } } } as unknown as Parameters<typeof githubConnectedAccountRuntime.status>[0];
     try {
       await expect(githubConnectedAccountRuntime.status(context)).resolves.toMatchObject({ status: 'unavailable' });
@@ -192,6 +227,7 @@ describe('GitHub Connected Account mode contract', () => {
       } as unknown as Parameters<typeof authentication.complete>[1]);
       expect(connectResult).toEqual({
         status: 'connected',
+        credentialKind: 'token',
         accountId: '12345',
         providerIdentity: { accountId: '12345', email: 'octocat@example.com' },
         displayName: 'octocat',
@@ -230,6 +266,7 @@ describe('GitHub Connected Account mode contract', () => {
       } as unknown as Parameters<typeof authentication.complete>[1]);
       expect(reconnectResult).toEqual({
         status: 'connected',
+        credentialKind: 'token',
         accountId: '67890',
         providerIdentity: { accountId: '67890' },
         displayName: 'renamed-octocat',

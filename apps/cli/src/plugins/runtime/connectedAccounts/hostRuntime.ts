@@ -6,6 +6,8 @@ import type {
 
 type ReadContext = Parameters<ConnectedAccountRuntime['status']>[0];
 type MutationContext = Parameters<ConnectedAccountRuntime['refresh']>[0];
+type NativeContext = Parameters<NonNullable<ConnectedAccountRuntime['materializeNative']>>[1];
+export type HostConnectedAccountNativeContext = Pick<NativeContext, 'service' | 'signal' | 'invokedAtMs'>;
 
 /** Built-in services use host authority; they have no plugin invocation identity. */
 export type HostConnectedAccountAuthenticationContext = Pick<
@@ -29,6 +31,7 @@ type RuntimeContext<T, Authentication, Read> = T extends ConnectedAccountAuthent
     ? Authentication
     : T extends MutationContext ? Read & Pick<MutationContext, 'operation' | 'stagedCredentials'>
     : T extends ReadContext ? Read
+    : T extends NativeContext ? HostConnectedAccountNativeContext
     : T;
 type RuntimeForContext<T, Authentication, Read> = T extends (...args: infer Args) => infer Result
     ? (...args: { [K in keyof Args]: RuntimeContext<Args[K], Authentication, Read> }) => Result

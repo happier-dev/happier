@@ -213,6 +213,8 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
       kind: z.literal('manual'),
       browserReachability: z.optional(browserReachabilitySchema),
       title: z.optional(PluginLocalizedStringV2Schema),
+      /** Presentation fact only: stored token material and absent usage never establish API-key mode. */
+      apiKey: z.optional(z.literal(true)),
       outcomeReconciliation: z.literal('none'),
       fields: PluginConnectedAccountAuthenticationFieldsV2Schema,
       setup: z.optional(PluginConnectedAccountSetupGuideV2Schema),
@@ -302,6 +304,11 @@ export const PluginConnectedAccountAuthenticationModeV2Schema =
 export type PluginConnectedAccountAuthenticationModeV2 =
   z.infer<typeof PluginConnectedAccountAuthenticationModeV2Schema>;
 
+/** Only the selected mode's explicit declaration identifies an API-key account. */
+export function isConnectedAccountApiKeyModeV1(mode: PluginConnectedAccountAuthenticationModeV2 | null | undefined): boolean {
+  return mode?.kind === 'manual' && mode.apiKey === true;
+}
+
 export function isAccountDirectConnectedAccountModeV1(mode: PluginConnectedAccountAuthenticationModeV2 | null | undefined):
   mode is Extract<PluginConnectedAccountAuthenticationModeV2, { kind: 'manual' }> & { accountDirectSave: NonNullable<Extract<PluginConnectedAccountAuthenticationModeV2, { kind: 'manual' }>['accountDirectSave']> } {
   return mode?.kind === 'manual' && mode.accountDirectSave !== undefined && mode.configuration === undefined;
@@ -338,7 +345,7 @@ export const PluginConnectedAccountAuthenticationV2Schema = lazyZodSchema(() => 
   account: z.optional(PluginClientExecutionReferenceV1Schema),
   defaultModeId: asProtocolZod(PluginContributionLocalIdSchema),
   modes: z.array(PluginConnectedAccountAuthenticationModeV2Schema).check(z.minLength(1)),
-  native: z.optional(z.strictObject({ systemTool: z.literal('gh') })),
+  native: z.optional(z.strictObject({ systemTool: asProtocolZod(PluginContributionLocalIdSchema) })),
 }).check(z.superRefine((authentication, context) => {
   const modeIds = new Set<string>();
   authentication.modes.forEach((mode, modeIndex) => {
@@ -380,7 +387,15 @@ export const PluginConnectedAccountDescriptorContributionV2Schema = lazyZodSchem
   description: z.optional(PluginLocalizedStringV2Schema),
   /** Presentation only; omission retains the host's existing service classification. */
   ui: z.optional(z.strictObject({
-    category: z.literal('cloud-machines'),
+    category: z.optional(z.literal('cloud-machines')),
+    /** Same-plugin packaged Resource used for the service's distinct mark. */
+    iconResourceId: z.optional(asProtocolZod(PluginContributionLocalIdSchema)),
+    shortName: z.optional(z.string().check(z.trim(), z.minLength(1))),
+    setup: z.optional(z.strictObject({
+      order: z.optional(z.number()),
+      firstRun: z.optional(z.boolean()),
+      catalogDescription: z.optional(PluginLocalizedStringV2Schema),
+    })),
   })),
   authentication: PluginConnectedAccountAuthenticationV2Schema,
   usageIdentity: z.optional(z.strictObject({

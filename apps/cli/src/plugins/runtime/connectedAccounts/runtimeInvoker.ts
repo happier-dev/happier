@@ -13,6 +13,7 @@ import {
 import type { ConnectedAccountPortableAuthenticationContext, ConnectedAccountPortableReadContext } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
     type PluginContributionRef,
+    PluginError,
 } from '@happier-dev/plugin-sdk';
 
 import { createPluginInvocationPresentation } from '@/plugins/runtime/invocation/services/interactions';
@@ -83,6 +84,11 @@ import type { ConnectedAccountRuntimeEstablishedOperation, ConnectedAccountRunti
 export type ConnectedAccountRuntimeEstablishedResult<TOperation extends ConnectedAccountRuntimeEstablishedOperation> = PortableEstablishedResult<TOperation, Awaited<ReturnType<NonNullable<PluginConnectedAccountRuntime['quota']>>>>;
 
 export type ConnectedAccountHostRuntimeInvoker = Readonly<{
+    invokeNative(input: Readonly<{
+        service: PluginContributionRef;
+        request: Parameters<NonNullable<PluginConnectedAccountRuntime['materializeNative']>>[0];
+        signal: AbortSignal;
+    }>): ReturnType<NonNullable<PluginConnectedAccountRuntime['materializeNative']>>;
     invokeAuthentication(
         input: ConnectedAccountRuntimeAuthenticationInvocation,
     ): Promise<unknown>;
@@ -453,6 +459,46 @@ export function createConnectedAccountHostRuntimeInvoker(params: Readonly<{
     }
 
     return Object.freeze({
+        async invokeNative(input) {
+            input.signal.throwIfAborted();
+            const lease = await params.resolveRuntime(input.service);
+            input.signal.throwIfAborted();
+            if (!lease || ('realm' in lease && lease.realm === 'account') || !lease.runtime.materializeNative) {
+                throw new PluginError({ code: 'plugin_connected_account_native_unavailable',
+                    message: 'The selected service does not provide native authentication',
+                    remediation: { kind: 'selectAccount', service: input.service } });
+            }
+            if (!lease.isCurrent()) throw new ConnectedAccountRuntimeInvocationNotStartedError();
+            const lifetime = createPluginInvocationLifetime(input.signal);
+            const signal = lifetime.signal;
+            try {
+                if (lease.owner === 'host') return await lease.runtime.materializeNative(input.request,
+                    { service: lease.ref, signal, invokedAtMs: lifetime.invokedAtMs }, { signal });
+                const plugin = params.resolvePlugin(lease.ref);
+                if (!plugin) throw new ConnectedAccountRuntimeInvocationNotStartedError();
+                const qualifiedId = `${lease.ref.pluginId}/connectedAccountDescriptors/${lease.ref.localId}`;
+                const seed: PluginInvocationServicesSeed = Object.freeze({
+                    plugin: Object.freeze({ id: lease.ref.pluginId, version: plugin.version }),
+                    contribution: Object.freeze({ id: lease.ref.localId, qualifiedId }),
+                    occurrenceId: lease.occurrenceId, sourceCustody: lease.sourceCustody,
+                    correlationId: randomUUID(), surface: 'cli', signal,
+                    redactionLifetimeSignal: lifetime.redactionLifetimeSignal,
+                    isOccurrenceCurrent: () => !signal.aborted,
+                });
+                const policy = params.resolveHostPolicy({ pluginId: lease.ref.pluginId,
+                    occurrenceId: lease.occurrenceId, qualifiedId },
+                { hostAccessRequests: plugin.hostAccessRequests, surface: 'cli', signal });
+                const services = params.createServices(seed, policy.serviceBinding);
+                return await lease.runtime.materializeNative(input.request, Object.freeze({
+                    plugin: seed.plugin, contribution: seed.contribution, surface: seed.surface,
+                    invokedAtMs: lifetime.invokedAtMs, signal, services, service: lease.ref,
+                    ui: createPluginInvocationPresentation({ currentSession: null, signal,
+                        isOccurrenceCurrent: seed.isOccurrenceCurrent }),
+                }), { signal });
+            } finally {
+                await lifetime.complete();
+            }
+        },
         async invokeAuthentication(input) {
             let invocation: AuthenticationInvocationContext;
             try {

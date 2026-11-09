@@ -1,4 +1,5 @@
 export type { AuthCallbackCreateInput } from '../connectedAccounts.js';
+export { requestDeviceGrantStep, type DeviceGrantStepInput } from './deviceGrantStep.js';
 export { classifyConnectedAccountTokenEndpointFailure, parseConnectedAccountTokenEndpointFailure } from './projections.js';
 export {
     PROVIDER_LIMIT_EVIDENCE_CLASSIFIER_PROJECTION_V1,
@@ -84,7 +85,10 @@ export type { ConnectedAccountRequestAuthClient } from './requestAuth.js';
 export type {
     ConnectedAccountAuthFailureRequestV1,
     ConnectedAccountQuotaFailureRequestV1,
-    OAuthBearerLeaseV1,
+    RequestAuthHeadersV1,
+    RequestAuthFactsV1,
+    RequestAuthHeaderMapV1,
+    RequestAuthCredentialContextV1,
     QualifiedConnectedAccountPurposeV1,
     RequestAuthFailureOutcomeV1,
 } from '../connectedAccounts.js';
@@ -105,6 +109,8 @@ export type { PluginConnectedAccountMaterializationKind } from '../connectedAcco
 export type { PluginConnectedAccountRegistrationApi } from '../services/connectedAccounts.js';
 export type { ProviderAccountUsageQuotaScopeV1 } from '../connectedAccounts.js';
 export type { ProviderAccountSubscriptionV1 } from '../connectedAccounts.js';
+export type { ProviderAccountUsageSnapshotV1 } from '../connectedAccounts.js';
+export type { ConnectedAccountCompletionObservation } from '../connectedAccounts.js';
 export type {
     ConnectedServiceQuotaRecoveryCreditV1,
     ConnectedServiceQuotaRecoveryCreditsV1,

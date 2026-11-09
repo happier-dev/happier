@@ -5,6 +5,37 @@ description: Select and materialize host-managed account credentials.
 
 Use `context.services.connectedAccounts` for host-managed account connections. Access is purpose-bound: a plugin declares why one contribution needs an account, and the host/user binds that purpose to one compatible account or account group. Plugins cannot enumerate unrelated accounts or choose a group member.
 
+## Authentication-mode presentation in development
+
+In unreleased 0.3 development source, a manual authentication mode can declare
+`apiKey: true` when it accepts an API key. The public catalog preserves this
+presentation fact so Credentials and account details identify the selected mode
+without guessing from stored token material. Leave it absent for device sign-in,
+native imports and other modes whose API-key identity is unknown. The declaration
+does not establish billing or a subscription; observed usage owns subscription
+status and plan labels.
+
+## Request headers in development
+
+In unreleased 0.3 development source, the public request-auth client returns the
+complete header map required by a declared purpose. It supports API-key headers
+and Basic authorization as well as Bearer authorization:
+
+```ts
+import { createConnectedAccountRequestAuthClient } from '@happier-dev/plugin-sdk/connected-accounts/request-auth';
+
+const client = await createConnectedAccountRequestAuthClient({ capabilityFile });
+const material = await client.lookupConnectedAccountRequestAuth({ purpose, signal });
+const headers = material.headers;
+```
+
+Pass those headers to the declared upstream request. The result also includes
+scalar `facts`, optional credential `expiresAt`, and the `credentialContext`
+needed by the existing failure-reporting operations. A service runtime can omit
+facts; the host supplies an empty map. Only the consuming plugin interprets its
+fact keys. Keep these values local to the operation and preserve the returned
+credential context when reporting an authentication or quota failure.
+
 ## Authorization-code callback in development
 
 In 0.3 development source, authorization-code Connected Accounts can declare the
@@ -273,7 +304,7 @@ binding and credential bytes, checks the issued origin and method before
 injection, and redacts provider echoes. Declare the purpose and network access
 on the Action; this request does not select an Account or grant access.
 
-- HTTP headers for one origin and bounded header names
+- HTTP headers for declared HTTPS origins and bounded header names
 - environment variables for bounded keys
 - files for bounded file ids
 
@@ -290,7 +321,7 @@ const credential = await context.services.connectedAccounts.materialize(
   'upstream',
   {
     kind: 'httpHeaders',
-    origin: 'https://api.example.com',
+    origins: ['https://api.example.com'],
     headerNames: ['authorization'],
   },
 );
@@ -305,7 +336,7 @@ forms. The host re-verifies that the account is still authorized for the
 declared purpose before and after materialization: it must still be the direct
 target or a current enabled member of the bound group. An account from the same
 service but outside that scope is rejected. For an `httpHeaders` request, an
-account with configured origins requires the requested origin to remain among
+account with configured origins requires every requested origin to remain among
 its current `connectedAccountOrigins`. The selected service's materialization
 adapter owns the credential's recipient contract, including when no configured
 origins exist. Manifest network targets do not supply a separate origin grant.
@@ -321,11 +352,18 @@ The host owns credential storage, refresh, scoping, selection UX, and log redact
 ### Machine-native materialization in development
 
 In 0.3 development, a Connected Service may declare
-`authentication.native: { systemTool: 'gh' }`. An authorized consumer can pass
+`authentication.native: { systemTool: 'acme-login' }` and implement the optional
+`ConnectedAccountRuntime.materializeNative(request, context, options)` callback.
+The tool id uses the System Tool contribution's local-id grammar. The callback
+receives the selected service, invocation services and cancellation signal; it
+does not receive a saved Account, credentials or Account configuration. An authorized consumer can pass
 that qualified service as `nativeService` in the ordinary `materialize()`
 options. The host uses it only for an unbound purpose; an explicit account
 selection, even if invalid or unavailable, never falls back to the native login.
 The service must be among the consumer purpose's compatible services.
+The daemon invokes only that service's callback; a missing callback is a typed
+native-authentication unavailability. Requesters whose custody forbids host
+native credentials are refused before the callback can acquire credentials.
 
 GitHub's adapter obtains authorization from the executing machine's GitHub CLI,
 including the admitted Enterprise host. The returned credential is ephemeral;
@@ -339,7 +377,7 @@ selection. Both UI and agent invocations use that same canonical admission.
 
 ## Observe invalidation
 
-`watch(purpose, listener)` installs an occurrence-local subscription and then schedules an initial opaque `{ kind: 'resync' }` event. Binding, current group member, credential, revocation, configured-origin, or producer changes may coalesce into another resync. On every resync, discard reliance on the previous snapshot and call `getBinding()`, `listAccounts()`, or a materialization again.
+In unreleased 0.3, `watch(purpose, listener)` installs an occurrence-local subscription and schedules an initial `{ kind: 'resync', authorityChanged: false }` event. Later presentation changes also carry `false`; refresh displayed metadata without restarting a Session or reconnecting its runtime. Binding, current group member, credential, revocation, configured-origin, or producer changes carry `true`. Coalescing preserves a pending authority change. Use the current binding on the next credential acquisition or admission. Already-admitted finite work retains its snapshot until completion or explicit cancellation/disposal.
 
 The subscription does not deliver every intermediate change, expose a cursor, or make copied bytes revocable. Dispose it when no longer needed. The host also disposes it when the invoking plugin occurrence retires; a replacement occurrence must receive fresh authorization and materialize again.
 
@@ -427,6 +465,15 @@ preserves that presentation hint for bundled and installed plugins. Omit it to
 keep the host's existing service classification. It grants no authentication,
 Machine availability, permission or HostAccess authority; those still come
 from the normal declaration and admission owners.
+
+The same unreleased descriptor can provide a compact `ui.shortName` and setup
+presentation through `ui.setup`. Set `order` for catalog placement,
+`firstRun: true` to offer the service during first setup, and
+`catalogDescription` for its sign-in description. The description accepts the
+same string or `{ key, fallback }` localized value as the descriptor's title.
+Omitting these fields keeps the host's generic presentation. Bundled services
+can also name a packaged SVG Resource from their own plugin with
+`ui.iconResourceId` when their service mark differs from the Agent mark.
 
 In an ordinary author module, put the same descriptor (without its `id`) and
 runtime under `connectedAccountDescriptors.forge`; `definePlugin(...)`

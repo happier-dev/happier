@@ -9,6 +9,10 @@ import type { PluginContributionRef } from '../identity.js';
 import type { PluginInvocationContext } from '../invocation.js';
 import type { HttpService } from './io.js';
 import type { LoggerService } from './core.js';
+/** @realm any */
+export type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
+/** @realm any */
+export type { ConnectedAccountCompletionObservation } from '@happier-dev/cli-common/connectedAccounts';
 export type {
     ConnectedAccountBindingEvent as PluginConnectedAccountBindingEvent,
     ConnectedAccountBindingSummary as PluginConnectedAccountBindingSummary,
@@ -107,7 +111,7 @@ export type PluginConnectedAccountMutationContext = PluginConnectedAccountReadCo
 }>;
 export type PluginConnectedAccountCommonRuntime = Pick<
     ConnectedAccountRuntime,
-    'refresh' | 'revoke' | 'status' | 'quota' | 'materialize'
+    'refresh' | 'revoke' | 'status' | 'quota' | 'materialize' | 'materializeNative'
 >;
 export type PluginConnectedAccountRefreshResult = Awaited<
     ReturnType<ConnectedAccountRuntime['refresh']>
