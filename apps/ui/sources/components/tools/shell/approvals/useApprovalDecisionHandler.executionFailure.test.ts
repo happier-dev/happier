@@ -11,6 +11,30 @@ import { t } from '@/text';
 import { alertApprovalFailure, assertApprovalExecutionSucceeded } from './useApprovalDecisionHandler';
 
 describe('approval decision execution outcome', () => {
+    it('keeps confirmed execution cancellation quiet without treating the cancelled effect as success', () => {
+        let cancelled: unknown;
+        try {
+            assertApprovalExecutionSucceeded({ executedAtMs: 1, ok: false, errorCode: 'cancelled', error: 'cancelled' });
+        } catch (error) { cancelled = error; }
+        expect(cancelled).toBeInstanceOf(HappyError);
+        expect(cancelled).toMatchObject({ code: 'cancelled' });
+        alert.mockClear();
+        alertApprovalFailure(cancelled);
+        expect(alert).not.toHaveBeenCalled();
+    });
+    it('keeps unconfirmed cancellation and unknown execution outcomes visible', () => {
+        alert.mockClear();
+        alertApprovalFailure(new HappyError('cancelled', false, { code: 'cancelled' }));
+        expect(alert).toHaveBeenCalledTimes(1);
+
+        let unknownOutcome: unknown;
+        try {
+            assertApprovalExecutionSucceeded({ executedAtMs: 1, ok: false, errorCode: 'outcome_unknown', error: 'outcome_unknown' });
+        } catch (error) { unknownOutcome = error; }
+        alert.mockClear();
+        alertApprovalFailure(unknownOutcome);
+        expect(alert).toHaveBeenCalledTimes(1);
+    });
     it.each(['database_transaction_timeout', 'unavailable'])('shows an uncertain %s decision next step and discloses its cause without private payloads', errorCode => {
         alert.mockClear();
         alertApprovalFailure(new HappyError('private transport text', false, { code: 'unavailable',
@@ -41,18 +65,22 @@ describe('approval decision execution outcome', () => {
         }
     });
 
-    it('alerts a failed decision in words, with its typed code only behind a deliberate Technical details', () => {
-        // A recorded effect failure: the card and page already hold its code in their own Details.
+    it.each(['target_changed', 'action_request_input_conflict'])('keeps a recorded %s failure available in the alert Technical details', errorCode => {
+        // RU2 R52: a confidential entry failure must retain its typed cause in the alert too.
         let recorded: unknown;
         try {
-            assertApprovalExecutionSucceeded({ executedAtMs: 1, ok: false, errorCode: 'action_request_input_conflict', error: 'action_request_input_conflict' });
+            assertApprovalExecutionSucceeded({ executedAtMs: 1, ok: false, errorCode, error: errorCode });
         } catch (error) { recorded = error; }
         alert.mockClear();
         alertApprovalFailure(recorded);
         expect(alert).toHaveBeenCalledTimes(1);
         const [, recordedMessage, recordedButtons] = alert.mock.calls[0]!;
-        expect(recordedMessage).not.toContain('action_request_input_conflict');
-        expect(recordedButtons).toBeUndefined();
+        expect(recordedMessage).not.toContain(errorCode);
+        const recordedDetails = (recordedButtons as Array<{ text: string; onPress?: () => void }> | undefined)
+            ?.find(button => button.text === t('approvals.technicalDetails'));
+        expect(recordedDetails).toBeTruthy();
+        recordedDetails!.onPress!();
+        expect(alert.mock.calls[1]![1]).toBe(errorCode);
 
         // A decision that couldn't be saved has no page Details: its code waits behind one button.
         alert.mockClear();

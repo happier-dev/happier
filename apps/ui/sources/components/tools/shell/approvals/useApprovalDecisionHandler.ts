@@ -44,8 +44,7 @@ export function isApprovalDecisionStale(error: unknown): boolean {
 
 /**
  * The one presentation of an approval failure, for every Action: a readable reason, and the typed
- * code kept apart. Surfaces with a details disclosure show the reason as the headline and the code
- * there; an alert has no disclosure, so it appends the code to the reason.
+ * code kept apart. Surfaces show the reason as the headline and keep the code in Technical details.
  */
 export function presentApprovalFailure(
     error: unknown,
@@ -112,16 +111,16 @@ export function presentRecordedApprovalFailure(failure: Readonly<{ errorCode?: s
 
 /**
  * The one alert for a decision that failed: the readable reason, and its typed code only behind a
- * deliberate Technical details. A recorded effect failure shows no code here, because the card and the
- * detail page that settle with it already keep that code in their own Details disclosure.
+ * deliberate Technical details, including when the approved effect has a recorded failure.
  */
 export function alertApprovalFailure(error: unknown, fallbackMessage = t('approvals.decisionError')): void {
+    // A confirmed execution cancellation is already visible in its receipt.
+    if (error instanceof ApprovalExecutionError && error.code === 'cancelled') return;
     const { reason, code } = presentApprovalFailure(error, fallbackMessage);
-    const disclosedCode = code && !(error instanceof ApprovalExecutionError) ? code : null;
     const failureCause = typeof error === 'object' && error !== null && 'failureCause' in error && error.failureCause !== undefined
         ? readActionFailureCauseV1(error.failureCause) : undefined;
     const details = typeof error === 'object' && error !== null && 'details' in error ? error.details : undefined;
-    alertActionFailure({ reason, code: disclosedCode, context: {
+    alertActionFailure({ reason, code, context: {
         ...readSafeFailureDetails(details),
         ...failureCause,
     } });
