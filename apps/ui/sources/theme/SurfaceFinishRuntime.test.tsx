@@ -5,6 +5,8 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { applyLocalSettings, localSettingsDefaults, type LocalSettings } from '@/sync/domains/settings/localSettings';
 import { darkTheme, lightTheme, type Theme } from '@/theme';
 import { resolveAppearanceDefaults } from '@/components/settings/appearance/appearanceDefaults';
+import { storage } from '@/sync/domains/state/storageStore';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 const shared = vi.hoisted(() => ({
     local: null as LocalSettings | null,
@@ -27,36 +29,40 @@ vi.mock('react-native-unistyles', async () => {
         updateTheme: shared.update,
     } });
 });
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub, createLiveStorageStoreMock, createUseLocalSettingMock } = await import('@/dev/testkit/mocks/storage');
-    const { localSettingsDefaults } = await import('@/sync/domains/settings/localSettings');
-    return createStorageModuleStub({
-        storage: createLiveStorageStoreMock(() => ({ localSettings: shared.local ?? localSettingsDefaults })),
-        useLocalSetting: createUseLocalSettingMock({ fallback: key => (shared.local ?? localSettingsDefaults)[key] }),
-    });
-});
 
-afterEach(standardCleanup);
+
+const originalState = storage.getState();
+afterEach(() => { standardCleanup(); storage.setState(originalState, true); });
 
 describe('surface finish runtime', () => {
     it('applies local and Reset writes in place and keeps theme identity when the selected values have not changed', async () => {
         shared.local = localSettingsDefaults;
+        storage.setState({ settings: settingsDefaults, localSettings: shared.local });
         shared.themes = { light: lightTheme, dark: darkTheme };
         shared.update.mockClear();
-        const { SurfaceFinishRuntime } = await import('./SurfaceFinishRuntime');
+        const { ThemeProfileRuntimeSync: SurfaceFinishRuntime } = await import('./ThemeProfileRuntimeSync');
         const screen = await renderScreen(<SurfaceFinishRuntime />);
         expect(shared.update).not.toHaveBeenCalled();
         shared.local = applyLocalSettings(shared.local, { uiSurfaceFinish: 'flat', uiSurfaceFinishOverrides: { composer: 'soft' } });
-        await act(async () => screen.update(<SurfaceFinishRuntime />));
+        await act(async () => {
+            storage.setState({ localSettings: shared.local! });
+            screen.update(<SurfaceFinishRuntime />);
+        });
         expect(shared.themes!.light.parts.card.finish).toBe('flat');
         expect(shared.themes!.light.parts.composer.finish).toBe('soft');
         const selected = shared.themes!.light;
         shared.update.mockClear();
-        await act(async () => screen.update(<SurfaceFinishRuntime />));
+        await act(async () => {
+            storage.setState({ localSettings: shared.local! });
+            screen.update(<SurfaceFinishRuntime />);
+        });
         expect(shared.themes!.light).toBe(selected);
         expect(shared.update).not.toHaveBeenCalled();
         shared.local = applyLocalSettings(shared.local, resolveAppearanceDefaults().local);
-        await act(async () => screen.update(<SurfaceFinishRuntime />));
+        await act(async () => {
+            storage.setState({ localSettings: shared.local! });
+            screen.update(<SurfaceFinishRuntime />);
+        });
         expect(shared.themes!.light.finish).toBe('soft');
         expect(shared.themes!.light.parts.card.finish).toBe('soft');
         expect(shared.local.uiSurfaceFinishOverrides).toEqual({});

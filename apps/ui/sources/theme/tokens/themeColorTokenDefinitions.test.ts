@@ -235,7 +235,7 @@ describe('editable theme color token definitions', () => {
         expect(classifiedPaths).toContain('glass.border');
         expect(classifiedPaths).toContain('glass.innerShadow');
         expect(classifiedPaths).toContain('glass.castShadow');
-        expect(classifiedPaths).toContain('glass.composerSurface');
+        expect(tokenDefinitionsModule.THEME_COLOR_TOKEN_CLASSIFICATIONS?.find((token) => token.path.join('.') === 'glass.composerSurface')?.status).toBe('derived');
     });
 
     it('exposes the raised-edge ink as an editable color token that defaults to each theme\'s own text ink', () => {

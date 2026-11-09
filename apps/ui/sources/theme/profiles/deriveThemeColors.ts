@@ -56,6 +56,13 @@ const deriveFeedCardBackground = (theme: Theme, baseTheme: Theme): string => {
     return theme.colors.surface.elevated;
 };
 
+const deriveGlassComposerSurface = (theme: Theme, baseTheme: Theme): string => {
+    const surface = theme.dark ? 'elevated' : 'base';
+    return theme.colors.surface[surface] === baseTheme.colors.surface[surface]
+        ? theme.colors.glass.composerSurface
+        : theme.colors.surface[surface];
+};
+
 // An edge ink the profile set explicitly is kept as set; otherwise it follows the profile's own text ink.
 const deriveRaisedEdgeInkForProfile = (theme: Theme, baseTheme: Theme): string => (
     theme.colors.effect.surfaceHighlight !== baseTheme.colors.effect.surfaceHighlight
@@ -90,6 +97,10 @@ export const deriveThemeColors = (theme: Theme, baseTheme: Theme, explicitOverri
         ...theme,
         colors: {
             ...theme.colors,
+            glass: {
+                ...theme.colors.glass,
+                composerSurface: deriveGlassComposerSurface(theme, baseTheme),
+            },
             state: {
                 ...theme.colors.state,
                 success: { ...theme.colors.state.success, textForeground: statusText('success') },

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseThemeProfilesLocalState } from './themeProfilePersistence';
+import { parseThemeProfilesLocalState, resolveThemeProfilesState } from './themeProfilePersistence';
 import type { ThemeProfileV1 } from './themeProfileTypes';
 
 const profile = (id: string): ThemeProfileV1 => ({
@@ -61,5 +61,38 @@ describe('theme profile persistence', () => {
 
         expect(result.state).toEqual({ activeProfileIds: { light: null, dark: null }, profiles: [] });
         expect(result.changed).toBe(true);
+    });
+});
+
+
+describe('theme profile library reads', () => {
+    it('retains all valid profiles beyond the per-device creation limit', () => {
+        const profiles = Array.from({ length: 51 }, (_, index) => profile(`theme_${index}`));
+        const result = parseThemeProfilesLocalState({ profiles, activeProfileIds: { light: 'theme_50', dark: null } });
+        expect(result.state.profiles).toHaveLength(51);
+        expect(result.state.activeProfileIds.light).toBe('theme_50');
+    });
+});
+
+
+describe('persisted token compatibility', () => {
+    it('retains valid newer tokens for lossless account edits', () => {
+        const source = { ...profile('theme_newer'), overrides: { light: { 'future.token': '#abcdef' }, dark: {} } };
+        expect(parseThemeProfilesLocalState({ profiles: [source] }).state.profiles[0]?.overrides).toEqual(source.overrides);
+    });
+});
+
+
+describe('theme library composition', () => {
+    it('retains colliding legacy profiles and deterministically remaps activation', () => {
+        const account = { ...profile('ocean'), name: 'Account' };
+        const legacy = { ...profile('ocean'), name: 'Device' };
+        const state = { profiles: [legacy], activeProfileIds: { light: 'ocean', dark: null } };
+        const composed = resolveThemeProfilesState([account], state, null);
+        expect(composed.profiles.map(({ id, name }) => ({ id, name }))).toEqual([
+            { id: 'ocean', name: 'Account' }, { id: 'ocean_2', name: 'Device' },
+        ]);
+        expect(composed.activeProfileIds.light).toBe('ocean_2');
+        expect(resolveThemeProfilesState(composed.profiles, state, null)).toEqual(composed);
     });
 });

@@ -1,15 +1,13 @@
+import { ThemeProfileIdSchema, ThemeProfileNameSchema, isReservedThemeProfileId, migrateThemeProfileOverrideTokenId, migrateThemeProfileOverrideTokenIds } from '@happier-dev/protocol/account/settings/themeProfiles';
 import {
     DEFAULT_IMPORTED_THEME_PROFILE_NAME,
     THEME_PROFILE_EXPORT_KIND,
-    THEME_PROFILE_ID_MAX_LENGTH,
     THEME_PROFILE_ID_PREFIX,
     THEME_PROFILE_MAX_JSON_BYTES,
     THEME_PROFILE_MAX_OVERRIDES_PER_MODE,
     THEME_PROFILE_MAX_PROFILES,
-    THEME_PROFILE_NAME_MAX_LENGTH,
     THEME_PROFILE_SCHEMA_VERSION,
 } from './themeProfileConstants';
-import { isBuiltInThemeProfilePresetId } from './builtInThemeProfiles';
 import { isValidThemeProfileColorValue } from './themeProfileColorValidation';
 import { getThemeProfileTokenDefinition, THEME_PROFILE_TOKEN_DEFINITIONS } from './themeProfileTokenRegistry';
 import { resolveThemeProfile } from './resolveThemeProfile';
@@ -46,26 +44,8 @@ type ExportThemeProfileOptions = Readonly<{
     includeResolvedValues?: boolean;
 }>;
 
-const DEPRECATED_TOKEN_ID_MIGRATIONS: Readonly<Record<string, string>> = {
-    'groupped.background': 'background.canvas',
-    surfaceHigh: 'surface.inset',
-    surfaceHighest: 'surface.elevated',
-    warningCritical: 'state.danger.foreground',
-    deleteAction: 'state.danger.foreground',
-    syntaxKeyword: 'syntax.keyword',
-    syntaxString: 'syntax.string',
-    syntaxComment: 'syntax.comment',
-    syntaxNumber: 'syntax.number',
-    syntaxFunction: 'syntax.function',
-    gitAddedText: 'versionControl.added.foreground',
-    gitRemovedText: 'versionControl.removed.foreground',
-};
-
-const migrateThemeProfileOverrideTokenId = (tokenId: string): string | undefined => DEPRECATED_TOKEN_ID_MIGRATIONS[tokenId];
 
 const MODES = ['light', 'dark'] as const satisfies readonly ThemeProfileMode[];
-const ROUTE_SAFE_THEME_PROFILE_ID_PATTERN = /^[A-Za-z0-9_-]+$/;
-const RESERVED_BASE_THEME_PROFILE_IDS = new Set(['adaptive', 'light', 'dark', 'new']);
 
 const isRecord = (value: unknown): value is Record<string, unknown> => (
     typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -86,30 +66,7 @@ const getUtf8ByteLength = (value: string): number => {
     return bytes;
 };
 
-export const migrateThemeProfileOverrideTokenIds = (overrides: ThemeProfileColorOverrides): Readonly<{
-    overrides: ThemeProfileColorOverrides;
-    migratedTokenIds: readonly string[];
-}> => {
-    const nextOverrides: Record<string, string> = {};
-    const migratedTokenIds: string[] = [];
-
-    for (const [tokenId, value] of Object.entries(overrides)) {
-        const migratedTokenId = migrateThemeProfileOverrideTokenId(tokenId);
-        if (migratedTokenId) {
-            if (Object.prototype.hasOwnProperty.call(overrides, migratedTokenId)) {
-                migratedTokenIds.push(tokenId);
-                continue;
-            }
-            nextOverrides[migratedTokenId] = value;
-            migratedTokenIds.push(tokenId);
-            continue;
-        }
-
-        nextOverrides[tokenId] = value;
-    }
-
-    return { overrides: nextOverrides, migratedTokenIds };
-};
+export { migrateThemeProfileOverrideTokenIds } from '@happier-dev/protocol/account/settings/themeProfiles';
 
 type SanitizeOverridesOptions = Readonly<{
     defaultBlankName?: boolean;
@@ -123,28 +80,21 @@ type SanitizeOverridesResult = Readonly<{
 }>;
 
 export const sanitizeThemeProfileName = (name: unknown, options: SanitizeOverridesOptions = {}): string | null => {
-    if (typeof name !== 'string') return null;
-
-    if (/[\u0000-\u001F\u007F]/.test(name)) return null;
-    const normalized = name.trim();
-    if (normalized.length === 0) {
+    if (typeof name === 'string' && name.trim().length === 0 && !/[\u0000-\u001F\u007F]/.test(name)) {
         return options.defaultBlankName === true ? DEFAULT_IMPORTED_THEME_PROFILE_NAME : null;
     }
-    if (normalized.length > THEME_PROFILE_NAME_MAX_LENGTH) return null;
-    return normalized;
+    const parsed = ThemeProfileNameSchema.safeParse(name);
+    return parsed.success ? parsed.data : null;
 };
 
-export const isRouteSafeThemeProfileId = (id: string): boolean => (
-    id.length <= THEME_PROFILE_ID_MAX_LENGTH
-    && ROUTE_SAFE_THEME_PROFILE_ID_PATTERN.test(id)
-);
+export const isRouteSafeThemeProfileId = (id: string): boolean => {
+    const parsed = ThemeProfileIdSchema.safeParse(id);
+    return parsed.success && parsed.data === id;
+};
 
-export const isReservedThemeProfileId = (id: string | null | undefined): boolean => (
-    typeof id === 'string'
-    && (RESERVED_BASE_THEME_PROFILE_IDS.has(id) || isBuiltInThemeProfilePresetId(id))
-);
+export { isReservedThemeProfileId } from '@happier-dev/protocol/account/settings/themeProfiles';
 
-const fallbackGenerateId = (): string => {
+export const createThemeProfileId = (): string => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
         return `${THEME_PROFILE_ID_PREFIX}${crypto.randomUUID()}`;
     }
@@ -153,7 +103,7 @@ const fallbackGenerateId = (): string => {
 };
 
 const sanitizeId = (id: unknown, options: ImportOptions): string => {
-    const sourceId = typeof id === 'string' && id.trim().length > 0 ? id.trim() : fallbackGenerateId();
+    const sourceId = typeof id === 'string' && id.trim().length > 0 ? id.trim() : createThemeProfileId();
     if (
         isRouteSafeThemeProfileId(sourceId)
         && !isReservedThemeProfileId(sourceId)
@@ -163,7 +113,7 @@ const sanitizeId = (id: unknown, options: ImportOptions): string => {
     }
 
     for (let attempt = 0; attempt < 10; attempt += 1) {
-        const candidate = (options.generateId ?? fallbackGenerateId)();
+        const candidate = (options.generateId ?? createThemeProfileId)();
         if (
             isRouteSafeThemeProfileId(candidate)
             && !isReservedThemeProfileId(candidate)
@@ -173,7 +123,7 @@ const sanitizeId = (id: unknown, options: ImportOptions): string => {
         }
     }
 
-    return fallbackGenerateId();
+    return createThemeProfileId();
 };
 
 const sanitizeOverrides = (
