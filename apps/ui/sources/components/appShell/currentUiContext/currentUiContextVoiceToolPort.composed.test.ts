@@ -1134,6 +1134,73 @@ describe('current UI context Voice tool port', () => {
         } finally { await installed.dispose(); await connection.dispose(); }
     });
 
+    it.each(['ready', 'aborted', 'absent'] as const)(
+        'settles a one-shot Action read during Account activation (%s)', async settlement => {
+        const { definePlugin } = await import('@happier-dev/plugin-sdk');
+        const { defineProtocolObject } = await import('@happier-dev/plugin-sdk/protocol');
+        const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
+        const { AppShellPluginUiProjectionValueProvider, useAppShellPluginUiProjection } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
+        const { CurrentUiContextBridge } = await import('./CurrentUiContextProvider');
+        const { CurrentUiContextActionHost } = await import('./currentUiContextVoiceToolPort');
+        const { readCurrentUiContextActionReader } = await import('./currentUiContextActionRuntime');
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://current-ui-public.test',
+            accountId: 'current-ui-account', request: homes.request });
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Account lifetime missing');
+        let reads = 0;
+        const authored = definePlugin({ id: 'acme.cold-catalog', version: '1.0.0', displayName: 'Cold catalog',
+            actions: { read: { title: 'Read', surfaces: ['ui'],
+                execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } },
+                inputSchema: defineProtocolObject({}, { policy: 'closed' }),
+                run: async () => { reads += 1; return { offered: true }; },
+            } } });
+        const install = () => installPortableAccountPluginReleaseForTest({ manifest: authored.manifest,
+            activate: api => authored.activateAccount(api, { artifactId: 'account-runtime', exportName: 'activate' }),
+            accountLifetime: lifetime });
+        const installed = await install();
+        await getInstalledPluginUiClientExecutableComposition().invalidatePlugin(authored.manifest.id);
+        let replacement: typeof installed | undefined;
+        let projection: PluginUiProjectionModel | null = installed.projection;
+        let published = false;
+        function AppShell() {
+            const defaults = useAppShellPluginUiProjection();
+            return React.createElement(AppShellPluginUiProjectionValueProvider, { declarationReady: true,
+                value: { ...defaults, pluginUiProjection: projection, phase: 'current',
+                    clientExecutableActivation: { status: published ? 'ready' : 'establishing' },
+                    accountLifetime: lifetime, serverId: lifetime.scope.serverId },
+                children: React.createElement(CurrentUiContextBridge, { publisher: null,
+                    reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+                    children: React.createElement(CurrentUiContextActionHost) }),
+            });
+        }
+        const screen = await renderScreen(React.createElement(AppShell));
+        const controller = new AbortController();
+        const currentPort = readCurrentUiContextActionReader({ surface: 'ui' });
+        if (!currentPort?.invokeAction) throw new Error('Action invocation missing');
+        let outcome: 'pending' | 'settled' = 'pending';
+        const pending = currentPort.invokeAction({ action: { pluginId: authored.manifest.id, localId: 'read' },
+            input: {}, signal: controller.signal }).then(result => { outcome = 'settled'; return result; });
+        try {
+            await act(async () => {});
+            expect(outcome).toBe('pending');
+            expect(reads).toBe(0);
+            if (settlement === 'ready') { replacement = await install(); projection = replacement.projection; }
+            if (settlement === 'aborted') controller.abort();
+            if (settlement === 'absent') projection = null;
+            published = true;
+            await screen.update(React.createElement(AppShell));
+            const result = await pending;
+            expect(result, JSON.stringify(result)).toMatchObject(settlement === 'ready'
+                ? { ok: true, result: { offered: true } } : { ok: false, code: 'unavailable' });
+            expect(reads).toBe(settlement === 'ready' ? 1 : 0);
+        } finally {
+            controller.abort(); await pending; await screen.unmount();
+            await replacement?.dispose(); await installed.dispose(); await connection.dispose();
+        }
+    });
+
     it.each(['installed', 'initial', 'absent', 'aborted', 'retired', 'replaced', 'replacement-gap',
         'replacement-absent', 'replacement-disabled', 'replacement-aborted', 'replacement-retired', 'after-acquired',
         'activation-gap', 'target-unavailable', 'after-acquired-retired', 'during-attachment'] as const)(

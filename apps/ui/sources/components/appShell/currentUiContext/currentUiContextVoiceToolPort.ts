@@ -52,7 +52,8 @@ import { PluginActionSurfaceV2Schema } from '@happier-dev/protocol/plugins/actio
 import { unavailable } from './currentUiContextVoiceToolBinding';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { resolveCurrentContributedAction as resolveCurrentAction, isResolvedContributedActionCurrent as isResolvedActionCurrent,
-    hasCurrentClientActionRegistration, type CurrentContributedAction as CurrentUiContextVoiceResolvedAction } from './contributedActionInvocation';
+    acquireCurrentContributedAction, hasCurrentClientActionRegistration,
+    type CurrentContributedAction as CurrentUiContextVoiceResolvedAction } from './contributedActionInvocation';
 export { bindCurrentUiContextVoiceToolPortToAdmission } from './currentUiContextVoiceToolBinding';
 
 import {
@@ -267,7 +268,11 @@ export function createCurrentUiContextVoiceToolPort(
         readObservation?: DispatchPluginSurfaceActionInput['readObservation'],
     ): Promise<CurrentUiContextVoiceInvocationOutcome> => {
         if (request.signal?.aborted) return unavailable();
-        const resolved = resolveCurrentAction(input.readProjection, request.action);
+        // One-shot catalog reads can arrive before their Account executable.
+        // Join the same push-driven startup settlement as observed reads.
+        const resolved = await acquireCurrentContributedAction({ readProjection: input.readProjection,
+            identity: request.action, admission: input.clientExecutableAdmission, scope,
+            signal: request.signal, isCurrent: isCallerCurrent });
         if (!resolved || !hasCurrentClientActionRegistration(resolved)) return unavailable();
         if (request.expectedContributorOccurrenceId !== undefined && request.expectedContributorOccurrenceId !== resolved.action.occurrenceId) {
             return { ok: false, code: 'stale_surface', errorCode: 'plugin_action_generation_retired', actionHandlerInvocation: 'notStarted' };
