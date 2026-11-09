@@ -14,7 +14,7 @@ import type { QualifiedConnectedAccountLegacyPeerClass } from '@happier-dev/prot
 import { QualifiedConnectedAccountConfigurationPatchV4Schema, QualifiedConnectedAccountCredentialDeleteV4Schema, QualifiedConnectedAccountCredentialHealthPatchV4Schema, QualifiedConnectedAccountCredentialErrorV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountGroupActiveAccountV4Schema, QualifiedConnectedAccountGroupListResponseV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupResponseV4Schema, QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema, QualifiedConnectedAccountQuotaResponseV4Schema, QualifiedConnectedAccountRefreshLeaseResponseV4Schema, QualifiedConnectedAccountRefreshLeaseV4Schema, QualifiedConnectedAccountSuccessV4Schema, QualifiedConnectedServiceUsageSourceResolveV4Schema, QualifiedConnectedServiceUsageSourceResolutionV4Schema, QualifiedProviderAccountUsageRecordQueryV4Schema, QualifiedProviderAccountUsageReadErrorV4Schema, QualifiedProviderAccountUsageRecordResponseV4Schema, QualifiedProviderAccountUsageWriteSuccessV4Schema, QualifiedProviderAccountUsageWriteV4Schema, sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { QualifiedConnectedAccountConfigurationSnapshotV4Schema, QualifiedConnectedAccountConfigurationTargetV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountServiceRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
-import { QualifiedConnectedAccountServiceListV4Schema, QualifiedConnectedAccountMultiServiceListResponseV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { QualifiedConnectedAccountServiceListV4Schema, QualifiedConnectedAccountMultiServiceListResponseV4Schema, QualifiedConnectedAccountRefListV4Schema, QualifiedConnectedAccountSummaryListResponseV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
 import type { BuiltInLegacyConnectedAccountOperation, BuiltInLegacyConnectedServiceId, QualifiedConnectedAccountConfigurationTargetV4, QualifiedConnectedAccountGroupRef, QualifiedConnectedAccountRef, QualifiedConnectedAccountServiceRef, QualifiedConnectedServiceUsageSourceV4, ProviderAccountUsageRecordId } from '@happier-dev/protocol';
 
@@ -397,17 +397,27 @@ type QualifiedConnectedAccountListRequest = Readonly<{
 }>;
 
 export function listQualifiedConnectedAccountsV4(params: QualifiedConnectedAccountListRequest & Readonly<{
+    accounts: readonly QualifiedConnectedAccountRef[];
+    service?: never;
+    services?: never;
+}>): Promise<ReturnType<typeof QualifiedConnectedAccountSummaryListResponseV4Schema.parse>>;
+export function listQualifiedConnectedAccountsV4(params: QualifiedConnectedAccountListRequest & Readonly<{
     services: readonly QualifiedConnectedAccountServiceRef[];
     service?: never;
+    accounts?: never;
 }>): Promise<ReturnType<typeof QualifiedConnectedAccountMultiServiceListResponseV4Schema.parse>>;
 export function listQualifiedConnectedAccountsV4(params: QualifiedConnectedAccountListRequest & Readonly<{
     service: QualifiedConnectedAccountServiceRef;
     services?: never;
+    accounts?: never;
 }>): Promise<ReturnType<typeof QualifiedConnectedAccountListResponseV4Schema.parse>>;
 export async function listQualifiedConnectedAccountsV4(params: QualifiedConnectedAccountListRequest & (
-    Readonly<{ service: QualifiedConnectedAccountServiceRef; services?: never }>
-    | Readonly<{ services: readonly QualifiedConnectedAccountServiceRef[]; service?: never }>
+    Readonly<{ service: QualifiedConnectedAccountServiceRef; services?: never; accounts?: never }>
+    | Readonly<{ services: readonly QualifiedConnectedAccountServiceRef[]; service?: never; accounts?: never }>
+    | Readonly<{ accounts: readonly QualifiedConnectedAccountRef[]; service?: never; services?: never }>
 )) {
+    const accounts = params.accounts === undefined ? undefined : QualifiedConnectedAccountRefListV4Schema.parse(params.accounts);
+    if (accounts?.length === 0) return { accounts: [] };
     const services = params.services === undefined ? undefined : QualifiedConnectedAccountServiceListV4Schema.parse(params.services);
     if (services?.length === 0) return { services, accounts: [] };
     // A scoped coordinator demand keeps the exact single-service wire contract.
@@ -416,7 +426,9 @@ export async function listQualifiedConnectedAccountsV4(params: QualifiedConnecte
             signal: params.signal, requestPurpose: params.requestPurpose });
         return { services: [result.service], accounts: result.accounts };
     }
-    const query = new URLSearchParams(services ? {
+    const query = new URLSearchParams(accounts ? {
+        accounts: encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountRefListV4Schema, accounts),
+    } : services ? {
         services: encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountServiceListV4Schema, services),
     } : {
         service: encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountServiceRefSchema, params.service),
@@ -434,6 +446,7 @@ export async function listQualifiedConnectedAccountsV4(params: QualifiedConnecte
             `Qualified Connected Account list returned ${response.status}`,
         );
     }
+    if (accounts) return parseQualifiedConnectedAccountReadResponse(QualifiedConnectedAccountSummaryListResponseV4Schema, response.data);
     return services
         ? parseQualifiedConnectedAccountReadResponse(QualifiedConnectedAccountMultiServiceListResponseV4Schema, response.data)
         : parseQualifiedConnectedAccountReadResponse(QualifiedConnectedAccountListResponseV4Schema, response.data);

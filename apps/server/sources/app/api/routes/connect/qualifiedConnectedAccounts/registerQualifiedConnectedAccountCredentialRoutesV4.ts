@@ -8,7 +8,7 @@ import { ManagedResourceDispositionV1Schema } from '@happier-dev/protocol/machin
 import { QualifiedConnectedAccountConfigurationSnapshotV4Schema, QualifiedConnectedAccountConfigurationTargetV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountGroupCreateV4Schema, QualifiedConnectedAccountGroupPatchV4Schema, QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupMemberDeleteV4Schema, QualifiedConnectedAccountGroupActiveAccountV4Schema, QualifiedConnectedAccountGroupIncarnationV4Schema, QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountGroupListResponseV4Schema, QualifiedConnectedAccountGroupResponseV4Schema, QualifiedConnectedServiceUsageSourceV4Schema, QualifiedProviderAccountUsageRecordResponseV4Schema, QualifiedConnectedAccountServiceRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { parseQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
-import { QualifiedConnectedAccountServiceListV4Schema, QualifiedConnectedAccountMultiServiceListResponseV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { QualifiedConnectedAccountServiceListV4Schema, QualifiedConnectedAccountMultiServiceListResponseV4Schema, QualifiedConnectedAccountRefListV4Schema, QualifiedConnectedAccountSummaryListResponseV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 
 import type { Fastify } from "../../../types";
 import { isServerFeatureEnabledForRequest } from "@/app/features/catalog/serverFeatureGate";
@@ -61,6 +61,7 @@ const StructuredServiceQuerySchema = z.strictObject({
 const StructuredAccountListQuerySchema = z.union([
     StructuredServiceQuerySchema,
     z.strictObject({ services: z.union([z.string(), z.array(z.string())]) }),
+    z.strictObject({ accounts: z.union([z.string(), z.array(z.string())]) }),
 ]);
 const StructuredRefQuerySchema = z.strictObject({
     ref: z.union([z.string(), z.array(z.string())]),
@@ -151,13 +152,29 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
         schema: {
             querystring: StructuredAccountListQuerySchema,
             response: {
-                200: z.union([QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountMultiServiceListResponseV4Schema]),
+                200: z.union([QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountMultiServiceListResponseV4Schema, QualifiedConnectedAccountSummaryListResponseV4Schema]),
                 400: z.strictObject({
                     error: z.literal("invalid-params"),
                 }),
             },
         },
     }, async (request, reply) => {
+        if ("accounts" in request.query) {
+            let refs;
+            try {
+                refs = parseQualifiedConnectedAccountV4StructuredQueryValue(
+                    QualifiedConnectedAccountRefListV4Schema,
+                    request.query.accounts,
+                );
+            } catch {
+                return reply.code(400).send({ error: "invalid-params" });
+            }
+            const accounts = await listQualifiedConnectedAccounts({
+                accountId: request.userId,
+                refs,
+            });
+            return reply.send({ accounts });
+        }
         if ("services" in request.query) {
             let services;
             try {

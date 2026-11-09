@@ -232,12 +232,32 @@ describe('qualified Connected Account list payload admission', () => {
                 expect(readColumns).toHaveLength(1);
                 expect(readColumns.flat()).not.toContain('token');
                 expect(readColumns.flat()).not.toContain('configurationContent');
+                const selectedRefs = expected.slice(0, 1).map(profile => profile.ref);
+                const selected = await request(new URLSearchParams({ accounts: JSON.stringify(selectedRefs) }));
+                expect(selected.statusCode, selected.body).toBe(200);
+                expect(selected.json()).toEqual({ accounts: expected.slice(0, 1) });
+                expect(readColumns).toHaveLength(2);
+                expect(readColumns[1]).not.toContain('token');
+                expect(readColumns[1]).not.toContain('configurationContent');
+                const stranger = await app.inject({ method: 'GET',
+                    url: `/v4/connect/qualified/accounts?${new URLSearchParams({ accounts: JSON.stringify(selectedRefs) })}`,
+                    headers: { 'x-test-user-id': outsider.id } });
+                expect(stranger.statusCode, stranger.body).toBe(200);
+                expect(stranger.json()).toEqual({ accounts: [] });
+                const emptyRefs = await request(new URLSearchParams({ accounts: '[]' }));
+                expect(emptyRefs.statusCode, emptyRefs.body).toBe(200);
+                expect(emptyRefs.json()).toEqual({ accounts: [] });
                 const empty = await request(new URLSearchParams({ services: '[]' }));
                 expect(empty.statusCode, empty.body).toBe(200);
                 expect(empty.json()).toEqual({ services: [], accounts: [] });
                 const beforeInvalid = readColumns.length;
                 for (const query of [
                     new URLSearchParams({ service: JSON.stringify(service), services: JSON.stringify(services) }),
+                    new URLSearchParams({ service: JSON.stringify(service), accounts: JSON.stringify(selectedRefs) }),
+                    new URLSearchParams({ services: JSON.stringify(services), accounts: JSON.stringify(selectedRefs) }),
+                    new URLSearchParams({ accounts: JSON.stringify([{ ...selectedRefs[0], unexpected: true }]) }),
+                    new URLSearchParams({ accounts: JSON.stringify(selectedRefs[0]) }),
+                    new URLSearchParams([['accounts', '[]'], ['accounts', '[]']]),
                     new URLSearchParams({ services: JSON.stringify([{ ...service, unexpected: true }]) }),
                     new URLSearchParams({ services: JSON.stringify(service) }),
                     new URLSearchParams({ services: '[' }),

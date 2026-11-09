@@ -78,6 +78,25 @@ function mockAxiosPostOnce(response: Readonly<{ status: number; data: unknown }>
 }
 
 describe("qualified Connected Account V4 API", () => {
+    it('requests only exact qualified account summaries and skips an empty demand', async () => {
+        const accounts = [{ service, accountId: 'work' }, {
+            service: { ...service, localId: 'second' }, accountId: 'work',
+        }];
+        const signal = new AbortController().signal;
+        vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { accounts: [] } });
+        await expect(listQualifiedConnectedAccountsV4({ token: 'fixture', accounts, signal }))
+            .resolves.toEqual({ accounts: [] });
+        expect(axios.get).toHaveBeenCalledTimes(1);
+        const [url, config] = vi.mocked(axios.get).mock.calls[0] ?? [];
+        const query = new URL(String(url)).searchParams;
+        expect([...query.keys()]).toEqual(['accounts']);
+        expect(JSON.parse(query.get('accounts') ?? 'null')).toEqual(accounts);
+        expect(config?.signal).toBe(signal);
+        await expect(listQualifiedConnectedAccountsV4({ token: 'fixture', accounts: [] }))
+            .resolves.toEqual({ accounts: [] });
+        expect(axios.get).toHaveBeenCalledTimes(1);
+    });
+
     it('attributes qualified-list reads through the existing request-purpose header', async () => {
         vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { service, accounts: [] } });
         await listQualifiedConnectedAccountsV4({ token: 'fixture', service });
