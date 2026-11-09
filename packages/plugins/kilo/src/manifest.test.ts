@@ -22,7 +22,7 @@ describe('Kilo plugin manifest', () => {
           capability: 'process',
           scope: {
             executables: [{ kind: 'systemTool', id: 'kilo-cli' }],
-            envKeys: ['KILO_PERMISSION'],
+            envKeys: expect.arrayContaining(['KILO_PERMISSION']),
           },
         }],
         optional: [],

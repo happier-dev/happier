@@ -7,6 +7,9 @@ import { KILO_PERMISSION_ENV } from './agent/permissions/kiloPermissionPolicy.js
 import { createKiloAgentRuntime } from './agent/runtime/factory.js';
 import { KILO_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 import { kiloExternalSessionsContribution } from './agent/externalSessions/contribution.js';
+import { KILO_PROVIDER_BINDING_ADAPTER_V1, KILO_PROVIDER_OWNED_ENV_KEYS } from './agent/providerBinding/adapter.js';
+import { KILO_CODEX_PURPOSE } from './agent/runtime/connectedAccounts.js';
+import { CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV } from '@happier-dev/plugin-sdk/connected-accounts';
 
 const {
   id: KILO_AGENT_SETTINGS_CONTRIBUTION_ID,
@@ -17,7 +20,6 @@ export const KILO_PLUGIN = definePlugin({
   id: 'happier.agent.kilo',
   version: '0.0.0',
   displayName: 'Kilo',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [{
@@ -31,7 +33,7 @@ export const KILO_PLUGIN = definePlugin({
       reason: 'Run the declared Kilo CLI executable.',
       scope: {
         executables: [{ kind: 'systemTool', id: 'kilo-cli' }],
-        envKeys: [KILO_PERMISSION_ENV],
+        envKeys: [KILO_PERMISSION_ENV, ...KILO_PROVIDER_OWNED_ENV_KEYS, CONNECTED_ACCOUNT_REQUEST_AUTH_CAPABILITY_PATH_ENV],
       },
     }],
     optional: [],
@@ -64,7 +66,28 @@ export const KILO_PLUGIN = definePlugin({
           },
         },
         primary: 'sessions',
+        connectedAccounts: [{
+          purpose: KILO_CODEX_PURPOSE,
+          service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' },
+          materializationKinds: ['httpHeaders'], credentialKinds: ['oauth'],
+        }],
+        providerRequirements: {
+          acceptsProtocols: ['openai-chat', 'openai-responses', 'anthropic'],
+          required: { streaming: true, toolRoundTrips: true },
+          credentialSupport: {
+            supportsNoAuth: true,
+            noAuthProtocols: ['openai-chat'],
+            apiKeyTransports: [
+              { protocol: 'openai-chat', destination: { kind: 'httpHeader', names: ['Authorization'], formats: ['bearer'] } },
+              { protocol: 'openai-responses', destination: { kind: 'httpHeader', names: ['Authorization'], formats: ['bearer'] } },
+              { protocol: 'anthropic', destination: { kind: 'httpHeader', names: ['x-api-key'], formats: ['raw'] } },
+            ],
+          },
+          authIsolation: { suppressConnectedServiceIds: [], ownedEnvKeys: [...KILO_PROVIDER_OWNED_ENV_KEYS] },
+          materialization: 'spawnEnv', applyPolicy: 'restart_session', supportsFreeformModelIds: true,
+        },
         catalog: {
+          agentCliSystemTool: { toolId: 'kilo-cli' },
           acpRegistryIds: [...AGENT_DEFINITION.acpRegistryIds],
           vendorResume: { support: AGENT_DEFINITION.core.resume.vendorResume },
         },
@@ -99,6 +122,17 @@ export const KILO_PLUGIN = definePlugin({
         },
       },
       factory: createKiloAgentRuntime,
+      connectedAccountLaunch: {
+        requestAuthUses: [{ purpose: KILO_CODEX_PURPOSE, materialization: {
+          kind: 'httpHeaders', origin: 'https://chatgpt.com', headerNames: ['authorization', 'chatgpt-account-id'],
+        } }],
+        continuity: {
+          // Kilo's current SQLite store has no host-declared resume-file lookup.
+          // Native ACP resume still works; pre-switch reachability is unproven.
+          verifyResumeReachable: async () => ({ ok: false, reason: 'kilo_resume_reachability_unsupported' }),
+        },
+      },
+      providerBinding: KILO_PROVIDER_BINDING_ADAPTER_V1,
       preflightSessionControls: {
         catalogs: { kind: 'acp', command: KILO_ACP_COMMAND },
         models: {
