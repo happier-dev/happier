@@ -553,6 +553,7 @@ function BackupRows(props: SectionProps) {
       <>
         <DeploymentBackupSetup
           detail={props.detail}
+          serverId={editing.serverId}
           testID={props.testID}
           onSave={(configuration) => retentionChange.press(() =>
             editing.actions.updateEnvironment(props.detail.environment, { backup: configuration }))}

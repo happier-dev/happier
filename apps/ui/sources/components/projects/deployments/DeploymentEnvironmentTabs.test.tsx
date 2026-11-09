@@ -42,14 +42,24 @@ const routerMock = await vi.hoisted(async () => {
 });
 vi.mock('expo-router', () => routerMock.module);
 // The exact controller RPC is the network boundary; its protocol reader stays real.
+const machineProjectionReplies = vi.hoisted(() => new Map<string, unknown>());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
-  machineRpcWithServerScope: vi.fn(async () => { throw new Error('controller_unavailable'); }),
+  machineRpcWithServerScope: vi.fn(async (params: { machineId: string; method: string }) => {
+    const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    if (params.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+      && machineProjectionReplies.has(params.machineId)) return machineProjectionReplies.get(params.machineId);
+    throw new Error('controller_unavailable');
+  }),
 }));
 vi.mock('@/modal', async () => {
   const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
   return createModalModuleMock({ renderCustomModals: true }).module;
 });
 afterEach(standardCleanup);
+afterEach(async () => {
+  machineProjectionReplies.clear();
+  (await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs')).clearDaemonMergedProjectionCacheForTests();
+});
 // Previews read through the Home's real Action transport; the harness owns only its HTTP boundary.
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -1134,10 +1144,10 @@ describe('Environment → Settings: checks, backups, previews', () => {
     } finally { await screen.unmount(); controller.retire(); account.dispose(); await homes.reset(); }
   });
 
-  it('sets up backups from Settings: S3 destination, what to back up and keep counts, saved once through environments.update', async () => {
+  it('sets up backups from the Environment controller even when the Account-selected old origin has no destinations', async () => {
     await homes.reset();
     const serverId = await homes.addHome({ name: 'Backup setup', serverUrl: 'https://backup-setup.test',
-      accountId: 'account-owner', currentAccount: true });
+      serverIdentityId: 'srv_backup_setup', accountId: 'account-owner', currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
     const detail = createDeploymentEnvironmentDetailV1();
     const settled = { ok: true as const, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
@@ -1157,13 +1167,37 @@ describe('Environment → Settings: checks, backups, previews', () => {
             advanced: { type: 'object', additionalProperties: false, properties: { label: { type: 'string' } } } } },
         actions: { test: { kind: 'hostAction', actionId: 'deployments.backups.test' },
           open: { pluginId: 'example.storage', localId: 'bucket-store/open' } } } };
+    const { DaemonContributionRegistryProjectionDescribeResponseSchema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+    const { getServerProfileById } = await import('@/sync/domains/server/serverProfiles');
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const machineId = detail.environment.controllerMachineId;
+    const sourceCustody = { kind: 'development', registeredRootId: '/plugins/backup-destinations' };
+    const executionOrigin = { serverIdentityId: getServerProfileById(serverId)!.serverIdentityId,
+      sourceRef: { machineId, pluginId: destination.pluginId, sourceCustody } };
+    const response = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+      projection: { v: 2, generation: 1, installedPackagesById: { [destination.pluginId]: {
+        id: destination.pluginId, displayName: 'Backup destinations', version: '1.0.0', enabled: true,
+        source: { kind: 'path', locator: '/plugins/backup-destinations' }, sourceCustody, executionOrigin,
+        occurrenceId: 'backup-destinations:22' } }, familiesById: { backupDestinations: {
+        family: 'backupDestinations', entriesById: { [destination.id]: { ...destination, executionOrigin,
+          occurrenceId: 'backup-destinations:22' } } } } } });
+    machineProjectionReplies.set(machineId, response);
+    storage.setState({ endpointStatus: 'online' });
+    await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: machineId,
+      active: true, activeAt: Date.now(), daemonStateVersion: 1 })]);
     const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
       environmentActions: { setController: vi.fn(), updateEnvironment },
-      pluginUiProjection: { value: { ...EMPTY_PLUGIN_UI_PROJECTION, backupDestinationsById: { [destination.id]: destination } },
+      // #99: the Account selected an older bundled Machine with no destination family.
+      serverId,
+      pluginUiProjection: { value: EMPTY_PLUGIN_UI_PROJECTION,
         serverId, accountLifetime: account.accountLifetime } });
     const id = 'project-deployments.environment.settings.backups.setup';
     try {
       expect(await settle(id)).not.toBeNull();
+      await vi.waitFor(() => expect(screen.findByTestId(`${id}.start`)).not.toBeNull());
+      expect(screen.findByTestId(`${id}.store`)).toBeNull();
       await screen.pressByTestIdAsync(`${id}.start`);
       const { FieldValueItem } = await import('@/components/ui/forms/FieldValueItem');
       const { HappierInputField } = await import('@happier-dev/plugin-ui/presentation');
@@ -1217,8 +1251,18 @@ describe('Environment → Settings: checks, backups, previews', () => {
       accountId: 'account-owner', currentAccount: true });
     const account = await captureLazyActionAccountContext(serverId);
     const detail = createDeploymentEnvironmentDetailV1();
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+    const { storage } = await import('@/sync/domains/state/storageStore');
+    const { DaemonContributionRegistryProjectionDescribeResponseSchema } = await import('@happier-dev/protocol/daemon/contributionRegistryProjection');
+    machineProjectionReplies.set(detail.environment.controllerMachineId,
+      DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+        projection: { v: 2, generation: 1 } }));
+    storage.setState({ endpointStatus: 'online' });
+    await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({
+      id: detail.environment.controllerMachineId, active: true, activeAt: Date.now(), daemonStateVersion: 1 })]);
     const { screen, controller, settle } = await renderTab('settings', detail, {}, { lifetime: account.accountLifetime,
-      environmentActions: { setController: vi.fn(), updateEnvironment: vi.fn() } });
+      serverId, environmentActions: { setController: vi.fn(), updateEnvironment: vi.fn() } });
     const id = 'project-deployments.environment.settings.backups.setup';
     try {
       expect(await settle(`${id}.store`)).not.toBeNull();
