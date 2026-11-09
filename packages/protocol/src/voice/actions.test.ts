@@ -37,7 +37,7 @@ describe('extractVoiceActionsFromAssistantText', () => {
     expect(result.actions).toEqual([{ t: 'sendSessionMessage', args: { message: 'Please do X.' } }]);
   });
 
-  it('supports optional sessionId fields for messages and rejects permission actions', () => {
+  it('rejects the whole block when a permission action accompanies a valid message', () => {
     const input = [
       'Ok.',
       '',
@@ -52,10 +52,22 @@ describe('extractVoiceActionsFromAssistantText', () => {
     ].join('\n');
 
     const result = extractVoiceActionsFromAssistantText(input);
-    expect(result.assistantText).toBe('Ok.');
-    expect(result.actions).toEqual([
-      { t: 'sendSessionMessage', args: { sessionId: 's1', message: 'Please do X.' } },
-    ]);
+    expect(result.invalidActionBlock).toBe(true);
+    expect(result.assistantText).not.toBe('Ok.');
+    expect(result.actions).toEqual([]);
+  });
+
+  it('discloses malformed message input in a mixed block without executing its valid sibling', () => {
+    const result = extractVoiceActionsFromAssistantText(`Sending both messages now. <voice_actions>${JSON.stringify({ actions: [
+      { t: 'sendSessionMessage', args: { sessionId: 's1', message: 'Valid request.' } },
+      { t: 'sendSessionMessage', args: { sessionId: 's2', message: { text: 'private request content' } } },
+    ] })}</voice_actions>`);
+    expect(result.invalidActionBlock).toBe(true);
+    expect(result.actions).toEqual([]);
+    expect(result.assistantText).toContain('sendSessionMessage');
+    expect(result.assistantText).toContain('message');
+    expect(result.assistantText).not.toContain('Sending both messages now');
+    expect(result.assistantText).not.toContain('private request content');
   });
 
   it('reports malformed action blocks as a failure instead of preserving success narration', () => {
@@ -65,7 +77,7 @@ describe('extractVoiceActionsFromAssistantText', () => {
   });
 
   it.each([
-    { t: 'listSessions', args: { limit: 20, query: { title: 'VOICE-RUN96 R118 approval target' } }, field: 'query' },
+    { t: 'listSessions', args: { limit: { title: 'VOICE-RUN96 R118 approval target' } }, field: 'limit' },
     { t: 'sendSessionMessage', args: { sessionId: 'cmw806d1u006bmcraf5efazah', message: { text: 'private request content' } }, field: 'message' },
   ])('identifies the invalid $t input field without disclosing its value', ({ t, args, field }) => {
     const result = extractVoiceActionsFromAssistantText(`<voice_actions>${JSON.stringify({ actions: [{ t, args }] })}</voice_actions>`);
@@ -229,8 +241,9 @@ describe('extractVoiceActionsFromAssistantText', () => {
         actions: [
           {
             t: 'listSessions',
-            args: { limit: '10', includeLastMessagePreview: 'true' },
+            args: { limit: '10' },
           },
+          { t: 'getSessionRecentMessages', args: { sessionId: 's1', includeUser: 'true' } },
         ],
       }),
       '</voice_actions>',
@@ -241,8 +254,9 @@ describe('extractVoiceActionsFromAssistantText', () => {
     expect(result.actions).toEqual([
       {
         t: 'listSessions',
-        args: { limit: 10, includeLastMessagePreview: true },
+        args: { limit: 10 },
       },
+      { t: 'getSessionRecentMessages', args: { sessionId: 's1', includeUser: true } },
     ]);
   });
 
@@ -311,7 +325,7 @@ describe('extractVoiceActionsFromAssistantText', () => {
     ]);
   });
 
-  it('keeps valid actions when one action has invalid args', () => {
+  it('rejects the whole block when one action has invalid numeric args', () => {
     const input = [
       'Ok.',
       '',
@@ -326,7 +340,9 @@ describe('extractVoiceActionsFromAssistantText', () => {
     ].join('\n');
 
     const result = extractVoiceActionsFromAssistantText(input);
-    expect(result.assistantText).toBe('Ok.');
-    expect(result.actions).toEqual([{ t: 'sendSessionMessage', args: { message: 'Please continue.' } }]);
+    expect(result.invalidActionBlock).toBe(true);
+    expect(result.assistantText).toContain('listSessions');
+    expect(result.assistantText).toContain('limit');
+    expect(result.actions).toEqual([]);
   });
 });
