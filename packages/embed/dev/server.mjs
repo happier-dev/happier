@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { connect } from '@happier-dev/sdk';
 import { buildFixtureHappierUrl, createFixtureStore, createCredentialIssuer, createLeadChat,
+  createLivePageBootstrap, matchFixtureLiveRoute,
   projectFixtureErrorLog, projectFixtureErrorResponse } from './fixture.mjs';
+import { buildLivePageBundle } from './liveBundle.mjs';
 import { FIXTURE_ORIGIN } from './leads-fixture/contracts.mjs';
 
 const token = process.env.HAPPIER_EMBED_KEY;
@@ -25,7 +27,9 @@ const bundle = await build({
     '@happier-dev/protocol/embed': fileURLToPath(new URL('../../protocol/src/embed/index.ts', import.meta.url)),
   },
 });
+const liveBundle = await buildLivePageBundle();
 const page = await readFile(new URL('./host.html', import.meta.url));
+const livePage = await readFile(new URL('./live.html', import.meta.url));
 const users = new Set(['salesperson', 'other-salesperson']);
 
 function currentUser(req) {
@@ -48,11 +52,17 @@ function reply(res, status, value, type = 'application/json') {
 const server = createServer(async (req, res) => {
   try {
     const path = new URL(req.url ?? '/', FIXTURE_ORIGIN).pathname;
+    const liveRoute = matchFixtureLiveRoute(req.method, path);
     if (req.method === 'GET' && path === '/') {
       if (!req.headers.cookie?.includes('happier_fixture_user=')) res.setHeader('set-cookie', 'happier_fixture_user=salesperson; HttpOnly; SameSite=Strict; Path=/');
       return reply(res, 200, page, 'text/html; charset=utf-8');
     }
     if (req.method === 'GET' && path === '/host.js') return reply(res, 200, bundle.outputFiles[0].contents, 'text/javascript');
+    if (req.method === 'GET' && path === '/live.js') return reply(res, 200, liveBundle.outputFiles[0].contents, 'text/javascript');
+    if (liveRoute?.kind === 'page') {
+      if (!req.headers.cookie?.includes('happier_fixture_user=')) res.setHeader('set-cookie', 'happier_fixture_user=salesperson; HttpOnly; SameSite=Strict; Path=/');
+      return reply(res, 200, livePage, 'text/html; charset=utf-8');
+    }
     // Plugin callbacks have no browser Origin. This fixture is loopback-only, with no production authentication claim.
     if (req.method === 'POST' && path.startsWith('/api/actions/')) {
       if (req.headers.origin) return reply(res, 403, { error: 'browser_action_callback_forbidden' });
@@ -71,6 +81,9 @@ const server = createServer(async (req, res) => {
       userId, happierUrl, leads: store.listLeads(userId), copilotSessionId: store.copilotSessionId(userId),
     });
     if (req.method === 'POST' && path === '/api/happier/credential') return reply(res, 200, await issuer.issue(userId, await body(req)));
+    if (liveRoute?.kind === 'credential') {
+      return reply(res, 200, await createLivePageBootstrap({ endpoint, issuer, store, userId, leadId: liveRoute.leadId }));
+    }
     if (req.method === 'GET' && path === '/api/happier/sessions') {
       const result = await happier.embed.listSessions();
       // Listing uses the embed's folder/tag filter; returned rows additionally require CRM ownership.
@@ -88,4 +101,4 @@ const server = createServer(async (req, res) => {
   }
 });
 const address = new URL(FIXTURE_ORIGIN);
-server.listen(Number(address.port), address.hostname, () => process.stdout.write(`Leads fixture: ${FIXTURE_ORIGIN}\n`));
+server.listen(Number(address.port || '80'), address.hostname, () => process.stdout.write(`Leads fixture: ${FIXTURE_ORIGIN}\n`));

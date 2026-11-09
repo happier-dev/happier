@@ -8,5 +8,5 @@
       "@happier-dev/embed/react": ["../src/react/index.tsx"]
     }
   },
-  "include": ["host.tsx", "leads-fixture/index.ts", "leads-fixture/contracts.mjs"]
+  "include": ["host.tsx", "live.ts", "leads-fixture/index.ts", "leads-fixture/contracts.mjs"]
 }

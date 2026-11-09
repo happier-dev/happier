@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { test } from 'vitest';
+import { createServer } from 'node:net';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { fileURLToPath } from 'node:url';
+import { test, vi } from 'vitest';
 import { buildFixtureHappierUrl, createFixtureStore, createCredentialIssuer, createLeadChat,
+  createLivePageBootstrap, matchFixtureLiveRoute,
   projectFixtureErrorLog, projectFixtureErrorResponse } from './fixture.mjs';
+import { buildLivePageBundle } from './liveBundle.mjs';
 import { actionSchemas } from './leads-fixture/contracts.mjs';
 import { activate, manifest } from './leads-fixture/index.ts';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { AccountApiTokenBearerV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
 
 const analysis = { leadId: 'northstar', score: 84, summary: 'Strong fit', nextStep: 'Call Maya' };
 const publicKey = Buffer.alloc(32, 1).toString('base64url');
@@ -13,6 +20,107 @@ const spawnTokenId = '11111111-1111-4111-8111-111111111111';
 const sessionTokenId = '22222222-2222-4222-8222-222222222222';
 const expiredTokenId = '33333333-3333-4333-8333-333333333333';
 const leadSessionId = 'northstar-session';
+
+// Cold source SDK loading and two real browser builds exceed the unit-test deadline.
+test('a second fixture origin reaches the listener, browser routes, POST guard and Happier URL', { timeout: 0 }, async () => {
+  // The OS selects a free test port; never bind a running QA lane's fixed port.
+  const reservation = createServer();
+  reservation.listen(0, '127.0.0.1');
+  await once(reservation, 'listening');
+  const origin = `http://127.0.0.1:${reservation.address().port}`;
+  await new Promise((resolve, reject) => reservation.close((error) => error ? reject(error) : resolve()));
+  vi.stubEnv('HAPPIER_FIXTURE_ORIGIN', origin);
+  vi.resetModules();
+  try {
+    const configured = await import('./leads-fixture/contracts.mjs');
+    // Fail before starting the server if it would use the default QA port.
+    assert.equal(configured.FIXTURE_ORIGIN, origin);
+    const plugin = await import('./leads-fixture/index.ts');
+    assert.equal(plugin.manifest.hostAccess.required[0].scope.targets[0].origin, origin);
+    const child = spawn(process.execPath, ['--conditions=happier-source', '--import', 'tsx',
+      fileURLToPath(new URL('./server.mjs', import.meta.url))], {
+      // Only synthetic configuration reaches this child, so startup diagnostics contain no QA secrets.
+      env: { PATH: process.env.PATH, SystemRoot: process.env.SystemRoot,
+        HAPPIER_FIXTURE_ORIGIN: origin,
+        HAPPIER_EMBED_KEY: AccountApiTokenBearerV1Schema.parse(`hap_v1_${spawnTokenId}_${Buffer.alloc(32, 1).toString('base64url')}`),
+        HAPPIER_SERVER_URL: 'http://home.example.test',
+        HAPPIER_WEBAPP_URL: 'http://ui.example.test/?happier_hmr=0&server=http%3A%2F%2Fstale.example.test' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const closed = once(child, 'close');
+    try {
+      let output = '';
+      let diagnostic = '';
+      await new Promise((resolve, reject) => {
+        child.once('error', reject);
+        child.once('exit', (code) => reject(new Error(`Fixture exited before listening (${code}): ${diagnostic}`)));
+        child.stdout.on('data', (chunk) => {
+          output += chunk;
+          if (output.includes('Leads fixture:')) resolve();
+        });
+        child.stderr.on('data', (chunk) => { diagnostic += chunk; });
+      });
+      assert.equal(output.trim(), `Leads fixture: ${origin}`);
+      for (const path of ['/', '/live/verdant', '/host.js', '/live.js']) {
+        const response = await fetch(`${origin}${path}`);
+        assert.equal(response.status, 200);
+        await response.arrayBuffer();
+      }
+      const headers = { cookie: 'happier_fixture_user=salesperson', 'content-type': 'application/json' };
+      const refused = await fetch(`${origin}/api/user`, {
+        method: 'POST', headers: { ...headers, origin: 'http://127.0.0.1:5199' },
+        body: JSON.stringify({ userId: 'other-salesperson' }),
+      });
+      assert.equal(refused.status, 403);
+      assert.deepEqual(await refused.json(), { error: 'fixture_origin_required' });
+      const accepted = await fetch(`${origin}/api/user`, {
+        method: 'POST', headers: { ...headers, origin },
+        body: JSON.stringify({ userId: 'other-salesperson' }),
+      });
+      assert.equal(accepted.status, 200);
+      assert.deepEqual(await accepted.json(), { ok: true });
+      const state = await fetch(`${origin}/api/state`, { headers });
+      assert.equal(state.status, 200);
+      const url = new URL((await state.json()).happierUrl);
+      assert.equal(url.origin, 'http://ui.example.test');
+      assert.equal(url.searchParams.get('server'), 'http://home.example.test');
+      assert.equal(url.searchParams.get('happier_hmr'), '0');
+    } finally {
+      child.kill();
+      await closed;
+    }
+  } finally {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  }
+});
+
+test.each([undefined, 'http://127.0.0.1:1', 'http://127.0.0.1:80', 'http://127.0.0.1:65535'])(
+  'uses the default or a valid browser-canonical fixture origin %j', async (origin) => {
+    vi.stubEnv('HAPPIER_FIXTURE_ORIGIN', origin);
+    vi.resetModules();
+    try {
+      const configured = await import('./leads-fixture/contracts.mjs');
+      assert.equal(configured.FIXTURE_ORIGIN, origin === undefined ? 'http://127.0.0.1:5199' : new URL(origin).origin);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  },
+);
+
+test.each(['', 'https://127.0.0.1:5200', 'http://localhost:5200', 'http://0.0.0.0:5200',
+  'http://127.0.0.1:0', 'http://127.0.0.1:65536', 'http://127.0.0.1:5200/path',
+  'http://user@127.0.0.1:5200', 'http://127.0.0.1:5200?x=1'])('rejects invalid fixture origin %j', async (origin) => {
+  vi.stubEnv('HAPPIER_FIXTURE_ORIGIN', origin);
+  vi.resetModules();
+  try {
+    await assert.rejects(import('./leads-fixture/contracts.mjs'), /HAPPIER_FIXTURE_ORIGIN/);
+  } finally {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  }
+});
 
 test('the development fixture starts against current workspace SDK source', async () => {
   const packageJson = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8'));
@@ -28,6 +136,61 @@ test('the fixture selects its SDK Home in every embed frame URL', () => {
   assert.equal(url.origin, 'http://happier-agent-qa-embed.localhost:19364');
   assert.equal(url.searchParams.get('happier_hmr'), '0');
   assert.equal(url.searchParams.get('server'), 'http://happier-agent-qa-embed.localhost:19361');
+});
+
+test('the fixture owns the live page and credential routes without broad path matches', () => {
+  assert.deepEqual(matchFixtureLiveRoute('GET', '/live/verdant'), { kind: 'page', leadId: 'verdant' });
+  assert.deepEqual(matchFixtureLiveRoute('POST', '/api/live/verdant/credential'), { kind: 'credential', leadId: 'verdant' });
+  assert.equal(matchFixtureLiveRoute('GET', '/api/live/verdant/credential'), null);
+  assert.equal(matchFixtureLiveRoute('GET', '/live/verdant/extra'), null);
+  assert.equal(matchFixtureLiveRoute('GET', '/live/%2F'), null);
+});
+
+test('the live page reuses the embed credential issuer and returns only its child bearer', async () => {
+  const store = createFixtureStore();
+  store.attachLeadSession('salesperson', 'verdant', 'verdant-session');
+  const calls = [];
+  const bootstrap = await createLivePageBootstrap({
+    endpoint: 'https://home.example.test',
+    issuer: { async issue(userId, input) {
+      calls.push({ userId, input });
+      return {
+        token: 'child-browser-token',
+        tokenId: sessionTokenId,
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      };
+    } },
+    store,
+    userId: 'salesperson',
+    leadId: 'verdant',
+  });
+  assert.deepEqual(bootstrap, {
+    endpoint: 'https://home.example.test',
+    sessionId: 'verdant-session',
+    token: 'child-browser-token',
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].userId, 'salesperson');
+  assert.deepEqual({ ...calls[0].input, embedPublicKey: '<ephemeral>' }, {
+    sessionId: 'verdant-session', reason: 'open', embedPublicKey: '<ephemeral>',
+  });
+  assert.match(calls[0].input.embedPublicKey, /^[A-Za-z0-9_-]{43}$/);
+  assert.doesNotMatch(JSON.stringify(bootstrap), /tokenId/);
+
+  await assert.rejects(createLivePageBootstrap({
+    endpoint: 'https://home.example.test', issuer: { issue: async () => ({ token: 'unexpected' }) },
+    store, userId: 'other-salesperson', leadId: 'verdant',
+  }), /lead_forbidden/);
+});
+
+test('the live page bundles the public browser SDK without Node transports', async () => {
+  const bundle = await buildLivePageBundle();
+  const inputs = Object.keys(bundle.metafile.inputs);
+  assert.ok(inputs.some((path) => path.endsWith('sdk/src/index.public.ts')));
+  assert.ok(inputs.some((path) => path === 'live.ts' || path.endsWith('embed/dev/live.ts')));
+  assert.ok(inputs.every((path) => !/(?:^|\/)undici(?:\/|$)/u.test(path)));
+  assert.ok(Object.values(bundle.metafile.outputs).every((output) => output.imports.every(({ path }) => !path.startsWith('node:'))));
+  assert.doesNotMatch(bundle.outputFiles[0].text, /HAPPIER_EMBED_KEY|server\.mjs/);
 });
 
 function ownedStore() {
@@ -173,6 +336,15 @@ test('fixture failure diagnostics project only typed issue paths and codes', () 
   });
   assert.deepEqual(projectFixtureErrorLog(new Error('private input value')), {
     status: 400, error: 'fixture_error',
+  });
+  assert.deepEqual(projectFixtureErrorLog(Object.assign(new Error('private input value'), {
+    code: 'credential_scope_denied', status: 403, details: {
+      admissionStage: 'execution_authorization', grantReason: 'create_not_granted', privateValue: 'must-not-cross',
+    },
+  })), {
+    status: 403, error: 'credential_scope_denied', diagnostic: {
+      admissionStage: 'execution_authorization', grantReason: 'create_not_granted',
+    },
   });
 });
 

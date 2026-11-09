@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fieldwork · Browser SDK live fixture</title>
+<style>
+  :root { color-scheme:light dark; --canvas:#f5f4ef; --surface:#fffefa; --text:#23382d; --muted:#657269; --line:#dcded5; --accent:#2f6f4e; }
+  * { box-sizing:border-box; } body { margin:0; background:var(--canvas); color:var(--text); font:15px/1.5 system-ui,sans-serif; }
+  main { max-width:980px; margin:auto; padding:32px; } h1 { margin:.2rem 0; } .fixture { color:var(--muted); text-transform:uppercase; letter-spacing:.08em; font-size:12px; }
+  section { background:var(--surface); border:1px solid var(--line); border-radius:12px; padding:18px; margin:18px 0; }
+  .row { display:flex; flex-wrap:wrap; align-items:center; gap:12px; } .state { font-variant-numeric:tabular-nums; }
+  button,input { font:inherit; } button { border:1px solid var(--line); border-radius:7px; background:var(--surface); color:var(--text); padding:8px 12px; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:not-allowed; } input[type=text] { min-width:280px; border:1px solid var(--line); border-radius:7px; background:var(--surface); color:var(--text); padding:8px; }
+  ul { min-height:180px; max-height:440px; overflow:auto; padding-left:24px; } li { white-space:pre-wrap; border-bottom:1px solid var(--line); padding:8px 0; }
+  output,code { color:var(--accent); font-family:ui-monospace,monospace; }
+  @media (prefers-color-scheme:dark) { :root { --canvas:#171d19; --surface:#202821; --text:#e7ece6; --muted:#a4b0a5; --line:#354137; --accent:#83b998; } }
+</style>
+<main>
+  <p class="fixture">Development fixture · public browser SDK</p>
+  <h1>Live Session</h1>
+  <section aria-label="Live connection">
+    <div class="row state"><strong>Connection</strong> <output id="connection-state">connecting</output><strong>Transport</strong> <output id="transport">—</output></div>
+    <div class="row"><label><input id="polling-mode" type="checkbox"> Bearer-only polling mode</label><button id="reconnect">Reconnect</button></div>
+  </section>
+  <section aria-label="Transcript"><h2>Transcript</h2><ul id="transcript"></ul>
+    <div class="row"><input id="message" type="text" aria-label="Live message" placeholder="One live-stream check"><button id="send">Send</button></div>
+  </section>
+  <section aria-label="Permission"><p id="pending">No permission pending</p><button id="approve-permission" disabled>Allow permission</button></section>
+  <section aria-label="Negative grant checks"><h2>Typed refusal checks</h2>
+    <p><button id="negative-model">Set non-granted model</button> <output id="negative-model-code"></output></p>
+    <p class="row"><input id="other-session-id" type="text" aria-label="Another lead Session id" placeholder="Another lead Session id"><button id="negative-session">Open another lead Session</button> <output id="negative-session-code"></output></p>
+    <p><button id="negative-token">Create child token</button> <output id="negative-token-code"></output></p>
+  </section>
+</main>
+<script type="module" src="/live.js"></script>
+</html>

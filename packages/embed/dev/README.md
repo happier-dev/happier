@@ -1,7 +1,7 @@
 # Embeddable Happier CRM fixture
 
 Dev-only source fixture for plan 04 U10. It serves Fieldwork, a small CRM, at
-`http://127.0.0.1:5199`: a lead table, structured analysis, per-lead Happier chat,
+`http://127.0.0.1:5199` by default: a lead table, structured analysis, per-lead Happier chat,
 and a second pipeline copilot chat. The Happier frame must be on a different origin.
 The host page sends `Content-Security-Policy: frame-ancestors 'none'`.
 
@@ -38,6 +38,20 @@ for that stack and the current-source development plugin lifecycle.
    the server does not load or write `.env` files. Optional
    `HAPPIER_FIXTURE_CREDENTIAL_SECONDS=120` exercises short-expiry refresh (default
    900 seconds, matching the generated snippet). Stop with the same process handle.
+
+   For another QA lane, use its own embed key with the allowed site
+   `http://127.0.0.1:5200`, and start a second instance from the repository root:
+
+   ```sh
+   HAPPIER_FIXTURE_ORIGIN=http://127.0.0.1:5200 node --conditions=happier-source --import tsx packages/embed/dev/server.mjs
+   ```
+
+   `HAPPIER_FIXTURE_ORIGIN` accepts only `http://127.0.0.1:<port>` (ports 1–65535,
+   without credentials, path, query or fragment). Use 5201, 5202, etc. for further
+   lanes. The server, POST origin check and plugin callback/network grant share
+   the value in `leads-fixture/contracts.mjs`; browser pages use relative URLs and
+   automatically follow the serving origin. The generated Happier URL still selects
+   the lane's `HAPPIER_WEBAPP_URL` and `HAPPIER_SERVER_URL`, on a different origin.
 4. On the same machine as the fixture backend, prepare and install the public plugin:
 
    ```sh
@@ -57,10 +71,11 @@ for that stack and the current-source development plugin lifecycle.
    The final `plugins install ... --dev` command grants exact-source code trust.
    Any separate network-resource authority
    review remains with the present user; retain its pending change ID. The plugin
-   requests POST access only to the fixture origin. If the backend must live on
-   another host, change `FIXTURE_ORIGIN` in `leads-fixture/contracts.mjs` (the
-   server derives its listen address/port from it), then review the actual network
-   grant. Do not silently replace loopback with a public service.
+   requests POST access only to the fixture origin. Set the same
+   `HAPPIER_FIXTURE_ORIGIN` in the plugin authoring/runtime environment before
+   preparing its manifest and activating it, then review the actual network grant.
+   The fixture supports loopback only; configuring a port does not redirect an
+   already active plugin to a different QA lane.
 5. Keep `record-analysis` at Allow and `update-stage` at Ask first in Happier's
    canonical Actions settings. The former is authored safe; the latter has remote
    write danger and confirmation metadata. The host never implements approvals.

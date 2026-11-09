@@ -1,6 +1,8 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { EmbedCredentialRequestV1Schema } from '@happier-dev/protocol/embed';
+import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol/crypto/boxBundle';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { EmbedCredentialInputV1Schema, EmbedCredentialRequestV1Schema } from '@happier-dev/protocol/embed';
 import { actionSchemas } from './leads-fixture/contracts.mjs';
 
 /** The fixture owns both endpoints, so every frame must select the same Home as its server SDK. */
@@ -8,6 +10,39 @@ export function buildFixtureHappierUrl(happierUrl, serverUrl) {
   const url = new URL(happierUrl);
   url.searchParams.set('server', serverUrl);
   return url.href;
+}
+
+export function matchFixtureLiveRoute(method, path) {
+  const match = method === 'GET'
+    ? /^\/live\/([^/]+)$/.exec(path)
+    : method === 'POST' ? /^\/api\/live\/([^/]+)\/credential$/.exec(path) : null;
+  if (!match) return null;
+  try {
+    const leadId = decodeURIComponent(match[1]);
+    if (!/^[A-Za-z0-9_-]+$/.test(leadId)) return null;
+    return { kind: method === 'GET' ? 'page' : 'credential', leadId };
+  } catch {
+    return null;
+  }
+}
+
+/** The browser receives only a short-lived child bearer; the parent and sealed embed fields stay server-side. */
+export async function createLivePageBootstrap({ endpoint, issuer, store, userId, leadId }) {
+  const lead = store.listLeads(userId).find((entry) => entry.id === leadId);
+  if (!lead) throw new Error('lead_forbidden');
+  if (!lead.sessionId) throw new Error('lead_session_required');
+  const seed = randomBytes(32);
+  try {
+    const embedPublicKey = encodeBase64(deriveBoxPublicKeyFromSeed(seed), 'base64url');
+    const credential = EmbedCredentialInputV1Schema.parse(await issuer.issue(userId, {
+      sessionId: lead.sessionId,
+      embedPublicKey,
+      reason: 'open',
+    }));
+    return { endpoint, sessionId: lead.sessionId, token: credential.token };
+  } finally {
+    seed.fill(0);
+  }
 }
 
 /** CRM records are dev-only memory; host reloads retain them, server restarts reset them. */
@@ -99,10 +134,34 @@ function readTypedSdkIssues(error) {
   });
 }
 
+const GRANT_DENIAL_REASONS = new Set([
+  'action_not_granted',
+  'target_required',
+  'target_not_granted',
+  'create_not_granted',
+  'automation_not_granted',
+]);
+
+function readCredentialScopeDiagnostic(error) {
+  if (!error || typeof error !== 'object') return null;
+  const candidate = error.diagnostic ?? error.details;
+  return candidate && typeof candidate === 'object'
+    && candidate.admissionStage === 'execution_authorization'
+    && GRANT_DENIAL_REASONS.has(candidate.grantReason)
+    ? { admissionStage: candidate.admissionStage, grantReason: candidate.grantReason }
+    : null;
+}
+
 function fixtureSdkFailure(error, sessionId) {
   const code = readTypedSdkErrorCode(error) ?? 'fixture_sdk_error';
   const issues = readTypedSdkIssues(error);
-  const failure = Object.assign(new Error(code), { code, sessionId, ...(issues.length ? { details: issues } : {}) });
+  const diagnostic = readCredentialScopeDiagnostic(error);
+  const failure = Object.assign(new Error(code), {
+    code,
+    sessionId,
+    ...(issues.length ? { details: issues } : {}),
+    ...(diagnostic ? { diagnostic } : {}),
+  });
   if (error && typeof error === 'object' && typeof error.status === 'number') failure.status = error.status;
   return failure;
 }
@@ -130,6 +189,7 @@ export function projectFixtureErrorResponse(error) {
 /** Log projection never falls back to an exception message or schema issue values. */
 export function projectFixtureErrorLog(error) {
   const response = projectFixtureErrorResponse(error);
+  const diagnostic = readCredentialScopeDiagnostic(error);
   const errorCode = error && typeof error === 'object' && typeof error.code === 'string' && error.code.trim()
     ? error.code : 'fixture_error';
   return {
@@ -137,6 +197,7 @@ export function projectFixtureErrorLog(error) {
     error: errorCode,
     ...(response.body.sessionId ? { sessionId: response.body.sessionId } : {}),
     ...(response.body.issues ? { issues: response.body.issues } : {}),
+    ...(diagnostic ? { diagnostic } : {}),
   };
 }
 
