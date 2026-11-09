@@ -61,7 +61,7 @@ import { SessionExecutionRunInfoCard } from './SessionExecutionRunInfoCard';
 import { SessionExecutionRunDetailsView, type SessionExecutionRunDetailsViewHandle } from './SessionExecutionRunDetailsView';
 import { SessionBrowserContextRuntimeProvider, useSessionBrowserContextRuntime,
     type SessionBrowserContextRuntime } from '@/components/sessions/browser/sessionBrowserContextRuntime';
-import { Modal } from '@/modal';
+import { Modal, ModalProvider } from '@/modal';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { AppSessionTranscriptSourceProvider } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
 import { useSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
@@ -100,7 +100,7 @@ vi.mock('@/text', async () => {
 });
 vi.mock('@/modal', async () => {
     const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
-    return createModalModuleMock().module;
+    return createModalModuleMock({ renderCustomModals: true }).module;
 });
 const routeBoundary = vi.hoisted(() => ({ pathname: '/' }));
 vi.mock('expo-router', async () => {
@@ -164,6 +164,7 @@ let httpSessionAvailable = true;
 let sessionMetadata: ReturnType<typeof createSessionMetadataHttpBoundary>;
 let initialHistoryResponse: Promise<Response> | undefined;
 let pendingAdmissionResponse: Promise<void> | undefined;
+let pendingActionApproval: Readonly<{ artifactId: string; read: ReturnType<typeof createDeferred<Response>> }> | undefined;
 let sidechainHistory: ReturnType<typeof SessionMessagesPageV1Schema.parse> | undefined;
 const pendingRows: Array<Readonly<{
     localId: string; recipient: { kind: 'execution_run'; runId: string }; messageRole: 'user';
@@ -275,6 +276,7 @@ beforeEach(async ({ task }) => {
     httpSessionAvailable = true;
     initialHistoryResponse = undefined;
     pendingAdmissionResponse = undefined;
+    pendingActionApproval = undefined;
     sidechainHistory = undefined;
     pendingRows.length = 0;
     runState = createRun();
@@ -390,8 +392,17 @@ beforeEach(async ({ task }) => {
             serverIdentityId: 'srv_run_details_' + sequence, accountId: 'account-1', settings: stopPolicy,
             currentAccount: true }],
         route: async request => {
+            if (pendingActionApproval && request.path === `/v1/artifacts/${pendingActionApproval.artifactId}`) {
+                return pendingActionApproval.read.promise;
+            }
             const response = await accountActions.handle(request.url, { method: request.method,
                 ...(request.body !== undefined ? { body: JSON.stringify(request.body) } : {}) });
+            if (response && pendingActionApproval && request.path === '/v1/actions/execution.run.send') {
+                const envelope = await response.json();
+                return Response.json({ ...envelope, execution: { ok: true, result: {
+                    kind: 'approval_request_created', artifactId: pendingActionApproval.artifactId, actionId: 'execution.run.send',
+                } } });
+            }
             return response ?? sessionReads.handle(request);
         },
     });
@@ -415,6 +426,8 @@ beforeEach(async ({ task }) => {
 afterEach(async () => {
     routeBoundary.pathname = '/';
     standardCleanup();
+    Modal.hideAll();
+    pendingActionApproval?.read.resolve(Response.json({ error: 'not_found' }, { status: 404 }));
     for (const timer of animationFrames) clearTimeout(timer);
     animationFrames.clear();
     restorePopoverWebGlobals?.();
@@ -769,6 +782,70 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
         expect(screen.getTextContent()).toContain('req-quota-fixture');
         expect(screen.findByTestId('session-run-details-turn-failure')).not.toBeNull();
     });
+    it.each(['runs', 'machine'] as const)('dismisses the detached failed Run opened from %s before navigating to Credentials', async surface => {
+        // J3's real detached native failure: no Session, and provider authentication failed with HTTP 401.
+        runState = createRun({ status: 'failed', finishedAtMs: 2, error: {
+            code: 'provider_endpoint_auth_required', message: 'Sign in to Codex or choose a Codex account.',
+            runtimeIssueV1: { v: 1, scope: 'primary_session', status: 'failed', occurredAt: 1, agentId: 'codex',
+                code: 'provider_endpoint_auth_required', source: 'auth_error', sanitizedPreview: 'Sign in to Codex or choose a Codex account.',
+                usageLimit: { v: 1, quotaScope: 'account', recoverability: 'switch_account', resetAtMs: null, retryAfterMs: null,
+                    connectedService: { serviceId: 'openai-codex', profileId: null, groupId: null } },
+                failureCause: { code: 'provider_endpoint_auth_required', failureReason: 'authentication_required', phase: 'turn', httpStatus: 401 } },
+        } });
+        const original = boundary.call.getMockImplementation()!;
+        boundary.call.mockImplementation(async (method, input) => method === RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST
+            ? DaemonExecutionRunListResponseSchema.parse({ runs: [{ ...runState, happyHomeDir: '/tmp/happier',
+                happySessionId: null, pid: 123, updatedAtMs: 2 }] }) : original(method, input));
+        const { router } = await import('expo-router');
+        router.setParams(surface === 'machine' ? { id: 'm1', tab: 'overview', serverId } : {});
+        const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+        const { InjectedAuthProvider } = await import('@/auth/context/AuthContext');
+        const credentials = await TokenStorage.getCredentialsForServerUrl(home.homes.home!.serverUrl);
+        const Entry = surface === 'runs' ? (await import('@/app/(app)/runs')).default
+            : (await import('@/app/(app)/machines/[id]/index')).WorkspaceRouteBody;
+        screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><AppPaneProvider><ModalProvider>
+            <Entry />
+        </ModalProvider></AppPaneProvider></InjectedAuthProvider>);
+        if (surface === 'runs') {
+            const { SegmentedTabBar } = await import('@/components/ui/navigation/SegmentedTabBar');
+            await act(async () => screen.findByType(SegmentedTabBar).props.onSelectTab('all'));
+        } else {
+            const { Switch } = await import('@/components/ui/forms/Switch');
+            const { Item } = await import('@/components/ui/lists/Item');
+            const finishedToggle = () => screen.findAllByType(Item).find(node => node.props.title === 'runs.showFinished')!.findByType(Switch);
+            await vi.waitFor(() => expect(finishedToggle()).toBeDefined());
+            await act(async () => finishedToggle().props.onValueChange(true));
+        }
+        const { ExecutionRunRow } = await import('@/components/sessions/runs/ExecutionRunRow');
+        await vi.waitFor(() => expect(screen.findAllByType(ExecutionRunRow)).toHaveLength(1));
+        await act(async () => screen.findByType(ExecutionRunRow).props.onPress());
+        await loaded();
+        expect(screen.findByTestId('session-run-details-turn-failure')).not.toBeNull();
+        vi.mocked(Modal.hide).mockClear();
+        vi.mocked(router.push).mockClear();
+        await screen.pressByTestIdAsync('session-run-details-turn-failure-action');
+        expect(screen.findAllByType(SessionExecutionRunInfoCard)).toHaveLength(0);
+        expect(vi.mocked(router.push)).toHaveBeenCalledWith('/(app)/settings/connected-services');
+        expect(vi.mocked(Modal.hide).mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(router.push).mock.invocationCallOrder[0]!);
+    });
+    it('dismisses Run details before opening a pending Action approval', async () => {
+        runState = liveRun({ turnInFlight: false });
+        pendingActionApproval = { artifactId: 'run-send-approval', read: createDeferred<Response>() };
+        const close = vi.fn();
+        await mount({ sessionId: null, workspace: { machineId: 'm1' }, onRequestClose: close });
+        await loaded();
+        await vi.waitFor(() => expect(screen.findAllByType(AgentInput)).toHaveLength(1));
+        // The Home reports pending approval for this real Run send. Its Artifact read stays in flight.
+        await act(async () => { void screen.findByType(AgentInput).props.onSend({ inputTextOverride: 'Continue after approval' }); });
+        const { ActionApprovalPendingNotice } = await import('@/components/approvals/ActionApprovalPendingNotice');
+        await vi.waitFor(() => expect(screen.findAllByType(ActionApprovalPendingNotice)).toHaveLength(1));
+        const { router } = await import('expo-router');
+        vi.mocked(router.push).mockClear();
+        await act(async () => screen.findByType(ActionApprovalPendingNotice).props.onOpenApproval());
+        expect(close).toHaveBeenCalledOnce();
+        expect(vi.mocked(router.push)).toHaveBeenCalledWith(`/inbox/approvals/run-send-approval?serverId=${encodeURIComponent(serverId)}`);
+        expect(close.mock.invocationCallOrder[0]).toBeLessThan(vi.mocked(router.push).mock.invocationCallOrder[0]!);
+    });
     it('says a failed Run\'s typed cause once, with its account action, instead of a raw tool-result block', async () => {
         const preview = 'Codex usage limit reached. Try another connected account or try again after your limit resets.';
         runState = createRun({ status: 'failed', finishedAtMs: 2, error: { code: 'usage_limit', message: preview, runtimeIssueV1: {
@@ -777,13 +854,14 @@ describe('SessionExecutionRunDetailsView — real Home, transcript and interacti
             usageLimit: { v: 1, recoverability: 'switch_account', quotaScope: 'account', resetAtMs: 1794056400000, retryAfterMs: null,
                 connectedService: { serviceId: 'openai-codex', profileId: 'quota-profile', groupId: null } } } } });
         latestToolResult = preview;
-        await mount(); await loaded();
+        await mount({ presentation: 'screen' }); await loaded();
         expect(screen.findByTestId('session-run-details-turn-failure')).not.toBeNull();
         expect(screen.getTextContent()).toContain('usage.board.plans.capacityResets');
         expect(screen.findAllHostsByTestId('session-run-details-latest-tool-result')).toHaveLength(0);
         await screen.pressByTestIdAsync('session-run-details-turn-failure-action');
         const { router } = await import('expo-router');
         expect(vi.mocked(router.push)).toHaveBeenCalledWith('/(app)/settings/connected-services');
+        expect(screen.findAllByType(SessionExecutionRunInfoCard)).toHaveLength(1);
     });
     it.each([
         ['provider_authorization_changed', 'settingsProviders.errors'],

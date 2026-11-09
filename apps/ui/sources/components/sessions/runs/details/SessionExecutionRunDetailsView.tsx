@@ -164,7 +164,7 @@ type SessionExecutionRunDetailsViewProps = Readonly<{
     openingTitle?: string | null;
     reviewersNotStarted?: readonly string[];
     narrationError?: string | null;
-    /** Closes the surface hosting this Run (its Details tab), offered when the Run is gone. */
+    /** Closes the hosting dialog or Details tab when leaving this Run for recovery. */
     onRequestClose?: () => void;
     /** The opener found the Run's Session removed: a missing Run went with it, rather than being pruned. */
     sessionRemoved?: boolean;
@@ -958,7 +958,10 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
                     {[turnFailure.message, turnFailure.reset].filter(Boolean).join(' · ')}
                 </Text> : null}
                 {turnFailure?.recovery ? <RoundButton testID="session-run-details-turn-failure-action" size="small" display="default"
-                    title={turnFailure.recovery} onPress={() => router.push('/(app)/settings/connected-services')} /> : null}
+                    title={turnFailure.recovery} onPress={() => {
+                        props.onRequestClose?.();
+                        router.push('/(app)/settings/connected-services');
+                    }} /> : null}
                 {showPreMarkerState ? (
                     <View
                         testID="session-run-details-pre-marker-state"
@@ -1002,7 +1005,10 @@ const SessionExecutionRunDetailsContent = React.forwardRef<SessionExecutionRunDe
             {approval.approvalPending && approval.approvalId && pendingOutboxScope ? (
                 <ActionApprovalPendingNotice
                     message={t('approvals.title')}
-                    onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(pendingOutboxScope.serverId)}`)}
+                    onOpenApproval={() => {
+                        props.onRequestClose?.();
+                        router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId!)}?serverId=${encodeURIComponent(pendingOutboxScope.serverId)}`);
+                    }}
                 />
             ) : null}
             {props.sessionId !== null && stopUnconfirmed ? (
