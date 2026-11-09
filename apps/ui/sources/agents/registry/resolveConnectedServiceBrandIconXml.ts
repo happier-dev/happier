@@ -1,50 +1,22 @@
 import type { Theme } from '@/theme';
+import {
+    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID,
+    type BuiltInLegacyConnectedAccountCompatibility,
+} from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 
-import { isBundledAgentId, resolveAgentIdFromConnectedServiceId } from './registryCore';
-import { AGENT_LOGO_SVG_XML } from './agentLogoSvgXml';
+import { CONNECTED_SERVICE_LOGO_SVG_XML } from './agentLogoSvgXml';
 
-/**
- * GitHub mark (Octicons `mark-github`, from svgl.app — Octicons is MIT-licensed by
- * GitHub). Rendered monochrome to match the app theme, in the SAME style as the
- * provider marks in `agentLogoSvgXml`. GitHub has no `AgentId`, so this
- * resolver lives with its only consumer rather than in `AGENT_LOGO_SVG_XML`.
- * Full-color brand treatment is a separate, deferred design decision.
- */
-function githubSvg(theme: Theme): string {
-    const body = `<path fill-rule="evenodd" clip-rule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/>`;
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="${theme.colors.text.primary}">${body}</svg>`;
-}
+const legacyServiceIdentities: Readonly<Record<string, BuiltInLegacyConnectedAccountCompatibility | undefined>> =
+    BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID;
 
-/** Anthropic's service identity (lab kit's A\\ mark), distinct from Claude's Agent starburst. */
-function anthropicSvg(theme: Theme): string {
-    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="${theme.colors.text.primary}"><path d="M13.8 5h3.1L22 19h-3.1L13.8 5ZM7.1 5h3.2L15.4 19h-3.2l-1-2.9H5.9L4.9 19H1.8L7.1 5Zm3.2 8.5-1.8-5-1.8 5h3.6Z"/></svg>`;
-}
-
-/**
- * Resolves the themed, monochrome brand-mark SVG XML for a connected service.
- *
- * Reuses the canonical registry plumbing: a service id maps to an `AgentId` via
- * `resolveAgentIdFromConnectedServiceId`, and the mark comes from the shared
- * `AGENT_LOGO_SVG_XML` registry. Services with their own identity (`github`,
- * `anthropic`) use their dedicated mark here. Returns `null` when no mark
- * exists (the caller falls back to a generic `key-outline` glyph).
- *
- * LOCKED: marks render in the registry's monochrome/themed treatment
- * (`theme.colors.text.primary`); full-color brand marks are deferred.
- */
+/** The released alias selects a qualified service; its plugin declaration owns the themed mark. */
 export function resolveConnectedServiceBrandIconXml(
     serviceId: string | null | undefined,
     theme: Theme,
 ): string | null {
     const normalized = typeof serviceId === 'string' ? serviceId.trim().toLowerCase() : '';
-    if (!normalized) return null;
-
-    if (normalized === 'github') return githubSvg(theme);
-    if (normalized === 'anthropic') return anthropicSvg(theme);
-
-    const agentId = resolveAgentIdFromConnectedServiceId(normalized);
-    if (!agentId) return null;
-
-    const resolver = isBundledAgentId(agentId) ? AGENT_LOGO_SVG_XML[agentId] : undefined;
-    return resolver ? resolver(theme) : null;
+    const service = legacyServiceIdentities[normalized]?.service;
+    if (!service) return null;
+    return CONNECTED_SERVICE_LOGO_SVG_XML[buildQualifiedPluginContributionKey(service)]?.(theme) ?? null;
 }

@@ -9,15 +9,10 @@
  * (`apps/ui/sources/components/onboarding/preAuth/ProviderMarkRow.tsx`). That row maps
  * `AGENT_IDS` (the generated bundled-plugin catalog order,
  * `packages/agents/src/generated/agentIds.ts`) through `AgentIcon`, whose SVG marks come
- * from two generated owners:
- *
- *   - `apps/ui/sources/agents/registry/generatedAgentLogoSvgXml.ts` — the hand-drawn
- *     `AGENT_LOGO_SVG_XML` resolver map (imported directly; its imports are type-only);
- *   - `apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts` — per-agent
- *     `<NAME>_SVG_ICON_XML` inline resolvers plus the `svgIconXml:` wiring in each
- *     `<NAME>_UI` block. That module's runtime import graph (path aliases, RN deps)
- *     cannot load under plain Node, so this script PARSES those self-contained
- *     resolvers out of the generated source instead of importing the module.
+ * from the generated `AGENT_LOGO_SVG_XML` resolver map in
+ * `apps/ui/sources/agents/registry/generatedAgentLogoSvgXml.ts`. The bundled-plugin
+ * publisher builds that standalone map from plugin-owned SVG assets/declarations;
+ * its imports are type-only, so this script can import it directly.
  *
  * Tinting replicates `AgentIcon.applySvgIconColor` (agents/registry/AgentIcon.tsx):
  * every fill/stroke (except fill="none") becomes the single strip color, so inherently
@@ -38,23 +33,17 @@
  * variant on `prefers-color-scheme`. Idempotent: overwrites the four files, nothing else.
  */
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
+
+import { AGENT_IDS } from '../packages/agents/src/generated/agentIds.ts';
+import { AGENT_LOGO_SVG_XML } from '../apps/ui/sources/agents/registry/generatedAgentLogoSvgXml.ts';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const repoRoot = path.resolve(path.dirname(scriptPath), '..');
 
-const LOGO_MODULE_PATH = path.join(
-  repoRoot, 'apps', 'ui', 'sources', 'agents', 'registry', 'generatedAgentLogoSvgXml.ts',
-);
-const BUNDLED_ENTRIES_PATH = path.join(
-  repoRoot, 'apps', 'ui', 'sources', 'agents', 'registry', 'generatedBundledPluginEntries.ts',
-);
-const AGENT_IDS_PATH = path.join(
-  repoRoot, 'packages', 'agents', 'src', 'generated', 'agentIds.ts',
-);
 const OUT_DIR = path.join(repoRoot, '.github');
 
 // Layout (1x units). Mirrors the welcome row's rhythm (square glyph boxes, even gaps):
@@ -85,68 +74,6 @@ const SVG_COLOR_ATTRIBUTE_PATTERN = /\s(fill|stroke)="(?!none\b)[^"]*"/g;
 
 function applySvgIconColor(svgXml, color) {
   return svgXml.replace(SVG_COLOR_ATTRIBUTE_PATTERN, (_match, attribute) => ` ${attribute}="${color}"`);
-}
-
-/** Same helpers the generated bundled-entries module defines for its inline resolvers. */
-function normalizeGeneratedSvgXml(xml) {
-  return xml.replace(/\s{2,}/g, ' ').trim();
-}
-function createGeneratedSvgIconXml(viewBox, body) {
-  return normalizeGeneratedSvgXml(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}">${body}</svg>`);
-}
-
-/** Welcome-screen order: the generated bundled catalog's AGENT_IDS declaration order. */
-async function readWelcomeScreenAgentOrder() {
-  try {
-    const module_ = await import(pathToFileURL(AGENT_IDS_PATH).href);
-    const ids = module_.AGENT_IDS;
-    if (Array.isArray(ids) && ids.length > 0) return [...ids];
-  } catch {
-    // fall through to the textual parse
-  }
-  try {
-    const source = await readFile(AGENT_IDS_PATH, 'utf8');
-    const block = source.match(/export const AGENT_IDS = Object\.freeze\(\[([\s\S]*?)\]/u);
-    if (!block) return null;
-    const keys = [...block[1].matchAll(/'([A-Za-z0-9_]+)'/gu)].map((entry) => entry[1]);
-    return keys.length > 0 ? keys : null;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * The inline `<NAME>_SVG_ICON_XML` resolvers and the per-agent `svgIconXml:` wiring,
- * parsed out of generatedBundledPluginEntries.ts (see the module docblock for why it
- * cannot simply be imported). Returns Map<agentId, resolver|null>.
- */
-async function readBundledEntriesSvgWiring() {
-  const source = await readFile(BUNDLED_ENTRIES_PATH, 'utf8');
-
-  const inlineResolvers = new Map();
-  const resolverPattern = /const ([A-Z0-9_]+_SVG_ICON_XML): AgentIconSvgXmlResolver = \(theme\)(?:: string)? =>/gu;
-  for (const match of source.matchAll(resolverPattern)) {
-    const name = match[1];
-    const start = match.index + match[0].length;
-    // The resolver body is a single createGeneratedSvgIconXml(...) call ending at the
-    // first `\n);` after the arrow (the generator always emits that shape).
-    const end = source.indexOf('\n);', start);
-    if (end === -1) continue;
-    const body = source.slice(start, end + 2).trim();
-    // The body is plain JS already (template literal + string args); wrap it back into
-    // an arrow function evaluated with our local helper in scope.
-    // eslint-disable-next-line no-new-func
-    const factory = new Function('createGeneratedSvgIconXml', `return (theme) => ${body.replace(/\)\s*;?$/u, ')')};`);
-    inlineResolvers.set(name, factory(createGeneratedSvgIconXml));
-  }
-
-  const wiring = new Map();
-  const uiBlockPattern = /const [A-Z0-9_]+_UI: AgentUiConfig = \{\s*id: '([A-Za-z0-9_]+)',[\s\S]*?svgIconXml: ([^,\n]+),/gu;
-  for (const match of source.matchAll(uiBlockPattern)) {
-    const [, agentId, expr] = match;
-    wiring.set(agentId, expr.trim());
-  }
-  return { inlineResolvers, wiring };
 }
 
 function loadSharp() {
@@ -222,36 +149,13 @@ let VIEW_WIDTH = 0;
 let VIEW_HEIGHT = 0;
 
 async function main() {
-  const logoModule = await import(pathToFileURL(LOGO_MODULE_PATH).href);
-  const logoMap = logoModule.AGENT_LOGO_SVG_XML;
-  if (!logoMap || typeof logoMap !== 'object') {
-    throw new Error(`AGENT_LOGO_SVG_XML not found in ${LOGO_MODULE_PATH}`);
-  }
-
-  const { inlineResolvers, wiring } = await readBundledEntriesSvgWiring();
-
-  const resolveFor = (agentId) => {
-    const expr = wiring.get(agentId);
-    if (expr === undefined) return typeof logoMap[agentId] === 'function' ? logoMap[agentId] : null;
-    if (expr === 'null') return null;
-    const logoRef = expr.match(/^AGENT_LOGO_SVG_XML\.([A-Za-z0-9_]+)/u);
-    if (logoRef) return typeof logoMap[logoRef[1]] === 'function' ? logoMap[logoRef[1]] : null;
-    if (inlineResolvers.has(expr)) return inlineResolvers.get(expr);
-    return null;
-  };
-
-  const welcomeOrder = await readWelcomeScreenAgentOrder();
-  const declarationOrder = [...wiring.keys()];
-  const agentIds = [...(welcomeOrder ?? declarationOrder)];
-  for (const id of declarationOrder) {
-    if (!agentIds.includes(id)) agentIds.push(id); // never drop an agent the map declares
-  }
+  const agentIds = AGENT_IDS;
 
   const skipped = [];
   const rendered = [];
   for (const agentId of agentIds) {
     if (EXCLUDED_AGENT_IDS.has(agentId)) { skipped.push(`${agentId} (excluded)`); continue; }
-    const resolver = resolveFor(agentId);
+    const resolver = AGENT_LOGO_SVG_XML[agentId] ?? null;
     if (!resolver) { skipped.push(`${agentId} (no SVG mark)`); continue; }
     rendered.push({ agentId, resolver });
   }
@@ -302,7 +206,7 @@ async function main() {
     }
   }
 
-  console.log(`Rendered ${rendered.length} agent marks (${welcomeOrder ? 'bundled-catalog AGENT_IDS order' : 'generated UI-entry declaration order'}):`);
+  console.log(`Rendered ${rendered.length} agent marks (bundled-catalog AGENT_IDS order):`);
   console.log(`  ${rendered.map((g) => g.agentId).join(', ')}`);
   if (skipped.length > 0) console.log(`Skipped: ${skipped.join(', ')}`);
   console.log('Wrote:');

@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { projectConnectedServiceRegistryEntries } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 
 import { resolveConnectMoreBlockForRequest, selectConnectMoreOffer, CONNECT_MORE_BROWSE_ID, readConnectedServiceSetupResult } from './connectMoreBlocks';
 
@@ -63,6 +66,34 @@ describe('selectConnectMoreOffer', () => {
         });
         expect(offer.offered.map((candidate) => candidate.serviceKey)).toEqual(['claude', 'chatgpt', 'gemini']);
         expect(offer.browse).toBe(true);
+    });
+
+    it('features a dynamic service from its declared setup facts without a built-in alias', () => {
+        const service = { pluginId: 'acme.portable-auth', localId: 'acme' };
+        const descriptor = projectConnectedAccountDescriptorV1({
+            descriptor: {
+                id: service.localId,
+                title: 'Acme account',
+                authentication: {
+                    defaultModeId: 'device',
+                    account: { artifactId: 'account-auth', exportName: 'activate' },
+                    modes: [{ id: 'device', kind: 'oauthDeviceCode', outcomeReconciliation: 'none' }],
+                },
+                ui: { setup: { order: 2, firstRun: true, catalogDescription: 'Acme account' } },
+            },
+            serviceId: service.localId,
+            pluginId: service.pluginId,
+            provenance: 'external',
+            sourceKind: 'account_release',
+            availability: { state: 'available', reason: 'account_declaration' },
+            diagnostics: [],
+        });
+        const registryEntry = projectConnectedServiceRegistryEntries({
+            scopeKey: 'account-cloud', status: 'ready', descriptors: [descriptor], conflicts: [], errorReason: null,
+        }).find((candidate) => candidate.service?.pluginId === service.pluginId && candidate.service.localId === service.localId);
+        if (!registryEntry) throw new Error('Expected the projected Acme service');
+        const dynamic = entry(buildQualifiedPluginContributionKey(service), { service, entry: registryEntry });
+        expect(selectConnectMoreOffer({ layout: 'firstRun', catalog: [github, dynamic], hidden: new Set() }).offered).toEqual([dynamic]);
     });
 
     it('does not browse when every addable service is already a block', () => {
