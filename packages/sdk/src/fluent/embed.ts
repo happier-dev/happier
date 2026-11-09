@@ -40,7 +40,7 @@ export type HappierEmbedCredential = Readonly<EmbedCredentialV1 & { tokenId: str
 export type HappierEmbed = Readonly<{
   get: (options?: HappierEmbedOptions) => Promise<EmbedConfigV1>;
   createSession: (input?: HappierEmbedCreateSessionInput, options?: HappierEmbedActionOptions) => Promise<HappierSession<HappierEmbedActionOptions>>;
-  listSessions: (input?: HappierEmbedListSessionsInput, options?: HappierEmbedActionOptions) => Promise<PublicActionResultById['session.list']>;
+  listSessions: (input?: HappierEmbedListSessionsInput, options?: ActionExecutionOptions) => Promise<PublicActionResultById['session.list']>;
   createCredential: (input: HappierEmbedCreateCredentialInput, options?: HappierEmbedOptions) => Promise<HappierEmbedCredential>;
 }>;
 
@@ -94,7 +94,9 @@ export function createEmbed(params: EmbedParams): HappierEmbed {
       if (model === null) refuse('model_not_granted');
       return params.machineSessions(grant.create.machineId).spawn({
         agent: grant.create.agentTargetKey,
-        directory: { kind: 'managed' }, organizationPlacement: grant.create.placement,
+        directory: { kind: 'managed' }, organizationPlacement: {
+          sectionId: grant.create.placement.folderId, tagIds: grant.create.placement.tagIds,
+        },
         permissionMode,
         ...(grant.create.connectedServices === undefined ? {} : { connectedServices: grant.create.connectedServices }),
         ...(input.title === undefined ? {} : { title: input.title }),
@@ -110,15 +112,13 @@ export function createEmbed(params: EmbedParams): HappierEmbed {
       if (!folderId && tagIds.length === 0) refuse('listing_filter_required');
       const { folderId: _folderId, tagIds: _tagIds, ...query } = input;
       // `session.list` is Account-placed, so Plain transport needs no target.
-      // E2EE Action operands still need an exact Machine carrier because the
-      // Home cannot open Account material. The parent grant's creation binding
-      // is the embed's one configured Machine authority; do not invent another
-      // Machine selector or alter the Action's canonical placement.
-      const sessions = accountMode === 'e2ee' && grant.create !== null
+      // E2EE reads need an explicit carrier independently of creation authority.
+      // Reuse the configured creation Machine only when no carrier was supplied.
+      const sessions = accountMode === 'e2ee' && options?.target === undefined && grant.create !== null
         ? params.machineSessions(grant.create.machineId)
         : params.sessions;
       return sessions.list({ ...query, folderIds: folderId ? [folderId] : [], tagIds },
-        { signal: options?.signal, requestId: options?.requestId });
+        options);
     },
     async createCredential(input, options) {
       const publicKey = decodeBase64(EmbedPublicKeyV1Schema.parse(input.embedPublicKey), 'base64url');
@@ -178,8 +178,11 @@ export function createEmbed(params: EmbedParams): HappierEmbed {
           const owner = openSessionOwnerMetadataEnvelopeV1({ accountMode: 'e2ee', envelope: session.ownerMetadata,
             material: { type: 'dataKey', machineKey: accountKey } });
           if (!owner.ok) refuse('session_options_unavailable');
+          // Current controls are a grant-filtered snapshot, refreshed by each credential mint.
+          // The frame applies acknowledged changes of its own; changes made elsewhere become
+          // visible at the next renewal or reload, not through a second polling/read path.
           const projection = EmbedSessionOptionsV1Schema.parse({ v: 1, sessionId,
-            owner: projectComposerOptionsInputV1(owner.ownerMetadata.runtime) });
+            owner: projectComposerOptionsInputV1(owner.ownerMetadata.runtime, childGrant) });
           plaintext = new TextEncoder().encode(JSON.stringify(projection));
           sessionOptions = encodeBase64(sealBoxBundle({ plaintext, recipientPublicKey: publicKey, randomBytes }), 'base64url');
         }

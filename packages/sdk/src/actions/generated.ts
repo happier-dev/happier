@@ -100,7 +100,10 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "browser.goBack",
   "browser.goForward",
   "browser.navigate",
+  "browser.profile.create",
+  "browser.profile.delete",
   "browser.profile.logins.import",
+  "browser.profile.select",
   "browser.recording.attachToComposer",
   "browser.recording.cancel",
   "browser.recording.cleanupExpired",
@@ -158,8 +161,6 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "connectedServices.authentication.resumeDevice",
   "connectedServices.authentication.submitManual",
   "connectedServices.configuration.replace",
-  "connectedServices.disclosure.reset",
-  "connectedServices.disclosure.set",
   "connectedServices.identityPrivacy.set",
   "connectedServices.labels.reset",
   "connectedServices.labels.set",
@@ -1229,9 +1230,13 @@ export type GeneratedActions = Readonly<{
     readonly goForward: (input: PublicActionInputById["browser.goForward"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.goForward">>;
     readonly navigate: (input: PublicActionInputById["browser.navigate"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.navigate">>;
     readonly profile: Readonly<{
+      readonly create: (input: PublicActionInputById["browser.profile.create"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.profile.create">>;
+      readonly delete: (input: PublicActionInputById["browser.profile.delete"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.profile.delete">>;
+      readonly list: (input: PublicActionInputById["browser.profile.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.profile.list">>;
       readonly logins: Readonly<{
         readonly import: (input: PublicActionInputById["browser.profile.logins.import"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.profile.logins.import">>;
       }> ;
+      readonly select: (input: PublicActionInputById["browser.profile.select"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.profile.select">>;
     }> ;
     readonly recording: Readonly<{
       readonly attachToComposer: (input: PublicActionInputById["browser.recording.attachToComposer"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"browser.recording.attachToComposer">>;
@@ -1416,10 +1421,6 @@ export type GeneratedActions = Readonly<{
       readonly get: (input: PublicActionInputById["connectedServices.configuration.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.configuration.get">>;
       readonly replace: (input: PublicActionInputById["connectedServices.configuration.replace"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.configuration.replace">>;
     }> ;
-    readonly disclosure: Readonly<{
-      readonly reset: (input: PublicActionInputById["connectedServices.disclosure.reset"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.disclosure.reset">>;
-      readonly set: (input: PublicActionInputById["connectedServices.disclosure.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.disclosure.set">>;
-    }> ;
     readonly identityPrivacy: Readonly<{
       readonly set: (input: PublicActionInputById["connectedServices.identityPrivacy.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"connectedServices.identityPrivacy.set">>;
     }> ;
@@ -1477,6 +1478,7 @@ export type GeneratedActions = Readonly<{
       readonly download: (input: PublicActionInputById["daemon.filesystem.download"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"daemon.filesystem.download">>;
       readonly getDirectoryTree: (input: PublicActionInputById["daemon.filesystem.getDirectoryTree"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"daemon.filesystem.getDirectoryTree">>;
       readonly listDirectory: (input: PublicActionInputById["daemon.filesystem.listDirectory"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"daemon.filesystem.listDirectory">>;
+      readonly listFiles: (input: PublicActionInputById["daemon.filesystem.listFiles"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"daemon.filesystem.listFiles">>;
       readonly listRoots: (input: PublicActionInputById["daemon.filesystem.listRoots"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"daemon.filesystem.listRoots">>;
       readonly readFile: (input: PublicActionInputById["daemon.filesystem.readFile"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"daemon.filesystem.readFile">>;
       readonly rename: (input: PublicActionInputById["daemon.filesystem.rename"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"daemon.filesystem.rename">>;
@@ -2824,6 +2826,7 @@ export type GeneratedActions = Readonly<{
       readonly update: (input: PublicActionInputById["secrets.shared.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"secrets.shared.update">>;
     }> ;
     readonly update: (input: PublicActionInputById["secrets.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"secrets.update">>;
+    readonly usedBy: (input: PublicActionInputById["secrets.usedBy"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"secrets.usedBy">>;
   }> ;
   readonly servers: Readonly<{
     readonly list: (input: PublicActionInputById["servers.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"servers.list">>;
@@ -4073,9 +4076,13 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       goForward: (input: PublicActionInputById["browser.goForward"], options?: ActionExecutionOptions) => execute("browser.goForward", input, options),
       navigate: (input: PublicActionInputById["browser.navigate"], options?: ActionExecutionOptions) => execute("browser.navigate", input, options),
       profile: {
+        create: (input: PublicActionInputById["browser.profile.create"], options?: ActionExecutionOptions) => execute("browser.profile.create", input, options),
+        delete: (input: PublicActionInputById["browser.profile.delete"], options?: ActionExecutionOptions) => execute("browser.profile.delete", input, options),
+        list: (input: PublicActionInputById["browser.profile.list"], options?: ActionExecutionOptions) => execute("browser.profile.list", input, options),
         logins: {
           import: (input: PublicActionInputById["browser.profile.logins.import"], options?: ActionExecutionOptions) => execute("browser.profile.logins.import", input, options),
         },
+        select: (input: PublicActionInputById["browser.profile.select"], options?: ActionExecutionOptions) => execute("browser.profile.select", input, options),
       },
       recording: {
         attachToComposer: (input: PublicActionInputById["browser.recording.attachToComposer"], options?: ActionExecutionOptions) => execute("browser.recording.attachToComposer", input, options),
@@ -4260,10 +4267,6 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         get: (input: PublicActionInputById["connectedServices.configuration.get"], options?: ActionExecutionOptions) => execute("connectedServices.configuration.get", input, options),
         replace: (input: PublicActionInputById["connectedServices.configuration.replace"], options?: ActionExecutionOptions) => execute("connectedServices.configuration.replace", input, options),
       },
-      disclosure: {
-        reset: (input: PublicActionInputById["connectedServices.disclosure.reset"], options?: ActionExecutionOptions) => execute("connectedServices.disclosure.reset", input, options),
-        set: (input: PublicActionInputById["connectedServices.disclosure.set"], options?: ActionExecutionOptions) => execute("connectedServices.disclosure.set", input, options),
-      },
       identityPrivacy: {
         set: (input: PublicActionInputById["connectedServices.identityPrivacy.set"], options?: ActionExecutionOptions) => execute("connectedServices.identityPrivacy.set", input, options),
       },
@@ -4321,6 +4324,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         download: (input: PublicActionInputById["daemon.filesystem.download"], options?: ActionExecutionOptions) => execute("daemon.filesystem.download", input, options),
         getDirectoryTree: (input: PublicActionInputById["daemon.filesystem.getDirectoryTree"], options?: ActionExecutionOptions) => execute("daemon.filesystem.getDirectoryTree", input, options),
         listDirectory: (input: PublicActionInputById["daemon.filesystem.listDirectory"], options?: ActionExecutionOptions) => execute("daemon.filesystem.listDirectory", input, options),
+        listFiles: (input: PublicActionInputById["daemon.filesystem.listFiles"], options?: ActionExecutionOptions) => execute("daemon.filesystem.listFiles", input, options),
         listRoots: (input: PublicActionInputById["daemon.filesystem.listRoots"], options?: ActionExecutionOptions) => execute("daemon.filesystem.listRoots", input, options),
         readFile: (input: PublicActionInputById["daemon.filesystem.readFile"], options?: ActionExecutionOptions) => execute("daemon.filesystem.readFile", input, options),
         rename: (input: PublicActionInputById["daemon.filesystem.rename"], options?: ActionExecutionOptions) => execute("daemon.filesystem.rename", input, options),
@@ -5668,6 +5672,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         update: (input: PublicActionInputById["secrets.shared.update"], options?: ActionExecutionOptions) => execute("secrets.shared.update", input, options),
       },
       update: (input: PublicActionInputById["secrets.update"], options?: ActionExecutionOptions) => execute("secrets.update", input, options),
+      usedBy: (input: PublicActionInputById["secrets.usedBy"], options?: ActionExecutionOptions) => execute("secrets.usedBy", input, options),
     },
     servers: {
       list: (input: PublicActionInputById["servers.list"], options?: ActionExecutionOptions) => execute("servers.list", input, options),

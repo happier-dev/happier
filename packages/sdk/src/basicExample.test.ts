@@ -78,7 +78,7 @@ function actionResponse(actionId: string): Readonly<Record<string, unknown>> {
           disposition: 'created',
           sessionId: 'session-1',
           executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-          organizationPlacement: { folderId: null, tagIds: [] },
+          organizationPlacement: { sectionId: null, tagIds: [] },
           initialInput: {
             status: 'rejected',
             code: 'session_input_target_update_required',
@@ -137,7 +137,7 @@ function successfulActionResponse(actionId: string): Readonly<Record<string, unk
           disposition: 'created',
           sessionId: 'session-1',
           executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
-          organizationPlacement: { folderId: null, tagIds: [] },
+          organizationPlacement: { sectionId: null, tagIds: [] },
           initialInput: { status: 'accepted', localId: 'initial-input-1' },
         },
       },

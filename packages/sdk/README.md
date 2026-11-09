@@ -206,6 +206,9 @@ try {
 identity. The snapshot includes history loading, opened metadata and Agent state,
 pending requests, connection state, and action availability. A permission response
 acknowledges the operation; it does not optimistically remove the pending request.
+In 0.3 development, `respondToPermission({ id, approved })` includes the matching
+pending request's turn when `turnId` is omitted. An explicitly supplied `turnId`
+is preserved, so the host can reject an answer to a stale turn.
 Reconciled Agent state and recipient-safe shared Action-confirmation metadata
 remain the source of truth. The Action adapter also carries that shared metadata and its
 public completion facts; it never exposes Account-private owner metadata.
@@ -509,6 +512,19 @@ Backend creation does not depend on the presentation choice to enable new chats.
 Listing defaults to the configuration's folder and tags. Tags match ANY of the
 chosen tags; an empty resolved folder/tag filter throws
 `listing_filter_required` before an account-wide request can run.
+
+For an E2EE Account, listing needs a Machine to open the encrypted Action. When
+creation is granted, its configured Machine is the default. For existing-only
+embeds, pass the carrier explicitly without enabling creation:
+
+```ts
+const sessions = await client.embed.listSessions({}, {
+  target: { kind: 'machine', machineId: 'your-machine-id' },
+});
+```
+
+The carrier must be admitted by the parent grant. Plain Accounts can list without
+a target.
 
 Omitting `sessionId` mints a spawn-only child when new chats are enabled. Record
 its returned `tokenId` against the signed-in user until that child expires. On

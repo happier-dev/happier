@@ -1,6 +1,8 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveWorkspaceBundleLockPath, withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
 
 import {
   PUBLIC_ACTION_IDS,
@@ -116,11 +118,27 @@ async function main(): Promise<void> {
   if (mode !== '--write' && mode !== '--check') {
     throw new Error('Usage: generateActions.ts --write|--check');
   }
-  const output = renderGeneratedActions(currentRows());
   if (mode === '--write') {
-    await writeFile(outputPath, output, 'utf8');
+    await withWorkspaceBundleLock(async ({ assertOwned }) => {
+      const output = renderGeneratedActions(currentRows());
+      const current = await readFile(outputPath, 'utf8').catch(error => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+      });
+      if (current === output) return;
+      const staged = `${outputPath}.${randomUUID()}.tmp`;
+      try {
+        await writeFile(staged, output, 'utf8');
+        assertOwned();
+        await rename(staged, outputPath);
+      } finally {
+        await rm(staged, { force: true });
+      }
+    }, { lockPath: resolveWorkspaceBundleLockPath(resolve(packageRoot, '../..')),
+      errorLabel: 'SDK Action method publication' });
     return;
   }
+  const output = renderGeneratedActions(currentRows());
   const existing = await readFile(outputPath, 'utf8').catch(() => '');
   if (existing !== output) throw new Error('Generated SDK Action layer is stale. Run pnpm --dir packages/sdk run generate:actions from the repository root.');
 }

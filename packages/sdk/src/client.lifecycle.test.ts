@@ -10,7 +10,7 @@ import {
   PublicActionIdSchema,
   type ActionExecutorDeps,
 } from '@happier-dev/protocol/actions';
-import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { projectSessionSpawnNewActionInputV2, SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
 import { connect } from './index.js';
@@ -39,8 +39,9 @@ describe('Happier SDK client lifecycle', () => {
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
       allowedTools: ['mcp__wilson-intake__*'],
       unlistedTools: 'deny',
+      organizationPlacement: { folderId: 'intake', tagIds: ['mail'] },
     });
-    const producedRequest = projectSessionSpawnNewApiRequest(canonicalInput);
+    const producedRequest = projectSessionSpawnNewApiRequest(projectSessionSpawnNewActionInputV2(canonicalInput));
     const admittedProcesses: Array<Parameters<ActionExecutorDeps['sessionSpawnNew']>[0]> = [];
     // Only the execution machine's process-start boundary is substituted. SDK
     // generation, surface binding, strict input/output and executor remain real.
@@ -50,7 +51,7 @@ describe('Happier SDK client lifecycle', () => {
         return SessionSpawnNewResultV1Schema.parse({
           type: 'success', disposition: 'created', sessionId: 'wil-session',
           executionTarget: request.executionTarget,
-          organizationPlacement: { folderId: null, tagIds: [] },
+          organizationPlacement: request.organizationPlacement ?? { folderId: null, tagIds: [] },
           initialInput: { status: 'notRequested' },
         });
       },
@@ -93,11 +94,13 @@ describe('Happier SDK client lifecycle', () => {
       const method = client.machine(producedRequest.target.machineId).actions.session.spawnNew;
       await expect(method(producedRequest.input, { requestId: 'wil-spawn-valid' })).resolves.toMatchObject({
         type: 'success', sessionId: 'wil-session', executionTarget: { serverId: 'home', machineId: 'machine-1' },
+        organizationPlacement: { sectionId: 'intake', tagIds: ['mail'] },
       });
       expect(admittedProcesses).toHaveLength(1);
       expect(admittedProcesses[0]).toMatchObject({
         creationKey: 'wil-sdk-spawn', actionRequestId: 'wil-spawn-valid',
         allowedTools: ['mcp__wilson-intake__*'], unlistedTools: 'deny',
+        organizationPlacement: { folderId: 'intake', tagIds: ['mail'] },
       });
       // Mutate only the receiving route binding: the same generated method now
       // reaches a wrong real Action, so a wiring-blind test could not pass.
@@ -106,9 +109,9 @@ describe('Happier SDK client lifecycle', () => {
         .rejects.toMatchObject({ name: 'HappierActionError', code: 'invalid_parameters' });
       expect(admittedProcesses).toHaveLength(1);
       misbindRoute = false;
-      const attestedRequest = projectSessionSpawnNewApiRequest({ ...canonicalInput,
+      const attestedRequest = projectSessionSpawnNewApiRequest(projectSessionSpawnNewActionInputV2({ ...canonicalInput,
         attestedContext: { externalPrincipalId: 'salesperson@example.test', sourceMessageId: '<lead@example.test>' },
-      });
+      }));
       await expect(method(attestedRequest.input, { requestId: 'wil-spawn-forged-attestation' }))
         .rejects.toMatchObject({ name: 'HappierActionError', code: 'session_attested_context_forbidden' });
       expect(admittedProcesses).toHaveLength(1);

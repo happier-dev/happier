@@ -17,6 +17,7 @@ import {
 } from '../../protocol/src/actions/actionSpecs.js';
 import { validateSdkMethodRows } from './generateActions.ts';
 import { resolvePnpmCommandInvocation } from '../../../scripts/workspaces/execPnpmCommand.mjs';
+import { resolveWorkspaceBundleLockPath, withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
 
 const generatedSourcePath = new URL('../src/actions/generated.ts', import.meta.url);
 
@@ -33,17 +34,27 @@ test('declaration preparation derives stale Action output while the explicit fre
     process.platform === 'win32' ? 'junction' : 'dir');
   await symlink(fileURLToPath(new URL('../../../node_modules', import.meta.url)), join(sdk, 'node_modules'),
     process.platform === 'win32' ? 'junction' : 'dir');
+  await symlink(fileURLToPath(new URL('../../../scripts', import.meta.url)), join(root, 'scripts'),
+    process.platform === 'win32' ? 'junction' : 'dir');
   const output = join(sdk, 'src/actions/generated.ts');
   await writeFile(output, '// stale generated output\n');
   const run = script => {
     const invocation = resolvePnpmCommandInvocation(['--silent', 'run', script]);
     return spawnSync(invocation.command, invocation.args, {
-      cwd: sdk, encoding: 'utf8', env: { ...process.env, PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: 'false' },
+      cwd: sdk, encoding: 'utf8', env: { ...process.env, PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN: 'false',
+        HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD: '', HAPPIER_WORKSPACE_DIST_BUILD_LOCK_LEASES: '[]',
+        HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: '0' },
     });
   };
   const stale = run('check:actions');
   assert.notEqual(stale.status, 0);
   assert.match(stale.stderr, /Action layer is stale/u);
+  await withWorkspaceBundleLock(async () => {
+    const competing = run('prepare:declarations');
+    assert.notEqual(competing.status, 0, 'a competing publisher must not write without the existing lease');
+    assert.match(competing.stderr, /publication lease is busy/);
+    assert.equal(await readFile(output, 'utf8'), '// stale generated output\n');
+  }, { lockPath: resolveWorkspaceBundleLockPath(root) });
   const prepared = run('prepare:declarations');
   assert.equal(prepared.status, 0, prepared.stdout + prepared.stderr);
   assert.deepEqual(emittedActionIds(await readFile(output, 'utf8')).sort(), [...PUBLIC_ACTION_IDS].sort());
@@ -82,11 +93,11 @@ test('does not mutate shared workspace artifacts while resolving Action rows', a
   assert.match(source, /return PUBLIC_ACTION_IDS[\s\S]*getActionSpec[\s\S]*resolveActionSdkMethodName/u);
 });
 
-test('composed typecheck reuses the governance build and checks only the test project afterward', async () => {
+test('consumer typecheck consumes prepared source without publishing unrelated governance outputs', async () => {
   const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.equal(
     packageJson.scripts['typecheck:local'],
-    'pnpm --silent run check:api-governance && node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json && pnpm --silent run test:external-consumer',
+    'node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.tests.json && pnpm --silent run test:external-consumer',
   );
 });
 

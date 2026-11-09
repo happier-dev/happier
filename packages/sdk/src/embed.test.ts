@@ -139,7 +139,7 @@ describe('SDK embed helpers', () => {
     } finally { await client.close(); }
   });
 
-  it('routes an E2EE parent listing through its bound Machine and the real Action executor', async () => {
+  it.each([true, false])('routes E2EE listing through an admitted Machine independently of creation (create=%s)', async (canCreate) => {
     const context = { serverIdentityId: 'srv_sdk', accountId: self.accountId, tokenId: TOKEN_ID,
       contentPublicKey: 'B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=' };
     const accountKey = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
@@ -156,7 +156,9 @@ describe('SDK embed helpers', () => {
     const executor = createActionExecutor({ sessionList, isActionApprovalRequired: () => false } as unknown as ActionExecutorDeps);
     const requests: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: URL, options: RequestInit) => {
-      if (url.pathname.endsWith('/self')) return json({ ...self, accountEncryptionMode: 'e2ee' });
+      if (url.pathname.endsWith('/self')) return json({ ...self, accountEncryptionMode: 'e2ee',
+        grant: { ...grant, create: canCreate ? grant.create : null },
+        embedConfig: { ...config, newChat: { enabled: canCreate } } });
       if (url.pathname.endsWith('/encryption-access')) {
         return json({ v: 1, accountId: context.accountId, tokenId: context.tokenId, encryptionAccess });
       }
@@ -181,12 +183,19 @@ describe('SDK embed helpers', () => {
     }));
     const client = connect({ endpoint: 'https://happier.example', token });
     try {
-      await expect(client.embed.listSessions()).resolves.toEqual(listResult);
+      await expect(client.embed.listSessions({}, canCreate ? undefined : {
+        target: { kind: 'machine', machineId: grant.create.machineId },
+      })).resolves.toEqual(listResult);
       expect(sessionList).toHaveBeenCalledWith(expect.objectContaining({ query: expect.objectContaining({
         folderIds: ['leads'], tagIds: ['hot', 'inbound'],
       }) }));
       expect(requests.join('')).not.toContain('leads');
       expect(requests.join('')).not.toContain('inbound');
+      expect(requests).toHaveLength(1);
+      if (!canCreate) {
+        await expect(client.embed.createSession()).rejects.toMatchObject({ code: 'create_not_granted' });
+        expect(requests).toHaveLength(1);
+      }
     } finally { await client.close(); }
   });
 
@@ -214,7 +223,7 @@ describe('SDK embed helpers', () => {
         spawns.push(body);
         result = { type: 'success', disposition: spawns.length === 1 ? 'created' : 'rejoined',
           sessionId: 'session-1', executionTarget: { serverId: 'home', machineId: 'machine-1' },
-          organizationPlacement: config.organization, initialInput: refuseInitialInput
+          organizationPlacement: { sectionId: 'leads', tagIds: ['inbound', 'hot'] }, initialInput: refuseInitialInput
             ? { status: 'rejected', code: 'session_input_archived' } : { status: 'accepted', localId: 'first' } };
       }
       return json({ v: 1, actionId, requestId: body.requestId, execution: { ok: true, result } });
@@ -226,7 +235,7 @@ describe('SDK embed helpers', () => {
       expect((await client.embed.createSession(input, { requestId: 'lead-creation' })).id).toBe('session-1');
       expect(spawns[0]).toEqual({ v: 1, requestId: 'lead-creation', target: { kind: 'machine', machineId: 'machine-1' },
         input: { directory: { kind: 'managed' },
-          organizationPlacement: config.organization, permissionMode: 'default', connectedServices,
+          organizationPlacement: { sectionId: 'leads', tagIds: ['inbound', 'hot'] }, permissionMode: 'default', connectedServices,
           modelSelection: { v: 1, ref: model, updatedAt: 0 },
           title: 'Lead', initialInput: { text: 'Analyse this lead' },
           agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } });
@@ -235,6 +244,61 @@ describe('SDK embed helpers', () => {
       await expect(client.embed.createSession(input, { requestId: 'another-lead' })).rejects.toMatchObject({
         name: 'HappierSessionInitialInputError', session: { id: 'session-1' },
         result: { initialInput: { status: 'rejected', code: 'session_input_archived' } } });
+    } finally { await client.close(); }
+  });
+
+  it('carries the closed Session spawn admission projection beside an encrypted embed create', async () => {
+    const context = { serverIdentityId: 'srv_sdk', accountId: self.accountId, tokenId: TOKEN_ID,
+      contentPublicKey: 'B6N8vBQgk8i3VdwbEOhstCY3StFqqFPtC9/AsrhtHHw=' };
+    const accountKey = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
+    const wrappingSecret = new Uint8Array(32).fill(7);
+    const token = formatAccountApiTokenCredentialV1({ bearer: TOKEN,
+      wrappingSecret: encodeBase64(wrappingSecret, 'base64url'),
+      serverIdentityId: context.serverIdentityId, accountId: context.accountId,
+      contentPublicKey: context.contentPublicKey });
+    const encryptionAccess = wrapApiTokenEncryptionAccessV1({ context, wrappingSecret,
+      contentPrivateKey: accountKey, randomBytes: (length) => new Uint8Array(length).fill(3) });
+    let admission: unknown;
+    let refuseCreate = false;
+    vi.stubGlobal('fetch', vi.fn(async (url: URL, options: RequestInit) => {
+      if (url.pathname.endsWith('/self')) return json({ ...self, accountEncryptionMode: 'e2ee' });
+      if (url.pathname.endsWith('/encryption-access')) {
+        return json({ v: 1, accountId: context.accountId, tokenId: context.tokenId, encryptionAccess });
+      }
+      if (url.pathname === '/v1/machines') return json([]);
+      if (refuseCreate) return json({ error: 'credential_scope_denied', diagnostic: {
+        admissionStage: 'execution_authorization', grantReason: 'create_not_granted',
+      } }, 403);
+      const request = ExternalActionRequestEnvelopeV2Schema.parse(JSON.parse(String(options.body)));
+      admission = request.sessionSpawnAdmission;
+      const binding = { serverIdentityId: context.serverIdentityId, accountId: context.accountId,
+        credentialId: context.tokenId, actionId: 'session.spawn_new' as const,
+        requestId: request.requestId, target: request.target! };
+      const result = { type: 'success' as const, disposition: 'created' as const,
+        sessionId: 'session-created', executionTarget: { serverId: context.serverIdentityId, machineId: 'machine-1' },
+        organizationPlacement: { sectionId: 'leads', tagIds: ['inbound', 'hot'] },
+        initialInput: { status: 'notRequested' as const } };
+      return json(prepareExternalActionResponseV2({ binding, request,
+        material: { type: 'dataKey', machineKey: accountKey },
+        randomBytes: (length) => new Uint8Array(length).fill(4),
+        executedMachineId: 'machine-1', execution: { ok: true, result } }).response);
+    }));
+    const client = connect({ endpoint: 'https://happier.example', token });
+    try {
+      await expect(client.embed.createSession({}, { requestId: 'encrypted-lead-create' }))
+        .resolves.toMatchObject({ id: 'session-created' });
+      expect(admission).toEqual({
+        executionTarget: { serverId: context.serverIdentityId, machineId: 'machine-1' },
+        directory: { kind: 'managed' },
+        organizationPlacement: { folderId: 'leads', tagIds: ['inbound', 'hot'] },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        permissionMode: 'default', connectedServices,
+      });
+      refuseCreate = true;
+      await expect(client.embed.createSession({}, { requestId: 'refused-encrypted-lead-create' }))
+        .rejects.toMatchObject({ code: 'credential_scope_denied', details: {
+          admissionStage: 'execution_authorization', grantReason: 'create_not_granted',
+        } });
     } finally { await client.close(); }
   });
 
@@ -289,7 +353,12 @@ describe('SDK embed helpers', () => {
     } finally { await client.close(); }
   });
 
-  it('seals only the bounded composer projection and DEK for an E2EE frame, preserving the root key for reuse', async () => {
+  it.each([
+    { controls: [], permission: false, model: false },
+    { controls: ['session.permission_mode.set'], permission: true, model: false },
+    { controls: ['session.model.set'], permission: false, model: true },
+    { controls: ['session.permission_mode.set', 'session.model.set'], permission: true, model: true },
+  ])('seals only granted current controls ($controls) and bounded input for an E2EE frame', async ({ controls, permission, model }) => {
     const accountSeed = new Uint8Array(32).fill(19);
     const accountKey = deriveBoxSecretKeyFromSeed(accountSeed);
     const wrappingSecret = new Uint8Array(32).fill(7);
@@ -307,7 +376,8 @@ describe('SDK embed helpers', () => {
     const modelOverrideV1 = { v: 1, updatedAt: 123, modelId: 'model-safe' };
     const ownerMetadata = sealSessionOwnerMetadataEnvelopeV1({ material: { type: 'dataKey', machineKey: accountKey },
       ownerMetadata: SessionOwnerMetadataV1Schema.parse({ v: 1, nativeSession: { claudeSessionId: 'private-native-id' },
-        runtime: { modelOverrideV1, archiveReason: 'private archive reason' } }), randomBytes: randomness });
+        runtime: { modelOverrideV1, permissionMode: 'read-only', permissionModeUpdatedAt: 321,
+          archiveReason: 'private archive reason' } }), randomBytes: randomness });
     let session = V2SessionByIdResponseSchema.parse({ session: { ...plainSession,
       metadataLayoutVersion: 1, share: null, encryptionMode: 'e2ee', ownerMetadata,
       dataEncryptionKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey,
@@ -316,7 +386,8 @@ describe('SDK embed helpers', () => {
     const paths: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async (url: URL, options: RequestInit) => {
       paths.push(url.pathname);
-      if (url.pathname.endsWith('/self')) return json({ ...self, accountEncryptionMode: 'e2ee' });
+      if (url.pathname.endsWith('/self')) return json({ ...self, accountEncryptionMode: 'e2ee',
+        grant: { ...grant, actions: { ...grant.actions, ids: ['session.spawn_new', ...controls] } } });
       if (url.pathname.endsWith('/children/create')) return mintResponse(JSON.parse(String(options.body)) as Record<string, unknown>);
       if (url.pathname.endsWith('/children/revoke')) return json({ revoked: true });
       if (url.pathname.endsWith('/encryption-access')) {
@@ -329,6 +400,13 @@ describe('SDK embed helpers', () => {
     try {
       const standaloneEnvelope = session.dataEncryptionKey;
       for (let attempt = 0; attempt < 4; attempt++) {
+        if (attempt === 1) session = { ...session, ownerMetadata: sealSessionOwnerMetadataEnvelopeV1({
+          material: { type: 'dataKey', machineKey: accountKey }, randomBytes: randomness,
+          ownerMetadata: SessionOwnerMetadataV1Schema.parse({ v: 1, runtime: {
+            modelOverrideV1: { ...modelOverrideV1, modelId: 'renewed-model', updatedAt: 456 },
+            permissionMode: 'default', permissionModeUpdatedAt: 654,
+          } }),
+        }) };
         if (attempt === 2) session = { ...session, encryptionMode: 'plain', dataEncryptionKey: null };
         if (attempt === 3) {
           const { ownerMetadata: _ownerMetadata, ...layoutZero } = session;
@@ -348,7 +426,12 @@ describe('SDK embed helpers', () => {
           recipientSecretKeyOrSeed: frameKey });
         expect(plaintext).not.toBeNull();
         expect(EmbedSessionOptionsV1Schema.parse(JSON.parse(new TextDecoder().decode(plaintext!)))).toEqual({
-          v: 1, sessionId: session.id, owner: { modelOverrideV1 } });
+          v: 1, sessionId: session.id, owner: {
+            ...(model ? { modelOverrideV1: attempt === 0 ? modelOverrideV1
+              : { ...modelOverrideV1, modelId: 'renewed-model', updatedAt: 456 } } : {}),
+            ...(permission ? { permissionMode: attempt === 0 ? 'read-only' : 'default',
+              permissionModeUpdatedAt: attempt === 0 ? 321 : 654 } : {}),
+          } });
       }
       expect(bootstraps).toBe(1);
       expect(paths.some((path) => path.endsWith('/revoke'))).toBe(false);
