@@ -1,4 +1,5 @@
-import type { ActionId } from '@happier-dev/protocol';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { PluginNotificationPushContextV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { GuardStopWarningPushDataV1Schema, readGuardStopWarningPushActionV1, MachineVitalsPushRoutingDataV1Schema } from '@happier-dev/protocol/activity/webhookPayload';
 import type { GuardStopWarningPushDataV1 } from '@happier-dev/protocol/activity/webhookPayload';
 import { machinePageHref, machineResourceAlertTab } from '@/components/machines/page/machinePageHref';
@@ -45,6 +46,11 @@ export type ActivityInteractionIgnoreReason =
     | 'disabled';
 
 export type ActivityInteractionCommand =
+    // Account-bound navigation for either a stored notice or its live source;
+    // neither path carries Session permission-response authority.
+    | Readonly<{ kind: 'openNotice'; serverId: string; serverUrl: string; accountId: string; route: string;
+        defaultSessionId?: string;
+        pluginNotificationPress?: Readonly<{ notification: PluginNotificationPushContextV1; buttonId: string }> }>
     | Readonly<{ kind: 'openMachine'; machineId: string; serverId: string | null; serverUrl: string | null; tab: MachinePageTabParams; route: string }>
     | Readonly<{
         kind: 'openSession';
@@ -265,6 +271,7 @@ export function resolveActivityInteractionCommand(params: Readonly<{
     actionIdentifier: string;
     defaultActionIdentifier: string;
     data: unknown;
+    userText?: unknown;
     knownIdentities?: readonly ActivityInteractionIdentity[];
     requireKnownIdentity?: boolean;
     directActionsEnabled?: boolean;
@@ -309,6 +316,7 @@ export function resolveActivityInteractionCommand(params: Readonly<{
         actionIdentifier: params.actionIdentifier,
         defaultActionIdentifier: params.defaultActionIdentifier,
         data: params.data,
+        userText: params.userText,
     });
     const requestedSessionId = readRequestedSessionId({
         actionIdentifier,
@@ -371,6 +379,20 @@ export function resolveActivityInteractionCommand(params: Readonly<{
             serverUrl: target.serverUrl ?? null,
             route: createActivitySurfaceSessionRoute(sessionId, serverId),
             identity,
+        };
+    }
+
+    if (parsed?.questionAction) {
+        if (!identity && !target.serverUrl) return openSessionCommand({ identity, target, fallbackReason: 'unsafe_target' });
+        if (params.directActionsEnabled === false) return openSessionCommand({ identity, target, fallbackReason: 'direct_actions_disabled' });
+        return {
+            kind: 'executeAction', actionId: 'session.user_action.answer',
+            payload: { sessionId: parsed.questionAction.sessionId, requestId: parsed.questionAction.requestId,
+                turnId: parsed.questionAction.turnId,
+                answers: Object.entries(parsed.questionAction.answers).map(([question, values]) => ({ question, values })) },
+            defaultSessionId: identity?.sessionId ?? parsed.questionAction.sessionId,
+            route: parsed.route ?? undefined, target, identity,
+            surface: { name: params.surfaceName ?? target.activityName ?? null, interaction: actionIdentifier },
         };
     }
 

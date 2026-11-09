@@ -8,6 +8,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { settingsParse } from '@/sync/domains/settings/settings';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 import type { LiveActivitySnapshot } from '../liveActivities/buildLiveActivitySnapshots';
 
 import { createSessionFixture as createBaseSessionFixture, createSessionOwnerViewerFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
@@ -353,6 +354,8 @@ vi.mock('expo-widgets', async (importOriginal) => {
 vi.mock('expo-modules-core', () => ({
     requireNativeModule: () => ({}),
     requireOptionalNativeModule: () => liveActivityAuthorizationState.module,
+    // Native view managers (the composer input) are resolved at import; none render in this runtime.
+    requireNativeViewManager: () => () => null,
 }));
 
 function publishActivityFixture(): void {
@@ -644,6 +647,7 @@ describe('ActivitySurfacesRuntime', () => {
     });
 
     afterEach(async () => {
+        setScreenSharingPrivacyActive(false);
         standardCleanup();
         const { stopConcurrentSessionCacheSync } = await import('@/sync/runtime/orchestration/concurrentSessionCache');
         stopConcurrentSessionCacheSync();
@@ -697,11 +701,50 @@ describe('ActivitySurfacesRuntime', () => {
     // asleep. The collaborator `session_changed` wake is not registered here:
     // it belongs to `ActivityLocalNotificationRuntime`, which mounts on every
     // platform, and is asserted there.
+    it('omits recording-private Sessions from widget and Live Activity bridges and restores them after sharing ends', async () => {
+        sessionsState.value = [createSessionFixture({ id: 'private-ios', encryptionMode: 'plain', active: true,
+            presence: 'online', pendingPermissionRequestCount: 1,
+            metadata: { path: '/private', host: 'host', name: 'Private iOS work' } })];
+        storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { 'server-a': ['private'] } });
+        storage.getState().setSessionTagAssignmentsOptimistic('server-a', 'private-ios', ['private']);
+        setScreenSharingPrivacyActive(true);
+        const { ActivitySurfacesRuntime } = await import('./ActivitySurfacesRuntime');
+        const screen = await renderScreen(<ActivitySurfacesRuntime />);
+        await act(async () => {});
+        expect(focusWidgetUpdateSnapshot).toHaveBeenCalled();
+        expect(JSON.stringify(focusWidgetUpdateSnapshot.mock.calls.at(-1))).not.toContain('private-ios');
+        expect(JSON.stringify(sessionsWidgetUpdateSnapshot.mock.calls.at(-1))).not.toContain('private-ios');
+        expect(liveActivityStart).not.toHaveBeenCalled();
+        await act(async () => { setScreenSharingPrivacyActive(false); });
+        await waitForHomeGovernance(() => expect(liveActivityStart).toHaveBeenCalledWith(
+            expect.objectContaining({ sessionId: 'private-ios' }), expect.any(String), expect.any(Date)));
+        expect(JSON.stringify(sessionsWidgetUpdateSnapshot.mock.calls.at(-1))).toContain('private-ios');
+        await screen.unmount();
+    });
+
     it('registers the Live Activity closed-app background wake task on iOS', async () => {
         const { ActivitySurfacesRuntime } = await import('./ActivitySurfacesRuntime');
         await renderScreen(React.createElement(ActivitySurfacesRuntime));
 
         expect(syncLiveActivityBackgroundWakeTaskRegistration).toHaveBeenCalled();
+    });
+
+    it('immediately dismisses retained private Live Activity content when sharing starts', async () => {
+        sessionsState.value = [createSessionFixture({ id: 'private-running', encryptionMode: 'plain', active: true,
+            presence: 'online', thinking: true,
+            metadata: { path: '/private', host: 'host', name: 'Private running work' } })];
+        const { ActivitySurfacesRuntime } = await import('./ActivitySurfacesRuntime');
+        const screen = await renderScreen(<ActivitySurfacesRuntime />);
+        await waitForHomeGovernance(() => expect(liveActivityStart).toHaveBeenCalled());
+        await act(async () => {
+            storage.getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { 'server-a': ['private'] } });
+            storage.getState().setSessionTagAssignmentsOptimistic('server-a', 'private-running', ['private']);
+            setScreenSharingPrivacyActive(true);
+        });
+        await waitForHomeGovernance(() => expect(liveActivityEnd).toHaveBeenCalled());
+        expect(liveActivityEnd).toHaveBeenCalledWith('immediate', undefined, expect.any(Date));
+        expect(JSON.stringify(sessionsWidgetUpdateSnapshot.mock.calls.at(-1))).not.toContain('private-running');
+        await screen.unmount();
     });
 
     it('registers no Live Activity background wake task on another platform', async () => {
@@ -870,12 +913,52 @@ describe('ActivitySurfacesRuntime', () => {
                 sessionId: 'permission',
                 title: 'Permission work',
                 previewText: 'Permission work',
-                statusText: 'Permission required',
+                attentionState: 'permission_required',
                 defaultTarget: 'open-session:permission?serverId=server-a',
             }),
             '/session/permission?serverId=server-a',
             expect.any(Date),
         );
+
+        await act(async () => {
+            screen.tree.unmount();
+        });
+    });
+
+    it('delivers only property-list values to the native widget timelines, with and without a focused Session', async () => {
+        // expo-widgets stores timeline props in UserDefaults. A null becomes NSNull, which is not a
+        // property-list value, so iOS rejects the whole timeline write and the widget keeps stale content.
+        const countNulls = (value: unknown): number => {
+            if (value === null) return 1;
+            if (Array.isArray(value)) return value.reduce<number>((total, entry) => total + countNulls(entry), 0);
+            if (typeof value === 'object' && value !== undefined) {
+                return Object.values(value as Record<string, unknown>).reduce<number>((total, entry) => total + countNulls(entry), 0);
+            }
+            return 0;
+        };
+        const deliveredNulls = () => [...focusWidgetUpdateSnapshot.mock.calls, ...sessionsWidgetUpdateSnapshot.mock.calls]
+            .reduce((total, [snapshot]) => total + countNulls(snapshot), 0);
+
+        sessionsState.value = [];
+        const { ActivitySurfacesRuntime } = await import('./ActivitySurfacesRuntime');
+        const screen = await renderScreen(React.createElement(ActivitySurfacesRuntime));
+        await act(async () => {});
+        expect(focusWidgetUpdateSnapshot).toHaveBeenCalled();
+        expect(deliveredNulls()).toBe(0);
+
+        await act(async () => {
+            sessionsState.value = [createSessionFixture({
+                id: 'permission', serverId: 'server-a', seq: 10, lastViewedSessionSeq: 10, active: true, presence: 'online',
+                pendingPermissionRequestCount: 1,
+                metadata: { path: '/Users/tester/project/permission', host: 'tester.local', homeDir: '/Users/tester',
+                    summary: { text: 'Permission work', updatedAt: 1 } },
+            })];
+        });
+        await act(async () => {});
+        expect(focusWidgetUpdateSnapshot).toHaveBeenLastCalledWith(expect.objectContaining({
+            primary: expect.objectContaining({ sessionId: 'permission' }),
+        }));
+        expect(deliveredNulls()).toBe(0);
 
         await act(async () => {
             screen.tree.unmount();

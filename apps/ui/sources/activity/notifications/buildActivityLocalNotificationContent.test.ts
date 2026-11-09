@@ -2,7 +2,7 @@ import {
     PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
     PUSH_NOTIFICATION_ACTION_IDS,
     PUSH_NOTIFICATION_CATEGORY_IDS,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/push/pushNotificationActions';
 import { describe, expect, it } from 'vitest';
 import {
     createActivityNotificationTextModuleMock,
@@ -19,6 +19,28 @@ installActivityNotificationRuntimeCommonModuleMocks({
 });
 
 describe('buildActivityLocalNotificationContent', () => {
+
+    it.each([
+        [{ question: 'Which branch?', options: [{ label: 'Main\n\tbranch', description: 'Stable\n\tcode', value: 'main-value' }, { label: 'Develop', choice: 'dev-value' }] },
+            { kind: 'choices', questionKey: 'Which branch?', values: ['main-value', 'dev-value'] }, 'happier.questionChoices2.v1', 'Which branch?\n1. Main branch — Stable code\n2. Develop'],
+        [{ question: 'Branch name?', freeform: { multiline: false, allowEmpty: false } },
+            { kind: 'text', questionKey: 'Branch name?', allowEmpty: false }, 'happier.questionText.v1', 'Branch name?'],
+    ])('offers a simple exact question only with its bound Account and private preview', async (question, descriptor, category, body) => {
+        const { buildActivityLocalNotificationContent } = await import('./buildActivityLocalNotificationContent');
+        const event = { kind: 'agent-request' as const, event: 'user_action_required' as const,
+            address: { serverId: 'server-a', sessionId: 'question-session' }, requestId: 'question-request', turnId: 'turn-question',
+            requestKind: 'user_action' as const, toolName: 'AskUserQuestion', toolArgs: { questions: [question] } };
+        const params = { event, session: null, serverUrl: 'https://home-a.example.test', accountId: 'notification-account' };
+        expect(buildActivityLocalNotificationContent(params)).toMatchObject({ body,
+            data: { accountId: 'notification-account', requestId: 'question-request', turnId: 'turn-question', questionAnswerV1: descriptor },
+            expo: { categoryIdentifier: category } });
+        for (const notice of [buildActivityLocalNotificationContent({ ...params, previewBehavior: 'status_only' }),
+            buildActivityLocalNotificationContent({ ...params, accountId: undefined })]) {
+            expect(notice.data.questionAnswerV1).toBeUndefined();
+            expect(notice.expo.categoryIdentifier).toBe(PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1);
+        }
+    });
+
     it('links an above-cap notification to its owning session without an inline answer', async () => {
         const { buildActivityLocalNotificationContent } = await import('./buildActivityLocalNotificationContent');
         const { parseNotificationTap } = await import('./notificationRouting');

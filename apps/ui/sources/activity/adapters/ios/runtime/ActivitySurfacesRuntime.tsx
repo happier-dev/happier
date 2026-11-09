@@ -27,6 +27,8 @@ import {
 import { useActivityAttentionSource } from '@/activity/source/useActivityAttentionSource';
 import { resolveActivitySurfaceDeliveryAdmission } from '@/activity/delivery/resolveActivitySurfaceDeliveryAdmission';
 import { useExactHomeAccountSettings } from '@/activity/delivery/useExactHomeAccountSettings';
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
+import { readSessionRecordingVisibility } from '@/sync/store/sessionRecordingVisibility';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { resolveLocalFeaturePolicyEnabled, type FeatureLocalPolicySettings } from '@/sync/domains/features/featureLocalPolicy';
@@ -116,12 +118,27 @@ function createEmptyWidgetSnapshot(snapshot: ActivitySurfaceSnapshot): ActivityS
     };
 }
 
+function toWidgetPropertyList(value: unknown): unknown {
+    if (Array.isArray(value)) {
+        return value.filter((entry) => entry !== null && entry !== undefined).map(toWidgetPropertyList);
+    }
+    if (typeof value !== 'object' || value === null) return value;
+    const entries: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+        if (entry === null || entry === undefined) continue;
+        entries[key] = toWidgetPropertyList(entry);
+    }
+    return entries;
+}
+
 function updateWidgetSnapshotSafely(
     widget: Readonly<{ updateSnapshot: (snapshot: ActivitySurfaceSnapshot) => void }>,
     snapshot: ActivitySurfaceSnapshot,
 ): void {
     try {
-        widget.updateSnapshot(snapshot);
+        // expo-widgets stores timeline props in UserDefaults, which rejects the whole write when any
+        // value is NSNull. Absent keys read the same as null for the widget presentation.
+        widget.updateSnapshot(toWidgetPropertyList(snapshot) as ActivitySurfaceSnapshot);
     } catch {
         // Widget bridge failures must not surface as app-level runtime errors.
     }
@@ -145,7 +162,8 @@ function resolveLiveActivityDismissalPolicy(
     snapshot: LiveActivitySnapshot | undefined,
     contentDate: Date,
 ): LiveActivityDismissalPolicy {
-    if (snapshot === undefined || snapshot.presentationTemplate === 'urgentAttention') {
+    if (snapshot === undefined || !readSessionRecordingVisibility()(snapshot)
+        || snapshot.presentationTemplate === 'urgentAttention') {
         return 'immediate';
     }
 
@@ -468,6 +486,7 @@ function createInitialLiveActivityAuthorizationCheckState(): LiveActivityAuthori
 
 export function ActivitySurfacesRuntime(): React.ReactElement | null {
     const activitySource = useActivityAttentionSource();
+    const isSessionVisible = useSessionRecordingVisibility();
     const resolveAccountSettings = useExactHomeAccountSettings(activitySource.audienceScopes);
     const isDataReady = activitySource.isDataReady;
     const experiments = useSetting('experiments');
@@ -561,13 +580,14 @@ export function ActivitySurfacesRuntime(): React.ReactElement | null {
     const widgetPolicy = policies.widgetPolicy;
 
     const sourceOverview = React.useMemo(() => {
-        return buildActivityOverviewFromSource({
+        const overview = buildActivityOverviewFromSource({
             source: activitySource,
             nowMs: activityNowMs,
             activityName: HAPPIER_FOCUS_LIVE_ACTIVITY_NAME,
             directActionsEnabled: liveActivityPolicy.liveActivities.allowActionButtons,
         });
-    }, [activityNowMs, activitySource, liveActivityPolicy.liveActivities.allowActionButtons]);
+        return buildActivityOverviewFromCandidates(overview.candidates.filter(candidate => isSessionVisible(candidate.address ?? candidate)));
+    }, [activityNowMs, activitySource, liveActivityPolicy.liveActivities.allowActionButtons, isSessionVisible]);
 
     // Each candidate is admitted and privacy-projected by its own Home's Account
     // delivery plan before any surface selects or presents it. A Home whose exact

@@ -1,5 +1,6 @@
 import type { Message } from "@happier-dev/session-core/messages";
-import type { ActivitySequenceEventReferenceV1, AgentRequestKind } from '@happier-dev/protocol';
+import type { ActivitySequenceEventReferenceV1} from '@happier-dev/protocol/activity/eventIdentity';
+import type { AgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import type { SessionFollowStalledOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceOccurrenceV1';

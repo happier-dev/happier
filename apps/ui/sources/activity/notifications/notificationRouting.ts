@@ -11,6 +11,10 @@ import { resolveIncomingMachineRemoteAlert } from './remoteAlerts/machineRemoteA
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { GuardStopWarningPushDataV1Schema } from '@happier-dev/protocol/activity/webhookPayload';
 import { resolveNotificationSavedHome } from './resolveNotificationSavedHome';
+import { AccountNoticePushDataV1Schema, PluginSessionPushDataV1Schema, type PluginNotificationPushContextV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
+import { parsePluginNotificationButtonId } from '@happier-dev/protocol/push/pushNotificationActions';
+import { resolveInboxNoticePageRoute } from '@/components/inbox/inboxItemFocus';
+import { createActivitySurfaceSessionRoute } from '@/activity/actions/activitySurfaceTargets';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -70,6 +74,12 @@ export type ParsedNotificationTap = Readonly<{
     accountId?: string | null;
 }>;
 
+function readPluginButtonPress(actionIdentifier: string, notification: PluginNotificationPushContextV1 | undefined) {
+    const button = parsePluginNotificationButtonId(actionIdentifier);
+    return button && notification && button.pluginId === notification.pluginId && button.categoryId === notification.categoryId
+        ? { notification, buttonId: button.buttonId } : null;
+}
+
 export function parseNotificationTap(params: Readonly<{
     response: unknown;
     defaultActionIdentifier: string;
@@ -78,6 +88,32 @@ export function parseNotificationTap(params: Readonly<{
     const data = readNotificationData({ response: params.response });
     const notificationId = readNotificationId({ response: params.response });
     const dedupeKey = notificationId ? `${notificationId}:${actionIdentifier}` : null;
+    if (isRecord(data) && data.topic === 'plugin_session') {
+        const session = PluginSessionPushDataV1Schema.safeParse(data);
+        if (!session.success) return { command: { kind: 'ignore', reason: 'malformed' }, dedupeKey };
+        const press = readPluginButtonPress(actionIdentifier, session.data.pluginNotification);
+        if (actionIdentifier !== params.defaultActionIdentifier && !press) return { command: { kind: 'ignore', reason: 'unknown_action' }, dedupeKey };
+        const home = resolveNotificationSavedHome(session.data);
+        if (!home) return { command: { kind: 'ignore', reason: 'unknown_server' }, dedupeKey };
+        return { command: { kind: 'openNotice', serverId: home.id, serverUrl: home.serverUrl, accountId: session.data.accountId,
+            route: createActivitySurfaceSessionRoute(session.data.sessionId, home.id), defaultSessionId: session.data.sessionId,
+            ...(press ? { pluginNotificationPress: press } : {}) },
+            dedupeKey, actionIdentifier, accountId: session.data.accountId };
+    }
+    if (isRecord(data) && data.topic === 'account_notice') {
+        const notice = AccountNoticePushDataV1Schema.safeParse(data);
+        if (!notice.success) return { command: { kind: 'ignore', reason: 'malformed' }, dedupeKey };
+        // Plugin buttons never enter Session permission response admission.
+        const press = readPluginButtonPress(actionIdentifier, notice.data.pluginNotification);
+        if (actionIdentifier !== params.defaultActionIdentifier && !press) return { command: { kind: 'ignore', reason: 'unknown_action' }, dedupeKey };
+        const home = resolveNotificationSavedHome({ serverId: notice.data.serverId, serverUrl: notice.data.serverUrl ?? '' });
+        if (!home) return { command: { kind: 'ignore', reason: 'unknown_server' }, dedupeKey };
+        return { command: { kind: 'openNotice', serverId: home.id, serverUrl: home.serverUrl, accountId: notice.data.accountId,
+            route: resolveInboxNoticePageRoute(notice.data.artifactId, { kind: 'account_notice.v1',
+                source: notice.data.source, ...(notice.data.page ? { page: notice.data.page } : {}) }, home.id),
+            ...(press ? { pluginNotificationPress: press } : {}) },
+            dedupeKey, actionIdentifier, accountId: notice.data.accountId };
+    }
     if (isRecord(data) && data.topic === 'guard_stop_warning') {
         const warning = GuardStopWarningPushDataV1Schema.safeParse(data);
         if (!warning.success) return { command: { kind: 'ignore', reason: 'malformed' }, dedupeKey };
@@ -135,6 +171,7 @@ export function parseNotificationTap(params: Readonly<{
         actionIdentifier,
         defaultActionIdentifier: params.defaultActionIdentifier,
         data,
+        userText: isRecord(params.response) ? params.response.userText : undefined,
         requireKnownIdentity: false,
     });
 

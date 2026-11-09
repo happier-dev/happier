@@ -65,3 +65,4 @@ describe('collapsed shared activity word', () => {
         expect(collectHostText(screen.tree)).toContain('Needs you');
     });
 });
+

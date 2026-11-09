@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { AppState } from 'react-native';
-import type { SessionAttentionStanding } from '@happier-dev/protocol';
+import type { SessionAttentionStanding } from '@happier-dev/protocol/sessions/organization/standings';
 
 import { sessionAddressKey, type SessionAddress } from '@/sync/domains/session/sessionAddress';
 import type { EnsureSessionVisibleForRouteResult } from '@/sync/domains/session/sessionRouteHydrationState';
@@ -149,12 +149,16 @@ export function useSessionAttentionReminderRefresh(params: Readonly<{
 
         const nowMs = Date.now();
         const plan = resolveSessionAttentionReminderRefreshPlan({ nowMs, reminders: params.reminders });
+        const invalidatedServerIds = new Set<string>();
         for (const reminder of plan.due) {
             if (params.connectedByServerId[reminder.address.serverId] !== true) continue;
             const token = reminderToken(reminder);
             if (completedTokensRef.current.has(token) || inFlightTokensRef.current.has(token)) continue;
             inFlightTokensRef.current.add(token);
-            void params.invalidateSessionListQueryHome(reminder.address.serverId);
+            if (!invalidatedServerIds.has(reminder.address.serverId)) {
+                invalidatedServerIds.add(reminder.address.serverId);
+                void params.invalidateSessionListQueryHome(reminder.address.serverId);
+            }
             void params.refreshSession(reminder.address).then(
                 (result) => {
                     inFlightTokensRef.current.delete(token);

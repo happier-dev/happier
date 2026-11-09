@@ -144,7 +144,9 @@ vi.mock('expo-widgets', async (importOriginal) => {
     });
 });
 
-vi.mock('expo-modules-core', () => ({
+// Start from the canonical stub (dev/expoModulesCoreStub.ts) so native view managers resolved at import stay available.
+vi.mock('expo-modules-core', async (importOriginal) => ({
+    ...await importOriginal<Record<string, unknown>>(),
     requireNativeModule: () => ({}),
     requireOptionalNativeModule: () => null,
 }));
@@ -421,10 +423,12 @@ describe('ActivitySurfacesRuntime exact-Home Account delivery', () => {
         const homeA = sessions.find((session) => session.serverId === HOME_A);
         const homeB = sessions.find((session) => session.serverId === HOME_B);
         expect(homeA?.title).toBe('Home A work');
+        expect(homeB).toBeDefined();
         expect(homeB?.title).not.toBe('Home B work');
         expect(homeB?.title).not.toBe('Home A work');
-        expect(homeB?.subtitle).toBeNull();
-        expect(homeB?.statusText).toBeNull();
-        expect(homeB?.previewText).toBeNull();
+        // The widget bridge drops null keys (UserDefaults rejects NSNull); absent reads as null.
+        expect(homeB?.subtitle ?? null).toBeNull();
+        expect(homeB?.statusText ?? null).toBeNull();
+        expect(homeB?.previewText ?? null).toBeNull();
     });
 });

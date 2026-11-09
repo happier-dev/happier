@@ -14,7 +14,7 @@ import { removeServerProfile, setActiveServerId, setServerProfileIdentityForUrl,
 import { handleNewMessageSocketUpdate } from '@/sync/engine/sessions/sessionSocketUpdate';
 import { handleEphemeralSocketUpdate, handleUpdateContainer } from '@/sync/engine/socket/socket';
 import { ActivityLocalNotificationRuntime } from './ActivityLocalNotificationRuntime';
-import { notifyActivityReady, resetActivityLocalNotificationRuntimeForTests } from './activityLocalNotificationBus';
+import { notifyActivityAgentRequest, notifyActivityReady, resetActivityLocalNotificationRuntimeForTests } from './activityLocalNotificationBus';
 import { resetActivityAlertPresentationNotesForTests } from '../remoteAlerts/activityAlertPresentationNotes';
 import { resolveForegroundNotificationBehavior } from '../resolveForegroundNotificationBehavior';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -26,6 +26,11 @@ type ExpoNotificationParams = Parameters<typeof import('../channels/sendExpoLoca
 
 const boundary = vi.hoisted(() => ({
     desktop: false,
+    nativePlatform: 'ios',
+    requests: vi.fn(async (_request: Parameters<typeof import('expo-notifications')['scheduleNotificationAsync']>[0]) => undefined),
+    inventory: vi.fn(async (): Promise<Array<{request: {identifier: string; content: {data: Record<string, unknown>}}}>> => []),
+    dismiss: vi.fn(async (_identifier: string) => undefined),
+    received: new Set<() => void>(),
     active: { serverId: 'srv_home_a', serverUrl: 'https://stack.example.test', generation: 1 },
     expo: vi.fn(async (_params: ExpoNotificationParams) => 'notification-1'),
     tauri: vi.fn((_params: Readonly<{ title: string; body: string }>) => undefined),
@@ -33,20 +38,8 @@ const boundary = vi.hoisted(() => ({
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
-    return createReactNativeWebMock({ Platform: { get OS() { return boundary.desktop ? 'web' : 'ios'; } } });
+    return createReactNativeWebMock({ Platform: { get OS() { return boundary.desktop ? 'web' : boundary.nativePlatform; } } });
 });
-vi.mock('expo-notifications', () => ({
-    // No Guard warning is presented in these flows; the wake reconciliation still reads the OS tray.
-    getPresentedNotificationsAsync: async () => [],
-    dismissNotificationAsync: async () => undefined,
-    scheduleNotificationAsync: async (request: Parameters<typeof import('expo-notifications')['scheduleNotificationAsync']>[0]) => {
-        const { content } = request;
-        if (typeof content.title !== 'string' || typeof content.body !== 'string') throw new Error('Expected local notification copy');
-        return boundary.expo({ title: content.title, body: content.body,
-            ...(content.data ? { data: content.data } : {}),
-            ...(content.categoryIdentifier ? { categoryIdentifier: content.categoryIdentifier } : {}) });
-    },
-}));
 vi.mock('@tauri-apps/plugin-notification', () => ({
     isPermissionGranted: async () => true,
     requestPermission: async () => 'granted',
@@ -194,6 +187,28 @@ describe('live Follow socket notifications', () => {
     beforeEach(async () => {
         storage.setState(initialState, true);
         storage.setState({ isDataReady: false });
+        boundary.nativePlatform = 'ios';
+        boundary.requests.mockClear(); boundary.inventory.mockReset().mockResolvedValue([]); boundary.dismiss.mockClear();
+        // The setup loader and direct SDK imports share this genuine OS boundary.
+        const notifications = await import('@/dev/expoNotificationsStub');
+        vi.spyOn(notifications, 'getPresentedNotificationsAsync').mockImplementation(() => boundary.inventory());
+        vi.spyOn(notifications, 'dismissNotificationAsync').mockImplementation(identifier => boundary.dismiss(identifier));
+        vi.spyOn(notifications, 'addNotificationReceivedListener').mockImplementation(listener => {
+            if (typeof listener !== 'function') throw new Error('Expected native receipt listener');
+            const received = () => listener();
+            boundary.received.add(received);
+            return { remove: () => { boundary.received.delete(received); } };
+        });
+        vi.spyOn(notifications, 'scheduleNotificationAsync').mockImplementation(async raw => {
+            // The canonical SDK stub is intentionally untyped; this is the native request boundary.
+            const request = raw as Parameters<typeof import('expo-notifications')['scheduleNotificationAsync']>[0];
+            await boundary.requests(request);
+            const { content } = request;
+            if (typeof content.title !== 'string' || typeof content.body !== 'string') throw new Error('Expected local notification copy');
+            return boundary.expo({ title: content.title, body: content.body,
+                ...(content.data ? { data: content.data } : {}),
+                ...(content.categoryIdentifier ? { categoryIdentifier: content.categoryIdentifier } : {}) });
+        });
         boundary.desktop = false;
         const desktopStorage = createDesktopSecureStorageBoundary();
         previousDesktopHost = Object.getOwnPropertyDescriptor(globalThis, '__TAURI_INTERNALS__');
@@ -242,6 +257,7 @@ describe('live Follow socket notifications', () => {
         }
         boundary.desktop = false;
         boundary.expo.mockClear(); boundary.tauri.mockClear();
+        vi.restoreAllMocks();
         resetActivityLocalNotificationRuntimeForTests();
         resetActivityAlertPresentationNotesForTests();
         storage.setState(initialState, true);
@@ -251,6 +267,88 @@ describe('live Follow socket notifications', () => {
         localStorage.restore();
         if (previousDesktopHost) Object.defineProperty(globalThis, '__TAURI_INTERNALS__', previousDesktopHost);
         else Reflect.deleteProperty(globalThis, '__TAURI_INTERNALS__');
+    });
+
+    it('schedules ordinary requests on their Android channel with the exact audience Account', async () => {
+        boundary.nativePlatform = 'android';
+        const settings = settingsParse({ attentionDeliveryPolicyV1: { v: 1, sounds: { defaultSoundId: 'default' } } });
+        storage.setState({ settings });
+        saveAccountSettings({ serverId: 'srv_home_a', accountId: 'account-a' }, settings, 2);
+        screen = await renderScreen(<ActivityLocalNotificationRuntime />);
+        for (const requestKind of ['permission', 'user_action'] as const) {
+            await act(async () => { notifyActivityAgentRequest({
+                address: { serverId: 'srv_home_a', sessionId: 'session-1' }, requestId: requestKind,
+                turnId: `turn-${requestKind}`, requestKind, toolName: 'Bash', toolArgs: { command: 'pwd' },
+            }); });
+        }
+        await vi.waitFor(() => expect(boundary.requests).toHaveBeenCalledTimes(2));
+        const { PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS } = await import('@happier-dev/protocol/push/pushNotificationActions');
+        expect(boundary.requests.mock.calls.map(([request]) => ({ data: request.content.data, trigger: request.trigger }))).toEqual([
+            expect.objectContaining({ data: expect.objectContaining({ accountId: 'account-a', kind: 'permission',
+                requestId: 'permission', turnId: 'turn-permission' }), trigger: { channelId: PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.permissionRequestsV1 } }),
+            expect.objectContaining({ data: expect.objectContaining({ accountId: 'account-a', kind: 'user_action',
+                requestId: 'user_action', turnId: 'turn-user_action' }), trigger: { channelId: PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS.userActionRequestsV1 } }),
+        ]);
+    });
+
+    it('withdraws only positively completed ordinary turns, independently of local delivery policy', async () => {
+        const notice = (identifier: string, data: Record<string, unknown> = {}) => ({ request: { identifier, content: { data: {
+            kind: 'permission', serverId: 'srv_home_a', serverUrl: boundary.active.serverUrl,
+            accountId: 'account-a', sessionId: 'session-1', requestId: 'request-1', turnId: 'turn-a', ...data,
+        } } } });
+        boundary.inventory.mockResolvedValue([
+            notice('settled-permission'), notice('settled-question', {kind: 'user_action', requestId: 'question-1'}),
+            notice('newer-turn', {turnId: 'turn-b'}), notice('other-account', {accountId: 'other-account'}),
+            notice('other-home', {serverId: 'unknown-home', serverUrl: 'https://other.example.test'}),
+            notice('unloaded', {sessionId: 'missing-session'}), notice('legacy', {turnId: undefined}),
+            notice('unknown-account', {accountId: undefined}), notice('missing-request', {requestId: 'missing-request'}),
+        ]);
+        const settings = settingsParse({ attentionDeliveryPolicyV1: { v: 1, channels: { local_notification: { enabled: false } } } });
+        storage.setState({ settings });
+        saveAccountSettings({ serverId: 'srv_home_a', accountId: 'account-a' }, settings, 2);
+        applySessions([{ ...getSession(), agentState: { requests: {
+            'request-1': { tool: 'Bash', arguments: {}, createdAt: 1, turnId: 'turn-a' },
+            'question-1': { tool: 'AskUserQuestion', arguments: {}, createdAt: 1, turnId: 'turn-a' },
+        } } }]);
+        screen = await renderScreen(<ActivityLocalNotificationRuntime />);
+        await vi.waitFor(() => expect(boundary.inventory).toHaveBeenCalled());
+        expect(boundary.dismiss).not.toHaveBeenCalled();
+        await act(async () => { applySessions([{ ...getSession(), agentStateVersion: 2, agentState: {
+            requests: { 'request-1': { tool: 'Bash', arguments: {}, createdAt: 2, turnId: 'turn-b' } },
+            completedRequests: {
+                'request-1': { tool: 'Bash', arguments: {}, createdAt: 1, completedAt: 2, status: 'denied', turnId: 'turn-a' },
+                'question-1': { tool: 'AskUserQuestion', arguments: {}, createdAt: 1, completedAt: 2, status: 'approved', turnId: 'turn-a' },
+            },
+        } }]); });
+        await vi.waitFor(() => expect(boundary.dismiss.mock.calls.map(([id]) => id).sort()).toEqual(['settled-permission', 'settled-question']));
+        expect(boundary.expo).not.toHaveBeenCalled();
+        boundary.inventory.mockResolvedValue([]);
+        await act(async () => { for (const listener of boundary.received) listener(); });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const reads = boundary.inventory.mock.calls.length;
+        await act(async () => { storage.setState({ sessions: Object.fromEntries(Array.from({ length: 1000 }, (_, index) => {
+            const session = createSessionFixture({ id: `unrelated-${index}`, serverId: 'srv_home_a', agentState: {} });
+            return [session.id, session];
+        })) }); });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(boundary.inventory).toHaveBeenCalledTimes(reads);
+    });
+
+    it('keeps a delivered request when the Account changes while native inventory is loading', async () => {
+        const inventory = createDeferred<Awaited<ReturnType<typeof boundary.inventory>>>();
+        boundary.inventory.mockReturnValue(inventory.promise);
+        applySessions([{ ...getSession(), agentState: { completedRequests: {
+            'request-1': { tool: 'Bash', arguments: {}, createdAt: 1, completedAt: 2, status: 'denied', turnId: 'turn-a' },
+        } } }]);
+        screen = await renderScreen(<ActivityLocalNotificationRuntime />);
+        await vi.waitFor(() => expect(boundary.inventory).toHaveBeenCalled());
+        await act(async () => { storage.getState().activateProfileScope({ serverId: 'srv_home_a', accountId: 'account-b' }); });
+        await act(async () => { inventory.resolve([{ request: { identifier: 'old-account-notice', content: { data: {
+            kind: 'permission', serverId: 'srv_home_a', serverUrl: boundary.active.serverUrl, accountId: 'account-a',
+            sessionId: 'session-1', requestId: 'request-1', turnId: 'turn-a',
+        } } } }]); });
+        await new Promise(resolve => setTimeout(resolve, 0));
+        expect(boundary.dismiss).not.toHaveBeenCalled();
     });
 
     it.each([false, true])('delivers live Follow messages on desktop=%s without remote enrollment or history replay', async (desktop) => {

@@ -11,10 +11,9 @@ import { resolveServerCredentialAccountScope } from '@/sync/domains/scope/server
 import { readExactHomeAccountSettings } from '@/activity/delivery/useExactHomeAccountSettings';
 import { loadExpoNotifications, type ExpoNotificationsModule } from '@/utils/platform/loadExpoNotifications';
 import { reconcileGuardStopWarningNotifications } from '../guardStopWarningLifecycle';
-import { parseNotificationTap } from '../notificationRouting';
 import { PUSH_NOTIFICATION_NATIVE_CALL_TIMEOUT_MS } from '../permission/pushNotificationAccess';
 import { withTimeout } from '@/utils/timing/time';
-import { executeNotificationPermissionAction, isNotificationPermissionAction } from '../runtime/notificationPermissionActions';
+import { handleNotificationBackgroundTask } from '../runtime/notificationPermissionActions';
 
 declare const require: (id: string) => unknown;
 
@@ -256,10 +255,8 @@ export function defineSessionChangedBackgroundWakeTask(params: Readonly<{
         async ({ data, error }) => {
             if (error) return notifications.BackgroundNotificationTaskResult.Failed;
             if (platformOS === 'android') {
-                const parsed = parseNotificationTap({ response: data,
-                    defaultActionIdentifier: 'expo.modules.notifications.actions.DEFAULT' });
-                if (parsed && isNotificationPermissionAction(parsed)) {
-                    const outcome = await executeNotificationPermissionAction(parsed);
+                const outcome = await handleNotificationBackgroundTask({ data });
+                if (outcome.status !== 'ignored') {
                     return outcome.status === 'confirmed' ? notifications.BackgroundNotificationTaskResult.NewData
                         : notifications.BackgroundNotificationTaskResult.Failed;
                 }

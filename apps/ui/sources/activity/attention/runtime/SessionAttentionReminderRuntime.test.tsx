@@ -2,9 +2,15 @@ import * as React from 'react';
 import { AppState } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { SessionListQueryV1Schema } from '@happier-dev/protocol/sessions/listing/query';
 
 import { createReactNativeAppStateEmitter, renderHook, standardCleanup } from '@/dev/testkit';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
+import { createSessionListQueryHomeController } from '@/sync/domains/session/listing/sessionListQueryController';
+import {
+    invalidateSessionListQueryHome,
+    subscribeSessionListQueryHomeInvalidation,
+} from '@/sync/domains/session/listing/sessionListQueryInvalidation';
 
 import {
     resolveSessionAttentionReminderDeadline,
@@ -13,6 +19,79 @@ import {
 } from './sessionAttentionReminderScheduler';
 
 describe('SessionAttentionReminderRuntime', () => {
+    it('refreshes each changed Home list once when several reminders become due together', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const reminders = [
+            { address: { serverId: 'home-a', sessionId: 'first' }, remindAt: 2_000 },
+            { address: { serverId: 'home-a', sessionId: 'second' }, remindAt: 2_000 },
+            { address: { serverId: 'home-a', sessionId: 'same-id' }, remindAt: 2_000 },
+            { address: { serverId: 'home-b', sessionId: 'same-id' }, remindAt: 2_000 },
+        ];
+        const pageReads = new Map<string, number>();
+        const query = SessionListQueryV1Schema.parse({
+            v: 1, storage: 'active', includeInactive: false, scope: 'my_work',
+            attention: 'needs_my_attention', audiences: [], tagIds: [],
+        });
+        const controllers = new Map(['home-a', 'home-b', 'home-c'].map((serverId) => [
+            serverId,
+            createSessionListQueryHomeController({
+                serverId,
+                // The network boundary returns the exact due membership; invalidation
+                // and replacement scheduling use the real production owners.
+                fetchPage: async () => {
+                    pageReads.set(serverId, (pageReads.get(serverId) ?? 0) + 1);
+                    return {
+                        sessionIds: reminders.filter((reminder) => (
+                            reminder.address.serverId === serverId && reminder.remindAt <= Date.now()
+                        )).map((reminder) => reminder.address.sessionId),
+                        nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false,
+                        current: true, source: 'v2' as const,
+                    };
+                },
+            }),
+        ] as const));
+        const unsubscribe = subscribeSessionListQueryHomeInvalidation(() => controllers);
+        let connectedByServerId: Readonly<Record<string, boolean>> = {
+            'home-a': true, 'home-b': true, 'home-c': true,
+        };
+        const refreshed: SessionAddress[] = [];
+        const refreshSession = async (address: SessionAddress) => {
+            refreshed.push(address);
+            return { kind: 'available' as const, sessionId: address.sessionId };
+        };
+        const refreshReminderInventory = async () => ({ kind: 'loaded' as const });
+
+        try {
+            await Promise.all([...controllers.values()].map((controller) => controller.update({
+                query, selected: true, online: true, supported: true,
+            })));
+            pageReads.clear();
+            const hook = await renderHook(() => useSessionAttentionReminderRefresh({
+                connectedByServerId, invalidateSessionListQueryHome, refreshReminderInventory,
+                refreshSession, reminders,
+            }));
+            expect(pageReads.size).toBe(0);
+
+            await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
+
+            expect(refreshed).toEqual(reminders.map((reminder) => reminder.address));
+            expect(controllers.get('home-a')?.getSnapshot().addresses.map((address) => address.sessionId))
+                .toEqual(['first', 'second', 'same-id']);
+            expect(controllers.get('home-b')?.getSnapshot().addresses)
+                .toEqual([{ serverId: 'home-b', sessionId: 'same-id' }]);
+            expect(Object.fromEntries(pageReads)).toEqual({ 'home-a': 1, 'home-b': 1 });
+
+            connectedByServerId = { ...connectedByServerId };
+            await hook.rerender();
+            expect(refreshed).toHaveLength(reminders.length);
+            expect(Object.fromEntries(pageReads)).toEqual({ 'home-a': 1, 'home-b': 1 });
+        } finally {
+            unsubscribe();
+            for (const controller of controllers.values()) controller.dispose();
+        }
+    });
+
     it('leaves retryable hydration eligible on the next owner wake without polling or repeating successful hydration', async () => {
         vi.useFakeTimers();
         vi.setSystemTime(2_000);

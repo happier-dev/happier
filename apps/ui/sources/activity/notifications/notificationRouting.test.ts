@@ -38,6 +38,49 @@ describe('activity remote alert taps', () => {
     beforeEach(clearProfiles);
     afterEach(clearProfiles);
 
+    it('retains an external plugin button binding without creating a permission response', async () => {
+        const home = await serverProfiles.upsertServerProfile({ serverUrl: 'https://plugin.example.test', name: 'Plugin Home' });
+        const pluginNotification = { pluginId: 'acme.tasks', categoryId: 'review', occurrenceId: 'current', clientRequestId: 'send-one' };
+        const response = { ...tapResponse({ v: 1, topic: 'plugin_session', serverId: home.id, serverUrl: home.serverUrl,
+            accountId: 'owner', sessionId: 'session-one', pluginNotification }),
+            actionIdentifier: 'happier.pluginNotification.v1/acme.tasks/review/Show%20%2F%20review' };
+        expect(parseNotificationTap({ response, defaultActionIdentifier: DEFAULT_ACTION_IDENTIFIER })?.command)
+            .toMatchObject({ kind: 'openNotice', accountId: 'owner',
+                pluginNotificationPress: { notification: pluginNotification, buttonId: 'Show / review' } });
+        expect(parseNotificationTap({ response: { ...response, actionIdentifier: 'happier.pluginNotification.v1/foreign/review/Show' },
+            defaultActionIdentifier: DEFAULT_ACTION_IDENTIFIER })?.command.kind).toBe('ignore');
+        const encoded = { ...pluginNotification, pluginId: 'acme.task-tools', categoryId: 'ready-to-review' };
+        expect(parseNotificationTap({ defaultActionIdentifier: DEFAULT_ACTION_IDENTIFIER, response: {
+            ...tapResponse({ v: 1, topic: 'plugin_session', serverId: home.id, serverUrl: home.serverUrl,
+                accountId: 'owner', sessionId: 'session-one', pluginNotification: encoded }),
+            actionIdentifier: 'happier.pluginNotification.v1/acme.task%2Dtools/ready%2Dto%2Dreview/Show%20%2F%20review',
+        } })?.command).toMatchObject({ kind: 'openNotice', pluginNotificationPress: { notification: encoded, buttonId: 'Show / review' } });
+    });
+
+    it('opens an external plugin notice on its exact saved Home without becoming a permission response', async () => {
+        const home = await serverProfiles.upsertServerProfile({ serverUrl: 'https://plugin.example.test', name: 'Plugin Home' });
+        const data = { v: 1, topic: 'account_notice', serverId: home.id, serverUrl: home.serverUrl, accountId: 'owner',
+            artifactId: 'notice-one', source: { kind: 'plugin', pluginId: 'acme.tasks', itemId: 'deployment/one' },
+            page: { pageId: 'deployment-review', subPath: 'repo/one' } };
+        const parsed = parseNotificationTap({ response: tapResponse(data), defaultActionIdentifier: DEFAULT_ACTION_IDENTIFIER });
+        expect(parsed?.command).toMatchObject({ kind: 'openNotice', serverId: home.id, serverUrl: home.serverUrl,
+            accountId: 'owner', route: '/plugins/acme.tasks/deployment-review/repo/one' });
+        for (const actionIdentifier of [PUSH_NOTIFICATION_ACTION_IDS.permissionAllowV1, PUSH_NOTIFICATION_ACTION_IDS.permissionDenyV1]) {
+            expect(parseNotificationTap({ response: { ...tapResponse(data), actionIdentifier },
+                defaultActionIdentifier: DEFAULT_ACTION_IDENTIFIER })?.command).toMatchObject({ kind: 'ignore' });
+        }
+        for (const extra of [{ sessionId: 'forged', requestId: 'forged' }, { page: { ...data.page, subPath: '../elsewhere' } }]) {
+            expect(parseNotificationTap({ response: tapResponse({ ...data, ...extra }),
+                defaultActionIdentifier: DEFAULT_ACTION_IDENTIFIER })?.command).toMatchObject({ kind: 'ignore' });
+        }
+        expect(parseNotificationTap({ response: tapResponse({ ...data, serverId: 'unknown', serverUrl: 'https://unknown.example.test' }),
+            defaultActionIdentifier: DEFAULT_ACTION_IDENTIFIER })?.command).toMatchObject({ kind: 'ignore', reason: 'unknown_server' });
+        const session = { v: 1, topic: 'plugin_session', accountId: 'owner', sessionId: 'session-bound', serverId: home.id, serverUrl: home.serverUrl };
+        expect(parseNotificationTap({ response: tapResponse(session), defaultActionIdentifier: DEFAULT_ACTION_IDENTIFIER })?.command)
+            .toMatchObject({ kind: 'openNotice', accountId: 'owner', serverId: home.id,
+                route: `/session/session-bound?serverId=${encodeURIComponent(home.id)}` });
+    });
+
     it('preserves request turn custody in an Android native action payload', () => {
         const parsed = parseNotificationTap({
             response: {

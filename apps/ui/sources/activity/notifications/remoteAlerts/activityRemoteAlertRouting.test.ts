@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
     ACTIVITY_REMOTE_ALERT_EVENT_TYPES_V1,
     type ActivityRemoteAlertV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/push/activityRemoteAlert';
 
 import {
     parseActivityRemoteAlertData,

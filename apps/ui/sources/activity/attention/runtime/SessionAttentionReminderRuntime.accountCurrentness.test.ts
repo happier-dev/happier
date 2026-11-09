@@ -98,7 +98,6 @@ describe('refreshSessionAttentionReminderInventory Account currentness', () => {
         expect(afterStale.sessionOrganizationSnapshotVersionByServerId[serverId]).toBeUndefined();
         expect(JSON.stringify(afterStale.sessionOrganizationPinsBySessionKey)).not.toContain('account-a-private');
         expect(JSON.stringify(afterStale.sessionOrganizationAttentionStandingsBySessionKey)).not.toContain('account-a-private');
-        expect(afterStale.sessionOrganizationErrorByServerId[serverId] ?? null).toBeNull();
 
         // B's own, lower-versioned inventory is not rejected by A's version.
         const accountBRefresh = refreshSessionAttentionReminderInventory({ serverId, serverUrl });

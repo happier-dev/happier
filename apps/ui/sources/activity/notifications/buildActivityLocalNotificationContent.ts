@@ -1,9 +1,10 @@
+import { projectNotificationQuestion } from '@happier-dev/protocol/push/notificationQuestionActions';
 import { PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS, PUSH_NOTIFICATION_CATEGORY_IDS } from '@happier-dev/protocol/push/pushNotificationActions';
 import { buildReadyNotificationContent } from '@happier-dev/protocol/push/readyNotificationContent';
 import { prepareTranscriptMessageBody } from '@/components/sessions/transcript/messageDisplayText';
 import { resolveActivityRemoteAlertEventForPersonalEventV2 } from '@happier-dev/protocol/push/activityRemoteAlert';
 import { restrictAttentionPreviewBehavior } from '@happier-dev/protocol/account/settings/accountRemoteAlertPolicy';
-import { summarizeToolInputForNotification, type AgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
+import { buildAgentRequestSemanticSummary, summarizeToolInputForNotification, type AgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { buildActivityPreviewText, normalizeActivityPreviewText } from '@/activity/attention/buildActivityPreviewText';
 import type { Message } from "@happier-dev/session-core/messages";
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -52,6 +53,7 @@ export function buildActivityLocalNotificationContent(params: Readonly<{
     event: ActivityLocalNotificationEvent;
     session: Session | null | undefined;
     serverUrl: string;
+    accountId?: string;
     contextLine?: string | null;
     previewBehavior?: AttentionPreviewBehavior;
     includeReadyMessageText?: boolean;
@@ -72,6 +74,7 @@ export function buildActivityLocalNotificationContent(params: Readonly<{
         serverId: params.event.address.serverId,
         sessionId: params.event.address.sessionId,
         serverUrl: params.serverUrl,
+        ...(params.accountId ? { accountId: params.accountId } : {}),
     };
 
     if (params.event.kind === 'ready') {
@@ -139,21 +142,19 @@ export function buildActivityLocalNotificationContent(params: Readonly<{
         };
     }
 
+    const includeRequestText = (previewBehavior === undefined || previewBehavior === 'include_preview')
+        && params.includeRequestMessageText !== false;
+    const question = params.event.requestKind === 'user_action' && params.event.turnId && params.accountId && includeRequestText
+        ? projectNotificationQuestion(buildAgentRequestSemanticSummary({ kind: params.event.requestKind,
+            toolName: params.event.toolName, toolInput: params.event.toolArgs })) : null;
     return {
         title,
-        body: summarizeAgentRequestBody(
-            params.event.requestKind,
-            params.event.toolName,
-            params.event.toolArgs,
-            previewBehavior === 'include_preview'
-                ? params.includeRequestMessageText !== false
-                : previewBehavior === undefined
-                    ? params.includeRequestMessageText !== false
-                    : false,
-        ),
+        body: question?.body ?? summarizeAgentRequestBody(params.event.requestKind, params.event.toolName, params.event.toolArgs, includeRequestText),
         data: {
             ...baseData,
+            kind: params.event.requestKind,
             requestId: params.event.requestId,
+            ...(question ? { questionAnswerV1: question.descriptor } : {}),
             ...(params.event.turnId ? { turnId: params.event.turnId } : {}),
         },
         expo: {
@@ -164,7 +165,7 @@ export function buildActivityLocalNotificationContent(params: Readonly<{
             categoryIdentifier:
                 params.event.requestKind === 'permission'
                     ? PUSH_NOTIFICATION_CATEGORY_IDS.permissionRequestV1
-                    : PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1,
+                    : question?.categoryId ?? PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1,
         },
     };
 }

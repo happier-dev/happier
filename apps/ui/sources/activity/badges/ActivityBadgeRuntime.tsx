@@ -3,7 +3,7 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 import { useShallow } from 'zustand/react/shallow';
 
-import type { AccountSettings } from '@happier-dev/protocol';
+import type { AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { useChangelog } from '@/hooks/inbox/useChangelog';
@@ -130,6 +130,14 @@ function useLocalActivityBadgeSnapshot(
 }
 
 export function ActivityBadgeRuntime(): React.ReactElement | null {
+    // This existing device bootstrap also seeds the first-install changelog
+    // baseline on web; it is independent of Account badge-source demand.
+    const { hasUnread: changelogHasUnread } = useChangelog();
+    if (Platform.OS === 'web' && !isDesktopHost()) return null;
+    return <SupportedActivityBadgeRuntime changelogHasUnread={changelogHasUnread} />;
+}
+
+function SupportedActivityBadgeRuntime({ changelogHasUnread }: Readonly<{ changelogHasUnread: boolean }>): React.ReactElement | null {
     const friendRequestCount = useFriendRequestCount();
     const localSettings = useActivityBadgeLocalSettingsInput();
     const activeServer = useActiveServerSnapshot();
@@ -144,9 +152,7 @@ export function ActivityBadgeRuntime(): React.ReactElement | null {
     );
     const accountSettingsByServerId = useActivityBadgeAccountSettingsByServerId(badgeHomeServerIds);
     const { updateAvailable } = useUpdates();
-    const { hasUnread: changelogHasUnread } = useChangelog();
     const isDesktopShell = isDesktopHost();
-    const shouldApplyBadgeRuntime = isDesktopShell || Platform.OS !== 'web';
     const [serverBadgeSnapshot, setServerBadgeSnapshot] = React.useState<ServerBadgeSnapshot | null>(null);
     const hasNonNumericInboxAttention = updateAvailable || changelogHasUnread;
     const badgeSnapshotParams = React.useMemo<LocalActivityBadgeSnapshotSelectorParams>(() => ({
@@ -156,6 +162,7 @@ export function ActivityBadgeRuntime(): React.ReactElement | null {
         localSettings,
         personalSessionListCoverageComplete: personalSessionMembership.coverageComplete,
         personalSessionListMembershipByServerId: personalSessionMembership.membershipByServerId,
+        ruleSessionMembershipByServerId: personalSessionMembership.ruleSessionMembershipByServerId,
         personalSessionListQueryStatesByServerId: personalSessionMembership.statesByServerId,
         personalFollowRulesByServerId: personalSessionMembership.followRulesByServerId,
     }), [
@@ -165,6 +172,7 @@ export function ActivityBadgeRuntime(): React.ReactElement | null {
         localSettings,
         personalSessionMembership.coverageComplete,
         personalSessionMembership.membershipByServerId,
+        personalSessionMembership.ruleSessionMembershipByServerId,
         personalSessionMembership.statesByServerId,
         personalSessionMembership.followRulesByServerId,
     ]);
@@ -175,7 +183,7 @@ export function ActivityBadgeRuntime(): React.ReactElement | null {
         && canUseServerBadgeSnapshot(localBadgeSnapshot.sessionOptions);
 
     React.useEffect(() => {
-        if (!shouldApplyBadgeRuntime || !serverSnapshotAllowed || !activeServer.serverId || !activeServer.serverUrl) {
+        if (!serverSnapshotAllowed || !activeServer.serverId || !activeServer.serverUrl) {
             setServerBadgeSnapshot(null);
             return;
         }
@@ -199,7 +207,6 @@ export function ActivityBadgeRuntime(): React.ReactElement | null {
         activeServer.serverId,
         activeServer.serverUrl,
         serverSnapshotAllowed,
-        shouldApplyBadgeRuntime,
     ]);
 
     const badgeState = React.useMemo(() => {
@@ -251,8 +258,6 @@ export function ActivityBadgeRuntime(): React.ReactElement | null {
             });
             return;
         }
-
-        if (Platform.OS === 'web') return;
 
         fireAndForget(applyExpoNativeBadgeState(nextBadgeState), {
             tag: 'ActivityBadgeRuntime.applyExpoNativeBadgeState',

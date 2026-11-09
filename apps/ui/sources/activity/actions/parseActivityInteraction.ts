@@ -1,3 +1,4 @@
+import { isNotificationQuestionAnswerAction, readNotificationQuestionAnswer } from '@happier-dev/protocol/push/notificationQuestionActions';
 import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol/push/pushNotificationActions';
 import { GuardStopWarningPushDataV1Schema, WorkflowRunUpdateNotificationV1Schema } from '@happier-dev/protocol/activity/webhookPayload';
 
@@ -109,6 +110,7 @@ export function parseActivityInteraction(params: Readonly<{
     actionIdentifier: string;
     defaultActionIdentifier: string;
     data: unknown;
+    userText?: unknown;
 }>): ParsedActivityInteraction | null {
     const actionIdentifier = params.actionIdentifier.trim() || params.defaultActionIdentifier;
     const isDefaultTap = actionIdentifier === params.defaultActionIdentifier;
@@ -131,18 +133,25 @@ export function parseActivityInteraction(params: Readonly<{
     const activitySurfaceRoute = resolveActivitySurfaceRoute(actionIdentifier, params.data);
 
     const workflowRun = readWorkflowRunTarget(params.data);
+    const isQuestionAction = isNotificationQuestionAnswerAction(actionIdentifier);
+    const answers = isQuestionAction && isRecord(params.data)
+        ? readNotificationQuestionAnswer(params.data.questionAnswerV1, actionIdentifier, params.userText) : null;
     const isOpenAction =
         isDefaultTap
+        || isQuestionAction && !answers
         || actionIdentifier === PUSH_NOTIFICATION_ACTION_IDS.userActionOpenV1
         || activitySurfaceRoute !== null
         || workflowRun !== null;
-    if (!isOpenAction && permissionAction === null) {
+    if (!isOpenAction && permissionAction === null && !isQuestionAction) {
         return null;
     }
 
     const sessionId = readSessionId(params.data);
     const requestId = readRequestId(params.data);
     const turnId = readTurnId(params.data);
+    const accountId = isRecord(params.data) && typeof params.data.accountId === 'string' ? params.data.accountId.trim() : '';
+    const questionAction = answers && sessionId && requestId && turnId && accountId
+        ? { sessionId, requestId, turnId, answers } : null;
     // A workflow Run is addressed by identity, so its route is derived here and
     // deliberately takes precedence over any `url` the payload carries.
     const route = workflowRun
@@ -165,10 +174,11 @@ export function parseActivityInteraction(params: Readonly<{
     return {
         actionIdentifier,
         isDefaultTap,
-        isOpenAction,
+        isOpenAction: isOpenAction || isQuestionAction && !questionAction,
         route,
         serverUrl: resolveServerUrl(params.data),
         permissionAction: resolvedPermissionAction,
+        ...(isQuestionAction ? { questionAction } : {}),
         workflowRun,
     };
 }

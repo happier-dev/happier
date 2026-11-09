@@ -21,6 +21,7 @@ export type ParsedActivityInteraction = Readonly<{
     route: string | null;
     serverUrl: string | null;
     permissionAction: ActivityPermissionAction | null;
+    questionAction?: Readonly<{ sessionId: string; requestId: string; turnId: string; answers: Readonly<Record<string, readonly string[]>> }> | null;
     workflowRun: ActivityWorkflowRunTarget | null;
     guardAction?: 'keepRunning' | 'stopNow';
 }>;

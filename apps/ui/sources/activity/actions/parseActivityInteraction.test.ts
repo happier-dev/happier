@@ -1,4 +1,4 @@
-import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
+import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol/push/pushNotificationActions';
 import { describe, expect, it } from 'vitest';
 
 import { parseActivityInteraction } from './parseActivityInteraction';

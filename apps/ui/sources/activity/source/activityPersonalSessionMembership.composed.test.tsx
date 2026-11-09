@@ -4,6 +4,7 @@ import { ACCOUNT_SESSION_FOLLOW_CHANGE_ENTITY_ID } from '@happier-dev/protocol/s
 import type { FollowDeliveryMuteScopeV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { createPlainSessionByIdResponseFixture, createSessionAccessFixture, createSessionFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { ABSENT_SESSION_FOLLOW_FACTS_V1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import { createSessionListSourceFixture, createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
@@ -184,4 +185,151 @@ it.each(['credentials', 'account'] as const)('admits a row-only rule candidate o
     await flushHookEffects();
     expect(candidates()).not.toContainEqual({ serverId, sessionId: foreign.id });
     expect(hook.getCurrent().membership.followRulesByServerId?.[serverId]?.status).not.toBe('ready');
+});
+
+it.each(['follow', 'rule', 'pending'] as const)('settles a foreign original only when the incumbent Inbox represents it (%s)', async representation => {
+    const represented = representation !== 'pending';
+    const serverId = await homes.addHome({ name: 'Receiver', serverUrl, accountId: 'alice', currentAccount: true });
+    const features = createRootLayoutFeaturesResponse();
+    expect(tryWriteServerEnabledBitInPlace(features, 'sessions.filteredListing', true)).toBe(true);
+    homes.answer(serverId, '/v1/features', { body: features });
+    homes.answer(serverId, '/v1/features/authenticated', { body: features });
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+    const source = createSessionFixture({ id: 'foreign-source', serverId, ownerAccountId: 'bob', seq: 1,
+        encryptionMode: 'plain', latestTurnStatus: 'completed', access: createSessionAccessFixture('view'), viewer: createSessionViewerFixture({
+            follow: { ...ABSENT_SESSION_FOLLOW_FACTS_V1, follows: representation === 'follow' },
+            readState: representation === 'follow' ? { state: 'tracking', lastViewedSessionSeq: 0, unreadSince: 10 } : { state: 'not_started' },
+            ...(representation === 'follow' ? { attention: { needsAttention: true, reasons: ['unread' as const], primary: 'unread' as const,
+                presentation: 'full' as const } } : {}),
+            ...(representation === 'rule' ? { ruleReadStates: [{ ruleId: 'receiver-rule', ruleVersion: 0,
+                readState: { state: 'tracking' as const, lastViewedSessionSeq: 0, unreadSince: 1 } }] } : {}),
+        }) });
+    const ownSource = createSessionFixture({ ...source, id: 'own-source', ownerAccountId: 'alice', access: createSessionAccessFixture('owner') });
+    const rule = { ruleId: 'receiver-rule', receiver: { kind: 'account' }, version: 0, inception: { createdAt: 1 },
+        content: { t: 'plain', v: { v: 1, enabled: true, policy: { preset: 'everything' },
+            filter: normalizeSessionListFilterV1({ show: 'sessions', homeServerIds: [serverId], scope: 'all_accessible', startedBy: ['you', 'agents', 'triggers'] }) } } };
+    homes.answer(serverId, '/v2/sessions', { body: { sessions: [], hasNext: false, nextCursor: null } });
+    homes.answer(serverId, '/v2/sessions/query', { select: input => ({ body: createSessionListSourceFixture({
+        sessions: input && typeof input === 'object' && 'scope' in input && input.scope === 'all_accessible'
+            ? [source, ownSource].map(session => ({ ...createPlainSessionByIdResponseFixture(session).session, ownerAccountId: session.ownerAccountId,
+                viewer: session.viewer })) : [],
+        hasNext: false, nextCursor: null, attentionHasNext: false, attentionNextCursor: null,
+    }) }) });
+    homes.answer(serverId, '/v2/account/session-follow-rules', { body: { rules: [rule] } });
+    homes.answer(serverId, '/v2/account/session-follow-preferences', { body: { assigned: false, direct: false, team: false, group: false } });
+    homes.answer(serverId, mutePath, { body: { scopes: [] } });
+    for (const session of [source, ownSource]) {
+        const response = createPlainSessionByIdResponseFixture(session);
+        homes.answer(serverId, `/v2/sessions/${session.id}`, { body: { session: { ...response.session, ownerAccountId: session.ownerAccountId, viewer: session.viewer } } });
+        homes.answer(serverId, `/v1/sessions/${session.id}/messages`, { select: (_input, request) => ({ body: {
+            messages: Number(new URL(request.url).searchParams.get('afterSeq')) >= 1 ? [] : [{
+                id: 'original-message', localId: 'original-local', seq: 1, createdAt: 10, messageRole: 'agent',
+                content: { t: 'plain', v: { role: 'agent', content: { type: 'acp', agentId: 'codex',
+                    data: { type: 'message', message: 'Committed update' } } } },
+            }], hasMore: false, nextAfterSeq: null,
+        } }) });
+        homes.answer(serverId, `POST /v2/sessions/${session.id}/follows/occurrence-routes`, { body: {
+            ok: true, v: 1, sourceSessionId: session.id, routes: [], originalCreatedAt: 10,
+            receiverEvaluation: { ownerAccountId: session.ownerAccountId, production: 'source' },
+        } });
+    }
+    let acceptedEffects = 0;
+    homes.answer(serverId, 'POST /v2/account/session-follow-rules/personal-progress', { select: () => ({
+        body: { accepted: true, alreadyRepresented: acceptedEffects++ > 0 },
+    }) });
+    restored = await restoreServerAccountForTest({ serverUrl, accountId: 'alice',
+        credentials: { token: createAccountTokenForTests('alice', { currentAccount: true }) },
+        configureSocket: configureConnectedServerSocketBoundary,
+        request: createSessionReadBatchFetchBoundary(homes.request) });
+    await vi.waitFor(() => expect(getStorage().getState().isDataReady).toBe(true));
+    const hook = await renderHook(() => useActivityPersonalSessionMembership(), {
+        wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled>{children}</ActivityPersonalSessionMembershipProvider>,
+    });
+    await vi.waitFor(() => expect(hook.getCurrent().followRulesByServerId?.[serverId]?.status).toBe('ready'));
+    await vi.waitFor(() => expect(homes.requests.some(request => request.path === '/v2/sessions/query'
+        && request.input && typeof request.input === 'object' && 'scope' in request.input && request.input.scope === 'all_accessible')).toBe(true));
+    if (represented) {
+        await vi.waitFor(() => expect(homes.requests.filter(request => request.path === '/v2/account/session-follow-rules/personal-progress')).toHaveLength(1));
+        expect(homes.requests.find(request => request.path === '/v2/account/session-follow-rules/personal-progress')?.input).toMatchObject({
+            evaluation: 'receiver', production: 'source', sourceSessionId: source.id,
+            rules: [{ ruleId: 'receiver-rule', ruleVersion: 0 }], sourceMessage: { localId: 'original-local', seq: 1 },
+        });
+    } else {
+        await vi.waitFor(() => expect(hook.getCurrent().receiverRuleEvaluationByServerId?.[serverId]?.pendingBySourceSessionId[source.id])
+            .toBe('catch_up_pending'));
+        await flushHookEffects();
+        expect(homes.requests.filter(request => request.path === '/v2/account/session-follow-rules/personal-progress')).toHaveLength(0);
+    }
+    const readsBefore = homes.requests.length;
+    await act(async () => {
+        for (let index = 0; index < 1_000; index++) publishHomeAccountChange(serverId, [`machine-${index}`], { changeKinds: ['machine'] });
+        publishHomeAccountChange(serverId, [source.id], { changeKinds: ['session'], sessionListQueryAffects: false });
+    });
+    await flushHookEffects();
+    expect(homes.requests.slice(readsBefore).filter(request => request.path === '/v2/account/session-follow-rules')).toHaveLength(0);
+    expect(homes.requests.filter(request => request.path === '/v2/account/session-follow-rules/personal-progress')).toHaveLength(represented ? 1 : 0);
+    expect(homes.requests.filter(request => request.path.startsWith('/v1/sessions/own-source/messages'))).toHaveLength(0);
+    await act(async () => getStorage().getState().clearProfileScope());
+    await flushHookEffects();
+    const receiverReads = () => homes.requests.filter(request => request.path.includes('/messages')
+        || request.path.includes('/session-follow-rules') || request.path.includes('/follows/occurrence-routes'));
+    const retiredReads = receiverReads();
+    await act(async () => publishHomeAccountChange(serverId, [source.id], { changeKinds: ['session'], sessionListQueryAffects: false }));
+    await flushHookEffects();
+    expect(receiverReads()).toEqual(retiredReads);
+});
+
+it('keeps personal membership identity when an equal refetch moves only the query lifecycle', async () => {
+    const serverId = await homes.addHome({ name: 'Refetch', serverUrl, accountId: 'alice', currentAccount: true });
+    const features = createRootLayoutFeaturesResponse();
+    expect(tryWriteServerEnabledBitInPlace(features, 'sessions.filteredListing', true)).toBe(true);
+    homes.answer(serverId, '/v1/features', { body: features });
+    homes.answer(serverId, '/v1/features/authenticated', { body: features });
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    primeServerFeaturesSnapshot({ serverId, snapshot: { status: 'ready', features } });
+    const sessions = ['own-one', 'own-two'].map(id => createSessionFixture({ id, serverId, ownerAccountId: 'alice', seq: 1,
+        encryptionMode: 'plain', access: createSessionAccessFixture('owner'), viewer: createSessionViewerFixture() }));
+    homes.answer(serverId, '/v2/sessions', { body: { sessions: [], hasNext: false, nextCursor: null } });
+    homes.answer(serverId, '/v2/sessions/query', { body: createSessionListSourceFixture({
+        sessions: sessions.map(session => ({ ...createPlainSessionByIdResponseFixture(session).session, ownerAccountId: 'alice',
+            viewer: session.viewer })),
+        hasNext: false, nextCursor: null, attentionHasNext: false, attentionNextCursor: null,
+    }) });
+    homes.answer(serverId, '/v2/account/session-follow-rules', { body: { rules: [] } });
+    homes.answer(serverId, '/v2/account/session-follow-preferences', { body: { assigned: true, direct: false, team: false, group: false } });
+    homes.answer(serverId, mutePath, { body: { scopes: [] } });
+    restored = await restoreServerAccountForTest({ serverUrl, accountId: 'alice',
+        credentials: { token: createAccountTokenForTests('alice', { currentAccount: true }) },
+        configureSocket: configureConnectedServerSocketBoundary,
+        request: createSessionReadBatchFetchBoundary(homes.request) });
+    await vi.waitFor(() => expect(getStorage().getState().isDataReady).toBe(true));
+    const membershipIdentities = new Set<object>();
+    const hook = await renderHook(() => {
+        const membership = useActivityPersonalSessionMembership();
+        membershipIdentities.add(membership.membershipByServerId);
+        return membership;
+    }, {
+        wrapper: ({ children }) => <ActivityPersonalSessionMembershipProvider enabled>{children}</ActivityPersonalSessionMembershipProvider>,
+    });
+    await vi.waitFor(() => expect([...hook.getCurrent().membershipByServerId[serverId] ?? []].sort()).toEqual(['own-one', 'own-two']));
+    await vi.waitFor(() => expect(hook.getCurrent().statesByServerId[serverId]?.phase).toBe('ready'));
+    await flushHookEffects();
+    const before = hook.getCurrent();
+    const queryReads = () => homes.requests.filter(request => request.serverId === serverId && request.path === '/v2/sessions/query').length;
+    const readsBefore = queryReads();
+    membershipIdentities.clear();
+
+    const { invalidateSessionListQueryHome } = await import('@/sync/domains/session/listing/sessionListQueryInvalidation');
+    for (let index = 0; index < 3; index++) {
+        await act(async () => { await invalidateSessionListQueryHome(serverId); });
+        await vi.waitFor(() => expect(hook.getCurrent().statesByServerId[serverId]?.phase).toBe('ready'));
+    }
+    await flushHookEffects();
+
+    expect(queryReads()).toBe(readsBefore + 3);
+    // The lifecycle genuinely moved; the membership facts did not.
+    expect(hook.getCurrent().statesByServerId).not.toBe(before.statesByServerId);
+    expect(hook.getCurrent().membershipByServerId).toBe(before.membershipByServerId);
+    expect([...membershipIdentities]).toEqual([before.membershipByServerId]);
 });

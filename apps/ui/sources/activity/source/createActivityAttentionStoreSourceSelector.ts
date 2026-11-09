@@ -1,5 +1,6 @@
 import { readSessionViewerAttentionSignature } from '@/sync/domains/session/readState/sessionViewerAttention';
-import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 
 import { readExternalSessionLink } from '@/sync/domains/session/external/readExternalSessionLink';
 import {
@@ -234,6 +235,7 @@ function buildSessionActivitySignature(session: Session): string {
         session.access?.capabilities.submitAgentInput === true ? 1 : 0,
         session.access?.capabilities.approveRuntimePermissions === true ? 1 : 0,
         session.serverId ?? '',
+        readSessionManagerSessionIdV1(session) ?? '',
         session.active === true ? 1 : 0,
         readNumber(session.activeAt) ?? '',
         session.presence,
@@ -287,6 +289,7 @@ function buildRenderableActivitySignature(renderable: SessionListRenderableSessi
         renderable.id,
         readSessionContentAvailability(renderable),
         readSessionViewerAttentionSignature(renderable),
+        readSessionManagerSessionIdV1(renderable) ?? '',
         JSON.stringify(renderable.access?.audienceContext ?? null),
         renderable.access?.capabilities.submitAgentInput === true ? 1 : 0,
         renderable.access?.capabilities.approveRuntimePermissions === true ? 1 : 0,

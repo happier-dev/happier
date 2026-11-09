@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import { accountSettingsParse } from '@happier-dev/protocol';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import { flushHookEffects, renderScreen } from '@/dev/testkit';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
@@ -144,7 +144,7 @@ installActivityBadgeRuntimeCommonModuleMocks({
 
 vi.mock('@/hooks/inbox/useUpdates', () => ({ useUpdates: () => ({ updateAvailable: false }) }));
 vi.mock('@/hooks/inbox/useChangelog', () => ({ useChangelog: () => ({ hasUnread: false }) }));
-vi.mock('@/utils/platform/desktopHost', () => ({ isDesktopHost: () => false }));
+vi.mock('@/utils/platform/desktopHost', () => ({ isDesktopHost: () => false, desktopHostKind: () => null }));
 vi.mock('@/sync/http/client', () => ({ serverFetch }));
 vi.mock('./channels/applyExpoNativeBadgeState', () => ({ applyExpoNativeBadgeState }));
 vi.mock('./channels/applyTauriBadgeState', () => ({ applyTauriBadgeState: vi.fn(async () => {}) }));

@@ -1,14 +1,15 @@
-import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
-import { settingsParse } from '@/sync/domains/settings/settings';
-import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol';
+import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { describe, expect, it, vi } from 'vitest';
 import * as linkedSessionMetadata from '@happier-dev/protocol/sessions/external/linked-metadata';
 
+import { createSessionMessagesFixture } from '@/dev/testkit/fixtures/transcriptFixtures';
 import { createSessionAccessFixture, createSessionFixture, createSessionViewerFixture } from '@/dev/testkit';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { storage } from '@/sync/domains/state/storageStore';
 import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization';
+import { settingsParse } from '@/sync/domains/settings/settings';
 
 import { createActivityAttentionStoreSourceSelector } from './createActivityAttentionStoreSourceSelector';
 import { readActivitySessionRulePolicies } from './readActivitySessionRulePolicies';
@@ -61,6 +62,26 @@ describe('createActivityAttentionStoreSourceSelector', () => {
         expect(closed(state).sessionMessagesById).toBeUndefined();
     });
 
+    it.each(['hydrated', 'list'] as const)('refreshes a %s rule-only read boundary and preserves unchanged source identity', kind => {
+        const base = storage.getState();
+        const viewer = createSessionViewerFixture({ ruleReadStates: [{ ruleId: 'personal', ruleVersion: 1,
+            readState: { state: 'tracking', lastViewedSessionSeq: 1, unreadSince: 10 } }] });
+        const session = createSessionFixture({ id: 'foreign', serverId: 'home-a', ownerAccountId: 'bob', seq: 2, viewer });
+        const stateFor = (next: typeof session): typeof base => ({ ...base,
+            sessions: kind === 'hydrated' ? { [session.id]: next } : {},
+            sessionListRowsByServerId: kind === 'list' ? { 'home-a': { [session.id]: buildSessionListRenderableFromSession(next) } } : {},
+            ordinarySessionListMembershipByServerId: {}, sessionListIndexByServerId: {}, concurrentSessionListCacheByServerId: {},
+        });
+        const selector = createActivityAttentionStoreSourceSelector({}, { includeSessionMessages: false, includeFollowRuleFacts: true,
+            ruleMembershipByServerId: { 'home-a': [session.id] } });
+        const first = selector(stateFor(session));
+        const read = { ...session, viewer: { ...viewer, ruleReadStates: [{ ruleId: 'personal', ruleVersion: 1,
+            readState: { state: 'tracking' as const, lastViewedSessionSeq: 2, unreadSince: null } }] } };
+        const changed = selector(stateFor(read));
+        expect(changed).not.toBe(first);
+        expect(selector(stateFor({ ...read }))).toBe(changed);
+    });
+
     it('refreshes a changed row held only by the authorized rule query corpus', () => {
         const base = storage.getState();
         const session = createSessionFixture({ id: 'rule-query-source', serverId: 'home-a', ownerAccountId: 'alice' });
@@ -75,6 +96,30 @@ describe('createActivityAttentionStoreSourceSelector', () => {
         expect(changed).not.toBe(first);
         expect(changed.sessionListRowsByServerId['home-a']?.[session.id]?.hasPendingUserActionRequests).toBe(true);
         expect(selector({ ...state, lastSyncAt: 99, sessionListRowsByServerId: changed.sessionListRowsByServerId })).toBe(changed);
+    });
+
+    it.each(['hydrated', 'list'] as const)('refreshes a %s Session after manager-only reassignment or detachment', kind => {
+        const session = createSessionFixture({ id: 'report-worker', serverId: 'home-a', manager: { sessionId: 'first-lead' } });
+        const base = storage.getState();
+        const sourceState = (next: typeof session): typeof base => ({ ...base,
+            sessions: kind === 'hydrated' ? { [session.id]: next } : {},
+            sessionListRowsByServerId: kind === 'list'
+                ? { 'home-a': { [session.id]: buildSessionListRenderableFromSession(next) } } : {},
+            ordinarySessionListMembershipByServerId: { 'home-a': [session.id] },
+            sessionListIndexByServerId: {}, concurrentSessionListCacheByServerId: {},
+        });
+        const selector = createActivityAttentionStoreSourceSelector({}, { includeSessionMessages: false });
+        const first = selector(sourceState(session));
+        const reassigned = selector(sourceState({ ...session, manager: { sessionId: 'next-lead' } }));
+        expect(reassigned).not.toBe(first);
+        const carried = kind === 'hydrated' ? reassigned.sessionsById[session.id]
+            : reassigned.sessionListRowsByServerId['home-a']?.[session.id];
+        expect(readSessionManagerSessionIdV1(carried)).toBe('next-lead');
+        const detached = selector(sourceState({ ...session, manager: null }));
+        expect(detached).not.toBe(reassigned);
+        const detachedSession = kind === 'hydrated' ? detached.sessionsById[session.id]
+            : detached.sessionListRowsByServerId['home-a']?.[session.id];
+        expect(readSessionManagerSessionIdV1(detachedSession)).toBeNull();
     });
 
     it('uses held Section assignments for rule preview and invalidates only affected membership', () => {
@@ -202,6 +247,38 @@ describe('createActivityAttentionStoreSourceSelector', () => {
             expect(next.sessionsById.linked.metadata?.externalSessionV1).toMatchObject({ remoteSessionId: 'remote-b' });
             expect(parse.mock.calls.filter(([input]) => input === updated)).toHaveLength(1);
         } finally { stop(); parse.mockRestore(); storage.setState(previous); }
+    });
+    it('reuses admitted linked metadata for optional Activity Agent predicates without reparsing', () => {
+        const session = createSessionFixture({ id: 'agent-demand', serverId: 'home-a', ownerAccountId: 'alice', origin: { kind: 'none' },
+            viewer: createSessionViewerFixture(), metadata: { path: '/repo', host: 'localhost', externalSessionV1: {
+                v: 1, agentId: 'codex', machineId: 'machine-a', remoteSessionId: 'remote-a',
+                source: { kind: 'codexHome', home: 'user' },
+            } } });
+        const source = { ...createActivityAttentionStoreSourceSelector()({ ...storage.getState(), sessions: { [session.id]: session } }),
+            personalFollowRulesByServerId: { 'home-a': { status: 'ready' as const, accountId: 'alice', rules: [{
+                ruleId: 'all', receiver: { kind: 'account' as const }, version: 0,
+                definition: { v: 1 as const, enabled: true, policy: { preset: 'important' as const },
+                    filter: normalizeSessionListFilterV1({ scope: 'all_accessible', homeServerIds: ['home-a'],
+                        startedBy: ['you', 'triggers', 'agents'] }) },
+            }] } },
+        };
+        const parse = vi.spyOn(linkedSessionMetadata, 'readNonAuthoritativeLinkedExternalSessionV1FromMetadata');
+        try {
+            expect(readActivitySessionRulePolicies(source, { serverId: 'home-a', sessionId: session.id }, session, 1_000))
+                .toEqual([{ preset: 'important' }]);
+            // The store source already admitted this immutable metadata, including an absent link.
+            expect(parse.mock.calls.filter(([metadata]) => metadata === session.metadata)).toHaveLength(0);
+            const selected = { ...source, personalFollowRulesByServerId: { 'home-a': {
+                ...source.personalFollowRulesByServerId['home-a'], rules: source.personalFollowRulesByServerId['home-a'].rules.map(rule => ({
+                    ...rule, definition: { ...rule.definition, filter: normalizeSessionListFilterV1({
+                        ...rule.definition.filter, agents: { include: ['agent:happier.agent.codex/codex'], exclude: [] },
+                    }) },
+                })),
+            } } };
+            expect(readActivitySessionRulePolicies(selected, { serverId: 'home-a', sessionId: session.id }, session, 1_000))
+                .toEqual([{ preset: 'important' }]);
+            expect(parse.mock.calls.filter(([metadata]) => metadata === session.metadata)).toHaveLength(0);
+        } finally { parse.mockRestore(); }
     });
     it.each(['hydrated', 'list'] as const)('updates pending-navigation eligibility when %s content availability changes', async (kind) => {
         const { buildPendingNavigationFromSource } = await import('./buildPendingNavigationFromSource');

@@ -1,5 +1,5 @@
-import { accountSettingsParse, type AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
-import { DeviceRemoteAlertPolicyV1Schema, type DeviceRemoteAlertPolicyV1 } from '@happier-dev/protocol/account/settings/accountRemoteAlertPolicy';
+import type { AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
+import { DeviceRemoteAlertPolicyV1Schema, readAccountRemoteAlertSettings, type DeviceRemoteAlertPolicyV1 } from '@happier-dev/protocol/account/settings/accountRemoteAlertPolicy';
 
 import {
     AttentionDeviceOverridesV1Schema,
@@ -60,7 +60,7 @@ export function deriveDeviceRemoteAlertPolicyV1(params: Readonly<{
     nativeSupport: DeviceRemoteAlertNativeSupport | null;
 }>): DeviceRemoteAlertPolicyV1 | null {
     if (!params.nativeSupport) return null;
-    const account = accountSettingsParse(params.accountSettings ?? {});
+    const account = readAccountRemoteAlertSettings(params.accountSettings);
     if (account.sessionRemoteAlertsEnabled !== true && account.machineOfflineAlertsV1.machineIds.length === 0) return null;
 
     const local = localSettingsParse(params.localSettings ?? {});

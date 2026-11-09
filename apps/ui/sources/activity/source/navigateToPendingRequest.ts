@@ -2,7 +2,7 @@ import { resolvePendingRequestAttentionReasonV1 } from '@happier-dev/protocol/se
 import { isSessionPersonallyTrackedForViewer } from '@/sync/domains/session/readState/sessionViewer';
 import { resolveSessionPersonalAttentionForViewer } from '@/sync/domains/session/readState/sessionViewerAttention';
 import { areSessionAddressesEqual, normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
-import { readPendingNavigationDetails, type PendingNavigationDetailsResult } from '@/sync/ops/sessionPendingNavigationDetails';
+import type { PendingNavigationDetailsResult } from '@/sync/ops/sessionPendingNavigationDetails';
 import { buildPermissionToolCallRoute } from '@/utils/sessions/permissions/buildPermissionToolCallRoute';
 import { isPendingNavigationRequestAnswerable, type PendingNavigationTarget } from './buildPendingNavigationFromSource';
 import { collectSourceSessions } from './buildActivityOverviewFromSource';
@@ -48,7 +48,7 @@ export function planPendingNavigationRoute(params: Readonly<{
 
 export async function navigateToPendingRequest(params: Readonly<{
     target: PendingNavigationTarget;
-    details?: Extract<PendingNavigationDetailsResult, { kind: 'available' }>;
+    details: Extract<PendingNavigationDetailsResult, { kind: 'available' }>;
     source: ActivityAttentionSource;
     nowMs: number;
     signal?: AbortSignal;
@@ -59,11 +59,8 @@ export async function navigateToPendingRequest(params: Readonly<{
         .some(candidate => areSessionAddressesEqual(candidate.address, params.target.address))) return { status: 'unavailable', reason: 'target_unavailable' };
     const scope = params.source.audienceScopes?.get(params.target.address.serverId);
     if (params.source.audienceScopes && !scope) return { status: 'unavailable', reason: 'scope_changed' };
-    const details = await readPendingNavigationDetails(params.target.address, scope, {
-        signal: params.signal, reuse: params.details,
-    });
-    if (params.signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
-    const plan = planPendingNavigationRoute({ ...params, details });
+    // Selection already admitted these details; the mounted destination observes settlement.
+    const plan = planPendingNavigationRoute(params);
     if (plan.kind === 'unavailable') return { status: 'unavailable', reason: plan.reason };
     params.openRoute(plan.route);
     setPendingNavigationLanding(params.target.address, params.target.requestId, plan.state, plan.focusTarget, params.target.requestSource);

@@ -15,7 +15,7 @@ function isUrgentCandidate(candidate: SessionActivityAttention, selection: Pick<
 >): boolean {
     if (!candidate.hasAttention) return false;
 
-    if (selection.activeOnly && candidate.session.active !== true) {
+    if (selection.activeOnly && (candidate.presentationSource?.lifecycle.active ?? candidate.session.active) !== true) {
         return false;
     }
 
@@ -35,7 +35,7 @@ function isRunningCandidate(candidate: SessionActivityAttention, selection: Pick
         return true;
     }
 
-    if (selection.activeOnly && candidate.session.active !== true) {
+    if (selection.activeOnly && (candidate.presentationSource?.lifecycle.active ?? candidate.session.active) !== true) {
         return false;
     }
 
@@ -46,7 +46,7 @@ function isRunningCandidate(candidate: SessionActivityAttention, selection: Pick
     return (
         selection.includeQuietActive &&
         candidate.attentionState === 'waiting' &&
-        candidate.session.active === true
+        (candidate.presentationSource?.lifecycle.active ?? candidate.session.active) === true
     );
 }
 

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 import { installSettingsViewCommonModuleMocks } from '@/components/settings/settingsViewTestHelpers';
@@ -9,14 +9,23 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { saveAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
+import { settingsDefaults } from '@/sync/domains/settings/settings';
 
 installSettingsViewCommonModuleMocks({ storage: 'real', text: async () => vi.importActual<typeof import('@/text')>('@/text') });
 const native = vi.hoisted(() => ({
     scheduleNotificationAsync: vi.fn(async (_request: Parameters<typeof import('expo-notifications')['scheduleNotificationAsync']>[0]) => 'scheduled-reminder'),
     cancelScheduledNotificationAsync: vi.fn(async (_identifier: string) => undefined),
 }));
-// Only Expo's OS transport is replaced; inventory, Settings and reminder owners remain real.
-vi.mock('expo-notifications', () => ({ ...native, SchedulableTriggerInputTypes: { DATE: 'date' } }));
+// The real Sync graph's Node loader and direct imports share this OS transport.
+beforeEach(async () => {
+    const notifications = await import('@/dev/expoNotificationsStub');
+    vi.spyOn(notifications, 'scheduleNotificationAsync').mockImplementation(async raw => {
+        // The shared native boundary accepts unknown; production supplies Expo's request shape.
+        return native.scheduleNotificationAsync(raw as Parameters<typeof import('expo-notifications')['scheduleNotificationAsync']>[0]);
+    });
+    vi.spyOn(notifications, 'cancelScheduledNotificationAsync').mockImplementation(native.cancelScheduledNotificationAsync);
+});
 
 // Prepare the real application graph during collection, like the settings integration tests.
 await loadSyncSingletonForTests();
@@ -41,13 +50,17 @@ describe('managed Machine deletion reminder Account preference', () => {
                 deletionNotices: [{ kind: 'stopped-storage', at: deadline,
                     rule: { kind: 'after-stop', afterMs: 14 * day }, consequence: 'disk-deleted' }] },
         });
+        const sibling = ManagedMachineV1Schema.parse({ ...machine, homeId: 'srv_sibling_reminders', custodianAccountId: 'sibling-owner' });
         const homes = await serveActionHomes({ homes: [{ key: 'reminders',
             serverUrl: 'https://deletion-preferences.test', serverIdentityId: homeId, accountId: 'owner', currentAccount: true,
             settings: { managedMachineDeletionReminderLeadTimeMs: day },
+        }, { key: 'sibling', serverUrl: 'https://sibling-reminders.test', serverIdentityId: sibling.homeId,
+            accountId: sibling.custodianAccountId, currentAccount: true,
+            settings: { managedMachineDeletionReminderLeadTimeMs: 2 * day },
         }], route: request => {
             if (request.path === '/v1/machines/managed/actions/list') {
                 const archived = request.body && typeof request.body === 'object' && 'archived' in request.body && request.body.archived;
-                return Response.json({ machines: archived ? [] : [machine] });
+                return Response.json({ machines: archived ? [] : [request.home === 'sibling' ? sibling : machine] });
             }
             return undefined;
         } });
@@ -59,7 +72,12 @@ describe('managed Machine deletion reminder Account preference', () => {
         const { useManagedMachineDeletionAttention } = await import('@/activity/source/useManagedMachineDeletionSource');
         const { ManagedMachineDeletionNotificationRuntime } = await import('./ManagedMachineDeletionNotificationRuntime');
         const serverId = homes.homes.reminders!.id;
-        const serverIds = [serverId];
+        const siblingServerId = homes.homes.sibling!.id;
+        // The inactive Home has already synchronized its Account preferences on this device.
+        saveAccountSettings({ serverId: siblingServerId, accountId: sibling.custodianAccountId }, {
+            ...settingsDefaults, managedMachineDeletionReminderLeadTimeMs: 2 * day,
+        }, 1);
+        const serverIds = [serverId, siblingServerId];
         let attention: ReturnType<typeof useManagedMachineDeletionAttention> = [];
         let commits = 0;
         function Attention() { attention = useManagedMachineDeletionAttention(serverId); return null; }
@@ -68,10 +86,14 @@ describe('managed Machine deletion reminder Account preference', () => {
             <ManagedMachineDeletionNotificationRuntime serverIds={serverIds} />
         </React.Profiler>);
         onTestFinished(() => screen.unmount());
-        await vi.waitFor(() => expect(native.scheduleNotificationAsync).toHaveBeenCalled());
+        await vi.waitFor(() => expect(native.scheduleNotificationAsync).toHaveBeenCalledTimes(2));
         const identifier = `managed-machine-deletion:${JSON.stringify([serverId, 'owner', machine.id])}`;
-        expect(native.scheduleNotificationAsync).toHaveBeenLastCalledWith(expect.objectContaining({
+        expect(native.scheduleNotificationAsync).toHaveBeenCalledWith(expect.objectContaining({
             identifier, trigger: { type: 'date', date: new Date(deadline - day) },
+        }));
+        const siblingIdentifier = `managed-machine-deletion:${JSON.stringify([siblingServerId, sibling.custodianAccountId, sibling.id])}`;
+        expect(native.scheduleNotificationAsync).toHaveBeenCalledWith(expect.objectContaining({
+            identifier: siblingIdentifier, trigger: { type: 'date', date: new Date(deadline - 2 * day) },
         }));
         expect(attention).toEqual([]);
 
@@ -105,7 +127,17 @@ describe('managed Machine deletion reminder Account preference', () => {
             identifier, trigger: { type: 'date', date: new Date(deadline) },
         })));
         expect(attention).toEqual([]);
-        expect(native.cancelScheduledNotificationAsync.mock.calls.every(([id]) => id === identifier)).toBe(true);
+        expect(native.scheduleNotificationAsync.mock.calls.filter(([request]) => request.identifier === siblingIdentifier)).toHaveLength(1);
+
+        // Editing the inactive Home's policy must reschedule only its own reminder.
+        const primarySchedules = native.scheduleNotificationAsync.mock.calls.filter(([request]) => request.identifier === identifier).length;
+        await act(async () => saveAccountSettings({ serverId: siblingServerId, accountId: sibling.custodianAccountId }, {
+            ...settingsDefaults, managedMachineDeletionReminderLeadTimeMs: day,
+        }, 2));
+        await vi.waitFor(() => expect(native.scheduleNotificationAsync).toHaveBeenLastCalledWith(expect.objectContaining({
+            identifier: siblingIdentifier, trigger: { type: 'date', date: new Date(deadline - day) },
+        })));
+        expect(native.scheduleNotificationAsync.mock.calls.filter(([request]) => request.identifier === identifier)).toHaveLength(primarySchedules);
 
         machine = ManagedMachineV1Schema.parse({ ...machine, observation: { ...machine.observation, deletionNotices: [] } });
         const beforeWithdrawal = native.cancelScheduledNotificationAsync.mock.calls.length;

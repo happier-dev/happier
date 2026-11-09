@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { accountSettingsParse } from '@happier-dev/protocol';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import { localSettingsDefaults, localSettingsParse } from '@/sync/domains/settings/localSettings';
 

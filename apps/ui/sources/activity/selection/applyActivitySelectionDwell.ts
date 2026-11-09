@@ -49,7 +49,7 @@ function isCandidateFresh(
         return true;
     }
     const observation = candidate.address ? sessionRuntimeObservations.read(candidate.address) : undefined;
-    return nowMs - Math.max(candidate.session.updatedAt, observation?.activeAt ?? 0) < staleAfterMs;
+    return nowMs - Math.max(candidate.presentationSource?.lifecycle.updatedAt ?? candidate.session.updatedAt, observation?.activeAt ?? 0) < staleAfterMs;
 }
 
 export function applyActivitySelectionDwell(params: Readonly<{

@@ -294,3 +294,4 @@ export function resolveNotchCameraSeamStops(rowHeight: number): Readonly<{
   }
   return { height, stops };
 }
+

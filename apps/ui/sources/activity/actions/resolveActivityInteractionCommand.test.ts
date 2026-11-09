@@ -1,4 +1,5 @@
-import { HAPPIER_FOCUS_LIVE_ACTIVITY_NAME, PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol';
+import { HAPPIER_FOCUS_LIVE_ACTIVITY_NAME} from '@happier-dev/protocol/activity/live/remoteUpdates';
+import { PUSH_NOTIFICATION_ACTION_IDS } from '@happier-dev/protocol/push/pushNotificationActions';
 import { describe, expect, it } from 'vitest';
 
 async function loadResolverModule() {

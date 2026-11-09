@@ -1,10 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { accountSettingsParse } from '@happier-dev/protocol';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import { createStorageStoreMock } from '@/dev/testkit/mocks/storage';
 import { createSessionAccessFixture, createSessionFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { normalizeSessionListFilterV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import { buildActivityOverviewSummaryFromSource } from '@/activity/source/buildActivityOverviewFromSource';
+import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization';
 import type { ActivityAttentionSource } from '@/activity/source/activityAttentionSourceTypes';
 import type { Message } from "@happier-dev/session-core/messages";
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
@@ -15,6 +16,7 @@ import { createReducer } from "@happier-dev/session-core/reducer";
 import type { SessionMessages } from '@/sync/store/domains/messages';
 import type { StorageState } from '@/sync/store/types';
 import { createLocalActivityBadgeSnapshotSelector } from './createLocalActivityBadgeSnapshotSelector';
+import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 
 let currentState: StorageState;
 
@@ -167,11 +169,75 @@ describe('createLocalActivityBadgeSnapshotSelector', () => {
         registerStorageStateReader(() => currentState);
     });
 
+    it('counts and refreshes a request held only by the authorized rule query corpus', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const session = createSessionFixture({ id: 'rule-query-source', serverId: 'server1', active: true, activeAt: 950, updatedAt: 950,
+            access: createSessionAccessFixture('edit'), viewer: createSessionViewerFixture(),
+            agentState: { controlledByUser: null, requests: { request_1: {
+                tool: 'Read', kind: 'user_action', arguments: {}, createdAt: 950,
+            } } } });
+        const row = buildSessionListRenderableFromSession(session);
+        const state = createStorageState({ sessions: {}, sessionListRowsByServerId: { server1: { [session.id]: row } },
+            ordinarySessionListMembershipByServerId: {}, sessionListIndexByServerId: {} });
+        const selector = createLocalActivityBadgeSnapshotSelector({
+            accountSettingsByServerId: { server1: accountSettingsParse({}) }, friendRequestCount: 0,
+            hasNonNumericInboxAttention: false, localSettings: localSettingsDefaults,
+            personalSessionListMembershipByServerId: { server1: [] },
+            ruleSessionMembershipByServerId: { server1: [session.id] },
+            personalFollowRulesByServerId: { server1: { status: 'ready', accountId: 'account1', rules: [{
+                ruleId: 'all-accessible', receiver: { kind: 'account' }, version: 1,
+                definition: { v: 1, enabled: true, policy: { preset: 'important' },
+                    filter: normalizeSessionListFilterV1({ scope: 'all_accessible', homeServerIds: ['server1'],
+                        startedBy: ['you', 'triggers', 'agents'] }) },
+            }] } },
+        });
+        expect(selector(state)).toMatchObject({ hasLocalActivitySource: true, localBadgeState: { count: 1 } });
+        const settled = { ...state, sessionListRowsByServerId: { server1: { [session.id]: { ...row,
+            hasPendingUserActionRequests: false } } } };
+        const after = selector(settled);
+        expect(after.localBadgeState.count).toBe(0);
+        expect(selector({ ...settled, lastSyncAt: 2_000 })).toBe(after);
+    });
+
+    it('recounts rule-only requests after held Section assignment changes without unrelated invalidation', () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_000);
+        const session = createSessionFixture({ id: 'section-rule', serverId: 'server1', ownerAccountId: 'account1',
+            origin: { kind: 'none' }, active: true, activeAt: 950, updatedAt: 950,
+            viewer: createSessionViewerFixture(), pendingUserActionRequestCount: 1, pendingRequestObservedAt: 950 });
+        const state = createStorageState({ sessions: { [session.id]: session } });
+        const selector = createLocalActivityBadgeSnapshotSelector({
+            accountSettingsByServerId: { server1: accountSettingsParse({}) }, friendRequestCount: 0,
+            hasNonNumericInboxAttention: false, localSettings: localSettingsDefaults,
+            personalFollowRulesByServerId: { server1: { status: 'ready', accountId: 'account1', rules: [{
+                ruleId: 'section', receiver: { kind: 'account' }, version: 0,
+                definition: { v: 1, enabled: true, policy: { preset: 'important' },
+                    filter: normalizeSessionListFilterV1({ scope: 'all_accessible', homeServerIds: ['server1'],
+                        startedBy: ['you', 'triggers', 'agents'], sections: { include: [{ serverId: 'server1', sectionId: 'section-a' }], exclude: [] } }) },
+            }] } },
+        });
+        expect(selector(state).localBadgeState.count).toBe(0);
+        const key = buildSessionOrganizationSessionKey('server1', session.id);
+        const held = { ...state, sessionOrganizationFolderAssignmentsBySessionKey: {
+            [key]: { sessionId: session.id, folderId: 'section-a' },
+        } };
+        const selected = selector(held);
+        expect(selected.localBadgeState.count).toBe(1);
+        expect(selector({ ...held, sessionOrganizationFolderAssignmentsBySessionKey: {
+            ...held.sessionOrganizationFolderAssignmentsBySessionKey,
+            [buildSessionOrganizationSessionKey('server1', 'unloaded')]: { sessionId: 'unloaded', folderId: 'elsewhere' },
+        } })).toBe(selected);
+        expect(selector({ ...held, sessionOrganizationFolderAssignmentsBySessionKey: {
+            [key]: { sessionId: session.id, folderId: null },
+        } }).localBadgeState.count).toBe(0);
+    });
+
     it('counts loaded rule-only requests and invalidates after a Project-only edit', () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000);
         const session = createSessionFixture({ id: 'rule-only', serverId: 'server1', active: true, activeAt: 950,
-            updatedAt: 950, presence: 'online', access: createSessionAccessFixture('edit'),
+            updatedAt: 950, projectKey: 'payments', presence: 'online', access: createSessionAccessFixture('edit'),
             viewer: createSessionViewerFixture(), metadata: { ...createSessionFixture().metadata, path: '/Users/tester/project', host: 'tester.local', projectId: 'payments' },
             pendingUserActionRequestCount: 1, pendingRequestObservedAt: 950 });
         const state = createStorageState({ sessions: { [session.id]: session } });
@@ -196,7 +262,7 @@ describe('createLocalActivityBadgeSnapshotSelector', () => {
             personalFollowRulesByServerId,
         });
         expect(selector(state).localBadgeState.count).toBe(1);
-        const moved = { ...session, metadata: { ...session.metadata, path: '/Users/tester/project', host: 'tester.local', projectId: 'design' } };
+        const moved = { ...session, projectKey: 'design', metadata: { ...session.metadata, path: '/Users/tester/project', host: 'tester.local', projectId: 'design' } };
         expect(selector({ ...state, sessions: { [session.id]: moved } }).localBadgeState.count).toBe(0);
     });
 

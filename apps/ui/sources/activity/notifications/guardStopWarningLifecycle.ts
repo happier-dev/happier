@@ -5,10 +5,20 @@ import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionEx
 import type { ActivityInteractionCommand } from '@/activity/actions/resolveActivityInteractionCommand';
 import { fetchMachineGuardViewViaAction } from '@/sync/domains/machines/guard/machineGuardRpc';
 import { resolveServerCredentialAccountScope } from '@/sync/domains/scope/serverCredentialAccountScope';
-import { loadExpoNotifications, type ExpoNotificationsModule } from '@/utils/platform/loadExpoNotifications';
+import { loadExpoNotifications } from '@/utils/platform/loadExpoNotifications';
 import { resolveNotificationSavedHome } from './resolveNotificationSavedHome';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { machineGuardStore } from '@/sync/domains/machines/guard/machineGuardStore';
+import { desktopHostKind, isDesktopHost } from '@/utils/platform/desktopHost';
+import { desktopGuardNotificationTransport } from './channels/tauriNotificationPlugin';
+
+type PresentedGuardNotification = Readonly<{ request: Readonly<{
+    identifier: string; content: Readonly<{ data?: unknown; accountId?: string }>;
+}> }>;
+type GuardNotificationTransport = Readonly<{
+    getPresentedNotificationsAsync: () => Promise<readonly PresentedGuardNotification[]>;
+    dismissNotificationAsync: (identifier: string) => Promise<void>;
+}>;
 
 /** A successful Guard read owns absence; a missing terminal projection remains unknown. */
 function warningCurrent(warning: GuardStopWarningPushDataV1, view: MachineGuardViewV1): boolean | null {
@@ -25,12 +35,12 @@ function warningCurrent(warning: GuardStopWarningPushDataV1, view: MachineGuardV
 }
 
 /** Direct controls never replay a withdrawn or replaced warning on the same Session/terminal. */
-export async function executeGuardStopWarningAction(command: Extract<ActivityInteractionCommand, { kind: 'executeAction' }>, signal?: AbortSignal): Promise<ActionExecuteResult | null> {
+export async function executeGuardStopWarningAction(command: Extract<ActivityInteractionCommand, { kind: 'executeAction' }>, signal?: AbortSignal, expectedAccountId?: string): Promise<ActionExecuteResult | null> {
     const warning = command.guardWarning;
     const serverId = command.target.serverId;
     if (!warning || !serverId || signal?.aborted) return null;
     const binding = await resolveServerCredentialAccountScope(serverId);
-    if (binding.kind !== 'bound' || signal?.aborted) return null;
+    if (binding.kind !== 'bound' || expectedAccountId && binding.scope.accountId !== expectedAccountId || signal?.aborted) return null;
     const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
     if (signal?.aborted) return null;
     const key = { serverId, expectedAccountId: binding.scope.accountId, machineId: warning.machineId, ...(signal ? { signal } : {}) };
@@ -44,10 +54,11 @@ export async function executeGuardStopWarningAction(command: Extract<ActivityInt
 
 /** Reuse the delivered OS request id; the payload occurrence id is not Expo's dismissal handle. */
 export async function reconcileGuardStopWarningNotifications(params: Readonly<{
-    notifications?: Pick<ExpoNotificationsModule, 'getPresentedNotificationsAsync' | 'dismissNotificationAsync'>;
+    notifications?: GuardNotificationTransport;
     session?: Readonly<{ serverId: string; sessionId: string }>;
 }> = {}): Promise<void> {
-    const notifications = params.notifications ?? await loadExpoNotifications();
+    const notifications: GuardNotificationTransport = params.notifications ?? (isDesktopHost() && desktopHostKind() === 'tauri'
+        ? desktopGuardNotificationTransport : await loadExpoNotifications());
     const presented = await notifications.getPresentedNotificationsAsync();
     for (const notification of presented) {
         const parsed = GuardStopWarningPushDataV1Schema.safeParse(notification.request.content.data);
@@ -57,7 +68,8 @@ export async function reconcileGuardStopWarningNotifications(params: Readonly<{
         if (!home || params.session && (!areServerProfileIdentifiersEquivalent(params.session.serverId, home.id) || warning.rule === 'idle_terminals'
             || warning.sessionId !== params.session.sessionId)) continue;
         const binding = await resolveServerCredentialAccountScope(home.id);
-        if (binding.kind !== 'bound') continue;
+        if (binding.kind !== 'bound' || notification.request.content.accountId
+            && binding.scope.accountId !== notification.request.content.accountId) continue;
         const current = await fetchMachineGuardViewViaAction({ serverId: home.id, expectedAccountId: binding.scope.accountId, machineId: warning.machineId });
         if (!current.ok || warningCurrent(warning, current.value) !== false) continue;
         const admitted = await resolveServerCredentialAccountScope(home.id);
@@ -67,7 +79,9 @@ export async function reconcileGuardStopWarningNotifications(params: Readonly<{
 }
 
 /** Delivered warnings demand the existing daemon watch only for their lifetime. */
-export function observeGuardStopWarningNotifications(notifications: ExpoNotificationsModule, onError: (error: unknown) => void) {
+export function observeGuardStopWarningNotifications(notifications: GuardNotificationTransport & Readonly<{
+    addNotificationReceivedListener: (listener: () => void) => { remove: () => void };
+}>, onError: (error: unknown) => void) {
     let disposed = false;
     let refreshing = false;
     let refreshRequested = false;
@@ -96,7 +110,8 @@ export function observeGuardStopWarningNotifications(notifications: ExpoNotifica
                         const home = resolveNotificationSavedHome({ serverId: warning.serverId, serverUrl: warning.serverUrl ?? '' });
                         if (!home) continue;
                         const binding = await resolveServerCredentialAccountScope(home.id);
-                        if (binding.kind !== 'bound' || disposed) continue;
+                        if (binding.kind !== 'bound' || notification.request.content.accountId
+                            && binding.scope.accountId !== notification.request.content.accountId || disposed) continue;
                         const key = { serverId: binding.scope.serverId, expectedAccountId: binding.scope.accountId, machineId: warning.machineId };
                         const id = JSON.stringify([key.serverId, key.expectedAccountId, key.machineId]);
                         // A push can precede an already-open view's watch answer. Invalidate before

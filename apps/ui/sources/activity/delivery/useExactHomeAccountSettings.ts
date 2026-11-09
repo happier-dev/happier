@@ -3,7 +3,6 @@ import * as React from 'react';
 import { accountSettingsParse, type AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import {
-    areServerAccountScopesEqual,
     serverAccountScopeKeySuffix,
     serverAccountScopeListKey,
     type ServerAccountScope,
@@ -13,6 +12,9 @@ import {
     readAccountSettingsPersistenceMutationToken,
     subscribeAccountSettingsPersistenceMutations,
 } from '@/sync/domains/state/accountSettingsPersistence';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
+
+const DELIVERY_SETTING_KEYS = ['attentionDeliveryPolicyV1'] as const;
 
 /**
  * Persisted Account settings bytes for one Home. Mirrors the canonical delivery
@@ -57,6 +59,7 @@ export function readExactHomeAccountSettings(
  */
 export function useExactHomeAccountSettings(
     audienceScopes: ReadonlyMap<string, ServerAccountScope> | undefined,
+    consumedKeys: readonly (keyof AccountSettings)[] = DELIVERY_SETTING_KEYS,
 ): ExactHomeAccountSettingsResolver {
     const scopes = React.useMemo(() => {
         const unique = new Map<string, ServerAccountScope>();
@@ -68,21 +71,47 @@ export function useExactHomeAccountSettings(
         ));
     }, [audienceScopes]);
     const scopesKey = serverAccountScopeListKey(scopes);
-    const subscribe = React.useCallback((listener: () => void) => (
-        subscribeAccountSettingsPersistenceMutations((mutatedScope) => {
-            if (scopes.some((scope) => areServerAccountScopesEqual(scope, mutatedScope))) listener();
-        })
-    ), [scopesKey]);
-    const readSnapshot = React.useCallback(() => JSON.stringify(scopes.map((scope) => [
-        scope.serverId,
-        scope.accountId,
-        readAccountSettingsPersistenceMutationToken(scope),
-    ])), [scopesKey]);
+    const keysKey = JSON.stringify(consumedKeys);
+    const subscribe = React.useCallback((listener: () => void) => {
+        const releases = scopes.map(scope => subscribeAccountSettingsPersistenceMutations(listener, {
+            scope, keys: consumedKeys,
+        }));
+        return () => releases.forEach(release => release());
+    }, [scopesKey, keysKey]);
+    const previousSettings = React.useRef(new Map<string, {
+        token: string | null;
+        keysKey: string;
+        settings: Partial<AccountSettings> | null;
+    }>());
+    const readSnapshot = React.useCallback(() => {
+        const next: typeof previousSettings.current = new Map();
+        for (const scope of scopes) {
+            const key = serverAccountScopeKeySuffix(scope);
+            const token = readAccountSettingsPersistenceMutationToken(scope);
+            const previous = previousSettings.current.get(key);
+            if (previous?.token === token && previous.keysKey === keysKey) {
+                next.set(key, previous);
+            } else {
+                const parsed = readExactHomeAccountSettings(scope);
+                const selected: Partial<AccountSettings> | null = parsed === null ? null
+                    : Object.fromEntries(consumedKeys.map(setting => [setting, parsed[setting]]));
+                next.set(key, { token, keysKey, settings: retainDeep(previous?.settings, selected) });
+            }
+        }
+        previousSettings.current = next;
+        // Snapshot only consumed facts, so an unrelated parent render also
+        // preserves the selected policy after an unrelated envelope write.
+        return JSON.stringify([...next].map(([key, entry]) => [key, entry.settings]));
+    }, [scopesKey, keysKey]);
     const persistenceSnapshot = React.useSyncExternalStore(subscribe, readSnapshot, readSnapshot);
+    const settingsByScope = React.useMemo(() => new Map([...previousSettings.current].map(
+        ([key, entry]) => [key, entry.settings],
+    )), [persistenceSnapshot]);
 
     return React.useCallback((serverId: string | null | undefined) => {
         const normalizedServerId = typeof serverId === 'string' ? serverId.trim() : '';
         if (!normalizedServerId) return null;
-        return readExactHomeAccountSettings(audienceScopes?.get(normalizedServerId));
-    }, [audienceScopes, persistenceSnapshot]);
+        const scope = audienceScopes?.get(normalizedServerId);
+        return scope ? settingsByScope.get(serverAccountScopeKeySuffix(scope)) ?? null : null;
+    }, [audienceScopes, settingsByScope]);
 }

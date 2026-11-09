@@ -1,5 +1,5 @@
 import { readSessionViewerAttentionSignature } from '@/sync/domains/session/readState/sessionViewerAttention';
-import type { AccountSettings } from '@happier-dev/protocol';
+import type { AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import { buildActivityOverviewSummaryFromSource } from '@/activity/source/buildActivityOverviewFromSource';
 import { createActivityAttentionStoreSourceSelector } from '@/activity/source/createActivityAttentionStoreSourceSelector';
@@ -77,6 +77,7 @@ export type LocalActivityBadgeSnapshotSelectorParams = Readonly<{
     localSettings: Partial<LocalSettings> | Readonly<Record<string, unknown>>;
     personalSessionListCoverageComplete?: ActivityAttentionSource['personalSessionListCoverageComplete'];
     personalSessionListMembershipByServerId?: Readonly<Record<string, readonly string[]>>;
+    ruleSessionMembershipByServerId?: ActivityAttentionSource['ruleSessionMembershipByServerId'];
     personalSessionListQueryStatesByServerId?: ActivityAttentionSource['personalSessionListQueryStatesByServerId'];
     personalFollowRulesByServerId?: ActivityAttentionSource['personalFollowRulesByServerId'];
 }>;
@@ -307,6 +308,7 @@ function buildOrdinaryRowsSignature(
 function collectPotentialSessionIds(
     state: StorageState,
     personalSessionListMembershipByServerId: Readonly<Record<string, readonly string[]>>,
+    ruleSessionMembershipByServerId: Readonly<Record<string, readonly string[]>>,
 ): string[] {
     const ids = new Set<string>();
     for (const id of collectRecordIds(state.sessions)) ids.add(id);
@@ -316,6 +318,9 @@ function collectPotentialSessionIds(
     });
     forEachRecordValue(personalSessionListMembershipByServerId, (membership) => {
         if (!Array.isArray(membership)) return;
+        for (const id of membership) if (id.trim()) ids.add(id.trim());
+    });
+    forEachRecordValue(ruleSessionMembershipByServerId, (membership) => {
         for (const id of membership) if (id.trim()) ids.add(id.trim());
     });
     return Array.from(ids).sort();
@@ -399,6 +404,7 @@ function buildRuntimeFreshnessRecordSignature(
 function hasLocalActivitySource(
     state: StorageState,
     personalSessionListMembershipByServerId: Readonly<Record<string, readonly string[]>>,
+    ruleSessionMembershipByServerId: Readonly<Record<string, readonly string[]>>,
 ): boolean {
     let hasIndexedSession = false;
     forEachRecordValue(state.sessionListIndexByServerId ?? {}, (items) => {
@@ -414,10 +420,15 @@ function hasLocalActivitySource(
     forEachRecordValue(personalSessionListMembershipByServerId, (membership) => {
         if (Array.isArray(membership) && membership.length > 0) hasPersonalMembership = true;
     });
+    let hasRuleMembership = false;
+    forEachRecordValue(ruleSessionMembershipByServerId, (membership) => {
+        if (membership.length > 0) hasRuleMembership = true;
+    });
     return hasRecordValues(state.sessions)
         || hasIndexedSession
         || hasOrdinaryMembership
-        || hasPersonalMembership;
+        || hasPersonalMembership
+        || hasRuleMembership;
 }
 
 function buildActivitySourceFromState(
@@ -426,6 +437,7 @@ function buildActivitySourceFromState(
         ActivityAttentionSource,
         | 'personalSessionListCoverageComplete'
         | 'personalSessionListMembershipByServerId'
+        | 'ruleSessionMembershipByServerId'
         | 'personalSessionListQueryStatesByServerId'
         | 'personalFollowRulesByServerId'
     >,
@@ -595,7 +607,8 @@ export function createLocalActivityBadgeSnapshotSelector(
     const includesRuleFacts = Object.values(params.personalFollowRulesByServerId ?? {}).some(snapshot =>
         snapshot.status === 'ready' && snapshot.rules.some(rule => rule.receiver.kind === 'account' && rule.definition.enabled));
     const selectRuleSource = includesRuleFacts ? createActivityAttentionStoreSourceSelector(
-        params.personalSessionListMembershipByServerId, { includeSessionMessages: false, includeFollowRuleFacts: true },
+        params.personalSessionListMembershipByServerId, { includeSessionMessages: false, includeFollowRuleFacts: true,
+            ruleMembershipByServerId: params.ruleSessionMembershipByServerId },
     ) : null;
     let previousRuleSource: ReturnType<NonNullable<typeof selectRuleSource>> | null = null;
     const sessionSignatureCache = new Map<string, SignatureCacheEntry<Session>>();
@@ -618,6 +631,7 @@ export function createLocalActivityBadgeSnapshotSelector(
         const clockMovedBackwards = previousNowMs !== null && nowMs < previousNowMs;
         const boundaryReached = previousSnapshot?.nextRefreshAtMs != null && nowMs >= previousSnapshot.nextRefreshAtMs;
         const personalSessionListMembershipByServerId = params.personalSessionListMembershipByServerId ?? {};
+        const ruleSessionMembershipByServerId = includesRuleFacts ? params.ruleSessionMembershipByServerId ?? {} : {};
         const renderableDelta = state.sessionListRenderableDelta;
         const profileScopeChanged = previousSourceIdentity?.profileScope?.serverId !== state.profileScope?.serverId
             || previousSourceIdentity?.profileScope?.accountId !== state.profileScope?.accountId;
@@ -662,10 +676,10 @@ export function createLocalActivityBadgeSnapshotSelector(
             return previousSnapshot;
         }
         const badgeModel = resolveBadgeModel(params, parsedLocalSettings, now, state.profileScope?.serverId ?? null);
-        const localSourceAvailable = hasLocalActivitySource(state, personalSessionListMembershipByServerId)
+        const localSourceAvailable = hasLocalActivitySource(state, personalSessionListMembershipByServerId, ruleSessionMembershipByServerId)
             || params.friendRequestCount > 0
             || params.hasNonNumericInboxAttention;
-        const sessionIds = collectPotentialSessionIds(state, personalSessionListMembershipByServerId);
+        const sessionIds = collectPotentialSessionIds(state, personalSessionListMembershipByServerId, ruleSessionMembershipByServerId);
         const snapshotSignature = badgeModel.channelDisabled || !badgeModel.policyReady
             ? joinSignatureParts([
                 badgeModel.channelDisabled ? 1 : 0,
@@ -734,6 +748,7 @@ export function createLocalActivityBadgeSnapshotSelector(
             source: buildActivitySourceFromState(state, {
                 personalSessionListCoverageComplete: params.personalSessionListCoverageComplete,
                 personalSessionListMembershipByServerId,
+                ruleSessionMembershipByServerId,
                 personalSessionListQueryStatesByServerId: params.personalSessionListQueryStatesByServerId,
                 personalFollowRulesByServerId: params.personalFollowRulesByServerId,
             }, ruleSource ?? undefined),

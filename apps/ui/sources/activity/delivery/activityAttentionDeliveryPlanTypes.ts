@@ -1,7 +1,7 @@
 import type {
     AttentionDeliveryDecision,
     AttentionDeliveryEventId,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/settings/attentionDeliveryPolicy';
 
 import type { ActivitySurfaceSelectionSpec } from '../selection/activitySurfaceSelectionTypes';
 

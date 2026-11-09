@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { accountSettingsParse } from '@happier-dev/protocol';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 
 import { createSessionAccessFixture, createSessionFixture, createSessionViewerFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { buildSessionActivityAttention } from '@/activity/attention/buildSessionActivityAttention';
