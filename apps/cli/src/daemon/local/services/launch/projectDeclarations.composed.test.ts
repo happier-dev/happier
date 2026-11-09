@@ -877,7 +877,8 @@ describe('accepted Project Service declaration starter', () => {
     // canonical replay's already-approved invocation, including its compound children.
     async function approvedMoveContext(f: Awaited<ReturnType<typeof fixture>>, request: unknown, options?: Readonly<{
         executor: Pick<ReturnType<typeof createActionExecutor>, 'execute'>;
-        onApproved(artifactId: string, request: ReturnType<typeof ApprovalRequestV2Schema.parse>): void;
+        setup?: true;
+        onOpen(artifactId: string, readApproval: () => Promise<unknown>): void;
     }>) {
         const priorGet = vi.mocked(axios.get).getMockImplementation()!;
         const priorPost = f.post.getMockImplementation()!;
@@ -936,15 +937,16 @@ describe('accepted Project Service declaration starter', () => {
         expect(open).toMatchObject({ status: 'open', requestedSurface: 'cli', actionArgs: request });
         if (options) {
             expect(open.actionArgs).toMatchObject({ setupReview: { reviewedEffectDigest: expect.any(String) } });
-            expect(open.preview).toMatchObject({ hostReviewedChildren: {
+            if (options.setup) expect(open.preview).toMatchObject({ hostReviewedChildren: {
                 children: expect.arrayContaining([expect.objectContaining({ action: 'projects.prepare', role: 'service.setup' })]),
             } });
+            options.onOpen(artifactId, () => store.approvalsGet({ artifactId, serverId: 'home' }));
+            return { authority: 'present_user' as const };
         }
         const approved = ApprovalRequestV2Schema.parse({ ...open, status: 'approved',
             decision: { kind: 'approve', authority: 'present_user', decidedAtMs: open.updatedAtMs } });
         expect(await store.approvalsUpdate({ artifactId, serverId: 'home', request: approved })).toEqual({ ok: true });
         expect(await store.approvalsGet({ artifactId, serverId: 'home' })).toEqual(approved);
-        options?.onApproved(artifactId, approved);
         return { authority: 'present_user' as const, bypassApprovals: true,
             presentUserConfirmation: { actionId: 'projects.service.relocate' as const } };
     }
@@ -1088,18 +1090,18 @@ describe('accepted Project Service declaration starter', () => {
             destination, selectedTarget: { machineId: f.targetWorkspace.machineId }, desiredPlacement: { workspace, serviceName: 'worker',
                 expectedRevision: 'absent' as const, expected: { kind: 'absent' as const }, value: { runsOn: destination, unavailable: 'fail' as const } } };
         const graphReadsBefore = f.post.mock.calls.length;
-        let replay: { artifactId: string; request: ReturnType<typeof ApprovalRequestV2Schema.parse> } | undefined;
-        const approved = await approvedMoveContext(f, request, setup ? { executor: source,
-            onApproved: (artifactId, request) => { replay = { artifactId, request }; } } : undefined);
-        const executionContext = { ...f.context, ...approved,
+        const review: { current?: { artifactId: string; readApproval: () => Promise<unknown> } } = {};
+        await approvedMoveContext(f, request, { executor: source, ...(setup ? { setup: true } : {}),
+            onOpen: (artifactId, readApproval) => { review.current = { artifactId, readApproval }; } });
+        if (!review.current) throw new Error('Missing open Move review');
+        const executionContext = { ...f.context, authority: 'present_user' as const, runtimeAccountId: 'owner',
             surface: 'cli', ...(binding === 'source-bound' ? { externalActionTarget: { kind: 'machine' as const, machineId: f.workspace.machineId } } : {}),
             operationProgress: { update(update) {
                 if (update.phase) phases.push(update.phase);
             } } } satisfies Parameters<typeof source.execute>[2];
-        const replayed = replay ? await source.executeApproved({ ...replay, artifactServerId: 'home',
-            ctx: { ...executionContext, runtimeAccountId: 'owner' } }) : undefined;
-        const result = replayed ? 'exec' in replayed ? replayed.exec : replayed
-            : await source.execute('projects.service.relocate', request, executionContext);
+        expect(await source.execute('approval.request.decide', { artifactId: review.current.artifactId, decision: 'approve' },
+            executionContext)).toMatchObject({ ok: true });
+        const result = ApprovalRequestV2Schema.parse(await review.current.readApproval()).execution;
         // Stop at the real unbound preparation port after status admission; this
         // measures destination dispatch without inventing clean-copy/start success.
         expect(result, JSON.stringify({ result, phases })).toMatchObject({ ok: false,
