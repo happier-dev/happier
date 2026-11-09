@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import zlib from 'node:zlib';
-import { chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, readlink, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import { deflateRawSync, gzipSync } from 'node:zlib';
@@ -885,6 +885,48 @@ test('extractArchivePayloadToDirectory extracts tar.xz payloads in-process', asy
   }
 });
 
+// Python 3 stdlib tarfile + bz2: nested/tool (0755), contents "bzip2-payload\n".
+const nestedBzip2Archive = Buffer.from('QlpoOTFBWSZTWUkYzkMAAHT7gMqQBABAAvOAAgB2Jd4wCAggAFRCm1D1GjQAG1NNP1QSUTRoaDQAAH2kBqED3IQiPEZy6FD0CGBm0vba4TmCMHGWqFkyX4OeptJR21MgojFK5+PFwKf1Q0MzIvxdyRThQkEkYzkM', 'base64');
+
+test('extractArchivePayloadToDirectory extracts nested tar.bz2 and tbz2 payloads in-process', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-bzip2-'));
+  try {
+    for (const archiveName of ['payload.tar.bz2', 'payload.tbz2']) {
+      const archivePath = join(rootDir, archiveName);
+      const extractDir = join(rootDir, `${archiveName}-extract`);
+      await writeFile(archivePath, nestedBzip2Archive);
+      await extractArchivePayloadToDirectory({ archiveName, archivePath, extractDir });
+      assert.equal(await readFile(join(extractDir, 'nested/tool'), 'utf8'), 'bzip2-payload\n');
+      if (process.platform !== 'win32') assert.equal((await stat(join(extractDir, 'nested/tool'))).mode & 0o777, 0o755);
+    }
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test('extractArchivePayloadToDirectory bounds tar.bz2 expansion with the existing stream budget', async () => {
+  const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-bzip2-budget-'));
+  try {
+    const archiveName = 'payload.tar.bz2';
+    const archivePath = join(rootDir, archiveName);
+    await writeFile(archivePath, nestedBzip2Archive);
+    for (const [suffix, limits, expected] of [
+      ['ratio', { maxCompressionRatio: 1 }, /compression ratio/iu],
+      ['file', { maxFileBytes: 1 }, /file exceeds its byte limit/iu],
+    ]) {
+      const extractDir = join(rootDir, suffix);
+      await assert.rejects(
+        extractArchivePayloadToDirectory({ archiveName, archivePath, extractDir, limits }),
+        expected,
+      );
+      await assert.rejects(stat(extractDir), { code: 'ENOENT' });
+    }
+    assert.deepEqual((await readdir(rootDir)).filter((name) => name.includes('.extract-')), []);
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
 test('extractArchivePayloadToDirectory keeps the default per-file ceiling at 256 MiB', async () => {
   const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-default-file-budget-'));
   try {
@@ -1385,16 +1427,12 @@ test('extractArchivePayloadToDirectory rejects tar symlink smuggling outside the
 
 test('extractArchivePayloadToDirectory rejects standalone tar symlinks and hardlinks', async () => {
   const rootDir = await mkdtemp(join(tmpdir(), 'release-runtime-extract-links-'));
-  const payloadDir = join(rootDir, 'payload');
   try {
-    await mkdir(payloadDir, { recursive: true });
-    await writeFile(join(payloadDir, 'target'), 'payload', 'utf8');
-    await symlink('target', join(payloadDir, 'symlink'));
+    // Explicit link headers avoid tar.c's asynchronous hardlink writer race.
     const symlinkArchivePath = join(rootDir, 'symlink.tar.gz');
-    await tar.c(
-      { cwd: payloadDir, file: symlinkArchivePath, gzip: true, portable: true },
-      ['symlink'],
-    );
+    await writeFile(symlinkArchivePath, createTarGzip([
+      { name: 'symlink', type: '2', linkpath: 'target' },
+    ]));
     await assert.rejects(
       extractArchivePayloadToDirectory({
         archiveName: 'symlink.tar.gz',
@@ -1406,12 +1444,11 @@ test('extractArchivePayloadToDirectory rejects standalone tar symlinks and hardl
     assert.deepEqual((await readdir(rootDir)).filter((name) => name.includes('.extract-')), []);
     await assert.rejects(stat(join(rootDir, 'extract-symlink')), { code: 'ENOENT' });
 
-    await link(join(payloadDir, 'target'), join(payloadDir, 'hardlink'));
     const hardlinkArchivePath = join(rootDir, 'hardlink.tar.gz');
-    await tar.c(
-      { cwd: payloadDir, file: hardlinkArchivePath, gzip: true, portable: true },
-      ['target', 'hardlink'],
-    );
+    await writeFile(hardlinkArchivePath, createTarGzip([
+      { name: 'target', contents: 'payload' },
+      { name: 'hardlink', type: '1', linkpath: 'target' },
+    ]));
     await assert.rejects(
       extractArchivePayloadToDirectory({
         archiveName: 'hardlink.tar.gz',

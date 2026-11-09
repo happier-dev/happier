@@ -1,6 +1,7 @@
 import { setTimeout as delay } from 'node:timers/promises';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
+import { CredentialRequestRedirectError, resolveCredentialRequestRedirect } from './httpRedirects.js';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_REDIRECTS = 5;
@@ -22,8 +23,6 @@ type RequestOptions = Readonly<{
   retryDelayMs?: number;
 }>;
 
-const CROSS_ORIGIN_SENSITIVE_HEADERS = new Set(['authorization', 'proxy-authorization']);
-
 function decodeDataUrl(url: string): Buffer {
   const match = /^data:([^,]*?),(.*)$/s.exec(url);
   if (!match) {
@@ -38,43 +37,11 @@ function decodeDataUrl(url: string): Buffer {
   return Buffer.from(decodeURIComponent(body), 'utf8');
 }
 
-function dropCrossOriginSensitiveHeaders(headers: HeaderMap | undefined): HeaderMap | undefined {
-  if (!headers) {
-    return headers;
-  }
-
-  let nextHeaders: Record<string, string> | null = null;
-  for (const [key, value] of Object.entries(headers)) {
-    if (CROSS_ORIGIN_SENSITIVE_HEADERS.has(key.toLowerCase())) {
-      nextHeaders ??= { ...headers };
-      delete nextHeaders[key];
-      continue;
-    }
-    if (nextHeaders) {
-      nextHeaders[key] = value;
-    }
-  }
-
-  return nextHeaders ?? headers;
-}
-
-function resolveRedirectHeaders(params: Readonly<{
-  requestUrl: string;
-  redirectUrl: string;
-  headers: HeaderMap | undefined;
-}>): HeaderMap | undefined {
-  const requestOrigin = new URL(params.requestUrl).origin;
-  const redirectOrigin = new URL(params.redirectUrl).origin;
-  if (requestOrigin === redirectOrigin) {
-    return params.headers;
-  }
-  return dropCrossOriginSensitiveHeaders(params.headers);
-}
-
 function createHttpError(url: string, statusCode: number, headers: import('node:http').IncomingHttpHeaders): Error {
   const error = new Error(`[http] request failed: ${url} (${statusCode})`);
   (error as Error & { statusCode: number }).statusCode = statusCode;
   Object.assign(error, { status: statusCode, code: `HTTP_${statusCode}` });
+  if (statusCode >= 300 && statusCode < 400) Object.assign(error, { retryable: false });
   // Preserve only public rate-limit facts, never arbitrary response headers.
   if ((statusCode === 403 || statusCode === 429) && headers['x-ratelimit-remaining'] === '0') {
     Object.assign(error, { rateLimitRemaining: '0', rateLimitReset: headers['x-ratelimit-reset'] });
@@ -114,9 +81,6 @@ async function requestBufferWithNode(params: RequestOptions & Readonly<{
   redirectCount?: number;
 }>): Promise<Buffer> {
   const redirectCount = params.redirectCount ?? 0;
-  if (redirectCount > MAX_REDIRECTS) {
-    throw new Error(`[http] too many redirects for ${params.url}`);
-  }
 
   const requestImpl = params.url.startsWith('https:') ? httpsRequest : httpRequest;
 
@@ -132,17 +96,32 @@ async function requestBufferWithNode(params: RequestOptions & Readonly<{
         const statusCode = res.statusCode ?? 0;
         const location = typeof res.headers.location === 'string' ? res.headers.location.trim() : '';
 
-        if (statusCode >= 300 && statusCode < 400 && location) {
-          const nextUrl = new URL(location, params.url).toString();
-          const nextHeaders = resolveRedirectHeaders({
+        let redirect: ReturnType<typeof resolveCredentialRequestRedirect>;
+        try {
+          redirect = resolveCredentialRequestRedirect({
+            status: statusCode,
             requestUrl: params.url,
-            redirectUrl: nextUrl,
-            headers: params.headers,
+            location: location || null,
+            method: 'GET',
+            headers: params.headers ?? {},
+            hasSecretBody: false,
           });
+        } catch (error) {
+          res.destroy();
+          reject(error);
+          return;
+        }
+
+        if (redirect) {
+          if (redirectCount >= MAX_REDIRECTS) {
+            res.destroy();
+            reject(new CredentialRequestRedirectError(statusCode));
+            return;
+          }
           res.resume();
           void requestBufferWithNode({
-            url: nextUrl,
-            headers: nextHeaders,
+            url: redirect.url,
+            headers: redirect.headers,
             redirectCount: redirectCount + 1,
             timeoutMs: params.timeoutMs,
             signal: params.signal,

@@ -176,6 +176,28 @@ test('requestText strips Authorization on cross-origin redirects', async () => {
   }
 });
 
+test('requestText closes an exhausted credential redirect chain without retaining its Location', async () => {
+  let requests = 0;
+  await withServer((_req, res) => {
+    requests += 1;
+    res.writeHead(302, { location: '/private-redirect-target?proof=synthetic-location' });
+    res.end();
+  }, async (baseUrl) => {
+    await assert.rejects(requestText({ url: `${baseUrl}/start`,
+      headers: { authorization: 'Bearer synthetic-loop-credential' },
+    }), error => {
+      assert.equal(error.code, 'credential_request_redirect_refused');
+      assert.equal(error.retryable, false);
+      assert.equal(error.status, 302);
+      assert.doesNotMatch(`${String(error)} ${JSON.stringify(error)}`,
+        /private-redirect-target|synthetic-location|synthetic-loop-credential/);
+      return true;
+    });
+    // Preserve the native transport's existing five followed redirects.
+    assert.equal(requests, 6);
+  });
+});
+
 test('requestBytes supports data urls without global fetch', async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => {

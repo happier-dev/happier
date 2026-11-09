@@ -29,6 +29,22 @@ function createFetchStub(routeMap) {
   return { fetch, calls };
 }
 
+for (const kind of ['tag', 'latest', 'assets']) {
+  test(`public ${kind} release lookup accepts a browser fetch with its native receiver contract`, async () => {
+    // Native Window.fetch rejects a foreign receiver before issuing any request.
+    async function browserFetch() {
+      if (this !== undefined && this !== globalThis) throw new TypeError('Illegal invocation');
+      return kind === 'assets'
+        ? new Response('<li><a href="/happier-dev/happier/releases/download/cli-stable/cli.tar.gz">cli</a></li>')
+        : Response.json({ tag_name: 'cli-stable', assets: [] });
+    }
+    const params = { githubRepo: 'happier-dev/happier', tag: 'cli-stable', fetchImpl: browserFetch };
+    const release = kind === 'latest' ? await fetchGitHubLatestRelease(params)
+      : await fetchGitHubReleaseByTag({ ...params, assetsOnly: kind === 'assets' });
+    assert.equal(release.tag_name, 'cli-stable');
+  });
+}
+
 test('fetchGitHubReleaseByTag calls GitHub tag endpoint and returns JSON', async () => {
   const url = 'https://api.github.com/repos/happier-dev/happier/releases/tags/server-preview';
   const routeMap = new Map([

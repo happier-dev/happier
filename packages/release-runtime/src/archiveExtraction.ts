@@ -5,14 +5,16 @@ import type { FileHandle } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
 import { Readable, Transform, Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
-import type { ReadableStream as NodeReadableStream } from 'node:stream/web';
-import { createGunzip, createInflateRaw } from 'node:zlib';
+import { createInflateRaw } from 'node:zlib';
 
 import * as tar from 'tar';
 import type { TarOptionsWithAliasesAsyncNoFile } from 'tar';
 import * as yauzl from 'yauzl';
 
 import { assertArchiveSymlinkTargetsAreContained } from './archiveSymlinkContainment.js';
+import { createTarDecompressionStreams, resolveReleaseArchiveFormat, type TarArchiveCompression } from './archiveFormats.js';
+
+export { resolveReleaseArchiveFormat } from './archiveFormats.js';
 
 const WINDOWS_INVALID_PATH_CHARACTER = /[\u0000-\u001f<>:"|?*]/u;
 const WINDOWS_RESERVED_PATH_SEGMENT = /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/iu;
@@ -190,6 +192,13 @@ export class ArchiveExtractionTimeoutError extends Error {
   }
 }
 
+// Timer handles are OS boundary values; native UI type consumers may see a numeric timer declaration.
+function unrefArchiveTimeout(timeout: unknown): void {
+  if (typeof timeout === 'object' && timeout !== null && 'unref' in timeout && typeof timeout.unref === 'function') {
+    timeout.unref();
+  }
+}
+
 function createArchiveAbortContext(params: Readonly<{
   externalSignal?: AbortSignal;
   timeoutMs: number | null;
@@ -213,8 +222,7 @@ function createArchiveAbortContext(params: Readonly<{
         () => abort(new ArchiveExtractionTimeoutError()),
         params.timeoutMs,
       );
-  // Node timers expose unref; DOM-lib consumers type setTimeout as a number.
-  if (typeof timeout === 'object' && timeout !== null && 'unref' in timeout) timeout.unref();
+  unrefArchiveTimeout(timeout);
 
   return {
     abort,
@@ -730,31 +738,6 @@ function createZipEntryValidator(params: Readonly<{
   };
 }
 
-type XzReadableStreamConstructor = new (
-  compressedStream: NodeReadableStream<Uint8Array>,
-) => NodeReadableStream<Uint8Array>;
-
-let xzReadableStreamConstructorPromise: Promise<XzReadableStreamConstructor> | null = null;
-
-async function resolveXzReadableStreamConstructor(): Promise<XzReadableStreamConstructor> {
-  if (!xzReadableStreamConstructorPromise) {
-    xzReadableStreamConstructorPromise = import('xz-decompress').then((module) => {
-      const xzModule = module as Readonly<{
-        XzReadableStream?: XzReadableStreamConstructor;
-        default?: Readonly<{
-          XzReadableStream?: XzReadableStreamConstructor;
-        }>;
-      }>;
-      const XzReadableStream = xzModule.XzReadableStream ?? xzModule.default?.XzReadableStream;
-      if (!XzReadableStream) {
-        throw new Error('[release-runtime] xz-decompress does not expose XzReadableStream');
-      }
-      return XzReadableStream;
-    });
-  }
-  return await xzReadableStreamConstructorPromise;
-}
-
 async function openArchiveSource(archivePath: string, limits: ArchiveExtractionLimits): Promise<{
   archiveFile: FileHandle;
   archiveBytes: number;
@@ -846,7 +829,7 @@ async function extractTarArchiveToDirectory(params: Readonly<{
   archiveBytes: number;
   archiveFile: FileHandle;
   extractDir: string;
-  isXz: boolean;
+  compression: TarArchiveCompression;
   limits: ArchiveExtractionLimits;
   linkPolicy: TarLinkPolicy;
 }>): Promise<void> {
@@ -894,28 +877,13 @@ async function extractTarArchiveToDirectory(params: Readonly<{
   });
   attachTarMetadataBudget({ parser: unpack, budget, abort: params.abortContext.abort });
 
+  const source = createOpenArchiveRangeStream(params.archiveFile, 0, params.archiveBytes);
   try {
-    if (params.isXz) {
-      const source = createOpenArchiveRangeStream(params.archiveFile, 0, params.archiveBytes);
-      const XzReadableStream = await resolveXzReadableStreamConstructor();
-      const decompressedStream = new XzReadableStream(Readable.toWeb(source));
-      await pipeline(
-        Readable.fromWeb(decompressedStream),
-        createDecompressionRatioGuard(params),
-        unpack,
-        { signal: params.abortContext.signal },
-      );
-    } else {
-      // Keep gzip teardown inside pipeline: node-tar's internal gunzip can emit
-      // a late stream error after a rejected entry has already settled extraction.
-      await pipeline(
-        createOpenArchiveRangeStream(params.archiveFile, 0, params.archiveBytes),
-        createGunzip(),
-        createDecompressionRatioGuard(params),
-        unpack,
-        { signal: params.abortContext.signal },
-      );
-    }
+    const decompressionStreams = await createTarDecompressionStreams(source, params.compression);
+    await pipeline(
+      [...decompressionStreams, createDecompressionRatioGuard(params), unpack],
+      { signal: params.abortContext.signal },
+    );
     params.abortContext.throwIfAborted();
     validateEntry.assertValid();
   } catch (error) {
@@ -924,6 +892,8 @@ async function extractTarArchiveToDirectory(params: Readonly<{
     validateEntry.assertValid();
     throw error;
   } finally {
+    // Web-stream decompressors do not necessarily cancel their compressed input.
+    source.destroy();
     // Pipeline synthesizes close for node-tar's legacy stream on failure;
     // that does not drain its pending filesystem callbacks. Successful unpack
     // emits finish after those callbacks, but parser abort and CwdError do not.
@@ -1791,14 +1761,7 @@ export async function extractFirstPartyReleaseArchiveToDirectory(params: Archive
 }
 
 export async function extractArchivePayloadToDirectory(params: ArchiveExtractionParams): Promise<void> {
-  const archiveName = params.archiveName.toLowerCase();
-  const archiveType = archiveName.endsWith('.zip')
-    ? 'zip'
-    : archiveName.endsWith('.tar.xz')
-      ? 'tar.xz'
-      : archiveName.endsWith('.tar.gz') || archiveName.endsWith('.tgz')
-        ? 'tar.gz'
-        : null;
+  const archiveType = resolveReleaseArchiveFormat(params.archiveName)?.compression;
   if (!archiveType) {
     throw new Error(`[release-runtime] unsupported archive type: ${params.archiveName}`);
   }
@@ -1856,7 +1819,7 @@ export async function extractArchivePayloadToDirectory(params: ArchiveExtraction
         archiveBytes,
         archiveFile,
         extractDir: stagingDir,
-        isXz: archiveType === 'tar.xz',
+        compression: archiveType,
         limits,
         linkPolicy: params.tarLinkPolicy ?? 'reject',
       });

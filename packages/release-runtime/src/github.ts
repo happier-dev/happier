@@ -152,8 +152,9 @@ async function fetchGitHubReleaseAssetsByTag(params: Readonly<{
     // GitHub's public release fragment publishes the same asset SHA-256 digests
     // as REST (observed 2026-10-18). Never send API credentials to this web path.
     let html: string;
-    if (params.fetchImpl) {
-      const response = await params.fetchImpl(url, { headers, signal: params.signal });
+    const fetchImpl = params.fetchImpl;
+    if (fetchImpl) {
+      const response = await fetchImpl(url, { headers, signal: params.signal });
       if (!response.ok) throw responseError('[github] failed to read release assets', response);
       html = await response.text();
     } else {
