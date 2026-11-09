@@ -1,3 +1,4 @@
+export { projectLaunchProfileAuthoringPreferencesV1, type LaunchProfileAuthoringPreferencesV1 } from './authoringPreferences.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from 'zod/mini';
 

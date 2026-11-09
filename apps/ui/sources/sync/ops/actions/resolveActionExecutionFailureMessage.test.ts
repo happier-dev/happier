@@ -1,10 +1,19 @@
 import { describe, expect, it } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 import { t } from '@/text';
 
 import { resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage, resolveActionExecutionFailureTitle } from './resolveActionExecutionFailureMessage';
 
 describe('Action failure presentation', () => {
+    it.each([
+        ['plugin_action_input_schema_invalid', 'common.requestFailed'],
+        ['plugin_action_unavailable', 'ui.pluginUi.actionUnavailable'],
+    ] as const)('presents plugin refusal %s through thrown errors and Action envelopes', (code, key) => {
+        expect(resolveActionExecutionErrorMessage(new PluginError({ code }), 'Save failed')).toBe(t(key));
+        expect(resolveActionExecutionFailureMessage({ ok: false, errorCode: code, error: code }, 'Save failed')).toBe(t(key));
+    });
+
     it('offers safe repetition for busy reads and idempotent writes without asserting rollback', () => {
         for (const errorCode of ['database_transaction_conflict_exhausted', 'database_transaction_timeout', 'database_connection_unavailable']) {
             expect(resolveActionExecutionErrorMessage({ code: errorCode }, 'Fallback', { safeToRetry: true }))

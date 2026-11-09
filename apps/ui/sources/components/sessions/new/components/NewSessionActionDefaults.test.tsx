@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { act, renderScreen } from '@/dev/testkit';
 import { installFormsCommonModuleMocks } from '@/components/ui/forms/formsTestHelpers';
 import { seedAndOpenNewSession } from '../newSessionSeedComposer';
@@ -7,6 +8,13 @@ import { readNewSessionDraftFromRepository, writeNewSessionAuthoringDraftToRepos
 import { resetSessionDraftRepositoryForTests, writeNewSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import type { NewSessionDraft } from '@/sync/domains/state/persistence';
+import { requireActionSuccess } from '@/sync/ops/actions/actionResult';
+import { clearBrowserRecords } from '@/sync/domains/state/browserRecordStorage';
+import { discardSessionDraftPersistenceWrites, prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
+
+// IndexedDB transactions are the persistence boundary; repository hydration stays real.
+vi.mock('@/sync/domains/state/browserRecordStorage', async () =>
+    (await import('@/dev/testkit/mocks/browserRecordStorage')).createBrowserRecordStorageModuleMock());
 
 installFormsCommonModuleMocks();
 
@@ -14,7 +22,12 @@ const scope = { serverId: 'server-a', accountId: 'account-a' };
 const draftId = '00000000-0000-4000-8000-000000000042';
 const actionDefault = { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, configuredActionId: 'fix-check', label: 'Fix check', launchMode: 'review' as const };
 
-afterEach(() => resetSessionDraftRepositoryForTests());
+beforeEach(async () => { await prepareSessionDraftPersistenceStorage(); });
+afterEach(async () => {
+    await discardSessionDraftPersistenceWrites();
+    resetSessionDraftRepositoryForTests();
+    await clearBrowserRecords();
+});
 
 describe('NewSessionActionDefaults', () => {
     it.each([
@@ -110,11 +123,41 @@ describe('NewSessionActionDefaults', () => {
     it.each([
         { refusal: { v: 1, status: 'unknownAction' }, feedback: 'newSession.actionDefault.failed' },
         { refusal: { v: 1, status: 'rejected', reason: 'workspaceMode' }, feedback: 'newSession.actionDefault.workspaceMode' },
+        { refusal: { v: 1, status: 'rejected', reason: 'target' }, feedback: 'newSession.actionDefault.failed' },
     ])('shows the $refusal.status save refusal and permits retry without losing the task', async ({ refusal, feedback }) => {
         const { NewSessionActionDefaults } = await import('./NewSessionActionDefaults');
         seedAndOpenNewSession({ seed: { prompt: 'Keep this task', actionDefault }, scope,
             isCurrent: () => true, createDraftId: () => draftId, navigateToNewSession: () => undefined });
         const execute = vi.fn().mockResolvedValueOnce(refusal).mockResolvedValueOnce({ v: 1, status: 'applied' });
+        const getCurrentDraft = () => {
+            const draft = readNewSessionDraftFromRepository({ scope, draftId });
+            if (!draft) throw new Error('Expected the seeded draft');
+            return draft;
+        };
+        const screen = await renderScreen(<NewSessionActionDefaults scope={scope} draftId={draftId} execute={execute}
+            getCurrentDraft={getCurrentDraft} onProfileSaved={() => undefined} />);
+        await screen.pressByTestIdAsync('new-session-action-default-save');
+        expect(screen.findByTestId('new-session-action-default-feedback')?.props.children).toBe(feedback);
+        expect(readNewSessionDraftFromRepository({ scope, draftId })?.input).toBe('Keep this task');
+        await screen.pressByTestIdAsync('new-session-action-default-save');
+        expect(screen.findByTestId('new-session-action-default-feedback')?.props.children).toBe('newSession.actionDefault.saved');
+        await screen.unmount();
+    });
+
+    it.each([
+        { code: 'plugin_action_input_schema_invalid', feedback: 'common.requestFailed', outer: false },
+        { code: 'plugin_action_unavailable', feedback: 'ui.pluginUi.actionUnavailable', outer: false },
+        { code: 'unrecognized_action_failure', feedback: 'newSession.actionDefault.failed', outer: true },
+    ])('presents thrown $code without losing the task and allows another save', async ({ code, feedback, outer }) => {
+        const { NewSessionActionDefaults } = await import('./NewSessionActionDefaults');
+        seedAndOpenNewSession({ seed: { prompt: 'Keep this task', actionDefault }, scope,
+            isCurrent: () => true, createDraftId: () => draftId, navigateToNewSession: () => undefined });
+        // Action execution is the external effect boundary; the shared presenter stays real.
+        const execute = vi.fn().mockImplementationOnce(async () => {
+            // The mounted executeValue owner throws every outer refusal before the leaf sees a value.
+            if (outer) requireActionSuccess({ ok: false, errorCode: code, error: code });
+            throw new PluginError({ code });
+        }).mockResolvedValueOnce({ v: 1, status: 'applied' });
         const getCurrentDraft = () => {
             const draft = readNewSessionDraftFromRepository({ scope, draftId });
             if (!draft) throw new Error('Expected the seeded draft');
