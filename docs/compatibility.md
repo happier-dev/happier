@@ -7180,12 +7180,18 @@ Run-on writer or store is added.
 
 ### Spaces membership and saved lenses (0.3 development source)
 
-Session Spaces extend the existing catalog with optional membership mode and
-Home/Account-qualified tag references. Catalogs without membership keep their
-saved-filter behavior. Organization assignments remain at each Session's own
-Home; typed internal-tag display content uses the existing Plain/E2EE envelope.
-Current ordinary-label edits preserve internal assignments, and membership
-add/remove operations preserve ordinary tags through the organization writer.
+Session Spaces retain optional membership mode and historical Home/Account-
+qualified tag references in the existing catalog. Catalogs without membership
+keep their saved-filter behavior. Current membership derives from all matching
+typed internal-tag relations at the Session's own Home/Account, including tags
+created by overlapping first preparations. The marker qualifies the Space and
+its catalog Account; tag content uses the existing Plain/E2EE envelope.
+Historical catalog references remain readable and survive deliberate mode edits.
+The current closed catalog mutation schema rejects `associateTag`: Add, Move,
+remove and New Session write organization assignments without automatic Account
+settings writes. Move and remove clear all matching source tags. Ordinary-label
+edits preserve internal assignments, and membership operations preserve ordinary
+tags through the organization writer.
 
 The closed filtered-list query adds an optional `membership` selector only when
 the Home advertises `sessions.filteredListing.membershipSelectorVersion: 1`

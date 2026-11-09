@@ -186,8 +186,8 @@ draft; a late accepted callback cannot change the next authority's presentation.
 Triage retains its Account-KV saved views and selected lens in its device page
 location; host collection spaces keep definitions in Account `collectionSpacesV1` and selection
 in the keyed device owner `session/listing/sessionListSpaces`, qualified by
-Account/Home and entity kind. Retained `collectionSpaceV1` Settings fields are
-import sources in 0.3 development. The controlled capability does not
+Account/Home and entity kind. The never-shipped `collectionSpaceV1` Settings carrier
+is not imported. The controlled capability does not
 merge those persistence contracts. `useCollectionSavedViewsSelection` owns the
 controlled selection, radio-menu model and scoped open state shared by the public
 control and built-in `CollectionSpaceTitle`. The built-in adapter retains its
@@ -247,12 +247,15 @@ space is revealed clear of that fade; the strip's ends have no fade.
 
 In 0.3 development source, a Session Space's persisted lens matches together
 with explicit membership: either is enough, while `manual_only` includes only
-hand-added Sessions. The create/edit form offers both modes. Membership uses
-qualified `{serverId, accountId, tagId}` associations in the existing catalog;
-the Session's own Home/Account organization writer owns its internal tag and
-keeps ordinary tags intact. A typed `space_membership` tag marker identifies
-the Space and its catalog Account; the central tag projection hides these
-internal tags from ordinary labels. Additive tag edits use the existing
+hand-added Sessions. The create/edit form offers both modes. Membership derives
+from every matching internal tag in the Session's Home/Account organization
+projection. A typed `space_membership` marker identifies the Space and its
+catalog Account; qualification also checks the current Home/Account. The central
+tag projection hides these internal tags from ordinary labels. Historical
+qualified `{serverId, accountId, tagId}` catalog references remain readable,
+including across deliberate membership-mode edits. The catalog stores deliberate
+saved-filter and mode choices; Add, Move, remove and New Session do not write
+automatic associations to Account settings. Additive tag edits use the existing
 `session.tags.set` Action alongside its retained full-replacement input.
 The existing retained filter state holds temporary
 refinements separately: these narrow displayed membership, and Reset returns
@@ -262,9 +265,11 @@ constrains the result.
 The `session.space_membership.set` Action owns Add, Move and remove, including
 the qualified destination authority. Move names its source and transfers only
 explicit membership; a saved-lens match may remain after Move or remove.
-An existing association reads its tag from the held organization projection.
-Only first tag creation and a competing association winner acquire a tag snapshot;
-tag content still passes through the organization envelope owner.
+Existing matching tags come from the held organization projection, with a tag
+snapshot read when no suitable tag is held. Concurrent first preparations can
+create several valid tags for one Space; Move and remove clear every matching
+source tag rather than selecting an association winner. The organization writer
+preserves ordinary tags, and tag content passes through its envelope owner.
 Semantic DnD dispatches that Action through the existing entity-DnD owner.
 Each space tab in the Sessions strip is a Session drop target that forwards to
 the list's entity-DnD owner as an Add (the same admission the row menu's Add to
@@ -467,7 +472,7 @@ In unreleased 0.3 development, custom tree adapters using [`useHappierTreeIntera
 
 A windowed host (one that builds only the rows near its viewport) passes `onRevealIndex`: a keyboard move to a row that is not mounted asks the host to scroll that visible index into view, and focus lands on the row when it binds, even if the row it left is recycled meanwhile. On web only, a focused row whose node the host recycles or reorders keeps focus. The browser blurs a moved node with no successor; the hook gives focus back unless a press caused the blur or focus already sits on another element. On native a blur always means focus moved on (into a TextInput, another control), so the hook never takes it back. `positionOf(key)` returns the row's 1-based position and set size among its siblings in the whole visible tree; rows forward it as `accessibilityPositionInSet`/`accessibilitySetSize` (`HappierTreeRow` takes it as `position`, and the public `Tree` passes it), so a windowed tree announces "n of m" from the tree, not from the mounted rows. `positionOf` is stable across renders and reads the current tree, so a host that memoizes rows must compare a row's position itself.
 
-`scroll="page"` keeps every row mounted in the page's scroller. `scroll="page-virtualized"` windows table rows, including their responsive list composition, against the containing page's existing scroll-activity tracker, with spacers preserving their full extent. Collection supplies its current row/header geometry; mounted-cell measurements account for wrapped content. The page tracker positions the same physical scroller, and List retains the single roving tab stop and pending focus request. On web, recomposition reveals the still-focused row without moving selection or pulling focus back from an outside control. No nested scroller or catalog truncation is introduced. Other presentations, or a table without a positioned containing page, use the incumbent virtualized collection scroller. The managed size comparison consumes this mode inside `ItemList`.
+`scroll="page"` keeps every row mounted in the page's scroller. `scroll="page-virtualized"` windows table rows, including their responsive list composition, against the containing page's existing scroll-activity tracker, with spacers preserving their full extent. A sheet-sectioned page list (titled groups, each its own page sheet; a Workflow library) windows the same way: each section's header and sheet are drawn while any of its rows is near the viewport, and the sheet holds the windowed rows and their spacers so its edges stay at the section's full extent. A retained-row list (a deep link's popover anchor) and the roving tab stop stay mounted wherever the viewport is. Collection supplies its current row/header geometry; mounted-cell measurements account for wrapped content. The page tracker positions the same physical scroller, and List retains the single roving tab stop and pending focus request. On web, recomposition reveals the still-focused row without moving selection or pulling focus back from an outside control. No nested scroller or catalog truncation is introduced. Other presentations, or a table without a positioned containing page, use the incumbent virtualized collection scroller. The managed size comparison consumes this mode inside `ItemList`.
 
 Board callers can select `boardLayout="stacked"` for domain-approved phone sections or `"columns"` for status columns; omission retains the shared responsive column pager. Columns keep the same text-scaled card-width track whether empty or populated, scrolling horizontally when they cannot fit, with a gutter at both ends. The track is the compact board track unless the caller supplies `minCardWidth`, which is then the board card's narrowest width as it is the grid's: when the host's details pane opens beside the board, the columns keep that track and the board scrolls sideways instead of squeezing every card, bringing the open card's column into view once per open or width change (never on a data refresh). Grouping may retain empty axis positions (`retainEmpty`) on wide status boards; an empty column says so by its header's count alone ("Needs you 0") and never resizes neighbouring tracks on arrival. A card whose facts carry a `byline` says the item's designation there, not again after its title, like a two-line list row. A card's right slot stops short of the identity mark and its words give way there. Counts sit beside their titles, with no column dividers. A non-empty group may use the shared Work semantic tone for its header; empty groups stay neutral. The shared List primary gridcell stretches card bodies to their column inset; stacked phone headers and cards share the page edge. Card collections with `detail="none"` omit the pane keyboard-hint bar. The model still owns cross-column arrows, one primary tab stop and viewport memory. Grid and Board use the bounded `card` slots described above; rich bodies do not replace identity or framing. The Work Board keeps the model mounted when switching Canvas/By status, without rendering hidden cards, and requests its focused card again when the item route returns.
 

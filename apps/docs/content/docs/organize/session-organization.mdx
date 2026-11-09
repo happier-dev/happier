@@ -1,6 +1,6 @@
 ---
 title: Organizing sessions
-description: Folders, tags, pins and multi-select — how to keep a long session list navigable, and what carries across your devices.
+description: Folders, tags, pins, colors and multi-select — how to keep a long session list navigable, and what carries across your devices.
 ---
 
 Once you are running more than a handful of sessions, the list becomes the
@@ -50,6 +50,8 @@ filter or were added by hand; a manual-only space includes only hand-added
 sessions. **Add to space** adds membership without changing the session's
 section. Move and Remove change only hand-added membership, so a session that
 still matches the saved filter can remain visible.
+Adding, moving or removing a session does not edit the space's saved filter or
+membership mode.
 
 Switching a space does not move sessions, start work, change access or change
 who you follow. Temporary filter changes narrow the displayed membership;
@@ -64,6 +66,11 @@ Workflow definitions and Discussions keep their own selections.
 Spaces have an Account-wide master switch and a switch for each list. Turning
 them off retains definitions, hand-added membership and this device's selection,
 so turning them back on restores the saved view.
+
+Deleting a saved space removes its filter and keeps the work it lists. In 0.3
+development, deletion uses the shared Action approval: it does not prompt by default and
+honors your Off, Ask or Allowed choice. Resetting a built-in space restores its
+default filter.
 
 Local conditions use already-held rows. Changing a structural scope, such as
 the selected Homes or a positive Section selection, uses the ordinary list
@@ -117,15 +124,15 @@ itself when its session is no longer live: like any offline row, it says
 
 Pinned sessions appear during the first paint of a long list rather than after
 you scroll, which is the point of pinning them. Archiving a session removes it
-from the pinned list and gives the pin quota back.
+from the pinned list.
 
 Development-only 0.3 keeps Session-list pins and Bot rail pins separate. Only a
 Session already marked as a Bot can be added to the rail; pinning never turns
 an ordinary session into a Bot. Each pin is your personal choice, not a change
 to another person's arrangement.
 
-Adding or removing one pin leaves the other alone. Both use one shared order
-and count the session once against the pin limit. Existing pins stay list-only
+Adding or removing one pin leaves the other alone. Both use one shared order.
+Development-only 0.3 has no total pin quota. Existing pins stay list-only
 after upgrading. Demoting a Bot hides its rail entry but retains the saved
 choice, so promoting it again restores the entry.
 
@@ -137,6 +144,34 @@ rail sit just under that entry;
 when the rail is too short, they move into the rail's More menu. On a phone, or
 when there's no rail, the same list opens as a sheet from the app's
 destinations and the command palette.
+
+## Colors in 0.3 development
+
+In development-only 0.3, you can give a project or a single session a color so
+it stands out at a glance. A colored project shows a small dot on its mark, and
+every session in it shows a thin stripe in that color at the leading edge of its
+row.
+
+- **A project:** open the project heading's menu and choose **Set color**.
+- **A session:** open the row's menu (right-click on desktop or long-press on
+  touch) and choose **Set color**.
+
+The menu offers the theme's colors — blue, green, orange, yellow, red, indigo
+and purple — which adjust to light and dark mode, followed by any custom colors
+you already use. Arrow keys move along a row of colors. **Custom color…** opens
+a picker that takes any opaque hex value other than a theme color. The current
+choice is ringed, and **Remove color** clears it. In a session's menu, a color
+it inherits from its project has a dashed ring instead; picking any color gives
+the session its own.
+
+A session uses its project's color until you give it its own; removing the
+session's color returns it to the project's. Colors are stored on the server
+with the rest of your organization, so they follow you to your other devices.
+Color is decoration, not meaning: Happier attaches no behavior to it.
+
+Coloring a single session needs a server that stores session colors. On an
+older server the session's **Set color** item is not shown, while project
+colors stay available.
 
 ## Bot readiness in 0.3 development
 
@@ -163,19 +198,41 @@ the unreleased diagnostic contract.
 
 ## Referencing another session
 
-In development-only 0.3, **Copy information** is available from a session's
-three-dot menu, list menu and Info screen without developer mode. Paste the
-text into another session to provide its Happier session ID, agent session ID
-and log paths when available. Review those paths before pasting outside your
-own sessions. Copying information does not grant access to the session.
+In development-only 0.3, the session's three-dot menu and list menu include a
+**Copy** submenu near the bottom, without requiring developer mode:
+
+- **Session information** copies the Happier session ID, Agent session ID, and log paths when available.
+- **Happier Session ID** copies only the Happier ID, ready to paste into another session.
+- The Agent's **Session ID** entry, such as **Claude Session ID**, copies only its native ID and appears when that ID is available.
+
+The info screen also lets you copy session information. Review log paths before
+pasting information outside your own sessions. Copying an ID does not grant access
+to the session; an Agent needs authorized Happier tools to retrieve another
+session's transcript using its Happier ID. The native Agent ID identifies that
+Agent's conversation and is separate from the Happier ID.
 
 You can also type `@` in the composer and choose a session from the suggestions;
 `@session:` narrows the suggestions to sessions.
 
+## Deleting a session
+
+In development-only 0.3, **Delete Session** is available for sessions you have permission to delete
+from the info screen, the open session's three-dot menu, and the session's list
+menu. You do not need to stop a running session in a separate step.
+
+When the session still needs to be stopped, the confirmation offers
+**Stop and delete** and explains that it will stop the session and permanently
+delete its messages and data. Happier stops the session before deleting it,
+without archiving it first. If stopping fails, the session is kept. If stopping
+succeeds but deletion fails, the stopped session remains so you can retry.
+
+When no stop is needed, the existing delete confirmation applies. Deleting is
+permanent and cannot be undone.
+
 ## Selecting several at once
 
 Open a row's menu (right-click on desktop or long-press on touch) and choose
-**Select** to start a selection. Then archive, delete,
+**Select** to start a selection. Then archive,
 move, mark read, or change attention handling for all of them together. The
 selection survives the list updating underneath you and survives scrolling.
 
@@ -202,7 +259,8 @@ Generous, but not unbounded. Each is per account:
 | Tags                                    | 500   |
 | Pinned sessions                         | 1000  |
 | Session attention choices and reminders | 500   |
-| Workspace and group labels              | 1000  |
+| Session colors                          | 1000  |
+| Workspace and group labels, with colors | 1000  |
 | Sessions changed in one bulk action     | 500   |
 | Custom order entries per scope          | 1000  |
 
