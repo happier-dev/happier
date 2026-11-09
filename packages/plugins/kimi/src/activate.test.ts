@@ -3,11 +3,13 @@ import { describe, expect, it } from 'vitest';
 
 import { activate } from './activate.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
+import { KIMI_ACP_COMMAND } from './agent/acp/preflight.js';
 
 describe('activate', () => {
   it('reexports the activation compiled by its canonical public plugin definition', async () => {
     expect(Object.keys(PLUGIN_MANIFEST.contributes).sort()).toEqual([
       'agents',
+      'connectedAccountDescriptors',
       'resources',
       'systemTools',
       'ui',
@@ -15,6 +17,9 @@ describe('activate', () => {
     expect(await import('./manifest.js')).toEqual(expect.objectContaining({
       KIMI_PLUGIN: expect.objectContaining({ manifest: PLUGIN_MANIFEST, activate }),
     }));
+    expect(PLUGIN_MANIFEST.contributes.systemTools?.map(tool => tool.id)).toEqual([KIMI_ACP_COMMAND.toolId]);
+    expect(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors?.find(service => service.id === 'kimi-code')?.authentication?.native)
+      .toEqual({ systemTool: KIMI_ACP_COMMAND.toolId });
   });
 
   it('exposes the custom Kimi ACP runtime with its interactive terminal surface', async () => {

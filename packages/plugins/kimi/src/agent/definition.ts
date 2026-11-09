@@ -10,7 +10,13 @@ export const AGENT_DEFINITION = Object.freeze({
     detectKey: 'kimi',
     flavorAliases: ['kimi-cli'],
     cloudConnect: null,
-    connectedServices: null,
+    connectedServices: {
+      supportedServiceIds: ['kimi-code'],
+      providerStateSharing: {
+        config: { supported: true, modes: ['linked', 'copied', 'isolated'] },
+        state: { supported: true, modes: ['isolated', 'shared'], sharedStatePrivacyRiskAcknowledgementRequired: true },
+      },
+    },
     resume: { vendorResume: 'supported' as const, vendorResumeIdField: 'kimiSessionId' },
     sessionStorage: { direct: false, persisted: true },
     sessionCapabilities: {
