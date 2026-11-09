@@ -1,4 +1,6 @@
 import { extractShellCommand, stripShellCommandPreludeForDisplay } from './shellCommand.js';
+import { isShellToolNameAlias } from '../tools/v2/aliases.js';
+import { resolveToolMutationClassification } from '../tools/toolMutationClassification.js';
 import {
   SESSION_PERMISSION_REMOTE_SUMMARY_MAX_CHOICES_PER_QUESTION,
   SESSION_PERMISSION_REMOTE_SUMMARY_MAX_QUESTIONS,
@@ -71,6 +73,7 @@ export type AgentRequestSemanticSummary = Readonly<{
   rawToolName: string;
   normalizedToolLabel: string;
   permissionTitle: string | null;
+  permissionAction: 'run_command' | 'change_files' | 'access_file' | 'use_tool';
   shellCommand: string | null;
   filePath: string | null;
   firstQuestionText: string | null;
@@ -242,14 +245,21 @@ export function buildAgentRequestSemanticSummary(params: Readonly<{
   const obj = asRecord(params.toolInput);
   const permission = asRecord(obj?.permission);
   const questions = extractQuestionSummaries(params.toolName, params.toolInput);
+  const shellCommand = extractShellCommand(params.toolInput);
+  const filePath = extractFilePathLike(params.toolInput);
+  const mutation = resolveToolMutationClassification(params.toolName);
+  const permissionAction = mutation === 'opaque_executor' || isShellToolNameAlias(params.toolName.trim()) || shellCommand ? 'run_command'
+    : mutation === 'patch' || mutation === 'single_path' || mutation === 'path_pair' ? 'change_files'
+      : filePath ? 'access_file' : 'use_tool';
 
   return {
     kind: params.kind,
     rawToolName: params.toolName,
     normalizedToolLabel: normalizeToolLabel(params.toolName),
     permissionTitle: firstString(permission?.title) ?? firstString(obj?.title) ?? null,
-    shellCommand: extractShellCommand(params.toolInput),
-    filePath: extractFilePathLike(params.toolInput),
+    permissionAction,
+    shellCommand,
+    filePath,
     firstQuestionText: questions[0]?.question ?? null,
     questionCount: questions.length,
     questions,

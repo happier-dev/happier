@@ -18,6 +18,9 @@ describe('native Voice permission input', () => {
 
   it.each([
     { label: 'Yes', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false },
+    { label: 'natural Yes go ahead', enabled: true, answer: 'YES, GO AHEAD.', approved: true, end: false, replaceRequest: false },
+    { label: 'natural Okay do it after carrier settlement', enabled: true, answer: 'Okay, do it.', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
+    { label: 'natural No dont after carrier settlement', enabled: true, answer: 'No, don’t.', approved: false, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'permission synthesis failure', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, readoutFailure: true },
     { label: 'permission synthesis failure followed by native denial', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false, readoutFailure: true, turnError: 'claude_error_during_execution', continues: true },
     { label: 'permission playback failure after the carrier settles', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, readoutFailure: true, startedReadout: true, carrierSettled: true },
@@ -31,6 +34,7 @@ describe('native Voice permission input', () => {
     { label: 'delegated Yes with acknowledgement after readout', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, replacedReadout: true, readoutCompleteBeforeFinal: true },
     { label: 'delegated No', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false, delegated: true },
     { label: 'delegated Yes after the carrier turn settles', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
+    { label: 'a synced delegated result after the carrier turn settles', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true, syncedResult: true },
     { label: 'retargeted delegated Yes', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true, retarget: true },
     { label: 'delegated No after the carrier turn settles', enabled: true, answer: 'No.', approved: false, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'a failed delegated response', enabled: true, answer: 'Yes.', approved: true, end: false, replaceRequest: false, delegated: true, responseFailure: true },
@@ -52,7 +56,7 @@ describe('native Voice permission input', () => {
     { label: 'an unclear decision after the carrier settles', enabled: true, answer: 'Maybe.', approved: null, end: false, replaceRequest: false, delegated: true, carrierSettled: true },
     { label: 'End', enabled: true, answer: '', approved: null, end: true, replaceRequest: false },
     { label: 'a replacement request while ASR is pending', enabled: true, answer: 'Yes.', approved: null, end: false, replaceRequest: true },
-  ])('reads a native permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure, delegated, carrierSettled, responseFailure, uiAnswer, retarget, replacedReadout, emptyFollowUp, startedReadout, nonStreaming, readoutCompleteBeforeFinal, readoutFailure }) => {
+  ])('reads a native permission aloud and respects $label', async ({ label, enabled, answer, approved, end, replaceRequest, turnError, continues, endAfterResponse, providerFailure, delegated, carrierSettled, responseFailure, uiAnswer, retarget, replacedReadout, emptyFollowUp, startedReadout, nonStreaming, readoutCompleteBeforeFinal, readoutFailure, syncedResult }) => {
     const storage = await getStorage();
     const state = storage.getState();
     const config = readLocalConversationVoiceSettings(state.settings.voice);
@@ -397,16 +401,30 @@ describe('native Voice permission input', () => {
         expect(expoSpeechSpeak.mock.calls).toHaveLength(precedingSpeechCount + 2);
         return;
       }
+      expect(sessionRpcWithServerScope.mock.calls.map(([request]) => request)).toContainEqual(expect.objectContaining({
+        sessionId: actualRequestSessionId, method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
+        payload: expect.objectContaining({ id: 'native-write', approved }),
+      }));
       const originalResult = await submitted;
       if (carrierSettled) {
         const { t } = await import('@/text');
         expect(expoSpeechSpeak.mock.calls.slice(precedingSpeechCount + 1).map(([text]) => text))
           .toContain(approved ? t('approvals.status.approved') : t('approvals.status.rejected'));
       }
-      expect(sessionRpcWithServerScope.mock.calls.map(([request]) => request)).toContainEqual(expect.objectContaining({
-        sessionId: actualRequestSessionId, method: RPC_METHODS.SESSION_PERMISSION_RESPOND,
-        payload: expect.objectContaining({ id: 'native-write', approved }),
-      }));
+      if (syncedResult) {
+        const { voiceHooks } = await import('@/voice/context/voiceHooks');
+        const { buildRealtimeConversationTurnMeta } = await import('@/voice/transcript/VoiceTranscriptProjector');
+        const resultText = 'The project root contains four hidden directories and no files.';
+        const beforeResult = expoSpeechSpeak.mock.calls.length;
+        voiceHooks.onMessages(target, [{ kind: 'agent-text', id: 'delegated-result', localId: null,
+          createdAt: Date.now(), text: resultText }]);
+        await vi.waitFor(() => expect(expoSpeechSpeak.mock.calls.slice(beforeResult).map(([text]) => text)).toEqual([resultText]));
+        await waitForTestEvent(lifecycle.subscribe, lifecycle.getSnapshot, snapshot => snapshot.canCommitInput === true);
+        voiceHooks.onMessages(binding.conversationSessionAddress, [{ kind: 'agent-text', id: 'spoken-result-echo', localId: null,
+          createdAt: Date.now(), text: resultText, meta: buildRealtimeConversationTurnMeta() }]);
+        await new Promise<void>(resolve => setImmediate(resolve));
+        expect(expoSpeechSpeak.mock.calls.slice(beforeResult).map(([text]) => text)).toEqual([resultText]);
+      }
       if (continues === false) {
         expect(originalResult).toMatchObject({ error: { rpcErrorCode: turnError } });
         expect(lifecycle.getSnapshot()).toMatchObject({ status: 'disconnected', errorCode: 'provider_error' });

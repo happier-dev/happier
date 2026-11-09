@@ -474,6 +474,10 @@ describe('mounted Voice Brief request', () => {
     it('renders real Inbox identities through the Brief projection and opens their exact Home destinations', async () => {
         const sessions = (['permission_required', 'failed', 'ready_after_read'] as const).map((reason, index) => createSessionFixture({
             id: `work-${index}`, serverId: account!.home.id, metadata: { path: '/repo', host: 'test', summary: { text: `Release captain ${index}`, updatedAt: 1 } },
+            active: true, activeAt: 1_000,
+            agentState: reason === 'permission_required' ? { controlledByUser: false, requests: {
+                root: { tool: 'Bash', arguments: { command: 'ls' }, createdAt: 1 },
+            } } : null,
             latestTurnStatus: 'completed', viewer: {
                 latestFailureSeq: null,
                 readState: { state: 'tracking', lastViewedSessionSeq: 0, unreadSince: null },
@@ -498,8 +502,9 @@ describe('mounted Voice Brief request', () => {
             const row = screen.findAllByType(Item).find(item => item.props.testID === testID);
             expect(row?.props.title).toBe(readInboxSessionTitle(session, address.serverId));
             if (session.viewer?.attention.primary === 'permission_required') {
-                // A request that has not hydrated yet still says why the row is here, in the row's own word.
-                expect(row?.props.subtitle).toBeTruthy();
+                expect(row?.props.subtitle).toContain(t('voiceMoments.briefWantsTo', {
+                    action: t('voiceMoments.briefRunCommand', { command: 'ls' }),
+                }));
                 expect(screen.getTextContent()).toContain(row?.props.subtitle);
             }
             await screen.pressByTestIdAsync(testID);

@@ -53,17 +53,20 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
         const title = candidate.title;
         return title.trim() && !isUntitledSessionName(title) ? title : null;
     };
-    // Drawn only, never spoken; a status-only row keeps its request's contents to itself.
+    // Inbox already admits readable request details. Notification-preview policy
+    // does not hide those details in the app; speech has its own disclosure below.
     const requestReason = (entry: VoiceBriefSource['sessionPresentation']['sessionsNeedingAttention'][number]): string | null => {
         const kind = entry.pendingPermissions[0] ? 'permission' : entry.pendingUserActions[0] ? 'user_action' : null;
         const request = entry.pendingPermissions[0] ?? entry.pendingUserActions[0];
-        if (!kind || !request || entry.candidate.personalAttention.presentation !== 'full') return null;
+        if (!kind || !request) return null;
         const semantic = buildAgentRequestSemanticSummary({ kind, toolName: request.tool, toolInput: request.arguments });
         if (kind === 'user_action') return semantic.firstQuestionText;
         if (semantic.permissionTitle) return semantic.permissionTitle;
         const action = semantic.shellCommand ? t('voiceMoments.briefRunCommand', { command: semantic.shellCommand })
             : semantic.filePath ? t('voice.readiness.permissionAccessFile', { path: semantic.filePath })
-                : t('voice.readiness.permissionUseTool', { tool: request.tool });
+                : semantic.permissionAction === 'run_command' ? t('voice.readiness.permissionRunCommand')
+                    : semantic.permissionAction === 'change_files' ? t('voice.readiness.permissionChangeFiles')
+                        : t('voice.readiness.permissionContinueAction');
         return t('voiceMoments.briefWantsTo', { action });
     };
     const sessionSubtitle = (candidate: VoiceBriefSource['sessionPresentation']['readySessions'][number], request: string | null = null) => {
@@ -73,7 +76,7 @@ export function buildVoiceBrief(input: Readonly<{ inbox: VoiceBriefSource; setti
     };
     const projectSessionSpeech = (candidate: VoiceBriefSource['sessionPresentation']['readySessions'][number], requests: readonly (readonly [AgentRequestKind, string, string, unknown])[] = []) => {
         const address = normalizeSessionAddress(candidate.address?.serverId ?? candidate.serverId, candidate.sessionId);
-        if (!address || candidate.personalAttention.presentation !== 'full') return;
+        if (!address) return;
         const includeInVoice = candidate.session.viewer?.follow?.includeInVoice === true;
         const isCurrentAttemptTarget = areSessionAddressesEqual(input.currentTarget, address);
         if (resolveVoiceSessionUpdatePolicyV1({ accountSettings: input.settings, includeInVoice, isCurrentAttemptTarget }).level === 'none') return;

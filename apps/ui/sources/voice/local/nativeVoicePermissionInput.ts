@@ -27,10 +27,11 @@ export type NativeVoicePermissionInput = Readonly<{
 type NativePermissionPrompt = { address: SessionAddress; request: SessionPendingRequest; ready: boolean; needsReadout: boolean };
 
 function resolveSpokenPermissionDecision(text: string): 'approved' | 'denied' | null {
-  const normalize = (value: string) => value.trim().toLocaleLowerCase().replace(/[,.!?。！？]+/gu, ' ').replace(/\s+/gu, ' ').trim();
+  const normalize = (value: string) => value.trim().toLocaleLowerCase()
+    .replace(/[’‘]/gu, "'").replace(/[,.!?。！？]+/gu, ' ').replace(/\s+/gu, ' ').trim();
   const answer = normalize(text);
-  if (answer === normalize(t('common.yes')) || /^(?:(?:yes|yeah|yep|okay|ok)(?: please)?(?: (?:allow|approve)(?: it| that)?)?|(?:please )?(?:allow|approve)(?: it| that)?)(?: please)?$/u.test(answer)) return 'approved';
-  if (answer === normalize(t('common.no')) || /^(?:(?:no|nope)(?: thanks| thank you)?(?: (?:deny|decline|reject)(?: it| that)?)?|(?:please )?(?:deny|decline|reject)(?: it| that)?|(?:don't|do not) allow(?: it| that)?)(?: please)?$/u.test(answer)) return 'denied';
+  if (answer === normalize(t('common.yes')) || /^(?:(?:yes|yeah|yep|okay|ok)(?: please)?(?: (?:allow|approve)(?: it| that)?| go ahead| do it)?|(?:please )?(?:allow|approve)(?: it| that)?|(?:please )?(?:go ahead|do it))(?: please)?$/u.test(answer)) return 'approved';
+  if (answer === normalize(t('common.no')) || /^(?:(?:no|nope)(?: thanks| thank you)?(?: (?:deny|decline|reject)(?: it| that)?| (?:don't|do not)(?: (?:allow|approve|do)(?: it| that)?)?)?|(?:please )?(?:deny|decline|reject)(?: it| that)?|(?:please )?(?:don't|do not)(?: (?:allow|approve|do)(?: it| that)?)?)(?: please)?$/u.test(answer)) return 'denied';
   return null;
 }
 

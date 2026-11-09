@@ -120,6 +120,34 @@ describe('formatPermissionRequest privacy', () => {
     expect(summarize(false)).not.toContain('Morning Coffee');
   });
 
+  it.each([
+    ['Bash', 'run a terminal command'],
+    ['Patch', 'change files'],
+    ['apply_patch', 'change files'],
+    ['custom_tool', 'continue with the requested action'],
+  ])('describes %s without disclosing private arguments or speaking a tool name', (toolName, action) => {
+    const result = summarizeAgentRequestForVoiceHuman('permission', 'req_private_args', toolName,
+      { command: 'echo SECRET', title: 'PRIVATE REQUEST', patch: 'PRIVATE CONTENT' },
+      { ...SHARE_ALL, voiceShareToolArgs: false }, 'List project root files');
+
+    expect(result).toContain(action);
+    expect(result).not.toContain(toolName);
+    expect(result).not.toContain('SECRET');
+    expect(result).not.toContain('PRIVATE');
+    expect(result).toContain('The session “List project root files”');
+  });
+
+  it.each(['Bash', 'Patch'])('does not reveal %s semantics when tool-name sharing is disabled', (toolName) => {
+    const result = summarizeAgentRequestForVoiceHuman('permission', 'req_private_name', toolName,
+      { command: 'echo SECRET' }, { ...SHARE_ALL, voiceShareToolNames: false });
+
+    expect(result).toContain('continue with the requested action');
+    expect(result).not.toContain('terminal');
+    expect(result).not.toContain('change files');
+    expect(result).not.toContain(toolName);
+    expect(result).not.toContain('SECRET');
+  });
+
   it('redacts file paths inside the human-facing permission summary when file path sharing is disabled', () => {
     const result = summarizeAgentRequestForVoiceHuman(
       'permission',

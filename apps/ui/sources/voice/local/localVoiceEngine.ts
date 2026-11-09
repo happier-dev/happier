@@ -843,15 +843,15 @@ async function readNativeTurnMessage(
   const sessionId = captureAttempt.controlSessionId;
   const isCurrent = () => isPromptCurrent() && isCaptureAttemptCurrent(admission, captureAttempt);
   if (!isCurrent()) return;
-  // Stop duplex recognition before the question, so its own speech cannot
-  // interrupt the still-waiting native model turn.
+  const assistantEntryId = projectLocalVoiceAgentAssistantText(sessionId, text);
+  const { config } = resolveLocalVoiceAdapterSettings(captureAttempt.settings);
+  if (config?.tts?.autoSpeakReplies === false) return;
+  // Stop duplex recognition during readout, so its own speech cannot
+  // interrupt the native model turn.
   if (localVoiceCaptureOwner.isCaptureActive(sessionId)) {
     await localVoiceCaptureOwner.stopSession(sessionId);
     if (!isCurrent()) return;
   }
-  const assistantEntryId = projectLocalVoiceAgentAssistantText(sessionId, text);
-  const { config } = resolveLocalVoiceAdapterSettings(captureAttempt.settings);
-  if (config?.tts?.autoSpeakReplies === false) return;
   let spoken = false;
   let interrupted = false;
   const registerPlaybackStopper = playbackController.registerStopper.captureAttempt?.() ?? playbackController.registerStopper;
@@ -1268,7 +1268,21 @@ function projectLocalVoiceAgentAssistantText(sessionId: string, text: string): s
 }
 
 export function announceLocalVoiceAgentAssistantText(sessionId: string, text: string): void {
-  projectLocalVoiceAgentAssistantText(sessionId, text);
+  const settings = storage.getState().settings;
+  const controlSessionId = resolveLocalConversationControlSessionId(settings, sessionId);
+  const admission = readCaptureAdmission(controlSessionId);
+  const binding = voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId });
+  if (!admission || binding?.transcriptMode !== 'native_session') {
+    projectLocalVoiceAgentAssistantText(sessionId, text);
+    return;
+  }
+  const captureAttempt = admission.captureAttempt;
+  // A delegated Session can finish after the carrier Voice turn has settled.
+  // Its sync announcement still uses the active attempt's playback and rearm.
+  fireAndForget((async () => {
+    if (await activeNativePermissionInput?.waitForPendingReadout()) return;
+    await readNativeTurnMessage(admission, captureAttempt, text, true, () => true, () => {});
+  })(), { tag: 'voice.nativeSession.announce' });
 }
 
 export async function sendLocalVoiceAgentTextTurn(

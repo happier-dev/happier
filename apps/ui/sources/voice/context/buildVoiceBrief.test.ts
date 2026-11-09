@@ -108,7 +108,10 @@ describe('Voice brief from the mounted Inbox', () => {
                 .find(candidate => candidate.sessionId === session.id)!;
             expect(item?.subtitle).toBe(buildInboxSessionReasonLine(candidate));
         }
-        expect(JSON.parse(brief.context).items.every((item: { title?: string }) => item.title === undefined)).toBe(true);
+        // Notification previews do not override the Account's Voice disclosure policy.
+        expect(JSON.parse(brief.context).items.map((item: { title?: string }) => item.title)).toEqual([
+            'needs <path_redacted>', 'failed <path_redacted>', 'ready <path_redacted>',
+        ]);
     });
     it('omits unreadable or unnamed work without claiming the Inbox is caught up', () => {
         const inbox = source();
@@ -156,7 +159,7 @@ describe('Voice brief from the mounted Inbox', () => {
     it.each([
         ['permission', { tool: 'Bash', arguments: { command: 'yarn test:e2e' } }, () => t('voiceMoments.briefWantsTo', { action: t('voiceMoments.briefRunCommand', { command: 'yarn test:e2e' }) })],
         ['permission', { tool: 'Edit', arguments: { file_path: 'src/index.ts' } }, () => t('voiceMoments.briefWantsTo', { action: t('voice.readiness.permissionAccessFile', { path: 'src/index.ts' }) })],
-        ['permission', { tool: 'WebFetch', arguments: {} }, () => t('voiceMoments.briefWantsTo', { action: t('voice.readiness.permissionUseTool', { tool: 'WebFetch' }) })],
+        ['permission', { tool: 'WebFetch', arguments: {} }, () => t('voiceMoments.briefWantsTo', { action: t('voice.readiness.permissionContinueAction') })],
         ['user_action', { tool: 'AskUserQuestion', arguments: { questions: [{ question: 'Which branch?', header: 'Branch', options: [], multiSelect: false }] } }, () => 'Which branch?'],
     ] as const)('leads with what the %s request asks for (%#)', (kind, request, expected) => {
         const inbox = source();
@@ -170,14 +173,41 @@ describe('Voice brief from the mounted Inbox', () => {
         expect(subtitle?.startsWith(expected())).toBe(true);
     });
 
-    it('keeps request contents out of a status-only row', () => {
+    it.each([true, false])('shows the readable Inbox request despite notification status-only, with Voice sharing=%s', (sharePermissionRequests) => {
         const inbox = source();
-        const sessionsNeedingAttention = inbox.sessionPresentation.sessionsNeedingAttention.map((entry) => entry.candidate.sessionId === 'needs'
-            ? { ...entry, candidate: { ...entry.candidate, personalAttention: { ...entry.candidate.personalAttention, presentation: 'status_only' as const } },
-                pendingPermissions: [{ id: 'r1', tool: 'Bash', arguments: { command: 'yarn secret' }, createdAt: 1 }] }
-            : entry);
-        const brief = buildVoiceBrief({ inbox: { ...inbox, sessionPresentation: { ...inbox.sessionPresentation, sessionsNeedingAttention } }, settings: {} });
-        expect(brief.items.find((item) => item.destination.kind === 'session' && item.destination.address.sessionId === 'needs')?.subtitle ?? '').not.toContain('yarn secret');
+        const original = inbox.sessionPresentation.sessionsNeedingAttention.find(entry => entry.candidate.sessionId === 'needs')!.candidate.session;
+        // Account A's observed Inbox has 788 waiting rows. Exercise that admitted
+        // shape without introducing a competing Brief window or disclosure cap.
+        const waitingCount = 788;
+        const question = 'Which branch should I publish to /home/alice/private?';
+        const candidates = Array.from({ length: waitingCount }, (_, index) => buildSessionActivityAttention({ session: createSessionFixture({
+            ...original, id: `waiting-${index}`, active: true, activeAt: 1_000,
+            viewer: { ...original.viewer!, attention: { ...original.viewer!.attention,
+                reasons: ['user_action_required'], primary: 'user_action_required', presentation: 'status_only' } },
+            agentState: { controlledByUser: false, requests: { r1: { tool: 'AskUserQuestion',
+                kind: 'user_action', arguments: { questions: [{ question, header: 'Branch', options: [], multiSelect: false }] }, createdAt: 950 } } },
+        }), nowMs: 1_000 }));
+        const sessionPresentation = buildInboxSessionPresentation({ overview: buildActivityOverviewFromCandidates(candidates) });
+        expect(sessionPresentation.sessionsNeedingAttention).toHaveLength(waitingCount);
+        expect(sessionPresentation.sessionsNeedingAttention.every(entry => entry.pendingUserActions.length === 1)).toBe(true);
+        const brief = buildVoiceBrief({ inbox: { ...inbox, sessionPresentation }, settings: { voice: { privacy: {
+            sharePermissionRequests, shareToolArgs: true, shareSessionSummary: true,
+        } } } });
+        expect(brief.items).toHaveLength(waitingCount);
+        expect(brief.items.every(item => item.subtitle === question)).toBe(true);
+        const spoken: readonly { title?: string; requests?: readonly string[] }[] = JSON.parse(brief.context).items;
+        expect(spoken).toHaveLength(waitingCount);
+        expect(spoken.every(item => item.title === 'needs <path_redacted>')).toBe(true);
+        expect(spoken.every(item => (item.requests?.length ?? 0) === (sharePermissionRequests ? 1 : 0))).toBe(true);
+        expect(brief.context.includes('Which branch should I publish')).toBe(sharePermissionRequests);
+        expect(brief.context).not.toContain('home-a');
+        expect(brief.context).not.toContain('waiting-');
+        expect(brief.context).not.toContain('/home/alice');
+    });
+
+    it('does not substitute a status word when the Inbox request reason is not yet known', () => {
+        const brief = buildVoiceBrief({ inbox: source(), settings: {} });
+        expect(brief.items.find(item => item.destination.kind === 'session' && item.destination.address.sessionId === 'needs')?.subtitle).toBeUndefined();
     });
 
     it('withholds titles, destinations and request details from speech unless the canonical privacy policy admits them', () => {

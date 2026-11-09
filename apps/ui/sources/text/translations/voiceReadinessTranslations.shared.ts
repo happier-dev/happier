@@ -6,9 +6,11 @@ export type VoiceReadinessCopy = {
   permissionTapRequired: string;
   permissionAnnouncement: (params: { session: string; summary: string }) => string;
   requestingSession: string;
+  permissionNamedSession: (params: { session: string }) => string;
+  permissionChangeFiles: string;
+  permissionContinueAction: string;
   permissionRunCommand: string;
   permissionAccessFile: (params: { path: string }) => string;
-  permissionUseTool: (params: { tool: string }) => string;
   userActionAnnouncement: (params: { question: string }) => string;
   userActionFallback: string;
   requestedTool: string;
@@ -90,9 +92,11 @@ export const voiceReadinessTranslationsEnglish = { en: defineVoiceReadinessTrans
     ready: 'Ready for Voice.',
     permissionAnnouncement: ({ session, summary }) => `${session} needs permission to ${summary}.`,
     requestingSession: 'The coding session',
+    permissionNamedSession: ({ session }) => `The session “${session}”`,
+    permissionChangeFiles: 'change files',
+    permissionContinueAction: 'continue with the requested action',
     permissionRunCommand: 'run a terminal command',
     permissionAccessFile: ({ path }) => `work with ${path}`,
-    permissionUseTool: ({ tool }) => `use ${tool}`,
     permissionQuestion: ({ approve, deny }) => `Should I allow it? Say “${approve}” or “${deny}”.`,
     permissionTapRequired: "Use the approval card to continue.",
     userActionAnnouncement: ({ question }) => `The coding session needs your input. ${question}`,

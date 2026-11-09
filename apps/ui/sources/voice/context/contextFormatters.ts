@@ -185,12 +185,16 @@ export function summarizeAgentRequestForVoiceHuman(
             toolInput: !resolved.voiceShareToolArgs ? null
                 : resolved.voiceShareFilePaths ? toolArgs : redactVoicePathLikeData(toolArgs ?? null),
         });
-        const summary = semantic.shellCommand ? t('voice.readiness.permissionRunCommand')
-            : semantic.filePath ? t('voice.readiness.permissionAccessFile', { path: semantic.filePath })
-                : t('voice.readiness.permissionUseTool', { tool: sharedToolName });
+        const summary = !resolved.voiceShareToolNames ? t('voice.readiness.permissionContinueAction')
+            : semantic.permissionAction === 'run_command' ? t('voice.readiness.permissionRunCommand')
+                : semantic.filePath ? t('voice.readiness.permissionAccessFile', { path: semantic.filePath })
+                    : semantic.permissionAction === 'change_files' ? t('voice.readiness.permissionChangeFiles')
+                        : t('voice.readiness.permissionContinueAction');
         const sharedSessionLabel = resolved.voiceShareSessionSummary && sessionLabel?.trim();
         const session = sharedSessionLabel
-            ? resolved.voiceShareFilePaths ? sharedSessionLabel : redactVoicePathLikeString(sharedSessionLabel)
+            ? t('voice.readiness.permissionNamedSession', {
+                session: resolved.voiceShareFilePaths ? sharedSessionLabel : redactVoicePathLikeString(sharedSessionLabel),
+            })
             : t('voice.readiness.requestingSession');
         return t('voice.readiness.permissionAnnouncement', { session, summary });
     }

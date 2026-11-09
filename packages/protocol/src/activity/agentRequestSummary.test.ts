@@ -10,6 +10,20 @@ import {
 } from './agentRequestSummary.js';
 
 describe('buildAgentRequestSemanticSummary', () => {
+  it.each([
+    ['Bash', 'run_command'],
+    ['exec_command', 'run_command'],
+    ['exec', 'run_command'],
+    ['Patch', 'change_files'],
+    ['apply_patch', 'change_files'],
+    ['Write', 'change_files'],
+    ['Read', 'use_tool'],
+    ['custom_tool', 'use_tool'],
+  ])('retains the %s operation semantics without sharing its input', (toolName, permissionAction) => {
+    expect(buildAgentRequestSemanticSummary({ kind: 'permission', toolName, toolInput: null }))
+      .toMatchObject({ permissionAction, shellCommand: null, filePath: null });
+  });
+
   it('collects permission title and shell command semantics', () => {
     const summary = buildAgentRequestSemanticSummary({
       kind: 'permission',
