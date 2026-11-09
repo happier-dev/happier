@@ -1,4 +1,4 @@
-import type { AccountApiTokenSelfV1 } from '@happier-dev/protocol';
+import type { AccountApiTokenSelfV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { deriveEmbedAccessFromGrantV1, type EmbedUiOverridesV1 } from '@happier-dev/protocol/embed';
 
 import type { SessionViewEmbeddedPresentation } from '@/components/sessions/shell/embedded/embeddedSessionPresentation';

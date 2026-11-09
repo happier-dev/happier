@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1 } from '@happier-dev/protocol';
+import { ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import type { ServerFetch } from '@/sync/http/client';
 import { admitEmbedCredential } from './admitEmbedCredential';
 

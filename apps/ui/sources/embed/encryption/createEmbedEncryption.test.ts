@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { sealBoxBundle, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
+import { sealBoxBundle} from '@happier-dev/protocol/crypto/boxBundle';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { projectComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
 
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';

@@ -1,10 +1,12 @@
 import {
-    type AccountApiTokenSelfV1, type ProviderBoundModelRef,
-} from '@happier-dev/protocol';
+    type AccountApiTokenSelfV1} from '@happier-dev/protocol/auth/accountApiTokens';
+import { type ProviderBoundModelRef,
+} from '@happier-dev/protocol/providers/selection/v1';
 import {
     EmbedCredentialV1Schema, EmbedErrorCodeV1Schema, EmbedUiOverridesV1Schema,
     type EmbedCredentialV1, type EmbedCredentialRequestV1, type EmbedErrorCodeV1,
     type ComposerOptionsInputV1, type EmbedUiOverridesV1,
+    projectComposerOptionsInputV1,
 } from '@happier-dev/protocol/embed';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { EmbeddedNewSessionDraft, EmbeddedSessionNewChatCreation } from '@/components/sessions/shell/embedded/embeddedSessionTarget';
@@ -13,6 +15,7 @@ import { admitEmbedCredential } from '@/embed/credential/admitEmbedCredential';
 import { createServerFetchAtEndpoint, type ServerFetch } from '@/sync/http/client';
 import { randomUUID } from '@/platform/randomUUID';
 import { buildEmbedSessionSpawnInput } from './buildEmbedSessionSpawnInput';
+import { EmbedSessionCreationFailure } from './creationFailure';
 
 // Browser/Node timers represent delays as signed 32-bit milliseconds, not credential TTLs.
 const MAX_TIMEOUT_DELAY_MS = 2_147_483_647;
@@ -64,6 +67,7 @@ export function createEmbedSessionRuntime(input: Readonly<{
     let originRefused = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let pendingCredential: Promise<void> | null = null;
+    let detachConfiguration: (() => void) | null = null;
     const creationControllers = new Set<AbortController>();
     let creation: { intent: Intent; attemptId: string; promise: Promise<{ sessionId: string }>; sessionId?: string; tokenId: string } | null = null;
     const publish = (next: EmbedSessionRuntimeSnapshot) => {
@@ -75,6 +79,8 @@ export function createEmbedSessionRuntime(input: Readonly<{
     const clearTimer = () => { if (timer !== null) clearTimeout(timer); timer = null; };
     const retire = (retain: boolean) => {
         clearTimer();
+        detachConfiguration?.();
+        detachConfiguration = null;
         scope?.controller.abort('embed-authority-retired');
         scope = null;
         syncOwner?.disposeEmbedSession({ preserveSessionState: retain });
@@ -121,7 +127,7 @@ export function createEmbedSessionRuntime(input: Readonly<{
             if (credential.sessionOptions !== undefined && target.sessionId !== null) {
                 const opened = input.encryption.openSessionOptions(target.sessionId, credential.sessionOptions);
                 if (!opened.ok) throw new Error('session_key_invalid');
-                composerOptionsInput = opened.composerOptionsInput;
+                composerOptionsInput = projectComposerOptionsInputV1(opened.composerOptionsInput, self.grant);
             }
             if (self.accountEncryptionMode === 'plain' && (credential.sessionKey !== undefined || credential.sessionOptions !== undefined)) {
                 throw new Error('credential_rejected');
@@ -130,6 +136,8 @@ export function createEmbedSessionRuntime(input: Readonly<{
             // Keep the incumbent live while the host responds and origin/key admission runs.
             // Only a validated replacement may retire its requests; sync.create owns socket swap.
             clearTimer();
+            detachConfiguration?.();
+            detachConfiguration = null;
             scope?.controller.abort('embed-authority-replaced');
             scope = admittedScope;
             let creationModels: readonly ProviderBoundModelRef[] | null = snapshot.creationModels;
@@ -161,21 +169,38 @@ export function createEmbedSessionRuntime(input: Readonly<{
                     providerProjection: catalog.modelCatalog?.providerProjection ?? null,
                 };
                 creationModels = self.grant.models;
-                // The canonical draft address requires a UUID. Allocate it once on the
-                // existing intent so remounts and credential replacement keep the draft.
-                target.draftId ??= randomUUID();
+                const draftScope = { serverId: input.endpointUrl, accountId: self.accountId };
+                const embedOwnerId = self.parentTokenId ?? self.credentialId;
+                if (!target.draftId) {
+                    const { prepareLocalSessionDraftScope, resolveInterruptedNewSessionDraftId } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+                    await prepareLocalSessionDraftScope(draftScope);
+                    if (!current(target) || scope !== admittedScope) { controller.abort(); return; }
+                    target.draftId = resolveInterruptedNewSessionDraftId(draftScope, embedOwnerId) ?? randomUUID();
+                }
                 creationConfig = { draftId: target.draftId,
-                    draftScope: { serverId: input.endpointUrl, accountId: self.accountId },
+                    draftScope,
                     machineId: binding.machineId, agentTargetKey: binding.agentTargetKey, allowedModels: creationModels,
                     modelCatalog,
                     permissionModes: self.grant.permissionModes, attachments: self.embedConfig?.ui.attachments !== false && snapshot.ui.attachments !== false };
             } else {
                 syncOwner ??= (await import('@/sync/sync')).sync;
                 if (!current(target) || scope !== admittedScope) { controller.abort(); return; }
+                const { watchEmbedConfiguration } = await import('./watchEmbedConfiguration');
+                if (!current(target) || scope !== admittedScope) { controller.abort(); return; }
+                const activeScope = admittedScope;
+                detachConfiguration = watchEmbedConfiguration({ request, parentOrigin, ancestorOrigins: ancestors,
+                    isCurrent: () => current(target) && scope === activeScope && !controller.signal.aborted,
+                    onConfiguration: embedConfig => {
+                        if (JSON.stringify(activeScope.self.embedConfig) === JSON.stringify(embedConfig)) return;
+                        activeScope.self = { ...activeScope.self, embedConfig };
+                        if (snapshot.self !== null) publish({ ...snapshot, self: activeScope.self });
+                    },
+                });
                 await syncOwner.create({ token: credential.token }, input.encryption.encryption, undefined, {
                     scope: { kind: 'embedSession', sessionId: target.sessionId }, endpointUrl: input.endpointUrl,
                     accountId: self.accountId, accountMode: self.accountEncryptionMode,
-                    sessionKey: credential.sessionKey ?? null, composerOptionsInput,
+                    approvalGranted: self.grant.approve,
+                    sessionKey: credential.sessionKey ?? null, composerOptionsInput, composerOptionsGrant: self.grant,
                     isCurrent: () => current(target) && scope === admittedScope && !controller.signal.aborted,
                     onCredentialRejected: () => { void requestCredential('rejected'); },
                 });
@@ -186,7 +211,7 @@ export function createEmbedSessionRuntime(input: Readonly<{
             // A failed exchange keeps it for Retry; subsequent renewal uses host ownership.
             if (target.sessionId !== null) delete target.createdByTokenId;
             publish({ ...snapshot, phase: 'ready', reconnecting: false, error: undefined, requestedSessionId: target.sessionId,
-                displayedSessionId: target.sessionId, self, credential: { token: credential.token }, creationModels, creationConfig });
+                displayedSessionId: target.sessionId, self: admittedScope.self, credential: { token: credential.token }, creationModels, creationConfig });
             const refreshAt = expiry - Math.min(60_000, (expiry - Date.now()) / 2);
             const scheduleRefresh = () => {
                 timer = setTimeout(() => {
@@ -260,7 +285,6 @@ export function createEmbedSessionRuntime(input: Readonly<{
                 ? { ...snapshot.creationConfig, attachments }
                 : snapshot.creationConfig;
             publish({ ...snapshot, ui, creationConfig });
-            if (snapshot.phase === 'error') void requestCredential('open');
         },
         async open(sessionId: string | null) {
             if (disposed || originRefused) return;
@@ -289,21 +313,30 @@ export function createEmbedSessionRuntime(input: Readonly<{
             if (creation && creation.intent === intent && creation.attemptId === attempt.attemptId) return creation.promise;
             const target = intent;
             const admitted = scope;
-            const payload = buildEmbedSessionSpawnInput({ draft, attemptId: attempt.attemptId, self: admitted.self, endpointUrl: input.endpointUrl });
-            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-            if (!current(target) || scope !== admitted) throw new Error('credential_unavailable');
             // A dispatched creation reports an authoritative fact even after viewer navigation.
             // Its completion belongs to this frame load, not the retired viewing scope.
             const controller = new AbortController();
             creationControllers.add(controller);
-            const request = createCredentialRequest(admitted.token, controller,
-                () => !disposed && !controller.signal.aborted,
-                () => current(target) && scope === admitted);
-            const executor = createDefaultActionExecutor({ apiTokenAction: { request, target: { kind: 'machine', machineId: payload.executionTarget.machineId } } });
             const operation: NonNullable<typeof creation> = { intent: target, attemptId: attempt.attemptId,
                 tokenId: admitted.self.credentialId, promise: Promise.resolve({ sessionId: '' }) };
+            // Reserve this attempt before any asynchronous preparation so every caller
+            // joins the same spawn, completion fact and credential exchange.
             operation.promise = (async () => {
                 try {
+                    const draftScope = snapshot.creationConfig?.draftScope;
+                    const draftId = snapshot.creationConfig?.draftId;
+                    if (draftScope && draftId) {
+                        const { writeSessionDraftLocalSupplement } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+                        writeSessionDraftLocalSupplement({ scope: draftScope, address: { kind: 'newSession', draftId },
+                            patch: { embedNewSessionOwnerId: admitted.self.parentTokenId ?? admitted.self.credentialId } });
+                    }
+                    const payload = buildEmbedSessionSpawnInput({ draft, attemptId: attempt.attemptId, self: admitted.self, endpointUrl: input.endpointUrl });
+                    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+                    if (!current(target) || scope !== admitted) throw new Error('credential_unavailable');
+                    const request = createCredentialRequest(admitted.token, controller,
+                        () => !disposed && !controller.signal.aborted,
+                        () => current(target) && scope === admitted);
+                    const executor = createDefaultActionExecutor({ apiTokenAction: { request, target: { kind: 'machine', machineId: payload.executionTarget.machineId } } });
                     const { executeSessionSpawnNewAction } = await import('@/sync/ops/actions/sessionSpawnNewAction');
                     if (!current(target) || scope !== admitted) throw new Error('credential_unavailable');
                     const action = await executeSessionSpawnNewAction(payload, { surface: 'ui', serverId: input.endpointUrl,
@@ -311,12 +344,12 @@ export function createEmbedSessionRuntime(input: Readonly<{
                     // Match the canonical New Session owner's settled Action-refusal contract.
                     // The shared client joins known operations. An unknown receipt
                     // retains creation custody rather than becoming an auth failure.
-                    if (!action.ok) throw Object.assign(new Error(action.errorCode), { code: action.errorCode, retryable: false });
+                    if (!action.ok) throw new EmbedSessionCreationFailure(action);
                     if (action.result.type !== 'success') {
                         if (action.result.type === 'pending') throw Object.assign(new Error('session_create_pending'), {
                             code: 'session_create_pending', retryable: true,
                         });
-                        throw Object.assign(new Error(action.result.code), { code: action.result.code, retryable: action.result.retryable });
+                        throw new EmbedSessionCreationFailure({ ok: true, result: action.result });
                     }
                     const sessionId = action.result.sessionId;
                     operation.sessionId = sessionId;
@@ -325,7 +358,6 @@ export function createEmbedSessionRuntime(input: Readonly<{
                     target.sessionId = sessionId;
                     target.createdByTokenId = operation.tokenId;
                     publish({ ...snapshot, phase: 'loading', requestedSessionId: sessionId });
-                    input.navigate?.(sessionId);
                     await requestCredential('created');
                     if (!current(target) || snapshot.phase !== 'ready' || snapshot.displayedSessionId !== sessionId) {
                         throw new Error(current(target) ? snapshot.error ?? 'credential_unavailable' : 'credential_unavailable');
@@ -341,6 +373,22 @@ export function createEmbedSessionRuntime(input: Readonly<{
                 if (!operation.sessionId && creation === operation) creation = null;
                 throw error;
             }
+        },
+        presentCreatedSession(sessionId: string): void {
+            const normalizedSessionId = String(sessionId ?? '').trim();
+            if (
+                !normalizedSessionId
+                || intent.sessionId !== normalizedSessionId
+                || snapshot.phase !== 'ready'
+                || snapshot.displayedSessionId !== normalizedSessionId
+            ) {
+                throw Object.assign(new Error('embed_created_session_not_ready'), {
+                    code: 'embed_created_session_not_ready',
+                });
+            }
+            if (snapshot.presentationTargetKind === 'session') return;
+            publish({ ...snapshot, presentationTargetKind: 'session' });
+            input.navigate?.(normalizedSessionId);
         },
         dispose() {
             if (disposed) return;

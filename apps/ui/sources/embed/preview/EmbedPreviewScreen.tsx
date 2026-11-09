@@ -232,6 +232,7 @@ function EmbedPreviewComposer(props: EmbedPreviewComposerProps & Readonly<{
             onModelModeChange={noop}
             voiceAffordance={props.controls.voiceAffordance}
             engineControls={props.controls.engineControls}
+            allowPlacementCustomization={props.controls.allowPlacementCustomization}
             onAttachmentsAdded={props.controls.attachments ? noop : undefined}
             composerInputLock={props.inputLock}
             autocompleteKinds={PREVIEW_SUGGESTION_KINDS}

@@ -1,11 +1,19 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1, AccountApiTokenSelfV1Schema, SessionCreationKeyV1Schema, SessionDraftAddressV2Schema } from '@happier-dev/protocol';
+import { ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1, AccountApiTokenSelfV1Schema} from '@happier-dev/protocol/auth/accountApiTokens';
+import { SessionCreationKeyV1Schema} from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { SessionDraftAddressV2Schema } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { DaemonProviderModelProjectionResponseV1Schema } from '@happier-dev/protocol/rpc';
 import type { EmbeddedNewSessionDraft } from '@/components/sessions/shell/embedded/embeddedSessionTarget';
 import { createEmbedEncryption } from '@/embed/encryption/createEmbedEncryption';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/sync/http/client';
 import '@/sync/ops/actions/defaultActionExecutor';
 import { createEmbedSessionRuntime } from './createEmbedSessionRuntime';
+import { writeNewSessionDraft, writeSessionDraftLocalSupplement } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { createEmbeddedNewChatSpawnExecutor } from '@/components/sessions/shell/embedded/EmbeddedSessionNewChat';
+import { resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 
 // Only Expo's native random boundary is substituted; Action and encryption
 // owners remain real and use the existing cryptographic Node adapters.
@@ -14,8 +22,8 @@ vi.mock('expo-crypto', async () => ({
     ...await import('@/platform/randomUUID.node'),
 }));
 
-// The static executor import exposes unavailable dependencies during collection,
-// rather than hiding them behind admission's deliberate error projection.
+// Load the real executor and creator during collection: cold UI module linking
+// must not outlive a timed-out test and use the next case's HTTP boundary.
 
 afterEach(() => { resetRuntimeFetch(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
@@ -44,6 +52,94 @@ function deferred<T>() {
 }
 
 describe('frame credential authority', () => {
+    it('changes presentation in an error state without requesting credentials, then recovers on explicit Retry', async () => {
+        let selfReads = 0;
+        setRuntimeFetch(async (url) => {
+            const path = new URL(String(url)).pathname;
+            if (path === ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1) {
+                selfReads += 1;
+                return selfReads === 1 ? new Response(null, { status: 401 }) : Response.json(newChatSelf());
+            }
+            if (path === '/v1/actions/action.options.resolve') return optionsResponse();
+            throw new Error(`Unexpected request: ${path}`);
+        });
+        const requests: string[] = [];
+        const credential = { token: 'replacement', expiresAt: new Date(Date.now() + 900_000).toISOString() };
+        const runtime = createEmbedSessionRuntime({ encryption: await createEmbedEncryption(), endpointUrl });
+        runtime.attachBridge({ requestCredential: async (request) => {
+            requests.push(request.reason);
+            return credential;
+        }, sessionCreated: () => {} });
+        try {
+            await runtime.initialize({ parentOrigin: 'https://allowed.example', credential });
+            expect(runtime.getSnapshot()).toMatchObject({ phase: 'error' });
+            runtime.configure({ ui: { attachments: false, modelPicker: false } });
+            runtime.configure({ ui: { attachments: true, modelPicker: false } });
+            expect(requests).toEqual([]);
+            expect(selfReads).toBe(1);
+            expect(runtime.getSnapshot()).toMatchObject({ phase: 'error', ui: { attachments: true, modelPicker: false } });
+
+            await runtime.retry();
+            expect(requests).toEqual(['rejected']);
+            expect(selfReads).toBe(2);
+            expect(runtime.getSnapshot()).toMatchObject({ phase: 'ready', credential: { token: 'replacement' },
+                ui: { attachments: true, modelPicker: false }, creationConfig: { attachments: true } });
+        } finally { runtime.dispose(); }
+    });
+
+    it.each([
+        { name: 'requester admission', execution: ActionExecuteFailureSchema.parse({ ok: false,
+            errorCode: 'target_unavailable', error: 'target_unavailable', effectAttempted: false,
+            details: { code: 'target_unavailable', reason: 'caller_depth_unavailable' } }) },
+        { name: 'native refusal', execution: { ok: true as const, result: SessionSpawnNewResultV1Schema.parse({
+            type: 'error', code: 'spawn_failed', retryable: false,
+            launchError: { kind: 'launch_error', code: 'native_agent_privileged_effect_authority_unavailable',
+                message: 'Native execution authority is unavailable.' },
+        }) } },
+        { name: 'Provider recovery', execution: { ok: true as const, result: SessionSpawnNewResultV1Schema.parse({
+            type: 'error', code: 'spawn_failed', retryable: false,
+            providerError: createProviderErrorV1('provider_secret_missing'),
+        }) } },
+        { name: 'incompatible target', execution: { ok: true as const, result: SessionSpawnNewResultV1Schema.parse({
+            type: 'error', code: 'incompatible_target', retryable: false,
+            incompatibleTarget: { reason: 'checkout_unavailable' },
+        }) } },
+    ])('preserves $name through the HTTP runtime and embedded creator to the existing presenter', async ({ name, execution }) => {
+        let spawns = 0;
+        let operationReads = 0;
+        setRuntimeFetch(async url => {
+            const path = new URL(String(url)).pathname;
+            if (path === ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1) return Response.json(newChatSelf());
+            if (path === '/v1/actions/action.options.resolve') return optionsResponse();
+            if (path === '/v1/actions/session.spawn_new') {
+                spawns += 1;
+                return Response.json({ v: 1, actionId: 'session.spawn_new', execution });
+            }
+            if (path === '/v1/actions/action.operations.get') operationReads += 1;
+            throw new Error(`Unexpected request: ${path}`);
+        });
+        const runtime = createEmbedSessionRuntime({ encryption: await createEmbedEncryption(), endpointUrl });
+        const onSpawned = vi.fn();
+        try {
+            await runtime.initialize({ parentOrigin: 'https://allowed.example', credential: {
+                token: 'child', expiresAt: new Date(Date.now() + 900_000).toISOString(),
+            } });
+            const executor = createEmbeddedNewChatSpawnExecutor({ readOnCreate: () => runtime.createSession, onSpawned });
+            const result = await executor({ creationKey: SessionCreationKeyV1Schema.parse(`refused-${name.replaceAll(' ', '-')}`),
+                executionTarget: { serverId: endpointUrl, machineId: 'bound-machine' }, directory: { kind: 'managed' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+            }, { surface: 'ui', actionRequestId: 'refused-creation' });
+            expect(result).toEqual(execution);
+            if (name === 'native refusal' && result.ok && result.result.type === 'error') {
+                expect(resolveSessionSpawnNewResultFailureMessage(result.result))
+                    .toContain('native_agent_privileged_effect_authority_unavailable');
+            }
+            expect({ spawns, operationReads }).toEqual({ spawns: 1, operationReads: 0 });
+            expect(onSpawned).not.toHaveBeenCalled();
+            expect(runtime.getSnapshot().phase).toBe('ready');
+        } finally { runtime.dispose(); }
+    });
+
     it('does not notify frame consumers for equivalent UI configuration', async () => {
         const runtime = createEmbedSessionRuntime({ encryption: await createEmbedEncryption(), endpointUrl });
         let publications = 0;
@@ -112,7 +208,7 @@ describe('frame credential authority', () => {
                 return new Response(JSON.stringify({ v: 1, actionId: 'session.spawn_new', execution: {
                     ok: true, result: { type: 'success', disposition: 'created', sessionId: 'created',
                         executionTarget: { serverId: endpointUrl, machineId: 'bound-machine' },
-                        organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } },
+                        organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } },
                 } }));
             }
             throw new Error(`Unexpected request: ${path}`);
@@ -142,7 +238,10 @@ describe('frame credential authority', () => {
         } finally { runtime.dispose(); }
     });
     it.each([true, false])('carries the admitted machine catalog without replacing connection refs (grant narrowing: %s)', async (restricted) => {
-        const self = newChatSelf();
+        const self = AccountApiTokenSelfV1Schema.parse({
+            ...newChatSelf(), accountEncryptionMode: 'e2ee',
+            parentTokenId: '00000000-0000-4000-8000-000000000002',
+        });
         const agentTargetKey = self.grant.create!.agentTargetKey;
         const providerProjection = DaemonProviderModelProjectionResponseV1Schema.parse({
             status: 'success', agentTargetKey, groups: ['pc_work', 'pc_personal'].map((connectionId) => ({
@@ -191,6 +290,30 @@ describe('frame credential authority', () => {
             expect(optionsInput).toMatchObject({ target: { kind: 'machine', machineId: 'bound-machine' }, input: {
                 draftInput: { executionTarget: { machineId: 'bound-machine' } },
             } });
+        } finally { runtime.dispose(); }
+    });
+
+    it('does not publish a host-bound creation profile when machine option discovery is unavailable', async () => {
+        setRuntimeFetch(async (url) => {
+            const path = new URL(String(url)).pathname;
+            if (path === ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1) return Response.json(newChatSelf());
+            if (path === '/v1/actions/action.options.resolve') return Response.json({
+                v: 1,
+                actionId: 'action.options.resolve',
+                execution: { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' },
+            });
+            throw new Error(`Unexpected request: ${path}`);
+        });
+        const runtime = createEmbedSessionRuntime({ encryption: await createEmbedEncryption(), endpointUrl });
+        try {
+            await runtime.initialize({ parentOrigin: 'https://allowed.example', credential: {
+                token: 'child', expiresAt: new Date(Date.now() + 900_000).toISOString(),
+            } });
+            expect(runtime.getSnapshot()).toMatchObject({
+                phase: 'error',
+                error: 'credential_unavailable',
+                creationConfig: null,
+            });
         } finally { runtime.dispose(); }
     });
 
@@ -256,30 +379,38 @@ describe('frame credential authority', () => {
     });
 
     it('preserves the creation presentation and attribution when the first credential exchange fails', async () => {
+        let spawns = 0;
         setRuntimeFetch(async (url) => {
             const path = new URL(String(url)).pathname;
             if (path === ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1) return new Response(JSON.stringify(newChatSelf()));
             if (path === '/v1/actions/action.options.resolve') return optionsResponse();
-            if (path === '/v1/actions/session.spawn_new') return new Response(JSON.stringify({ v: 1, actionId: 'session.spawn_new', execution: {
+            if (path === '/v1/actions/session.spawn_new') { spawns += 1; return new Response(JSON.stringify({ v: 1, actionId: 'session.spawn_new', execution: {
                 ok: true, result: { type: 'success', disposition: 'created', sessionId: 'created',
                     executionTarget: { serverId: endpointUrl, machineId: 'bound-machine' },
-                    organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } },
-            } }));
+                    organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } },
+            } })); }
             throw new Error(`Unexpected request: ${path}`);
         });
         const requests: unknown[] = [];
         const runtime = createEmbedSessionRuntime({ encryption: await createEmbedEncryption(), endpointUrl });
-        runtime.attachBridge({ requestCredential: async (request) => { requests.push(request); throw new Error('credential_unavailable'); }, sessionCreated: () => {} });
+        const created: string[] = [];
+        runtime.attachBridge({ requestCredential: async (request) => { requests.push(request); throw new Error('credential_unavailable'); }, sessionCreated: (sessionId) => { created.push(sessionId); } });
         try {
             await runtime.initialize({ parentOrigin: 'https://allowed.example', credential: { token: 'child', expiresAt: new Date(Date.now() + 900_000).toISOString() } });
             const config = runtime.getSnapshot().creationConfig;
             const draft: EmbeddedNewSessionDraft = { creationKey: SessionCreationKeyV1Schema.parse('intent'),
                 executionTarget: { serverId: endpointUrl, machineId: 'bound-machine' },
                 agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } }, directory: { kind: 'managed' } };
-            await expect(runtime.createSession(draft, { attemptId: 'intent' })).rejects.toThrow('credential_unavailable');
+            const completions = await Promise.allSettled([
+                runtime.createSession(draft, { attemptId: 'intent' }),
+                runtime.createSession(draft, { attemptId: 'intent' }),
+            ]);
+            expect(completions.every((result) => result.status === 'rejected')).toBe(true);
+            expect({ spawns, created }).toEqual({ spawns: 1, created: ['created'] });
             expect(runtime.getSnapshot()).toMatchObject({ presentationTargetKind: 'new', presentationTargetKey: 0,
                 creationConfig: config, credential: { token: 'child' }, requestedSessionId: 'created' });
             await expect(runtime.createSession(draft, { attemptId: 'intent' })).rejects.toThrow('credential_unavailable');
+            expect({ spawns, created }).toEqual({ spawns: 1, created: ['created'] });
             expect(requests).toEqual([expect.objectContaining({ reason: 'created', createdByTokenId: newChatSelf().credentialId }),
                 expect.objectContaining({ reason: 'created', createdByTokenId: newChatSelf().credentialId })]);
         } finally { runtime.dispose(); }
@@ -398,6 +529,90 @@ describe('frame credential authority', () => {
         }
     });
 
+    it('reattaches a reloaded frame to the retained draft attempt and observes its terminal operation', async () => {
+        const success = { type: 'success', disposition: 'created', sessionId: 'recovered-session',
+            executionTarget: { serverId: endpointUrl, machineId: 'bound-machine' },
+            organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } } as const;
+        let spawns = 0;
+        let observations = 0;
+        let initialFrame = true;
+        const initialSpawnDispatched = deferred<void>();
+        setRuntimeFetch(async (url, init) => {
+            const path = new URL(String(url)).pathname;
+            if (path === ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1) return Response.json(newChatSelf(true));
+            if (path === '/v1/actions/action.options.resolve') return optionsResponse();
+            if (path === '/v1/actions/session.spawn_new') {
+                spawns += 1;
+                expect(JSON.parse(String(init?.body))).toMatchObject({ input: { creationKey: 'reload-attempt' } });
+                if (initialFrame) {
+                    initialSpawnDispatched.resolve();
+                    return new Promise<Response>((_resolve, reject) => {
+                        init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+                    });
+                }
+                return Response.json({ v: 1, actionId: 'session.spawn_new', execution: { ok: true, result: {
+                    type: 'pending', outcome: 'accepted', retryWithSameCreationKey: true,
+                    operation: { serverId: endpointUrl, machineId: 'bound-machine', operationId: 'reload-operation' },
+                } } });
+            }
+            if (path === '/v1/actions/action.operations.get') {
+                observations += 1;
+                return Response.json({ v: 1, actionId: 'action.operations.get', execution: { ok: true, result: {
+                    kind: 'found', operation: { version: 1, operationId: 'reload-operation', revision: 3,
+                        actionId: 'session.spawn_new', state: 'succeeded', scope: { accountId: 'account', machineId: 'bound-machine' },
+                        title: 'Create session', createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'supported', result: success },
+                } } });
+            }
+            throw new Error(`Unexpected request: ${path}`);
+        });
+        const credential = { token: 'child', expiresAt: new Date(Date.now() + 900_000).toISOString() };
+        const first = createEmbedSessionRuntime({ encryption: await createEmbedEncryption(), endpointUrl });
+        let second: ReturnType<typeof createEmbedSessionRuntime> | null = null;
+        let scope: { serverId: string; accountId: string } | null = null;
+        let draftId: string | null = null;
+        try {
+            await first.initialize({ parentOrigin: 'https://allowed.example', credential });
+            const creation = first.getSnapshot().creationConfig;
+            if (!creation) throw new Error('Missing initial creation configuration');
+            const recoveredScope = creation.draftScope;
+            if (!recoveredScope) throw new Error('Missing initial creation draft scope');
+            const recoveredDraftId = creation.draftId;
+            scope = recoveredScope;
+            draftId = recoveredDraftId;
+            writeNewSessionDraft({ scope: recoveredScope, draftId: recoveredDraftId,
+                patch: { text: 'Preserved first turn' }, materializationIntent: 'userEdit' });
+            writeSessionDraftLocalSupplement({ scope: recoveredScope, address: { kind: 'newSession', draftId: recoveredDraftId },
+                patch: { launchUserAttemptId: 'reload-attempt' } });
+            const interrupted = first.createSession({ creationKey: SessionCreationKeyV1Schema.parse('reload-attempt'),
+                executionTarget: { serverId: endpointUrl, machineId: 'bound-machine' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+                directory: { kind: 'managed' },
+            }, { attemptId: 'reload-attempt' });
+            await initialSpawnDispatched.promise;
+            first.dispose();
+            await expect(interrupted).rejects.toThrow();
+            initialFrame = false;
+
+            second = createEmbedSessionRuntime({ encryption: await createEmbedEncryption(), endpointUrl });
+            const created: string[] = [];
+            second.attachBridge({ requestCredential: async () => { throw new Error('credential_unavailable'); },
+                sessionCreated: (sessionId) => { created.push(sessionId); } });
+            await second.initialize({ parentOrigin: 'https://allowed.example', credential });
+            expect(second.getSnapshot().creationConfig?.draftId).toBe(draftId);
+            await expect(second.createSession({ creationKey: SessionCreationKeyV1Schema.parse('reload-attempt'),
+                executionTarget: { serverId: endpointUrl, machineId: 'bound-machine' },
+                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+                directory: { kind: 'managed' },
+            }, { attemptId: 'reload-attempt' })).rejects.toThrow('credential_unavailable');
+            expect({ spawns, observations, created }).toEqual({ spawns: 2, observations: 1, created: ['recovered-session'] });
+        } finally {
+            first.dispose();
+            second?.dispose();
+            if (scope && draftId) writeSessionDraftLocalSupplement({ scope,
+                address: { kind: 'newSession', draftId }, patch: { launchUserAttemptId: null } });
+        }
+    });
+
     it.each([
         ['open', 'success'], ['dispose', 'success'], ['open', 'pending'], ['dispose', 'pending'],
     ] as const)('settles a dispatched spawn only for the surviving frame after %s (%s receipt)', async (transition, receipt) => {
@@ -407,7 +622,7 @@ describe('frame credential authority', () => {
         let observations = 0;
         const success = { type: 'success', disposition: 'created', sessionId: 'session-new',
             executionTarget: { serverId: endpointUrl, machineId: 'bound-machine' },
-            organizationPlacement: { folderId: null, tagIds: [] }, initialInput: { status: 'notRequested' } };
+            organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } };
         setRuntimeFetch(async (url, init) => {
             const path = new URL(String(url)).pathname;
             if (path === ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1) return new Response(JSON.stringify(newChatSelf(receipt === 'pending')));

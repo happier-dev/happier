@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { useRouter } from 'expo-router';
+import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { createEmbedEncryption } from '@/embed/encryption/createEmbedEncryption';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { bootstrapActiveServerFromWebLocation } from '@/sync/domains/server/url/bootstrapActiveServerFromWebLocation';
@@ -83,7 +84,13 @@ export function EmbedSessionRuntimeProvider(props: Readonly<{ children: React.Re
 function MountedRuntime(props: Readonly<{ runtime: EmbedSessionRuntime; children: React.ReactNode }>) {
     const snapshot = React.useSyncExternalStore(props.runtime.subscribe, props.runtime.getSnapshot, props.runtime.getSnapshot);
     const value = React.useMemo(() => ({ runtime: props.runtime, snapshot }), [props.runtime, snapshot]);
-    return <Context.Provider value={value}>{props.children}</Context.Provider>;
+    return (
+        <Context.Provider value={value}>
+            <InjectedAuthProvider credentials={snapshot.credential}>
+                {props.children}
+            </InjectedAuthProvider>
+        </Context.Provider>
+    );
 }
 
 export function useEmbedSessionRuntime(): Readonly<{ runtime: EmbedSessionRuntime; snapshot: EmbedSessionRuntimeSnapshot }> {

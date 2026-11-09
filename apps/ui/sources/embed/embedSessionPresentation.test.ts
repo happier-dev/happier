@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AccountApiTokenSelfV1 } from '@happier-dev/protocol';
+import type { AccountApiTokenSelfV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { buildEmbedParentGrantV1, type EmbedAccessV1 } from '@happier-dev/protocol/embed';
 
 import { buildEmbedSessionPresentation } from './embedSessionPresentation';

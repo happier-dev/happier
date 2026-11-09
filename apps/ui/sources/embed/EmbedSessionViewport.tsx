@@ -51,19 +51,22 @@ export function EmbedSessionViewport() {
     const onCreate = React.useCallback((draft: EmbeddedNewSessionDraft, attempt: Readonly<{ attemptId: string }>) => (
         runtime.createSession(draft, attempt)
     ), [runtime]);
+    const onPresented = React.useCallback((sessionId: string) => {
+        runtime.presentCreatedSession(sessionId);
+    }, [runtime]);
     const retry = React.useCallback(() => { void runtime.retry(); }, [runtime]);
     const target = React.useMemo<EmbeddedSessionTarget | null>(() => {
         if (!snapshot.credential || !snapshot.self) return null;
         if (snapshot.presentationTargetKind === 'new') {
             return snapshot.creationConfig
-                ? { kind: 'new', creation: snapshot.creationConfig, onCreate }
+                ? { kind: 'new', creation: snapshot.creationConfig, onCreate, onPresented }
                 : null;
         }
         return snapshot.displayedSessionId && snapshot.displayedSessionId === snapshot.requestedSessionId
             ? { kind: 'session', sessionId: snapshot.displayedSessionId }
             : null;
     }, [snapshot.credential, snapshot.self, snapshot.presentationTargetKind, snapshot.creationConfig,
-        snapshot.displayedSessionId, snapshot.requestedSessionId, onCreate]);
+        snapshot.displayedSessionId, snapshot.requestedSessionId, onCreate, onPresented]);
     const presentation = React.useMemo<SessionViewEmbeddedPresentation>(
         () => buildEmbedSessionPresentation({ phase: snapshot.phase, self: snapshot.self, ui: snapshot.ui, reconnecting: snapshot.reconnecting }),
         [snapshot.phase, snapshot.self, snapshot.ui, snapshot.reconnecting],

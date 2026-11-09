@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
     AccountApiTokenSelfV1Schema,
-    SessionCreationKeyV1Schema,
-    type AccountApiTokenSelfV1,
+    type AccountApiTokenSelfV1} from '@happier-dev/protocol/auth/accountApiTokens';
+import {
+    SessionCreationKeyV1Schema} from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import {
     type ProviderBoundModelRef,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/providers/selection/v1';
 
 import type { EmbeddedNewSessionDraft } from '@/components/sessions/shell/embedded/embeddedSessionTarget';
 import { buildEmbedSessionSpawnInput } from './buildEmbedSessionSpawnInput';

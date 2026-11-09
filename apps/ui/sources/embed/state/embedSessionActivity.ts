@@ -1,5 +1,5 @@
 import type { EmbedStateV1 } from '@happier-dev/protocol/embed';
-import type { SessionAwarenessOperationalPrimaryV1 } from '@happier-dev/protocol';
+import type { SessionAwarenessOperationalPrimaryV1 } from '@happier-dev/protocol/sessions/awareness/projectionV1';
 
 import { projectUiSessionAwareness } from '@/sync/domains/session/awareness/sessionAwareness';
 import { storage } from '@/sync/domains/state/storage';
@@ -44,9 +44,5 @@ export function watchEmbedSessionActivity(input: Readonly<{
         input.onActivity(activity);
     };
     report(storage.getState().sessions[input.sessionId]);
-    return storage.subscribe((state, previous) => {
-        const session = state.sessions[input.sessionId];
-        if (session === previous.sessions[input.sessionId]) return;
-        report(session);
-    });
+    return storage.subscribe(state => report(state.sessions[input.sessionId]), { sessions: [input.sessionId] });
 }

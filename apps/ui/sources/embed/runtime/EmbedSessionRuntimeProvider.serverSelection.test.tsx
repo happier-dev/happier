@@ -4,7 +4,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1, AccountApiTokenSelfV1Schema } from '@happier-dev/protocol';
+import { ACCOUNT_API_TOKEN_SELF_HTTP_PATH_V1, AccountApiTokenSelfV1Schema } from '@happier-dev/protocol/auth/accountApiTokens';
 import { renderScreen, createRootLayoutFeaturesResponse, flushHookEffects, installBrowserStorageLockBoundary } from '@/dev/testkit';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
