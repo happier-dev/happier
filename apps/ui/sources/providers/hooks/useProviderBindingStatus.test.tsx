@@ -6,9 +6,19 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
-import { createProviderErrorV1, ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createProviderErrorV1} from '@happier-dev/protocol/providers/errors';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE } from '@happier-dev/protocol/rpcErrors';
 import { presentSessionProviderBinding } from '@/providers/session/presentation';
+import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1,
+    ProviderConnectionsCatalogV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { getProviderCatalogSnapshot, readProviderCatalogConnection } from '@/sync/store/settings/providerCatalogSnapshot';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { readAccountAgentProviderRequirements, readAccountProviderDeclarations,
+    type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
+import { DaemonProviderBindingStatusResponseV1Schema } from '@happier-dev/protocol/rpc';
 
 const describeProviderBindingStatus = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
@@ -55,6 +65,8 @@ describe('useProviderBindingStatus', () => {
             banners.push(result.banner);
             return result;
         });
+        expect(rendered.getCurrent().banner).toBeNull();
+        await waitForHomeGovernance(() => expect(rendered.getCurrent().loading).toBe(false));
         expect(rendered.getCurrent()).toMatchObject({ status: { status: 'current' }, error: null, loading: false, banner: null });
         expect(banners.every(banner => banner === null)).toBe(true);
         expect(describeProviderBindingStatus).toHaveBeenLastCalledWith(
@@ -160,6 +172,91 @@ describe('useProviderBindingStatus', () => {
             status: { status: 'changed', nextBindingSecurityFingerprint: 'binding-security:v1:next' } });
         await rendered.rerender({ bindingRefusalObservedAt: 100 });
         expect(describeProviderBindingStatus.mock.calls.length - initialReads).toBe(1);
+    });
+
+    it('does no binding RPC work for healthy completed turns', async () => {
+        describeProviderBindingStatus.mockResolvedValue({ status: 'current' });
+        const rendered = await renderHook(({ completedTurnObservedAt }: { completedTurnObservedAt: number | null }) =>
+            useProviderBindingStatus({ enabled: true, machineId: 'machine-a', serverId,
+                selection, launchBinding, completedTurnObservedAt }),
+        { initialProps: { completedTurnObservedAt: null as number | null } });
+        expect(rendered.getCurrent().status).toEqual({ status: 'current' });
+        const reads = describeProviderBindingStatus.mock.calls.length;
+        for (let turn = 1; turn <= 3; turn += 1) {
+            await rendered.rerender({ completedTurnObservedAt: turn });
+        }
+        expect(describeProviderBindingStatus.mock.calls.length - reads).toBe(0);
+    });
+
+    it.each(['agent', 'provider'] as const)('observes selected %s declaration changes without reading for unrelated projection changes', async family => {
+        const declaration = readAccountProviderDeclarations({ kind: 'account' })[0]!;
+        const providerBinding = { ...launchBinding, contributionKey: declaration.contributionKey };
+        const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+            agentsById: { codex: { id: 'codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+                providerRequirements: readAccountAgentProviderRequirements(selection.ref.agentTargetKey, { kind: 'account' }) } },
+            familiesById: { providers: { family: 'providers', entriesById: {
+                [declaration.contributionKey]: { id: declaration.contributionKey, pluginId: declaration.contributionKey.split('/')[0],
+                    provenance: declaration.provenance, sourceKind: 'path', definition: declaration.definition },
+            } } },
+        });
+        describeProviderBindingStatus.mockResolvedValue({ status: 'current' });
+        const rendered = await renderHook(({ declarationContext }: { declarationContext: ProviderDeclarationContext }) =>
+            useProviderBindingStatus({ enabled: true, machineId: 'machine-a', serverId,
+                selection, launchBinding: providerBinding, declarationContext }),
+        { initialProps: { declarationContext: { kind: 'machine', projection } } });
+        const reads = describeProviderBindingStatus.mock.calls.length;
+        await rendered.rerender({ declarationContext: { kind: 'machine', projection: { ...projection, generation: 2 } } });
+        expect(describeProviderBindingStatus).toHaveBeenCalledTimes(reads);
+        const unavailable = DaemonProviderBindingStatusResponseV1Schema.parse({ status: 'contribution_unavailable',
+            error: createProviderErrorV1('provider_contribution_unavailable', { connectionId: launchBinding.connectionId }) });
+        describeProviderBindingStatus.mockResolvedValue(unavailable);
+        await rendered.rerender({ declarationContext: { kind: 'machine', projection: family === 'agent'
+            ? { ...projection, agentsById: {} }
+            : { ...projection, familiesById: {} } } });
+        expect(describeProviderBindingStatus).toHaveBeenCalledTimes(reads + 1);
+        expect(rendered.getCurrent().status).toEqual(unavailable);
+    });
+
+    it('rereads selected grant changes from Home push, but not unrelated catalog changes', async () => {
+        let catalog = ProviderConnectionsCatalogV1Schema.parse({ ...DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
+            connections: ['pc_launch', 'pc_other'].map(id => ({ v: 1, id,
+                source: { kind: 'contribution', contributionKey: 'acme.gateway/gateway' }, role: 'named',
+                displayName: id, displayNameMode: 'custom', revision: 1, createdAt: 1, updatedAt: 1 })),
+            accountGrants: [{ v: 1, connectionId: 'pc_launch', connectionSecurityFingerprint: 'connection-security:v1:a', confirmedAt: 1 }],
+        });
+        serverId = (await account.restore({ catalog })).serverId;
+        const scope = { serverId, accountId: 'account-a' };
+        describeProviderBindingStatus.mockResolvedValue({ status: 'current' });
+        const rendered = await renderHook(useBindingPresentation);
+        await act(async () => {
+            await vi.waitFor(() => expect(getProviderCatalogSnapshot(scope)).toMatchObject({ status: 'ready', revision: 1 }));
+        });
+        const selected = readProviderCatalogConnection(scope, 'pc_launch');
+        const reads = describeProviderBindingStatus.mock.calls.length;
+        const row = account.readCatalogRow();
+        if (!row) throw new Error('Expected catalog HTTP boundary');
+        const push = async (revision: number) => {
+            row.revision = revision;
+            row.content = { t: 'plain', v: catalog };
+            await act(async () => {
+                publishHomeAccountChange(serverId, [PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1], { source: 'socket', changeKinds: ['account'] });
+                await vi.waitFor(() => expect(getProviderCatalogSnapshot(scope)).toMatchObject({ status: 'ready', revision }));
+            });
+        };
+        catalog = { ...catalog, connections: catalog.connections.map(connection => connection.id === 'pc_other'
+            ? { ...connection, displayName: 'Renamed elsewhere', revision: 2 } : connection) };
+        await push(2);
+        expect(readProviderCatalogConnection(scope, 'pc_launch')).toBe(selected);
+        expect(describeProviderBindingStatus).toHaveBeenCalledTimes(reads);
+        const disabled = DaemonProviderBindingStatusResponseV1Schema.parse({ status: 'disabled',
+            error: createProviderErrorV1('provider_connection_disabled', { connectionId: launchBinding.connectionId }) });
+        describeProviderBindingStatus.mockResolvedValue(disabled);
+        catalog = { ...catalog, accountGrants: [] };
+        await push(3);
+        expect(readProviderCatalogConnection(scope, 'pc_launch')).toBe(selected);
+        expect(describeProviderBindingStatus).toHaveBeenCalledTimes(reads + 1);
+        expect(rendered.getCurrent().status).toEqual(disabled);
+        expect(rendered.getCurrent().banner).not.toBeNull();
     });
 
     it('clears a successful binding status immediately when its machine scope changes', async () => {

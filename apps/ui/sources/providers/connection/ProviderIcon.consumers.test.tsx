@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RPC_METHODS, PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { RPC_METHODS} from '@happier-dev/protocol/rpc/methods';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, ProviderConnectionsCatalogV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createProviderSettingsHarness, createProviderSettingsAccountHarness, installProviderSettingsRpcBoundary,
@@ -101,7 +102,7 @@ describe('packaged Provider marks through admitted consumers', () => {
             providers: { family: 'providers', entriesById: { [contributionKey]: { id: contributionKey, pluginId: 'happier.provider.deepseek' } } },
         } });
         rpc.intercept(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE, async () => ({ protocolVersion: 1, projection }));
-        expect((await loadDaemonMergedProjectionCacheEntry({ machineId: 'machine-a', serverId }))?.kind).toBe('ready');
+        expect((await loadDaemonMergedProjectionCacheEntry({ sections: 'complete', machineId: 'machine-a', serverId }))?.kind).toBe('ready');
         const reads = rpc.state.requests.length;
         const screen = await renderScreen(<UsageWorkProviderMark providerId={contributionKey} machineId="machine-a" serverId={serverId} />);
         expect(screen.findAllByType('Image').some(node => node.props.source?.uri?.startsWith('data:image/png;base64,'))).toBe(true);

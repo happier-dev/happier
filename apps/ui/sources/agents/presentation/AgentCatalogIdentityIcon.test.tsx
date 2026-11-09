@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -8,9 +9,10 @@ import { AgentCatalogIdentityIcon } from './AgentCatalogIdentityIcon';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-vi.mock('react-native-unistyles', () => ({
-    useUnistyles: () => ({ theme: { colors: { text: { secondary: '#777' } } } }),
-}));
+vi.mock('react-native-unistyles', async () => {
+    const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
+    return createUnistylesMock();
+});
 
 /** The Account-epoch boundary, held current so brand reads are admitted. */
 const accountScopeState = vi.hoisted(() => ({ current: true }));
@@ -32,6 +34,7 @@ vi.mock('@/sync/domains/scope/activeServerAccountScope', () => ({
 const brandPresentationState = vi.hoisted(() => ({
     presentation: null as Readonly<{ displayName: string; bytes?: Uint8Array }> | null,
     input: null as Record<string, unknown> | null,
+    bundledInput: null as Readonly<{ pluginId: string | null | undefined; displayName?: string; iconAgentId?: string | null }> | null,
 }));
 
 vi.mock('@/components/plugins/shared/installedPluginBrandPresentation', () => ({
@@ -41,19 +44,16 @@ vi.mock('@/components/plugins/shared/installedPluginBrandPresentation', () => ({
             ? brandPresentationState.presentation
             : null;
     },
+    // Bundled artwork is a host-owned catalog read; the stub names which Agent the owner asked for.
+    useBundledPluginBrandPresentation: (pluginId: string | null | undefined, displayName?: string, iconAgentId?: string | null) => {
+        brandPresentationState.bundledInput = { pluginId, displayName, iconAgentId };
+        return iconAgentId ? Object.freeze({ displayName: `bundled:${iconAgentId}` }) : null;
+    },
 }));
 
-vi.mock('@/components/plugins/shared/InstalledPluginBrandMark', () => ({
-    InstalledPluginBrandMark: (props: Record<string, unknown>) =>
-        React.createElement('InstalledPluginBrandMark', props),
-}));
 
-vi.mock('@/components/ui/icons/Icon', () => ({
-    Icon: (props: Record<string, unknown>) => React.createElement('Icon', props),
-}));
-
-vi.mock('@/agents/registry/AgentIcon', () => ({
-    AgentIcon: (props: Record<string, unknown>) => React.createElement('AgentIcon', props),
+vi.mock('@/components/ui/media/HappierBrandMark', () => ({
+    HappierBrandMark: (props: Record<string, unknown>) => React.createElement('HappierBrandMark', props),
 }));
 
 function renderIcon(
@@ -117,14 +117,15 @@ describe('AgentCatalogIdentityIcon', () => {
     beforeEach(() => {
         brandPresentationState.presentation = null;
         brandPresentationState.input = null;
+        brandPresentationState.bundledInput = null;
         accountScopeState.current = true;
     });
 
     it('renders a bundled Agent with its own brand mark rather than a generic glyph', () => {
         const tree = renderIcon(createResolvedAgentCatalogEntryFixture({ agentId: 'claude' }));
 
-        expect(tree.root.findByType('AgentIcon' as never).props.agentId).toBe('claude');
-        expect(tree.root.findAllByType('Icon' as never)).toHaveLength(0);
+        expect(brandPresentationState.bundledInput?.iconAgentId).toBe('claude');
+        expect(tree.root.findByType(HappierBrandMark).props.brand).toEqual({ displayName: 'bundled:claude' });
     });
 
     it('keeps an external Agent neutral when its exact package identity is unavailable', () => {
@@ -144,7 +145,9 @@ describe('AgentCatalogIdentityIcon', () => {
             },
         }));
 
-        expect(tree.root.findByType('Icon' as never).props.name).toBe('stack-simple');
+        // Neutral: the title-only mark, never the stale bundled carrier's artwork.
+        expect(tree.root.findByType(HappierBrandMark).props.brand).toEqual({ displayName: 'UltraCode' });
+        expect(brandPresentationState.bundledInput?.iconAgentId).toBeNull();
         expect(brandPresentationState.input?.installedPackage).toBeNull();
     });
 
@@ -154,9 +157,8 @@ describe('AgentCatalogIdentityIcon', () => {
 
         const tree = renderIcon(entry);
 
-        const mark = tree.root.findByType('InstalledPluginBrandMark' as never);
-        expect(mark.props.brand).toMatchObject({ displayName: 'UltraCode' });
-        expect(tree.root.findAllByType('Icon' as never)).toHaveLength(0);
+        const mark = tree.root.findByType(HappierBrandMark);
+        expect(mark.props.brand).toMatchObject({ displayName: 'UltraCode', bytes: new Uint8Array([1]) });
         // The brand read is machine-scoped and retains the package occurrence
         // through the installed-package projection plus the owner currentness predicate.
         expect(brandPresentationState.input).toMatchObject({
@@ -175,8 +177,7 @@ describe('AgentCatalogIdentityIcon', () => {
         // The owner hands the boundary no package facts at all when the row is
         // not current, so a stale package cannot keep lending its brand.
         expect(brandPresentationState.input?.installedPackage).toBeNull();
-        expect(tree.root.findByType('Icon' as never).props.name).toBe('stack-simple');
-        expect(tree.root.findAllByType('InstalledPluginBrandMark' as never)).toHaveLength(0);
+        expect(tree.root.findByType(HappierBrandMark).props.brand).toEqual({ displayName: 'UltraCode' });
     });
 
     it('keeps an external Agent neutral when its package facts belong to another plugin', () => {
@@ -212,7 +213,6 @@ describe('AgentCatalogIdentityIcon', () => {
         const tree = renderIcon(entry);
 
         expect(brandPresentationState.input?.installedPackage).toBeNull();
-        expect(tree.root.findByType('Icon' as never).props.name).toBe('stack-simple');
-        expect(tree.root.findAllByType('InstalledPluginBrandMark' as never)).toHaveLength(0);
+        expect(tree.root.findByType(HappierBrandMark).props.brand).toEqual({ displayName: 'UltraCode' });
     });
 });

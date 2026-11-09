@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { adaptDaemonContributionRegistryProjectionToMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';

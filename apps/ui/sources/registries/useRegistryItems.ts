@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { t } from '@/text';
-import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, type RegistryKindV1, type RegistryListPageV1 } from '@happier-dev/protocol/registries';
+import type { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, RegistryKindV1, RegistryListPageV1 } from '@happier-dev/protocol/registries';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { useRegistryActionRead } from './useRegistryActionRead';
 import { describeRegistrySourceStatus } from './describeRegistrySourceStatus';
@@ -10,8 +10,8 @@ import type { RegistryContributionFamilyV1 } from '@happier-dev/protocol/registr
 
 type DisplayPage = Omit<RegistryListPageV1, 'items'> & Readonly<{ items: RegistryCatalogItemSummary[] }>;
 type CurationPage = Readonly<{ sourceId: string; discovery: NonNullable<DisplayPage['discovery']> }>;
-const parse = (value: unknown, previous: readonly DisplayPage[] = [], previousCuration: readonly CurationPage[] = []) => {
-    const parsed = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'].parse(value);
+type ListResult = ReturnType<(typeof REGISTRY_ACTION_OUTPUT_SCHEMAS_V1)['registries.items.list']['parse']>;
+const project = (parsed: ListResult, previous: readonly DisplayPage[] = [], previousCuration: readonly CurationPage[] = []) => {
     const priorPages = new Map(previous.map(page => [page.sourceId, page]));
     const sources = new Map(previous.map(page => [page.sourceId, new Map(page.items.map(item => [item.itemId, item]))]));
     const pages = parsed.pages.map(page => ({ ...page,
@@ -52,11 +52,11 @@ export function useRegistryItems(request: { kind: RegistryKindV1; sourceIds?: re
     const selection = useRegistryListSourceSelection(request.kind, enabled, request.sourceIds);
     const input = { ...request, sourceIds: selection.sourceIds };
     const revision = selection.revision;
-    const [more, setMore] = React.useState<{ first: ReturnType<typeof parse> | null; pages: readonly DisplayPage[] } | null>(null);
-    const pagesFor = (value: ReturnType<typeof parse> | null) => value && more?.first === value ? more.pages : value?.pages;
-    const read = useRegistryActionRead('registries.items.list', input, (value, previous: ReturnType<typeof parse> | null) => {
+    const [more, setMore] = React.useState<{ first: ReturnType<typeof project> | null; pages: readonly DisplayPage[] } | null>(null);
+    const pagesFor = (value: ReturnType<typeof project> | null) => value && more?.first === value ? more.pages : value?.pages;
+    const read = useRegistryActionRead('registries.items.list', input, (value, previous: ReturnType<typeof project> | null) => {
         const previousPages = pagesFor(previous);
-        const parsed = parse(value, previousPages, previous?.curation);
+        const parsed = project(value, previousPages, previous?.curation);
         if (!previousPages) return parsed;
         const bySource = new Map(previousPages.map(page => [page.sourceId, page]));
         const refreshed = { ...parsed, pages: parsed.pages.map(page => {
@@ -96,7 +96,7 @@ export function useRegistryItems(request: { kind: RegistryKindV1; sourceIds?: re
             const following = await Promise.all(pages.filter(page => page.nextCursor !== null).map(async page => {
                 const result = await read.execution.execute('registries.items.list', { ...input, sourceIds: [page.sourceId], cursor: page.nextCursor });
                 if (!result.ok) throw new Error(result.error);
-                return parse(result.result, pages).pages;
+                return project(result.result as ListResult, pages).pages;
             }));
             if (!read.execution.isCurrent()) return;
             const bySource = new Map(following.flat().map(page => [page.sourceId, page]));

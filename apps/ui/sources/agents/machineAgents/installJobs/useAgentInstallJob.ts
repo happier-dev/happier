@@ -13,7 +13,7 @@ export function useAgentInstallJob({ serverId, machineId, agentId, definitionId 
     const presented = useLayoutPresentationActive();
     const { binding, execute, isCurrent } = useMountedActionExecution(serverId);
     const target = React.useMemo(() => binding?.isCurrent() ? { ...binding.scope, machineId, agentId, definitionId } : null, [binding, machineId, agentId, definitionId]);
-    const subscribe = React.useCallback((listener: () => void) => target ? subscribeAgentInstallJob(target, listener) : () => {}, [target]);
+    const subscribe = React.useCallback((listener: () => void) => presented && target ? subscribeAgentInstallJob(target, listener) : () => {}, [presented, target]);
     const read = React.useCallback(() => target && binding?.isCurrent() ? readAgentInstallJob(target) : null, [binding, target]);
     const job = React.useSyncExternalStore(subscribe, read, read);
     React.useEffect(() => {

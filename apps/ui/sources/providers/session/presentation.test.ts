@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { createProviderErrorV1, ProviderConnectionIdSchema, type SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
+import { createProviderErrorV1} from '@happier-dev/protocol/providers/errors';
+import { ProviderConnectionIdSchema} from '@happier-dev/protocol/providers/ids';
+import { type SessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 
 import { presentSessionProviderBinding } from './presentation';
 

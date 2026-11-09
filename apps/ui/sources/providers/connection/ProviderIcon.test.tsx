@@ -42,4 +42,14 @@ describe('ProviderIcon', () => {
         const tokenOnly = await renderScreen(<ProviderIcon icon="deepseek" size={24} color="#123456" />);
         expect(tokenOnly.findByType(Icon).props.name).toBe('cube');
     });
+    it('draws one identity for every bundled Provider: its plugin\'s admitted artwork, else the shared letter, never the cube', async () => {
+        // Anthropic is contributed by the Claude plugin, whose admitted artwork is its brand.
+        const anthropic = await renderScreen(<ProviderIcon contributionKey="happier.agent.claude/anthropic" icon={null} size={24} color="#123456" />);
+        expect(anthropic.findAllByType(Icon)).toHaveLength(0);
+        expect(anthropic.findAllByType('Image').length + anthropic.findAllByType('SvgXml').length).toBeGreaterThan(0);
+        // No artwork is admitted for Cloudflare AI Gateway: the same bare grapheme every other unmarked item draws.
+        const gateway = await renderScreen(<ProviderIcon contributionKey="happier.provider.cloudflare-ai-gateway/cloudflare-ai-gateway" icon={null} size={24} color="#123456" />);
+        expect(gateway.findAllByType(Icon)).toHaveLength(0);
+        expect(gateway.getTextContent()).toContain('C');
+    });
 });

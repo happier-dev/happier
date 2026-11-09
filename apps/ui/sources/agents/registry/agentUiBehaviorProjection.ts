@@ -148,6 +148,13 @@ function readScopeSets(scopeKey: string): readonly PublishedMachineSet[] {
     ));
 }
 
+/** Metadata consumers enumerate only the current Account's already-published declarations. */
+export function listProjectedAgentUiBehaviorIds(accountScope?: ServerAccountScope | null): readonly string[] {
+    const scopeKey = accountScopeKey(accountScope);
+    if (scopeKey === null) return [];
+    return [...new Set(readScopeSets(scopeKey).flatMap(set => [...set.descriptorsByAgentId.keys()]))].sort();
+}
+
 function readPublishedDescriptor(
     agentId: string,
     machineId: string | null,

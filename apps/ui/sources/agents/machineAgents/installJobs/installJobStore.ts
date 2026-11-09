@@ -83,6 +83,19 @@ export function readMachineAgentInstallJobs(target: MachineAgentInstallJobTarget
     return machine(target).jobs;
 }
 
+function hasReaders(state: MachineJobs, record: JobRecord): boolean {
+    return state.listeners.size > 0 || (state.agentListeners.get(buildMachineAgentInventoryKey(record.target))?.size ?? 0) > 0;
+}
+
+function updatePolling(state: MachineJobs, record: JobRecord): void {
+    if (hasReaders(state, record)) {
+        if (!record.timer) void poll(record.target, record);
+    } else if (record.timer) {
+        clearTimeout(record.timer);
+        record.timer = undefined;
+    }
+}
+
 export function subscribeAgentInstallJob(target: AgentInstallJobTarget, listener: () => void): () => void {
     const state = machine(target);
     const targetKey = buildMachineAgentInventoryKey(target);
@@ -92,16 +105,24 @@ export function subscribeAgentInstallJob(target: AgentInstallJobTarget, listener
         state.agentListeners.set(targetKey, listeners);
     }
     listeners.add(listener);
+    const record = state.records.get(targetKey);
+    if (record) updatePolling(state, record);
     return () => {
         listeners.delete(listener);
         if (listeners.size === 0) state.agentListeners.delete(targetKey);
+        const current = state.records.get(targetKey);
+        if (current) updatePolling(state, current);
     };
 }
 
 export function subscribeMachineAgentInstallJobs(target: MachineAgentInstallJobTarget, listener: () => void): () => void {
-    const listeners = machine(target).listeners;
-    listeners.add(listener);
-    return () => { listeners.delete(listener); };
+    const state = machine(target);
+    state.listeners.add(listener);
+    for (const record of state.records.values()) updatePolling(state, record);
+    return () => {
+        state.listeners.delete(listener);
+        for (const record of state.records.values()) updatePolling(state, record);
+    };
 }
 
 function fromWire(job: AgentInstallJob): MachineAgentJob {
@@ -139,6 +160,8 @@ async function poll(target: AgentInstallJobTarget, record: JobRecord): Promise<v
     const state = machine(target);
     const targetKey = buildMachineAgentInventoryKey(target);
     if (state.controller.signal.aborted || record.polling || record.job.outcome || state.records.get(targetKey) !== record) return;
+    if (record.timer) clearTimeout(record.timer);
+    record.timer = undefined;
     record.polling = true;
     try {
         const response = await readAgentInstallJobRpc({ ...target, signal: state.controller.signal }, { jobId: record.job.jobId, cursor: record.cursor });
@@ -175,8 +198,13 @@ async function poll(target: AgentInstallJobTarget, record: JobRecord): Promise<v
     } finally {
         record.polling = false;
     }
-    if (!state.controller.signal.aborted && state.records.get(targetKey) === record && !record.job.outcome) {
-        record.timer = setTimeout(() => { void poll(target, record); }, MACHINE_RPC_POLL_INTERVAL_MS);
+    // The daemon has no progress push port. Only demanded jobs repeat cursor reads;
+    // closing a presenter suspends observation, never the daemon's installation.
+    if (!state.controller.signal.aborted && state.records.get(targetKey) === record && !record.job.outcome && hasReaders(state, record)) {
+        record.timer = setTimeout(() => {
+            record.timer = undefined;
+            void poll(target, record);
+        }, MACHINE_RPC_POLL_INTERVAL_MS);
     }
 }
 

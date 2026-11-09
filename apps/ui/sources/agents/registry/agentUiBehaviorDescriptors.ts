@@ -13,7 +13,7 @@ import {
     SESSION_CONFIG_OPTION_OVERRIDES_KEY,
 } from '@happier-dev/agents';
 import { mergeSpawnConfigOptionAliases, type SpawnConfigOptionValue } from '@happier-dev/protocol/actions/sessionSpawnConfigOptions';
-import type { AgentUiSettingReferenceV1 } from '@happier-dev/protocol/plugins/contributions/agentUiGrammar';
+import { AgentUiConnectedServicesV1Schema, type AgentUiSettingReferenceV1 } from '@happier-dev/protocol/plugins/contributions/agentUiGrammar';
 
 import type {
     AgentSessionComposerNonSteerablePayloadContext,
@@ -25,6 +25,7 @@ import type {
 } from './registryUiBehavior';
 import type { PermissionPromptProtocol } from './registryCore';
 import { createBooleanOptionActionChip } from './agentUiBehavior/booleanOptionActionChip';
+import type { BooleanOptionActionChipDefinition } from './agentUiBehavior/booleanOptionChipPlacement';
 import {
     createUiProjectionDiagnostic,
     isRecord,
@@ -168,6 +169,7 @@ type NormalizedContextWindowModelRule = Readonly<{
 }>;
 
 export type PluginUiBehaviorDescriptor = Readonly<{
+    connectedServices?: Readonly<{ poolSettings?: readonly unknown[] }>;
     /**
      * Opt-in to the host's attached-terminal viewer. Serviceability is a host
      * fact the daemon publishes for whichever Agent runs inside a terminal
@@ -1103,7 +1105,8 @@ function createContextWindowBehaviorFromDescriptor(
 function hasNoExecuteBehaviorFields(value: Readonly<Record<string, unknown>>): boolean {
     const components = isRecord(value.components) ? value.components : null;
     const hasComponentSlots = Array.isArray(components?.slots) && components.slots.length > 0;
-    return value.guidance != null
+    return value.connectedServices != null
+        || value.guidance != null
         || value.attachedSessionTerminal != null
         || value.pendingDelivery != null
         || value.permissions != null
@@ -1121,6 +1124,7 @@ function hasNoExecuteBehaviorFields(value: Readonly<Record<string, unknown>>): b
 
 function mergeDescriptorBehavior(a: AgentUiBehavior, b: AgentUiBehavior): AgentUiBehavior {
     return {
+        ...(a.connectedServices || b.connectedServices ? { connectedServices: b.connectedServices ?? a.connectedServices } : {}),
         ...(a.guidance || b.guidance ? { guidance: { ...(a.guidance ?? {}), ...(b.guidance ?? {}) } } : {}),
         ...(a.attachedSessionTerminal || b.attachedSessionTerminal
             ? {
@@ -1380,21 +1384,27 @@ function createNewSessionActionChipsBehaviorFromComponents(
     const slots = readComponentSlots(components)
         .filter((slot) => slot.slot === 'newSession.agentInputExtraActionChips');
     if (slots.length === 0) return undefined;
+    const definitions = slots.flatMap((slot): readonly BooleanOptionActionChipDefinition[] => {
+        const chip = readBooleanOptionChipDescriptor(slot, diagnostics);
+        if (!chip) return [];
+        return [{
+            key: readString(slot.id) ?? chip.optionStateKey,
+            optionStateKey: chip.optionStateKey,
+            iconName: chip.iconName,
+            onLabelKey: chip.onLabelKey,
+            offLabelKey: chip.offLabelKey,
+        }];
+    });
 
     return {
+        agentInputExtraActionChipDefinitions: definitions,
         getAgentInputExtraActionChips: ({ agentOptionState, setAgentOptionState }) => {
             const chips: AgentInputExtraActionChip[] = [];
-            for (const slot of slots) {
-                const chipDescriptor = readBooleanOptionChipDescriptor(slot, diagnostics);
-                if (!chipDescriptor) continue;
+            for (const definition of definitions) {
                 chips.push(createBooleanOptionActionChip({
-                    key: readString(slot.id) ?? chipDescriptor.optionStateKey,
-                    optionStateKey: chipDescriptor.optionStateKey,
-                    iconName: chipDescriptor.iconName,
-                    onLabelKey: chipDescriptor.onLabelKey,
-                    offLabelKey: chipDescriptor.offLabelKey,
-                    value: agentOptionState?.[chipDescriptor.optionStateKey] === true,
-                    setValue: (value) => setAgentOptionState(chipDescriptor.optionStateKey, value),
+                    ...definition,
+                    value: agentOptionState?.[definition.optionStateKey] === true,
+                    setValue: (value) => setAgentOptionState(definition.optionStateKey, value),
                 }));
             }
             return chips;
@@ -1604,6 +1614,20 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
     resolvePluginTranslation?: (pluginId: string, key: string) => string | null,
 ): AgentUiBehavior {
     const relevantInstallableDepKeys = readStringArray(descriptor.newSession?.relevantInstallableDepKeys);
+    const connectedServices = descriptor.connectedServices === undefined
+        ? null : AgentUiConnectedServicesV1Schema.safeParse(descriptor.connectedServices);
+    if (connectedServices && !connectedServices.success) {
+        diagnostics.push(createUiProjectionDiagnostic(
+            'A16X1_MALFORMED_DESCRIPTOR',
+            'connectedServices',
+            'Pool settings require supported boolean policy fields and service declarations.',
+        ));
+    }
+    const poolSettings = connectedServices?.success ? connectedServices.data.poolSettings.map((entry) => {
+        const title = resolvePluginTranslation?.(pluginId, entry.titleKey);
+        const subtitle = resolvePluginTranslation?.(pluginId, entry.subtitleKey);
+        return { ...entry, pluginId, ...(title ? { title } : {}), ...(subtitle ? { subtitle } : {}) };
+    }) : [];
     const conditionalRelevantInstallableDeps = (descriptor.newSession?.relevantInstallableDeps ?? [])
         .flatMap((entry) => {
             const keys = readStringArray(entry.keys);
@@ -1671,7 +1695,7 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
             }
             : {}),
         ...(transcriptStorageModes.size > 0
-            ? { supportsTranscriptStorageMode: ({ storageMode }) => transcriptStorageModes.has(storageMode) }
+            ? { transcriptStorageSettingKeys: [], supportsTranscriptStorageMode: ({ storageMode }) => transcriptStorageModes.has(storageMode) }
             : {}),
         ...(typeof descriptor.newSession?.canSelectWithoutDetectedCli === 'boolean'
             ? { canSelectWithoutDetectedCli: () => descriptor.newSession?.canSelectWithoutDetectedCli === true }
@@ -1682,6 +1706,7 @@ function createAgentUiBehaviorFromBehaviorDescriptor(
     };
 
     const baseBehavior: AgentUiBehavior = {
+        ...(poolSettings.length > 0 ? { connectedServices: { poolSettings } } : {}),
         ...(descriptor.attachedSessionTerminal?.supported === true
             ? { attachedSessionTerminal: { supported: true } }
             : {}),

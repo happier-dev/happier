@@ -1,6 +1,6 @@
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { TokenStorage } from '@/auth/storage/tokenStorage';

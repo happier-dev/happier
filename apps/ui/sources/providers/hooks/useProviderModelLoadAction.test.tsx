@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createProviderErrorV1 } from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { renderScreen } from '@/dev/testkit/render/renderScreen';

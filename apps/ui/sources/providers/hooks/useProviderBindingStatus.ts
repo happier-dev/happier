@@ -1,9 +1,17 @@
 import * as React from 'react';
-import type { ProviderErrorV1, SessionModelSelectionV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
+import { useShallow } from 'zustand/react/shallow';
+import type { ProviderErrorV1} from '@happier-dev/protocol/providers/errors';
+import type { SessionModelSelectionV1} from '@happier-dev/protocol/providers/selection/v1';
+import type { SessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import type { DaemonProviderBindingStatusResponseV1 } from '@happier-dev/protocol/rpc';
 
 import { providerErrorFromRpcFailure } from '@/providers/actions/client';
 import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
+import { readAccountAgentProviderRequirements, readAccountProviderDeclaration,
+    type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
+import { useProviderCatalogSelection } from '@/sync/store/useProviderCatalog';
+import { readProviderCatalogConnection, readProviderCatalogModel,
+    type ProviderCatalogSnapshot } from '@/sync/store/settings/providerCatalogSnapshot';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import {
     captureActiveServerAccountScopeLifetime,
@@ -29,6 +37,7 @@ export function useProviderBindingStatus(input: Readonly<{
     selection: SessionModelSelectionV1 | null;
     selectionIntentPresent?: boolean;
     launchBinding: SessionProviderBindingMetadataV1 | null;
+    declarationContext?: ProviderDeclarationContext;
     completedTurnObservedAt?: number | null;
     bindingRefusalObservedAt?: number | null;
 }>) {
@@ -61,6 +70,35 @@ export function useProviderBindingStatus(input: Readonly<{
         && input.selection.ref.providerConnectionId === input.launchBinding.connectionId
         && (!input.launchBinding.model || input.selection.ref.modelId === input.launchBinding.model.id),
     );
+    const connectionId = input.launchBinding?.connectionId;
+    const agentTargetKey = input.selection?.ref.agentTargetKey;
+    const modelId = input.selection?.ref.modelId;
+    // Observe only this binding's producer-owned facts. An unrelated catalog
+    // publication is not a reason to repeat the daemon's full binding read.
+    const bindingFacts = useProviderCatalogSelection(useShallow((snapshot: ProviderCatalogSnapshot | null) => {
+        const catalog = snapshot?.data;
+        const secrets = connectionId ? catalog?.secretBindingsByConnectionId[connectionId] : undefined;
+        return [
+            connectionId ? readProviderCatalogConnection(snapshot?.scope, connectionId) : null,
+            catalog?.accountGrants.find(row => row.connectionId === connectionId) ?? null,
+            catalog?.machineGrants.find(row => row.connectionId === connectionId && row.machineId === input.machineId) ?? null,
+            secrets?.account ?? null,
+            input.machineId ? secrets?.byMachineId?.[input.machineId] ?? null : null,
+            connectionId && modelId ? readProviderCatalogModel(snapshot?.scope, connectionId, modelId) : null,
+            catalog?.experimentalBindingConfirmations.find(row => row.connectionId === connectionId
+                && row.agentTargetKey === agentTargetKey && row.modelId === null) ?? null,
+            catalog?.experimentalBindingConfirmations.find(row => row.connectionId === connectionId
+                && row.agentTargetKey === agentTargetKey && row.modelId === modelId) ?? null,
+        ] as const;
+    }), binding?.scope ?? null, { enabled: requestable });
+    const contributionKey = bindingFacts[0]?.source.kind === 'contribution'
+        ? bindingFacts[0].source.contributionKey : input.launchBinding?.contributionKey;
+    const providerDeclaration = React.useMemo(() => contributionKey && input.declarationContext
+        ? readAccountProviderDeclaration(contributionKey, input.declarationContext) : null,
+    [contributionKey, input.declarationContext]);
+    const agentRequirements = React.useMemo(() => agentTargetKey && input.declarationContext
+        ? readAccountAgentProviderRequirements(agentTargetKey, input.declarationContext) : null,
+    [agentTargetKey, input.declarationContext]);
     const stateMatchesScope = state.scopeKey === scopeKey
         && state.accountLifetime === accountLifetime;
     const currentAccountLifetimeRef = React.useRef(accountLifetime);
@@ -172,7 +210,7 @@ export function useProviderBindingStatus(input: Readonly<{
             pendingRead.current?.abort();
             pendingRead.current = null;
         };
-    }, [accountLifetime, refresh, scopeKey]);
+    }, [accountLifetime, refresh, scopeKey, bindingFacts, providerDeclaration?.definition, providerDeclaration?.provenance, agentRequirements]);
 
     const previousCompletedTurnObservedAt = React.useRef(input.completedTurnObservedAt);
     const previousBindingRefusalObservedAt = React.useRef(input.bindingRefusalObservedAt);
@@ -183,12 +221,13 @@ export function useProviderBindingStatus(input: Readonly<{
         previousBindingRefusalObservedAt.current = input.bindingRefusalObservedAt;
         // A recovered turn invalidates an earlier transient read failure. Keep
         // the existing attention state until its canonical binding read settles.
+        const needsAttention = stateMatchesScope && (state.error !== null || state.status !== null && state.status.status !== 'current');
         // The runner can discover a binding change before this client sees any catalog update.
         const bindingRefused = input.bindingRefusalObservedAt != null && input.bindingRefusalObservedAt !== previousRefusal;
-        if (bindingRefused || (input.completedTurnObservedAt != null && input.completedTurnObservedAt !== previous)) {
+        if (bindingRefused || (needsAttention && input.completedTurnObservedAt != null && input.completedTurnObservedAt !== previous)) {
             void refresh();
         }
-    }, [input.completedTurnObservedAt, input.bindingRefusalObservedAt, refresh]);
+    }, [input.completedTurnObservedAt, input.bindingRefusalObservedAt, refresh, stateMatchesScope, state.error, state.status]);
 
     return {
         status: stateMatchesScope ? state.status : null,

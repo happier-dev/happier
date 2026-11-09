@@ -12,7 +12,7 @@ import {
     resolveScopedPluginSettingsServerIdentity,
     scopedPluginSettingsAdapter,
 } from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
-import { resolveAgentScopedPluginSettingsDeclarations } from './agentScopedPluginSettingsDeclarations';
+import { AGENT_SCOPED_PLUGIN_SETTINGS_SECTIONS, resolveAgentScopedPluginSettingsDeclarations } from './agentScopedPluginSettingsDeclarations';
 
 /**
  * Reads inactive-session behavior Settings through the same scoped record
@@ -43,6 +43,8 @@ export async function readAgentScopedPluginSettingsSnapshot(params: Readonly<{
     const projectionInputs = await loadDaemonMergedProjectionInputs({
         machineId,
         serverId,
+        // The Agent's plugin identity and that plugin's editable settings groups.
+        sections: AGENT_SCOPED_PLUGIN_SETTINGS_SECTIONS,
         ...(params.accountLifetime ? { accountLifetime: params.accountLifetime } : {}),
         signal: params.signal,
     });

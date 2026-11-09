@@ -1,4 +1,4 @@
-import type { DaemonTerminalLaunchIntent } from '@happier-dev/protocol';
+import type { DaemonTerminalLaunchIntent } from '@happier-dev/protocol/daemon/terminal';
 
 export type AgentLocalAuthSupport = 'login_terminal' | 'status_only' | 'manual_only' | 'unsupported';
 export type AgentLocalAuthLaunchKind = 'primary' | 'device_code';

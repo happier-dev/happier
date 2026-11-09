@@ -1,4 +1,4 @@
-import type { PluginAgentCliMetadata } from '@happier-dev/protocol';
+import type { PluginAgentCliMetadata } from '@happier-dev/protocol/plugins/contributions/agentCliMetadata';
 
 import type { AgentLocalAuthPlugin } from './agentLocalAuthPlugin';
 import { createAgentLocalAuthPluginFromLaunches } from './createAgentLocalAuthPluginFromLaunches';

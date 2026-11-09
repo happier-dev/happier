@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { DaemonPluginUiComposerSurfaceCatalogEntryV1Schema, PluginProjectionV2Schema, type PluginProjectedSettingsV2, type PluginProjectionV2 } from '@happier-dev/protocol';
+import { DaemonPluginUiComposerSurfaceCatalogEntryV1Schema, PluginProjectedActionV2Schema, PluginProjectionInstalledPackageV2Schema, PluginProjectionV2Schema, type PluginProjectedSettingsV2, type PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { createProjectedAgentLocalAuthPlugin } from '@/agents/catalog/localAuth/createProjectedAgentLocalAuthPlugin';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import * as strictJsonProjection from '@happier-dev/protocol/json/strictJsonValue';
@@ -15,9 +15,34 @@ import {
     publishDaemonMergedProjectionInputs,
     mapV2EditableSettingsGroup,
     resolvePluginProjectionEditableSettingsGroup,
+    buildV2PluginProjectionById,
 } from './daemonContributionRegistryProjectionAdapters';
 
 describe('daemon contribution registry projection adapters', () => {
+    it('presents held Account Actions without a Machine describe or a fabricated registry generation', () => {
+        const pluginId = 'acme.account-review';
+        const action = PluginProjectedActionV2Schema.parse({
+            id: 'review', pluginId, occurrenceId: 'account-current',
+            title: { key: 'review', fallback: 'Review Session' },
+            scopes: ['session'], surfaces: ['ui'], placementBindings: ['contextMenu'],
+            dangerLevel: 'safe', available: false,
+            execution: { target: 'account', account: { artifactId: 'runtime', exportName: 'activate' } },
+        });
+        const installed = PluginProjectionInstalledPackageV2Schema.parse({
+            id: pluginId, displayName: 'Account review', version: '1.0.0', enabled: true,
+            source: { kind: 'localPath', locator: pluginId },
+        });
+        const held = { generation: null, installedPackagesById: { [pluginId]: installed },
+            actionsById: { [`${pluginId}/review`]: action }, resourcesById: {} };
+        const projected = buildV2PluginProjectionById(held)[pluginId];
+        expect(projected?.installedPackage).toBe(installed);
+        expect(projected).toMatchObject({ generation: null, generationLabel: null, enabled: true,
+            actions: [{ id: 'review', occurrenceId: 'account-current', title: 'Review Session',
+                localizedPresentation: { title: action.title }, placementBindings: ['contextMenu'], available: false }],
+            diagnostics: [], resources: [], editableSettingsGroups: [], contributionKinds: [],
+        });
+    });
+
     it('publishes composer Action selections for resource-backed translation descriptors', () => {
         const pluginId = 'acme.review';
         const occurrenceId = 'review-current';
@@ -72,6 +97,26 @@ describe('daemon contribution registry projection adapters', () => {
         }
     });
 
+    it('does not rebuild unchanged field dictionaries across 148 decoded Machine replies', () => {
+        const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 19,
+            installedPackagesById: Object.fromEntries(Array.from({ length: 66 }, (_, index) => {
+                const id = `acme.restore-${index}`;
+                return [id, { id, displayName: id, enabled: true, source: { kind: 'localPath', locator: id } }];
+            })),
+        });
+        const fleet = Array.from({ length: 148 }, () => publishDaemonMergedProjectionInputs({ projection }));
+        const replies = fleet.map(() => structuredClone(projection));
+        // Count dictionary allocations at the publication owner, in addition to
+        // checking its observable no-publication/row-identity contract.
+        const dictionaries = vi.spyOn(Object, 'fromEntries');
+        try {
+            for (let index = 0; index < fleet.length; index++) {
+                expect(publishDaemonMergedProjectionInputs({ projection: replies[index]! }, fleet[index])).toBe(fleet[index]);
+            }
+            expect(dictionaries).toHaveBeenCalledTimes(0);
+        } finally { dictionaries.mockRestore(); }
+    });
+
     it('publishes changed translation bundles with canonical immutable ownership for unchanged selected reads', () => {
         const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 20,
             familiesById: { pluginUi: { family: 'pluginUi', entriesById: {
@@ -112,12 +157,15 @@ describe('daemon contribution registry projection adapters', () => {
         const admittedBundles = new Set(Object.values(first.translationsByPluginId).map(entry => entry.bundles));
         const json = vi.spyOn(strictJsonProjection, 'projectNativeJsonValueForTransport');
         const bindingAdmission = vi.spyOn(PluginUiSurfaceBindingV1Schema, 'safeParse');
+        const descriptorAdmission = vi.spyOn(descriptorProjection, 'readConnectedAccountDescriptorProjection');
         const bundleOwnershipRequests = () => json.mock.calls.filter(([value]) => value !== null && typeof value === 'object' && Object.hasOwn(value, 'en')).length;
         try {
             // Decoded equal replies and unrelated Agent/generation arrivals
             // do not reconstruct the authored UI graph.
             for (let arrival = 1; arrival <= 20; arrival++) {
                 const reply = PluginProjectionV2Schema.parse({ ...structuredClone(projection), generation: projection.generation + arrival,
+                    familiesById: { ...projection.familiesById,
+                        ...(arrival % 2 ? { connectedAccounts: { family: 'connectedAccounts', entriesById: {} } } : {}) },
                     agentsById: { review: { id: 'review', title: `Unrelated Agent observation ${arrival}`,
                         identity: { pluginId: 'acme.agent', localId: 'review' },
                         capabilities: { surfaces: [], sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } } },
@@ -131,6 +179,9 @@ describe('daemon contribution registry projection adapters', () => {
             expect.soft(json.mock.calls.filter(([value]) => admittedBundles.has(value))).toHaveLength(0);
             expect.soft(bundleOwnershipRequests()).toBe(0);
             expect.soft(bindingAdmission.mock.calls.length).toBe(0);
+            // Those descriptor-family changes are real for Connected Accounts,
+            // while the independently published UI declarations stay unchanged.
+            expect.soft(descriptorAdmission).toHaveBeenCalledTimes(20);
             json.mockClear(); bindingAdmission.mockClear();
 
             const edited = PluginProjectionV2Schema.parse({ ...projection, generation: projection.generation + 20,
@@ -164,7 +215,7 @@ describe('daemon contribution registry projection adapters', () => {
             expect(first.translationsByPluginId['acme.arrival-0']?.bundles)
                 .toEqual({ en: { title: 'Plugin 0', detail: 'An admitted translation bundle' } });
         } finally {
-            json.mockRestore(); bindingAdmission.mockRestore();
+            json.mockRestore(); bindingAdmission.mockRestore(); descriptorAdmission.mockRestore();
         }
     });
 
@@ -449,8 +500,6 @@ describe('daemon contribution registry projection adapters', () => {
                 },
             },
             familiesById: {},
-
-
             resourcesById: {
                 'acme.review.prompt': {
                     id: 'acme.review.prompt',
@@ -659,8 +708,6 @@ describe('daemon contribution registry projection adapters', () => {
             } as unknown as PluginProjectionV2['agentsById'],
             actionsById: {},
             familiesById: {},
-
-
             resourcesById: {},
             settingsById: {},
             diagnostics: [],
@@ -692,8 +739,6 @@ describe('daemon contribution registry projection adapters', () => {
                 voiceProviders: { family: 'voiceProviders', entriesById: { el: { id: 'el', pluginId: 'happier.elevenlabs' } } },
                 providers: { family: 'providers', entriesById: { claudeModels: { id: 'claudeModels', pluginId: 'happier.claude' } } },
             } as unknown as PluginProjectionV2['familiesById'],
-
-
             resourcesById: {},
             settingsById: {},
             diagnostics: [],
@@ -738,8 +783,6 @@ describe('daemon contribution registry projection adapters', () => {
             agentsById: {},
             actionsById: {},
             familiesById: {},
-
-
             resourcesById: {},
             settingsById: {},
             diagnostics: [{

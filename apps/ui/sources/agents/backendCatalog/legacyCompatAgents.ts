@@ -1,4 +1,4 @@
-import type { BackendTargetRefV1 } from '@happier-dev/protocol';
+import type { BackendTargetRefV1 } from '@happier-dev/protocol/backends/targets/backendTargetRef';
 import { legacyCustomAcpCompat } from '@happier-dev/agents';
 
 const LEGACY_COMPAT_AGENT_IDS = legacyCustomAcpCompat.LEGACY_COMPAT_AGENT_IDS;

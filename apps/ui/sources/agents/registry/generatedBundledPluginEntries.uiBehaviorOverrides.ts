@@ -185,6 +185,21 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
       }
     ]
   },
+  "connectedServices": {
+    "poolSettings": [
+      {
+        "id": "claude-auto-continue",
+        "kind": "boolean",
+        "policyKey": "claudeCodeAutoContinueAtUsageLimit",
+        "serviceLocalIds": [
+          "claude-subscription",
+          "anthropic"
+        ],
+        "subtitleKey": "connectedServicesPool.claudeCodeAutoContinueAtUsageLimitSubtitle",
+        "titleKey": "connectedServicesPool.claudeCodeAutoContinueAtUsageLimitTitle"
+      }
+    ]
+  },
   "contextWindow": {
     "defaultTokens": 200000,
     "modelRules": [
@@ -253,6 +268,23 @@ export const BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS: Readonly<
         }
       }
     ]
+  },
+  "payload": {
+    "sessionExtras": {
+      "booleanValues": {
+        "false": "agentSdk",
+        "true": "unifiedTerminal"
+      },
+      "defaultValue": "agentSdk",
+      "settingKey": {
+        "localId": "claudeUnifiedTerminalEnabled",
+        "scope": "account"
+      },
+      "values": [
+        "agentSdk",
+        "unifiedTerminal"
+      ]
+    }
   },
   "pendingDelivery": {
     "custodyLabelKey": "session.pendingMessages.deliveryStatus.queuedInClaude",
@@ -742,6 +774,7 @@ const CLAUDE_PREDECESSOR_MESSAGE_META_DEFAULTS = {
   ],
   "claudeRemoteStrictMcpServerConfig": false,
   "claudeRemoteVerboseEnabled": false,
+  "claudeSessionRetentionV1": null,
   "claudeUnifiedTerminalEnabled": false,
   "claudeUnifiedTerminalHost": "auto",
   "claudeUnifiedTerminalPermissionResponseLocation": "app_and_terminal",

@@ -3,6 +3,7 @@ import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
 import { SessionModelTransitionRequestV1Schema, SessionModelTransitionResultV1Schema } from '@happier-dev/protocol/sessions/control/modelTransitionV1';
 import { projectExecutionRunChildChoiceV1, withExecutionRunStartFailureDetails, ExecutionRunStartFailureDetailsV1Schema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ManagedMachineActionOutputSchemasV1, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
 import { installSessionActionFixture, installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionActionRpcBoundary';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -44,8 +45,14 @@ describe('Provider routing Actions through the real UI composition', () => {
     });
 
     it('preserves the host-produced child choice and no-Run-created evidence through attached start and Action error normalization', async () => {
-        const { serverId, accountId } = await account.restore({ machines: [createMachineFixture({ id: 'machine_1', active: true, activeAt: Date.now() })] });
+        const { serverId, accountId } = await account.restore({ serverIdentityId: 'srv_provider_routing',
+            machines: [createMachineFixture({ id: 'machine_1', active: true, activeAt: Date.now() })] });
         installSessionActionFixture({ homes: account.home, storage, serverId, session: { id: 'lead' } });
+        // Run admission resolves the Session's managed association through its Home.
+        // This fixture's enrolled Machine is unmanaged; keep that HTTP read real.
+        account.home.answer(serverId, managedMachineActionEndpointPathV1('machines.managed.list'), {
+            body: ManagedMachineActionOutputSchemasV1['machines.managed.list'].parse({ machines: [] }),
+        });
         const childChoice = projectExecutionRunChildChoiceV1({ agentTargetKey: 'agent:happier.agent.claude/claude',
             parentModelSelection: ProviderBoundModelRefSchema.parse({ agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: 'pc_parent', modelId: 'parent-model' }),
             parentRouteCompatibility: 'incompatible' });

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol';
+import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { DaemonProviderConnectionViewV1 } from '@happier-dev/protocol/rpc';
 
 import {
@@ -10,9 +10,8 @@ import { providerErrorFromRpcFailure } from '@/providers/actions/client';
 import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
-import { beginProviderConnectionCheckRead, getProviderConnectionCheckSnapshot, providerConnectionCheckQueryKey,
+import { beginProviderConnectionCheckRead, getProviderConnectionCheckSnapshot, isProviderConnectionCheckReadRequired, providerConnectionCheckQueryKey,
     subscribeProviderModelProjectionSnapshot } from '@/sync/store/settings/providerCatalogSnapshot';
-import { registerProviderConnectionReader, type ProviderConnectionReadTarget } from './providerConnectionRefresh';
 import {
     captureActiveServerAccountScopeLifetime,
     type ActiveServerAccountScopeLifetime,
@@ -21,7 +20,7 @@ import {
 export type ProviderConnectionMachineViewState =
     | Readonly<{ status: 'loading'; connection: DaemonProviderConnectionViewV1 | null }>
     | Readonly<{ status: 'success'; connection: DaemonProviderConnectionViewV1 | null }>
-    | Readonly<{ status: 'error'; error: ProviderErrorV1 }>;
+    | Readonly<{ status: 'error'; error: ProviderErrorV1; connection?: DaemonProviderConnectionViewV1 | null }>;
 
 type ProviderConnectionMachineViewsState = Readonly<{
     scopeKey: string | null;
@@ -121,11 +120,14 @@ export function useProviderConnectionMachineViews(input: Readonly<{
             const key = providerSettingsMachineRowKey(row.target);
             const captured = capturedByTargetKey[key];
             const cached = snapshots[index];
-            // Mounted responses keep their captured peer basis; a new view paints
-            // the resource owner's last-known check while its own Action revalidates.
-            if (cached && (!captured || captured.status === 'loading' && captured.connection === null)) {
+            // Peer rows have no editor basis: their Machine facts belong to
+            // the subscribed check owner, including after this reader answered.
+            if (cached) {
                 projected ??= { ...capturedByTargetKey };
-                projected[key] = { status: 'loading', connection: cached.connections.find(connection => connection.connectionId === input.connectionId) ?? null };
+                projected[key] = captured?.status === 'error' ? { ...captured,
+                    connection: cached.connections.find(connection => connection.connectionId === input.connectionId) ?? null }
+                    : { status: captured?.status ?? 'loading',
+                        connection: cached.connections.find(connection => connection.connectionId === input.connectionId) ?? null };
             }
         });
         return projected ?? capturedByTargetKey;
@@ -144,7 +146,7 @@ export function useProviderConnectionMachineViews(input: Readonly<{
         return () => registration?.dispose();
     }, [accountLifetime]);
 
-    const read = React.useCallback(async (requestedTargets?: readonly ProviderConnectionReadTarget[]) => {
+    const read = React.useCallback(async (requestedTargetKeys?: ReadonlySet<string>) => {
         if (!activeRef.current) return;
         const requestGeneration = generation.current;
         const requestStillCurrent = (): boolean => (
@@ -157,9 +159,7 @@ export function useProviderConnectionMachineViews(input: Readonly<{
             setState({ scopeKey, accountLifetime, byTargetKey: {}, accountScopesByTargetKey: {}, loading: false });
             return;
         }
-        const targets = requestedTargets
-            ? targetsRef.current.filter(row => requestedTargets.some(target =>
-                target.serverId === row.serverId && target.machineId === row.target.machineId))
+        const targets = requestedTargetKeys ? targetsRef.current.filter(row => requestedTargetKeys.has(providerSettingsMachineRowKey(row.target)))
             : targetsRef.current;
         if (targets.length === 0) return;
         if (!ready) return;
@@ -234,26 +234,27 @@ export function useProviderConnectionMachineViews(input: Readonly<{
     }, [accountLifetime, accountScopesByTargetKey, credentialStates, describeProviderConnections, input.connectionId, input.enabled, ready, scopeKey, targetsKey]);
 
     React.useEffect(() => {
-        const unregister = input.active !== false && scopeEnabled
-            ? registerProviderConnectionReader({
-                targets: targetsRef.current.map(row => ({ machineId: row.target.machineId, serverId: row.serverId })),
-                accountLifetime,
-                read,
-            })
-            : null;
+        if (input.active === false || !scopeEnabled) return;
+        const requestedTargetKeys = new Set(targetsRef.current.flatMap(row => {
+            const binding = credentialStates.get(resolveServerProfileScopeIdForIdentifier(row.serverId))?.binding;
+            return binding?.isCurrent() && binding.credentialKey && isProviderConnectionCheckReadRequired(binding.scope,
+                binding.credentialKey, providerConnectionCheckQueryKey(row.target.machineId, input.connectionId))
+                ? [providerSettingsMachineRowKey(row.target)] : [];
+        }));
+        if (requestedTargetKeys.size > 0) void read(requestedTargetKeys);
+    }, [credentialStates, input.active, input.connectionId, read, scopeEnabled, snapshots]);
+
+    React.useEffect(() => {
         void read();
         return () => {
             generation.current += 1;
             for (const controller of latestReadByTarget.current.values()) controller.abort();
             latestReadByTarget.current.clear();
-            unregister?.();
         };
     }, [accountLifetime, input.active, read, scopeEnabled, scopeKey]);
 
     const refresh = React.useCallback(async (target?: ProviderSettingsMachineRowV1['target']) => {
-        await read(target ? targetsRef.current
-            .filter(row => providerSettingsMachineRowKey(row.target) === providerSettingsMachineRowKey(target))
-            .map(row => ({ machineId: row.target.machineId, serverId: row.serverId })) : undefined);
+        await read(target ? new Set([providerSettingsMachineRowKey(target)]) : undefined);
     }, [read]);
 
     return {

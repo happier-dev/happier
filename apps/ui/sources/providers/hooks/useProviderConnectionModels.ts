@@ -1,10 +1,11 @@
 import * as React from 'react';
-import type { ProviderErrorV1 } from '@happier-dev/protocol';
+import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type { DaemonProviderModelRowV1 } from '@happier-dev/protocol/rpc';
 import { beginProviderConnectionModelsRead, getProviderConnectionModelsSnapshot, subscribeProviderModelProjectionSnapshot } from '@/sync/store/settings/providerCatalogSnapshot';
 
 import { providerErrorFromRpcFailure } from '@/providers/actions/client';
 import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
+import { useProviderModelQueryRetention } from './useProviderModelQueryRetention';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import {
     captureActiveServerAccountScopeLifetime,
@@ -52,6 +53,7 @@ export function useProviderConnectionModels(input: Readonly<{
         ? subscribeProviderModelProjectionSnapshot(binding.scope, binding.credentialKey, queryKey, listener) : () => {},
     [binding, input.active, scopeEnabled, queryKey]);
     const data = React.useSyncExternalStore(subscribeSnapshot, readSnapshot, readSnapshot);
+    useProviderModelQueryRetention(scopeEnabled ? binding?.scope ?? null : null, binding?.credentialKey ?? null, queryKey);
 
     React.useEffect(() => {
         const registration = accountLifetime?.onRetire(() => {

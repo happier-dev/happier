@@ -1,11 +1,16 @@
 import * as React from 'react';
-import type { ProviderBoundModelRef } from '@happier-dev/protocol';
+import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/selection/v1';
 import type { DaemonProviderModelProjectionResponseV1 } from '@happier-dev/protocol/rpc';
+import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
+import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { providerErrorFromRpcFailure } from '@/providers/actions/client';
 import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
 import { sessionModelSelectionKey } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
+import { modelProjectionScopeKey } from './modelProjectionScopeKey';
+import { useProviderModelQueryRetention } from './useProviderModelQueryRetention';
 import { beginProviderModelProjectionRead, getProviderModelProjectionSnapshot, subscribeProviderModelProjectionSnapshot } from '@/sync/store/settings/providerCatalogSnapshot';
 import {
     captureActiveServerAccountScopeLifetime,
@@ -34,8 +39,13 @@ export function useProviderModelProjection(input: Readonly<{
     /** Browsing a source is local picker state; it never changes the selected model. */
     sourceConnectionId?: string;
     favoriteSelections?: readonly ProviderBoundModelRef[];
+    /** One gathered Home catalog; only the exact execution Machine resolves delivery. */
+    teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
+    /** Exact admitted catalog bodies behind a gathered Home projection; progress does not replace them. */
+    teamCredentialCatalogSources?: readonly (readonly TeamCredentialResourceCatalogEntryV1[] | null | undefined)[];
 }>) {
-    const { describeProviderModels, ready, pendingApproval, accountScope: { resolution, binding } } = useProviderActionClient(input.serverId);
+    const scopeEnabled = Boolean(input.enabled && input.agentTargetKey);
+    const { describeProviderModels, ready, pendingApproval, accountScope: { resolution, binding } } = useProviderActionClient(scopeEnabled ? input.serverId : []);
     const accountLifetime = captureActiveServerAccountScopeLifetime();
     const [state, setState] = React.useState<ProjectionState>({
         scopeKey: null,
@@ -50,13 +60,10 @@ export function useProviderModelProjection(input: Readonly<{
     const selectionKey = input.currentSelection
         ? sessionModelSelectionKey(input.currentSelection)
         : '';
-    const scopeKey = JSON.stringify([
-        input.enabled, input.machineId, input.agentTargetKey, input.mode ?? 'picker', selectionKey,
-        input.sourceConnectionId ?? null, input.favoriteSelections?.map(sessionModelSelectionKey) ?? [],
-        resolution.kind === 'bound' ? serverAccountScopeKeySuffix(resolution.scope) : input.serverId,
-        binding?.credentialKey ?? null,
-    ]);
-    const scopeEnabled = Boolean(input.enabled && input.agentTargetKey);
+    const scopeKey = modelProjectionScopeKey({ ...input, selectionKey,
+        favoriteKeys: input.favoriteSelections?.map(sessionModelSelectionKey) ?? [],
+        accountScopeKey: resolution.kind === 'bound' ? serverAccountScopeKeySuffix(resolution.scope) : input.serverId,
+        credentialKey: binding?.credentialKey ?? null });
     const stateMatchesScope = state.scopeKey === scopeKey
         && state.accountLifetime === accountLifetime;
     const readSnapshot = React.useCallback(() => scopeEnabled && binding?.credentialKey && binding.isCurrent()
@@ -67,6 +74,7 @@ export function useProviderModelProjection(input: Readonly<{
         ? subscribeProviderModelProjectionSnapshot(binding.scope, binding.credentialKey, scopeKey, listener) : () => {},
     [binding, input.active, scopeEnabled, scopeKey]);
     const data = React.useSyncExternalStore(subscribeSnapshot, readSnapshot, readSnapshot);
+    useProviderModelQueryRetention(scopeEnabled ? binding?.scope ?? null : null, binding?.credentialKey ?? null, scopeKey);
     const error = stateMatchesScope ? state.error : null;
     const loading = input.active !== false && scopeEnabled
         && (resolution.kind === 'resolving' || resolution.kind === 'bound')
@@ -95,16 +103,16 @@ export function useProviderModelProjection(input: Readonly<{
     const refreshWithResult = React.useCallback(async (forceRefresh: boolean = true) => {
         if (!activeRef.current) return null;
         const requestGeneration = ++generation.current;
+        if (!input.enabled || !input.agentTargetKey) {
+            setState({ scopeKey, accountLifetime, error: null, loading: false });
+            return null;
+        }
         const requestStillCurrent = (): boolean => (
             currentAccountLifetimeRef.current === accountLifetime
             && (accountLifetime?.isCurrent() ?? true)
             && binding?.isCurrent() === true
         );
         if (!requestStillCurrent()) return null;
-        if (!input.enabled || !input.agentTargetKey) {
-            setState({ scopeKey, accountLifetime, error: null, loading: false });
-            return null;
-        }
         if (!ready || !binding?.credentialKey) return null;
         pendingRead.current?.abort();
         const controller = new AbortController();
@@ -115,7 +123,7 @@ export function useProviderModelProjection(input: Readonly<{
             : { scopeKey, accountLifetime, error: null, loading: true });
         const publish = beginProviderModelProjectionRead(binding.scope, binding.credentialKey, scopeKey);
         try {
-            const result = await describeProviderModels({
+            const response = await describeProviderModels({
                 // Keep the refresh discriminator correlated with its required machine.
                 ...(forceRefresh && input.machineId
                     ? { machineId: input.machineId, forceRefresh: true as const }
@@ -126,8 +134,15 @@ export function useProviderModelProjection(input: Readonly<{
                 ...(input.currentSelection ? { currentSelection: input.currentSelection } : {}),
                 ...(input.sourceConnectionId ? { sourceConnectionId: input.sourceConnectionId } : {}),
                 ...(input.favoriteSelections ? { favoriteSelections: [...input.favoriteSelections] } : {}),
+                ...(input.teamCredentialResources ? { teamCredentialResources: [...input.teamCredentialResources] } : {}),
             }, { signal: controller.signal });
             if (requestGeneration !== generation.current || !requestStillCurrent()) return null;
+            const result = response.status === 'success' && input.teamCredentialResources !== undefined
+                && response.teamCredentialResources === undefined
+                ? { status: 'error' as const, error: createProviderErrorV1('provider_rpc_response_invalid', {
+                    ...(input.machineId ? { machineId: input.machineId } : {}),
+                }) }
+                : response;
             if (result.status === 'success') {
                 publish(result);
                 setState({
@@ -146,6 +161,11 @@ export function useProviderModelProjection(input: Readonly<{
             return result;
         } catch (caught) {
             if (requestGeneration !== generation.current || !requestStillCurrent()) return null;
+            // A rejected or canceled approval is the person's own decision: nothing ran, nothing failed.
+            if (isActionApprovalDeclinedErrorCode((caught as { code?: unknown } | null)?.code)) {
+                setState({ scopeKey, accountLifetime, error: null, loading: true });
+                return null;
+            }
             const providerError = providerErrorFromRpcFailure(caught, {
                 ...(input.machineId ? { machineId: input.machineId } : {}),
                 ...(input.currentSelection?.providerConnectionId

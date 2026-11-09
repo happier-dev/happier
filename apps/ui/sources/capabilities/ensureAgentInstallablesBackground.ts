@@ -1,7 +1,7 @@
 import type { CapabilitiesDetectRequest, CapabilityDetectRequest, CapabilityDetectResult, CapabilityId } from '@/sync/api/capabilities/capabilitiesProtocol';
 import type { CapabilitiesInvokeRequest } from '@/sync/api/capabilities/capabilitiesProtocol';
 import { getMachineCapabilitiesSnapshot, prefetchMachineCapabilities, prefetchMachineCapabilitiesIfStale } from '@/hooks/server/useMachineCapabilitiesCache';
-import { resolveDaemonCapabilitiesCacheKeySalt } from '@/hooks/server/useDaemonScopedMachineCapabilitiesCache';
+import { createMachineUpdateFactsCacheInputKey, MACHINE_UPDATE_FACTS_CACHE_SALT } from '@/updates/machineUpdateFacts';
 import { LATEST_VERSION_CHECK_FRESH_MS } from '@/updates/latestVersionCheckFreshness';
 import { machineCapabilitiesInvoke } from '@/sync/ops';
 import { getAgentResumeExperimentsFromSettings, getNewSessionRelevantInstallableDepKeys } from '@/agents/catalog/catalog';
@@ -153,6 +153,8 @@ async function collectAgentInstallables(
                 serverId: opts.serverId,
                 signal: opts.signal,
                 accountLifetime: opts.accountLifetime,
+                // Installables read only managed dependency declarations.
+                sections: ['familiesById.managedDependencies'],
             });
             if (projectionInputs?.pluginProjectionV2) {
                 entries = getInstallablesRegistryEntries({
@@ -302,7 +304,8 @@ export async function ensureMachineUpdateFactsBackground(
         machineId,
         serverId: opts.serverId,
         accountLifetime: opts.accountLifetime,
-        cacheKeySalt: resolveDaemonCapabilitiesCacheKeySalt({ id: machineId }, opts.serverId) || null,
+        cacheKeySalt: MACHINE_UPDATE_FACTS_CACHE_SALT,
+        cacheInputKey: createMachineUpdateFactsCacheInputKey({ machineId, serverId: opts.serverId, accountId: opts.accountLifetime?.scope.accountId }),
         staleMs: LATEST_VERSION_CHECK_FRESH_MS,
         request,
         signal: opts.signal,

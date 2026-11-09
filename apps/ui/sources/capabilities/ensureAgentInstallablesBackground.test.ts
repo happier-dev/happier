@@ -5,7 +5,7 @@ import type { CapabilitiesDetectRequest, CapabilitiesInvokeRequest } from '@/syn
 import { settingsParse } from '@/sync/domains/settings/settings';
 import type { MachineCapabilitiesInvokeResult } from '@/sync/ops';
 import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import {
     clearProjectedAgentUiBehaviorDescriptors,
@@ -37,8 +37,6 @@ const codexAcpPluginProjection = {
     installedPackagesById: {},
     agentsById: {},
     actionsById: {},
-
-
     resourcesById: {},
     settingsById: {},
     diagnostics: [],

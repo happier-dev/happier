@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createProviderErrorV1 } from '@happier-dev/protocol';
+import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 
 import { dispatchProviderRecoveryAction } from './recovery';
 

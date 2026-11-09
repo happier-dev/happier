@@ -255,7 +255,7 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
     });
     const executeAdmitted = async (actionId: RegistryActionIdV1, admitted: RegistryActionInput): Promise<RegistryActionOutput> => {
         if (actionId === REGISTRY_ITEMS_LIST_ACTION_ID_V1) {
-            const args = REGISTRY_ACTION_INPUT_SCHEMAS_V1[actionId].parse(admitted);
+            const args = admitted as ReturnType<(typeof REGISTRY_ACTION_INPUT_SCHEMAS_V1)[typeof actionId]['parse']>;
             const sources = (await readSources()).filter(source => source.enabled && source.kinds.some(kind => kind === args.kind)
                 && (args.sourceIds === undefined || args.sourceIds.includes(source.id)));
             const results = await Promise.all(sources.map(async source => {
@@ -278,7 +278,7 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
                 const reusable = cached?.pages.every(page => page.status.state === 'ok' || page.status.state === 'rate_limited'
                     && (page.status.retryAt === undefined || page.status.retryAt > Date.now()));
                 if (cached && !args.refresh && reusable) return project(cached);
-                const next = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse(await host.execute(actionId, input));
+                const next = await host.execute(actionId, input) as ReturnType<(typeof REGISTRY_ACTION_OUTPUT_SCHEMAS_V1)[typeof actionId]['parse']>;
                 const previous = new Map(cached?.pages.map(page => [page.sourceId, page]));
                 const value = { pages: next.pages.map(page => {
                     const prior = previous.get(page.sourceId);
@@ -307,7 +307,7 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
             account.assertCurrent(); context.signal?.throwIfAborted();
             return cached.value;
         }
-        const parsed = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse(await host.execute(actionId, admitted));
+        const parsed = await host.execute(actionId, admitted) as RegistryActionOutput;
         if (cacheable
             && (!appCheck || 'results' in parsed && parsed.results.every(item => item.upstream.state !== 'unchecked'))) {
             memo.values.set(key, { revision, value: parsed });

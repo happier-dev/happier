@@ -1,8 +1,10 @@
 import type {
-    PluginAgentCapabilitiesV2,
-    PluginContributionIdentityV1,
+    PluginAgentCapabilitiesV2} from '@happier-dev/protocol/plugins/contributions/v2';
+import type {
+    PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import type {
     PluginProjectionV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 import {
     evaluateAgentSessionCapabilitySupport,

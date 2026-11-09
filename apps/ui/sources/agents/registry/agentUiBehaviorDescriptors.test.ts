@@ -20,6 +20,15 @@ function makeAgentAccountSettings(account: Readonly<Record<string, unknown>>) {
 }
 
 describe('createAgentUiBehaviorFromDescriptor', () => {
+    it('refuses malformed pool settings with a projection diagnostic', () => {
+        const result = createAgentUiBehaviorFromDescriptor({
+            kind: 'plugin.ui.v1', pluginId: 'acme.agent', agentId: 'acme', version: 1,
+            behavior: { connectedServices: { poolSettings: 'invalid' } },
+        });
+        expect(result.behavior.connectedServices).toBeUndefined();
+        expect(result.diagnostics).toEqual([expect.objectContaining({ code: 'A16X1_MALFORMED_DESCRIPTOR' })]);
+    });
+
     it('resolves a boolean configured runtime without inventing a spawn config option', () => {
         const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
             kind: 'plugin.ui.v1', pluginId: 'acme.agent', agentId: 'acme', version: 1,
@@ -47,6 +56,23 @@ describe('createAgentUiBehaviorFromDescriptor', () => {
             });
         }
     });
+    it('exposes parsed native chip definitions without constructing interactive chips', () => {
+        const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
+            components: { slots: [{
+                id: 'indexing-choice', slot: 'newSession.agentInputExtraActionChips',
+                chip: {
+                    kind: 'booleanOption', optionStateKey: 'allowIndexing', iconName: 'magnifying-glass',
+                    onLabelKey: 'agentInput.auggieIndexingChip.on', offLabelKey: 'agentInput.auggieIndexingChip.off',
+                },
+            }] },
+        });
+        expect(diagnostics).toEqual([]);
+        expect(behavior.newSession?.agentInputExtraActionChipDefinitions).toEqual([{
+            key: 'indexing-choice', optionStateKey: 'allowIndexing', iconName: 'magnifying-glass',
+            onLabelKey: 'agentInput.auggieIndexingChip.on', offLabelKey: 'agentInput.auggieIndexingChip.off',
+        }]);
+    });
+
     it('materializes a closed AskUserQuestion dialog declaration without an Agent-specific adapter', () => {
         const { behavior, diagnostics } = createAgentUiBehaviorFromDescriptor({
             kind: 'plugin.ui.v1',

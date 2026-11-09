@@ -17,6 +17,7 @@ export function useCurrentProjectedAgentCapabilities(params: Readonly<{
     enabled?: boolean;
 }>): CurrentProjectedAgentCapabilities | null {
     const projection = useDaemonMergedProjectionInputs({
+        sections: ['agentsById'],
         machineId: params.machineId,
         serverId: params.serverId,
         enabled: params.enabled !== false && params.agentId !== null && params.agentId !== undefined,

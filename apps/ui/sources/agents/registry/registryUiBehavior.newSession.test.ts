@@ -5,9 +5,25 @@ import {
     getAgentResumeExperimentsFromSettings,
     getNewSessionPreflightIssues,
     getNewSessionRelevantInstallableDepKeys,
+    resolveConfiguredAgentRuntimeKindFromUiBehavior,
     resolveAgentPluginSettingsPreflightIssue,
 } from './registryUiBehavior';
 import { makeResults, makeSettings, okCapability } from './registryUiBehavior.testHelpers';
+
+describe('resolveConfiguredAgentRuntimeKindFromUiBehavior', () => {
+    it.each([
+        [true, 'unifiedTerminal'],
+        [false, 'agentSdk'],
+        [undefined, 'agentSdk'],
+    ] as const)('resolves Claude runtime selection for %s', (enabled, expected) => {
+        const account = enabled === undefined ? {} : { claudeUnifiedTerminalEnabled: enabled };
+        expect(resolveConfiguredAgentRuntimeKindFromUiBehavior({
+            agentId: 'claude',
+            settings: makeSettings(),
+            pluginSettings: { account },
+        })).toBe(expected);
+    });
+});
 
 describe('getNewSessionRelevantInstallableDepKeys', () => {
     it('uses the exact scoped Agent Settings snapshot over the legacy global value', () => {

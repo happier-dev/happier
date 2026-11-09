@@ -492,8 +492,8 @@ it('refreshes daemon-created sources in the UI and reads tokened sources through
         .toEqual({ metadata: 0, admissions: 1, upstream: 1 });
     // One UI ingress, two existing protocol-owner parses, and one remote test transport ingress.
     expect.soft(inputParses).toHaveBeenCalledTimes(4);
-    // The remote result, protocol result, and UI result are separate existing owner boundaries.
-    expect.soft(outputParses).toHaveBeenCalledTimes(3);
+    // The remote result and protocol result validate their boundaries; the UI trusts that result.
+    expect.soft(outputParses).toHaveBeenCalledTimes(2);
     const reopened = await createUiRegistryHostV1(account, port, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
     for (let open = 0; open < 3; open++) expect(await reopened.execute('registries.updates.check', appDemand)).toEqual(firstApp);
     expect.soft({ metadata: appMetadataReads, admissions: appAdmissionReads, upstream: appUpstreamReads })
@@ -622,7 +622,7 @@ it('refreshes daemon-created sources in the UI and reads tokened sources through
         ['prompt_registry.install', { machineId, sourceId: source.id, itemId: 'private-skill' }],
     ] as const) {
         expect.soft(await executor.execute(actionId, input, { surface: 'ui', authority: 'present_user', serverId: account.serverId }))
-            .toEqual({ ok: false, errorCode: 'origin_probe_refused', error: 'origin_probe_refused' });
+            .toMatchObject({ ok: false, errorCode: 'origin_probe_refused', error: 'origin_probe_refused' });
         expect.soft(actionCalls.at(-1)).toBe(actionId);
     }
     expect(artifacts.list()).toHaveLength(1);

@@ -1,14 +1,9 @@
 import * as React from 'react';
 
 import type { ResolvedAgentCatalogEntry } from '@/agents/backendCatalog/agentCatalogProjection';
-import { getAgentCore, hasAgentIconMark } from '@/agents/catalog/catalog';
-import { AgentIcon } from '@/agents/registry/AgentIcon';
-import { InstalledPluginBrandMark } from '@/components/plugins/shared/InstalledPluginBrandMark';
-import { useInstalledPluginBrandPresentation } from '@/components/plugins/shared/installedPluginBrandPresentation';
-import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { HappierBrandMark } from '@/components/ui/media/HappierBrandMark';
+import { useBundledPluginBrandPresentation, useInstalledPluginBrandPresentation } from '@/components/plugins/shared/installedPluginBrandPresentation';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { useUnistyles } from 'react-native-unistyles';
-import { isCustomAcpAgentContributionIdentityV1 } from '@happier-dev/protocol/agents/executionTargetV1';
 
 /**
  * The one Agent catalog identity mark. External Agents use only the package
@@ -24,8 +19,6 @@ export function AgentCatalogIdentityIcon(props: Readonly<{
     size?: number;
     testID?: string;
 }>): React.ReactElement {
-    const { theme } = useUnistyles();
-    const color = props.color ?? theme.colors.text.secondary;
     const scope = React.useMemo(
         () => new AbortController(),
         [
@@ -55,39 +48,13 @@ export function AgentCatalogIdentityIcon(props: Readonly<{
         isCurrent: () => props.current && !scope.signal.aborted,
     });
 
-    if (!props.entry.isBuiltIn) {
-        return brand ? (
-            <InstalledPluginBrandMark
-                brand={brand}
-                externallyLabelled
-                size="small"
-                pixelSize={props.size ?? 29}
-                testID={props.testID}
-            />
-        ) : (
-            <Icon
-                name={isCustomAcpAgentContributionIdentityV1(props.entry.identity) ? props.entry.iconName as IconName : 'stack-simple'}
-                size={props.size ?? 29}
-                color={color}
-                testID={props.testID}
-            />
-        );
-    }
-
-    // A bundled Agent carries its own brand mark; the generic glyph is only the fallback.
-    const brandAgentId = props.entry.iconAgentId;
-    if (brandAgentId && hasAgentIconMark(brandAgentId, theme)) {
-        return <AgentIcon agentId={brandAgentId} size={props.size ?? 29} testID={props.testID} />;
-    }
-
-    const iconName = getAgentCore(props.entry.iconAgentId ?? '')?.ui.agentPickerIconName
-        ?? props.entry.iconName;
-    return (
-        <Icon
-            name={iconName as IconName}
-            size={props.size ?? 29}
-            color={color}
-            testID={props.testID}
-        />
+    const bundledBrand = useBundledPluginBrandPresentation(
+        props.entry.isBuiltIn ? props.entry.installedPackage?.id : null,
+        props.entry.title,
+        props.entry.isBuiltIn ? props.entry.iconAgentId : null,
     );
+    return <HappierBrandMark
+        brand={brand ?? bundledBrand ?? { displayName: props.entry.title }}
+        externallyLabelled size="small" pixelSize={props.size ?? 29} testID={props.testID}
+    />;
 }

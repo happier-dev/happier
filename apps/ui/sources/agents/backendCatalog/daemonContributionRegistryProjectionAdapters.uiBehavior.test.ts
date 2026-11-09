@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import {
     adaptDaemonContributionRegistryProjectionToMergedProjectionInputs,
@@ -73,8 +73,6 @@ function projectionWithExternalAgent(): PluginProjectionV2 {
             },
         },
         actionsById: {},
-
-
         resourcesById: {},
         settingsById: {},
         familiesById: {},

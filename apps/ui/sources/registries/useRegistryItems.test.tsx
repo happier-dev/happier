@@ -2,13 +2,15 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { MarketplaceIndexSourceSnapshotV1Schema, deriveMarketplaceSourceId } from '@happier-dev/protocol/marketplace';
-import { HAPPIER_PICKS_SOURCE_ID, registryMarketplaceSourceV1, type RegistrySourceV1 } from '@happier-dev/protocol/registries';
+import { HAPPIER_PICKS_SOURCE_ID, registryMarketplaceSourceV1, createRegistryHostV1,
+    REGISTRY_ACTION_INPUT_SCHEMAS_V1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, type RegistrySourceV1 } from '@happier-dev/protocol/registries';
 import { DEFAULT_CURATED_MARKETPLACE_SOURCE_URL } from '@happier-dev/protocol/marketplace';
 import { flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { PROMPT_LIBRARY_ROWS_ROUTE_V1 } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { createRegistryNpmPackageFixture, createRegistryPluginCatalogFixture } from '@/dev/testkit/fixtures/registryPluginCatalog';
 import { COMMUNITY_NPM_MARKETPLACE_SOURCE_ID_V1 } from '@happier-dev/protocol/marketplace';
 import { installPromptRegistriesCommonModuleMocks } from '@/components/settings/prompts/registries/promptRegistriesScreenTestHelpers';
+import { createUiRegistryHttpV1 } from './registryHttpV1';
 
 const platform = vi.hoisted(() => ({ value: 'web', width: 1440 }));
 const confirmation = vi.hoisted(() => ({ accepted: true }));
@@ -20,6 +22,8 @@ installPromptRegistriesCommonModuleMocks({ storage: original => original(), reac
     }).module });
 vi.mock('@react-navigation/native', async () =>
     (await import('@/dev/testkit/mocks/reactNavigation')).createReactNavigationNativeMock());
+vi.mock('@/components/ui/popover', async importOriginal =>
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(importOriginal));
 const { createPlainPromptLibraryCatalogHomeFixture } = await import('@/dev/testkit/harness/promptLibraryCatalogBoundary');
 // Load the fixture's runtime graph at collection, without admitting a Home or
 // writing credentials before Vitest installs its per-case storage boundary.
@@ -36,6 +40,7 @@ const [{ usePluginCatalog }, { usePromptLibraryCatalogValue }] = await Promise.a
 const { waitForHomeGovernance } = await import('@/dev/testkit/harness/homeGovernanceHarness');
 const { useRegistrySourceRevision } = await import('./useRegistrySourceRevision');
 const { useRegistrySources } = await import('./useRegistrySources');
+const { useSourceTitle } = await import('@/components/store/StoreKindPage');
 const { AppShellPluginUiProjectionValueProvider } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
 const { EMPTY_PLUGIN_UI_PROJECTION } = await import('@/sync/domains/plugins/ui/projection');
 const actionFrontDoor = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
@@ -84,6 +89,48 @@ async function setup(suffix: string, refresh = true) {
 }
 
 describe('registry item last-known reads through the Account and HTTP owners', () => {
+    it('never reads as settled before a demanded read has answered', async () => {
+        const { sourceId } = await setupHome('not-started');
+        // A held page reads the render where demand turns on: settled-looking there is a false empty state.
+        const seen: Array<Readonly<{ enabled: boolean; loading: boolean; hasValue: boolean; error: string | null }>> = [];
+        const hook = await renderHook((enabled: boolean) => {
+            const read = useRegistryItems({ kind: 'plugin', sourceIds: [sourceId] }, enabled);
+            seen.push({ enabled, loading: read.loading, hasValue: read.hasValue, error: read.error });
+            return read;
+        }, { initialProps: false });
+        await hook.rerender(true);
+        await waitForHomeGovernance(() => expect(hook.getCurrent().hasValue).toBe(true));
+        expect(seen.filter(render => render.enabled && !render.loading && !render.hasValue && render.error === null)).toEqual([]);
+    });
+
+    it('names a failing source from every held catalog, and never prints a raw id', async () => {
+        const { sourceId } = await setupHome('source-title');
+        // The fixture's catalog serves plugins; the Apps page still has to name it when it fails.
+        const hook = await renderHook(() => useSourceTitle());
+        await waitForHomeGovernance(() => expect(hook.getCurrent()(sourceId)).toBe('Private catalog'));
+        expect(hook.getCurrent()('marketplace:not-held')).not.toContain('marketplace:');
+    });
+
+    it('validates listing boundaries once and projects the admitted page without reparsing it', async () => {
+        const { sourceId } = await setupHome('schema-boundaries');
+        // Passthrough instrumentation: the real schemas, Account, HTTP and hook all run.
+        const inputParses = vi.spyOn(REGISTRY_ACTION_INPUT_SCHEMAS_V1['registries.items.list'], 'parse');
+        const outputParses = vi.spyOn(REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.items.list'], 'parse');
+        onTestFinished(() => { inputParses.mockRestore(); outputParses.mockRestore(); });
+        const hook = await renderHook(() => useRegistryItems({ kind: 'plugin', sourceIds: [sourceId] }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+        expect(hook.getCurrent().error).toBeNull();
+        expect(hook.getCurrent().items).toContainEqual(expect.objectContaining({ itemId: 'sample.plugin', version: '1.2.3' }));
+        // One UI memo admission and the public protocol's existing two input validations.
+        expect.soft(inputParses).toHaveBeenCalledTimes(3);
+        // The public protocol owner validates output; same-process consumers project it.
+        expect.soft(outputParses).toHaveBeenCalledTimes(1);
+
+        const protocol = createRegistryHostV1({ host: 'web', http: createUiRegistryHttpV1(fetch), readSources: async () => [] });
+        await expect(protocol.execute('registries.items.list', { kind: 'unsupported' })).rejects.toMatchObject({ issues: expect.any(Array) });
+        await expect(protocol.execute('registries.items.list', { kind: 'plugin' })).resolves.toEqual({ pages: [] });
+    });
+
     it.each(['', 'wordpress'])('spends one compose listing fetch across views and local queries (initial query: %s), and nothing on idle', async initialQuery => {
         vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
         onTestFinished(() => vi.useRealTimers());
@@ -353,8 +400,9 @@ describe('registry item last-known reads through the Account and HTTP owners', (
                 pushRetainingCurrent: href => { navigation.openHref(resolveHref(href)); }, back: () => navigation.step(-1),
                 setParams: params => navigation.setParams(current().id, params) }}>{children}</DestinationInstanceHost>;
         // A Project group needs no arbitrary checkout selection to offer Browse Store.
-        const screen = await renderScreen(tree(<ProjectsListItemMenu workspaceRef={null} project={project}
+        const screen = await renderScreen(tree(<ProjectsListItemMenu testID="project-store-menu" workspaceRef={null} project={project}
             onTogglePinned={() => {}} onRename={() => {}} onReset={() => {}} onRemove={() => {}} />));
+        await screen.pressByTestIdAsync('project-store-menu');
         const menu = screen.root.findByType(DropdownMenu);
         expect(menu.props.items.map((item: { id: string }) => item.id)).toContain('browse-store');
         await act(async () => { menu.props.onSelect('browse-store'); });

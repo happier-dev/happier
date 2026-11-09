@@ -38,5 +38,10 @@ export function projectMachineAgentCapabilityObservation(
         ? 'idle'
         : cache.status === 'loading' ? 'loading'
         : cache.status === 'loaded' && !invalidResponse ? 'ready' : 'error';
-    return { status, ...inventory, descriptors: agents, lastCheckedAt };
+    const failure = cache?.status === 'error'
+        ? { reason: 'probe_failed' as const, ...(cache.error?.rpcErrorCode ? { errorCode: cache.error.rpcErrorCode } : {}) }
+        : undefined;
+    return { status, ...inventory, descriptors: agents, lastCheckedAt,
+        ...(failure ? { failure, unavailable: agents.map(({ agentId, definitionId }) => ({ agentId,
+            ...(definitionId === undefined ? {} : { definitionId }), ...failure })) } : {}) };
 }

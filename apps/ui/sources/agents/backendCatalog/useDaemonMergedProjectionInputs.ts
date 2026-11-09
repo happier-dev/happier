@@ -23,6 +23,7 @@ import {
     captureDaemonMergedProjectionReader,
     type DaemonMergedProjectionInputs,
     type DaemonMergedProjectionSummary,
+    type DaemonProjectionSectionDemand,
 } from './loadDaemonMergedProjectionInputs';
 
 /**
@@ -65,7 +66,11 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
     machineId: string | null | undefined;
     serverId?: string | null;
     enabled?: boolean;
-    staleMs?: number;
+    /**
+     * Explicit fresh demand only (`0`): re-read on mount. Mounted readers never
+     * impose an age boundary; the Machine projection revision owns currentness.
+     */
+    staleMs?: 0;
     refreshKey?: unknown;
     /**
      * Keeps the last projection available as stale metadata while a route-driven scope
@@ -77,7 +82,12 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
      * that should not start daemon work). Defaults to loading when stale or missing.
      */
     load?: boolean;
-    sections?: readonly string[];
+    /**
+     * Required: the sections this reader's fields read, or `'complete'` for a
+     * reader that presents the whole catalogue. Base facts and installed
+     * packages always load (`demandedDaemonProjectionSections`).
+     */
+    sections: DaemonProjectionSectionDemand;
     /**
      * `false`: a demand-only caller that reads nothing back. It acquires and re-asks exactly the same,
      * but the cache's answers (other readers' included) do not re-render it.
@@ -87,15 +97,13 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
     // Settings updates also arrive remotely; subscribe only to the language field.
     useSetting('preferredLanguage');
     const locale = getPreferredLanguage();
-    const sectionsKey = params.sections?.join('\0') ?? null;
+    const sectionsKey = params.sections === 'complete' ? null : params.sections.join('\0');
     const sections = React.useMemo(() => sectionsKey === null ? undefined : sectionsKey === '' ? [] : sectionsKey.split('\0'), [sectionsKey]);
     const stateSectionsKeyRef = React.useRef(sectionsKey);
     const enabled = params.enabled !== false;
     const machineId = normalizeKeyPart(params.machineId);
     const serverId = normalizeKeyPart(params.serverId);
-    const staleMs = typeof params.staleMs === 'number' && Number.isFinite(params.staleMs) && params.staleMs >= 0
-        ? Math.max(0, Math.floor(params.staleMs))
-        : undefined;
+    const staleMs = params.staleMs;
     const hasProjectionScope = enabled && Boolean(machineId);
     const routedBindings = useServerCredentialAccountScopeBindings(
         params.accountLifetime === undefined && hasProjectionScope && serverId ? [serverId] : [],
@@ -296,7 +304,7 @@ export function useDaemonMergedProjectionInputs(params: Readonly<{
             try {
                 const entry = await loadDaemonMergedProjectionCacheEntry({
                     machineId,
-                    sections,
+                    sections: sections ?? 'complete',
                     reuseFreshReady: !forceReload && readReusableDaemonMergedProjectionCacheEntry({
                         machineId, serverId: serverId || null, accountLifetime, staleMs, sections: [],
                     }) !== null,

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { PluginAgentUiBehaviorContributionV2Schema } from '@happier-dev/protocol';
+import { PluginAgentUiBehaviorContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/v2';
 
 import { BUNDLED_CANONICAL_AGENT_UI_BEHAVIOR_DESCRIPTORS } from './generatedBundledPluginEntries.uiBehaviorOverrides';
 

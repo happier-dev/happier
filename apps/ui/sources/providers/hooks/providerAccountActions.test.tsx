@@ -7,7 +7,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { getAgentStaticModels } from '@happier-dev/agents';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import {
     DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1,
     PROVIDER_CONNECTIONS_ROWS_ROUTE_V1,

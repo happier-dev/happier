@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AcpBackendDefinitionV1 } from '@happier-dev/protocol';
+import type { AcpBackendDefinitionV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
 
 import { resolvePreferredBackendTarget } from './resolvePreferredBackendTarget';
 import { resolvePreferredBackendTargetFromSettings } from './resolvePreferredBackendTargetFromSettings';
@@ -190,15 +190,6 @@ describe('resolvePreferredBackendTargetFromSettings', () => {
 });
 
 describe('resolvePreferredBackendTarget', () => {
-    it('prefers a ready target only for an implicit fresh default while retaining authored choices', () => {
-        const readiness = { availableBackendTargets: [CLAUDE_TARGET, CODEX_TARGET], readyBackendTargets: [CODEX_TARGET] };
-        expect(resolvePreferredBackendTarget({ ...readiness, lastUsedAgent: null })).toEqual(CODEX_TARGET);
-        expect(resolvePreferredBackendTarget({ ...readiness, lastUsedAgent: 'claude' })).toEqual(CLAUDE_TARGET);
-        expect(resolvePreferredBackendTarget({ ...readiness, lastUsedAgent: null, lastUsedBackendTarget: CLAUDE_TARGET })).toEqual(CLAUDE_TARGET);
-        expect(resolvePreferredBackendTarget({ ...readiness, lastUsedAgent: null, candidateBackendTargets: [CLAUDE_TARGET] })).toEqual(CLAUDE_TARGET);
-        expect(resolvePreferredBackendTarget({ ...readiness, lastUsedAgent: null, preferredBuiltInAgentIds: ['claude'] })).toEqual(CLAUDE_TARGET);
-    });
-
     it('keeps the first explicit configured candidate for repair before settings or available defaults', () => {
         expect(resolvePreferredBackendTarget({
             candidateBackendTargets: [

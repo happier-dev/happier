@@ -1,4 +1,4 @@
-import type { PluginProjectionV2 } from '@happier-dev/protocol';
+import type { PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { buildMachineAgentInventoryDescriptors as buildProtocolMachineAgentInventoryDescriptors, type MachineAgentInventoryDescriptor, type MachineAcpInventoryDefinition } from '@happier-dev/protocol/capabilities';
 import { readBackendTargetKeyV2, type BackendTargetRefV2Input } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 

@@ -5,6 +5,13 @@ import { AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/cata
 import { resolveBuiltInAgentForRegistryId } from '@/agents/registry/resolveBuiltInAgentForRegistryId';
 
 describe('bundled Agent declarations without a machine projection', () => {
+    it('reads a canonical selected target key through the same cold display owner', () => {
+        const direct = resolveAgentCatalogProjection('codex', { enabledAgentIds: [] });
+        const selected = resolveAgentCatalogProjection('agent:happier.agent.codex/codex', { enabledAgentIds: [] });
+        expect(selected.agentId).toBe(direct.agentId);
+        expect(selected.title).toBe(direct.title);
+        expect(selected.identity).toEqual(direct.identity);
+    });
     it('keeps configured ACP display names and marks distinct from the runtime contribution', () => {
         const record = AcpCatalogRecordV1Schema.parse({ v: 1, definitions: ['review', 'build'].map(id => ({
             id, name: id, title: `${id} configured agent`, launch: { kind: 'npm', package: 'fixture', version: '1.0', args: [] },

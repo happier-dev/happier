@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { RegistryActionIdV1, RegistrySourceStatusV1 } from '@happier-dev/protocol/registries';
+import type { RegistryActionIdV1, RegistrySourceStatusV1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
 import { REGISTRY_ITEMS_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/registries/registryActionIdsV1';
 import { readRegistryFailureStatus, type RegistryFailureStatus } from './describeRegistrySourceStatus';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -13,8 +13,8 @@ class RegistryReadFailure extends Error {
 }
 
 /** Reads share the mounted approval/currentness owner and retain last-known data during refresh. */
-export function useRegistryActionRead<T>(actionId: RegistryActionIdV1, input: unknown,
-    parse: (value: unknown, previous: T | null) => T, revision?: unknown, enabled = true,
+export function useRegistryActionRead<T, K extends RegistryActionIdV1>(actionId: K, input: unknown,
+    parse: (value: ReturnType<(typeof REGISTRY_ACTION_OUTPUT_SCHEMAS_V1)[K]['parse']>, previous: T | null) => T, revision?: unknown, enabled = true,
     recovery?: Readonly<{ sourceIds?: readonly string[];
         failures?: (value: T | null) => readonly Readonly<{ sourceId: string; status: RegistrySourceStatusV1 }>[] }>): {
     scopeKey: string;
@@ -81,7 +81,8 @@ export function useRegistryActionRead<T>(actionId: RegistryActionIdV1, input: un
             const result = await execution.execute(actionId, value, { signal: controller.signal });
             if (request !== generation.current || !execution.isCurrent()) return;
             if (!result.ok) throw new RegistryReadFailure(result.error, readRegistryFailureStatus(result.details));
-            const parsed = parser.current(result.result, previous.scopeKey === scopeKey && previous.inputKey === inputKey
+            // The registry protocol host already validated this same-process Action result.
+            const parsed = parser.current(result.result as ReturnType<(typeof REGISTRY_ACTION_OUTPUT_SCHEMAS_V1)[K]['parse']>, previous.scopeKey === scopeKey && previous.inputKey === inputKey
                 && Object.is(previous.revision, revision) ? previous.value : null);
             setState(previous => ({ scopeKey, inputKey, revision, value: previous.scopeKey === scopeKey && Object.is(previous.revision, revision)
                 && sameStrictJsonValue(previous.value, parsed)
@@ -111,8 +112,11 @@ export function useRegistryActionRead<T>(actionId: RegistryActionIdV1, input: un
         current.status?.state === 'needs_machine' ? recovery?.sourceIds : failedSources, enabled && !current.loading);
     // Credential retirement precedes the Sync store's next Account projection.
     // Never disclose that previous projection through an unbound mounted caller.
+    const stale = current.inputKey !== inputKey || !Object.is(current.revision, revision);
+    const answered = current.value !== null || current.error !== null;
     return { ...current, value: execution.ready ? current.value : null, error: execution.ready ? current.error : null,
         status: execution.ready ? current.status : null,
-        loading: enabled && (current.loading || !execution.ready),
-        stale: current.inputKey !== inputKey || !Object.is(current.revision, revision), refresh, execution, scope };
+        // A demanded read that has not answered is still loading: the render between demand and its effect never settles empty.
+        loading: enabled && (current.loading || !execution.ready || !answered || stale && current.error === null),
+        stale, refresh, execution, scope };
 }

@@ -25,6 +25,7 @@ export function useResumeCapabilityOptions(opts: {
     const { snapshot: acpCatalog } = useAcpCatalogForServer(opts.serverId, opts.accountScope);
     const acpCatalogSnapshot = acpCatalog && !acpCatalog.stale ? acpCatalog.catalog : undefined;
     const projection = useDaemonMergedProjectionInputs({
+        sections: ['agentsById'],
         machineId: opts.machineId,
         serverId: opts.serverId,
         enabled: opts.enabled !== false && opts.agentId !== null && opts.agentId !== undefined,

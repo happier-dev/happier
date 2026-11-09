@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { createProviderErrorV1, ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { createProviderErrorV1} from '@happier-dev/protocol/providers/errors';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 
 import { renderScreen } from '@/dev/testkit';
 import { PageHeaderMenu } from '@/components/ui/layout/PageHeaderEntityParts';

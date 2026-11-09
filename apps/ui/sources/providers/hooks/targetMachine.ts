@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol';
+import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 
 import {
     MACHINE_ADMINISTRATION_SELECTION_KEYS_V1,

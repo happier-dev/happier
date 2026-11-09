@@ -1,4 +1,5 @@
-import type { ProviderErrorV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
+import type { ProviderErrorV1} from '@happier-dev/protocol/providers/errors';
+import type { SessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import type { DaemonProviderBindingStatusResponseV1 } from '@happier-dev/protocol/rpc';
 import { presentProviderConnectionIdentity } from '@/providers/connection/presentation';
 import { presentProviderError, type ProviderErrorPresentation } from '@/providers/connection/errorPresentation';

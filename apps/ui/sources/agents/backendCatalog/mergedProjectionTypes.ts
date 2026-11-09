@@ -1,11 +1,14 @@
 import type { AgentId } from '@/agents/catalog/catalog';
 import type {
-    PluginAgentCliMetadata,
-    AgentUiProjectedDeclarationV1,
-    PluginContributionIdentityV1,
+    PluginAgentCliMetadata} from '@happier-dev/protocol/plugins/contributions/agentCliMetadata';
+import type {
+    AgentUiProjectedDeclarationV1} from '@happier-dev/protocol/plugins/contributions/agentUiGrammar';
+import type {
+    PluginContributionIdentityV1} from '@happier-dev/protocol/plugins/contribution-identity';
+import type {
     PluginProjectedAgentConnectedAccountPurposeV2,
     PluginProjectionInstalledPackageV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 export type MergedBackendCapabilities = Readonly<{
     executionRun?: unknown;

@@ -1,12 +1,13 @@
-import { getBooleanOptionActionChipPlacement } from './booleanOptionChipPlacement';
 import * as React from 'react';
-import { Pressable, type PressableStateCallbackType } from 'react-native';
 
 import type { AgentInputExtraActionChip } from '@/components/sessions/agentInput/agentInputContracts';
+import { Switch } from '@/components/ui/forms/Switch';
 import { hapticsLight } from '@/components/ui/theme/haptics';
 import { tLoose } from '@/text';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_MENU_ICON_SIZE_PX } from '@/components/sessions/agentInput/definitions/agentInputChipIconMetrics';
+import { getBooleanOptionActionChipPlacement, type BooleanOptionActionChipDefinition } from './booleanOptionChipPlacement';
+import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
 
 /**
  * The composer's declared boolean option chip.
@@ -17,12 +18,7 @@ import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_MENU_ICON_SIZE_PX } from '@/
  * this control is Agent-specific, so it is reachable by any installed Agent
  * through the same slot declaration a bundled one uses.
  */
-export function createBooleanOptionActionChip(opts: Readonly<{
-    key: string;
-    optionStateKey: string;
-    iconName: string;
-    onLabelKey: string;
-    offLabelKey: string;
+export function createBooleanOptionActionChip(opts: BooleanOptionActionChipDefinition & Readonly<{
     value: boolean;
     setValue: (value: boolean) => void;
 }>): AgentInputExtraActionChip {
@@ -30,10 +26,11 @@ export function createBooleanOptionActionChip(opts: Readonly<{
     const renderIcon = (color: string, size: number): React.ReactNode => (
         <Icon name={opts.iconName as IconName} size={size} color={color} />
     );
-    const toggle = () => {
+    const changeValue = (value: boolean) => {
         hapticsLight();
-        opts.setValue(!opts.value);
+        opts.setValue(value);
     };
+    const toggle = () => changeValue(!opts.value);
 
     return {
         key: opts.key,
@@ -43,6 +40,17 @@ export function createBooleanOptionActionChip(opts: Readonly<{
             id: opts.key,
             label,
             icon: renderIcon(tint, AGENT_INPUT_MENU_ICON_SIZE_PX),
+            right: (
+                <Switch
+                    value={opts.value}
+                    accessibilityLabel={label}
+                    onValueChange={(value) => {
+                        dismiss();
+                        changeValue(value);
+                    }}
+                />
+            ),
+            rightElementOutsidePressable: true,
             onPress: () => {
                 dismiss();
                 toggle();
@@ -51,12 +59,11 @@ export function createBooleanOptionActionChip(opts: Readonly<{
         render: ({ chipStyle, showLabel, iconColor, textStyle }) => {
             const { Text } = require('@/components/ui/text/Text') as typeof import('@/components/ui/text/Text');
             return (
-                <Pressable
+                <AgentInputRailChip
                     onPress={toggle}
                     accessibilityRole="button"
                     accessibilityLabel={label}
-                    hitSlop={{ top: 5, bottom: 10, left: 0, right: 0 }}
-                    style={(pressableState: PressableStateCallbackType) => chipStyle(pressableState.pressed)}
+                    style={chipStyle}
                 >
                     {renderIcon(iconColor, AGENT_INPUT_CHIP_ICON_SIZE_PX)}
                     {showLabel ? (
@@ -64,7 +71,7 @@ export function createBooleanOptionActionChip(opts: Readonly<{
                             {label}
                         </Text>
                     ) : null}
-                </Pressable>
+                </AgentInputRailChip>
             );
         },
     };

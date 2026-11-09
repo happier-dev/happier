@@ -104,6 +104,59 @@ describe('useConfirmExperimentalProviderModel', () => {
         })]);
         expect(commitSelectionSpy).toHaveBeenCalledOnce();
     });
+    it.each([false, true])('waits for canonical in-flow confirmation before applying an experimental choice (accepted: %s)', async accepted => {
+        await account.reset();
+        serverId = (await account.restore({ catalog, waivedActions: [], currentAccount: true })).serverId;
+        installRow();
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const executor = createDefaultActionExecutor();
+        await expect(executor.execute('actions.policy.reset', {
+            actionId: 'providers.models.experimental.confirm', audience: 'ui',
+        }, { surface: 'ui', serverId, authority: 'present_user', actionCaller: { kind: 'host' } })).resolves.toMatchObject({ ok: true });
+        await expect(executor.execute('actions.policy.get', {
+            actionId: 'providers.models.experimental.confirm', audience: 'ui',
+        }, { surface: 'ui', serverId, authority: 'present_user', actionCaller: { kind: 'host' } })).resolves.toMatchObject({
+            ok: true, result: { mode: 'default', enabled: true },
+        });
+        const decision = createDeferred<boolean>();
+        confirmSpy.mockImplementationOnce(() => decision.promise);
+        const refresh = vi.fn(async () => {});
+        const { useConfirmExperimentalProviderModel } = await import('./useConfirmExperimentalProviderModel');
+        const hook = await renderHook(() => useConfirmExperimentalProviderModel({ enabled: true, machineId: null,
+            serverId, agentTargetKey: confirmation.agentTargetKey, refresh }));
+        let settled: boolean | null = null;
+        let operation!: Promise<boolean>;
+        await act(async () => {
+            operation = hook.getCurrent().confirm(confirmation, commitSelectionSpy);
+            void operation.then(value => { settled = value; });
+        });
+        await waitForHomeGovernance(() => expect({
+            dialogs: confirmSpy.mock.calls.length,
+            writes: row.writes,
+            settled,
+            artifacts: account.home.artifacts(serverId).list().length,
+            error: hook.getCurrent().error,
+        }).toEqual({ dialogs: 1, writes: 0, settled: null, artifacts: 0, error: null }));
+        expect(settled).toBeNull();
+        expect(hook.getCurrent().pending).toBe(true);
+        expect(row.writes).toBe(0);
+        expect(row.catalog.experimentalBindingConfirmations).toHaveLength(0);
+        expect(commitSelectionSpy).not.toHaveBeenCalled();
+        expect(refresh).not.toHaveBeenCalled();
+        expect(account.home.artifacts(serverId).list()).toHaveLength(0);
+
+        await act(async () => { decision.resolve(accepted); await operation; });
+
+        expect(settled).toBe(accepted);
+        expect(hook.getCurrent().pending).toBe(false);
+        expect(row.writes).toBe(accepted ? 1 : 0);
+        expect(row.catalog.experimentalBindingConfirmations).toHaveLength(accepted ? 1 : 0);
+        expect(commitSelectionSpy).toHaveBeenCalledTimes(accepted ? 1 : 0);
+        expect(refresh).toHaveBeenCalledTimes(accepted ? 1 : 0);
+        expect(confirmSpy).toHaveBeenCalledOnce();
+        expect(account.home.artifacts(serverId).list()).toHaveLength(0);
+    });
+
     it('honors an experimental-confirm Action waiver without a second unwaivable modal', async () => {
         confirmSpy.mockResolvedValue(false);
         const { useConfirmExperimentalProviderModel } = await import('./useConfirmExperimentalProviderModel');

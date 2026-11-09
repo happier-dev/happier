@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { z } from 'zod/mini';
-import { REGISTRY_ACTION_INPUT_SCHEMAS_V1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
+import type { REGISTRY_ACTION_INPUT_SCHEMAS_V1, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries';
 import { REGISTRY_SOURCE_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { presentActionApproval } from '@/components/approvals/actionApprovalPresentation';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
@@ -16,8 +16,8 @@ export function useRegistrySourceMutations() {
         actionId: K, input: z.infer<(typeof REGISTRY_ACTION_INPUT_SCHEMAS_V1)[K]>, operation?: Pick<UiActionOperation, 'confirmed'>): Promise<z.infer<(typeof REGISTRY_ACTION_OUTPUT_SCHEMAS_V1)[K]>> => {
         const result = await execution.execute(actionId, input, operation);
         if (!result.ok) throw Object.assign(new Error(result.error), { code: result.errorCode, result });
-        // The schema indexed by this same Action id validates the correlated result.
-        return REGISTRY_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse(result.result) as z.infer<(typeof REGISTRY_ACTION_OUTPUT_SCHEMAS_V1)[K]>;
+        // The registry protocol host validated the result for this same Action id.
+        return result.result as z.infer<(typeof REGISTRY_ACTION_OUTPUT_SCHEMAS_V1)[K]>;
     }, [execution.execute]);
     const remove = React.useCallback(async (sourceId: string) => {
         const input = { sourceId };

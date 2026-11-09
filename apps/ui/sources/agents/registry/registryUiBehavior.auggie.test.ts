@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { isValidElement } from 'react';
+import { Switch } from '@/components/ui/forms/Switch';
 
 import { createAgentUiBehaviorFromDescriptor } from './agentUiBehaviorDescriptors';
 import {
@@ -52,6 +54,11 @@ describe('Auggie UI behavior projection', () => {
         });
 
         expect(chips).toHaveLength(1);
+        expect(chips?.[0]?.placement).toMatchObject({
+            id: 'providerOption:auggie-allow-indexing',
+            icon: AUGGIE_DECLARATION.components.slots[0].chip.iconName,
+            defaultPlacement: 'overflow',
+        });
         expect(chips?.[0]?.key).toBe('auggie-allow-indexing');
         expect(buildNewSessionOptionsFromUiState({
             agentId: 'auggie',
@@ -81,6 +88,15 @@ describe('Auggie UI behavior projection', () => {
         expect(actionItem?.id).toBe('auggie-allow-indexing');
         // The declared label keys resolve, and the chip reads the live option value.
         expect(actionItem?.label).toBe('Indexing off');
+        const control = actionItem?.right;
+        if (!isValidElement<{ value: boolean; onValueChange: (next: boolean) => void }>(control)) {
+            throw new Error('Boolean options must expose their current value as a switch');
+        }
+        expect(control.props.value).toBe(false);
+        expect(control.type).toBe(Switch);
+        expect(actionItem?.rightElementOutsidePressable).toBe(true);
+        control.props.onValueChange(true);
+        expect(setAgentOptionState).toHaveBeenCalledWith('allowIndexing', true);
         actionItem?.onPress?.();
         expect(setAgentOptionState).toHaveBeenCalledWith('allowIndexing', true);
 
@@ -97,6 +113,14 @@ describe('Auggie UI behavior projection', () => {
             openCollapsedPopover: vi.fn(),
         });
         expect((Array.isArray(onAction) ? onAction[0] : onAction)?.label).toBe('Indexing on');
+        expect(onChips?.[0]?.placement?.title).toBe(chips?.[0]?.placement?.title);
+        const onControl = (Array.isArray(onAction) ? onAction[0] : onAction)?.right;
+        if (!isValidElement<{ value: boolean; onValueChange: (next: boolean) => void }>(onControl)) {
+            throw new Error('Boolean options must expose their current value as a switch');
+        }
+        expect(onControl.props.value).toBe(true);
+        onControl.props.onValueChange(false);
+        expect(setAgentOptionState).toHaveBeenLastCalledWith('allowIndexing', false);
     });
 
     it('refuses a chip slot that declares no supported chip instead of rendering nothing silently', () => {

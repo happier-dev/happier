@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ProviderConnectionIdSchema } from '@happier-dev/protocol';
+import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 
 import { buildSessionModelSelectionIntent } from './modelSelectionIntent';
 
