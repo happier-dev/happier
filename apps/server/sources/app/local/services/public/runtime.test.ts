@@ -25,6 +25,32 @@ const preview: LocalServicePreviewResourceV1 = {
 };
 
 describe("local service public exposure runtime", () => {
+    it('publishes one content-free change per exposure lifecycle transition, never per status read', () => {
+        // The publisher is the socket transport boundary; exposure lifecycle remains real.
+        const onExposureChanged = vi.fn();
+        const runtime = createLocalServicePublicRuntime({
+            publicBaseUrl: 'https://home.example.test', hostOriginBaseDomain: 'preview.example.test',
+            tokenSecret: 'fixture-key',
+            policy: { enabled: true, allowedModes: ['secret_link'], maxTtlMs: 60_000,
+                dnsTlsRequired: false, auditRequired: true, rateLimitProfileIds: ['default'] },
+            nowMs: () => 1_000, allowTestDevAuditSink: true,
+            recordAuditEvent: () => {}, checkRateLimit: () => true, onExposureChanged,
+        });
+        const result = runtime.createExposure({ preview, requestedMode: 'secret_link', requestedTtlMs: 60_000,
+            actorId: 'creator', sessionAuthorized: true, dnsTlsValid: true, rateLimitProfileId: 'default' });
+        if (!result.ok) throw new Error(result.reasonCode);
+        const expected = { actorId: 'creator', owner: preview.owner, sessionId: preview.sessionId,
+            change: { type: 'local-service-public-preview-changed', machineId: preview.machineId,
+                previewId: preview.previewId, exposureId: result.exposure.exposureId } };
+        expect(onExposureChanged.mock.calls).toEqual([[expected]]);
+        for (let read = 0; read < 10; read++) runtime.getSnapshot({ machineId: preview.machineId });
+        expect(onExposureChanged).toHaveBeenCalledTimes(1);
+        expect(runtime.revokeExposure(result.exposure.exposureId, { actorId: 'creator' })).toEqual({ ok: true });
+        expect(onExposureChanged.mock.calls).toEqual([[expected], [expected]]);
+        expect(runtime.getSnapshot({ machineId: preview.machineId }).exposures[0]?.state).toBe('revoked');
+        expect(JSON.stringify(onExposureChanged.mock.calls)).not.toContain('publicUrl');
+        expect(JSON.stringify(onExposureChanged.mock.calls)).not.toContain('fixture-key');
+    });
     it('creates the minimum positive TTL from one issuance timestamp when the clock advances', () => {
         let now = 1_000;
         const runtime = createLocalServicePublicRuntime({

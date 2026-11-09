@@ -1,4 +1,5 @@
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
+import { notifyLocalServicePublicPreviewChange } from '@/sync/domains/local/services/publicPreview/changes';
 import { attachManagedSessionHumanPresenceSocket } from '@/sync/domains/session/humanPresence/attachManagedSessionHumanPresenceSocket';
 import { attachManagedSessionConsumptionSocket } from '@/sync/runtime/attachManagedSessionConsumptionSocket';
 import { getHomeAccountChangeDemandedServerIds, subscribeHomeAccountChangeDemand, invalidateHomeAccountReadJoins, publishHomeAccountChange, publishHomeAccountChangeForRouting, publishHomeAccountChangeWake, type HomeAccountChangeEvent } from './homeAccountChange';
@@ -1701,6 +1702,10 @@ async function connectManagedServer(
                 socket.on('ephemeral', (raw: unknown) => {
                     if (!isManagedServerActive(entry) || entry.socket !== socket) return;
                     const usage = EphemeralUpdateSchema.safeParse(raw);
+                    if (usage.success && usage.data.type === 'local-service-public-preview-changed' && ingressAccountId) {
+                        notifyLocalServicePublicPreviewChange({ serverId: entry.id, accountId: ingressAccountId, change: usage.data });
+                        return;
+                    }
                     if (usage.success && (usage.data.type === 'transcript-stream-segment' || usage.data.type === 'transcript-stream-segment-delta')) {
                         const update = usage.data;
                         fireAndForget(captureSessionRealtimeScope().then(scope => getSyncSingleton().consumeSessionRealtimeEphemeralForHome({

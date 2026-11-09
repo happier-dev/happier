@@ -1,11 +1,20 @@
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type {
     LocalServicePublicExposureV1,
     LocalServicePublicPreviewSnapshotV1,
 } from '@happier-dev/protocol/local/services/public/v1';
 import { flushHookEffects, renderHook, standardCleanup } from '@/dev/testkit';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
+import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { setActiveServer } from '@/sync/domains/server/serverRuntime';
+import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+
+await loadSyncSingletonForTests();
 
 import { selectLocalServicePublicPreviewRows } from './store';
 import type { LocalServicePublicPreviewStatusClient } from './useLocalServicePublicPreviewState';
@@ -48,9 +57,28 @@ const snapshot = {
 } satisfies LocalServicePublicPreviewSnapshotV1;
 
 describe('useLocalServicePublicPreviewState', () => {
+    let home: Awaited<ReturnType<typeof upsertServerProfile>>;
+    beforeEach(async () => {
+        home = await upsertServerProfile({ serverUrl: 'https://public-preview-hook.example.test' });
+        const token = createAccountTokenForTests('public-preview-account', { currentAccount: true });
+        vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async serverUrl =>
+            serverUrl === home.serverUrl ? { token } : null);
+        setRuntimeFetch(async input => {
+            const url = new URL(String(input));
+            if (url.origin !== home.serverUrl) throw new Error('Unexpected public preview Home');
+            if (url.pathname === '/health') return Response.json({ status: 'ok' });
+            if (url.pathname === '/v1/auth/ping') return Response.json({});
+            if (url.pathname === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+            if (url.pathname === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+            return Response.json({}, { status: 404 });
+        });
+        await setActiveServer({ serverId: home.id });
+    });
     afterEach(() => {
         vi.useRealTimers();
         resetLocalServicePublicPreviewStoreForTests();
+        resetRuntimeFetch();
+        vi.restoreAllMocks();
         standardCleanup();
     });
 
@@ -64,7 +92,7 @@ describe('useLocalServicePublicPreviewState', () => {
         const hook = await renderHook(() => useLocalServicePublicPreviewStateController({
             machineId: 'machine_1',
             sessionId: 'session_1',
-            serverId: 'server_1',
+            serverId: home.id,
             statusClient,
             nowMs: () => 1_900,
         }));
@@ -76,7 +104,7 @@ describe('useLocalServicePublicPreviewState', () => {
                 machineId: 'machine_1',
                 sessionId: 'session_1',
             },
-            serverId: 'server_1',
+            serverId: home.id,
         }));
         expect(selectLocalServicePublicPreviewRows(hook.getCurrent().state)).toEqual([exposure]);
         expect(hook.getCurrent().state.refreshState).toBe('idle');
@@ -99,7 +127,8 @@ describe('useLocalServicePublicPreviewState', () => {
         expect(selectLocalServicePublicPreviewRows(hook.getCurrent().state)).toHaveLength(1);
 
         await act(async () => {
-            invalidateLocalServicePublicPreviewStore({ machineId: 'machine_1', sessionId: 'session_1' });
+            invalidateLocalServicePublicPreviewStore({ machineId: 'machine_1', sessionId: 'session_1',
+                serverId: home.id, accountId: 'public-preview-account' });
         });
         await flushHookEffects({ cycles: 2, turns: 2 });
 

@@ -363,7 +363,7 @@ export type UpdateEvent = {
 
 // === EPHEMERAL EVENT TYPES (Transient) ===
 
-export type EphemeralEvent = ScmDiffSummaryResultUpdateEphemeral | SessionPersonalEventEphemeralV1 | PendingActivationRequestedEphemeralV1 | SessionMessageReplyPendingHintV1 | UsageSourcesInvalidationV1 | ExecutionRunMachineActivityEphemeralV1 | {
+export type EphemeralEvent = Extract<EphemeralUpdate, { type: 'local-service-public-preview-changed' }> | ScmDiffSummaryResultUpdateEphemeral | SessionPersonalEventEphemeralV1 | PendingActivationRequestedEphemeralV1 | SessionMessageReplyPendingHintV1 | UsageSourcesInvalidationV1 | ExecutionRunMachineActivityEphemeralV1 | {
     type: 'activity';
     id: string;
     active: boolean;

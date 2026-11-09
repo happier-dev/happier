@@ -1,4 +1,5 @@
 import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
+import { notifyLocalServicePublicPreviewChange } from '@/sync/domains/local/services/publicPreview/changes';
 import { type SessionMessageObservationFactsV1} from '@happier-dev/protocol/sessions';
 import { type SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { didSessionRuntimeObservationRecover, readSessionFullPublicationUpdatedAt, sessionRuntimeObservations } from '@/sync/domains/session/sessionRuntimeObservation';
@@ -2648,6 +2649,13 @@ export function handleEphemeralSocketUpdate(params: {
     const updateData = parseEphemeralUpdate(update);
     if (!updateData) return Promise.resolve();
     if (!shouldContinue()) return Promise.resolve();
+
+    if (updateData.type === 'local-service-public-preview-changed') {
+        if (sourceServerId && sourceAccountId) {
+            notifyLocalServicePublicPreviewChange({ serverId: sourceServerId, accountId: sourceAccountId, change: updateData });
+        }
+        return Promise.resolve();
+    }
 
     if (updateData.type === 'session-message-reply-pending-v1') {
         const scope = getActiveServerAccountScope();

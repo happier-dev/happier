@@ -349,17 +349,21 @@ export function createLocalServicesRuntimeActionExecutor(
         else publishLocalServicePreviewSnapshot({ machineId: published.machineId, serverId: published.serverId,
             ...catalogScope }, published.snapshot);
     };
-    const onPublicPreviewSnapshot = input.onPublicPreviewSnapshot
-        ?? ((published) => publishLocalServicePublicPreviewSnapshot(
+    const onPublicPreviewSnapshot: NonNullable<CreateLocalServicesRuntimeActionExecutorInput['onPublicPreviewSnapshot']> = published => {
+        if (!mayPublishCatalog(published.serverId)) return;
+        if (input.onPublicPreviewSnapshot) input.onPublicPreviewSnapshot(published);
+        else publishLocalServicePublicPreviewSnapshot(
             {
                 machineId: published.machineId,
                 serverId: published.serverId,
                 sessionId: published.sessionId,
                 previewId: published.previewId,
                 exposureId: published.exposureId,
+                ...catalogScope,
             },
             published.snapshot,
-        ));
+        );
+    };
     const fetchPublicPreviewStatus = input.fetchPublicPreviewStatus;
     const createPublicPreviewExposure = input.createPublicPreviewExposure;
     const revokePublicPreviewExposure = input.revokePublicPreviewExposure;

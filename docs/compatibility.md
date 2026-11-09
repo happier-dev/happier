@@ -1,5 +1,24 @@
 # Compatibility and version skew
 
+## Public preview exposure invalidation (unreleased 0.3)
+
+The existing ephemeral carrier adds the closed content-free
+`local-service-public-preview-changed` event with `machineId`, `previewId` and
+`exposureId`. The server exposure runtime publishes it after creation or a
+withdrawal transition. Managed Service previews wake the existing current Machine
+audience; other previews wake current Session recipients. The creator and service
+owner are also included. These are the canonical recipient owners for the same
+branches used by public-status admission, which still decides disclosure. No
+link, token or exposure content crosses the wake.
+
+Matching development Protocol, server and UI reload together. The UI re-reads
+only demanded matching Home/Account/Machine/preview scopes and uses existing
+reconnect recovery. This adds no persisted record, wire epoch, polling or older
+client live-update guarantee; an unrecognized ephemeral event is skipped by the
+existing parser. The inspected `../0.2` frontier at
+`7b37d65ca75e58560f8f3ca850958ac5407d2e75` has none of the current public-preview
+runtime/store module paths, including scoped local changes.
+
 ## Managed Provider model observations and restriction copy (unreleased 0.3)
 
 Managed connected-account purposes may declare localized
@@ -721,6 +740,15 @@ registry. Cancellation and the existing parked-watch owner retain the observatio
 lifetime. Matching development Protocol, daemon and UI load together; older strict
 development daemons reject the optional field. No released compatibility adapter,
 persistence, protocol epoch or migration changes.
+
+An authenticated admitted guest's broad inventory read returns the existing
+`RPC_METHOD_NOT_AVAILABLE` result after the credential-custody owner validates the
+Machine admission. Missing or invalid custody retains its refusal; credential-bearing
+mutations and preview reads retain their strict scope. The matching development UI
+retains this unavailable read outcome without inventing an empty inventory snapshot.
+A healthy settled empty requester launcher composes as empty Services, and Check again
+refreshes that available projection. Genuine scan, transport and credential failures
+still offer their existing recovery. Load the matching daemon and UI together.
 
 
 ## Triage exact PR status lookup (unreleased 0.3)

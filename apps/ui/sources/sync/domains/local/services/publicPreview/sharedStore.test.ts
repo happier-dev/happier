@@ -25,6 +25,7 @@ import {
     subscribeLocalServicePublicPreviewStore,
 } from './sharedStore';
 import { selectLocalServicePublicPreviewRows } from './store';
+import { handleEphemeralSocketUpdate } from '@/sync/engine/socket/socket';
 
 const exposure = {
     exposureId: 'public_preview_1',
@@ -75,6 +76,54 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe('shared local-service public-preview store', () => {
+    it('keeps exposure snapshots separate for two Accounts using the same Home and Machine', async () => {
+        const first = { machineId: 'machine_1', serverId: 'server_1', accountId: 'account_1' };
+        const second = { ...first, accountId: 'account_2' };
+        rpc.machine.mockResolvedValueOnce({ protocolVersion: 1, snapshot: snapshot() })
+            .mockResolvedValueOnce({ protocolVersion: 1, snapshot: snapshot({ exposures: [] }) });
+        const releaseFirst = subscribeLocalServicePublicPreviewStore(first, () => {});
+        await flushMicrotasks();
+        const releaseSecond = subscribeLocalServicePublicPreviewStore(second, () => {});
+        try {
+            await flushMicrotasks();
+            expect(selectLocalServicePublicPreviewRows(getLocalServicePublicPreviewState(first))).toEqual([exposure]);
+            expect(selectLocalServicePublicPreviewRows(getLocalServicePublicPreviewState(second))).toEqual([]);
+        } finally { releaseFirst(); releaseSecond(); }
+    });
+    it('reconciles an external revoke push once for the active Home and Account without reading unrelated scopes', async () => {
+        const key = { machineId: 'machine_1', serverId: 'server_1', accountId: 'account_1',
+            previewId: exposure.previewId, exposureId: exposure.exposureId };
+        rpc.machine.mockResolvedValue({ protocolVersion: 1, snapshot: snapshot({ previewId: key.previewId }) });
+        const release = subscribeLocalServicePublicPreviewStore(key, () => {});
+        await flushMicrotasks();
+        const initialReads = rpc.machine.mock.calls.length;
+        const push = (update: unknown, sourceServerId = key.serverId, sourceAccountId = key.accountId) =>
+            handleEphemeralSocketUpdate({ update, sourceServerId, sourceAccountId,
+                addActivityUpdate: () => {}, addMachineActivityUpdate: () => {}, getSessionEncryption: () => null,
+                getSession: () => undefined, applyMessages: () => {} });
+        const change = { type: 'local-service-public-preview-changed', machineId: key.machineId,
+            previewId: exposure.previewId, exposureId: exposure.exposureId };
+        try {
+            for (let index = 0; index < 10; index++) {
+                await push({ ...change, machineId: 'other_machine' });
+                await push(change, 'other_home');
+                await push(change, key.serverId, 'other_account');
+                await push({ ...change, previewId: 'other_preview' });
+                await push({ ...change, exposureId: 'other_exposure' });
+            }
+            await flushMicrotasks();
+            expect(rpc.machine).toHaveBeenCalledTimes(initialReads);
+            rpc.machine.mockResolvedValue({ protocolVersion: 1, snapshot: snapshot({ generatedAt: 3_000, previewId: key.previewId,
+                exposures: [{ ...exposure, state: 'revoked', revokedAt: 3_000 }] }) });
+            await push(change);
+            await flushMicrotasks();
+            expect(selectLocalServicePublicPreviewRows(getLocalServicePublicPreviewState(key))[0]?.state).toBe('revoked');
+            expect(rpc.machine).toHaveBeenCalledTimes(initialReads + 1);
+        } finally { release(); }
+        await push(change);
+        await flushMicrotasks();
+        expect(rpc.machine).toHaveBeenCalledTimes(initialReads + 1);
+    });
     it('publishes nothing for equal receipts and retains unchanged collections when policy or expiry changes', async () => {
         const initial = snapshot();
         rpc.machine.mockResolvedValue({ protocolVersion: 1, snapshot: initial });

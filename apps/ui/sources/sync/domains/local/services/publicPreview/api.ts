@@ -28,6 +28,7 @@ type LocalServicePublicPreviewFailureResult = Readonly<{
 export type LocalServicePublicPreviewStatusClientInput = Readonly<{
     request: DaemonLocalServicePublicPreviewStatusRequestV1;
     serverId?: string | null;
+    accountId?: string | null;
     signal?: AbortSignal;
 }>;
 

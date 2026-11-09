@@ -130,7 +130,7 @@ type CredentialFileMaterializeInput = Parameters<
 const exec = Object.freeze({}) as ExecService;
 
 function gatewayRequestAuthUses(purpose = 'upstream', origins = ['https://example.com']) {
-    const materialization = (origin: string) => ({ kind: 'httpHeaders' as const, origin, headerNames: ['authorization'] });
+    const materialization = (origin: string) => ({ kind: 'httpHeaders' as const, origin: origin, headerNames: ['authorization'] });
     return {
         requestAuthUses: origins.map(origin => ({ purpose, materialization: materialization(origin) })),
         qualifiedRequestAuthUses: origins.map(origin => ({
@@ -5140,10 +5140,10 @@ describe('managed-services SVC09 owner', () => {
                 },
                 watch: vi.fn((_purpose, listener) => {
                     invalidateCredentials = () => listener(
-                        Object.freeze({ kind: 'resync' }),
+                        Object.freeze({ kind: 'resync', authorityChanged: true }),
                     );
                     queueMicrotask(() => {
-                        listener(Object.freeze({ kind: 'resync' }));
+                        listener(Object.freeze({ kind: 'resync', authorityChanged: false }));
                         initialResyncDelivered.resolve(undefined);
                     });
                     return Object.freeze({ dispose: disposeWatch });
@@ -5337,7 +5337,7 @@ describe('managed-services SVC09 owner', () => {
     it('preserves __proto__ health headers on initial materialization and refresh', async () => {
         const harness = createHarness();
         let headerValue = 'header-secret-a';
-        const watchState: { deliverResync?: () => void } = {};
+        const watchState: { deliverResync?: (authorityChanged: boolean) => void } = {};
         const connectedAccounts = Object.freeze({
             getBinding: vi.fn(),
             requestSelection: vi.fn(),
@@ -5354,11 +5354,11 @@ describe('managed-services SVC09 owner', () => {
                 throw new Error('Exact-listed Connected Account materialization is outside this fixture');
             },
             watch: vi.fn((_purpose, listener) => {
-                watchState.deliverResync = () => listener(
-                    Object.freeze({ kind: 'resync' }),
+                watchState.deliverResync = authorityChanged => listener(
+                    Object.freeze({ kind: 'resync', authorityChanged }),
                 );
                 queueMicrotask(() => listener(
-                    Object.freeze({ kind: 'resync' }),
+                    Object.freeze({ kind: 'resync', authorityChanged: false }),
                 ));
                 return Object.freeze({ dispose() {} });
             }),
@@ -5406,7 +5406,12 @@ describe('managed-services SVC09 owner', () => {
         if (!watchState.deliverResync) {
             throw new Error('watch was not registered');
         }
-        watchState.deliverResync();
+        watchState.deliverResync(false);
+        const unchanged = await processSpec.healthCheck.resolveHeaders?.();
+        expect(unchanged?.headers.__proto__).toBe('header-secret-a');
+        expect(connectedAccounts.materialize).toHaveBeenCalledOnce();
+
+        watchState.deliverResync(true);
         const refreshed = await processSpec.healthCheck.resolveHeaders?.();
         expect(Object.hasOwn(refreshed?.headers ?? {}, '__proto__')).toBe(true);
         expect(refreshed?.headers.__proto__).toBe('header-secret-b');
@@ -5416,7 +5421,7 @@ describe('managed-services SVC09 owner', () => {
     it('registers credential invalidation before materialization without stopping the admitted process', async () => {
         const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response('{}'));
         const harness = createHarness(fetch);
-        let deliverResync: (() => void) | null = null;
+        let deliverResync: ((authorityChanged: boolean) => void) | null = null;
         const disposeWatch = vi.fn();
         const connectedAccounts = Object.freeze({
             getBinding: vi.fn(),
@@ -5432,8 +5437,8 @@ describe('managed-services SVC09 owner', () => {
                 throw new Error('Exact-listed Connected Account materialization is outside this fixture');
             },
             watch: vi.fn((_purpose, listener) => {
-                deliverResync = () => listener(Object.freeze({ kind: 'resync' }));
-                queueMicrotask(() => listener(Object.freeze({ kind: 'resync' })));
+                deliverResync = authorityChanged => listener(Object.freeze({ kind: 'resync', authorityChanged }));
+                queueMicrotask(() => listener(Object.freeze({ kind: 'resync', authorityChanged: false })));
                 return Object.freeze({ dispose: disposeWatch });
             }),
         }) satisfies ConnectedAccountsService;
@@ -5467,7 +5472,11 @@ describe('managed-services SVC09 owner', () => {
             connectedAccounts.materialize,
         );
         expect(deliverResync).not.toBeNull();
-        deliverResync!();
+        deliverResync!(false);
+        await expect(handle.request({ pathAndQuery: '/v1/models' })).resolves.toBeDefined();
+        expect(connectedAccounts.materialize).toHaveBeenCalledOnce();
+        fetch.mockClear();
+        deliverResync!(true);
         await Promise.resolve();
         expect(harness.legacyHandle.stop).not.toHaveBeenCalled();
         expect(harness.legacyHandle.dispose).not.toHaveBeenCalled();
@@ -5486,10 +5495,14 @@ describe('managed-services SVC09 owner', () => {
         const { owner, exec: lifecycleExec } = createLifecycleHarness([process], 'sessionRunner', { fetch });
         const scope = lifecycleScope({ occurrenceId: 'canonical-credential-retirement', sessionId: 'canonical-credential-session' });
         const service = { pluginId: 'acme.accounts', localId: 'upstream' };
+        let displayName = 'Selected Account';
         const fixture = createForegroundPurposeOwnerFixture({
             consumer: { pluginId: scope.pluginId, localId: 'gateway' },
             service,
             purpose: 'provider.inference',
+            resolveTarget: async target => target.kind === 'account'
+                ? { displayName, account: target.account }
+                : null,
             // The authenticated Account's credential store is the system boundary.
             materializeAccount: async () => ({ kind: 'environment', env: { TOKEN: 'private-credential' } }),
         });
@@ -5513,6 +5526,12 @@ describe('managed-services SVC09 owner', () => {
         });
         try {
             await new Promise<void>(resolve => setImmediate(resolve));
+            displayName = 'Renamed Account';
+            await fixture.store.update(value => value);
+            await new Promise<void>(resolve => setImmediate(resolve));
+            await expect(handle.request({ pathAndQuery: '/v1/models' })).resolves.toBeDefined();
+            expect(process.dispose).not.toHaveBeenCalled();
+            fetch.mockClear();
             await fixture.store.update(() => ({ v: 1, bindings: [] }));
             await new Promise<void>(resolve => setImmediate(resolve));
             expect(process.dispose).not.toHaveBeenCalled();
@@ -8444,7 +8463,18 @@ describe('Project Local Services control composition', () => {
                 servingCurrent = false;
                 expect(handle.isCurrent()).toBe(false);
             }
-            const request = { requestId: 'control-stop', target, action: 'stop_managed' as const, force: false };
+            // Agents consume the same published selection as the UI; source bindings
+            // are optional operands, not extra knowledge needed to stop this instance.
+            if (feedTarget?.sourceClass?.kind !== 'managed_service') throw new Error('Expected a managed selection');
+            const selectionTarget = { kind: 'managed_service' as const, machineId: feedTarget.machineId,
+                managedServiceId: feedTarget.sourceClass.managedServiceId, workspaceId: feedTarget.workspaceId };
+            expect(owner.resolveProjectService(selectionTarget)).toMatchObject({ status: 'found', handle });
+            expect(owner.resolveProjectService({ kind: 'managed_service', machineId: workspace.machineId,
+                managedServiceId: handle.instanceId })).toMatchObject({ status: 'found', handle });
+            expect(owner.resolveProjectService({ ...selectionTarget, cwd: '/wrong-workspace' })).toEqual({ status: 'mismatch' });
+            expect(owner.resolveProjectService({ ...selectionTarget, workspaceId: 'wrong-workspace' })).toEqual({ status: 'mismatch' });
+            expect(owner.resolveProjectService({ ...selectionTarget, sessionId: 'wrong-session' })).toEqual({ status: 'mismatch' });
+            const request = { requestId: 'control-stop', target: selectionTarget, action: 'stop_managed' as const, force: false };
             const mismatched = { ...request, target: { ...target, declaration: { ...declaration,
                 selection: { kind: 'manifest' as const, name: 'other-worker' } } } };
             expect(await routes.execute({ ...mismatched, confirmationNonce: createLocalServiceActionConfirmationNonceV1(mismatched) }))

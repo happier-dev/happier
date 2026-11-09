@@ -189,10 +189,11 @@ export function createLocalServicePreviewRuntime(
         if (!accountId) {
             return { ok: false, reasonCode: "invalid_preview_resource" };
         }
-        const resource = parsed.data;
+        const previous = resources.get(parsed.data.previewId);
+        // Minting another viewer URL does not replace the registration observed by in-flight admissions.
+        const resource = previous && isDeepStrictEqual(previous.resource, parsed.data) ? previous.resource : parsed.data;
         const nativeDirect: LocalServicePreviewNativeDirectDescriptorV1 | undefined = input.nativeDirectSupported
             ? { v: 1, kind: 'iroh_preview', previewId: resource.previewId, machineId: resource.machineId } : undefined;
-        const previous = resources.get(parsed.data.previewId);
         if (previous && (previous.accountId !== accountId
             || previous.resource.machineId !== parsed.data.machineId
             || previous.resource.sessionId !== parsed.data.sessionId

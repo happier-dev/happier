@@ -1,6 +1,10 @@
 import type { LocalServicePublicPreviewSnapshotV1 } from '@happier-dev/protocol/local/services/public/v1';
 
 import { createSharedSubscriptionStore } from '@/sync/runtime/subscriptions/sharedSubscriptionStore';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { subscribeMachineRpcRecovery } from '@/sync/runtime/orchestration/serverScopedRpc/subscribeMachineRpcRecovery';
+import { subscribeLocalServiceCredentialRetirement } from '../inventory/sharedStore';
+import { subscribeLocalServicePublicPreviewChanges } from './changes';
 import type {
     LocalServicePublicPreviewStatusClientInput,
     LocalServicePublicPreviewStatusClientResult,
@@ -21,6 +25,8 @@ export type LocalServicePublicPreviewStatusClient = (
 export type LocalServicePublicPreviewStoreKeyInput = Readonly<{
     machineId: string;
     serverId?: string | null;
+    accountId?: string | null;
+    credentialKey?: string | null;
     sessionId?: string | null;
     previewId?: string | null;
     exposureId?: string | null;
@@ -56,6 +62,7 @@ function sameServerAndMachine(
     input: LocalServicePublicPreviewStoreKeyInput,
 ): boolean {
     return entry.machineId === input.machineId
+        && (entry.accountId ?? null) === (input.accountId ?? null)
         && (entry.serverId ?? null) === (input.serverId ?? null);
 }
 
@@ -69,19 +76,28 @@ const store = createSharedSubscriptionStore<
     createState: createLocalServicePublicPreviewState,
     normalizeInput: (input) => ({
         machineId: input.machineId,
-        serverId: input.serverId ?? null,
+        serverId: resolveServerProfileScopeIdForIdentifier(input.serverId) || null,
+        accountId: input.accountId ?? null,
+        credentialKey: input.credentialKey ?? null,
         sessionId: normalizeOptionalId(input.sessionId),
         previewId: normalizeOptionalId(input.previewId),
         exposureId: normalizeOptionalId(input.exposureId),
     }),
     storeKey: (input) => [
         input.serverId ?? '',
+        input.accountId ?? '',
         input.machineId,
         input.sessionId ?? '',
         input.previewId ?? '',
         input.exposureId ?? '',
     ].join('::'),
     defaultSnapshotClient: defaultStatusClient,
+    subscribeRetirement: subscribeLocalServiceCredentialRetirement,
+    subscribeRecovery: (input, recover) => {
+        const unsubscribeChanges = subscribeLocalServicePublicPreviewChanges(input, () => recover(true));
+        const unsubscribeRecovery = subscribeMachineRpcRecovery({ ...input, expectedAccountId: input.accountId }, recover);
+        return () => { unsubscribeChanges(); unsubscribeRecovery(); };
+    },
     beginRefresh: (state) => applyLocalServicePublicPreviewRefreshStarted(state),
     refresh: async ({ input, state, snapshotClient, signal }) => {
         const receivedAt = state.generatedAt;
@@ -93,6 +109,7 @@ const store = createSharedSubscriptionStore<
                 ...(input.exposureId ? { exposureId: input.exposureId } : {}),
             },
             serverId: input.serverId ?? null,
+            accountId: input.accountId ?? null,
             signal,
         });
         return (current: LocalServicePublicPreviewState) => result.ok

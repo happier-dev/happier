@@ -3,6 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { SessionEndAckResponseSchema, UpdateBodySchema, EphemeralUpdateSchema } from './index.js';
 
 describe('updates sharing', () => {
+  it('accepts only content-free public preview identities on the ephemeral carrier', () => {
+    const wake = { type: 'local-service-public-preview-changed', machineId: 'machine', previewId: 'preview', exposureId: 'exposure' };
+    expect(EphemeralUpdateSchema.parse(wake)).toEqual(wake);
+    expect(EphemeralUpdateSchema.safeParse({ ...wake, publicUrl: 'private-link' }).success).toBe(false);
+    expect(EphemeralUpdateSchema.safeParse({ ...wake, token: 'private-token' }).success).toBe(false);
+    expect(EphemeralUpdateSchema.safeParse({ ...wake, previewId: '' }).success).toBe(false);
+  });
   it('accepts only content-free installed Machine usage source wakes', () => {
     const wake = { type: 'usage-sources-invalidated', machineId: 'machine', installationId: 'installation' };
     expect(EphemeralUpdateSchema.parse(wake)).toEqual(wake);

@@ -2396,6 +2396,12 @@ The host binds the reviewed root and environment, retains the invocation until
 native settlement, and reacquires only the lifecycle role for recovery: it never
 replays command resolution or Start to obtain inspection/Stop services.
 
+Development-source Service controls resolve a published managed-instance selection
+through the retained service owner. Omitted `cwd` and declaration operands use that
+instance's authoritative Project binding; explicit qualifiers must match it. Agent
+and UI Stop therefore share the same resolution path without rediscovering or
+re-admitting the Start declaration.
+
 Builtin Compose uses detached `up` under a stable requester-scoped project name,
 then the same native supervisor observes immutable Docker container IDs. Successful
 starter exit is not container death. Recovery inspects surviving containers before

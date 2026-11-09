@@ -66,7 +66,7 @@ function failureFromError(error: unknown): Extract<LocalServicePublicPreviewStat
 
 /** One feature-admission and failure-envelope boundary for every public-preview operation. */
 async function callPublicPreviewRpc(
-    input: Pick<LocalServicePublicPreviewStatusClientInput, 'serverId' | 'signal'>,
+    input: Pick<LocalServicePublicPreviewStatusClientInput, 'serverId' | 'accountId' | 'signal'>,
     method: string,
     payload: Readonly<{ machineId: string }>,
 ): Promise<Readonly<{ ok: true; raw: unknown }> | Extract<LocalServicePublicPreviewStatusClientResult, { ok: false }>> {
@@ -80,6 +80,7 @@ async function callPublicPreviewRpc(
     if (input.signal?.aborted) return { ok: false, reason: 'request_failed' };
     const raw = await machineRpcWithServerScope<unknown, typeof payload>({
         machineId: payload.machineId, serverId: input.serverId, method, payload, signal: input.signal,
+        accountId: input.accountId,
     });
     return readRpcFailure(raw) ?? { ok: true, raw };
 }

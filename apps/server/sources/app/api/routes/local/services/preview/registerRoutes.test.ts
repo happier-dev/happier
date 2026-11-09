@@ -338,6 +338,17 @@ describe('local service preview routes', () => {
             expect(reopened.statusCode).toBe(201);
             await new Promise<void>(resolve => setImmediate(resolve));
             expect(runtimes.preview.resolvePreview(resource.previewId)).toEqual(resource);
+            // Concurrent Browser requests can first acquire the same agent-opened Service together.
+            const serverAccessRequest = { userId: 'viewer_1', params: { previewId: resource.previewId },
+                body: { v: 1, kind: 'server_preview' } };
+            const concurrentAccess = [createReplyStub(), createReplyStub()];
+            await Promise.all(concurrentAccess.map(reply => getRouteHandler(app, 'POST',
+                '/v1/local-services/preview/:previewId/access')(serverAccessRequest, reply)));
+            for (const reply of concurrentAccess) {
+                expect(reply.statusCode).toBe(200);
+                expect(LocalServicePreviewServerAccessV1Schema.parse(reply.send.mock.calls[0]?.[0]))
+                    .toMatchObject({ previewId: resource.previewId, machineId: resource.machineId });
+            }
             const accessRequest = { userId: 'viewer_1', params: { previewId: resource.previewId }, body: {
                 v: 1, initiator: { kind: 'account_client', endpointId: 'a'.repeat(64) }, ephemeralPublicKeyBase64Url: 'c'.repeat(43),
             } };
@@ -1127,6 +1138,38 @@ describe('local service preview routes', () => {
         const denied = createReplyStub();
         await getRouteHandler(app, 'POST', '/v1/local-services/preview/:previewId/access')(request, denied);
         expect(denied.statusCode).toBe(403);
+    });
+
+    it('admits concurrent first opens of the same registered preview without reporting it ended', async () => {
+        sessionFindUnique.mockResolvedValue(sharedSession);
+        const env = { HAPPIER_PUBLIC_SERVER_URL: 'https://app.happier.test', HANDY_MASTER_SECRET: 'secret',
+            HAPPIER_MANAGED_RELAY_PURPOSE: 'personal-home',
+            HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: 'true',
+            HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED: 'true',
+            HAPPIER_FEATURE_MACHINES_TUNNEL_ALLOWED_PORTS: '5173' };
+        const runtime = createLocalServicePreviewRuntime({ tokenSecret: 'secret', publicBaseUrl: env.HAPPIER_PUBLIC_SERVER_URL,
+            hostOriginBaseDomain: 'preview.happier.test' });
+        expect(runtime.registerPreview({ resource: preview, accountId: 'user_1' }).ok).toBe(true);
+        const app = createFakeRouteApp();
+        registerLocalServiceRoutes(app as never, { env, runtimes: { ...createLocalServiceRouteRuntimes(env), preview: runtime } });
+        const request = { userId: 'viewer_1', authAuthority: 'present_user', params: { previewId: preview.previewId },
+            body: { v: 1, kind: 'server_preview' } };
+        const first = createReplyStub();
+        const second = createReplyStub();
+        const access = getRouteHandler(app, 'POST', '/v1/local-services/preview/:previewId/access');
+
+        await Promise.all([access(request, first), access(request, second)]);
+
+        const binding = { previewId: preview.previewId, sessionId: preview.sessionId, machineId: preview.machineId };
+        const admissions = [first, second].map(reply => {
+            expect(reply.statusCode).toBe(200);
+            return LocalServicePreviewServerAccessV1Schema.parse(reply.send.mock.calls[0]?.[0]);
+        });
+        expect(admissions[0]!.accessUrl).not.toBe(admissions[1]!.accessUrl);
+        for (const admission of admissions) {
+            expect(runtime.exchangeAccessToken({ ...binding,
+                rawToken: new URL(admission.accessUrl).searchParams.get('previewToken') }).ok).toBe(true);
+        }
     });
 
     it('does not roll back replacement policy while a server admission waits for Session authorization', async () => {

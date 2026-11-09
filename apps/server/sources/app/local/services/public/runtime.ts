@@ -25,6 +25,7 @@ import {
     type LocalServicePublicExposureRejectionReason,
 } from "@/app/local/services/public/policy";
 import { resolveLocalServiceHostOrigin } from "@/app/local/services/preview/origin";
+import type { LocalServicePublicPreviewChange } from './changes';
 
 type PublicAccessFailureReason =
     | "exposure_not_found"
@@ -148,6 +149,7 @@ export type CreateLocalServicePublicRuntimeInput = Readonly<{
     auditSinkDurable?: boolean;
     allowTestDevAuditSink?: boolean;
     recordAuditEvent?: (event: LocalServicePublicAuditEventV1) => void;
+    onExposureChanged?: (change: LocalServicePublicPreviewChange) => void;
     hostOriginBaseDomain?: string | null;
     checkRateLimit?: (input: Readonly<{
         exposure: LocalServicePublicExposureV1;
@@ -329,7 +331,23 @@ export function createLocalServicePublicRuntime(
         const retired = updateExposureEntry(entry, exposure);
         const audit = appendAuditEvent(retired.exposure, event);
         const updated = updateExposureEntry({ ...retired, withdrawalAuditFailed: !audit.ok }, audit.ok ? audit.exposure : retired.exposure);
+        if (entry.exposure.state !== updated.exposure.state) publishExposureChange(updated);
         return audit.ok ? { ok: true, entry: updated } : audit;
+    }
+
+    function publishExposureChange(entry: ExposureEntry): void {
+        input.onExposureChanged?.({
+            actorId: entry.actorId,
+            owner: entry.preview.owner,
+            ...(entry.preview.sessionId ? { sessionId: entry.preview.sessionId } : {}),
+            ...(entry.preview.serviceTarget ? { serviceTarget: entry.preview.serviceTarget } : {}),
+            change: {
+                type: 'local-service-public-preview-changed',
+                machineId: entry.exposure.machineId,
+                previewId: entry.exposure.previewId,
+                exposureId: entry.exposure.exposureId,
+            },
+        });
     }
 
     function createExposure(createInput: Readonly<{
@@ -439,7 +457,7 @@ export function createLocalServicePublicRuntime(
         }
         exposure = auditResult.exposure;
 
-        entries.set(exposureId, {
+        const entry: ExposureEntry = {
             preview: createInput.preview,
             exposure,
             secretTokenHash: secretToken && tokenSecret ? hashToken(tokenSecret, secretToken) : null,
@@ -448,8 +466,10 @@ export function createLocalServicePublicRuntime(
             viewerTokenHashes: new Set(),
             actorId: createInput.actorId,
             connections: new Set(),
-        });
+        };
+        entries.set(exposureId, entry);
         exposureIdByHostname.set(new URL(exposureOrigin.origin).hostname, exposureId);
+        publishExposureChange(entry);
         return { ok: true, exposure };
     }
 

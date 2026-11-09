@@ -468,6 +468,12 @@ export const EphemeralUpdateSchema = lazyZodSchema(() => z.union([z.discriminate
   }),
   ExternalSessionTranscriptInvalidationV1Schema,
   UsageSourcesInvalidationV1Schema,
+  z.strictObject({
+    type: z.literal('local-service-public-preview-changed'),
+    machineId: z.string().check(z.minLength(1)),
+    previewId: z.string().check(z.minLength(1)),
+    exposureId: z.string().check(z.minLength(1)),
+  }),
   z.looseObject({
     type: z.literal('machine-activity'),
     id: z.string(),

@@ -1,5 +1,8 @@
 import * as React from 'react';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 
 import type {
     LocalServicePublicPreviewStatusClientInput,
@@ -48,8 +51,14 @@ export function useLocalServicePublicPreviewStateController(
     const sessionId = normalizeId(input.sessionId);
     const previewId = normalizeId(input.previewId);
     const exposureId = normalizeId(input.exposureId);
-    const serverId = normalizeId(input.serverId);
-    const active = enabled && Boolean(machineId);
+    const requestedServerId = normalizeId(input.serverId);
+    const activeServer = useActiveServerSnapshot(!requestedServerId);
+    const serverId = resolveServerProfileScopeIdForIdentifier(requestedServerId ?? activeServer.serverId) || null;
+    const { binding } = useServerCredentialAccountScopeBinding(serverId);
+    const active = enabled && Boolean(machineId) && binding?.isCurrent() === true;
+    const storeKey = React.useMemo(() => ({ machineId: machineId ?? '', serverId, sessionId, previewId, exposureId,
+        accountId: binding?.accountId ?? null, credentialKey: binding?.credentialKey ?? null }),
+    [binding, exposureId, machineId, previewId, serverId, sessionId]);
 
     const statusClientRef = React.useRef(input.statusClient);
     const nowMsRef = React.useRef(input.nowMs);
@@ -63,20 +72,20 @@ export function useLocalServicePublicPreviewStateController(
             return () => {};
         }
         return subscribeLocalServicePublicPreviewStore(
-            { machineId, serverId, sessionId, previewId, exposureId },
+            storeKey,
             onStoreChange,
             {
                 ...(statusClientRef.current ? { statusClient: statusClientRef.current } : {}),
                 ...(nowMsRef.current ? { nowMs: nowMsRef.current } : {}),
             },
         );
-    }, [active, exposureId, machineId, previewId, serverId, sessionId]);
+    }, [active, machineId, storeKey]);
 
     const getSnapshot = React.useCallback((): LocalServicePublicPreviewState => (
         active && machineId
-            ? getLocalServicePublicPreviewState({ machineId, serverId, sessionId, previewId, exposureId })
+            ? getLocalServicePublicPreviewState(storeKey)
             : EMPTY_LOCAL_SERVICE_PUBLIC_PREVIEW_STATE
-    ), [active, exposureId, machineId, previewId, serverId, sessionId]);
+    ), [active, machineId, storeKey]);
 
     const state = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
     const applySnapshot = React.useCallback((snapshot: LocalServicePublicPreviewSnapshotV1) => {
@@ -84,10 +93,10 @@ export function useLocalServicePublicPreviewStateController(
             return;
         }
         publishLocalServicePublicPreviewSnapshot(
-            { machineId, serverId, sessionId, previewId, exposureId },
+            storeKey,
             snapshot,
         );
-    }, [active, exposureId, machineId, previewId, serverId, sessionId]);
+    }, [active, machineId, storeKey]);
 
     return React.useMemo(() => ({ state, applySnapshot }), [applySnapshot, state]);
 }

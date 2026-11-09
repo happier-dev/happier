@@ -1,6 +1,8 @@
 import type { Fastify } from "@/app/api/types";
 import { scopedLocalServiceViewerTokenCookie } from '@/app/local/services/viewerCookie';
 import { eventRouter } from '@/app/events/connectionEventRouter';
+import { publishLocalServicePublicPreviewChange } from '@/app/local/services/public/changes';
+import { log } from '@/utils/logging/log';
 import { readLocalServicePreviewAdmission } from '@/app/local/services/preview/admission';
 import { readAvailableMachineIrohEndpointAuthority } from '@/app/machines/machineStateGuards';
 import { resolveApiTrustProxy } from '@/app/api/utils/apiRateLimitPolicy';
@@ -171,6 +173,11 @@ export function createLocalServiceRouteRuntimes(env: NodeJS.ProcessEnv): LocalSe
             hostOriginBaseDomain: featureEnv.previewHostOriginBaseDomain,
             tokenSecret: resolvePublicTokenSecret(env),
             policy: featureEnv.publicPolicy,
+            onExposureChanged: change => {
+                void publishLocalServicePublicPreviewChange(change).catch(() => {
+                    log({ module: 'local-service-public-preview', level: 'warn' }, 'Exposure change delivery failed');
+                });
+            },
             resolvePreview: (previewId) => preview.resolvePreview(previewId),
             peopleAdmission: {
                 isInAudience: isLocalServicePublicAudienceMember,
