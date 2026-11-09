@@ -6,6 +6,7 @@ import type {
 import { createAcpToolNameInferencePreset } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { selectGrokAuthentication } from './auth.js';
+import { readGrokConnectedAccountMode } from '../connectedAccount.js';
 import { GROK_PROMPT_COMPLETE_METHODS, handleGrokPromptComplete } from './completion.js';
 import { GROK_MCP_SERVERS_UPDATED_METHOD, handleGrokMcpServersUpdated } from './mcpServersUpdated.js';
 import {
@@ -43,6 +44,9 @@ export function buildGrokAcpRuntimeDefinition(
       maxStringChars: 8_192,
     },
     models: {
+      ...(readGrokConnectedAccountMode(launchEnvironment) ? {
+        catalogConfidence: 'account_unverified' as const,
+      } : {}),
       projectModel(rawModel, normalizedModel) {
         const modelRecord = rawModel !== null && typeof rawModel === 'object' && !Array.isArray(rawModel)
           ? rawModel as Readonly<Record<string, unknown>>

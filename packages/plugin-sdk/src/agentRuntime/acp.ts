@@ -1,3 +1,4 @@
+import type { DaemonProviderModelProjectionRowV1 } from '@happier-dev/protocol/rpc/providers';
 import type { AgentAcpProviderTurnSourceFactory } from './acpProviderTurns.js';
 import type { PluginAgentAcpTransport, PluginAgentAcpSkillsSessionDeliveryV2 } from '@happier-dev/protocol';
 
@@ -144,6 +145,8 @@ export type AgentAcpModelState = Readonly<{
 }>;
 
 export type AgentAcpModelControls = Readonly<{
+  /** Native catalog provenance; this does not alter private active-model controls. */
+  catalogConfidence?: DaemonProviderModelProjectionRowV1['confidence'];
   projectModel(rawModel: JsonValue, normalizedModel: AgentAcpModel): AgentAcpModel;
   projectModelState?(input: Readonly<{
     normalizedModelState: AgentAcpModelState;

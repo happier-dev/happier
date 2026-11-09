@@ -4,6 +4,13 @@ type JsonObject = Readonly<Record<string, unknown>>;
 
 export type GrokModelOption = AgentAcpModelOption;
 
+// Native manager/mod.rs (2bdd1d6a) exposes bundled picker rows even when
+// wait_for_first_catalog fails; ACP does not publish that readiness fact.
+export const GROK_UNVERIFIED_ACCOUNT_MODEL_CATALOG = Object.freeze({
+  availableModels: Object.freeze([]), source: 'unavailable' as const, catalogObserved: true as const,
+  refreshError: true, refreshErrorMessage: 'Grok account model entitlement is unavailable from the native catalog.',
+});
+
 const FALLBACK_REASONING_EFFORT_OPTIONS = Object.freeze([
   { value: 'xhigh', name: 'XHigh', description: 'Extended reasoning' },
   { value: 'high', name: 'High', description: 'Heavy reasoning' },

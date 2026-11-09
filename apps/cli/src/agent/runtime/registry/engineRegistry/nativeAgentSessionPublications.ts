@@ -122,7 +122,7 @@ export function createNativeAgentSessionPublications(params: Readonly<{
     });
   };
   const modelPublication = createCatalogPublication<AgentSessionModelsSnapshot>(Object.freeze({ models: null }), (snapshot) => Object.freeze({
-    models: snapshot.models === null || isProviderSourceModelCatalogConfidenceUsable(snapshot.catalogConfidence) ? snapshot.models : [],
+    models: isProviderSourceModelCatalogConfidenceUsable(snapshot.catalogConfidence) ? snapshot.models : [],
     ...(snapshot.catalogConfidence === undefined ? {} : { catalogConfidence: snapshot.catalogConfidence }),
     ...(snapshot.observedAt === undefined ? {} : { observedAt: snapshot.observedAt }),
     ...(snapshot.currentModelId === undefined ? {} : { currentModelId: snapshot.currentModelId }),

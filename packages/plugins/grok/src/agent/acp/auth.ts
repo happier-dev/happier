@@ -3,8 +3,14 @@ import type {
   AgentAcpAuthenticationSelection,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
+import { readGrokConnectedAccountMode, type GrokConnectedAccountMode } from '../connectedAccount.js';
+
 const CACHED_METHOD_IDS = new Set(['grok.com', 'cached_token']);
 const HEADLESS_METADATA = Object.freeze({ headless: true });
+
+export function selectGrokConnectedAccountAuthentication(mode: GrokConnectedAccountMode): AgentAcpAuthenticationSelection {
+  return { methodId: mode === 'subscription' ? 'cached_token' : 'xai.api_key', metadata: HEADLESS_METADATA };
+}
 
 function readExactNonemptyString(value: unknown): string | null {
   return typeof value === 'string' && value.length > 0 && value === value.trim() ? value : null;
@@ -14,14 +20,20 @@ export function selectGrokAuthentication(
   context: AgentAcpAuthenticationContext,
   launchEnvironment: Readonly<Record<string, string>>,
 ): AgentAcpAuthenticationSelection | null {
-  return selectGrokAuthenticationFromFacts(context, { hasApiKey: Boolean(launchEnvironment.XAI_API_KEY?.trim()) });
+  return selectGrokAuthenticationFromFacts(context, { hasApiKey: Boolean(launchEnvironment.XAI_API_KEY?.trim()),
+    selectedMode: readGrokConnectedAccountMode(launchEnvironment) });
 }
 
 export function selectGrokAuthenticationFromFacts(
   context: AgentAcpAuthenticationContext,
-  facts: Readonly<{ hasApiKey: boolean }>,
+  facts: Readonly<{ hasApiKey: boolean; selectedMode?: GrokConnectedAccountMode }>,
 ): AgentAcpAuthenticationSelection | null {
   const advertised = new Set(context.advertisedMethodIds);
+  if (facts.selectedMode) {
+    const selection = selectGrokConnectedAccountAuthentication(facts.selectedMode);
+    if (!advertised.has(selection.methodId)) throw new Error('Selected Grok authentication method is unavailable');
+    return selection;
+  }
   if (facts.hasApiKey && advertised.has('xai.api_key')) {
     return { methodId: 'xai.api_key', metadata: HEADLESS_METADATA };
   }

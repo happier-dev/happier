@@ -1,4 +1,5 @@
 import type {
+  AgentAcpModelControls,
   AgentSessionHostServices,
   AgentSessionModelsSnapshot,
   AgentSessionModelsSource,
@@ -6,6 +7,7 @@ import type {
   AgentSessionModesSource,
   AgentSessionRuntimeEvent,
 } from '@happier-dev/plugin-sdk/agents/runtime';
+import { isProviderSourceModelCatalogConfidenceUsable } from '@/providers/modelManagement/sourceCatalog';
 import { isDeepStrictEqual } from 'node:util';
 import type { AcpBackend } from '@/agent/acp/AcpBackend';
 import type { AgentMessage } from '@/agent/core/AgentMessage';
@@ -21,13 +23,16 @@ export function createPublicAcpSessionCatalogs(params: Readonly<{
   models: AgentSessionHostServices['models'];
   modes: AgentSessionHostServices['modes'];
   modelConfigOptionId?: string;
+  catalogConfidence?: AgentAcpModelControls['catalogConfidence'];
   publish(event: CatalogEvent): void;
 }>) {
   let ready = false;
   let disposed = false;
   let modelPending = false;
   let modelObservedAt = 0;
-  let modelSnapshot: AgentSessionModelsSnapshot = Object.freeze({ models: null });
+  let modelSnapshot: AgentSessionModelsSnapshot = Object.freeze({ models: null,
+    ...(params.catalogConfidence === undefined ? {} : { catalogConfidence: params.catalogConfidence }),
+  });
   const modelSubscribers = new Set<(snapshot: AgentSessionModelsSnapshot) => void>();
   const modelSource: AgentSessionModelsSource = Object.freeze({
     read: () => modelSnapshot,
@@ -54,6 +59,7 @@ export function createPublicAcpSessionCatalogs(params: Readonly<{
     }
     modelSnapshot = Object.freeze({
       observedAt: modelObservedAt,
+      ...(params.catalogConfidence === undefined ? {} : { catalogConfidence: params.catalogConfidence }),
       models,
       ...(state ? { currentModelId: state.currentModelId }
         : modelSnapshot.currentModelId === undefined ? {} : { currentModelId: modelSnapshot.currentModelId }),
@@ -94,7 +100,15 @@ export function createPublicAcpSessionCatalogs(params: Readonly<{
     const configOptions = params.backend.getSessionConfigOptionsState();
     if (configOptions === null) return;
     const modelOption = resolveSessionModelConfigOption(configOptions, params.modelConfigOptionId);
-    params.publish({ kind: 'config-options', configOptions,
+    let publishedOptions = configOptions;
+    if (modelOption && !isProviderSourceModelCatalogConfidenceUsable(params.catalogConfidence)) {
+      publishedOptions = configOptions.map(option => option !== modelOption ? option : {
+        ...option,
+        ...(option.options ? { options: [] } : {}),
+        ...(option.groups ? { groups: [] } : {}),
+      });
+    }
+    params.publish({ kind: 'config-options', configOptions: publishedOptions,
       ...(modelOption ? { modelConfigOptionId: modelOption.id } : {}),
     });
   };

@@ -5,13 +5,13 @@ import { PLUGIN_MANIFEST } from './manifest.js';
 describe('Grok plugin manifest', () => {
   it('declares the native Agent, exact system tool, environment access, and CLI setup facts', () => {
     expect(PLUGIN_MANIFEST.id).toBe('happier.agent.grok');
-    expect(PLUGIN_MANIFEST.hostAccess.required).toEqual([expect.objectContaining({
+    expect(PLUGIN_MANIFEST.hostAccess.required).toEqual(expect.arrayContaining([expect.objectContaining({
       capability: 'process',
       scope: {
         executables: [{ kind: 'systemTool', id: 'grok-cli' }],
-        envKeys: ['XAI_API_KEY'],
+        envKeys: expect.arrayContaining(['XAI_API_KEY']),
       },
-    })]);
+    })]));
     expect(PLUGIN_MANIFEST.contributes.systemTools).toEqual([{
       id: 'grok-cli', title: 'Grok Build CLI', executableNames: ['grok'],
     }]);

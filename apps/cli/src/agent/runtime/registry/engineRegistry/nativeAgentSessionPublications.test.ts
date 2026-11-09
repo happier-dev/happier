@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { readAcpSessionModeIntentFromMetadata } from '@happier-dev/agents';
 import type { Metadata } from '@/api/types';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
-import type { AgentSessionModesSnapshot } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionModelsSnapshot, AgentSessionModesSnapshot } from '@happier-dev/plugin-sdk/agents/runtime';
 import { createSessionRuntimeModelsPublisher } from '@/agent/runtime/controls/sessionRuntimeModelsPublisher';
 import { createNativeAgentSessionPublications } from './nativeAgentSessionPublications';
 
@@ -79,6 +79,31 @@ describe('createNativeAgentSessionPublications', () => {
     publications.dispose();
     expect(updateAgentState).not.toHaveBeenCalled();
   });
+  it('withholds unverified account choices while retaining the active model and observed catalogs', () => {
+    const publications = createNativeAgentSessionPublications({
+      agentId: 'pi', session: null, signal: new AbortController().signal,
+      isCurrent: () => true, supportsInFlightSteer: false,
+    });
+    let snapshot: AgentSessionModelsSnapshot = {
+      observedAt: 0, currentModelId: 'selected',
+      models: [{ id: 'selected', name: 'Selected' }],
+    };
+    let publish: ((value: AgentSessionModelsSnapshot) => void) | undefined;
+    const binding = publications.services.models.bind({
+      read: () => snapshot,
+      subscribe(listener) { publish = listener; return { dispose() {} }; },
+    });
+    expect(publications.modelsSource.read().models).toEqual(snapshot.models);
+    snapshot = { ...snapshot, catalogConfidence: 'account_unverified' };
+    publish!(snapshot);
+    expect(publications.modelsSource.read()).toMatchObject({ currentModelId: 'selected', models: [] });
+    snapshot = { ...snapshot, catalogConfidence: 'probe' };
+    publish!(snapshot);
+    expect(publications.modelsSource.read()).toMatchObject({ currentModelId: 'selected', models: snapshot.models });
+    binding.dispose();
+    publications.dispose();
+  });
+
   it('adapts native model evidence without installing a competing metadata writer', async () => {
     const updateMetadata = vi.fn();
     const onMetadata = vi.fn();
@@ -140,7 +165,7 @@ describe('createNativeAgentSessionPublications', () => {
     expect(offMetadata).not.toHaveBeenCalled();
   });
 
-  it('replays native model evidence through one host metadata projector', async () => {
+  it.each([false, true])('replays native model evidence without restoring an unverified static catalog (unverified=%s)', async (unverified) => {
     let metadata: Metadata = {
       path: '/tmp/workspace',
       host: 'test-host',
@@ -148,6 +173,8 @@ describe('createNativeAgentSessionPublications', () => {
       happyHomeDir: '/tmp/home/.happier',
       happyLibDir: '/tmp/home/.happier/lib',
       happyToolsDir: '/tmp/home/.happier/tools',
+      sessionModelsV1: { v: 1, agentId: 'qwen', updatedAt: 10, currentModelId: 'old',
+        availableModels: [{ id: 'old', name: 'Previously available' }] },
     };
     const metadataListeners = new Set<() => void>();
     const updateMetadata = vi.fn(async (updater: (current: Metadata) => Metadata) => {
@@ -183,6 +210,7 @@ describe('createNativeAgentSessionPublications', () => {
     const disposeNativeSource = vi.fn();
     const binding = publications.services.models.bind({
       read: () => ({
+        ...(unverified ? { catalogConfidence: 'account_unverified' as const, observedAt: 0 } : {}),
         currentModelId: 'native-current',
         models: [
           {
@@ -200,12 +228,7 @@ describe('createNativeAgentSessionPublications', () => {
     expect(metadata.sessionModelsV1).toMatchObject({
       agentId: 'qwen',
       currentModelId: 'native-current',
-      availableModels: [
-        {
-          id: 'native-current',
-          name: 'Native current',
-        },
-      ],
+      availableModels: unverified ? [] : [{ id: 'native-current', name: 'Native current' }],
     });
     expect(updateMetadata).toHaveBeenCalled();
     expect(onMetadata).toHaveBeenCalledOnce();

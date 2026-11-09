@@ -14,7 +14,7 @@ async function setup() {
   const f = await createGrokNativeHistoryFixture(home);
   vi.stubEnv('HOME', home); vi.stubEnv('USERPROFILE', home); vi.stubEnv('GROK_HOME', join(home, '.grok'));
   const registered: AgentExternalSessionsContribution[] = [];
-  await activate({ agents: { register: () => {}, registerExternalSessions: (_id: string, reader: AgentExternalSessionsContribution) => registered.push(reader) } } as Parameters<typeof activate>[0]);
+  await activate({ connectedAccounts: { register: () => {} }, agents: { register: () => {}, registerExternalSessions: (_id: string, reader: AgentExternalSessionsContribution) => registered.push(reader) } } as Parameters<typeof activate>[0]);
   expect(registered, 'Grok native reader must be registered through activate').toHaveLength(1);
   const invocation = { signal: new AbortController().signal, maxSerializedBytes: 1_048_576,
     exec: { run: async () => { throw new Error('No vendor command'); } },

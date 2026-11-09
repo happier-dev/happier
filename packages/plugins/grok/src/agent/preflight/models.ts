@@ -1,6 +1,8 @@
-import type { AgentPreflightSessionControlsContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentPreflightSessionControlsContributionV1, AgentPreflightSessionControlsProbeInputV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import { selectGrokAuthenticationFromFacts } from '../acp/auth.js';
+import { GROK_UNVERIFIED_ACCOUNT_MODEL_CATALOG } from '../acp/modelControls.js';
+import { GROK_CONNECTED_ACCOUNT_MODE_ENV, GROK_OAUTH2_ISSUER_ENV, type GrokConnectedAccountMode } from '../connectedAccount.js';
 
 export const GROK_ACP_COMMAND = Object.freeze({ toolId: 'grok-cli', args: Object.freeze(['--no-auto-update', 'agent', 'stdio']) });
 
@@ -50,6 +52,12 @@ export function parseGrokModelsOutput(outputRaw: string): readonly GrokPreflight
   return models.length > 0 ? Object.freeze(models) : null;
 }
 
+function readSelectedMode(probe: AgentPreflightSessionControlsProbeInputV1): GrokConnectedAccountMode | undefined {
+  return probe.nonblankEnvironment?.[GROK_CONNECTED_ACCOUNT_MODE_ENV] === true
+    ? probe.nonblankEnvironment?.[GROK_OAUTH2_ISSUER_ENV] === true ? 'subscription' : 'api-key'
+    : undefined;
+}
+
 export const GROK_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
   catalogs: Object.freeze({
     kind: 'acp' as const,
@@ -60,7 +68,8 @@ export const GROK_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
       return selectGrokAuthenticationFromFacts({
         advertisedMethodIds: methods.flatMap((method) => isRecord(method) && typeof method.id === 'string' ? [method.id] : []),
         initializeMetadata: isRecord(initialized._meta) ? initialized._meta : null,
-      }, { hasApiKey: probe.nonblankEnvironment?.XAI_API_KEY === true });
+      }, { hasApiKey: probe.nonblankEnvironment?.XAI_API_KEY === true,
+        selectedMode: readSelectedMode(probe) });
     },
   }),
   models: Object.freeze({
@@ -72,4 +81,17 @@ export const GROK_PREFLIGHT_SESSION_CONTROLS = Object.freeze({
     parseOutput: ({ stdout, stderr }) =>
       parseGrokModelsOutput(stdout) ?? parseGrokModelsOutput(stderr),
   }),
+  async probeModels(context) {
+    const selectedMode = readSelectedMode(context);
+    if (!selectedMode) {
+      const result = await context.runDeclaredSystemToolCommand({ toolId: GROK_ACP_COMMAND.toolId, args: GROK_MODELS_COMMAND_ARGS });
+      return result.ok ? parseGrokModelsOutput(result.stdout) ?? parseGrokModelsOutput(result.stderr) : null;
+    }
+    try {
+      await context.probeDeclaredAcpSessionControls?.(GROK_ACP_COMMAND);
+    } catch {
+      // A failed selected probe also withdraws rows cached from another auth route.
+    }
+    return GROK_UNVERIFIED_ACCOUNT_MODEL_CATALOG;
+  },
 } satisfies AgentPreflightSessionControlsContributionV1);

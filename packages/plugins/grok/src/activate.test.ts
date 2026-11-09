@@ -9,7 +9,7 @@ import { createGrokAgentRuntime } from './agent/runtime/factory.js';
 describe('Grok native activation', () => {
   it('registers a native runtime and opens exact Grok ACP stdio launch facts', async () => {
     const register = vi.fn();
-    await activate({ agents: { register, registerExternalSessions: vi.fn() } } as unknown as PluginApi);
+    await activate({ connectedAccounts: { register: vi.fn() }, agents: { register, registerExternalSessions: vi.fn() } } as unknown as PluginApi);
     expect(register).toHaveBeenCalledWith('grok', createGrokAgentRuntime, expect.objectContaining({
       sessionRunnerFactory: {
         module: './agent/runtime/factory',

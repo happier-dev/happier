@@ -21,7 +21,7 @@ export const GROK_UI_DESCRIPTOR = Object.freeze({
     availability: { experimental: true },
     connectedService: { serviceId: null, labelKey: 'agentInput.agent.grok', connectRoute: null },
     flavorAliases: ['grok', 'grok-build', 'grok-cli'],
-    permissions: { modeGroup: 'codexLike', promptProtocol: 'codexDecision' },
+    permissions: { promptProtocol: 'codexDecision' },
     resume: {
       uiVendorResumeIdLabelKey: 'sessionInfo.grokSessionId',
       uiVendorResumeIdCopiedKey: 'sessionInfo.grokSessionIdCopied',

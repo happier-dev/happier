@@ -992,6 +992,11 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
     | 'resolveRuntimeMaxInputUnicodeCharacters'
 > {
     const contribution = params.preflightSessionControls;
+    type AcpPreflightDeclaration = Extract<NonNullable<AgentPreflightSessionControlsContributionV1['catalogs']>, { kind: 'acp' }>;
+    const declaredAcpAuthentication = (catalogs: AcpPreflightDeclaration, probe: AgentPreflightSessionControlsProbeInputV1) => ({
+        ...(catalogs.authenticationMethodId ? { authenticationMethodId: catalogs.authenticationMethodId } : {}),
+        ...(catalogs.selectAuthentication ? { selectAuthentication: (initializeResult: JsonValue) => catalogs.selectAuthentication!({ initializeResult, probe }) } : {}),
+    });
     const resolveModelConfigOptionId = async (): Promise<string | undefined> => {
         if (params.modelConfigOptionId !== undefined) return params.modelConfigOptionId;
         const { getAgentModelConfig } = await import('@happier-dev/agents');
@@ -1238,10 +1243,16 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                 }
             }, probeParams.cleanupScope);
         };
+        const resolveRequestedAcpAuthentication = (request: PreflightCommandRequest & Readonly<{ authenticationMethodId?: string }>) => {
+            if (request.authenticationMethodId) return { authenticationMethodId: request.authenticationMethodId };
+            const catalogs = contribution.catalogs;
+            return catalogs && 'kind' in catalogs && catalogs.kind === 'acp' && isExactPreflightCommand(catalogs.command, request)
+                ? declaredAcpAuthentication(catalogs, input) : {};
+        };
         const probeDeclaredAcpCatalogs: AgentPreflightSessionControlsProbeContextV1['probeDeclaredAcpCatalogs'] =
             async (request) => await withDeclaredJsonRpcClient(request, async (client, scopedSignal) => (
                 await probeAcpCatalogs({ client, signal: scopedSignal, cwd: probeParams.cwd,
-                    ...(request.authenticationMethodId ? { authenticationMethodId: request.authenticationMethodId } : {}),
+                    ...resolveRequestedAcpAuthentication(request),
                 })
             ));
         const probeDeclaredAcpSessionControls: NonNullable<AgentPreflightSessionControlsProbeContextV1['probeDeclaredAcpSessionControls']> =
@@ -1250,7 +1261,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                 const controls = await probeAcpSessionControls({ client, signal: scopedSignal, cwd: probeParams.cwd,
                     modelConfigOptionId: request.modelConfigOptionId ?? modelConfigOptionId,
                     configOptionOverrides: request.configOptionOverrides ?? probeParams.configOptionOverrides,
-                    ...(request.authenticationMethodId ? { authenticationMethodId: request.authenticationMethodId } : {}) });
+                    ...resolveRequestedAcpAuthentication(request) });
                 const { normalizeAcpModelsSnapshot } = await import('@/capabilities/probes/agentModelsProbe');
                 const { normalizeAcpModesSnapshot } = await import('@/capabilities/probes/agentModesProbe');
                 return {
@@ -1279,7 +1290,6 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
             withDeclaredManagedService,
         });
     };
-    type AcpPreflightDeclaration = Extract<NonNullable<AgentPreflightSessionControlsContributionV1['catalogs']>, { kind: 'acp' }>;
     const withDeclaredAcpPreflight = async <T>(
         context: AgentPreflightSessionControlsProbeContextV1,
         catalogs: AcpPreflightDeclaration,
@@ -1301,8 +1311,7 @@ export function projectAgentPreflightSessionControlsCatalogEntry(params: Readonl
                 client, signal, cwd: context.cwd,
                 configOptionOverrides: context.configOptionOverrides,
                 ...(modelConfigOptionId === undefined ? {} : { modelConfigOptionId }),
-                ...(catalogs.authenticationMethodId ? { authenticationMethodId: catalogs.authenticationMethodId } : {}),
-                ...(catalogs.selectAuthentication ? { selectAuthentication: (initializeResult) => catalogs.selectAuthentication!({ initializeResult, probe: context }) } : {}),
+                ...declaredAcpAuthentication(catalogs, context),
             }),
         );
     };

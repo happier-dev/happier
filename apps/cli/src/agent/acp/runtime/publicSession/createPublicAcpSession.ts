@@ -1723,7 +1723,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
   const catalogs = createPublicAcpSessionCatalogs({
     backend, models: dependencies.models, modes: dependencies.modes,
     modelConfigOptionId: options.definition?.modelConfigOptionId,
-    projectAvailableModels: options.definition?.models?.projectAvailableModels,
+    catalogConfidence: options.definition?.models?.catalogConfidence,
     publish,
   });
 

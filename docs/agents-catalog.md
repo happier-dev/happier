@@ -184,6 +184,24 @@ runtime confirmation; Account-only rows do not prove that the Agent can run on
 any machine. See [Providers](providers.md#provider-connections) for the Account
 catalog writer and declaration-only model projection.
 
+### Muse Agent (0.3 development)
+
+The Muse plugin owns the `muse` Agent, its vendor installer, native MSP adapter
+and model catalog. A selected Session launches `muse serve` through the admitted
+Machine's Exec service. The SDK JSON-RPC client owns stdio transport; the plugin
+checks the MSP envelope version once and treats the native fingerprint as
+diagnostic information. Native login/home materialization belongs to the
+Connected Account owner and is shared by model discovery and Session launch.
+
+Muse is an executable Agent; the Muse account's model-source and gateway uses
+remain separate contributions. Its demanded native model catalog preserves all
+returned IDs, including contributor variants and their native descriptions.
+An explicit unavailable default returns a typed model-selection failure rather
+than choosing another account or rewriting the model. Install/update uses the
+declared vendor recipe, while ordinary native launches disable auto-update.
+These are unreleased development-source integrations, not stable-release or
+authenticated native-platform certification claims.
+
 ### Additional Provider bindings (0.3 development)
 
 Gemini CLI, Kilo, Droid and Copilot CLI contribute Provider
@@ -946,13 +964,13 @@ response contract has only optional metadata in the
 the current protocol prefers
 [session configuration options](https://agentclientprotocol.com/protocol/v1/session-config-options).
 
-In development source, an ACP Agent can project its public model catalog with
-`models.projectAvailableModels`. The shared Session publication owner applies that
-projection to both catalog rows and model configuration choices, while retaining
-native active-model state and controls for acknowledged model changes. Grok uses
-this boundary for selected Connected Accounts because its native ACP catalog can
-contain bundled fallback rows without exposing whether account discovery succeeded.
-Its model-list preflight consumes the same unavailable-catalog fact.
+In development source, ACP Agents declare model catalog provenance with
+`models.catalogConfidence`. The shared catalog membership owner withholds
+unverified rows and model configuration choices while retaining native
+active-model state and controls for acknowledged model changes. Grok declares
+`account_unverified` for selected Connected Accounts because its native ACP
+catalog can contain bundled fallback rows without exposing whether account
+discovery succeeded. Its model-list preflight reports the same unavailable catalog.
 
 In the current development source, daemon model, mode and config probes demand the exact Agent
 registration from the authoritative plugin runtime and retain its lease for the operation.

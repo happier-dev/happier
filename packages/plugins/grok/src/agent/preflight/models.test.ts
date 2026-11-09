@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { AgentPreflightSessionControlsContributionV1, AgentPreflightSessionControlsProbeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import {
   GROK_PREFLIGHT_SESSION_CONTROLS,
@@ -29,6 +30,33 @@ Available models:
 });
 
 describe('GROK_PREFLIGHT_SESSION_CONTROLS', () => {
+  it.each([
+    ['subscription', false], ['api-key', false], ['subscription', true],
+  ] as const)('authenticates selected %s through ACP while withholding unverified rows (transport fails=%s)', async (mode, transportFails) => {
+    const requests: unknown[] = [];
+    const context: AgentPreflightSessionControlsProbeContextV1 = {
+      cwd: '/fake-workspace', accountSettings: null, environment: {},
+      nonblankEnvironment: { GROK_CONNECTED_ACCOUNT_MODE: true, GROK_OAUTH2_ISSUER: mode === 'subscription' },
+      signal: new AbortController().signal,
+      async resolveDeclaredSystemTool() { throw new Error('Unexpected resolution'); },
+      async runDeclaredSystemToolCommand() { throw new Error('Selected mode must use ACP'); },
+      async probeDeclaredAcpCatalogs() { throw new Error('Unexpected catalog request'); },
+      async withDeclaredJsonRpcClient() { throw new Error('Unexpected raw client'); },
+      async withDeclaredManagedService() { throw new Error('Unexpected managed service'); },
+      async probeDeclaredAcpSessionControls(request) {
+        requests.push(request);
+        if (transportFails) throw new Error('Fake native transport unavailable');
+        return { models: [{ id: 'bundled-unverified', name: 'Bundled model' }], modes: null, configOptions: null };
+      },
+    };
+    const contribution: AgentPreflightSessionControlsContributionV1 = GROK_PREFLIGHT_SESSION_CONTROLS;
+    if (!contribution.probeModels) throw new Error('Selected Grok model probe unavailable');
+    expect(await contribution.probeModels(context)).toMatchObject({
+      availableModels: [], source: 'unavailable', catalogObserved: true, refreshError: true,
+    });
+    expect(requests).toEqual([GROK_PREFLIGHT_SESSION_CONTROLS.catalogs.command]);
+  });
+
   it('declares the native command while leaving execution to the host', () => {
     const models = GROK_PREFLIGHT_SESSION_CONTROLS.models;
     expect(models?.command).toEqual({
