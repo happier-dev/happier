@@ -9,8 +9,8 @@ import { useDeviceType } from '@/utils/platform/responsive';
 import { Icon } from '@/components/ui/icons/Icon';
 import { SetupSteps } from '@/components/ui/setupBlocks/SetupSteps';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 
 import { ConnectedServiceSetupFlowActions } from '../setup/ConnectedServiceSetupFlowBody';
 import { ConnectedAccountFormSection } from './ConnectedAccountFormSection';
@@ -25,11 +25,15 @@ function formatExpiry(msLeft: number): string {
 /** The code's remaining life, ticking once a second in this leaf only while the code is shown. */
 function useCodeExpiry(expiresAtMs: number | undefined): number | null {
     const [now, setNow] = React.useState(() => Date.now());
+    const expired = expiresAtMs !== undefined && expiresAtMs <= now;
     React.useEffect(() => {
         if (expiresAtMs === undefined) return;
+        const current = Date.now();
+        setNow(current);
+        if (expiresAtMs <= current) return;
         const timer = setInterval(() => setNow(Date.now()), 1000);
         return () => clearInterval(timer);
-    }, [expiresAtMs]);
+    }, [expiresAtMs, expired]);
     return expiresAtMs === undefined ? null : expiresAtMs - now;
 }
 
@@ -65,6 +69,7 @@ export const ConnectedAccountDeviceForm = React.memo(function ConnectedAccountDe
     const msLeft = useCodeExpiry(props.expiresAtMs);
     const expired = msLeft !== null && msLeft <= 0;
     const [copied, setCopied] = React.useState(false);
+    const writeClipboard = useClipboardWrite(undefined, { enabled: Boolean(props.userCode) });
     const service = props.serviceTitle ?? null;
     const code = (
         <View style={[styles.codeBox, phone ? styles.codeBoxPhone : null, expired ? styles.expired : null]}>
@@ -86,7 +91,7 @@ export const ConnectedAccountDeviceForm = React.memo(function ConnectedAccountDe
                     title={copied ? t('common.copied') : t('common.copy')}
                     leading={<Icon name="copy" size={14} color={theme.colors.text.secondary} />}
                     onPress={async () => {
-                        setCopied(await setClipboardStringSafe(props.userCode ?? ''));
+                        setCopied(await writeClipboard(props.userCode ?? ''));
                     }}
                 />
             ) : null}
